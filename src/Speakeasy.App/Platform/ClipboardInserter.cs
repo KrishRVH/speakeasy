@@ -1,12 +1,14 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using Speakeasy.Core;
+using static Speakeasy.App.Platform.KeyboardInput;
 
 namespace Speakeasy.App.Platform;
 
 /// <summary>
 /// Invoke on the application's STA UI thread. This never changes the foreground window.
-/// Successful insertion means Ctrl+V was delivered; Windows cannot prove the target accepted it.
+/// Successful insertion means input was delivered; Windows cannot prove the target accepted it.
 /// </summary>
 public sealed class ClipboardInserter : ITextInserter, IDisposable
 {
@@ -45,7 +47,13 @@ public sealed class ClipboardInserter : ITextInserter, IDisposable
                 for (var attempt = 0; attempt < 3; attempt++)
                 {
                     var before = ClipboardNative.GetClipboardSequenceNumber();
-                    snapshot = ClipboardSnapshot.Capture();
+                    try { snapshot = ClipboardSnapshot.Capture(); }
+                    catch (Exception ex) when (ex is ExternalException or NotSupportedException or InvalidOperationException)
+                    {
+                        // Some Windows metadata cannot be materialized. Keep the entire
+                        // clipboard intact and use direct text input for this insertion.
+                        return await InsertDirectAsync(text, modifiersReleased, cancellationToken);
+                    }
                     var after = ClipboardNative.GetClipboardSequenceNumber();
                     if (before == after)
                     {
@@ -57,10 +65,11 @@ public sealed class ClipboardInserter : ITextInserter, IDisposable
                     await Task.Delay(30, cancellationToken);
                 }
                 if (snapshot == null)
-                    return new InsertionResult(false, "The clipboard kept changing. Your previous clipboard was left untouched; try dictating again.");
+                    return await InsertDirectAsync(text, modifiersReleased, cancellationToken);
             }
 
-            using var payload = ClipboardFormatHandle.FromText(text);
+            // CF_UNICODETEXT requires CRLF even when the model returns Unix line endings.
+            using var payload = ClipboardFormatHandle.FromText(text.ReplaceLineEndings("\r\n"));
             if (!await OpenClipboardAsync(cancellationToken))
                 return new InsertionResult(false, "Another application is holding the clipboard open. Release it and try again.");
             try
@@ -72,15 +81,18 @@ public sealed class ClipboardInserter : ITextInserter, IDisposable
                     return new InsertionResult(false, "Windows could not update the clipboard.");
                 if (!payload.TransferToClipboard())
                     return new InsertionResult(false, "Windows could not place the transcript on the clipboard.");
-                transcriptSequence = ClipboardNative.GetClipboardSequenceNumber();
             }
             finally { ClipboardNative.CloseClipboard(); }
 
+            // Closing completes the clipboard write transaction, including Windows' added
+            // formats. Sample afterward, and verify ownership so a concurrent copy cannot
+            // become the transcript's baseline sequence.
+            transcriptSequence = ClipboardNative.GetClipboardSequenceNumber();
+            if (!OwnsClipboard(transcriptSequence))
+                return new InsertionResult(false, "The clipboard changed before paste. Speakeasy did not paste the replacement contents.");
             cancellationToken.ThrowIfCancellationRequested();
             if (!modifiersReleased || AreModifiersDown())
                 return new InsertionResult(false, "Transcript copied. Release the modifier keys, then paste with Ctrl+V.");
-            if (ClipboardNative.GetClipboardSequenceNumber() != transcriptSequence)
-                return new InsertionResult(false, "The clipboard changed before paste. Speakeasy did not paste the replacement contents.");
 
             var foreground = GetForegroundWindow();
             if (foreground == 0)
@@ -89,6 +101,8 @@ public sealed class ClipboardInserter : ITextInserter, IDisposable
                 return new InsertionResult(false, "Transcript copied. Windows blocks automatic paste into this elevated application; press Ctrl+V there.");
 
             cancellationToken.ThrowIfCancellationRequested();
+            if (!OwnsClipboard(transcriptSequence))
+                return new InsertionResult(false, "The clipboard changed before paste. Speakeasy did not paste the replacement contents.");
             Input[] inputs = [Key(0xA2), Key(0x56), Key(0x56, keyUp: true), Key(0xA2, keyUp: true)];
             var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>());
             if (sent != inputs.Length)
@@ -133,19 +147,104 @@ public sealed class ClipboardInserter : ITextInserter, IDisposable
         }
     }
 
+    private async Task<InsertionResult> InsertDirectAsync(string text, bool modifiersReleased, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!modifiersReleased || AreModifiersDown())
+            return new InsertionResult(false, "Release the modifier keys and try dictating again. Your previous clipboard was preserved.");
+        var foreground = GetForegroundWindow();
+        if (foreground == 0)
+            return new InsertionResult(false, "Focus an editable field and try dictating again. Your previous clipboard was preserved.");
+        if (IsElevatedTarget(foreground))
+            return new InsertionResult(false, "Windows blocks direct text input into this elevated application. Your previous clipboard was preserved.");
+
+        var nativeInsertion = TryInsertNativeEdit(text, foreground, cancellationToken);
+        if (nativeInsertion != null) return nativeInsertion;
+
+        // WM_CHAR uses one carriage return per line break. Unicode packets do not
+        // synthesize VK_RETURN, so newlines are never sent as an Enter key shortcut.
+        var normalized = text.ReplaceLineEndings("\r");
+        var insertedAny = false;
+        InsertionResult Stopped(string reason) => new(false, insertedAny
+            ? $"{reason} Part of the transcript may have been inserted. Your previous clipboard was preserved."
+            : $"{reason} Your previous clipboard was preserved.");
+        for (var offset = 0; offset < normalized.Length;)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_disposed) return Stopped("Speakeasy stopped before insertion finished.");
+            if (GetForegroundWindow() != foreground) return Stopped("Focus changed before insertion finished.");
+            if (AreModifiersDown()) return Stopped("A modifier key was pressed before insertion finished.");
+
+            // Text services can decode VK_PACKET from keyboard state later. Pace one
+            // Unicode scalar at a time so the next packet does not replace that state.
+            var inputs = UnicodeScalar(normalized, offset);
+            var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>());
+            insertedAny |= sent > 0;
+            if (sent != inputs.Length)
+            {
+                if ((sent & 1) != 0)
+                {
+                    // Complete only the Unicode key pair partially sent by this batch.
+                    Input[] release = [Unicode((char)inputs[sent - 1].Data.Keyboard.ScanCode, keyUp: true)];
+                    SendInput(1, release, Marshal.SizeOf<Input>());
+                }
+                return Stopped("Windows or this application blocked direct text input.");
+            }
+            offset += inputs.Length / 2;
+            if (offset < normalized.Length) await Task.Delay(5, cancellationToken);
+        }
+        return new InsertionResult(true, "Inserted directly. Your previous clipboard was preserved.");
+    }
+
+    private InsertionResult? TryInsertNativeEdit(string text, nint foreground, CancellationToken cancellationToken)
+    {
+        var thread = GetWindowThreadProcessId(foreground, out _);
+        var info = new GuiThreadInfo { Size = (uint)Marshal.SizeOf<GuiThreadInfo>() };
+        if (thread == 0 || !GetGUIThreadInfo(thread, ref info) || info.Focus == 0) return null;
+        var target = info.Focus;
+        var className = new StringBuilder(256);
+        if (GetClassName(target, className, className.Capacity) == 0 || !IsWindowUnicode(target)) return null;
+        var name = className.ToString();
+        if (!name.Equals("Edit", StringComparison.OrdinalIgnoreCase) &&
+            !name.StartsWith("RichEdit", StringComparison.OrdinalIgnoreCase) &&
+            !name.StartsWith("WindowsForms10.EDIT.", StringComparison.OrdinalIgnoreCase) &&
+            !name.StartsWith("WindowsForms10.RichEdit", StringComparison.OrdinalIgnoreCase)) return null;
+
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_disposed || GetForegroundWindow() != foreground || !GetGUIThreadInfo(thread, ref info) ||
+            info.Focus != target || GetAncestor(target, 2) != foreground || (info.Flags & 0x1C) != 0 || AreModifiersDown())
+            return new InsertionResult(false, "Focus or keyboard state changed before insertion. Your previous clipboard was preserved.");
+        if (!IsWindowEnabled(target) || (GetWindowLong(target, -16) & 0x800) != 0)
+            return new InsertionResult(false, "The focused text field is disabled or read-only. Your previous clipboard was preserved.");
+
+        // EM_REPLACESEL inserts at the caret (or replaces the selection) with undo.
+        // It is a system message, so Windows marshals the UTF-16 text across processes.
+        cancellationToken.ThrowIfCancellationRequested();
+        var delivered = SendMessageTimeout(target, 0x00C2, 1, text.ReplaceLineEndings("\r\n"),
+            0x0001 | 0x0002 | 0x0020, 250, out _);
+        // A timeout can occur after insertion began. Never retry with another method.
+        return delivered != 0
+            ? new InsertionResult(true, "Inserted directly. Your previous clipboard was preserved.")
+            : new InsertionResult(false, "Windows could not confirm text insertion. Check the field before trying again; your previous clipboard was preserved.");
+    }
+
     private async Task<bool> RestoreIfUnchangedAsync(ClipboardSnapshot snapshot, uint sequence)
     {
-        if (_disposed || ClipboardNative.GetClipboardSequenceNumber() != sequence) return false;
+        if (!OwnsClipboard(sequence)) return false;
         if (!await OpenClipboardAsync(CancellationToken.None)) return false;
         try
         {
             // Check under the clipboard lock: nobody can race a new copy between this
             // comparison and replacement, as could happen with Clipboard.SetDataObject.
-            if (ClipboardNative.GetClipboardSequenceNumber() != sequence) return false;
+            if (!OwnsClipboard(sequence)) return false;
             return snapshot.RestoreWhileOpen();
         }
         finally { ClipboardNative.CloseClipboard(); }
     }
+
+    private bool OwnsClipboard(uint sequence) => !_disposed &&
+        ClipboardNative.GetClipboardSequenceNumber() == sequence &&
+        ClipboardNative.GetClipboardOwner() == _owner.Handle;
 
     private async Task<bool> OpenClipboardAsync(CancellationToken cancellationToken)
     {
@@ -210,22 +309,22 @@ public sealed class ClipboardInserter : ITextInserter, IDisposable
         internal ClipboardOwner() => CreateHandle(new CreateParams { Caption = "Speakeasy clipboard", Parent = new nint(-3) });
     }
 
-    private static Input Key(ushort key, bool keyUp = false) => new()
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GuiThreadInfo
     {
-        Type = 1,
-        Data = new InputUnion { Keyboard = new KeyboardInput { VirtualKey = key, Flags = keyUp ? 2u : 0u } }
-    };
-
-    [StructLayout(LayoutKind.Sequential)] private struct Input { public uint Type; public InputUnion Data; }
-    [StructLayout(LayoutKind.Explicit)]
-    private struct InputUnion
-    {
-        [FieldOffset(0)] public KeyboardInput Keyboard;
-        [FieldOffset(0)] public MouseInput Mouse;
+        internal uint Size, Flags;
+        internal nint Active, Focus, Capture, MenuOwner, MoveSize, Caret;
+        internal int CaretLeft, CaretTop, CaretRight, CaretBottom;
     }
-    [StructLayout(LayoutKind.Sequential)] private struct KeyboardInput { public ushort VirtualKey, ScanCode; public uint Flags, Time; public nuint ExtraInfo; }
-    [StructLayout(LayoutKind.Sequential)] private struct MouseInput { public int X, Y; public uint Data, Flags, Time; public nuint ExtraInfo; }
+
     [DllImport("user32.dll", SetLastError = true)] private static extern uint SendInput(uint count, Input[] inputs, int size);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern nint SendMessageTimeout(nint window, uint message, nuint wParam, string text, uint flags, uint timeoutMs, out nuint result);
+    [DllImport("user32.dll")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetGUIThreadInfo(uint thread, ref GuiThreadInfo info);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(nint window, StringBuilder name, int maxCount);
+    [DllImport("user32.dll")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsWindowUnicode(nint window);
+    [DllImport("user32.dll")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsWindowEnabled(nint window);
+    [DllImport("user32.dll")] private static extern nint GetAncestor(nint window, uint flags);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] private static extern int GetWindowLong(nint window, int index);
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll")] private static extern nint GetForegroundWindow();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint window, out uint process);

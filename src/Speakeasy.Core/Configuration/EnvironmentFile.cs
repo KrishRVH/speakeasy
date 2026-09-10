@@ -33,7 +33,7 @@ internal sealed class EnvironmentFile
             }
             else
             {
-                // A hash inside an unquoted key is literal unless preceded by whitespace.
+                // A hash inside an unquoted value is literal unless preceded by whitespace.
                 for (var i = 0; i < value.Length; i++)
                     if (value[i] == '#' && (i == 0 || char.IsWhiteSpace(value[i - 1])))
                     {

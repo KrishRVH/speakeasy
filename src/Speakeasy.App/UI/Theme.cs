@@ -64,6 +64,8 @@ internal static class Theme
 
 internal sealed class SoftButton : Button
 {
+    private bool _hovered;
+    private bool _pressed;
     [System.ComponentModel.DefaultValue(false)]
     public bool Primary { get; set; }
     public SoftButton()
@@ -78,12 +80,29 @@ internal sealed class SoftButton : Button
 
     protected override void OnPaint(PaintEventArgs e)
     {
+        e.Graphics.Clear(Parent?.BackColor ?? Theme.Background);
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var shape = Theme.Rounded(new RectangleF(0, 0, Width - 1, Height - 1), 9);
-        using var brush = new SolidBrush(Primary ? Theme.Green : Color.FromArgb(235, 238, 229));
+        var scale = DeviceDpi / 96f;
+        using var shape = Theme.Rounded(new RectangleF(0, 0, Width - 1, Height - 1), 9 * scale);
+        var color = Primary ? Theme.Green : Color.FromArgb(235, 238, 229);
+        if (Enabled && (_pressed || _hovered))
+        {
+            var shade = _pressed ? .88 : .96;
+            color = Color.FromArgb((int)(color.R * shade), (int)(color.G * shade), (int)(color.B * shade));
+        }
+        if (!Enabled) color = Color.FromArgb(229, 232, 225);
+        using var brush = new SolidBrush(color);
         e.Graphics.FillPath(brush, shape);
-        TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, Primary ? Color.White : Theme.Ink,
+        TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, !Enabled ? Theme.Muted : Primary ? Color.White : Theme.Ink,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-        if (Focused) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -5, -5));
+        if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -(int)(5 * scale), -(int)(5 * scale)));
     }
+
+    protected override void OnMouseEnter(EventArgs e) { _hovered = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { _hovered = false; _pressed = false; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnMouseDown(MouseEventArgs e) { _pressed = e.Button == MouseButtons.Left; Invalidate(); base.OnMouseDown(e); }
+    protected override void OnMouseUp(MouseEventArgs e) { _pressed = false; Invalidate(); base.OnMouseUp(e); }
+    protected override void OnKeyDown(KeyEventArgs e) { if (e.KeyCode == Keys.Space) { _pressed = true; Invalidate(); } base.OnKeyDown(e); }
+    protected override void OnKeyUp(KeyEventArgs e) { _pressed = false; Invalidate(); base.OnKeyUp(e); }
+    protected override void OnLostFocus(EventArgs e) { _pressed = false; Invalidate(); base.OnLostFocus(e); }
 }

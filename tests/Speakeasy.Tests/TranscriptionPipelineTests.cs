@@ -159,6 +159,68 @@ public sealed class TranscriptionPipelineTests
         Assert.NotNull(result.Warning);
     }
 
+    [Theory]
+    [InlineData("content_filter")]
+    [InlineData("tool_calls")]
+    [InlineData("function_call")]
+    public async Task InterruptedCleanupDoesNotReplaceDictationWithPartialText(string finishReason)
+    {
+        var calls = 0;
+        using var client = Client((_, _) => Task.FromResult(++calls == 1
+            ? Json("{\"text\":\"Please send the complete proposal tomorrow.\"}")
+            : Json(JsonSerializer.Serialize(new
+            {
+                choices = new[] { new { message = new { content = "Please send" }, finish_reason = finishReason } }
+            }))));
+        using var pipeline = Pipeline(CloudSettings("groq", "auto"), client);
+
+        var result = await pipeline.TranscribeAsync(Audio, null, CancellationToken.None);
+
+        Assert.Equal("Please send the complete proposal tomorrow.", result.Text);
+        Assert.NotNull(result.Warning);
+    }
+
+    [Fact]
+    public async Task CancelledWarmupDoesNotReportSuccessWhenNoWorkerNeedsLoading()
+    {
+        using var client = Client((_, _) => throw new InvalidOperationException("Warmup must not make a cloud request."));
+        using var pipeline = Pipeline(CloudSettings("groq", "none"), client);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pipeline.WarmupAsync(cancellation.Token));
+    }
+
+    [Fact]
+    public async Task LocalCleanupUsesItsDedicatedTransport()
+    {
+        var cloudCalls = 0;
+        var localCalls = 0;
+        using var cloud = Client((request, _) =>
+        {
+            cloudCalls++;
+            if (request.RequestUri!.IsLoopback)
+                throw new InvalidOperationException("Local text reached the cloud/proxy transport.");
+            return Task.FromResult(Json("{\"text\":\"Um hello\"}"));
+        });
+        using var local = Client((request, _) =>
+        {
+            localCalls++;
+            Assert.True(request.RequestUri!.IsLoopback);
+            return Task.FromResult(Chat("Hello."));
+        });
+        var settings = CloudSettings("groq", "local");
+        settings.Cleanup.Model = "local-model";
+        using var pipeline = new TranscriptionPipeline(settings, MissingConfigDirectory, cloud, _ => "fake-key", local);
+
+        var result = await pipeline.TranscribeAsync(Audio, null, CancellationToken.None);
+
+        Assert.Equal("Hello.", result.Text);
+        Assert.Null(result.Warning);
+        Assert.Equal(1, cloudCalls);
+        Assert.Equal(1, localCalls);
+    }
+
     [Fact]
     public async Task CancelDuringCleanupPropagatesInsteadOfReturningRawText()
     {

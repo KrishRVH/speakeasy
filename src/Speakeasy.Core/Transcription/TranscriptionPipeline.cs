@@ -19,20 +19,30 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
     })
     { Timeout = Timeout.InfiniteTimeSpan };
 
+    private static readonly HttpClient SharedLocalClient = new(new SocketsHttpHandler
+    {
+        AllowAutoRedirect = false,
+        UseProxy = false,
+        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+        ConnectTimeout = TimeSpan.FromSeconds(15)
+    })
+    { Timeout = Timeout.InfiniteTimeSpan };
+
     private readonly AppSettings _settings;
     private readonly string _configDirectory;
     private readonly EnvironmentFile _keys;
     private readonly HttpClient _client;
+    private readonly HttpClient _localClient;
     private readonly LocalWhisperHost? _localWhisper;
     private readonly LocalCleanupHost? _localCleanup;
     private readonly CancellationTokenSource _lifetime = new();
     private bool _disposed;
 
     public TranscriptionPipeline(AppSettings settings, string configDirectory)
-        : this(settings, configDirectory, SharedClient, null) { }
+        : this(settings, configDirectory, SharedClient, null, SharedLocalClient) { }
 
     internal TranscriptionPipeline(AppSettings settings, string configDirectory, HttpClient client,
-        Func<string, string?>? environment)
+        Func<string, string?>? environment, HttpClient? localClient = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         settings.Validate();
@@ -41,6 +51,7 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
         _configDirectory = Path.GetFullPath(configDirectory);
         _keys = new EnvironmentFile(Path.Combine(_configDirectory, ".env"), environment);
         _client = client;
+        _localClient = localClient ?? client;
         if (_settings.Transcription.Provider == "local" && _settings.Transcription.LocalMode == "server" &&
             File.Exists(Path.GetFullPath(_settings.Transcription.WhisperServerExecutable, _configDirectory)))
             _localWhisper = new LocalWhisperHost(_settings.Transcription, _configDirectory);
@@ -53,9 +64,11 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
+        lifetime.Token.ThrowIfCancellationRequested();
         await Task.WhenAll(
             _localWhisper?.WarmupAsync(lifetime.Token) ?? Task.CompletedTask,
             _localCleanup?.WarmupAsync(lifetime.Token) ?? Task.CompletedTask).ConfigureAwait(false);
+        lifetime.Token.ThrowIfCancellationRequested();
     }
 
     public async Task<TranscriptionResult> TranscribeAsync(RecordedAudio audio, Action<string>? stage,
@@ -241,7 +254,8 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
                 new { role = "user", content = JsonSerializer.Serialize(new { dictation = transcript }) }
             }
         });
-        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
+        var client = provider == "local" ? _localClient : _client;
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
         RequireSuccess(response, "Text cleanup");
         using var data = await ReadJsonAsync(response, token).ConfigureAwait(false);
         if (data.RootElement.ValueKind != JsonValueKind.Object ||
@@ -250,7 +264,7 @@ public sealed class TranscriptionPipeline : ITranscriptionPipeline
             !choices[0].TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.Object ||
             !message.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.String)
             throw new TranscriptionException("Text cleanup returned no text.");
-        if (choices[0].TryGetProperty("finish_reason", out var reason) && reason.ValueKind == JsonValueKind.String && reason.GetString() == "length")
+        if (choices[0].TryGetProperty("finish_reason", out var reason) && reason.ValueKind == JsonValueKind.String && reason.GetString() != "stop")
             throw new TranscriptionException("Text cleanup returned an incomplete result.");
         var result = content.GetString()!.Trim();
         if (result.Length == 0) throw new TranscriptionException("Text cleanup returned empty text.");

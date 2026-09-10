@@ -105,8 +105,7 @@ internal sealed class LocalWhisperHost : IDisposable
         if (!File.Exists(model))
             throw new TranscriptionException("The local Whisper model is missing. Run setup-local.ps1 or set transcription.modelPath.");
 
-        // Reserve an ephemeral loopback port while constructing the process. The server
-        // binds immediately after release; an unguessable path identifies this instance.
+        // Select an ephemeral loopback port; an unguessable path identifies this instance.
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;

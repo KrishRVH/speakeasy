@@ -5,6 +5,43 @@ namespace Speakeasy.Platform.Tests;
 
 public sealed class MicRecorderTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SlowDriverStopDoesNotBlockStopOrCancelCaller(bool cancelPendingStop)
+    {
+        using var releaseDriver = new ManualResetEventSlim();
+        var enteredDriver = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stopReturned = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var device = new FakeInput
+        {
+            OnStop = () =>
+            {
+                enteredDriver.TrySetResult();
+                if (!releaseDriver.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Fake driver was not released.");
+            }
+        };
+        using var recorder = new MicRecorder(() => device);
+        recorder.Start();
+        var beginStop = Task.Run(() => stopReturned.TrySetResult(recorder.StopAsync(CancellationToken.None)));
+        Task? cancel = null;
+        try
+        {
+            await enteredDriver.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            var responsiveCall = cancelPendingStop ? cancel = Task.Run(recorder.Cancel) : stopReturned.Task;
+            Assert.Same(responsiveCall, await Task.WhenAny(responsiveCall, Task.Delay(500)));
+        }
+        finally
+        {
+            releaseDriver.Set();
+            await beginStop.WaitAsync(TimeSpan.FromSeconds(2));
+            if (cancel != null) await cancel.WaitAsync(TimeSpan.FromSeconds(2));
+            var completion = await stopReturned.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            try { await completion.WaitAsync(TimeSpan.FromSeconds(2)); }
+            catch (OperationCanceledException) when (cancelPendingStop) { }
+        }
+    }
+
     [Fact]
     public async Task StopFinalizesAudioAndReleasesDeviceBeforeCompleting()
     {
@@ -66,6 +103,7 @@ public sealed class MicRecorderTests
         using var recorder = new MicRecorder(() => device);
         recorder.Start();
         device.Emit(new byte[PcmRecording.MaximumBytes + 100]);
+        await device.DisposedCompletion.Task.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.True(device.Disposed);
         var audio = await recorder.StopAsync(CancellationToken.None);
         Assert.Equal(TimeSpan.FromMinutes(5), audio.Duration);
@@ -115,10 +153,12 @@ public sealed class MicRecorderTests
         public event EventHandler<WaveInEventArgs>? DataAvailable;
         public event EventHandler<StoppedEventArgs>? RecordingStopped;
         internal bool StopImmediately { get; init; } = true;
+        internal Action? OnStop { get; init; }
         internal bool Disposed { get; private set; }
+        internal TaskCompletionSource DisposedCompletion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public void StartRecording() { }
-        public void StopRecording() { if (StopImmediately) Stopped(); }
-        public void Dispose() => Disposed = true;
+        public void StopRecording() { OnStop?.Invoke(); if (StopImmediately) Stopped(); }
+        public void Dispose() { Disposed = true; DisposedCompletion.TrySetResult(); }
         internal void Emit(byte[] data) => DataAvailable?.Invoke(this, new WaveInEventArgs(data, data.Length));
         internal void Stopped(Exception? error = null) => RecordingStopped?.Invoke(this, new StoppedEventArgs(error));
     }

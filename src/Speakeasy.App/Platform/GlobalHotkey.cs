@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 namespace Speakeasy.App.Platform;
 
 /// <summary>
-/// Installs a physical keyboard hook on a dedicated message-loop thread. Construct on
+/// Installs a keyboard hook supporting local and remote input on a dedicated thread. Construct on
 /// the WinForms UI thread after its synchronization context exists, or supply it explicitly.
 /// Down, Up and Escape are posted to that context; no subscriber runs inside the hook.
 /// </summary>
@@ -120,7 +120,8 @@ public sealed class GlobalHotkey : IDisposable
                     _ => (int)keyboard.Key
                 };
                 var signal = _tracker.Process(key, message is 0x100 or 0x104,
-                    (keyboard.Flags & 0x12) != 0, (enabledState & 1) != 0 && Volatile.Read(ref _resetPending) == 0);
+                    (keyboard.Flags & 0x12) != 0, (enabledState & 1) != 0 && Volatile.Read(ref _resetPending) == 0,
+                    keyboard.ExtraInfo);
                 var notification = signal & ~HotkeySignal.Suppress;
                 if (notification != HotkeySignal.None)
                     PostNotification(notification, enabledState);

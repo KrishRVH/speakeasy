@@ -1,3 +1,5 @@
+param([string]$SetupScriptPath = (Join-Path $PSScriptRoot '../scripts/setup-local.ps1'))
+
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $testDirectory = Join-Path $repositoryRoot ('artifacts/setup-download-tests/' + [Guid]::NewGuid().ToString('N'))
@@ -8,7 +10,7 @@ New-Item -ItemType Directory -Path $testDirectory -Force | Out-Null
 $parseTokens = $null
 $parseErrors = $null
 $scriptAst = [System.Management.Automation.Language.Parser]::ParseFile(
-    (Join-Path $repositoryRoot 'scripts/setup-local.ps1'), [ref]$parseTokens, [ref]$parseErrors)
+    $SetupScriptPath, [ref]$parseTokens, [ref]$parseErrors)
 if ($parseErrors.Count -gt 0) { throw ($parseErrors | Out-String) }
 $downloadFunction = $scriptAst.Find({ param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-HuggingFaceDownload'
@@ -93,4 +95,33 @@ catch { $rejectedHash = $_.Exception.Message -like '*checksum did not match*' }
 Assert-Condition $rejectedHash 'A corrupted full download must fail its official checksum.'
 Assert-Condition (-not (Test-Path -LiteralPath $wrongHash)) 'A corrupted download must not produce an installed model.'
 
-Write-Output 'Passed 4 setup download scenarios: normal, resumed fallback, incorrect range, incorrect hash.'
+$settingsFunction = $scriptAst.Find({ param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Read-SetupSettings'
+}, $true)
+if (-not $settingsFunction) { throw 'Setup cannot read valid commented settings and omitted defaults.' }
+. ([scriptblock]::Create($settingsFunction.Extent.Text))
+$settingsFixture = Join-Path $testDirectory 'settings.json'
+@'
+{
+  // Keep my shortcut when installing another local model.
+  "hotkey": "F8",
+  "transcription": {
+    "modelPath": "models/a//b,}/*literal*/\\model.bin",
+    "language": "auto", /* The model may be multilingual. */
+  },
+}
+'@ | Set-Content -LiteralPath $settingsFixture
+$templatePath = Join-Path $repositoryRoot 'settings.example.json'
+$settings = Read-SetupSettings $settingsFixture $templatePath
+Assert-Condition ($settings.hotkey -eq 'F8') 'Setup must preserve customized settings.'
+Assert-Condition ($settings.transcription.modelPath -eq 'models/a//b,}/*literal*/\model.bin') 'Comment and comma syntax inside quoted values must remain literal.'
+Assert-Condition ($settings.transcription.language -eq 'auto') 'Existing nested settings must override defaults.'
+Assert-Condition ($settings.transcription.threads -eq 4 -and $settings.cleanup.provider -eq 'auto' -and $settings.microphoneDevice -eq -1) 'Omitted nested and root settings must receive the shipped defaults.'
+
+'{"transcription":null}' | Set-Content -LiteralPath $settingsFixture
+$rejectedNullSection = $false
+try { Read-SetupSettings $settingsFixture $templatePath | Out-Null }
+catch { $rejectedNullSection = $_.Exception.Message -like '*transcription*JSON object*' }
+Assert-Condition $rejectedNullSection 'An explicitly invalid provider section must not silently become default settings.'
+
+Write-Output 'Passed 6 setup scenarios: normal download, resumed fallback, incorrect range, incorrect hash, commented/default settings, invalid section.'

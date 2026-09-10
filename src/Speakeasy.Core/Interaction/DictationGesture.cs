@@ -54,6 +54,20 @@ public sealed class DictationGesture
     /// <summary>The original recording start, retained through processing until completion or cancellation.</summary>
     public TimeSpan? RecordingStartedAt { get; private set; }
 
+    /// <summary>Starts or finishes recording from the UI without changing physical key state.</summary>
+    public IReadOnlyList<GestureAction> ToggleHandsFree(TimeSpan now)
+    {
+        if (State == DictationState.Idle)
+        {
+            RecordingStartedAt = now;
+            State = DictationState.HandsFree;
+            return StartAction;
+        }
+
+        return State is DictationState.Held or DictationState.PendingTap or DictationState.HandsFree
+            ? Stop() : NoActions;
+    }
+
     public IReadOnlyList<GestureAction> KeyDown(TimeSpan now)
     {
         // Expiration wins over a late second tap, even when a timer tick was delayed.

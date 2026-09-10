@@ -9,6 +9,61 @@ namespace Speakeasy.Platform.Tests;
 
 public sealed class ControllerTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PasteNoticeSurvivesCompletionUntilNewRecordingOrReenable(bool reenable) => Run(fixture =>
+    {
+        const string reason = "The target is elevated. Your text is copied; paste it manually.";
+        fixture.ReachInsertion().Source.SetResult(new(false, reason));
+
+        Assert.Equal(DictationState.Idle, fixture.Controller.State);
+        Assert.Equal("Automatic paste unavailable", fixture.Controller.Status);
+        Assert.Equal(reason, fixture.Controller.LastNotice);
+        fixture.Context.Drain();
+        Assert.Equal(reason, fixture.Controller.LastNotice);
+
+        if (reenable)
+        {
+            fixture.Controller.SetEnabled(false);
+            fixture.Controller.SetEnabled(true);
+        }
+        else fixture.Controller.ToggleHandsFree();
+
+        Assert.Null(fixture.Controller.LastNotice);
+    });
+
+    [Fact]
+    public void UiHandsFreeUsesExistingCaptureTranscriptionAndInsertion() => Run(fixture =>
+    {
+        fixture.Controller.ToggleHandsFree();
+
+        Assert.Equal(DictationState.HandsFree, fixture.Controller.State);
+        Assert.Equal("Listening hands-free", fixture.Controller.Status);
+        Assert.Equal(1, fixture.Recorder.StartCount);
+        fixture.Controller.ToggleHandsFree();
+        fixture.Controller.ToggleHandsFree();
+        Assert.Equal(DictationState.Processing, fixture.Controller.State);
+        Assert.Single(fixture.Recorder.Stops).Complete(Speech());
+        Assert.Single(fixture.Pipeline.Calls).Complete("Practice dictation.");
+        var insertion = Assert.Single(fixture.Inserter.Calls);
+        Assert.Equal("Practice dictation.", insertion.Text);
+        insertion.AttemptCommit();
+        Assert.True(insertion.Pasted);
+        Assert.Equal(DictationState.Idle, fixture.Controller.State);
+    });
+
+    [Fact]
+    public void UiHandsFreeCannotStartWhileDictationIsPaused() => Run(fixture =>
+    {
+        fixture.Controller.SetEnabled(false);
+        fixture.Controller.ToggleHandsFree();
+
+        Assert.Equal(DictationState.Idle, fixture.Controller.State);
+        Assert.Equal(0, fixture.Recorder.StartCount);
+        Assert.Equal("Dictation is paused", fixture.Controller.Status);
+    });
+
     [Fact]
     public void EscapeDuringCaptureDropsAudioAndRequiresPhysicalRelease() => Run(fixture =>
     {

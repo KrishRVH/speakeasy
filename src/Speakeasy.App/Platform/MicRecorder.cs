@@ -166,7 +166,7 @@ public sealed class MicRecorder : IAudioRecorder
         }
         // Repeat the stop request until acknowledged. This also covers WaveInEvent's
         // start/stop race when a tap ends before its capture worker has started.
-        _ = StopUntilAcknowledgedAsync(session);
+        _ = Task.Run(() => StopUntilAcknowledgedAsync(session));
     }
 
     private async Task StopUntilAcknowledgedAsync(Session session)
@@ -174,9 +174,9 @@ public sealed class MicRecorder : IAudioRecorder
         for (var attempt = 0; attempt < 30; attempt++)
         {
             Exception? error = null;
-            lock (_gate)
+            lock (session.NativeGate)
             {
-                if (session.Finished) return;
+                lock (_gate) if (session.Finished) return;
                 try { session.Device.StopRecording(); }
                 catch (Exception ex) { error = ex; }
             }
@@ -231,9 +231,12 @@ public sealed class MicRecorder : IAudioRecorder
 
     private static void DetachAndDispose(Session session)
     {
-        session.Device.DataAvailable -= session.DataHandler;
-        session.Device.RecordingStopped -= session.StoppedHandler;
-        session.Device.Dispose();
+        lock (session.NativeGate)
+        {
+            session.Device.DataAvailable -= session.DataHandler;
+            session.Device.RecordingStopped -= session.StoppedHandler;
+            session.Device.Dispose();
+        }
     }
 
     private void Post(Session session, Action action)
@@ -265,6 +268,9 @@ public sealed class MicRecorder : IAudioRecorder
 
     private sealed class Session(IWaveIn device, PcmRecording pcm)
     {
+        // Driver calls may block. Serialize them separately from session state so
+        // Cancel can drop audio immediately without waiting for a device response.
+        internal object NativeGate { get; } = new();
         internal IWaveIn Device { get; } = device;
         internal PcmRecording Pcm { get; } = pcm;
         internal TaskCompletionSource<RecordedAudio> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

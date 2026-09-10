@@ -19,7 +19,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private AppSettings _settings;
     private GlobalHotkey? _hotkey;
     private DictationController? _controller;
+    private TranscriptionPipeline? _pipeline;
     private DashboardForm? _dashboard;
+    private PreferencesForm? _preferences;
+    private TryDictationForm? _practice;
     private bool _localReady;
     private bool _disposed;
     private string? _engineStatus;
@@ -45,6 +48,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         menu.Items.AddRange([
             title, new ToolStripSeparator(), _enabledItem, _startupItem, new ToolStripSeparator(),
             new ToolStripMenuItem("Open speakeasy", null, (_, _) => ShowDashboard()),
+            new ToolStripMenuItem("Try dictation", null, (_, _) => ShowPractice()),
             new ToolStripMenuItem("Preferences", null, (_, _) => ShowPreferences()),
             new ToolStripMenuItem("Edit settings", null, (_, _) => OpenFile(_store.SettingsPath)),
             new ToolStripMenuItem("Edit API keys (.env)", null, (_, _) => OpenFile(_store.EnvPath)),
@@ -59,7 +63,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (showDashboard) ShowDashboard();
     }
 
-    private void Install(AppSettings settings)
+    private void Install(AppSettings settings, bool save = false)
     {
         // Construct first so invalid configuration never leaves a half-installed hotkey.
         settings.Validate();
@@ -67,23 +71,40 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var pipeline = new TranscriptionPipeline(settings, _directory);
         var controller = new DictationController(settings, recorder, pipeline, new ClipboardInserter());
         GlobalHotkey hook;
-        try { hook = new GlobalHotkey(settings.Hotkey) { Enabled = false }; }
+        try
+        {
+            hook = new GlobalHotkey(settings.Hotkey) { Enabled = false };
+            try { if (save) _store.Save(settings); }
+            catch { hook.Dispose(); throw; }
+        }
         catch { controller.Dispose(); throw; }
+        _practice?.Close();
         _hotkey?.Dispose();
         _controller?.Dispose();
         _settings = settings;
         _controller = controller;
+        _pipeline = pipeline;
         _hotkey = hook;
         hook.Down += controller.KeyDown;
         hook.Up += controller.KeyUp;
         hook.Escape += controller.Cancel;
         controller.Changed += RefreshStatus;
         controller.Notice += ShowNotice;
-        hook.Enabled = settings.Enabled;
-        _localReady = File.Exists(Resolve(settings.Transcription.WhisperExecutable)) && File.Exists(Resolve(settings.Transcription.ModelPath));
-        _engineStatus = settings.Transcription.Provider == "local" && _localReady ? "Loading local models" : null;
+        hook.Enabled = settings.Enabled && _preferences is not { Visible: true };
+        _localReady = File.Exists(Resolve(settings.Transcription.ModelPath)) &&
+            (File.Exists(Resolve(settings.Transcription.WhisperExecutable)) ||
+             settings.Transcription.LocalMode == "server" && File.Exists(Resolve(settings.Transcription.WhisperServerExecutable)));
+        _engineStatus = null;
+        if (_settings.Enabled) BeginWarmup();
+        else RefreshStatus();
+    }
+
+    private void BeginWarmup()
+    {
+        if (_pipeline is null || _controller is null) return;
+        _engineStatus = "Loading local models";
         RefreshStatus();
-        if (_settings.Enabled && _localReady) _ = WarmupAsync(pipeline, controller);
+        _ = WarmupAsync(_pipeline, _controller);
     }
 
     private async Task WarmupAsync(TranscriptionPipeline pipeline, DictationController owner)
@@ -111,10 +132,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         RunSafely(() =>
         {
             _settings.Enabled = !_settings.Enabled;
-            _store.Save(_settings);
+            try { _store.Save(_settings); }
+            catch { _settings.Enabled = !_settings.Enabled; throw; }
             _controller!.SetEnabled(_settings.Enabled);
-            _hotkey!.Enabled = _settings.Enabled;
-            RefreshStatus();
+            _hotkey!.Enabled = _settings.Enabled && _preferences is not { Visible: true };
+            if (_settings.Enabled) BeginWarmup();
+            else RefreshStatus();
         });
     }
 
@@ -143,11 +166,17 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var tooltip = $"speakeasy · {(_settings.Enabled ? status : "Paused")}";
         _tray.Text = tooltip.Length <= 63 ? tooltip : tooltip[..63];
         if (_dashboard is { IsDisposed: false, Visible: true })
-            _dashboard.UpdateSettings(_settings, status, _startupItem.Checked, _localReady);
+            _dashboard.UpdateSettings(_settings, status, _startupItem.Checked, _localReady, _controller.LastNotice);
     }
 
     private void ShowDashboard()
     {
+        if (_preferences is { IsDisposed: false })
+        {
+            Theme.Reveal(_preferences, activate: true);
+            _preferences.Activate();
+            return;
+        }
         if (_dashboard is null || _dashboard.IsDisposed)
         {
             _dashboard = new DashboardForm();
@@ -155,9 +184,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _dashboard.SettingsRequested += ShowPreferences;
             _dashboard.EnvRequested += () => OpenFile(_store.EnvPath);
             _dashboard.ReloadRequested += Reload;
+            _dashboard.TryRequested += ShowPractice;
             _dashboard.StartupChanged += SetStartup;
         }
-        _dashboard.UpdateSettings(_settings, _controller!.Status, StartupRegistration.IsEnabled(), _localReady);
+        _dashboard.UpdateSettings(_settings, _engineStatus ?? _controller!.Status, StartupRegistration.IsEnabled(), _localReady, _controller!.LastNotice);
         _dashboard.Show();
         if (_dashboard.WindowState == FormWindowState.Minimized) _dashboard.WindowState = FormWindowState.Normal;
         Theme.Reveal(_dashboard, activate: true);
@@ -166,9 +196,17 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void ShowPreferences()
     {
+        if (_preferences is { IsDisposed: false })
+        {
+            Theme.Reveal(_preferences, activate: true);
+            _preferences.Activate();
+            return;
+        }
+        _practice?.Close();
         _controller?.Cancel();
         if (_hotkey is not null) _hotkey.Enabled = false;
         using var preferences = new PreferencesForm(_settings);
+        _preferences = preferences;
         preferences.AdvancedSettingsRequested += () =>
         {
             preferences.DialogResult = DialogResult.Cancel;
@@ -177,18 +215,41 @@ internal sealed class TrayApplicationContext : ApplicationContext
         };
         try
         {
-            if (preferences.ShowDialog(_dashboard) == DialogResult.OK && preferences.Result is { } updated)
+            var owner = _dashboard is { IsDisposed: false, Visible: true } ? _dashboard : null;
+            if (preferences.ShowDialog(owner) == DialogResult.OK && preferences.Result is { } updated)
             {
-                Install(updated);
-                _store.Save(updated);
+                Install(updated, save: true);
             }
         }
         catch (Exception exception) { ShowNotice(exception.Message); }
         finally
         {
-            if (_hotkey is not null) _hotkey.Enabled = _settings.Enabled;
-            RefreshStatus();
+            _preferences = null;
+            if (!_disposed)
+            {
+                if (_hotkey is not null) _hotkey.Enabled = _settings.Enabled;
+                RefreshStatus();
+            }
         }
+    }
+
+    private void ShowPractice()
+    {
+        if (_preferences is { IsDisposed: false })
+        {
+            Theme.Reveal(_preferences, activate: true);
+            _preferences.Activate();
+            return;
+        }
+        if (_practice is null || _practice.IsDisposed)
+        {
+            _practice = new TryDictationForm(_controller!, _settings.Hotkey);
+            _practice.FormClosed += (_, _) => _practice = null;
+        }
+        _practice.Show();
+        if (_practice.WindowState == FormWindowState.Minimized) _practice.WindowState = FormWindowState.Normal;
+        Theme.Reveal(_practice, activate: true);
+        _practice.Activate();
     }
 
     private void ShowNotice(string message)
@@ -244,9 +305,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _quitSignal.Dispose();
             SystemEvents.SessionSwitch -= OnSessionSwitch;
             SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+            _practice?.Dispose();
             _hotkey?.Dispose();
             _controller?.Dispose();
             _pill.Dispose();
+            _preferences?.Dispose();
             _dashboard?.Dispose();
             _tray.Visible = false;
             _tray.ContextMenuStrip?.Dispose();

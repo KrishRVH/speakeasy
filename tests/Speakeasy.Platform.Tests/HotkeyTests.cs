@@ -7,6 +7,21 @@ public sealed class HotkeyTests
 {
     private const int Space = 0x20, LeftCtrl = 0xA2, RightCtrl = 0xA3, LeftAlt = 0xA4, RightAlt = 0xA5;
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void RemoteAndLocalKeyboardEdgesHaveTheSameDictationBehavior(bool injected)
+    {
+        var tracker = new HotkeyTracker(HotkeyGesture.Parse("Ctrl+Alt+Space"));
+        Assert.Equal(HotkeySignal.None, tracker.Process(LeftCtrl, true, injected, true));
+        Assert.Equal(HotkeySignal.None, tracker.Process(LeftAlt, true, injected, true));
+        Assert.Equal(HotkeySignal.Down | HotkeySignal.Suppress, tracker.Process(Space, true, injected, true));
+        Assert.Equal(HotkeySignal.Suppress, tracker.Process(Space, true, injected, true));
+        Assert.Equal(HotkeySignal.Up | HotkeySignal.Suppress, tracker.Process(Space, false, injected, true));
+        Assert.Equal(HotkeySignal.Escape, tracker.Process(0x1B, true, injected, true));
+        Assert.Equal(HotkeySignal.None, tracker.Process(0x1B, false, injected, true));
+    }
+
     [Fact]
     public void ChordSuppressesOnlyActivationAndItsRepeats()
     {
@@ -56,15 +71,36 @@ public sealed class HotkeyTests
     }
 
     [Fact]
-    public void InjectedInputDoesNotActivateCancelOrCorruptPhysicalState()
+    public void OwnInputDoesNotActivateCancelOrCorruptPhysicalState()
     {
         var tracker = new HotkeyTracker(HotkeyGesture.Parse("RightAlt"));
-        Assert.Equal(HotkeySignal.None, tracker.Process(RightAlt, true, true, true));
-        Assert.Equal(HotkeySignal.None, tracker.Process(0x1B, true, true, true));
+        var marker = KeyboardInput.OwnEventMarker;
+        Assert.Equal(HotkeySignal.None, tracker.Process(RightAlt, true, true, true, marker));
+        Assert.Equal(HotkeySignal.None, tracker.Process(0x1B, true, true, true, marker));
         Assert.Equal(HotkeySignal.Down | HotkeySignal.Suppress, tracker.Process(RightAlt, true, false, true));
-        Assert.Equal(HotkeySignal.None, tracker.Process(RightAlt, false, true, true));
+        Assert.Equal(HotkeySignal.None, tracker.Process(RightAlt, false, true, true, marker));
         Assert.Equal(HotkeySignal.Suppress, tracker.Process(RightAlt, true, false, true));
         Assert.Equal(HotkeySignal.Up | HotkeySignal.Suppress, tracker.Process(RightAlt, false, false, true));
+    }
+
+    [Theory]
+    [InlineData("V")]
+    [InlineData("LeftCtrl")]
+    public void PasteAndRepairKeysCannotTriggerTheirOwnConfiguredHotkey(string shortcut)
+    {
+        var tracker = new HotkeyTracker(HotkeyGesture.Parse(shortcut));
+        KeyboardInput.Input[] keys =
+        [
+            KeyboardInput.Key(LeftCtrl), KeyboardInput.Key(0x56),
+            KeyboardInput.Key(0x56, keyUp: true), KeyboardInput.Key(LeftCtrl, keyUp: true),
+            KeyboardInput.Key(0x56, keyUp: true), KeyboardInput.Key(LeftCtrl, keyUp: true)
+        ];
+        foreach (var input in keys)
+        {
+            var keyboard = input.Data.Keyboard;
+            Assert.Equal(HotkeySignal.None, tracker.Process(keyboard.VirtualKey, (keyboard.Flags & 2) == 0,
+                injected: true, enabled: true, keyboard.ExtraInfo));
+        }
     }
 
     [Fact]
@@ -92,7 +128,7 @@ public sealed class HotkeyTests
     }
 
     [Fact]
-    public void DisabledModeHasNoSuppressionOrEventsAndDoesNotReviveAHeldKey()
+    public void DisabledModeBlocksNewActivationsAndCompletesOwnedRelease()
     {
         var tracker = new HotkeyTracker(HotkeyGesture.Parse("F8"));
         Assert.Equal(HotkeySignal.None, tracker.Process(0x77, true, false, false));
@@ -161,6 +197,14 @@ public sealed class HotkeyTests
     }
 
     private static DictationGesture NewGesture() => new(TimeSpan.FromMilliseconds(300), TimeSpan.FromMilliseconds(220), TimeSpan.FromMinutes(5));
+
+    [Fact]
+    public void ShortcutValidationMessageDoesNotAppendAnInternalParameterName()
+    {
+        var error = Assert.Throws<ArgumentException>(() => HotkeyGesture.Parse("Escape"));
+        Assert.Null(error.ParamName);
+        Assert.Contains("Escape is reserved", error.Message);
+    }
 
     [Theory]
     [InlineData("F1", 0x70)]

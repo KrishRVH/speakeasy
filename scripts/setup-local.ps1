@@ -13,6 +13,37 @@ $downloads = Join-Path $configRoot 'downloads'
 $models = Join-Path $configRoot 'models'
 New-Item -ItemType Directory -Path $configRoot, $downloads, $models -Force | Out-Null
 
+function Read-SetupSettings([string]$Path, [string]$Template) {
+    $defaults = Get-Content -LiteralPath $Template -Raw | ConvertFrom-Json
+    if (-not (Test-Path -LiteralPath $Path)) { return $defaults }
+
+    # Match quoted strings first so comment markers, escaped quotes, and commas
+    # inside values survive. Windows PowerShell 5.1 needs strict JSON here.
+    $json = Get-Content -LiteralPath $Path -Raw
+    $keepStrings = [System.Text.RegularExpressions.MatchEvaluator]{ param($match)
+        if ($match.Groups[1].Success) { return $match.Groups[1].Value }
+        return ' '
+    }
+    $json = [regex]::Replace($json, '("(?:\\.|[^"\\])*")|//[^\r\n]*|/\*[\s\S]*?\*/', $keepStrings)
+    $json = [regex]::Replace($json, '("(?:\\.|[^"\\])*")|,\s*(?=[}\]])', $keepStrings)
+    $settings = $json | ConvertFrom-Json
+    if ($settings -isnot [pscustomobject]) { throw 'settings.json must contain a JSON object.' }
+
+    function Add-Defaults($Current, $Defaults) {
+        foreach ($property in $Defaults.PSObject.Properties) {
+            $existing = $Current.PSObject.Properties[$property.Name]
+            if ($null -eq $existing) {
+                $Current | Add-Member -NotePropertyName $property.Name -NotePropertyValue $property.Value
+            } elseif ($property.Value -is [pscustomobject]) {
+                if ($existing.Value -isnot [pscustomobject]) { throw ($property.Name + ' must be a JSON object.') }
+                Add-Defaults $existing.Value $property.Value
+            }
+        }
+    }
+    Add-Defaults $settings $defaults
+    return $settings
+}
+
 function Get-HuggingFaceDownload([string]$Uri, [string]$Path) {
     # Try a normal resumable download first. Some networks stall on large
     # responses; bounded ranges recover without discarding completed bytes.
@@ -102,6 +133,9 @@ function Install-Archive([string]$Archive, [string]$Target, [string]$Executable)
     return $found.FullName
 }
 
+$settingsPath = Join-Path $configRoot 'settings.json'
+$settings = Read-SetupSettings $settingsPath (Join-Path $PSScriptRoot '../settings.example.json')
+
 $whisperTag = 'b4938'
 $whisperAsset = if ($Backend -eq 'cuda') { 'whisper-cublas-12.4.0-bin-x64.zip' } else { 'whisper-bin-x64.zip' }
 $whisperZip = Join-Path $downloads $whisperAsset
@@ -111,13 +145,6 @@ $whisperServer = Join-Path (Split-Path -Parent $whisperExe) 'whisper-server.exe'
 $modelPath = Join-Path $models "ggml-$Model.bin"
 Get-Download "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-$Model.bin" $modelPath
 
-$settingsPath = Join-Path $configRoot 'settings.json'
-if (Test-Path -LiteralPath $settingsPath) {
-    $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
-} else {
-    $template = Join-Path $PSScriptRoot '../settings.example.json'
-    $settings = Get-Content -LiteralPath $template -Raw | ConvertFrom-Json
-}
 $settings.transcription | Add-Member -NotePropertyName provider -NotePropertyValue 'local' -Force
 $settings.transcription | Add-Member -NotePropertyName whisperExecutable -NotePropertyValue $whisperExe -Force
 $settings.transcription | Add-Member -NotePropertyName whisperServerExecutable -NotePropertyValue $whisperServer -Force

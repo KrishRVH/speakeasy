@@ -29,14 +29,14 @@ internal sealed class PreferencesForm : Form
         _edited = JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(settings))
             ?? throw new InvalidOperationException("Settings could not be copied.");
         Text = "Preferences · speakeasy";
-        ClientSize = new Size(700, 640);
+        ClientSize = new Size(700, 670);
         BackColor = Theme.Background;
         ForeColor = Theme.Ink;
         Font = Theme.Font(10);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
-        ShowInTaskbar = false;
+        ShowInTaskbar = true;
         StartPosition = FormStartPosition.CenterParent;
         Icon = Theme.MakeIcon();
         AutoScroll = true;
@@ -44,7 +44,7 @@ internal sealed class PreferencesForm : Form
         AddLabel(this, "Make it yours.", 24, 20, 652, 38, 24, FontStyle.Bold);
         AddLabel(this, "A few preferences for a little less typing.", 26, 65, 648, 22, 10, color: Theme.Muted);
 
-        var capture = Card("RECORDING", 94, 186);
+        var capture = Card("RECORDING", 94, 216);
         AddLabel(capture, "&Shortcut", 18, 43, 287, 22);
         _shortcut = new TextBox
         {
@@ -61,7 +61,7 @@ internal sealed class PreferencesForm : Form
         AddLabel(capture, "&Microphone", 336, 43, 290, 22);
         _microphone = Dropdown(capture, "Microphone", 336, 68, 296, 1);
         _microphone.Items.Add(new DeviceChoice(-1, "Windows default microphone"));
-        var microphoneHelp = "Fn usually needs a keyboard-level remap\nto F13. Left/Right modifiers are supported.";
+        var microphoneHelp = "Remote microphone audio must reach\na Windows recording device on this PC.";
         if (discoverMicrophones)
         {
             try
@@ -83,21 +83,40 @@ internal sealed class PreferencesForm : Form
         _microphone.SelectedItem = selectedDevice;
         AddLabel(capture, microphoneHelp, 336, 101, 296, 37, 9, color: Theme.Muted);
 
-        AddLabel(capture, "Stop forgotten recordings after", 18, 149, 259, 24, 9);
+        var checkMicrophone = new LinkLabel
+        {
+            Text = "Check microphone",
+            Location = new Point(336, 140),
+            AutoSize = true,
+            LinkColor = Theme.Green,
+            ActiveLinkColor = Theme.Ink,
+            VisitedLinkColor = Theme.Green,
+            LinkBehavior = LinkBehavior.HoverUnderline,
+            TabIndex = 2
+        };
+        checkMicrophone.LinkClicked += (_, _) =>
+        {
+            var device = (DeviceChoice)_microphone.SelectedItem!;
+            using var check = new MicrophoneCheckForm(device.Number, device.Label, _edited.SilenceThreshold);
+            check.ShowDialog(this);
+        };
+        capture.Controls.Add(checkMicrophone);
+
+        AddLabel(capture, "Stop forgotten recordings after", 18, 179, 259, 24, 9);
         _recordingLimit = new NumericUpDown
         {
-            Location = new Point(281, 146),
+            Location = new Point(281, 176),
             Width = 73,
             Minimum = 1,
             Maximum = 300,
             Value = Math.Clamp(settings.MaxRecordingSeconds, 1, 300),
             AccessibleName = "Maximum recording length in seconds",
-            TabIndex = 2
+            TabIndex = 3
         };
         capture.Controls.Add(_recordingLimit);
-        AddLabel(capture, "seconds  ·  up to 5 minutes", 365, 149, 267, 24, 9, color: Theme.Muted);
+        AddLabel(capture, "seconds  ·  up to 5 minutes", 365, 179, 267, 24, 9, color: Theme.Muted);
 
-        var intelligence = Card("TRANSCRIPTION && CLEANUP", 292, 132);
+        var intelligence = Card("TRANSCRIPTION && CLEANUP", 322, 132);
         AddLabel(intelligence, "&Transcribe with", 18, 42, 290, 23);
         _transcription = Dropdown(intelligence, "Transcription provider", 18, 68, 290, 3);
         SetChoices(_transcription, settings.Transcription.Provider,
@@ -110,7 +129,7 @@ internal sealed class PreferencesForm : Form
         AddLabel(intelligence, "Cloud providers use your API keys in .env.", 18, 103, 306, 21, 9, color: Theme.Muted);
         AddLabel(intelligence, "Models and local setup live in advanced settings.", 336, 103, 296, 21, 8.5f, color: Theme.Muted);
 
-        var output = Card("YOUR WORDS", 436, 110);
+        var output = Card("YOUR WORDS", 466, 110);
         AddLabel(output, "&Casing", 18, 40, 195, 23);
         _casing = Dropdown(output, "Dictation casing", 18, 65, 221, 5);
         SetChoices(_casing, settings.Cleanup.Style,
@@ -130,7 +149,7 @@ internal sealed class PreferencesForm : Form
         var advanced = new LinkLabel
         {
             Text = "Advanced settings file ↗",
-            Location = new Point(26, 581),
+            Location = new Point(26, 611),
             AutoSize = true,
             Font = Theme.Font(10),
             LinkColor = Theme.Green,
@@ -145,7 +164,7 @@ internal sealed class PreferencesForm : Form
         var cancel = new SoftButton
         {
             Text = "Cancel",
-            Location = new Point(439, 568),
+            Location = new Point(439, 598),
             Size = new Size(104, 44),
             DialogResult = DialogResult.Cancel,
             TabIndex = 8
@@ -154,7 +173,7 @@ internal sealed class PreferencesForm : Form
         {
             Text = "Save changes",
             Primary = true,
-            Location = new Point(555, 568),
+            Location = new Point(555, 598),
             Size = new Size(121, 44),
             TabIndex = 9
         };
@@ -256,5 +275,11 @@ internal sealed class PreferencesForm : Form
     private sealed record Choice(string Value, string Label)
     {
         public override string ToString() => Label;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) Icon?.Dispose();
+        base.Dispose(disposing);
     }
 }

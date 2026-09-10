@@ -1,6 +1,6 @@
 namespace Speakeasy.App.Platform;
 
-/// <summary>A physical Windows key, optionally qualified by left/right-specific modifiers.</summary>
+/// <summary>A Windows key, optionally qualified by left/right-specific modifiers.</summary>
 public sealed class HotkeyGesture
 {
     private readonly int[][] _modifiers;
@@ -16,24 +16,24 @@ public sealed class HotkeyGesture
     public static HotkeyGesture Parse(string shortcut)
     {
         if (string.IsNullOrWhiteSpace(shortcut))
-            throw new ArgumentException("Choose a hotkey such as Ctrl+Alt+Space, F8, or RightAlt.", nameof(shortcut));
+            throw new ArgumentException("Choose a hotkey such as Ctrl+Alt+Space, F8, or RightAlt.");
 
         var parts = shortcut.Split('+', StringSplitOptions.TrimEntries);
         if (parts.Length > 5)
-            throw new ArgumentException("A hotkey can contain at most four modifiers and one activation key.", nameof(shortcut));
+            throw new ArgumentException("A hotkey can contain at most four modifiers and one activation key.");
         if (parts.Any(p => p.Equals("Fn", StringComparison.OrdinalIgnoreCase)))
-            throw new ArgumentException("Fn is usually handled by keyboard firmware and Windows cannot observe it. Remap Fn to F13 with your keyboard software, then choose F13, or use Ctrl+Alt+Space.", nameof(shortcut));
+            throw new ArgumentException("Fn is usually handled by keyboard firmware and Windows cannot observe it. Remap Fn to F13 with your keyboard software, then choose F13, or use Ctrl+Alt+Space.");
 
         var modifiers = new List<int[]>();
         for (var i = 0; i < parts.Length - 1; i++)
-            modifiers.Add(ParseModifier(parts[i]) ?? throw new ArgumentException($"Unknown modifier '{parts[i]}'. Use Ctrl, Alt, Shift, Win, or their Left/Right variants.", nameof(shortcut)));
+            modifiers.Add(ParseModifier(parts[i]) ?? throw new ArgumentException($"Unknown modifier '{parts[i]}'. Use Ctrl, Alt, Shift, Win, or their Left/Right variants."));
 
         var primary = parts[^1];
         var key = ParseKey(primary);
         if (key == 0 || key == 0x1B)
-            throw new ArgumentException($"'{primary}' is not a supported activation key. Escape is reserved for passive cancellation. Use Ctrl+Alt+Space, F1–F24, or a side-specific key such as RightAlt.", nameof(shortcut));
+            throw new ArgumentException($"'{primary}' is not a supported activation key. Escape is reserved for passive cancellation. Use Ctrl+Alt+Space, F1–F24, or a side-specific key such as RightAlt.");
         if (modifiers.Any(group => group.Contains(key)))
-            throw new ArgumentException("The activation key cannot also be a required modifier.", nameof(shortcut));
+            throw new ArgumentException("The activation key cannot also be a required modifier.");
         return new HotkeyGesture(key, modifiers.ToArray());
     }
 
@@ -108,6 +108,7 @@ internal enum HotkeySignal { None = 0, Suppress = 1, Down = 2, Up = 4, Escape = 
 internal sealed class HotkeyTracker(HotkeyGesture gesture)
 {
     private readonly bool[] _down = new bool[256];
+    private readonly nuint _ownInputMarker = KeyboardInput.OwnEventMarker;
     private bool _active;
     private bool _suppressedPrimary;
 
@@ -120,9 +121,9 @@ internal sealed class HotkeyTracker(HotkeyGesture gesture)
         _suppressedPrimary &= _down[gesture.Key];
     }
 
-    internal HotkeySignal Process(int key, bool down, bool injected, bool enabled)
+    internal HotkeySignal Process(int key, bool down, bool injected, bool enabled, nuint extraInfo = 0)
     {
-        if (injected || key is < 0 or >= 256) return HotkeySignal.None;
+        if ((injected && extraInfo == _ownInputMarker) || key is < 0 or >= 256) return HotkeySignal.None;
         var repeated = down && _down[key];
         _down[key] = down;
 

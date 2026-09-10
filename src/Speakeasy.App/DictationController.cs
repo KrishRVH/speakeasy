@@ -24,6 +24,7 @@ internal sealed class DictationController : IDisposable
     public event Action<string>? Notice;
     public DictationState State => _gesture.State;
     public string Status { get; private set; } = "Ready when you are";
+    public string? LastNotice { get; private set; }
     public float Level => _recorder.Level;
     public TimeSpan Elapsed => _gesture.RecordingStartedAt is { } start ? _clock.Elapsed - start : TimeSpan.Zero;
     public bool IsEnabled { get; private set; }
@@ -49,6 +50,11 @@ internal sealed class DictationController : IDisposable
         if (!_disposed && IsEnabled) Apply(_gesture.KeyDown(_clock.Elapsed));
     }
 
+    public void ToggleHandsFree()
+    {
+        if (!_disposed && IsEnabled) Apply(_gesture.ToggleHandsFree(_clock.Elapsed));
+    }
+
     public void KeyUp()
     {
         if (!_disposed) Apply(_gesture.KeyUp(_clock.Elapsed));
@@ -64,6 +70,7 @@ internal sealed class DictationController : IDisposable
     {
         Cancel();
         IsEnabled = enabled;
+        if (enabled) LastNotice = null;
         Status = enabled ? "Ready when you are" : "Dictation is paused";
         Changed?.Invoke();
     }
@@ -79,15 +86,16 @@ internal sealed class DictationController : IDisposable
                     try
                     {
                         _generation++;
+                        LastNotice = null;
                         _recorder.Start();
-                        Status = "Listening";
+                        Status = State == DictationState.HandsFree ? "Listening hands-free" : "Listening";
                         _timer.Start();
                     }
                     catch (Exception exception)
                     {
                         Apply(_gesture.Cancel());
                         Status = "Microphone unavailable";
-                        Notice?.Invoke(exception.Message);
+                        ReportNotice(exception.Message);
                     }
                     break;
                 case GestureAction.ModeChanged:
@@ -142,8 +150,8 @@ internal sealed class DictationController : IDisposable
                 _settings.ClipboardRestoreDelayMs, token);
             if (!IsCurrent()) return;
             Status = result.Pasted ? "Ready when you are" : "Automatic paste unavailable";
-            if (transcript.Warning is { } warning) Notice?.Invoke(warning);
-            if (result.Message is { } message) Notice?.Invoke(message);
+            if (transcript.Warning is { } warning) ReportNotice(warning);
+            if (result.Message is { } message) ReportNotice(message);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception exception)
@@ -151,7 +159,7 @@ internal sealed class DictationController : IDisposable
             if (IsCurrent())
             {
                 Status = "Could not finish dictation";
-                Notice?.Invoke(exception.Message);
+                ReportNotice(exception.Message);
             }
         }
         finally
@@ -175,7 +183,7 @@ internal sealed class DictationController : IDisposable
             if (_disposed || generation != _generation || State is DictationState.Idle or DictationState.Processing) return;
             Cancel();
             Status = "Microphone disconnected";
-            Notice?.Invoke(exception.Message);
+            ReportNotice(exception.Message);
             Changed?.Invoke();
         }, null);
     }
@@ -190,6 +198,12 @@ internal sealed class DictationController : IDisposable
             Apply(_gesture.Tick((_gesture.RecordingStartedAt ?? _clock.Elapsed)
                 + TimeSpan.FromSeconds(_settings.MaxRecordingSeconds)));
         }, null);
+    }
+
+    private void ReportNotice(string message)
+    {
+        LastNotice = message;
+        Notice?.Invoke(message);
     }
 
     public void Dispose()

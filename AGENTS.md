@@ -13,8 +13,10 @@ adoption of KrishRVH/standards.
   controller. `Platform/` owns microphone, keyboard, clipboard, and login APIs.
 - `tests/Speakeasy.Tests`: platform-independent decisions and provider contracts.
 - `tests/Speakeasy.Platform.Tests`: Windows adapters and controller lifecycle
-  tests with fakes. Automated tests must not record live microphone audio,
+  tests with fakes. Default repeatable tests must not record live microphone audio,
   install a real global hook, or modify the user's clipboard or focused app.
+  Explicitly user-authorized, opt-in interactive acceptance may use the real
+  microphone, clipboard, and a target scratch app; report that evidence separately.
 - `scripts/`: explicit setup and packaging helpers. Keep ordinary host commands
   direct rather than creating wrappers for every utility.
 

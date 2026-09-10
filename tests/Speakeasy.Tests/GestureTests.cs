@@ -8,6 +8,57 @@ public sealed class GestureTests
     private static DictationGesture Create(double maxMs = 300_000) => new(Ms(300), Ms(220), Ms(maxMs));
 
     [Fact]
+    public void UiToggleStartsHandsFreeWithoutInventingPhysicalKeyEdges()
+    {
+        var gesture = Create();
+
+        Assert.Equal([GestureAction.StartRecording], gesture.ToggleHandsFree(Ms(100)));
+        Assert.Equal(DictationState.HandsFree, gesture.State);
+        Assert.Equal(Ms(100), gesture.RecordingStartedAt);
+        Assert.Empty(gesture.KeyUp(Ms(200)));
+        Assert.Equal([GestureAction.StopAndTranscribe], gesture.KeyDown(Ms(300)));
+        gesture.Complete();
+        Assert.Empty(gesture.KeyDown(Ms(400)));
+        gesture.KeyUp(Ms(500));
+        Assert.Equal([GestureAction.StartRecording], gesture.KeyDown(Ms(600)));
+    }
+
+    [Theory]
+    [InlineData(DictationState.Held)]
+    [InlineData(DictationState.PendingTap)]
+    [InlineData(DictationState.HandsFree)]
+    public void UiToggleFinishesAnyRecordingAndIgnoresProcessing(DictationState target)
+    {
+        var gesture = Create();
+        gesture.KeyDown(Ms(100));
+        if (target is DictationState.PendingTap or DictationState.HandsFree) gesture.KeyUp(Ms(150));
+        if (target == DictationState.HandsFree) gesture.KeyDown(Ms(200));
+
+        Assert.Equal(target, gesture.State);
+        Assert.Equal([GestureAction.StopAndTranscribe], gesture.ToggleHandsFree(Ms(250)));
+        Assert.Equal(DictationState.Processing, gesture.State);
+        Assert.Empty(gesture.ToggleHandsFree(Ms(300)));
+        gesture.Complete();
+        if (target != DictationState.PendingTap) Assert.Empty(gesture.KeyDown(Ms(350)));
+        gesture.KeyUp(Ms(400));
+        Assert.Equal([GestureAction.StartRecording], gesture.ToggleHandsFree(Ms(500)));
+        Assert.Equal(DictationState.HandsFree, gesture.State);
+    }
+
+    [Theory]
+    [InlineData(1000, 1000)]
+    [InlineData(600_000, 300_000)]
+    public void UiHandsFreeUsesConfiguredLimitAndFiveMinuteCap(int configuredMs, int limitMs)
+    {
+        var gesture = Create(configuredMs);
+        gesture.ToggleHandsFree(Ms(100));
+
+        Assert.Empty(gesture.Tick(Ms(100 + limitMs - 1)));
+        Assert.Equal([GestureAction.StopAndTranscribe], gesture.Tick(Ms(100 + limitMs)));
+        Assert.Empty(gesture.Tick(Ms(100 + limitMs + 1)));
+    }
+
+    [Fact]
     public void HoldRecordsImmediatelyAndTranscribesOnRelease()
     {
         var gesture = Create();

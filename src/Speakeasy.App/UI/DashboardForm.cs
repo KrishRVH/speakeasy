@@ -15,6 +15,7 @@ internal sealed class DashboardForm : Form
     public event Action? SettingsRequested;
     public event Action? EnvRequested;
     public event Action? ReloadRequested;
+    public event Action? TryRequested;
     public event Action<bool>? StartupChanged;
 
     public DashboardForm()
@@ -52,14 +53,17 @@ internal sealed class DashboardForm : Form
         AddLabel("Tap again to finish. Esc to cancel.", 408, 386, 245, 28, 9, color: Theme.Muted);
 
         _note = AddLabel("Local by default. No accounts. No telemetry.", 37, 441, 628, 43, 9, color: Theme.Muted);
+        _note.AutoEllipsis = true;
+        _note.UseMnemonic = false;
         _startup = new CheckBox { Text = "Launch at login", Location = new Point(39, 499), Size = new Size(194, 30), Cursor = Cursors.Hand };
         _startup.CheckedChanged += (_, _) => { if (!_updating) StartupChanged?.Invoke(_startup.Checked); };
         Controls.Add(_startup);
 
-        _toggle = AddButton("Pause dictation", 36, 550, 166, true, () => ToggleRequested?.Invoke());
-        AddButton("Preferences", 215, 550, 134, false, () => SettingsRequested?.Invoke());
-        AddButton("API keys", 362, 550, 130, false, () => EnvRequested?.Invoke());
-        AddButton("Reload", 505, 550, 159, false, () => ReloadRequested?.Invoke());
+        _toggle = AddButton("Pause dictation", 36, 550, 132, true, () => ToggleRequested?.Invoke());
+        AddButton("Preferences", 180, 550, 132, false, () => SettingsRequested?.Invoke());
+        AddButton("Try dictation", 324, 550, 132, false, () => TryRequested?.Invoke());
+        AddButton("API keys", 468, 550, 100, false, () => EnvRequested?.Invoke());
+        AddButton("Reload", 580, 550, 84, false, () => ReloadRequested?.Invoke());
         AddLabel("Lives in your system tray. Close this window and keep speaking.", 37, 608, 628, 22, 8, color: Theme.Muted);
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96, 96);
@@ -67,7 +71,7 @@ internal sealed class DashboardForm : Form
         PerformLayout();
     }
 
-    public void UpdateSettings(AppSettings settings, string status, bool startupEnabled, bool localReady)
+    public void UpdateSettings(AppSettings settings, string status, bool startupEnabled, bool localReady, string? notice = null)
     {
         _updating = true;
         _status.Text = settings.Enabled ? status : "Dictation is paused";
@@ -80,9 +84,12 @@ internal sealed class DashboardForm : Form
         _hotkey.Text = settings.Hotkey.Replace("+", " + ");
         _toggle.Text = settings.Enabled ? "Pause dictation" : "Enable dictation";
         _startup.Checked = startupEnabled;
-        _note.Text = settings.Transcription.Provider.Equals("local", StringComparison.OrdinalIgnoreCase) && !localReady
+        var limit = settings.MaxRecordingSeconds < 60
+            ? $"{settings.MaxRecordingSeconds} seconds" : $"{settings.MaxRecordingSeconds / 60.0:0.#} minutes";
+        _note.Text = !string.IsNullOrWhiteSpace(notice) ? notice
+            : settings.Transcription.Provider.Equals("local", StringComparison.OrdinalIgnoreCase) && !localReady
             ? "Run scripts/setup-local.ps1 to install whisper.cpp and a model.\nYour shortcut and API preferences live in the settings file."
-            : $"{settings.MaxRecordingSeconds / 60.0:0.#} minute recording limit. Esc always passes through to your app.\nNo account or telemetry. Cloud providers receive audio/text only when configured.";
+            : $"Recording limit: {limit}. Esc always passes through to your app.\nNo account or telemetry. Cloud providers receive audio/text only when configured.";
         _updating = false;
         Invalidate();
     }

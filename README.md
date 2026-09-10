@@ -28,7 +28,7 @@ For a machine without a compatible NVIDIA GPU, use CPU builds and the smaller mo
 ./scripts/setup-local.ps1 -Backend cpu -Model small.en -IncludeCleanup
 ```
 
-The setup script supports `small.en`, `small`, `medium.en`, and `medium`. Choose a model without `.en` for multilingual recognition and set `transcription.language` to the appropriate language code or `auto`. Running setup again selects the local provider and updates its model/backend settings. Choose **Reload settings** in the tray menu afterward.
+The setup script supports `small.en`, `small`, `medium.en`, and `medium`. Choose a model without `.en` for multilingual recognition and set `transcription.language` to the appropriate language code or `auto`. Running setup again selects the local provider and updates its model/backend settings. It preserves other setting values, fills omitted defaults, and writes ordinary JSON without retaining comments. Choose **Reload settings** in the tray menu afterward.
 
 To run directly from source:
 
@@ -36,7 +36,10 @@ To run directly from source:
 dotnet run --project src/Speakeasy.App -- --settings
 ```
 
-Source runs and the installed app use the same configuration directory. Only one tray instance runs at a time. Closing the main window leaves dictation available in the tray; choose **Quit** to close it completely.
+Source runs and the installed app share the default configuration directory. If
+you install with a custom configuration directory, pass the same `--config-dir`
+when running from source. Only one tray instance runs at a time. Closing the
+main window leaves dictation available in the tray; choose **Quit** to close it completely.
 
 ## Everyday use
 
@@ -52,9 +55,15 @@ The first tap of a double-tap must last at most **220 ms**; press the shortcut a
 
 Every recording stops automatically after **five minutes**, including hold-to-talk. A shorter limit is configurable; a longer limit is rejected. Locking Windows, logging off, disconnecting the session, or suspending the PC cancels active work. Silence and very short accidental recordings are skipped.
 
-The pill shows the recording mode, elapsed time, and microphone level, then the processing stage. It does not take keyboard focus. The result goes to the editable field that has focus **when paste happens**; keep your intended destination focused while transcription finishes. Escape cannot retract text after Windows has already received the paste shortcut.
+The pill shows the recording mode, elapsed time, and microphone level, then the processing stage. It does not take keyboard focus. The result goes to the editable field that has focus **when insertion happens**; keep your intended destination focused while transcription finishes. Escape cannot retract text after Windows has already received the input.
 
 Double-click the tray icon to open Speakeasy. **Preferences** provides the common microphone, shortcut, provider, cleanup, and clipboard controls. The tray also offers **Dictation enabled**, **Launch at login**, **Edit settings**, **Edit API keys (.env)**, **Reload settings**, and **Quit**. Launch at login applies only to your Windows user and does not require administrator access.
+
+Use **Try dictation** for a practice text box with Start and Finish buttons.
+It uses your normal microphone, models, shortcut, and clipboard preferences;
+its text is kept only while the window is open. In Preferences, **Check
+microphone** shows a live input meter for ten seconds and discards the audio.
+Use it to confirm a new microphone or remote audio connection before dictating.
 
 ## Windows permissions and keyboard behavior
 
@@ -64,13 +73,39 @@ In **Settings → Privacy & security → Microphone**, enable **Microphone acces
 
 The **Fn** key is often handled inside keyboard firmware and never produces an observable Windows key event. Speakeasy therefore rejects `Fn` as a shortcut. If your keyboard's own software or firmware can remap Fn to **F13**, configure `F13` in Speakeasy. Otherwise choose an observable key such as `RightAlt`, `F8`, or `Ctrl+Alt+Space`. A remapping utility cannot recover a key event the keyboard never sends. Side-specific modifiers and F1–F24 are supported; Escape is reserved for cancellation.
 
-Windows can block automatic input into applications running as administrator. In that case Speakeasy leaves the transcript on the clipboard and asks you to press **Ctrl+V** in the target app. Secure desktops and applications that reject paste are outside normal automatic insertion support. This follows Windows' [SendInput integrity-level restrictions](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput).
+Windows can block automatic input into applications running as administrator. On the normal clipboard path, Speakeasy leaves the transcript copied and asks you to press **Ctrl+V** in the target app. When direct insertion is required to preserve an unreadable previous clipboard, it leaves that clipboard untouched and reports the blocked input. Secure desktops and applications that reject paste are outside normal automatic insertion support. This follows Windows' [SendInput integrity-level restrictions](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput).
+
+## Moonlight and Sunshine
+
+Speakeasy accepts shortcut and Escape events sent through Sunshine, including
+Windows-injected keyboard input. The app runs on the streamed Windows desktop
+and inserts text into the focused app on that desktop.
+
+The microphone also needs to reach the Windows host. Stock Moonlight/Sunshine
+does not automatically turn the client's microphone into a Windows recording
+device; upstream [microphone forwarding remains an open feature](https://github.com/moonlight-stream/moonlight-qt/pull/1648).
+Use a microphone connected to the host, or route the client's microphone through
+an audio receiver into a host recording device. Then select that device in
+Speakeasy Preferences. See the [remote dictation setup](docs/remote-dictation.md)
+for the existing Voicemeeter and VB-CABLE options and a routing check.
 
 ## Clipboard behavior
 
 By default, the last result remains on the clipboard, so you can paste it again. Set `restoreClipboard` to `true` to restore the previous contents after automatic paste. `clipboardRestoreDelayMs` defaults to **800 ms**.
 
-Restoration captures the available clipboard formats before replacement and only restores if the clipboard still contains Speakeasy's result. A newer copy from another app wins. Some custom or delayed clipboard formats cannot be copied reliably; restoration is best effort. Applications that read the clipboard unusually late may need a longer delay. Windows can confirm that Ctrl+V was sent, but cannot prove that every target application consumed the text. If automatic paste is blocked, the result stays available for manual paste even when restoration is enabled.
+Restoration captures the available clipboard formats before replacement and only restores if the clipboard still contains Speakeasy's result. A newer copy from another app wins. Applications that read the clipboard unusually late may need a longer delay.
+
+If custom or delayed formats prevent a complete snapshot, Speakeasy leaves the
+whole clipboard untouched and inserts directly. Standard Windows Edit/RichEdit
+controls, including Notepad, receive an undoable text insertion; other apps
+receive paced Unicode input. Some custom editors reject direct input or its
+paragraph breaks. Use the default clipboard mode for an app that needs paste.
+The dashboard and practice window show the current insertion notice.
+
+Windows confirms that input was delivered, not that every target accepted it.
+When the normal paste path is blocked, the transcript remains copied for manual
+Ctrl+V. Direct insertion instead keeps the previous clipboard and reports the
+problem; it never claims that an uninserted transcript was copied.
 
 ## Settings and providers
 
@@ -138,6 +173,7 @@ dotnet restore Speakeasy.sln --locked-mode
 dotnet build Speakeasy.sln -c Release --no-restore
 dotnet test Speakeasy.sln -c Release --no-build --no-restore
 dotnet format whitespace Speakeasy.sln --verify-no-changes --no-restore
+powershell.exe -NoProfile -File tests/SetupDownload.Tests.ps1
 ./scripts/publish.ps1
 ```
 
@@ -148,7 +184,7 @@ Use `install.ps1 -DesktopShortcut` to add a desktop launcher. An installed
 the executable directly. `--config-dir` overrides it. `speakeasy.exe --quit`
 gracefully closes the running instance; the installer uses this when updating.
 
-Tests cover gesture boundaries, cancellation, audio limits, clipboard ownership, provider requests, and owned process termination. Automated tests use fakes or explicit fixtures and do not record the live microphone or type into your applications. The project adopts a small, scoped set of [repository standards](docs/standards.md); see [architecture](docs/architecture.md) for component and lifetime details.
+Tests cover gesture boundaries, cancellation, audio limits, clipboard ownership, provider requests, and owned process termination. Default repeatable tests use fakes or explicit fixtures and do not record the live microphone or type into your applications. Explicitly authorized interactive acceptance is recorded separately in the [verification notes](docs/VERIFIED.md). The project adopts a small, scoped set of [repository standards](docs/standards.md); see [architecture](docs/architecture.md) for component and lifetime details.
 
 For an explicit diagnostic with a known **16 kHz mono PCM16 WAV** fixture:
 
