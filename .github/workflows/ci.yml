@@ -1,10 +1,10 @@
-name: Rust native builds
+name: Native builds
 on:
   workflow_dispatch:
   push:
-    paths: ['crates/**', 'Cargo.*', 'rust-toolchain.toml', 'rust-settings.example.json', 'packaging/**', 'scripts/package-rust-*', '.github/workflows/rust.yml']
+    paths: ['crates/**', 'Cargo.*', 'rust-toolchain.toml', 'settings.example.json', 'packaging/**', 'scripts/package-*', '.github/workflows/ci.yml']
   pull_request:
-    paths: ['crates/**', 'Cargo.*', 'rust-toolchain.toml', 'rust-settings.example.json', 'packaging/**', 'scripts/package-rust-*', '.github/workflows/rust.yml']
+    paths: ['crates/**', 'Cargo.*', 'rust-toolchain.toml', 'settings.example.json', 'packaging/**', 'scripts/package-*', '.github/workflows/ci.yml']
 
 permissions:
   contents: read
@@ -27,10 +27,10 @@ jobs:
       - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/package-rust-windows.ps1
+        run: ./scripts/package-windows.ps1
       - name: Package macOS
         if: runner.os == 'macOS'
-        run: bash scripts/package-rust-macos.sh
+        run: bash scripts/package-macos.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: speakeasy-${{ matrix.os }}

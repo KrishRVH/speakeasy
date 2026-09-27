@@ -10,7 +10,7 @@ bundle="artifacts/rust/Speakeasy.app"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp target/release/speakeasy "$bundle/Contents/MacOS/speakeasy"
 cp packaging/macos/Info.plist "$bundle/Contents/Info.plist"
-cp rust-settings.example.json artifacts/rust/
+cp settings.example.json "$bundle/Contents/Resources/"
 # Local development signature; distribution still requires Developer ID signing
 # and notarization. Keep the bundle identifier stable for OS permissions.
 codesign --force --sign - "$bundle"

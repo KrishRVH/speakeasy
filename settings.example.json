@@ -1,35 +1,11 @@
 {
-  "hotkey": "Ctrl+Alt+Space",
-  "enabled": true,
-  "doubleTapMs": 300,
-  "tapMaxMs": 220,
-  "maxRecordingSeconds": 300,
-  "restoreClipboard": false,
-  "clipboardRestoreDelayMs": 800,
-  "microphoneDevice": -1,
-  "silenceThreshold": 0.003,
-  "transcription": {
-    "provider": "local",
-    "localMode": "server",
-    "whisperExecutable": "tools/whisper/whisper-cli.exe",
-    "whisperServerExecutable": "tools/whisper/whisper-server.exe",
-    "modelPath": "models/ggml-small.en.bin",
-    "model": "",
-    "language": "en",
-    "threads": 4,
-    "useGpu": true,
-    "timeoutSeconds": 120,
-    "startupTimeoutSeconds": 120
-  },
-  "cleanup": {
-    "provider": "auto",
-    "model": "",
-    "endpoint": "http://localhost:11434/v1",
-    "style": "natural",
-    "timeoutSeconds": 30,
-    "autoStartLocal": false,
-    "localExecutable": "tools/llama/llama-server.exe",
-    "localModelPath": "models/qwen2.5-3b-instruct-q4_k_m.gguf",
-    "gpuLayers": 99
-  }
+  "engine": "whisper",
+  "engine_executable": "tools/whisper/whisper-server.exe",
+  "model": "models/ggml-small.en.bin",
+  "language": "en",
+  "microphone": null,
+  "threads": 4,
+  "use_gpu": true,
+  "reduced_motion": false,
+  "preserve_clipboard": false
 }

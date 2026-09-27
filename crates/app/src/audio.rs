@@ -113,8 +113,7 @@ fn record(
         ),
         _ => bail!("Microphone sample format is unsupported. Choose a standard PCM microphone."),
     }?;
-    // One mono PCM buffer at the device's native rate. whisper.cpp accepts WAV
-    // at native rates, so no ad-hoc low-quality resampler is needed in the app.
+    // Keep mono PCM at the device's native rate; the local engine resamples it.
     // Reserve for an ordinary utterance; long recordings grow on this consumer
     // thread, never in the real-time callback.
     let mut pcm = Vec::with_capacity(rate as usize * 10 * 2 + 44);
@@ -240,8 +239,8 @@ where
     )?)
 }
 
-// Match the existing dictation behavior: 20 ms energy windows, at least
-// 100 ms audible audio, and 500 ms padding when a quiet edge exceeds a second.
+// Use 20 ms energy windows, at least 100 ms audible audio, and 500 ms
+// padding when a quiet edge exceeds a second.
 // This is conservative edge trimming, not VAD; all interior pauses remain.
 fn trim_quiet_edges(pcm: &mut Vec<u8>, rate: u32) -> bool {
     let bytes_per_second = rate as usize * 2;

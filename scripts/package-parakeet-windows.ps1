@@ -28,7 +28,7 @@ try {
     Copy-Item -Path "$root/packaging/windows-portable/*" -Destination $bundle
     $settings = [ordered]@{
         engine = 'parakeet'
-        whisper_server = 'engine/bin/nemo-speech.exe'
+        engine_executable = 'engine/bin/nemo-speech.exe'
         model = 'models/parakeet-v3-q8.gguf'
         language = 'auto'
         threads = 1
@@ -36,7 +36,7 @@ try {
         reduced_motion = $false
         preserve_clipboard = $false
     }
-    [IO.File]::WriteAllText("$bundle/rust-settings.json", ($settings | ConvertTo-Json))
+    [IO.File]::WriteAllText("$bundle/settings.json", ($settings | ConvertTo-Json))
     $null = New-Item -ItemType Directory (Split-Path $destination -Parent) -Force
     Compress-Archive -LiteralPath $bundle -DestinationPath $destination -Force
     Get-Item -LiteralPath $destination | Select-Object FullName, Length

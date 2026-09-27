@@ -12,6 +12,6 @@ if ($LASTEXITCODE -ne 0) { throw 'Rust build failed' }
 $destination = Join-Path (Get-Location) 'artifacts/rust/windows'
 New-Item -ItemType Directory -Force -Path $destination | Out-Null
 Copy-Item 'target/x86_64-pc-windows-msvc/release/speakeasy.exe' $destination
-Copy-Item 'rust-settings.example.json' $destination
-Compress-Archive -Path "$destination/*" -DestinationPath 'artifacts/rust/speakeasy-windows-x64.zip' -Force
+Copy-Item 'settings.example.json' $destination
+Compress-Archive -LiteralPath "$destination/speakeasy.exe", "$destination/settings.example.json" -DestinationPath 'artifacts/rust/speakeasy-windows-x64.zip' -Force
 Write-Host "Built $destination"

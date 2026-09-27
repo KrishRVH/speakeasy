@@ -1,27 +1,15 @@
-# Normalize repository text; Windows launch scripts retain native line endings.
+# Normalize repository text; Windows scripts retain native line endings.
 * text=auto eol=lf
-
-*.cs text diff=csharp
-*.csproj text
-*.props text
-*.resx text
-*.sln text
-*.json text
 *.md text diff=markdown
-*.txt text
-*.example text
 *.ps1 text eol=crlf
 *.cmd text eol=crlf
-*.bat text eol=crlf
 
 # Native assets, local speech models, and release binaries are never text.
 *.bin binary
+*.gguf binary
 *.dll binary
 *.exe binary
 *.ico binary
-*.pdb binary
 *.png binary
 *.wav binary
 *.zip binary
-
-packages.lock.json text linguist-generated=true

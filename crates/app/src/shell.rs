@@ -214,7 +214,7 @@ pub struct Settings {
 #[derive(Clone, Copy)]
 enum Action {
     Engine,
-    Server,
+    Executable,
     Model,
     Microphone,
     Refresh,
@@ -278,7 +278,7 @@ impl Settings {
                             if model {
                                 view.config.model = path;
                             } else {
-                                view.config.whisper_server = path;
+                                view.config.engine_executable = path;
                             }
                             view.notice = Some("Unsaved changes".into());
                         }
@@ -304,7 +304,7 @@ impl Settings {
                 self.notice =
                     Some("Choose the executable and model for this engine, then save.".into());
             }
-            Action::Server => self.choose(false, cx),
+            Action::Executable => self.choose(false, cx),
             Action::Model => self.choose(true, cx),
             Action::Refresh => {
                 if !self.demo {
@@ -553,9 +553,9 @@ impl Render for Settings {
                                     .flex_1()
                                     .overflow_hidden()
                                     .text_size(px(12.0))
-                                    .child(filename(&self.config.whisper_server)),
+                                    .child(filename(&self.config.engine_executable)),
                             )
-                            .child(button("Choose executable", Action::Server, cx)),
+                            .child(button("Choose executable", Action::Executable, cx)),
                     )
                     .child(
                         div()

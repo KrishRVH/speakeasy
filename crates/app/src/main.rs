@@ -46,7 +46,7 @@ fn run() -> anyhow::Result<()> {
             .create(true)
             .truncate(false)
             .write(true)
-            .open(directory.join("rust-instance.lock"))?;
+            .open(directory.join("instance.lock"))?;
         lock.try_lock()
             .context("Speakeasy is already running. Open it from the tray.")?;
         Some(lock)
@@ -65,7 +65,7 @@ fn run() -> anyhow::Result<()> {
         ),
         Err(error) => (config::Config::default(), error.to_string()),
     };
-    let configured = if !config.whisper_server.as_os_str().is_empty() {
+    let configured = if !config.engine_executable.as_os_str().is_empty() {
         match config.validate(&path) {
             Ok(()) => true,
             Err(error) => {

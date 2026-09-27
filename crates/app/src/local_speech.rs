@@ -34,9 +34,7 @@ impl LocalSpeech {
             .context("Missing temporary directory name")?
             .to_string_lossy()
             .into_owned();
-        // Keep default timestamp decoding: disabling it can skip speech when a
-        // window ends early. The JSON response contains plain text either way.
-        let mut command = Command::new(&config.whisper_server);
+        let mut command = Command::new(&config.engine_executable);
         if nemo {
             command
                 .args(["serve", "--asr-model"])
@@ -55,6 +53,8 @@ impl LocalSpeech {
                 ])
                 .env("NEMO_SPEECH_HTTP_API_KEY", &route);
         } else {
+            // Keep default timestamp decoding: disabling it can skip speech
+            // when a window ends early. The JSON response contains plain text.
             command
                 .args(["--model"])
                 .arg(&config.model)

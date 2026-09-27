@@ -17,7 +17,7 @@ pub struct Config {
     pub engine: Engine,
     #[serde(default)]
     pub microphone: Option<String>,
-    pub whisper_server: PathBuf,
+    pub engine_executable: PathBuf,
     pub model: PathBuf,
     #[serde(default = "language")]
     pub language: String,
@@ -45,7 +45,12 @@ impl Config {
         serde_json::from_slice(
             &std::fs::read(path).with_context(|| format!("Cannot read {}", path.display()))?,
         )
-        .context("Invalid settings. Repair the settings file before saving changes.")
+        .with_context(|| {
+            format!(
+                "Invalid settings in {}. Repair this file before saving changes.",
+                path.display()
+            )
+        })
     }
 
     #[cfg(test)]
@@ -57,7 +62,7 @@ impl Config {
 
     pub fn speech_changed(&self, next: &Self) -> bool {
         self.engine != next.engine
-            || self.whisper_server != next.whisper_server
+            || self.engine_executable != next.engine_executable
             || self.model != next.model
             || self.threads != next.threads
             || self.use_gpu != next.use_gpu
@@ -68,7 +73,7 @@ impl Config {
             bail!("Parakeet requires GPU acceleration. Enable Prefer GPU or select Whisper.");
         }
         let directory = path.parent().unwrap_or(Path::new("."));
-        for file in [&mut self.whisper_server, &mut self.model] {
+        for file in [&mut self.engine_executable, &mut self.model] {
             if file.as_os_str().is_empty() {
                 bail!("Choose the local speech executable and a matching model.");
             }
@@ -113,7 +118,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             engine: Engine::default(),
-            whisper_server: PathBuf::new(),
+            engine_executable: PathBuf::new(),
             model: PathBuf::new(),
             language: language(),
             threads: threads(),
@@ -136,5 +141,5 @@ pub fn default_path() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")));
     base.unwrap_or_else(|| PathBuf::from("."))
-        .join("speakeasy/rust-settings.json")
+        .join("speakeasy/settings.json")
 }

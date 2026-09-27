@@ -4,7 +4,7 @@ This bundle includes the app, Parakeet engine and model. It requires an NVIDIA
 GPU and was verified on an RTX 4090. It works offline without an account.
 
 1. Extract the entire Speakeasy folder to a Windows drive. Keep its files together.
-2. Close any older Speakeasy instance, then double-click Speakeasy.cmd.
+2. Close any running Speakeasy instance, then double-click Speakeasy.cmd.
 3. Wait for the local model to load. Hold Ctrl+Alt+Space, speak, then release.
 
 Double-tap the shortcut for hands-free dictation; tap again to finish.
@@ -13,7 +13,7 @@ The microphone starts only when you trigger dictation.
 
 The tray menu opens Settings, pauses dictation or quits. Closing Settings keeps
 the app in the tray. Pause releases the loaded model. Settings are stored in this
-folder; this bundle does not replace an existing installation's settings.
+folder.
 
 Standard insertion puts the transcript on the clipboard and sends paste to the
 focused app. Preserve clipboard uses direct text input, which some editors reject.
