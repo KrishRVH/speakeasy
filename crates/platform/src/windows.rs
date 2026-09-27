@@ -275,6 +275,72 @@ pub fn modifiers_down() -> bool {
     }
 }
 
+/// Install once per Settings window. The window owns the callback context until
+/// WM_NCDESTROY; callbacks only enqueue work, avoiding reentrant GPUI updates.
+pub fn minimize_to_tray(handle: RawWindowHandle, hide: Sender<()>) -> anyhow::Result<()> {
+    use windows_sys::Win32::UI::Shell::SetWindowSubclass;
+    let RawWindowHandle::Win32(raw) = handle else {
+        bail!("Expected a Windows window");
+    };
+    let context = Box::into_raw(Box::new(hide));
+    // SAFETY: the live window belongs to this UI thread. Ownership transfers to
+    // settings_window on success, or is reclaimed immediately on failure.
+    unsafe {
+        if SetWindowSubclass(
+            raw.hwnd.get() as HWND,
+            Some(settings_window),
+            1,
+            context as usize,
+        ) == 0
+        {
+            drop(Box::from_raw(context));
+            bail!("Cannot enable minimize to tray. Restart Speakeasy.");
+        }
+    }
+    Ok(())
+}
+
+unsafe extern "system" fn settings_window(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    id: usize,
+    context: usize,
+) -> LRESULT {
+    use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
+    // SAFETY: SetWindowSubclass stores this boxed sender for this window only.
+    // Remove the callback before freeing its context at final destruction.
+    unsafe {
+        if message == WM_NCDESTROY {
+            RemoveWindowSubclass(hwnd, Some(settings_window), id);
+            drop(Box::from_raw(context as *mut Sender<()>));
+        } else if message == WM_SYSCOMMAND && wparam & 0xfff0 == SC_MINIMIZE as usize {
+            let _ = (*(context as *const Sender<()>)).try_send(());
+            return 0;
+        } else if message == WM_SIZE && wparam == SIZE_MINIMIZED as usize {
+            // ShowWindow(SW_MINIMIZE), including GPUI's own minimize path, can
+            // bypass WM_SYSCOMMAND. Still forward size so GPUI tracks restore.
+            let _ = (*(context as *const Sender<()>)).try_send(());
+        }
+        DefSubclassProc(hwnd, message, wparam, lparam)
+    }
+}
+
+pub fn set_settings_visible(handle: RawWindowHandle, visible: bool) {
+    if let RawWindowHandle::Win32(raw) = handle {
+        // SAFETY: caller resolves a live Settings window on its owning UI thread,
+        // after releasing GPUI's borrow because ShowWindow can send messages.
+        unsafe {
+            let hwnd = raw.hwnd.get() as HWND;
+            ShowWindow(hwnd, if visible { SW_RESTORE } else { SW_HIDE });
+            if visible {
+                SetForegroundWindow(hwnd);
+            }
+        }
+    }
+}
+
 pub fn set_pill_visible(handle: RawWindowHandle, visible: bool) {
     if let RawWindowHandle::Win32(raw) = handle {
         // SAFETY: called with a live window handle on its UI thread.

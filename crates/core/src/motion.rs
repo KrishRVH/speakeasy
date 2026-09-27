@@ -16,10 +16,15 @@ impl Spring {
     }
 
     pub fn step(&mut self, seconds: f32) {
-        let omega = 24.0;
+        self.step_with_response(seconds, 24.0);
+    }
+
+    /// Higher positive response values settle sooner while retaining velocity.
+    pub fn step_with_response(&mut self, seconds: f32, omega: f32) {
+        let seconds = seconds.max(0.0);
         let displacement = self.value - self.target;
         let c = self.velocity + omega * displacement;
-        let decay = (-omega * seconds.max(0.0)).exp();
+        let decay = (-omega * seconds).exp();
         self.value = self.target + (displacement + c * seconds) * decay;
         self.velocity = (self.velocity - omega * c * seconds) * decay;
         if self.settled() {
@@ -41,6 +46,24 @@ impl Spring {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn negative_elapsed_time_matches_zero_without_reversing_motion() {
+        let mut negative = Spring::new(56.0);
+        let mut zero = Spring::new(56.0);
+        for spring in [&mut negative, &mut zero] {
+            spring.target = 188.0;
+            spring.step(0.05);
+        }
+        negative.step(-0.1);
+        zero.step(0.0);
+        assert_eq!(negative.value, zero.value);
+        assert_eq!(negative.velocity, zero.velocity);
+        negative.step(0.05);
+        zero.step(0.05);
+        assert_eq!(negative.value, zero.value);
+        assert_eq!(negative.velocity, zero.velocity);
+    }
 
     #[test]
     fn interrupted_motion_is_continuous_and_refresh_rate_independent() {

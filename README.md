@@ -4,7 +4,8 @@ Speakeasy is a native Rust dictation app for Windows and macOS. It uses a shared
 GPUI interface and native OS adapters, with hold-to-talk, hands-free dictation,
 Escape cancellation, and a small animated pill. It needs no account and works
 offline after downloading a local speech engine and model. Speech inference
-runs in an owned native whisper.cpp or NeMo-Speech.cpp process. The Windows Release demo and prerecorded recognition are verified;
+runs in an owned native whisper.cpp or NeMo-Speech.cpp process. The Windows
+Release demo and prerecorded recognition are verified;
 live microphone-to-editor acceptance remains. Native macOS builds, tests, and
 packaging pass; interactive Mac acceptance remains.
 
@@ -22,6 +23,10 @@ cargo run --locked -p speakeasy -- --demo
 `--demo` runs a simulated motion preview without microphone, global shortcut,
 model, or clipboard access. Linux supports this preview only; GPUI's X11 build
 needs ALSA, fontconfig, X11/XCB, xkbcommon, and Vulkan development dependencies.
+The preview includes hands-free, the limit countdown, submission, interrupted
+dismissal, cancellation, silence, and an error. **Reduce motion** takes effect
+immediately in the preview. On Windows/macOS, `--demo-tray` adds the native tray
+and Settings hide/reopen behavior while keeping dictation controls disabled.
 
 For dictation, run the app, choose an engine and its executable and model in
 Settings, and select **Enable dictation**. Whisper is the default engine. Settings
@@ -62,8 +67,11 @@ The self-contained Windows NVIDIA-GPU bundle is generated locally at
 `artifacts/rust/speakeasy-windows-parakeet-x64.zip`. Extract its entire
 `Speakeasy` folder to a Windows drive and run **Speakeasy.cmd**. It includes the
 verified engine, model and relative-path settings; no download or path editing
-is needed. It uses its own settings file and enables dictation on launch.
-`Speakeasy.cmd --demo` opens the simulated preview instead. The smaller
+is needed. It uses its own settings file and enables dictation in the tray on
+launch. Open **Settings…** from the tray to check model readiness or change your
+microphone. `Speakeasy.cmd --demo` opens the simulated motion preview;
+`Speakeasy.cmd --demo-tray` also previews tray and Settings behavior. Quit the
+regular app before starting the tray preview from the same folder. The smaller
 `speakeasy-windows-x64.zip` contains the app and settings example.
 Generated packages and models are excluded from Git.
 
@@ -95,8 +103,16 @@ releases it. CPU-only Parakeet and Parakeet on Mac are unverified.
 
 Without `--config`, settings are read from `%APPDATA%/speakeasy/settings.json`
 on Windows or `~/Library/Application Support/speakeasy/settings.json` on Mac.
-Closing Settings leaves dictation in the tray; use **Pause dictation** to release
-the shortcut and model, or **Quit** to stop the app.
+Once configured, native launches stay in the tray/menu bar. First setup and
+invalid configuration open Settings. Closing Settings hides its window and keeps
+unsaved edits; Windows minimize does the same. Reopening Speakeasy or choosing
+**Settings…** in the tray restores that window. A brief hint appears the first
+time Settings is hidden while the pill is idle.
+
+The tray icon and menu show model loading, readiness, recording, processing,
+pause, or an error. **Pause dictation** releases the shortcut and model;
+**Resume dictation** uses the saved configuration. **Quit Speakeasy** stops the
+app. Error details remain in Settings after the pill disappears.
 
 Hold **Ctrl+Alt+Space** to dictate, double-tap for hands-free, tap again to finish,
 or press **Escape** to cancel. On Mac, Alt is Option. Text goes to the app focused
@@ -104,6 +120,9 @@ when insertion occurs. Standard mode leaves the transcript on the clipboard;
 `preserve_clipboard: true` uses direct Unicode input instead, which some editors
 reject. Protected fields and elevated Windows apps may reject either method.
 An OS input submission cannot confirm that an editor accepted the text.
+The pill's brief check mark means input was submitted. Silence instead shows
+**No speech detected**, and cancellation dismisses quietly. Hands-free shows a
+lock symbol and timer; the last 30 seconds show the remaining recording time.
 
 ## Package and verify
 
@@ -139,3 +158,6 @@ On an available Windows desktop, `scripts/check-demo-windows.ps1
 testing without recording, injecting input, or changing the clipboard.
 Native build/package jobs are in `.github/workflows/ci.yml`. See
 [handoff.md](handoff.md) for the checks actually run and remaining native limits.
+`scripts/check-tray-windows.ps1 -Executable <path-to-speakeasy.exe>` checks
+minimize, close, relaunch, and configuration preservation using owned
+`--demo-tray` windows and a temporary configuration directory.

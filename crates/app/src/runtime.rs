@@ -23,8 +23,17 @@ pub enum Phase {
     Stopping,
     Processing,
     Done,
+    Empty,
     Cancelled,
     Error,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum ModelState {
+    Loading,
+    Ready,
+    #[default]
+    Unavailable,
 }
 
 #[derive(Clone, PartialEq)]
@@ -36,6 +45,7 @@ pub struct Snapshot {
     pub meter_tick: u64,
     pub started: Instant,
     pub message: String,
+    pub model: ModelState,
 }
 impl Default for Snapshot {
     fn default() -> Self {
@@ -47,6 +57,7 @@ impl Default for Snapshot {
             meter_tick: 0,
             started: Instant::now(),
             message: String::new(),
+            model: ModelState::Unavailable,
         }
     }
 }
@@ -209,7 +220,12 @@ async fn run<P: Ports>(
     let mut config = changes.borrow_and_update().clone();
     let (events, audio) = async_channel::bounded(64);
     let mut gesture = Gesture::default();
-    let mut snapshot = Snapshot::default();
+    let mut snapshot = Snapshot {
+        model: ModelState::Loading,
+        message: "Loading local model…".into(),
+        ..Snapshot::default()
+    };
+    output.send_replace(snapshot.clone());
     let mut capture: Option<P::Recording> = None;
     let mut server: Option<P::Speech> = None;
     let mut job = Some(warm(&ports, &config));
@@ -288,7 +304,7 @@ async fn run<P: Ports>(
                         gesture.finish();
                         match result {
                             Ok(Some(wav)) => { snapshot.phase = Phase::Processing; waiting_audio = Some(wav); }
-                            Ok(None) => { gesture.complete(); snapshot.phase = Phase::Done; }
+                            Ok(None) => { gesture.complete(); snapshot.phase = Phase::Empty; }
                             Err(error) => { gesture.cancel(); snapshot.phase = Phase::Error; snapshot.message = error.to_string(); }
                         }
                     }
@@ -303,7 +319,7 @@ async fn run<P: Ports>(
                         server = Some(worker);
                         if session.is_none() && snapshot.phase != Phase::Error && snapshot.message == "Loading local model…" { snapshot.message.clear(); }
                         if let Some(text) = text.filter(|_| session == Some(snapshot.id)) {
-                            if text.is_empty() { gesture.complete(); snapshot.phase = Phase::Done; }
+                            if text.is_empty() { gesture.complete(); snapshot.phase = Phase::Empty; }
                             else { pending_text = Some((text, Instant::now())); }
                         }
                     }
@@ -426,6 +442,13 @@ async fn run<P: Ports>(
             });
         }
         snapshot.hands_free = gesture.state == State::HandsFree;
+        snapshot.model = if job.as_ref().is_some_and(|job| job.session.is_none()) {
+            ModelState::Loading
+        } else if server.is_some() || job.is_some() {
+            ModelState::Ready
+        } else {
+            ModelState::Unavailable
+        };
         output.send_if_modified(|published| {
             if *published == snapshot {
                 return false;
@@ -614,6 +637,21 @@ mod tests {
     }
     async fn receive<T>(receiver: &Receiver<T>) -> anyhow::Result<T> {
         Ok(tokio::time::timeout(Duration::from_secs(2), receiver.recv()).await??)
+    }
+
+    #[tokio::test]
+    async fn silence_and_empty_recognition_never_report_submission() -> anyhow::Result<()> {
+        let mut h = Harness::new()?;
+        let (id, events) = h.start().await?;
+        events.send(Event::AudioDone(id, Ok(None))).await?;
+        h.phase(Phase::Empty).await?;
+        assert!(h.jobs.try_recv().is_err());
+        assert!(h.pasted.try_recv().is_err());
+        h.start().await?;
+        assert!(h.finish().await?.send(Ok(String::new())).is_ok());
+        h.phase(Phase::Empty).await?;
+        assert!(h.pasted.try_recv().is_err());
+        Ok(())
     }
 
     #[tokio::test]

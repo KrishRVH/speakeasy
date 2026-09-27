@@ -14,25 +14,56 @@ Escape, a five-minute cap, tray/settings, and clipboard or Unicode insertion.
 No automatic editing, transcript history, accounts, telemetry, or silent engine
 switching. Configuration uses `settings.json` and `engine_executable`.
 
+The app provides quiet configured launches, a live status icon and
+menu, Pause/Resume, Windows minimize-to-tray, hidden Settings that retain edits,
+and relaunch-to-reveal. The pill distinguishes startup, capture, hands-free,
+processing, submitted input, silence, cancellation, and errors. It includes a
+last-30-seconds countdown and respects reduced motion. The behavior contract
+is [ux-plan.md](docs/ux-plan.md); `--demo-tray` safely previews native lifecycle
+behavior with dictation disabled.
+
 ## Windows delivery
 
 The local NVIDIA GPU bundle is `artifacts/rust/speakeasy-windows-parakeet-x64.zip`.
 Extract its entire `Speakeasy` folder to a Windows drive and run **Speakeasy.cmd**.
 It includes the app, CUDA worker, Parakeet model, license notices, and its own
-relative-path settings. It enables dictation on launch. `Speakeasy.cmd --demo`
-opens a simulated preview. The smaller `speakeasy-windows-x64.zip` contains the
+relative-path settings. It enables dictation in the tray on launch; open Settings
+from the tray to check readiness. `Speakeasy.cmd --demo` opens a simulated motion
+preview; `Speakeasy.cmd --demo-tray` also previews the native tray lifecycle.
+Quit the regular app before starting the tray preview from the same folder.
+The smaller `speakeasy-windows-x64.zip` contains the
 app and settings example. Both packages are generated and excluded from Git.
 
-Checksums and sizes are recorded beside the bundles in `windows-delivery.json`
-and `parakeet-package.json`. Recreate packages with the scripts documented in
-README; models and native engine binaries remain separate dependencies.
+The source commit, build target, checksums and sizes are recorded beside the
+bundles in `latest-windows-build.json`. Recreate packages with the scripts
+documented in README; models and native engine binaries remain separate
+dependencies.
 
 ## Verification
 
-The current cleanup passes Rust formatting, Linux and Windows all-target Clippy,
-Linux tests, and the Windows GNU Release build. Windows bundle acceptance uses
-public prerecorded audio, fake capture/insertion, and owned demo windows. It
-checks extraction under a path containing spaces, the actual launcher from an
+The repo-wide finishing pass covers all 52 active human-maintained files against
+`49b381c`; Cargo.lock and ignored generated outputs are preserved. New tests have
+executed regression evidence, including native lifecycle faults in isolated
+copies and a working alternative minimize path.
+
+The UX pass passes formatting, Linux and Windows GNU all-target Clippy, 18
+default tests (three opt-in tests remain ignored), and a Windows GNU Release
+build. The macOS platform crate cross-checks successfully; interactive macOS UX
+has not been verified. Both Windows ZIPs contain the fresh GNU Release app.
+
+On Windows, the extracted bundle passes demo visibility, focus preservation, and
+click-through checks. `scripts/check-tray-windows.ps1` verifies native command
+and direct minimize paths, close-to-tray, relaunch restoring the same window,
+unchanged configuration, and orderly reopen-listener cleanup at quit. Captured
+pill states were inspected at 175% display scale. A settled, hidden tray demo
+used 15.63 ms measured CPU over three seconds and a 63.7 MiB working set; this is a
+short simulated idle sample, not a dictation performance benchmark. Evidence is
+under ignored `artifacts/rust/polish/` and `artifacts/rust/ux/`. Live
+microphone/input/clipboard acceptance was not run.
+
+Earlier Windows bundle acceptance used public prerecorded audio, fake
+capture/insertion, and owned demo windows. It checked extraction under a path
+containing spaces, the actual launcher from an
 unrelated directory, visible-pill focus/hit testing, production controller and
 worker inference, unchanged settings, and worker shutdown.
 
@@ -45,7 +76,7 @@ The transitive `proc-macro-error2` future-compatibility advisory remains.
 ## Performance
 
 Fable 5.1 xhigh informed the Tally interaction design. Opus 5.5 xhigh audited
-performance; [the current findings](docs/performance-audit.md) record measured
+performance; [the audit record](docs/performance-audit.md) preserves measured
 latency, memory, UX limits, and rejected approaches. The requested additional
 app-wide 10× gain remains unachieved. Component gains do not establish that claim.
 

@@ -32,6 +32,9 @@ flowchart LR
 | `crates/app/src/ports.rs` | Capture, speech, and insertion interfaces used by the session owner and unattended fixtures. |
 | `crates/app/src/pill.rs` | Tally pill, measured audio envelope, and frame-driven motion. |
 | `crates/app/src/shell.rs` | Settings, native file selection, microphone selection, pause, and runtime retirement. |
+| `crates/app/src/tray.rs` | Owned native tray icon, menu actions, and snapshot-driven status updates. |
+| `crates/app/src/status.rs` | Shared readiness and capture status for Settings and the tray. |
+| `crates/app/src/instance.rs` | Configuration-directory lock and an owned loopback listener for revealing the existing Settings window. |
 | `crates/app/src/config.rs` | Typed settings, path resolution, validation, and atomic saves. |
 
 Core and app forbid unsafe code. Platform contains native FFI with local safety
@@ -49,6 +52,23 @@ Every recording and inference result carries its session identity. Late audio,
 cancelled inference, and stale completion messages cannot insert text for a newer
 session. Callback atomics control capture and cancellation; other state changes
 arrive as messages. The UI receives coalesced snapshots and never reads PCM.
+Snapshots distinguish model readiness from capture state, and empty recognition
+from submitted input. Only native input submission produces the completion check.
+View-owned feedback timers redraw the current snapshot; they cannot publish
+session changes. Native visibility work resolves the latest pill state before
+showing or hiding it, so a queued dismissal cannot hide a later recording.
+
+Settings stays alive when hidden, preserving unsaved edits. Windows intercepts
+the native minimize command with a window-owned subclass and enqueues a hide;
+macOS retains its normal minimize behavior. Native show/hide runs outside GPUI
+borrows. Tray tasks are cancelled before session services are retired at quit.
+
+Relaunch discovery uses `instance.port` next to the locked `instance.lock`.
+The loopback listener accepts only a request to show Settings, returns a fixed
+identification response, and carries no audio or transcript data. Its thread
+sleeps in accept, is explicitly woken and joined at shutdown, and holds the lock
+until cleanup finishes. The first-hide hint is remembered in `tray-hint-seen`
+beside settings without rewriting the user's configuration.
 
 The audio callback writes to a bounded ring without allocating. A consumer owns
 mono PCM at the device's sample rate, begins with a ten-second reservation, and

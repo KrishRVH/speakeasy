@@ -104,6 +104,23 @@ pub fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn set_settings_visible(handle: RawWindowHandle, visible: bool) {
+    if let RawWindowHandle::AppKit(raw) = handle {
+        // SAFETY: GPUI owns this live NSView and NSWindow on the main thread.
+        // The caller releases GPUI borrows before invoking AppKit.
+        unsafe {
+            let view = raw.ns_view.as_ptr().cast::<AnyObject>();
+            let window: *mut AnyObject = msg_send![view, window];
+            if visible {
+                let _: () = msg_send![window, deminiaturize: std::ptr::null::<AnyObject>()];
+                let _: () = msg_send![window, makeKeyAndOrderFront: std::ptr::null::<AnyObject>()];
+            } else {
+                let _: () = msg_send![window, orderOut: std::ptr::null::<AnyObject>()];
+            }
+        }
+    }
+}
+
 pub fn set_pill_visible(handle: RawWindowHandle, visible: bool) {
     if let RawWindowHandle::AppKit(raw) = handle {
         // SAFETY: same main-thread NSView lifetime as configure_pill.

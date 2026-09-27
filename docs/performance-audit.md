@@ -2,7 +2,10 @@
 
 The performance audit used Opus 5.5 through Claude Code at xhigh, followed by
 native Windows measurements and review of the implemented changes. This document
-keeps the measurements relevant to the current architecture and decoding policy.
+preserves those measurements as historical evidence for the architecture and
+decoding policy. The rendering and idle measurements predate the tray and motion
+pass; they are not measurements of the latest build. See [handoff](../handoff.md)
+for subsequent checks.
 The detailed experiment history is retained in Git; raw metrics and recipes are
 ignored local artifacts under `artifacts/rust/`.
 
@@ -144,8 +147,9 @@ An exact integer RMS scan preserved trimming thresholds and reduced five-minute
 synthetic scan time from 7.58 to 2.37 ms at 48 kHz and 29.40 to 9.03 ms at 192 kHz
 in a Linux probe. Evidence: `ui-audio-performance.json`.
 
-An idle Windows Release demo used 62.5 ms CPU over 5.02 seconds, 58.9 MiB working
-set, and 97.2 MiB private memory. A separate thread probe attributed 103 of 114
+Before the tray and motion pass, an idle Windows Release demo used 62.5 ms CPU
+over 5.02 seconds, 58.9 MiB working set, and 97.2 MiB private memory. A separate
+thread probe attributed 103 of 114
 threads to the NVIDIA driver; most were dormant. GPUI's Windows VSync loop still
 wakes even when app drawing has settled. Hiding the demo's Settings window reduced
 five-second process cycles from 104.7 to 45.9 million, but this is not a complete

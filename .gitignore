@@ -12,6 +12,8 @@
 .env.*
 /settings.json
 /instance.lock
+/instance.port
+/tray-hint-seen
 /models/
 /tools/
 /recordings/

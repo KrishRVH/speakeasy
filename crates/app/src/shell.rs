@@ -2,9 +2,12 @@ use crate::{
     audio,
     config::{Config, Engine},
     pill::Pill,
-    runtime::{Phase, Runtime, Snapshot},
+    runtime::{ModelState, Phase, Runtime, Snapshot},
+    status,
 };
 use gpui::{prelude::*, *};
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use raw_window_handle::HasWindowHandle;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use speakeasy_platform::Input;
 use speakeasy_platform::InputMonitor;
@@ -28,10 +31,20 @@ pub struct Services {
     pub pill: WindowHandle<Pill>,
     pub window: Option<WindowHandle<Settings>>,
     pub demo: bool,
+    pub demo_tray: bool,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub visibility: Option<Task<()>>,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub tray_hint_seen: bool,
+    pub _reopen: Option<Task<()>>,
+    pub _instance: Option<crate::instance::Instance>,
 }
 impl Global for Services {}
 
 impl Services {
+    pub fn running(&self) -> bool {
+        self.runtime.as_ref().is_some_and(Runtime::is_running)
+    }
     pub fn apply(&mut self, config: Config, cx: &mut App) -> anyhow::Result<()> {
         if self
             .runtime
@@ -50,6 +63,7 @@ impl Services {
         } else {
             self.output.send_modify(|snapshot| {
                 snapshot.phase = Phase::Idle;
+                snapshot.model = ModelState::Loading;
                 snapshot.message = "Loading local model…".into();
             });
             let runtime = Runtime::start(config.clone(), self.output.clone())?;
@@ -118,17 +132,95 @@ impl Services {
     }
 }
 
+pub fn reveal(cx: &mut App) {
+    if !cx.has_global::<Services>() {
+        return;
+    }
+    if let Err(error) = open(cx) {
+        speakeasy_platform::show_error(&error.to_string());
+    }
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub fn toggle_enabled(cx: &mut App) {
+    if cx.global::<Services>().demo {
+        return;
+    }
+    let result = cx.update_global::<Services, _>(|services, cx| {
+        if services.retiring.is_some() {
+            return Ok(());
+        }
+        if services.running() {
+            services.stop(cx);
+            Ok(())
+        } else {
+            let mut config = services.config.clone();
+            config
+                .validate(&services.path)
+                .and_then(|()| services.apply(config, cx))
+        }
+    });
+    if let Err(error) = result {
+        cx.global::<Services>().output.send_modify(|snapshot| {
+            snapshot.phase = Phase::Error;
+            snapshot.message = error.to_string();
+        });
+        reveal(cx);
+    }
+}
+
+// Resolve native handles immediately before use, outside GPUI's window borrow.
+// Replacing the task cancels a queued hide if the app is reopened first.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn settings_visible(handle: WindowHandle<Settings>, visible: bool, cx: &mut App) {
+    let task = cx.spawn(async move |cx| {
+        let raw = handle.update(cx, |_, window, _| {
+            HasWindowHandle::window_handle(window).map(|handle| handle.as_raw())
+        });
+        if let Ok(Ok(raw)) = raw {
+            speakeasy_platform::set_settings_visible(raw, visible);
+            if visible {
+                let _ = cx.update(|cx| cx.activate(true));
+            } else {
+                let _ = cx.update(|cx| {
+                    let (pill, show_hint, path) = {
+                        let services = cx.global::<Services>();
+                        let path = services.path.with_file_name("tray-hint-seen");
+                        let show = !services.tray_hint_seen && !path.exists();
+                        (services.pill, show, path)
+                    };
+                    if show_hint {
+                        let shown = pill
+                            .update(cx, |pill, _, cx| pill.tray_hint(cx))
+                            .unwrap_or(false);
+                        if shown {
+                            cx.global_mut::<Services>().tray_hint_seen = true;
+                            let _ = std::fs::write(path, b"");
+                        }
+                    }
+                });
+            }
+        }
+    });
+    cx.global_mut::<Services>().visibility = Some(task);
+}
+
 pub fn open(cx: &mut App) -> anyhow::Result<()> {
     if let Some(window) = cx.global::<Services>().window
-        && window
-            .update(cx, |_, window, _| window.activate_window())
-            .is_ok()
+        && window.update(cx, |_, _, _| ()).is_ok()
     {
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        settings_visible(window, true, cx);
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        let _ = window.update(cx, |_, window, _| window.activate_window());
         return Ok(());
     }
     let config = cx.global::<Services>().config.clone();
     let demo = cx.global::<Services>().demo;
+    let tray_lifecycle = !demo || cx.global::<Services>().demo_tray;
     let mut updates = cx.global::<Services>().output.subscribe();
+    #[cfg(target_os = "windows")]
+    let mut native_result = Ok(());
     let window = cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
@@ -142,25 +234,63 @@ pub fn open(cx: &mut App) -> anyhow::Result<()> {
             }),
             ..Default::default()
         },
-        |_, cx| {
+        |window, cx| {
+            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+            let _ = (window, tray_lifecycle);
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            if tray_lifecycle {
+                window.on_window_should_close(cx, |_, cx| {
+                    if !cx.has_global::<Services>() {
+                        return true;
+                    }
+                    if let Some(handle) = cx.global::<Services>().window {
+                        settings_visible(handle, false, cx);
+                    }
+                    false
+                });
+            }
+            #[cfg(target_os = "windows")]
+            let minimize = if tray_lifecycle {
+                let (hide, hidden) = async_channel::bounded(1);
+                native_result = HasWindowHandle::window_handle(window)
+                    .map_err(|error| anyhow::anyhow!("Cannot access Settings window: {error}"))
+                    .and_then(|handle| speakeasy_platform::minimize_to_tray(handle.as_raw(), hide));
+                Some(cx.spawn(async move |cx| {
+                    while hidden.recv().await.is_ok() {
+                        if cx
+                            .update(|cx| {
+                                if cx.has_global::<Services>()
+                                    && let Some(handle) = cx.global::<Services>().window
+                                {
+                                    settings_visible(handle, false, cx);
+                                }
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }))
+            } else {
+                None
+            };
             cx.new(|cx: &mut Context<Settings>| {
                 let task = cx.spawn(async move |this, cx| {
                     loop {
                         let snapshot = updates.borrow_and_update().clone();
-                        let status = if !snapshot.message.is_empty() {
-                            snapshot.message
-                        } else {
-                            match snapshot.phase {
-                                Phase::Starting => "Opening microphone…".into(),
-                                Phase::Recording | Phase::Stopping => "Listening".into(),
-                                Phase::Processing => "Transcribing locally…".into(),
-                                Phase::Cancelled => "Cancelled".into(),
-                                Phase::Done => "Ready for your next thought".into(),
-                                _ => "Ready when you are".into(),
-                            }
-                        };
                         if this
                             .update(cx, |view, cx| {
+                                let services = cx.global::<Services>();
+                                let status = if !snapshot.message.is_empty() {
+                                    snapshot.message.clone()
+                                } else {
+                                    status::description(
+                                        &snapshot,
+                                        services.running() || services.demo,
+                                        services.retiring.is_some(),
+                                        services.config.engine,
+                                    )
+                                };
                                 if view.status != status {
                                     view.status = status;
                                     cx.notify();
@@ -185,6 +315,8 @@ pub fn open(cx: &mut App) -> anyhow::Result<()> {
                     preview: None,
                     _updates: task,
                     demo,
+                    #[cfg(target_os = "windows")]
+                    _minimize: minimize,
                 };
                 if !demo {
                     view.refresh_devices(cx);
@@ -193,6 +325,11 @@ pub fn open(cx: &mut App) -> anyhow::Result<()> {
             })
         },
     )?;
+    #[cfg(target_os = "windows")]
+    if let Err(error) = native_result {
+        let _ = window.update(cx, |_, window, _| window.remove_window());
+        return Err(error);
+    }
     cx.global_mut::<Services>().window = Some(window);
     if demo {
         let _ = window.update(cx, |view, _, cx| view.play(cx));
@@ -210,6 +347,8 @@ pub struct Settings {
     preview: Option<Task<()>>,
     _updates: Task<()>,
     demo: bool,
+    #[cfg(target_os = "windows")]
+    _minimize: Option<Task<()>>,
 }
 #[derive(Clone, Copy)]
 enum Action {
@@ -349,6 +488,16 @@ impl Settings {
             Action::Motion => {
                 self.config.reduced_motion = !self.config.reduced_motion;
                 self.notice = Some("Unsaved changes".into());
+                if self.demo {
+                    let pill = cx.global::<Services>().pill;
+                    let reduced =
+                        self.config.reduced_motion || speakeasy_platform::reduced_motion();
+                    let _ = pill.update(cx, |view, _, cx| {
+                        view.set_reduced(reduced);
+                        cx.notify();
+                    });
+                    self.notice = None;
+                }
             }
             Action::Save => {
                 if self.demo {
@@ -394,6 +543,7 @@ impl Settings {
             let mut snapshot = Snapshot {
                 id,
                 phase: Phase::Starting,
+                model: ModelState::Ready,
                 ..Snapshot::default()
             };
             tx.send_replace(snapshot.clone());
@@ -408,11 +558,48 @@ impl Settings {
                 tx.send_replace(snapshot.clone());
                 Timer::after(Duration::from_millis(32)).await;
             }
+            snapshot.started = Instant::now() - Duration::from_secs(272);
+            snapshot.level = 0.0;
+            snapshot.meter_tick += 1;
+            tx.send_replace(snapshot.clone());
+            Timer::after(Duration::from_secs(2)).await;
+            snapshot.phase = Phase::Stopping;
+            tx.send_replace(snapshot.clone());
+            Timer::after(Duration::from_millis(150)).await;
             snapshot.phase = Phase::Processing;
             tx.send_replace(snapshot.clone());
             Timer::after(Duration::from_millis(1400)).await;
             snapshot.phase = Phase::Done;
-            tx.send_replace(snapshot);
+            tx.send_replace(snapshot.clone());
+            Timer::after(Duration::from_millis(450)).await;
+            // Interrupt the outgoing completion, then cancel and immediately
+            // begin a new recording. No demo callbacks touch the real runtime.
+            for end in [Phase::Cancelled, Phase::Empty, Phase::Error] {
+                snapshot = Snapshot {
+                    id: snapshot.id.wrapping_add(1),
+                    phase: Phase::Starting,
+                    model: ModelState::Ready,
+                    ..Snapshot::default()
+                };
+                tx.send_replace(snapshot.clone());
+                Timer::after(Duration::from_millis(180)).await;
+                snapshot.phase = Phase::Recording;
+                tx.send_replace(snapshot.clone());
+                Timer::after(Duration::from_millis(700)).await;
+                snapshot.phase = end;
+                if end == Phase::Error {
+                    snapshot.message =
+                        "Microphone disconnected. Choose an available microphone in Settings."
+                            .into();
+                }
+                tx.send_replace(snapshot.clone());
+                Timer::after(if end == Phase::Cancelled {
+                    Duration::from_millis(60)
+                } else {
+                    Duration::from_secs(2)
+                })
+                .await;
+            }
         }));
     }
 }
@@ -462,6 +649,20 @@ fn filename(path: &std::path::Path) -> String {
 }
 impl Render for Settings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let indicator = {
+            let services = cx.global::<Services>();
+            status::indicator(
+                &services.output.borrow(),
+                services.running() || services.demo,
+                services.retiring.is_some(),
+            )
+        };
+        let indicator_color = match indicator {
+            status::Indicator::Recording => 0xff4f2e,
+            status::Indicator::Attention => 0xf5a524,
+            status::Indicator::Ready => 0xe0e0e4,
+            status::Indicator::Busy | status::Indicator::Paused => 0x73747d,
+        };
         let microphone = match &self.config.microphone {
             None => "System default".to_owned(),
             Some(id) => self
@@ -473,11 +674,7 @@ impl Render for Settings {
                     |(_, name)| name.clone(),
                 ),
         };
-        let running = cx
-            .global::<Services>()
-            .runtime
-            .as_ref()
-            .is_some_and(Runtime::is_running);
+        let running = cx.global::<Services>().running();
         div()
             .id("settings")
             .on_key_down(|event, window, cx| {
@@ -503,7 +700,7 @@ impl Render for Settings {
                     .flex()
                     .items_center()
                     .gap(px(10.0))
-                    .child(div().size(px(8.0)).rounded_full().bg(rgb(0xff4f2e)))
+                    .child(div().size(px(8.0)).rounded_full().bg(rgb(indicator_color)))
                     .child(div().text_size(px(24.0)).child("Speakeasy")),
             )
             .child(
@@ -679,7 +876,10 @@ impl Render for Settings {
                     } else {
                         0xa7a8b0
                     }))
-                    .child(self.notice.clone().unwrap_or_else(|| self.status.clone())),
+                    .child(self.status.clone())
+                    .when_some(self.notice.clone(), |status, notice| {
+                        status.child(div().child(notice))
+                    }),
             )
             .child(
                 div()

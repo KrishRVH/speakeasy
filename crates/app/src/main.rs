@@ -2,16 +2,18 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod audio;
 mod config;
+mod instance;
 mod local_speech;
 mod pill;
 mod ports;
 mod runtime;
 mod shell;
+mod status;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+mod tray;
 use anyhow::{Context as _, bail};
 use gpui::*;
 use runtime::Snapshot;
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-use speakeasy_platform::Input;
 
 fn main() {
     if let Err(error) = run() {
@@ -21,55 +23,59 @@ fn main() {
 
 fn run() -> anyhow::Result<()> {
     let mut demo = false;
+    let mut demo_tray = false;
     let mut path = config::default_path();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--demo" => demo = true,
+            "--demo-tray" => {
+                demo = true;
+                demo_tray = true;
+            }
             "--config" => path = args.next().context("--config needs a path")?.into(),
             "--help" | "-h" => {
                 println!(
-                    "speakeasy [--config PATH] [--demo]\nCtrl+Alt+Space: hold to dictate; double tap for hands-free. Escape cancels.\n--demo uses simulated audio without microphone, hook, or clipboard access."
+                    "speakeasy [--config PATH] [--demo | --demo-tray]\nCtrl+Alt+Space: hold to dictate; double tap for hands-free. Escape cancels.\n--demo uses simulated audio without microphone, hook, or clipboard access.\n--demo-tray also previews native tray, minimize, close and relaunch behavior."
                 );
                 return Ok(());
             }
             _ => bail!("Unknown option: {arg}"),
         }
     }
+    if demo_tray && !cfg!(any(target_os = "windows", target_os = "macos")) {
+        bail!("Tray preview requires Windows or macOS. Use --demo for the motion preview.");
+    }
     if path.is_relative() {
         path = std::env::current_dir()?.join(path);
     }
-    let _instance = if !demo {
-        let directory = path.parent().context("Settings path has no directory")?;
-        std::fs::create_dir_all(directory)?;
-        let lock = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(directory.join("instance.lock"))?;
-        lock.try_lock()
-            .context("Speakeasy is already running. Open it from the tray.")?;
-        Some(lock)
+    let (instance, reopen) = if demo && !demo_tray {
+        (None, None)
     } else {
-        None
+        let Some((instance, reopen)) = instance::Instance::acquire(&path)? else {
+            return Ok(());
+        };
+        (Some(instance), Some(reopen))
     };
     let loaded = if demo || !path.exists() {
         Ok(config::Config::default())
     } else {
         config::Config::read(&path)
     };
-    let (mut config, mut message) = match loaded {
+    let (mut config, mut message, mut invalid) = match loaded {
         Ok(config) => (
             config,
             "Choose your local engine and model, then enable dictation.".to_owned(),
+            false,
         ),
-        Err(error) => (config::Config::default(), error.to_string()),
+        Err(error) => (config::Config::default(), error.to_string(), true),
     };
     let configured = if !config.engine_executable.as_os_str().is_empty() {
         match config.validate(&path) {
             Ok(()) => true,
             Err(error) => {
                 message = error.to_string();
+                invalid = true;
                 false
             }
         }
@@ -78,9 +84,16 @@ fn run() -> anyhow::Result<()> {
     };
     let (output, updates) = tokio::sync::watch::channel(Snapshot {
         message,
+        phase: if invalid {
+            runtime::Phase::Error
+        } else {
+            runtime::Phase::Idle
+        },
         ..Snapshot::default()
     });
-    Application::new().run(move |cx| {
+    let application = Application::new();
+    application.on_reopen(shell::reveal);
+    application.run(move |cx| {
         let reduced = config.reduced_motion || speakeasy_platform::reduced_motion();
         let pill = match pill::open(updates, reduced, cx) {
             Ok(pill) => pill,
@@ -102,8 +115,29 @@ fn run() -> anyhow::Result<()> {
             pill,
             window: None,
             demo,
+            demo_tray,
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            visibility: None,
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            tray_hint_seen: false,
+            _reopen: None,
+            _instance: instance,
         });
+        if let Some(reopen) = reopen {
+            let task = cx.spawn(async move |cx| {
+                while reopen.recv().await.is_ok() {
+                    if cx.update(shell::reveal).is_err() {
+                        break;
+                    }
+                }
+            });
+            cx.global_mut::<shell::Services>()._reopen = Some(task);
+        }
         cx.on_app_quit(|cx| {
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            if cx.has_global::<tray::Tray>() {
+                drop(cx.remove_global::<tray::Tray>());
+            }
             drop(cx.remove_global::<shell::Services>());
             async {}
         })
@@ -113,96 +147,25 @@ fn run() -> anyhow::Result<()> {
             && let Err(error) =
                 cx.update_global::<shell::Services, _>(|services, cx| services.apply(config, cx))
         {
-            cx.global::<shell::Services>()
-                .output
-                .send_modify(|s| s.message = error.to_string());
+            cx.global::<shell::Services>().output.send_modify(|s| {
+                s.phase = runtime::Phase::Error;
+                s.message = error.to_string();
+            });
         }
-        if let Err(error) = shell::open(cx) {
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        if (!demo || demo_tray)
+            && let Err(error) = tray::install(cx)
+        {
             speakeasy_platform::show_error(&error.to_string());
             cx.quit();
             return;
         }
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
-        if !demo {
-            match tray(cx) {
-                Ok(tray) => cx.set_global(Tray { _icon: tray }),
-                Err(error) => {
-                    speakeasy_platform::show_error(&error.to_string());
-                    cx.quit();
-                }
-            }
+        if demo || !configured || !cx.global::<shell::Services>().running() {
+            shell::reveal(cx);
         }
-        if demo {
+        if demo && !demo_tray {
             cx.on_window_closed(|cx| cx.quit()).detach();
         }
     });
     Ok(())
-}
-
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-struct Tray {
-    _icon: tray_icon::TrayIcon,
-}
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-impl Global for Tray {}
-
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-fn tray(cx: &mut App) -> anyhow::Result<tray_icon::TrayIcon> {
-    use tray_icon::{
-        Icon, TrayIconBuilder,
-        menu::{Menu, MenuEvent, MenuItem},
-    };
-    let menu = Menu::new();
-    let show = MenuItem::new("Open Speakeasy", true, None);
-    let toggle = MenuItem::new("Start / finish dictation", true, None);
-    let cancel = MenuItem::new("Cancel", true, None);
-    let quit = MenuItem::new("Quit", true, None);
-    menu.append_items(&[&show, &toggle, &cancel, &quit])?;
-    let show_id = show.id().clone();
-    let quit_id = quit.id().clone();
-    let toggle_id = toggle.id().clone();
-    let (tx, rx) = async_channel::bounded(16);
-    MenuEvent::set_event_handler(Some(move |event| {
-        let _ = tx.try_send(event);
-    }));
-    cx.spawn(async move |cx| {
-        while let Ok(event) = rx.recv().await {
-            if event.id == show_id {
-                let _ = cx.update(|cx| {
-                    if let Err(error) = shell::open(cx) {
-                        speakeasy_platform::show_error(&error.to_string());
-                    }
-                });
-                continue;
-            }
-            let action = if event.id == quit_id {
-                Input::Quit
-            } else if event.id == toggle_id {
-                Input::Toggle
-            } else {
-                Input::Cancel
-            };
-            let _ = cx.update(|cx| shell::send(action, cx));
-            if matches!(action, Input::Quit) {
-                let _ = cx.update(|cx| cx.quit());
-                break;
-            }
-        }
-    })
-    .detach();
-    let mut rgba = vec![0_u8; 32 * 32 * 4];
-    for y in 0_i32..32 {
-        for x in 0_i32..32 {
-            if (x - 16).pow(2) + (y - 16).pow(2) < 100 {
-                let offset = (y * 32 + x) as usize * 4;
-                rgba[offset..offset + 4].copy_from_slice(&[224, 224, 230, 255]);
-            }
-        }
-    }
-    Ok(TrayIconBuilder::new()
-        .with_tooltip("Speakeasy · Ctrl+Alt+Space")
-        .with_icon_as_template(true)
-        .with_icon(Icon::from_rgba(rgba, 32, 32)?)
-        .with_menu(Box::new(menu))
-        .build()?)
 }
