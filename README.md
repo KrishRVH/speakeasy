@@ -1,5 +1,171 @@
 # speakeasy
 
+## Rust rewrite
+
+The Rust implementation is in `crates/`: a shared GPUI interface, a small
+gesture/motion core, and Windows/macOS adapters. It implements local dictation
+with the Tally pill, hold/double-tap gestures, Escape cancellation, a five-minute
+cap, tray controls, and clipboard or direct text insertion. Automatic editing
+is outside this rewrite's scope. The Windows Release demo and prerecorded
+recognition are verified; microphone-to-editor and native Mac acceptance remain.
+The .NET application below remains available.
+
+### Build and run
+
+Use the pinned Rust toolchain. Windows builds need Visual Studio C++ Build Tools
+and the Windows SDK; macOS builds need Xcode command line tools. Initial native
+targets are Windows 11 x64 and macOS 14+ on Apple Silicon.
+
+```sh
+cargo build --locked -p speakeasy
+cargo run --locked -p speakeasy -- --demo
+```
+
+`--demo` runs a simulated motion preview without microphone, global shortcut,
+model, or clipboard access. Linux supports this preview only; GPUI's X11 build
+needs ALSA, fontconfig, X11/XCB, xkbcommon, and Vulkan development dependencies.
+
+For dictation, run the app, choose an engine and its executable and model in
+Settings, and select **Enable dictation**. Whisper is the default engine. Settings
+also select your microphone, language, GPU use, clipboard behavior, and reduced
+motion. Changes apply when you save; appearance, microphone, and language changes
+keep the loaded model warm.
+
+For a separate configuration, copy `rust-settings.example.json`, set its paths,
+and run:
+
+```sh
+cargo run --locked -p speakeasy -- --config rust-settings.json
+```
+
+Use a local whisper.cpp server and a compatible GGML model. Windows fixture checks
+cover v1.8.3 and [v1.9.4's b5130 binaries](https://github.com/ggml-org/whisper.cpp/releases/tag/b5130)
+(GitHub labels the binary release as a prerelease).
+The newer CUDA 12.4 build was faster on the measured RTX 4090, with a larger
+runtime download; see the performance audit below. Relative paths resolve beside
+the settings file.
+The app owns a loopback-only server and keeps its model warm. With GPU preference
+enabled, cancellation disconnects inference and checks the worker in the background
+before reusing it. If recovery fails or takes more than two seconds, the worker is
+terminated and replaced. CPU cancellation replaces the worker. No audio files,
+transcripts, or provider output are logged. Microphone capture starts only when
+you trigger dictation. Selecting a missing microphone produces an error; the app
+does not silently switch devices.
+
+Choose an engine built for your hardware: a GPU backend or an optimized CPU build.
+A generic scalar CPU build can be much slower. **Prefer GPU** allows the selected
+engine to use its GPU backend; it cannot add GPU support to a CPU-only executable.
+Turn **Prefer GPU** off for a CPU-only engine to skip unnecessary kernel warmup.
+With that preference enabled, loading includes a short synthetic-silence request
+to initialize inference kernels before your first dictation. First-time GPU setup
+can take several seconds; its output is discarded.
+The separately generated `artifacts/rust/whisper-cpu-avx2.zip` is an optional CPU
+engine requiring AVX2, FMA, F16C, and SSE4.2. It is never selected automatically.
+For the measured RTX 4090, prefer the newer CUDA build: its native GPU kernels
+avoid the old bundle's roughly ten-second first-use compilation. The verified
+upstream ZIP is staged at `artifacts/rust/whisper-cuda-b5130.zip`; extract it and
+select `Release/whisper-server.exe`. The engine remains separate from the app.
+The app uses Whisper's normal segmentation for long recordings; inserted text
+contains no timestamps. See the audit for accuracy and latency measurements,
+including the decoding settings used by earlier performance comparisons.
+The `threads` JSON setting can be tuned per machine; the default remains four.
+Quit the app before editing JSON directly, then restart to load those changes.
+See [the performance audit](docs/performance-audit.md) for measured gains and limits.
+
+### Optional Parakeet engine
+
+The self-contained Windows NVIDIA-GPU bundle is generated locally at
+`artifacts/rust/speakeasy-windows-parakeet-x64.zip`. Extract its entire
+`Speakeasy` folder to a Windows drive and run **Speakeasy.cmd**. It includes the
+verified engine, model and relative-path settings; no download or path editing
+is needed. It uses its own settings file and enables dictation on launch.
+`Speakeasy.cmd --demo` opens the simulated preview instead. The smaller
+`speakeasy-windows-x64.zip` still contains only the app and settings example.
+Generated packages and models are excluded from Git.
+
+To recreate the full bundle from the built executable and assets listed below:
+
+```powershell
+./scripts/package-rust-parakeet-windows.ps1 -RuntimeDirectory <extracted-nemo-release> -Model <parakeet-v3-q8.gguf>
+```
+
+**Engine: Parakeet** uses NVIDIA's NeMo-Speech.cpp with a Parakeet v3 model.
+It requires GPU acceleration and detects the language automatically. Choose the
+matching executable and GGUF model, then save. Existing configurations keep
+Whisper; switching engines is always explicit. The JSON setting is
+`"engine": "parakeet"`; `whisper_server` remains the executable path for either
+engine for compatibility. The `threads` setting applies only to Whisper.
+
+Verified on Windows with an RTX 4090:
+
+- [NeMo-Speech.cpp v0.1.0 CUDA ZIP](https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-windows-x86_64-cuda.zip).
+  Extract the complete archive and choose `bin/nemo-speech.exe`.
+  SHA-256: `ba024204e76ca2fa4eefa8787506c3c49e418147f627f60cf9206a582b60089c`.
+- [NVIDIA Parakeet TDT 0.6B v3 q8 GGUF](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/parakeet-tdt-0.6b-v3.q8_0.gguf),
+  by NVIDIA, distributed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+  SHA-256: `e3880d0aaaaf2c308ea2c35016b2b895c423eb3fda924c1b463d1c19b7f4d32e`.
+
+The fixture checks showed fewer word errors overall and faster insertion through
+the mocked controller, with slightly different punctuation. Accuracy varies by
+recording. This engine held about **3.8 GB of dedicated GPU memory** after a
+five-minute recording on this machine; Windows private commit was about 10 GB.
+**Pause dictation** releases the model. Cancellation responds immediately while
+the worker finishes its current request in the background; if recovery exceeds
+two seconds, the app stops and reloads it. Microphone audio must be 8–96 kHz;
+48 kHz is a suitable OS setting. CPU-only Parakeet and native Mac acceptance have
+not been verified. See the performance audit for exact measurements and limits.
+
+Without `--config`, settings are read from `%APPDATA%/speakeasy/rust-settings.json`
+on Windows or `~/Library/Application Support/speakeasy/rust-settings.json` on Mac.
+Close the .NET app before starting Rust, since both use the same default shortcut.
+Closing Settings leaves dictation in the tray; use **Pause dictation** to release
+the shortcut and model, or **Quit** to stop the app.
+
+Hold **Ctrl+Alt+Space** to dictate, double-tap for hands-free, tap again to finish,
+or press **Escape** to cancel. On Mac, Alt is Option. Text goes to the app focused
+when insertion occurs. Standard mode leaves the transcript on the clipboard;
+`preserve_clipboard: true` uses direct Unicode input instead, which some editors
+reject. Protected fields and elevated Windows apps may reject either method.
+An OS input submission cannot confirm that an editor accepted the text.
+
+For local packaging, run `scripts/package-rust-windows.ps1` on Windows or
+`bash scripts/package-rust-macos.sh` on Mac. The Mac bundle includes the microphone
+usage declaration and a local signature; grant Microphone and Accessibility
+permissions to that bundle. These scripts package the app, not models or the
+Whisper runtime. Mac distribution signing/notarization is still pending.
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+```
+
+Default tests use mocked microphone, inference, and insertion ports around the
+real session owner. They never record, install a global hook, or modify the
+clipboard. A separate ignored provider test accepts public prerecorded audio:
+
+```sh
+SPEAKEASY_FIXTURE_CONFIG=/path/to/settings.json \
+SPEAKEASY_FIXTURE_WAV=/path/to/whisper.cpp/samples/jfk.wav \
+cargo test -p speakeasy local_worker_recognizes_fixture_and_stops -- --ignored
+```
+
+With the same variables, `cargo test -p speakeasy profile_fixture_dictation --
+--ignored --nocapture` measures the real controller and provider through fake
+capture and insertion. It excludes microphone teardown, audio preparation, and
+OS paste latency; it is not a microphone-to-editor acceptance check.
+
+On an available Windows desktop, `scripts/check-rust-demo-windows.ps1
+-Executable <path-to-speakeasy.exe>` checks the visible demo's focus and hit
+testing without recording, injecting input, or changing the clipboard.
+Native build/package jobs are in `.github/workflows/rust.yml`. See
+[handoff.md](handoff.md) for the checks actually run and remaining native limits.
+
+## Existing .NET application
+
+The rest of this README describes the existing .NET app. Its setup commands,
+settings and cleanup features are separate from the Rust implementation above.
+
 System-wide AI dictation for Windows. Hold a shortcut, speak, and release to put polished text at your cursor. Speakeasy runs in the system tray, with a small floating pill while the microphone is live.
 
 The app uses native Windows input and clipboard APIs, .NET 10 WinForms, local whisper.cpp speech recognition, and optional local or cloud text cleanup. The fully local setup needs no account, API key, or network connection after installation. Speakeasy has no telemetry or transcript history.

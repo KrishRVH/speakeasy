@@ -1,5 +1,8 @@
 # Dictation through Moonlight and Sunshine
 
+UI names and microphone-check steps here refer to the .NET app. The same host
+audio routing applies to Rust; choose the receiving microphone in Rust Settings.
+
 Run Speakeasy on the Windows host where your destination app is open. Sunshine
 can deliver the shortcut and Escape through injected Windows keyboard events;
 Speakeasy accepts those events and filters its own generated paste keystrokes.

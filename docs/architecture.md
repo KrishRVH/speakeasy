@@ -1,4 +1,6 @@
-# Architecture
+# .NET architecture
+
+For the Rust implementation, see the [Rust module map](rust-rewrite-plan.md).
 
 Speakeasy is a per-user Windows tray application. A .NET 10 WinForms process owns keyboard input, recording, the floating pill, and insertion. Speech recognition and text cleanup are selected explicitly through configuration; the ordinary local path uses owned native processes that keep their models loaded.
 

@@ -1,4 +1,7 @@
-# Verification on this PC
+# .NET verification record
+
+This record covers the existing .NET app. Rust delivery and verification are
+documented separately in [handoff.md](../handoff.md).
 
 Verified on September 9, 2026: Windows 11 x64, Ryzen 9 9950X3D,
 NVIDIA RTX 4090, and 64 GB RAM.

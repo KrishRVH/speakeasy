@@ -1,0 +1,497 @@
+use super::*;
+use anyhow::{Context, bail};
+use std::{cell::RefCell, ptr::null_mut, sync::mpsc, thread};
+use windows_sys::Win32::{
+    Foundation::*,
+    Graphics::Gdi::*,
+    System::{
+        LibraryLoader::GetModuleHandleW,
+        RemoteDesktop::*,
+        Threading::{GetCurrentProcessId, GetCurrentThreadId},
+    },
+    UI::{HiDpi::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
+};
+
+const OWN_INPUT: usize = 0x53504541;
+
+unsafe extern "system" fn lifecycle(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let cancel = (message == WM_WTSSESSION_CHANGE && matches!(wparam, 2 | 4 | 6 | 7))
+        || message == WM_QUERYENDSESSION
+        || (message == WM_POWERBROADCAST && wparam == PBT_APMSUSPEND as usize);
+    if cancel {
+        HOOK.with(|slot| {
+            if let Ok(mut state) = slot.try_borrow_mut()
+                && let Some(state) = state.as_mut()
+            {
+                deliver(&state.tx, Input::Cancel);
+                deliver(&state.tx, Input::Release);
+                state.held = false;
+                state.rearm = true;
+            }
+        });
+    }
+    // SAFETY: forward unchanged arguments for this registered native window.
+    unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+}
+struct HookState {
+    tx: InputSender,
+    held: bool,
+    rearm: bool,
+}
+thread_local! {
+    // WH_KEYBOARD_LL has no context parameter. The hook and its state live on
+    // the same message-loop thread; no state is shared with the UI.
+    static HOOK: RefCell<Option<HookState>> = const { RefCell::new(None) };
+}
+
+pub struct InputMonitor {
+    thread_id: u32,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl InputMonitor {
+    pub fn start(tx: InputSender) -> anyhow::Result<Self> {
+        let (ready, started) = mpsc::sync_channel(1);
+        let thread = thread::Builder::new()
+            .name("shortcut".into())
+            .spawn(move || {
+                HOOK.with(|slot| {
+                    *slot.borrow_mut() = Some(HookState {
+                        tx,
+                        held: false,
+                        rearm: false,
+                    })
+                });
+                // SAFETY: this thread owns the hook, pumps its messages, and removes
+                // it before the thread-local callback state is destroyed.
+                unsafe {
+                    let mut msg = std::mem::zeroed();
+                    PeekMessageW(&mut msg, null_mut(), 0, 0, PM_NOREMOVE);
+                    let hook = SetWindowsHookExW(
+                        WH_KEYBOARD_LL,
+                        Some(keyboard),
+                        GetModuleHandleW(std::ptr::null()),
+                        0,
+                    );
+                    if hook.is_null() {
+                        let _ = ready.send(Err(std::io::Error::last_os_error()));
+                        return;
+                    }
+                    let class_name: Vec<u16> = "SpeakeasyEvents\0".encode_utf16().collect();
+                    let class = WNDCLASSW {
+                        lpfnWndProc: Some(lifecycle),
+                        hInstance: GetModuleHandleW(std::ptr::null()),
+                        lpszClassName: class_name.as_ptr(),
+                        ..std::mem::zeroed()
+                    };
+                    RegisterClassW(&class);
+                    let window = CreateWindowExW(
+                        0,
+                        class_name.as_ptr(),
+                        class_name.as_ptr(),
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        null_mut(),
+                        null_mut(),
+                        class.hInstance,
+                        std::ptr::null(),
+                    );
+                    if window.is_null()
+                        || WTSRegisterSessionNotification(window, NOTIFY_FOR_THIS_SESSION) == 0
+                    {
+                        let error = std::io::Error::last_os_error();
+                        if !window.is_null() {
+                            DestroyWindow(window);
+                        }
+                        UnhookWindowsHookEx(hook);
+                        let _ = ready.send(Err(error));
+                        return;
+                    }
+                    let _ = ready.send(Ok(GetCurrentThreadId()));
+                    while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
+                        TranslateMessage(&msg);
+                        DispatchMessageW(&msg);
+                    }
+                    WTSUnRegisterSessionNotification(window);
+                    DestroyWindow(window);
+                    UnhookWindowsHookEx(hook);
+                }
+                HOOK.with(|slot| {
+                    if let Some(state) = slot.borrow_mut().take() {
+                        state.tx.close();
+                    }
+                });
+            })?;
+        let thread_id = started.recv().context("Shortcut thread stopped")??;
+        Ok(Self {
+            thread_id,
+            thread: Some(thread),
+        })
+    }
+}
+
+impl Drop for InputMonitor {
+    fn drop(&mut self) {
+        // SAFETY: the ID belongs to our live message-loop thread.
+        unsafe {
+            PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0);
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+unsafe extern "system" fn keyboard(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    // Never unwind through the OS callback. A poisoned input path closes its
+    // channel, causing the owner to cancel rather than continuing with lost edges.
+    let handled = std::panic::catch_unwind(|| {
+        if code < 0 {
+            return false;
+        }
+        // SAFETY: for nonnegative WH_KEYBOARD_LL callbacks lparam points to a
+        // KBDLLHOOKSTRUCT valid for this invocation.
+        let key = unsafe { &*(lparam as *const KBDLLHOOKSTRUCT) };
+        if key.dwExtraInfo == OWN_INPUT {
+            return false;
+        }
+        let down = wparam as u32 == WM_KEYDOWN || wparam as u32 == WM_SYSKEYDOWN;
+        HOOK.with(|slot| {
+            let mut state = slot.borrow_mut();
+            let Some(state) = state.as_mut() else {
+                return false;
+            };
+            // A suppressed Space is not reflected reliably in async key state.
+            // After a desktop transition, wait for release or a fresh chord.
+            if state.rearm {
+                if key.vkCode == u32::from(VK_SPACE) && !down {
+                    state.rearm = false;
+                    return true;
+                }
+                // SAFETY: these unsuppressed modifier keys have native state.
+                if unsafe {
+                    GetAsyncKeyState(i32::from(VK_CONTROL)) >= 0
+                        && GetAsyncKeyState(i32::from(VK_MENU)) >= 0
+                } {
+                    state.rearm = false;
+                } else {
+                    return false;
+                }
+            }
+            if key.vkCode == u32::from(VK_ESCAPE) && down {
+                deliver(&state.tx, Input::Cancel);
+                return false;
+            }
+            if key.vkCode == u32::from(VK_SPACE) {
+                // SAFETY: GetAsyncKeyState has no pointer/lifetime requirements.
+                let chord = unsafe {
+                    GetAsyncKeyState(i32::from(VK_CONTROL)) < 0
+                        && GetAsyncKeyState(i32::from(VK_MENU)) < 0
+                };
+                if down && (chord || state.held) {
+                    if !state.held {
+                        state.held = true;
+                        deliver(&state.tx, Input::Press);
+                    }
+                    return true;
+                }
+                if !down && state.held {
+                    state.held = false;
+                    deliver(&state.tx, Input::Release);
+                    return true;
+                }
+            }
+            false
+        })
+    });
+    match handled {
+        Ok(true) => 1,
+        result => {
+            if result.is_err() {
+                HOOK.with(|slot| {
+                    if let Ok(state) = slot.try_borrow()
+                        && let Some(state) = state.as_ref()
+                    {
+                        state.tx.close();
+                    }
+                });
+            }
+            // SAFETY: forward the original callback arguments, including Escape.
+            unsafe { CallNextHookEx(null_mut(), code, wparam, lparam) }
+        }
+    }
+}
+
+pub fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
+    let RawWindowHandle::Win32(raw) = handle else {
+        bail!("Expected a Windows window");
+    };
+    let hwnd = raw.hwnd.get() as HWND;
+    // SAFETY: the caller holds a live GPUI window on its owning UI thread.
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(
+            hwnd,
+            GWL_EXSTYLE,
+            style
+                | (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_LAYERED)
+                    as isize,
+        );
+        // WS_EX_TRANSPARENT only affects paint ordering on an ordinary window.
+        // Layering makes the entire noninteractive pill pass mouse hit testing.
+        if SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA) == 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        if SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        ) == 0
+        {
+            return Err(std::io::Error::last_os_error().into());
+        }
+    }
+    Ok(())
+}
+
+pub fn modifiers_down() -> bool {
+    // SAFETY: querying virtual key state requires no owned resources.
+    unsafe {
+        [VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN]
+            .iter()
+            .any(|key| GetAsyncKeyState(i32::from(*key)) < 0)
+    }
+}
+
+pub fn set_pill_visible(handle: RawWindowHandle, visible: bool) {
+    if let RawWindowHandle::Win32(raw) = handle {
+        // SAFETY: called with a live window handle on its UI thread.
+        unsafe {
+            if visible {
+                let monitor = MonitorFromWindow(GetForegroundWindow(), MONITOR_DEFAULTTOPRIMARY);
+                let mut info: MONITORINFO = std::mem::zeroed();
+                info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                let mut dpi_x = 96;
+                let mut dpi_y = 96;
+                GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y);
+                if GetMonitorInfoW(monitor, &mut info) != 0 {
+                    let scale = dpi_x as f32 / 96.0;
+                    let width = (400.0 * scale) as i32;
+                    let height = (100.0 * scale) as i32;
+                    SetWindowPos(
+                        raw.hwnd.get() as HWND,
+                        HWND_TOPMOST,
+                        (info.rcWork.left + info.rcWork.right - width) / 2,
+                        info.rcWork.bottom - height - (8.0 * scale) as i32,
+                        width,
+                        height,
+                        SWP_NOACTIVATE,
+                    );
+                }
+            }
+            ShowWindow(
+                raw.hwnd.get() as HWND,
+                if visible { SW_SHOWNOACTIVATE } else { SW_HIDE },
+            );
+        }
+    }
+}
+
+// Clipboard listeners can briefly hold it immediately after a change. Retry
+// with a short wall-clock budget on the dictation owner, never the UI thread.
+fn open_clipboard() -> anyhow::Result<clipboard_win::Clipboard> {
+    let until = std::time::Instant::now() + std::time::Duration::from_millis(50);
+    loop {
+        match clipboard_win::Clipboard::new() {
+            Ok(clipboard) => return Ok(clipboard),
+            Err(error) if std::time::Instant::now() >= until => return Err(error.into()),
+            Err(_) => thread::sleep(std::time::Duration::from_millis(2)),
+        }
+    }
+}
+
+pub fn insert(
+    text: &str,
+    gate: &InputSender,
+    preserve_clipboard: bool,
+) -> anyhow::Result<Inserted> {
+    if !gate.active() {
+        return Ok(Inserted::Cancelled);
+    }
+    if preserve_clipboard {
+        return insert_direct(text, gate);
+    }
+    let normalized = text.replace("\r\n", "\n").replace('\n', "\r\n");
+    {
+        let _clipboard = open_clipboard()?;
+        if !gate.active() {
+            return Ok(Inserted::Cancelled);
+        }
+        clipboard_win::raw::set_string(&normalized)?;
+    }
+    let sequence = clipboard_win::raw::seq_num();
+    {
+        let _clipboard = open_clipboard()?;
+        let mut current = Vec::new();
+        clipboard_win::raw::get_string(&mut current)?;
+        if current != normalized.as_bytes() || sequence != clipboard_win::raw::seq_num() {
+            return Ok(Inserted::Unavailable(
+                "Clipboard changed. New contents were preserved; paste was not sent.",
+            ));
+        }
+    }
+    if modifiers_down() {
+        return Ok(Inserted::Copied(
+            "Copied. Release the shortcut and press Ctrl+V.",
+        ));
+    }
+    // SAFETY: INPUT records contain initialized keyboard payloads. The OS
+    // copies them synchronously; our marker excludes them from shortcut handling.
+    unsafe {
+        if !has_external_target() {
+            return Ok(Inserted::Copied(
+                "Copied. Focus an editor and press Ctrl+V.",
+            ));
+        }
+        let key = |vk, flags| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    wScan: 0,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: OWN_INPUT,
+                },
+            },
+        };
+        let input = [
+            key(VK_CONTROL, 0),
+            key(0x56, 0),
+            key(0x56, KEYEVENTF_KEYUP),
+            key(VK_CONTROL, KEYEVENTF_KEYUP),
+        ];
+        if sequence != clipboard_win::raw::seq_num() {
+            return Ok(Inserted::Unavailable(
+                "Clipboard changed before paste. New contents were preserved.",
+            ));
+        }
+        if !gate.commit() {
+            return Ok(Inserted::Cancelled);
+        }
+        let sent = SendInput(
+            input.len() as u32,
+            input.as_ptr(),
+            std::mem::size_of::<INPUT>() as i32,
+        );
+        if sent != input.len() as u32 {
+            let release = [key(0x56, KEYEVENTF_KEYUP), key(VK_CONTROL, KEYEVENTF_KEYUP)];
+            if sent > 0 {
+                SendInput(2, release.as_ptr(), std::mem::size_of::<INPUT>() as i32);
+            }
+            return Ok(Inserted::Copied(
+                "Copied. This app blocked paste; press Ctrl+V.",
+            ));
+        }
+    }
+    Ok(Inserted::Sent)
+}
+
+pub fn reduced_motion() -> bool {
+    let mut enabled: i32 = 1;
+    // SAFETY: SPI_GETCLIENTAREAANIMATION writes a BOOL into this live variable.
+    unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            (&mut enabled as *mut i32).cast(),
+            0,
+        );
+    }
+    enabled == 0
+}
+
+fn insert_direct(text: &str, gate: &InputSender) -> anyhow::Result<Inserted> {
+    if modifiers_down() {
+        return Ok(Inserted::Unavailable(
+            "Release the shortcut and try again. Clipboard preserved.",
+        ));
+    }
+    let mut input = Vec::with_capacity(text.len() * 2);
+    for unit in text.replace("\r\n", "\n").encode_utf16() {
+        for flags in [KEYEVENTF_UNICODE, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP] {
+            input.push(INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: 0,
+                        wScan: unit,
+                        dwFlags: flags,
+                        time: 0,
+                        dwExtraInfo: OWN_INPUT,
+                    },
+                },
+            });
+        }
+    }
+    if !has_external_target() {
+        return Ok(Inserted::Unavailable(
+            "Focus an editor and try again. Clipboard preserved.",
+        ));
+    }
+    if !gate.commit() {
+        return Ok(Inserted::Cancelled);
+    }
+    // SAFETY: all UTF-16 keyboard records are initialized and stay alive for
+    // this synchronous OS submission. No clipboard format is read or changed.
+    let sent = unsafe {
+        SendInput(
+            input.len() as u32,
+            input.as_ptr(),
+            std::mem::size_of::<INPUT>() as i32,
+        )
+    };
+    if sent != input.len() as u32 {
+        return Ok(Inserted::Unavailable(
+            "Direct input was blocked or only partly sent. Clipboard preserved.",
+        ));
+    }
+    Ok(Inserted::Sent)
+}
+
+pub fn show_error(message: &str) {
+    let text: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+    let title: Vec<u16> = "Speakeasy".encode_utf16().chain(Some(0)).collect();
+    // SAFETY: both NUL-terminated strings outlive this synchronous dialog.
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            title.as_ptr(),
+            MB_OK | MB_ICONERROR,
+        );
+    }
+}
+
+fn has_external_target() -> bool {
+    // SAFETY: foreground HWND is queried and used immediately, with a valid PID out parameter.
+    unsafe {
+        let window = GetForegroundWindow();
+        let mut pid = 0;
+        !window.is_null()
+            && GetWindowThreadProcessId(window, &mut pid) != 0
+            && pid != GetCurrentProcessId()
+    }
+}

@@ -1,0 +1,11 @@
+{
+  "engine": "whisper",
+  "whisper_server": "tools/whisper/whisper-server.exe",
+  "model": "models/ggml-small.en.bin",
+  "language": "en",
+  "microphone": null,
+  "threads": 4,
+  "use_gpu": true,
+  "reduced_motion": false,
+  "preserve_clipboard": false
+}

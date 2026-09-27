@@ -1,9 +1,27 @@
 # Speakeasy agent guide
 
-Speakeasy is a personal Windows dictation app. Keep it fast, small, and usable
+Speakeasy is a personal dictation app moving from Windows/.NET to Rust on
+Windows and macOS. Keep it fast, small, and usable
 without an account or network connection when local providers are selected.
 Read `README.md` for setup and behavior, and `docs/standards.md` for the scoped
 adoption of KrishRVH/standards.
+
+## Rust rewrite
+
+`crates/core` owns pure gestures and motion; `crates/app` owns GPUI, session
+state, capture, and the local worker; `crates/platform` owns native adapters.
+Keep unsafe FFI confined to platform with a `SAFETY` explanation at each site.
+Shared atomics are limited to callback control and cancellation during OS calls;
+the session owner receives other changes as messages.
+
+Use native Cargo commands from the root: `cargo fmt --all --check`,
+`cargo clippy --workspace --all-targets --locked -- -D warnings`, and
+`cargo test --workspace --locked`. Regenerate Cargo
+locks through Cargo. Use `#[expect(..., reason = "...")]` for a necessary lint
+exception. Keep tests focused on real failure boundaries; fuzzing, mutation,
+coverage targets, and ADR gates are outside the user's requested scope.
+`--demo` is simulated; native microphone/input/clipboard acceptance requires
+explicit opt-in. See the Rust section of `README.md` for native build/setup.
 
 ## Layout and ownership
 
@@ -22,7 +40,7 @@ adoption of KrishRVH/standards.
 
 ## Workflow
 
-Use the pinned .NET SDK and native commands from the repository root:
+For .NET changes, use the pinned SDK and native commands from the repository root:
 
 ```powershell
 dotnet restore Speakeasy.sln --locked-mode

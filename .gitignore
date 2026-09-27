@@ -3,6 +3,7 @@
 **/[Oo]bj/
 /.vs/
 /artifacts/
+/target/
 **/TestResults/
 *.user
 *.suo
@@ -15,6 +16,8 @@
 !.env.sample
 !.env.template
 /settings.json
+/rust-settings.json
+/rust-instance.lock
 /models/
 /tools/
 /recordings/

@@ -1,4 +1,8 @@
-# speakeasy on this PC
+# Recorded .NET workstation setup
+
+These notes describe the .NET installation recorded on September 9, 2026. Paths,
+devices and saved preferences below refer to that installation. For the current
+Rust Windows bundle, use the [README](../README.md#optional-parakeet-engine).
 
 Open **speakeasy** using the desktop shortcut. The installed app is at
 `C:\Users\Krish\Apps\speakeasy\speakeasy.exe` and will already be in the

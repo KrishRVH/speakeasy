@@ -1,0 +1,30 @@
+[workspace]
+members = ["crates/core", "crates/platform", "crates/app"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98.1"
+publish = false
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unexpected_cfgs = "deny"
+unfulfilled_lint_expectations = "deny"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+allow_attributes = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+overflow-checks = true

@@ -1,237 +1,128 @@
-# Speakeasy: handoff to WSL Codex
+# Speakeasy Rust handoff — September 27, 2026
 
-## Start here
+## Windows delivery
 
-The user wants to pivot Speakeasy to **one Rust codebase for Windows and
-macOS**, including the interface and application core. The priorities are
-measured performance, responsiveness, a clean and elegant experience, and
-smooth, high-frame-rate animation. Separate Swift and C# applications are
-not the desired architecture.
+The Rust app is implemented in `crates/`. The available Windows delivery is
+complete with mocked capture/insertion and public-audio verification. Missing
+live-device or Mac measurements do not block this Windows package.
 
-The immediate request is to write this handoff so the user can resume in WSL
-Codex, discuss the next steps, and involve **Fable** in planning. Continue that
-discussion before starting the migration. No Rust implementation has begun.
-No Fable or Claude session has been contacted. Discover the tools available in
-the WSL session and agree on how to involve Fable; do not assume a particular
-CLI, model identifier, or integration is installed.
+| Local artifact | Contents | Size |
+| --- | --- | ---: |
+| `artifacts/rust/speakeasy-windows-parakeet-x64.zip` | App, verified CUDA engine/model, notices, launcher and relative-path settings | 792,175,054 bytes |
+| `artifacts/rust/speakeasy-windows-x64.zip` | App and settings example; choose an engine/model separately | 4,119,441 bytes |
 
-To resume from a fresh WSL checkout:
+Extract the full bundle's `Speakeasy` folder to a Windows drive and run
+**Speakeasy.cmd**. It uses its own settings and enables dictation on launch.
+It requires an NVIDIA GPU; this machine has an RTX 4090. For a simulated preview,
+run `Speakeasy.cmd --demo`. Close older instances before normal dictation.
+These generated artifacts and models are excluded from Git.
+
+Full bundle SHA-256: `815c0a9f6d5d3d42aa726de5b32f817dad59505fce427e13b985ed40b5a25f23`.
+Application SHA-256: `ecc0046737d2effc47ee76b56e5ea90d2d3644da935e60731f99d25579021e2c`.
+Machine-readable metadata: `artifacts/rust/windows-delivery.json` and
+`artifacts/rust/parakeet-package.json`. Rebuild instructions and upstream assets
+are in [README.md](README.md#optional-parakeet-engine).
+
+## Scope and ownership
+
+Core dictation only: hold-to-talk, double-tap hands-free, passive Escape,
+five-minute cap, tray/settings, and clipboard or direct Unicode insertion.
+Premium Tally motion comes from the Fable 5.1 xhigh consultation. No automatic
+editing, transcript history, accounts, telemetry, or silent provider switching.
+The existing .NET app remains supported separately and retains its own features.
+
+- `core` owns pure gestures and analytic motion; `app` owns GPUI, capture and
+  the session owner; `platform` owns native adapters and unsafe FFI.
+- Tagged sessions, bounded input and the native commit gate reject stale results.
+  Pause retires the owner asynchronously; Quit waits for owned cleanup.
+- The audio callback uses a bounded ring without locks or allocations. First
+  samples trigger Ready. The consumer owns native-rate PCM16, grows its initial
+  ten-second allocation up to five minutes, and prepares the WAV in memory.
+- The audible gate requires 100 ms in 20 ms RMS windows. Quiet edges of at least
+  one second are trimmed with 500 ms padding; interior pauses remain intact.
+- `local_speech.rs` owns one loopback worker, defaults to Whisper, and supports
+  explicitly selected Parakeet. GPU cancellation disconnects, then performs a
+  bounded silent inference check before reuse; failure stops the worker before
+  replacement. CPU cancellation reloads. Failed warmup does not retry-loop.
+- Keep Whisper's normal timestamp decoding to avoid long-recording omissions.
+  Inserted text has normalized whitespace and no timestamps.
+- The pill is nonactivating/click-through and stops requesting frames when
+  settled. Upstream GPUI's Windows VSync thread still wakes while idle.
+
+See the [module map](docs/rust-rewrite-plan.md),
+[interaction direction](docs/interaction-design.md), and
+[scoped standards](docs/standards.md). No ADR, fuzzing, mutation or coverage gates.
+
+## Verification
+
+The final Windows bundle was extracted into a path containing spaces. Its app
+passed visible-pill, focus and hit-testing checks; its actual launcher worked
+from an unrelated directory. Packaged settings, engine and model recognized
+public JFK audio through the real controller with fake capture/insertion.
+Settings were unchanged, all owned workers exited, and temporary files were
+removed. Evidence: `artifacts/rust/windows-delivery-final.log`.
+
+- Rust formatting, Linux and Windows all-target Clippy, and Windows GNU Release
+  build passed. All 12 default tests passed on Linux and actual Windows.
+- The existing .NET app passed locked restore, Release build with no warnings or
+  errors, all 168 tests, and whitespace verification using Windows SDK 10.0.100.
+- Six setup scenarios with fake downloads/settings passed. PowerShell, Bash and
+  configuration parsing passed. No live microphone, hook, clipboard or input
+  was used in these checks.
+- Repo-wide `$polish` covered 104 human-maintained paths against base `d619fc0`
+  plus the working tree; nine generated locks/binary assets were preserved.
+  It fixed Windows startup error preservation, strengthened demo bounds checks,
+  corrected CI paths and clarified current versus historical documentation.
+  No tests or runtime dependencies were added by the polish pass.
+
+Native MSVC packaging, native Mac execution, actual microphone-to-editor
+behavior, broad target-app/elevated-field compatibility, sleep/lock, display
+changes, screen readers and displayed frame pacing remain unverified. Submission
+intervals under GPU load were measured, but DXGI returned no display timestamps
+and PresentMon tracing lacked permission. These limits are explicit evidence
+boundaries. The transitive `proc-macro-error2` future-compatibility advisory
+remains; there are no first-party compiler/Clippy warnings.
+
+## Performance findings
+
+Opus 5.5 xhigh completed the comprehensive performance audit and follow-ups.
+[The audit](docs/performance-audit.md) preserves measurements, corrections,
+source links and rejected candidates. The additional app-wide 10× goal remains
+unachieved; do not present component gains as that result.
+
+Parakeet reduced measured stop-to-fake-insertion from about 42/96/2,489 ms to
+11/20/929 ms for 3.3/10.4/293.7-second fixtures. These exclude capture preparation
+and actual OS insertion. Word errors improved overall, with different formatting.
+The worker retained about 3.8 GB dedicated GPU memory after long audio; Pause
+releases it. Original 16 kHz versus synthetic 48 kHz input added a median 4 ms
+short/131 ms long in the HTTP screen, with matching normalized word hashes.
+
+Rejected candidates include independent pause chunks and tested continuous
+streaming models (formatting/quality loss), whole-recording speculation (stale
+work can delay Stop), and tested CUDA/cuBLAS/Q8/F16 switches (no useful gain or
+higher memory). Do not reopen them without new evidence. Current upstream GPUI
+still has the unconditional Windows VSync loop; NeMo has no newer packaged release.
+
+## Continuing locally
+
+Use the native Cargo commands in AGENTS.md. Linux development libraries restored
+inside this workspace need these environment paths:
 
 ```sh
-git clone https://github.com/KrishRVH/speakeasy.git
-cd speakeasy
+export PKG_CONFIG_PATH="$PWD/artifacts/rust/build-libs/root/usr/lib/x86_64-linux-gnu/pkgconfig"
+export LIBRARY_PATH="$PWD/artifacts/rust/build-libs/root/usr/lib/x86_64-linux-gnu"
 ```
 
-Then ask the agent: "Read handoff.md and AGENTS.md, inspect the current code and
-my standards repo, and continue planning the Rust rewrite with me. Help involve
-Fable in reviewing the architecture, performance goals, and implementation plan."
+Windows GNU target and release shader output are cached under `target/`.
+The normal native packaging script uses MSVC and Windows SDK FXC. Do not commit
+SDK, model, binary or diagnostic output. Stage reviewed WSL PowerShell scripts
+into a unique Windows-local temporary directory under the existing RemoteSigned
+policy; no policy bypass is needed. Await GUI test processes with
+`Diagnostics.Process.WaitForExit`, not a launcher that waits for its descendants.
 
-## Workspace and Git state
-
-| Item | Value |
-| --- | --- |
-| Repository | <https://github.com/KrishRVH/speakeasy.git> |
-| Windows checkout | `C:\Users\rvhsp\Documents\Codex\speakeasy` |
-| Expected WSL path | `/mnt/c/Users/rvhsp/Documents/Codex/speakeasy` |
-| Handoff delivery branch | `main` (the remote default) |
-| Base commit | `9f8f3cb216dc865bf7dbfd85afdb71ee5a7acd6a` |
-| Standards repository | <https://github.com/KrishRVH/standards.git> |
-| Standards Windows checkout | `C:\Users\rvhsp\Documents\Codex\standards` |
-| Expected standards WSL path | `/mnt/c/Users/rvhsp/Documents/Codex/standards` |
-| Standards revision inspected | `f1909fdd2c55bd23604d0c5042ade09013495847` |
-
-Confirm WSL mount paths and Git status on arrival. Both repositories were
-cloned during this session. GitHub authentication initially blocked cloning;
-the user resolved it. WSL may use a separate credential configuration.
-
-The local `perf/responsive-status` branch was created for an initial Windows
-optimization pass, before the Rust pivot, and contains no new commits. No
-application source changes or optimization patches were made. The working
-tree was clean before this handoff was added. At the user's request, this
-handoff is being delivered as a documentation-only commit on remote `main`,
-so a normal fresh clone includes it. No application implementation is being
-committed or pushed as part of this handoff.
-
-If moving development to the WSL Linux filesystem for toolchain performance,
-preserve this handoff and check for subsequent user changes first. The
-Windows checkout remains the reference implementation.
-
-## Decisions and open choices
-
-Agreed direction:
-
-- Windows and macOS first. iPhone and iPad are outside the initial scope.
-- One Rust application codebase, with shared UI and application behavior.
-- Small platform-specific modules are expected for OS integration. They can
-  live in the same Rust workspace; separate product implementations are not
-  required.
-- Follow the user's standards repository, adapting its actual Rust and
-  shared profiles to this desktop application.
-- Treat responsiveness, animation, resource use, and reliable dictation as
-  design requirements from the beginning.
-
-Discussed recommendations, not final architecture decisions:
-
-- **GPUI is the leading UI prototype candidate**, because the user wants a
-  custom, GPU-rendered desktop experience. It has Windows and macOS backends.
-  Its official documentation warns that it is pre-1.0 with breaking changes.
-  Framework choice remains open pending a technical proof and Fable's review.
-- Iced is another Rust UI option worth comparing where useful. Its official
-  README also describes it as experimental. Do not label either option
-  production-ready for Speakeasy without testing the required behavior.
-- Keep existing native inference technology such as whisper.cpp initially.
-  A Rust application can own and call a C/C++ inference engine. There is no
-  agreed requirement to rewrite speech recognition or model kernels in Rust.
-- Decide separately whether inference stays in owned worker processes or
-  moves in-process. Measure startup, cancellation, memory, failure isolation,
-  and latency before replacing the existing worker design.
-
-Native compilation and a Rust UI do not automatically provide platform-native
-widgets, accessibility, or good frame pacing. Test keyboard navigation, IME,
-screen readers, focus behavior, scaling, and OS conventions explicitly.
-Rust removes GC from the Rust application layer; it does not guarantee faster
-inference or lower total memory once models and graphics are included.
-
-## Existing implementation and behavior to preserve
-
-Read [AGENTS.md](AGENTS.md), [README.md](README.md),
-[docs/architecture.md](docs/architecture.md), and the relevant tests.
-
-- `src/Speakeasy.Core`: settings, pure gesture decisions, transcription,
-  cleanup, and owned inference-worker lifetimes.
-- `src/Speakeasy.App`: .NET 10 WinForms app, tray/dashboard/preferences,
-  recording pill, controller, and Windows adapters.
-- `tests/Speakeasy.Tests`: pure behavior and provider contracts.
-- `tests/Speakeasy.Platform.Tests`: Windows adapter/controller tests using
-  fakes for microphone, clipboard, and keyboard side effects.
-
-The current app already has important behavior beyond the visible UI:
-
-- Hold-to-talk, double-tap hands-free, and passive Escape cancellation.
-- A hard five-minute capture ceiling, enforced independently of UI updates.
-- Session ownership and generation checks: late callbacks must never cancel
-  newer work, overwrite its status, or insert stale text.
-- Microphone failure handling; cancellation on lock, disconnect, and suspend.
-- Clipboard restoration that respects a newer copy from another app, plus
-  direct insertion and manual-paste fallback with accurate user notices.
-- A recording pill that does not steal the target application's focus.
-- Explicit local/cloud provider selection, local-only operation when chosen,
-  no silent cloud fallback, no transcript history, and no telemetry.
-- Warm local inference workers, conservative silence trimming, and cleanup
-  failure fallback to the original transcript.
-
-Use these behaviors and their tests as migration acceptance criteria. Port
-the contracts into Rust tests rather than blindly translating every C# class.
-Retain the old implementation until equivalent behavior has been verified.
-
-## Evidence from this Windows session
-
-The machine initially had no `dotnet` on PATH. Microsoft's installation script
-installed the repository-pinned SDK **10.0.100** at
-`C:\Users\rvhsp\.dotnet\dotnet.exe`. No repository SDK or package versions
-were changed. This is a Windows SDK installation, not a WSL Linux SDK.
-
-Checks completed on the unchanged source:
-
-| Check | Result |
-| --- | --- |
-| `dotnet restore Speakeasy.sln --locked-mode` | Passed |
-| `dotnet build Speakeasy.sln -c Release --no-restore` | Passed; zero warnings and errors |
-| `dotnet test Speakeasy.sln -c Release --no-build --no-restore` | Passed; 83 Core tests and 85 Windows tests, 168 total |
-
-The commands used the absolute Windows SDK path and opted out of CLI telemetry.
-Whitespace verification, PowerShell setup tests, packaging, and interactive
-acceptance were **not run**. No live microphone capture, clipboard insertion,
-model download, inference benchmark, or macOS test was performed here.
-
-`docs/THIS_PC.md` and `docs/VERIFIED.md` contain historical evidence from a
-different Windows user/machine (`C:\Users\Krish\...`). Do not report those
-paths, model installations, hardware, or latency results as this session's
-environment or newly verified results.
-
-One source-level performance finding: `DictationController` has a 40 ms UI
-timer. Its callback calls `Apply(...)`, which invokes `Changed`, and then
-invokes `Changed` again. Typical ticks therefore trigger two status refreshes,
-including static dashboard updates. This is approximately 25 timer ticks per
-second, not a measured rendering FPS result. No optimization was applied.
-An earlier suspicion about model-file checks on every tick was incorrect;
-those checks occur when settings are installed.
-
-## Applying the user's standards
-
-The standards catalog was read locally at the revision above, including its
-README, `shared/AGENTS.md`, `Rust/AGENTS.md`, `Rust/README.md`, and Rust manifest.
-Speakeasy's existing `docs/standards.md` describes an older, scoped C# adoption;
-it is not the completed standards baseline for the proposed Rust rewrite.
-
-Relevant Rust principles:
-
-- One owner for application state; pure state/event transitions where useful.
-- Explicit inputs, side effects, ownership, cancellation, and failures.
-- Message passing across work boundaries; avoid unnecessary shared mutable
-  state or abstractions.
-- Pinned tools, committed generated lockfiles, narrow dependencies, meaningful
-  boundary/property tests, and executable formatting/lint/test gates.
-- Follow the catalog's adoption instructions: select and adapt applicable
-  files instead of copying the entire catalog or its root maintenance setup.
-
-Account for two concrete adoption issues during planning:
-
-1. The Rust profile forbids first-party unsafe code. OS/FFI work may need a
-   narrowly scoped adaptation. Prefer suitable safe interfaces; document any
-   required interop boundary and follow the profile's approval rules before
-   weakening enforcement. Do not silently loosen the whole workspace.
-2. The mutation runner currently uses Linux process-group behavior. It may run
-   in WSL for portable code, but native Windows/macOS verification needs an
-   explicit, tested workflow. Linux success does not establish OS integration.
-
-Read the actual profiles again when implementing their adoption; the summary
-here is not a replacement for their rules.
-
-## Planning work for WSL Codex and Fable
-
-Produce a compact architecture decision and implementation sequence together.
-Fable should challenge the proposal with concrete failure modes and evidence.
-The useful questions are:
-
-1. Which Rust UI framework best supports a non-activating transparent pill,
-   high-DPI/multiple displays, tray/menu bar, keyboard interaction, accessibility,
-   and efficient animation on both target OSes?
-2. Where do session state, audio capture, inference, rendering, and text
-   insertion live, and how do cancellation and ownership cross those boundaries?
-3. Which platform adapters and dependencies are necessary? What maintenance,
-   packaging, licensing, and standards-adaptation costs do they introduce?
-4. What minimum OS versions and CPU architectures are required? Which Mac or
-   macOS runner is available for builds and real acceptance testing?
-5. What measurements and thresholds establish success on named hardware?
-   Include input-to-feedback latency, frame pacing, microphone startup,
-   warm/cold inference, insertion latency, idle CPU, RAM/VRAM, and power use.
-6. How can the rewrite preserve proven behavior while keeping the repository
-   and agent workflows small and understandable?
-
-Proposed performance intent, not measured results or finalized budgets:
-display-paced animation targeting 120 Hz where supported (about 8.3 ms per
-frame), immediate recording feedback, and no continuous animation when hidden
-or idle. Respect reduced-motion preferences. Separate UI performance from model
-inference, and evaluate contention when both use the GPU.
-
-The suggested first implementation milestone is one complete path:
-**shortcut -> non-activating animated pill -> record -> transcribe -> insert**,
-with reliable Escape cancellation. Prove it on Windows and macOS before
-committing to the full UI migration. WSL can host planning and portable Rust
-work, but is not a substitute for native acceptance on either target.
-
-## Primary references already consulted
-
-- [GPUI](https://gpui.rs/) and its
-  [official README](https://github.com/zed-industries/zed/blob/main/crates/gpui/README.md)
-  for architecture, platform support, and pre-1.0 status.
-- [Zed's Windows implementation](https://zed.dev/blog/zed-for-windows-is-here)
-  for DirectX and native Windows integration.
-- [GPUI frame-pacing investigation](https://zed.dev/blog/120fps) for why GPU
-  rendering alone does not guarantee smooth presentation.
-- [Iced](https://github.com/iced-rs/iced) for the alternative shared Rust UI.
-- [whisper.cpp](https://github.com/ggml-org/whisper.cpp) for Windows/macOS
-  support and Apple Silicon acceleration.
-
-Recheck current versions and APIs before adopting a framework or dependency.
+The user requested mocks while unavailable. Continue using public fixtures and
+owned demo windows; do not reopen live capture/hook/clipboard/input testing
+without renewed direction. User settings remain untouched. Historical probe
+recipes and evidence live under ignored `artifacts/rust/profiling/`; old `/tmp`
+references may be absent after the earlier WSL restart. All delivery checks and
+review workers are complete.
