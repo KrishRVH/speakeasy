@@ -191,7 +191,7 @@ pub fn set_pill_visible(handle: RawWindowHandle, visible: bool) {
                         let frame = screen.visibleFrame();
                         let origin = objc2_foundation::NSPoint::new(
                             frame.origin.x + (frame.size.width - 400.0) / 2.0,
-                            frame.origin.y + 8.0,
+                            frame.origin.y + 2.0,
                         );
                         let _: () = msg_send![window, setFrameOrigin: origin];
                     }

@@ -3,7 +3,7 @@ use anyhow::{Context, bail};
 use std::{cell::RefCell, ptr::null_mut, sync::mpsc, thread};
 use windows_sys::Win32::{
     Foundation::*,
-    Graphics::Gdi::*,
+    Graphics::{Dwm::*, Gdi::*},
     System::{
         LibraryLoader::GetModuleHandleW,
         RemoteDesktop::*,
@@ -273,8 +273,30 @@ pub fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
         bail!("Expected a Windows window");
     };
     let hwnd = raw.hwnd.get() as HWND;
-    // SAFETY: the caller holds a live GPUI window on its owning UI thread.
+    // SAFETY: the caller holds a live GPUI window on its owning UI thread, and
+    // both DWM values are 32-bit locals that outlive their synchronous calls.
     unsafe {
+        // GPUI creates an overlapped window, whose frame Windows 11 outlines
+        // and shadows around the whole transparent surface. The pill is a
+        // plain popup with no frame, border, or rounded corners.
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        SetWindowLongPtrW(
+            hwnd,
+            GWL_STYLE,
+            (style & !(WS_OVERLAPPEDWINDOW as isize)) | WS_POPUP as isize,
+        );
+        let border = DWMWA_COLOR_NONE;
+        let corners = DWMWCP_DONOTROUND;
+        for (attribute, value) in [
+            (DWMWA_BORDER_COLOR, (&border as *const u32).cast()),
+            (
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                (&corners as *const i32).cast(),
+            ),
+        ] {
+            // Windows 10 lacks these attributes; its popups draw neither anyway.
+            let _ = DwmSetWindowAttribute(hwnd, attribute as u32, value, 4);
+        }
         let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         SetWindowLongPtrW(
             hwnd,
@@ -398,7 +420,7 @@ pub fn set_pill_visible(handle: RawWindowHandle, visible: bool) {
                         raw.hwnd.get() as HWND,
                         HWND_TOPMOST,
                         (info.rcWork.left + info.rcWork.right - width) / 2,
-                        info.rcWork.bottom - height - (8.0 * scale) as i32,
+                        info.rcWork.bottom - height - (2.0 * scale) as i32,
                         width,
                         height,
                         SWP_NOACTIVATE,

@@ -492,7 +492,9 @@ impl Render for Pill {
             .flex()
             .items_end()
             .justify_center()
-            .pb(px(20.0 - self.lift.value))
+            // Room below the capsule for its whole shadow; the window sits 2 DIP
+            // above the work area, placing the capsule 28 DIP above its edge.
+            .pb(px(26.0 - self.lift.value))
             .child(
                 div()
                     .relative()
