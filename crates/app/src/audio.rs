@@ -308,8 +308,20 @@ pub(crate) fn wave(mut pcm: Vec<u8>, rate: u32) -> Vec<u8> {
     pcm
 }
 
-/// Enumeration opens no recording stream. Run away from the UI because device drivers may block.
-pub fn microphones() -> anyhow::Result<Vec<(String, String)>> {
+/// Lists input devices without opening a stream. Drivers may block, and CPAL
+/// leaves its calling thread in a single-threaded COM apartment, which a shared
+/// executor thread must not keep. Enumeration runs on its own short-lived thread.
+pub async fn microphones() -> anyhow::Result<Vec<(String, String)>> {
+    let (tx, rx) = async_channel::bounded(1);
+    thread::Builder::new()
+        .name("microphones".into())
+        .spawn(move || {
+            let _ = tx.send_blocking(enumerate_microphones());
+        })?;
+    rx.recv().await?
+}
+
+fn enumerate_microphones() -> anyhow::Result<Vec<(String, String)>> {
     cpal::default_host()
         .input_devices()?
         .map(|device| {

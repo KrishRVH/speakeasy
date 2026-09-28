@@ -1,15 +1,24 @@
 use super::*;
 use anyhow::{Context, bail};
-use std::{cell::RefCell, ptr::null_mut, sync::mpsc, thread};
+use std::{
+    cell::RefCell,
+    ffi::OsString,
+    os::windows::ffi::OsStringExt,
+    path::PathBuf,
+    ptr::{null, null_mut},
+    sync::mpsc,
+    thread,
+};
 use windows_sys::Win32::{
     Foundation::*,
     Graphics::{Dwm::*, Gdi::*},
     System::{
+        Com::{COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize},
         LibraryLoader::GetModuleHandleW,
         RemoteDesktop::*,
         Threading::{GetCurrentProcessId, GetCurrentThreadId},
     },
-    UI::{HiDpi::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
+    UI::{Controls::Dialogs::*, HiDpi::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
 };
 
 const OWN_INPUT: usize = 0x53504541;
@@ -399,6 +408,74 @@ pub fn set_settings_visible(handle: RawWindowHandle, visible: bool) {
             }
         }
     }
+}
+
+/// Asks for one existing file, offering `filter` (a name and pattern) before
+/// all files. The dialog runs its own message loop on a dedicated thread:
+/// shown from GPUI's UI thread, it stays unpainted while GPUI is idle.
+pub async fn choose_file(
+    owner: RawWindowHandle,
+    title: &str,
+    filter: [&str; 2],
+) -> anyhow::Result<Option<PathBuf>> {
+    let RawWindowHandle::Win32(raw) = owner else {
+        bail!("Expected a Windows window");
+    };
+    let owner = raw.hwnd.get();
+    let title: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
+    let filter: Vec<u16> = [filter[0], filter[1], "All files", "*.*", ""]
+        .join("\0")
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    let (tx, rx) = async_channel::bounded(1);
+    thread::Builder::new()
+        .name("file dialog".into())
+        .spawn(move || {
+            let _ = tx.send_blocking(open_file(owner as HWND, &title, &filter));
+        })?;
+    rx.recv().await?
+}
+
+fn open_file(owner: HWND, title: &[u16], filter: &[u16]) -> anyhow::Result<Option<PathBuf>> {
+    let mut file = vec![0u16; 32_768];
+    let mut dialog = OPENFILENAMEW {
+        lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
+        hwndOwner: owner,
+        lpstrFilter: filter.as_ptr(),
+        nFilterIndex: 1,
+        lpstrFile: file.as_mut_ptr(),
+        nMaxFile: file.len() as u32,
+        lpstrTitle: title.as_ptr(),
+        Flags: OFN_EXPLORER
+            | OFN_FILEMUSTEXIST
+            | OFN_PATHMUSTEXIST
+            | OFN_HIDEREADONLY
+            | OFN_NOCHANGEDIR,
+        ..Default::default()
+    };
+    // SAFETY: this thread owns the dialog's apartment and message loop, and
+    // every buffer in `dialog` outlives the synchronous call.
+    let error = unsafe {
+        let apartment = CoInitializeEx(
+            null(),
+            (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32,
+        );
+        let error = if GetOpenFileNameW(&mut dialog) == 0 {
+            CommDlgExtendedError()
+        } else {
+            0
+        };
+        if apartment >= 0 {
+            CoUninitialize();
+        }
+        error
+    };
+    if error != 0 {
+        bail!("The file dialog failed with code {error:#x}");
+    }
+    let length = file.iter().position(|&unit| unit == 0).unwrap_or(0);
+    Ok((length > 0).then(|| OsString::from_wide(&file[..length]).into()))
 }
 
 pub fn set_pill_visible(handle: RawWindowHandle, visible: bool) {

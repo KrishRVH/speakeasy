@@ -371,9 +371,7 @@ enum Action {
 
 impl Settings {
     fn refresh_devices(&mut self, cx: &mut Context<Self>) {
-        let enumeration = cx
-            .background_executor()
-            .spawn(async { audio::microphones() });
+        let enumeration = audio::microphones();
         self.devices = Some(cx.spawn(async move |this, cx| {
             let result = enumeration.await;
             let _ = this.update(cx, |view, cx| {
@@ -389,50 +387,43 @@ impl Settings {
             });
         }));
     }
-    fn choose(&mut self, model: bool, cx: &mut Context<Self>) {
+    fn choose(&mut self, model: bool, window: &Window, cx: &mut Context<Self>) {
         if self.dialog.is_some() {
             return;
         }
-        let picker = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some(
-                if self.config.engine == Engine::Parakeet && model {
-                    "Choose a Parakeet v3 GGUF model"
-                } else if self.config.engine == Engine::Parakeet {
-                    "Choose nemo-speech"
-                } else if model {
-                    "Choose a Whisper GGML model"
-                } else {
-                    "Choose whisper-server"
-                }
-                .into(),
+        let (title, filter) = match (self.config.engine, model) {
+            (Engine::Parakeet, true) => (
+                "Choose a Parakeet v3 GGUF model",
+                ["Parakeet models", "*.gguf"],
             ),
-        });
+            (Engine::Parakeet, false) => ("Choose nemo-speech", ["Programs", "*.exe"]),
+            (Engine::Whisper, true) => ("Choose a Whisper GGML model", ["Whisper models", "*.bin"]),
+            (Engine::Whisper, false) => ("Choose whisper-server", ["Programs", "*.exe"]),
+        };
+        let picker = choose_file(window, title, filter, cx);
         self.dialog = Some(cx.spawn(async move |this, cx| {
             let result = picker.await;
             let _ = this.update(cx, |view, cx| {
                 match result {
-                    Ok(Ok(Some(paths))) => {
-                        if let Some(path) = paths.into_iter().next() {
-                            if model {
-                                view.config.model = path;
-                            } else {
-                                view.config.engine_executable = path;
-                            }
-                            view.notice = Some("Unsaved changes".into());
+                    Ok(Some(path)) => {
+                        if model {
+                            view.config.model = path;
+                        } else {
+                            view.config.engine_executable = path;
                         }
+                        view.notice = Some("Unsaved changes".into());
                     }
-                    Ok(Ok(None)) => {}
-                    _ => view.notice = Some("Could not open the file picker. Try again.".into()),
+                    Ok(None) => {}
+                    Err(_) => {
+                        view.notice = Some("Could not open the file picker. Try again.".into())
+                    }
                 }
                 view.dialog = None;
                 cx.notify();
             });
         }));
     }
-    fn act(&mut self, action: Action, cx: &mut Context<Self>) {
+    fn act(&mut self, action: Action, window: &Window, cx: &mut Context<Self>) {
         match action {
             Action::Engine => {
                 self.config.engine = match self.config.engine {
@@ -445,8 +436,8 @@ impl Settings {
                 self.notice =
                     Some("Choose the executable and model for this engine, then save.".into());
             }
-            Action::Executable => self.choose(false, cx),
-            Action::Model => self.choose(true, cx),
+            Action::Executable => self.choose(false, window, cx),
+            Action::Model => self.choose(true, window, cx),
             Action::Refresh => {
                 if !self.demo {
                     self.refresh_devices(cx);
@@ -650,14 +641,43 @@ fn button(
         .hover(|s| s.bg(rgb(mix(palette.raise, palette.ink, 0.08))))
         .focus(|s| s.border_color(rgb(palette.lamp)))
         .cursor_pointer()
-        .on_click(cx.listener(move |view, _, _, cx| view.act(action, cx)))
-        .on_key_down(cx.listener(move |view, event: &KeyDownEvent, _, cx| {
+        .on_click(cx.listener(move |view, _, window, cx| view.act(action, window, cx)))
+        .on_key_down(cx.listener(move |view, event: &KeyDownEvent, window, cx| {
             if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                view.act(action, cx);
+                view.act(action, window, cx);
                 cx.stop_propagation();
             }
         }))
         .child(label)
+}
+/// Windows gets the platform dialog: GPUI shows its picker inside the UI
+/// thread's message loop, where it stays unpainted while GPUI is idle.
+#[cfg(target_os = "windows")]
+fn choose_file(
+    window: &Window,
+    title: &'static str,
+    filter: [&'static str; 2],
+    _: &App,
+) -> impl Future<Output = anyhow::Result<Option<PathBuf>>> + use<> {
+    let owner = HasWindowHandle::window_handle(window)
+        .map(|handle| handle.as_raw())
+        .map_err(|error| anyhow::anyhow!("Cannot access Settings window: {error}"));
+    async move { speakeasy_platform::choose_file(owner?, title, filter).await }
+}
+#[cfg(not(target_os = "windows"))]
+fn choose_file(
+    _: &Window,
+    title: &'static str,
+    _: [&'static str; 2],
+    cx: &App,
+) -> impl Future<Output = anyhow::Result<Option<PathBuf>>> + use<> {
+    let paths = cx.prompt_for_paths(PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: false,
+        prompt: Some(title.into()),
+    });
+    async move { Ok(paths.await??.and_then(|paths| paths.into_iter().next())) }
 }
 fn label(text: &'static str, palette: &'static Palette) -> impl IntoElement {
     div()
