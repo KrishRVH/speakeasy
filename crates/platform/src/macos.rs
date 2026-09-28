@@ -145,8 +145,11 @@ pub fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
             bail!("The pill has no native window");
         }
         let _: () = msg_send![window, setIgnoresMouseEvents: true];
-        // GPUI creates a titled panel; its system shadow outlines the whole
-        // transparent window. The capsule draws its own shadow.
+        // GPUI creates a titled panel. Its frame draws a highlight along the
+        // top edge in dark mode, and its shadow outlines the whole transparent
+        // window. A borderless panel has neither; the capsule draws its own
+        // shadow. The content view already filled the frame, so its size holds.
+        let _: () = msg_send![window, setStyleMask: 1_usize << 7]; // borderless, NSWindowStyleMaskNonactivatingPanel
         let _: () = msg_send![window, setHasShadow: false];
         let _: () = msg_send![window, setLevel: 3_isize]; // NSFloatingWindowLevel
         let _: () = msg_send![window, setCollectionBehavior: 1_usize | (1 << 8)]; // all Spaces + full-screen auxiliary
