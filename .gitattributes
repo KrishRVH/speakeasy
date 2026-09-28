@@ -6,10 +6,12 @@
 
 # Native assets, local speech models, and release binaries are never text.
 *.bin binary
-*.gguf binary
 *.dll binary
 *.exe binary
+*.gguf binary
+*.icns binary
 *.ico binary
 *.png binary
+*.ttf binary
 *.wav binary
 *.zip binary

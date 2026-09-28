@@ -4,6 +4,7 @@ use crate::{
     pill::Pill,
     runtime::{ModelState, Phase, Runtime, Snapshot},
     status,
+    theme::{Palette, alpha, mix},
 };
 use gpui::{prelude::*, *};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -64,7 +65,7 @@ impl Services {
             self.output.send_modify(|snapshot| {
                 snapshot.phase = Phase::Idle;
                 snapshot.model = ModelState::Loading;
-                snapshot.message = "Loading local model…".into();
+                snapshot.message = crate::runtime::LOADING.into();
             });
             let runtime = Runtime::start(config.clone(), self.output.clone())?;
             let monitor = match InputMonitor::start(runtime.input.clone()) {
@@ -361,6 +362,7 @@ enum Action {
     Gpu,
     Clipboard,
     Motion,
+    Theme,
     Save,
     Pause,
     Preview,
@@ -499,6 +501,16 @@ impl Settings {
                     self.notice = None;
                 }
             }
+            Action::Theme => {
+                self.config.theme = self.config.theme.next();
+                self.notice = Some("Unsaved changes".into());
+                if self.demo {
+                    let theme = self.config.theme;
+                    cx.update_global::<Services, _>(|services, _| services.config.theme = theme);
+                    show_theme(theme, cx);
+                    self.notice = None;
+                }
+            }
             Action::Save => {
                 if self.demo {
                     self.notice =
@@ -525,6 +537,7 @@ impl Settings {
                         view.set_reduced(reduced);
                         cx.notify();
                     });
+                    show_theme(cx.global::<Services>().config.theme, cx);
                 }
             }
             Action::Pause => {
@@ -603,9 +616,20 @@ impl Settings {
         }));
     }
 }
+// The pill and tray follow the saved theme; Settings previews unsaved edits.
+fn show_theme(theme: crate::theme::Theme, cx: &mut App) {
+    let pill = cx.global::<Services>().pill;
+    let _ = pill.update(cx, |view, _, cx| {
+        view.set_theme(theme);
+        cx.notify();
+    });
+    // Republish the current snapshot so the tray redraws its icon.
+    cx.global::<Services>().output.send_modify(|_| ());
+}
 fn button(
     label: impl Into<SharedString>,
     action: Action,
+    palette: &'static Palette,
     cx: &Context<Settings>,
 ) -> impl IntoElement {
     let label = label.into();
@@ -618,13 +642,13 @@ fn button(
         .overflow_hidden()
         .text_ellipsis()
         .py(px(8.0))
-        .rounded(px(7.0))
+        .rounded(px(3.0))
         .border_1()
-        .border_color(rgb(0x35363d))
-        .bg(rgb(0x23242a))
+        .border_color(rgb(mix(palette.raise, palette.ink, 0.14)))
+        .bg(rgb(palette.raise))
         .text_size(px(12.0))
-        .hover(|s| s.bg(rgb(0x303138)))
-        .focus(|s| s.border_color(rgb(0xff765d)))
+        .hover(|s| s.bg(rgb(mix(palette.raise, palette.ink, 0.08))))
+        .focus(|s| s.border_color(rgb(palette.lamp)))
         .cursor_pointer()
         .on_click(cx.listener(move |view, _, _, cx| view.act(action, cx)))
         .on_key_down(cx.listener(move |view, event: &KeyDownEvent, _, cx| {
@@ -635,11 +659,54 @@ fn button(
         }))
         .child(label)
 }
-fn label(text: &'static str) -> impl IntoElement {
+fn label(text: &'static str, palette: &'static Palette) -> impl IntoElement {
     div()
         .text_size(px(12.0))
-        .text_color(rgb(0xa7a8b0))
+        .text_color(rgb(palette.muted))
         .child(text)
+}
+// A cut-jewel status mark, matching the tray badges.
+fn jewel(color: u32, size: f32) -> impl IntoElement {
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let center = bounds.center();
+            crate::pill::keystone(
+                window,
+                f32::from(center.x),
+                f32::from(center.y),
+                size / 2.0,
+                rgb(color),
+            );
+        },
+    )
+    .size(px(size))
+    .flex_none()
+}
+// GPUI text has no tracking, so the wordmark spaces its capitals as glyphs.
+fn wordmark(palette: &'static Palette) -> impl IntoElement {
+    div()
+        .flex()
+        .gap(px(5.0))
+        .font_family(crate::WORDMARK_FONT)
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_size(px(19.0))
+        .text_color(rgb(palette.ink))
+        .children(
+            "SPEAKEASY"
+                .chars()
+                .map(|letter| div().child(letter.to_string())),
+        )
+}
+fn keystone_rule(palette: &'static Palette) -> impl IntoElement {
+    let rule = || div().flex_1().h(px(1.0)).bg(alpha(palette.lamp, 0.3));
+    div()
+        .flex()
+        .items_center()
+        .gap(px(8.0))
+        .child(rule())
+        .child(jewel(palette.lamp, 6.0))
+        .child(rule())
 }
 fn filename(path: &std::path::Path) -> String {
     path.file_name().map_or_else(
@@ -657,11 +724,13 @@ impl Render for Settings {
                 services.retiring.is_some(),
             )
         };
+        let palette = self.config.theme.palette();
+        let dim = mix(palette.room, palette.muted, 0.6);
         let indicator_color = match indicator {
-            status::Indicator::Recording => 0xff4f2e,
-            status::Indicator::Attention => 0xf5a524,
-            status::Indicator::Ready => 0xe0e0e4,
-            status::Indicator::Busy | status::Indicator::Paused => 0x73747d,
+            status::Indicator::Recording => palette.live,
+            status::Indicator::Attention => palette.warn,
+            status::Indicator::Ready => palette.lamp,
+            status::Indicator::Busy | status::Indicator::Paused => dim,
         };
         let microphone = match &self.config.microphone {
             None => "System default".to_owned(),
@@ -689,8 +758,8 @@ impl Render for Settings {
             })
             .size_full()
             .overflow_y_scroll()
-            .bg(rgb(0x111215))
-            .text_color(rgb(0xeaeaec))
+            .bg(rgb(palette.room))
+            .text_color(rgb(palette.ink))
             .p(px(32.0))
             .flex()
             .flex_col()
@@ -698,22 +767,31 @@ impl Render for Settings {
             .child(
                 div()
                     .flex()
-                    .items_center()
+                    .flex_col()
                     .gap(px(10.0))
-                    .child(div().size(px(8.0)).rounded_full().bg(rgb(indicator_color)))
-                    .child(div().text_size(px(24.0)).child("Speakeasy")),
-            )
-            .child(
-                div()
-                    .text_size(px(14.0))
-                    .text_color(rgb(0xa7a8b0))
-                    .child("Your voice, right where you’re working."),
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(12.0))
+                            .child(jewel(indicator_color, 10.0))
+                            .child(wordmark(palette)),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(14.0))
+                            .text_color(rgb(palette.muted))
+                            .child("Say the word."),
+                    )
+                    .child(keystone_rule(palette)),
             )
             .child(
                 div()
                     .p(px(16.0))
-                    .rounded(px(10.0))
-                    .bg(rgb(0x1a1b20))
+                    .rounded(px(4.0))
+                    .bg(rgb(palette.panel))
+                    .border_1()
+                    .border_color(alpha(palette.lamp, 0.14))
                     .text_size(px(13.0))
                     .line_height(px(23.0))
                     .child("Hold Ctrl + Alt + Space to speak.")
@@ -729,13 +807,14 @@ impl Render for Settings {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .child(label("LOCAL SPEECH"))
+                            .child(label("LOCAL SPEECH", palette))
                             .child(button(
                                 match self.config.engine {
                                     Engine::Whisper => "Engine: Whisper",
                                     Engine::Parakeet => "Engine: Parakeet",
                                 },
                                 Action::Engine,
+                                palette,
                                 cx,
                             )),
                     )
@@ -752,7 +831,7 @@ impl Render for Settings {
                                     .text_size(px(12.0))
                                     .child(filename(&self.config.engine_executable)),
                             )
-                            .child(button("Choose executable", Action::Executable, cx)),
+                            .child(button("Choose executable", Action::Executable, palette, cx)),
                     )
                     .child(
                         div()
@@ -767,7 +846,7 @@ impl Render for Settings {
                                     .text_size(px(12.0))
                                     .child(filename(&self.config.model)),
                             )
-                            .child(button("Choose model", Action::Model, cx)),
+                            .child(button("Choose model", Action::Model, palette, cx)),
                     ),
             )
             .child(
@@ -775,13 +854,13 @@ impl Render for Settings {
                     .flex()
                     .flex_col()
                     .gap(px(8.0))
-                    .child(label("MICROPHONE"))
+                    .child(label("MICROPHONE", palette))
                     .child(
                         div()
                             .flex()
                             .gap(px(8.0))
-                            .child(button(microphone, Action::Microphone, cx))
-                            .child(button("Refresh", Action::Refresh, cx)),
+                            .child(button(microphone, Action::Microphone, palette, cx))
+                            .child(button("Refresh", Action::Refresh, palette, cx)),
                     ),
             )
             .child(
@@ -789,7 +868,7 @@ impl Render for Settings {
                     .flex()
                     .flex_col()
                     .gap(px(8.0))
-                    .child(label("PREFERENCES"))
+                    .child(label("PREFERENCES", palette))
                     .child(div().flex().gap(px(8.0)).child(
                         if self.config.engine == Engine::Parakeet {
                             div()
@@ -808,6 +887,7 @@ impl Render for Settings {
                                         language => format!("Language: {language}"),
                                     },
                                     Action::Language,
+                                    palette,
                                     cx,
                                 ))
                                 .child(button(
@@ -817,6 +897,7 @@ impl Render for Settings {
                                         "Prefer GPU: Off"
                                     },
                                     Action::Gpu,
+                                    palette,
                                     cx,
                                 ))
                                 .into_any_element()
@@ -833,6 +914,7 @@ impl Render for Settings {
                                     "Keep clipboard: Off"
                                 },
                                 Action::Clipboard,
+                                palette,
                                 cx,
                             ))
                             .child(button(
@@ -842,9 +924,16 @@ impl Render for Settings {
                                     "Reduce motion: Off"
                                 },
                                 Action::Motion,
+                                palette,
                                 cx,
                             )),
-                    ),
+                    )
+                    .child(div().flex().child(button(
+                        format!("Theme: {}", self.config.theme.name()),
+                        Action::Theme,
+                        palette,
+                        cx,
+                    ))),
             )
             .child(
                 div()
@@ -863,18 +952,21 @@ impl Render for Settings {
                         } else {
                             Action::Save
                         },
+                        palette,
                         cx,
                     ))
-                    .when(running, |row| row.child(button("Pause", Action::Pause, cx)))
-                    .child(button("Quit", Action::Quit, cx)),
+                    .when(running, |row| {
+                        row.child(button("Pause", Action::Pause, palette, cx))
+                    })
+                    .child(button("Quit", Action::Quit, palette, cx)),
             )
             .child(
                 div()
                     .text_size(px(12.0))
                     .text_color(rgb(if self.notice.is_some() {
-                        0xf2bd78
+                        palette.warn
                     } else {
-                        0xa7a8b0
+                        palette.muted
                     }))
                     .child(self.status.clone())
                     .when_some(self.notice.clone(), |status, notice| {
@@ -884,7 +976,7 @@ impl Render for Settings {
             .child(
                 div()
                     .text_size(px(11.0))
-                    .text_color(rgb(0x73747d))
+                    .text_color(rgb(dim))
                     .child(if self.demo {
                         "Preview only · Simulated audio · No insertion"
                     } else {

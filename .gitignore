@@ -1,28 +1,22 @@
-# Generated build and editor output.
-**/[Bb]in/
-**/[Oo]bj/
-/.vs/
+# Generated build output.
 /artifacts/
 /target/
-*.user
-*.suo
 
 # Local configuration, credentials, downloaded models, and runtime tools.
-.env
-.env.*
 /settings.json
 /instance.lock
 /instance.port
 /tray-hint-seen
+.env
+.env.*
 /models/
 /tools/
-/recordings/
 
-# Temporary output; intentional fixtures and shared editor files remain visible.
+# Temporary and operating-system files.
 *.log
-*.tmp
 *.temp
-/tmp/
+*.tmp
 /.tmp/
-Thumbs.db
+/tmp/
 Desktop.ini
+Thumbs.db

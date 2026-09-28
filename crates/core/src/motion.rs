@@ -15,12 +15,8 @@ impl Spring {
         }
     }
 
-    pub fn step(&mut self, seconds: f32) {
-        self.step_with_response(seconds, 24.0);
-    }
-
-    /// Higher positive response values settle sooner while retaining velocity.
-    pub fn step_with_response(&mut self, seconds: f32, omega: f32) {
+    /// Advances by `seconds`; a higher positive `omega` settles sooner.
+    pub fn step(&mut self, seconds: f32, omega: f32) {
         let seconds = seconds.max(0.0);
         let displacement = self.value - self.target;
         let c = self.velocity + omega * displacement;
@@ -53,14 +49,14 @@ mod tests {
         let mut zero = Spring::new(56.0);
         for spring in [&mut negative, &mut zero] {
             spring.target = 188.0;
-            spring.step(0.05);
+            spring.step(0.05, 24.0);
         }
-        negative.step(-0.1);
-        zero.step(0.0);
+        negative.step(-0.1, 24.0);
+        zero.step(0.0, 24.0);
         assert_eq!(negative.value, zero.value);
         assert_eq!(negative.velocity, zero.velocity);
-        negative.step(0.05);
-        zero.step(0.05);
+        negative.step(0.05, 24.0);
+        zero.step(0.05, 24.0);
         assert_eq!(negative.value, zero.value);
         assert_eq!(negative.velocity, zero.velocity);
     }
@@ -72,16 +68,16 @@ mod tests {
         a.target = 188.0;
         b.target = 188.0;
         for _ in 0..12 {
-            a.step(1.0 / 120.0);
+            a.step(1.0 / 120.0, 24.0);
         }
         for _ in 0..6 {
-            b.step(1.0 / 60.0);
+            b.step(1.0 / 60.0, 24.0);
         }
         assert!((a.value - b.value).abs() < 0.001);
         let value = a.value;
         a.target = 72.0;
         assert_eq!(a.value, value);
-        a.step(4.0);
+        a.step(4.0, 24.0);
         assert_eq!(a.value, 72.0);
     }
 }

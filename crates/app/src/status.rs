@@ -49,7 +49,7 @@ pub fn description(snapshot: &Snapshot, running: bool, pausing: bool, engine: En
         Phase::Stopping => "Finishing capture…".into(),
         Phase::Processing => "Transcribing locally…".into(),
         _ => match snapshot.model {
-            ModelState::Loading => "Loading local model…".into(),
+            ModelState::Loading => crate::runtime::LOADING.into(),
             ModelState::Unavailable => "Model unavailable · Open Settings".into(),
             ModelState::Ready => format!(
                 "Ready · {}",

@@ -5,6 +5,7 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use rtrb::{Producer, RingBuffer};
+use speakeasy_core::gesture::RECORDING_LIMIT;
 use std::{
     sync::{
         Arc,
@@ -79,7 +80,7 @@ fn record(
     let (producer, mut consumer) = RingBuffer::new(rate as usize);
     let failed = Arc::new(AtomicBool::new(false));
     let started = Instant::now();
-    let limit = rate as usize * 300;
+    let limit = rate as usize * RECORDING_LIMIT.as_secs() as usize;
     let stream = match format.sample_format() {
         SampleFormat::F32 => stream::<f32>(
             &device,
@@ -137,7 +138,7 @@ fn record(
             bail!("Microphone disconnected or audio buffer overran. Try recording again.");
         }
         if command.load(Ordering::Acquire) == 1
-            || started.elapsed() >= Duration::from_secs(300)
+            || started.elapsed() >= RECORDING_LIMIT
             || (pcm.len() - 44) / 2 >= limit
         {
             let _ = command.compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire);
@@ -212,8 +213,7 @@ where
     Ok(device.build_input_stream(
         config,
         move |data: &[T], _| {
-            if command.load(Ordering::Acquire) != 0 || started.elapsed() >= Duration::from_secs(300)
-            {
+            if command.load(Ordering::Acquire) != 0 || started.elapsed() >= RECORDING_LIMIT {
                 return;
             }
             for frame in data.chunks_exact(channels) {

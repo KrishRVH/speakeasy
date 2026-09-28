@@ -7,5 +7,6 @@
   "threads": 4,
   "use_gpu": true,
   "reduced_motion": false,
-  "preserve_clipboard": false
+  "preserve_clipboard": false,
+  "theme": "jet"
 }

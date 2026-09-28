@@ -9,11 +9,15 @@ mod ports;
 mod runtime;
 mod shell;
 mod status;
+mod theme;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 mod tray;
 use anyhow::{Context as _, bail};
 use gpui::*;
 use runtime::Snapshot;
+
+// Josefin Sans SemiBold, SIL Open Font License 1.1 (assets/JosefinSans-OFL.txt).
+const WORDMARK_FONT: &str = "Josefin Sans";
 
 fn main() {
     if let Err(error) = run() {
@@ -94,8 +98,14 @@ fn run() -> anyhow::Result<()> {
     let application = Application::new();
     application.on_reopen(shell::reveal);
     application.run(move |cx| {
+        // Without the brand face, the wordmark falls back to the system font.
+        let _ = cx
+            .text_system()
+            .add_fonts(vec![std::borrow::Cow::Borrowed(include_bytes!(
+                "../assets/JosefinSans-SemiBold.ttf"
+            ))]);
         let reduced = config.reduced_motion || speakeasy_platform::reduced_motion();
-        let pill = match pill::open(updates, reduced, cx) {
+        let pill = match pill::open(updates, reduced, config.theme, cx) {
             Ok(pill) => pill,
             Err(error) => {
                 speakeasy_platform::show_error(&format!("Cannot open pill: {error}"));

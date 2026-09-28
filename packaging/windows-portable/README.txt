@@ -1,7 +1,7 @@
 Speakeasy for Windows — local dictation
 
 This bundle includes the app, Parakeet engine and model. It requires an NVIDIA
-GPU and was verified on an RTX 4090. It works offline without an account.
+GPU and works offline without an account.
 
 1. Extract the entire Speakeasy folder to a Windows drive. Keep its files together.
 2. Double-click Speakeasy.cmd. The app starts in the system tray.
@@ -32,6 +32,5 @@ To also preview the tray and Settings hide/reopen behavior, run:
 Speakeasy.cmd --demo-tray
 Quit the regular app first; each folder runs one tray instance at a time.
 
-Automated checks used public audio and simulated capture/insertion. Actual
-microphone-to-editor behavior has not been manually verified on this machine.
 See MODEL-NOTICE.txt and engine/licenses for included component attribution.
+The Speakeasy wordmark uses Josefin Sans under JosefinSans-OFL.txt.

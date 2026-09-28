@@ -30,10 +30,11 @@ flowchart LR
 | `crates/app/src/audio.rs` | CPAL capture, bounded callback ring, audio levels, speech gate, quiet-edge trimming, and five-minute recording limit. |
 | `crates/app/src/local_speech.rs` | Warm Whisper or Parakeet process, loopback HTTP, bounded responses, and cancellation recovery. |
 | `crates/app/src/ports.rs` | Capture, speech, and insertion interfaces used by the session owner and unattended fixtures. |
-| `crates/app/src/pill.rs` | Tally pill, measured audio envelope, and frame-driven motion. |
+| `crates/app/src/pill.rs` | Grille pill, measured audio envelope, and frame-driven motion. |
 | `crates/app/src/shell.rs` | Settings, native file selection, microphone selection, pause, and runtime retirement. |
 | `crates/app/src/tray.rs` | Owned native tray icon, menu actions, and snapshot-driven status updates. |
 | `crates/app/src/status.rs` | Shared readiness and capture status for Settings and the tray. |
+| `crates/app/src/theme.rs` | Selectable color themes shared by Settings, the pill, and the tray. |
 | `crates/app/src/instance.rs` | Configuration-directory lock and an owned loopback listener for revealing the existing Settings window. |
 | `crates/app/src/config.rs` | Typed settings, path resolution, validation, and atomic saves. |
 
@@ -121,4 +122,4 @@ real controller and local worker; `--demo` uses the actual views with scripted
 levels and no microphone, global hook, or insertion. Native microphone/editor
 acceptance requires explicit opt-in and is reported separately. Build commands
 are in the [README](../README.md); measured costs and remaining performance gaps
-are in the [performance audit](performance-audit.md).
+are in [performance](performance.md).

@@ -1,14 +1,14 @@
 use crate::runtime::{Phase, Snapshot};
+use crate::theme::{Palette, Theme, alpha, mix};
 use gpui::{prelude::*, *};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use raw_window_handle::HasWindowHandle;
-use speakeasy_core::motion::Spring;
+use speakeasy_core::{gesture::RECORDING_LIMIT, motion::Spring};
 use std::time::{Duration, Instant};
 
 const SUBMITTED_FOR: Duration = Duration::from_millis(350);
 const EMPTY_FOR: Duration = Duration::from_millis(1200);
 const ERROR_FOR: Duration = Duration::from_secs(8);
-const LIMIT_SECONDS: u64 = 300;
 
 // Deadlines are presentation-only. A wake only redraws the current snapshot;
 // it never publishes session state or changes a capture/insertion deadline.
@@ -23,11 +23,9 @@ fn feedback_remaining(phase: Phase, elapsed: Duration) -> Option<Duration> {
 }
 
 fn recording_clock(seconds: u64) -> (bool, String) {
-    if seconds >= LIMIT_SECONDS - 30 {
-        (
-            true,
-            format!("0:{:02} left", LIMIT_SECONDS.saturating_sub(seconds)),
-        )
+    let limit = RECORDING_LIMIT.as_secs();
+    if seconds >= limit - 30 {
+        (true, format!("0:{:02} left", limit.saturating_sub(seconds)))
     } else {
         (false, format!("{}:{:02}", seconds / 60, seconds % 60))
     }
@@ -40,12 +38,14 @@ pub struct Pill {
     opacity: Spring,
     lift: Spring,
     waveform: Spring,
+    lid: Spring,
     meter: [Spring; 24],
     history: [f32; 24],
     frame_at: Instant,
     phase_at: Instant,
     hint_until: Option<Instant>,
     reduced: bool,
+    theme: Theme,
     visible: bool,
     animating: bool,
     wake: Option<Task<()>>,
@@ -57,6 +57,10 @@ pub struct Pill {
 impl Pill {
     pub fn set_reduced(&mut self, reduced: bool) {
         self.reduced = reduced;
+    }
+
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.theme = theme;
     }
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -77,6 +81,7 @@ impl Pill {
     pub fn new(
         mut updates: tokio::sync::watch::Receiver<Snapshot>,
         reduced: bool,
+        theme: Theme,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -150,17 +155,19 @@ impl Pill {
         });
         Self {
             snapshot: Snapshot::default(),
-            width: Spring::new(56.0),
-            height: Spring::new(28.0),
+            width: Spring::new(60.0),
+            height: Spring::new(30.0),
             opacity: Spring::new(0.0),
             lift: Spring::new(6.0),
             waveform: Spring::new(0.0),
+            lid: Spring::new(1.0),
             meter: std::array::from_fn(|_| Spring::new(0.0)),
             history: [0.0; 24],
             frame_at: Instant::now(),
             phase_at: Instant::now(),
             hint_until: None,
             reduced,
+            theme,
             visible: false,
             animating: false,
             wake: None,
@@ -196,27 +203,27 @@ impl Render for Pill {
             recording_clock(now.duration_since(self.snapshot.started).as_secs());
         let show_clock = capturing && (self.snapshot.hands_free || near_limit);
         let (width, height) = if !show {
-            (56.0, 28.0)
+            (60.0, 30.0)
         } else if hint.is_some() {
             (360.0, 36.0)
         } else {
             match phase {
-                Phase::Starting => (158.0, 32.0),
+                Phase::Starting => (172.0, 38.0),
                 Phase::Recording | Phase::Stopping => (
                     if near_limit {
-                        248.0
+                        262.0
                     } else if show_clock {
-                        212.0
+                        228.0
                     } else {
-                        148.0
+                        152.0
                     },
-                    36.0,
+                    38.0,
                 ),
-                Phase::Processing => (88.0, 28.0),
-                Phase::Done => (64.0, 28.0),
-                Phase::Empty => (166.0, 32.0),
+                Phase::Processing => (104.0, 32.0),
+                Phase::Done => (76.0, 34.0),
+                Phase::Empty => (182.0, 36.0),
                 Phase::Error => (360.0, 64.0),
-                _ => (56.0, 28.0),
+                _ => (60.0, 30.0),
             }
         };
         self.width.target = width;
@@ -224,6 +231,12 @@ impl Render for Pill {
         self.opacity.target = if show { 1.0 } else { 0.0 };
         self.lift.target = if show { 0.0 } else { 6.0 };
         self.waveform.target = if capturing { 1.0 } else { 0.0 };
+        // The lid opens only while capture is live and half-closes while processing.
+        self.lid.target = match phase {
+            Phase::Recording | Phase::Stopping => 0.0,
+            Phase::Processing => 0.62,
+            _ => 1.0,
+        };
         let mut moving = false;
         for (spring, response) in [
             (&mut self.width, 28.0),
@@ -231,11 +244,12 @@ impl Render for Pill {
             (&mut self.opacity, 40.0),
             (&mut self.lift, 32.0),
             (&mut self.waveform, 32.0),
+            (&mut self.lid, 24.0),
         ] {
             if self.reduced {
                 spring.snap();
             } else {
-                spring.step_with_response(dt, response);
+                spring.step(dt, response);
             }
             moving |= !spring.settled();
         }
@@ -252,7 +266,7 @@ impl Render for Pill {
             if self.reduced {
                 spring.snap();
             } else {
-                spring.step_with_response(
+                spring.step(
                     dt,
                     if spring.target > spring.value {
                         48.0
@@ -274,6 +288,7 @@ impl Render for Pill {
                 &mut self.opacity,
                 &mut self.lift,
                 &mut self.waveform,
+                &mut self.lid,
             ] {
                 spring.snap();
             }
@@ -313,6 +328,18 @@ impl Render for Pill {
                 });
             }));
         }
+        let palette = self.theme.palette();
+        let (width, height) = (self.width.value, self.height.value);
+        let slot = hint.is_none()
+            && matches!(
+                phase,
+                Phase::Starting
+                    | Phase::Recording
+                    | Phase::Stopping
+                    | Phase::Processing
+                    | Phase::Done
+                    | Phase::Empty
+            );
         let content = if hint.is_some() {
             div()
                 .text_size(px(12.0))
@@ -322,113 +349,143 @@ impl Render for Pill {
                     "In the tray · Use Speakeasy’s menu to quit"
                 })
                 .into_any_element()
-        } else {
-            match phase {
-                Phase::Error => div()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.0))
-                    .child(symbol(Symbol::Attention, 0xf5a524))
-                    .child(
-                        div()
-                            .flex_1()
-                            .overflow_hidden()
-                            .text_size(px(12.0))
-                            .line_height(px(16.0))
-                            .child(
-                                div()
-                                    .max_h(px(32.0))
-                                    .overflow_hidden()
-                                    .child(self.snapshot.message.clone()),
-                            )
-                            .child(div().text_color(rgb(0xa9aab2)).child("Details in Settings")),
-                    )
-                    .into_any_element(),
-                Phase::Starting => div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .child(symbol(Symbol::Microphone, 0xa9aab2))
-                    .child(div().text_size(px(12.0)).child("Opening mic…"))
-                    .into_any_element(),
-                Phase::Done => symbol(Symbol::Check, 0xe0e0e4).into_any_element(),
-                Phase::Empty => div()
-                    .text_size(px(12.0))
-                    .child("No speech detected")
-                    .into_any_element(),
-                Phase::Processing => {
-                    let progress =
-                        ((elapsed.as_secs_f32() * std::f32::consts::TAU / 1.2).sin() + 1.0) / 2.0;
+        } else if phase == Phase::Error {
+            div()
+                .w_full()
+                .px(px(14.0))
+                .flex()
+                .items_center()
+                .gap(px(10.0))
+                .child(symbol(Symbol::Attention, palette.warn))
+                .child(
+                    div()
+                        .flex_1()
+                        .overflow_hidden()
+                        .text_size(px(12.0))
+                        .line_height(px(16.0))
+                        .child(
+                            div()
+                                .max_h(px(32.0))
+                                .overflow_hidden()
+                                .child(self.snapshot.message.clone()),
+                        )
+                        .child(
+                            div()
+                                .text_color(rgb(palette.muted))
+                                .child("Details in Settings"),
+                        ),
+                )
+                .into_any_element()
+        } else if slot {
+            // The slot keeps its recording width while the clock widens the pill.
+            let extra = if show_clock {
+                (width - 152.0).max(0.0)
+            } else {
+                0.0
+            };
+            let slot_height = (height - 16.0).max(4.0);
+            let label = match phase {
+                Phase::Starting => Some(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(7.0))
+                        .child(symbol(Symbol::Microphone, palette.muted))
+                        .child(div().text_size(px(12.0)).child("Opening mic…"))
+                        .into_any_element(),
+                ),
+                Phase::Empty => Some(
+                    div()
+                        .text_size(px(12.0))
+                        .child("No speech detected")
+                        .into_any_element(),
+                ),
+                Phase::Done => Some(symbol(Symbol::Check, palette.lamp).into_any_element()),
+                _ => None,
+            };
+            let grille = Grille {
+                lid: self.lid.value.clamp(0.0, 1.0),
+                wave: self.waveform.value.clamp(0.0, 1.0),
+                levels: self.meter.each_ref().map(|spring| spring.value),
+                reduced: self.reduced,
+                sweep: (phase == Phase::Processing && elapsed >= Duration::from_millis(250)).then(
+                    || {
+                        if self.reduced {
+                            0.5
+                        } else {
+                            ((elapsed.as_secs_f32() * std::f32::consts::TAU / 1.2).sin() + 1.0)
+                                / 2.0
+                        }
+                    },
+                ),
+                palette,
+            };
+            div()
+                .w_full()
+                .px(px(7.0))
+                .flex()
+                .items_center()
+                .gap(px(11.0))
+                .child(
                     div()
                         .relative()
-                        .w(px(60.0))
-                        .h(px(22.0))
-                        .child(
-                            div()
-                                .absolute()
-                                .left(px(-17.0))
-                                .opacity(self.waveform.value.clamp(0.0, 1.0))
-                                .child(meter(
-                                    self.meter.each_ref().map(|spring| spring.value),
-                                    self.reduced,
-                                )),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .left(px(10.0))
-                                .top(px(10.0))
-                                .w(px(40.0))
-                                .h(px(2.0))
-                                .rounded_full()
-                                .opacity((1.0 - self.waveform.value).clamp(0.0, 1.0))
-                                .bg(rgb(0x505159))
-                                .when(elapsed >= Duration::from_millis(250), |line| {
-                                    line.child(
-                                        div()
-                                            .w(px(if self.reduced { 40.0 } else { 8.0 }))
-                                            .h(px(2.0))
-                                            .rounded_full()
-                                            .ml(px(if self.reduced {
-                                                0.0
-                                            } else {
-                                                progress * 32.0
-                                            }))
-                                            .bg(rgb(0xc1c2c8)),
-                                    )
-                                }),
-                        )
-                        .into_any_element()
-                }
-                Phase::Recording | Phase::Stopping => div()
-                    .flex()
-                    .items_center()
-                    .gap(px(9.0))
-                    .child(div().size(px(8.0)).rounded_full().bg(rgb(0xff4f2e)))
-                    .child(meter(
-                        self.meter.each_ref().map(|spring| spring.value),
-                        self.reduced,
-                    ))
-                    .when(show_clock, |row| {
-                        row.when(self.snapshot.hands_free, |row| {
-                            row.child(symbol(Symbol::Lock, 0xa9aab2))
+                        .flex_none()
+                        .w(px((width - 16.0 - extra).max(6.0)))
+                        .h(px(slot_height))
+                        .rounded(px(slot_height / 2.0))
+                        .bg(alpha(0x000000, 0.5))
+                        .border_1()
+                        .border_color(if grille.wave > 0.01 {
+                            alpha(palette.live, 0.45 * grille.wave)
+                        } else {
+                            alpha(palette.ink, 0.08)
                         })
                         .child(
-                            div()
-                                .text_size(px(11.0))
-                                .text_color(rgb(if near_limit { 0xf5bd72 } else { 0xa9aab2 }))
-                                .child(clock),
+                            canvas(
+                                |_, _, _| (),
+                                move |bounds, _, window, _| grille.paint(bounds, window),
+                            )
+                            .size_full(),
                         )
+                        .when_some(label, |slot, label| {
+                            slot.child(
+                                div()
+                                    .absolute()
+                                    .top(px(0.0))
+                                    .left(px(0.0))
+                                    .size_full()
+                                    .pl(px(10.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .opacity(((grille.lid - 0.6) / 0.4).clamp(0.0, 1.0))
+                                    .child(label),
+                            )
+                        }),
+                )
+                .when(show_clock, |row| {
+                    row.when(self.snapshot.hands_free, |row| {
+                        row.child(symbol(Symbol::Lock, palette.muted))
                     })
-                    .into_any_element(),
-                _ => div()
-                    .w(px(18.0))
-                    .h(px(2.0))
-                    .rounded_full()
-                    .bg(rgb(0x95969c))
-                    .into_any_element(),
-            }
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(if near_limit {
+                                palette.warn
+                            } else {
+                                palette.muted
+                            }))
+                            .child(clock),
+                    )
+                })
+                .into_any_element()
+        } else {
+            div()
+                .w(px(18.0))
+                .h(px(2.0))
+                .rounded_full()
+                .bg(alpha(palette.ink, 0.5))
+                .into_any_element()
         };
         div()
             .size_full()
@@ -438,25 +495,39 @@ impl Render for Pill {
             .pb(px(20.0 - self.lift.value))
             .child(
                 div()
+                    .relative()
                     .flex()
                     .items_center()
                     .justify_center()
-                    .px(px(14.0))
-                    .w(px(self.width.value))
-                    .h(px(self.height.value))
-                    .rounded(px(self.height.value / 2.0))
-                    .bg(rgba(0x17181bf5))
+                    .w(px(width))
+                    .h(px(height))
+                    .rounded(px(height / 2.0))
+                    .bg(alpha(palette.door, 0.96))
                     .border_1()
-                    .border_color(rgba(0xffffff20))
-                    .text_color(rgb(0xe7e7e9))
+                    .border_color(alpha(palette.ink, 0.13))
+                    .text_color(rgb(palette.ink))
                     .shadow(vec![BoxShadow {
-                        color: rgba(0x00000047).into(),
+                        color: rgba(0x00000052).into(),
                         offset: point(px(0.0), px(4.0)),
                         blur_radius: px(16.0),
                         spread_radius: px(0.0),
                     }])
                     .overflow_hidden()
                     .opacity(self.opacity.value.clamp(0.0, 1.0))
+                    .when(slot && height > 22.0, |capsule| {
+                        // A fine brass inlay; ornament stays still while state moves.
+                        capsule.child(
+                            div()
+                                .absolute()
+                                .top(px(2.5))
+                                .left(px(2.5))
+                                .right(px(2.5))
+                                .bottom(px(2.5))
+                                .rounded(px(height / 2.0 - 3.5))
+                                .border_1()
+                                .border_color(alpha(palette.lamp, 0.16)),
+                        )
+                    })
                     .child(content),
             )
     }
@@ -516,29 +587,142 @@ fn symbol(symbol: Symbol, color: u32) -> impl IntoElement {
     .flex_shrink_0()
 }
 
-// The decorative bars share one layout element; their geometry stays independent
-// of layout and hit testing as the audio level changes.
-fn meter(levels: [f32; 24], reduced: bool) -> impl IntoElement {
-    canvas(
-        |_, _, _| (),
-        move |bounds, _, window, _| {
-            let width = if reduced { 94.0 } else { 2.0 };
-            for (index, level) in levels.iter().take(if reduced { 1 } else { 24 }).enumerate() {
-                let height = 2.0 + level * 20.0;
-                let origin =
-                    bounds.origin + point(px(index as f32 * 4.0), px((22.0 - height) / 2.0));
-                window.paint_quad(
-                    fill(
-                        Bounds::new(origin, size(px(width), px(height))),
-                        rgb(0xe0e0e4),
-                    )
-                    .corner_radii(px(width.min(height) / 2.0)),
+// The door slot: a symmetric grille of measured levels behind a sliding lid.
+// Painting shares one layout element; bar geometry is independent of layout
+// and hit testing as the audio level changes.
+#[derive(Clone, Copy)]
+struct Grille {
+    lid: f32,
+    wave: f32,
+    levels: [f32; 24],
+    reduced: bool,
+    sweep: Option<f32>,
+    palette: &'static Palette,
+}
+
+impl Grille {
+    fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window) {
+        let palette = self.palette;
+        let (x, y) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+        let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+        let radius = h / 2.0;
+        let open = w * (1.0 - self.lid);
+        let rect = |left: f32, top: f32, width: f32, height: f32| {
+            Bounds::new(point(px(left), px(top)), size(px(width), px(height)))
+        };
+        if self.wave > 0.01 {
+            // Light behind the door brightens with the voice.
+            window.paint_quad(
+                fill(
+                    bounds,
+                    alpha(palette.live, (0.1 + self.levels[23] * 0.22) * self.wave),
+                )
+                .corner_radii(px(radius)),
+            );
+            let color = alpha(palette.live, self.wave);
+            let max = h - 6.0;
+            let mask = ContentMask {
+                bounds: rect(x, y, open, h),
+            };
+            window.with_content_mask(Some(mask), |window| {
+                if self.reduced {
+                    let bar = 2.0 + self.levels[23] * max;
+                    window.paint_quad(
+                        fill(rect(x + 9.0, y + (h - bar) / 2.0, w - 18.0, bar), color)
+                            .corner_radii(px(bar.min(6.0) / 2.0)),
+                    );
+                    return;
+                }
+                let count = ((w - 12.0) / 4.0).floor().max(1.0) as usize;
+                let start = x + (w - (count as f32 * 4.0 - 2.0)) / 2.0;
+                let middle = (count as f32 - 1.0) / 2.0;
+                for index in 0..count {
+                    // Newest level at the center, older levels mirrored outward.
+                    let distance = ((index as f32 - middle).abs().round() as usize).min(23);
+                    let left = start + index as f32 * 4.0;
+                    let inset = (x + radius - left - 1.0)
+                        .max(left + 1.0 - (x + w - radius))
+                        .max(0.0);
+                    let chord = 2.0 * (radius * radius - inset * inset).max(0.0).sqrt() - 3.0;
+                    let bar = (2.0 + self.levels[23 - distance] * max).min(chord.max(2.0));
+                    window.paint_quad(
+                        fill(rect(left, y + (h - bar) / 2.0, 2.0, bar), color)
+                            .corner_radii(px(1.0)),
+                    );
+                }
+            });
+        }
+        if let Some(position) = self.sweep
+            && open > 16.0
+        {
+            let glow = rect(x + 4.0 + position * (open - 18.0), y + 3.0, 10.0, h - 6.0);
+            let corners = Corners::all(px(((h - 6.0) / 2.0).min(5.0)));
+            window.paint_shadows(
+                glow,
+                corners,
+                &[BoxShadow {
+                    color: alpha(palette.lamp, 0.6).into(),
+                    offset: point(px(0.0), px(0.0)),
+                    blur_radius: px(6.0),
+                    spread_radius: px(0.0),
+                }],
+            );
+            window.paint_quad(fill(glow, alpha(palette.lamp, 0.85)).corner_radii(corners));
+        }
+        let cover = w - open;
+        if cover >= 1.0 {
+            let left = x + open;
+            // A nearly open lid follows the curve of the slot's end.
+            let height = if cover < radius {
+                2.0 * (radius * radius - (radius - cover).powi(2)).max(0.0).sqrt()
+            } else {
+                h
+            };
+            let top = y + (h - height) / 2.0;
+            let leading = px((radius - open).max(0.0));
+            let trailing = px((height / 2.0).min(cover));
+            window.paint_quad(
+                fill(
+                    rect(left, top, cover, height),
+                    linear_gradient(
+                        180.0,
+                        linear_color_stop(rgb(mix(palette.raise, palette.ink, 0.06)), 0.0),
+                        linear_color_stop(rgb(palette.door), 1.0),
+                    ),
+                )
+                .corner_radii(Corners {
+                    top_left: leading,
+                    top_right: trailing,
+                    bottom_right: trailing,
+                    bottom_left: leading,
+                }),
+            );
+            if open >= 0.5 {
+                window.paint_quad(fill(rect(left, top, 1.0, height), alpha(palette.ink, 0.2)));
+            }
+            if cover > 20.0 && h > 12.0 {
+                keystone(
+                    window,
+                    left + 7.0,
+                    y + radius,
+                    2.4,
+                    alpha(palette.lamp, 0.8),
                 );
             }
-        },
-    )
-    .w(px(94.0))
-    .h(px(22.0))
+        }
+    }
+}
+
+pub fn keystone(window: &mut Window, x: f32, y: f32, radius: f32, color: Rgba) {
+    let mut path = PathBuilder::fill();
+    path.move_to(point(px(x), px(y - radius)));
+    path.line_to(point(px(x + radius), px(y)));
+    path.line_to(point(px(x), px(y + radius)));
+    path.line_to(point(px(x - radius), px(y)));
+    path.close();
+    if let Ok(path) = path.build() {
+        window.paint_path(path, color);
+    }
 }
 
 // Native show/resize can synchronously request a GPUI frame. Run it after
@@ -565,6 +749,7 @@ fn set_visible(handle: AnyWindowHandle, cx: &mut App) -> Task<()> {
 pub fn open(
     updates: tokio::sync::watch::Receiver<Snapshot>,
     reduced: bool,
+    theme: Theme,
     cx: &mut App,
 ) -> anyhow::Result<WindowHandle<Pill>> {
     let display = cx
@@ -608,7 +793,7 @@ pub fn open(
                     .map_err(|error| anyhow::anyhow!("Cannot access pill window: {error}"))
                     .and_then(|handle| speakeasy_platform::configure_pill(handle.as_raw()));
             }
-            cx.new(|cx| Pill::new(updates, reduced, window, cx))
+            cx.new(|cx| Pill::new(updates, reduced, theme, window, cx))
         },
     )?;
     #[cfg(any(target_os = "windows", target_os = "macos"))]

@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory=$true)][string]$RuntimeDirectory,
     [Parameter(Mandatory=$true)][string]$Model,
-    [string]$Executable = (Join-Path $PSScriptRoot '../artifacts/rust/windows/speakeasy.exe')
+    [string]$Executable = (Join-Path $PSScriptRoot '../artifacts/windows/speakeasy.exe')
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -18,7 +18,7 @@ if ((Get-FileHash -LiteralPath $modelPath -Algorithm SHA256).Hash -ne
 }
 $stage = Join-Path $env:TEMP ('speakeasy-package-' + [guid]::NewGuid().ToString('N'))
 $bundle = Join-Path $stage 'Speakeasy'
-$destination = Join-Path $root 'artifacts/rust/speakeasy-windows-parakeet-x64.zip'
+$destination = Join-Path $root 'artifacts/speakeasy-windows-parakeet-x64.zip'
 try {
     $null = New-Item -ItemType Directory "$bundle/engine", "$bundle/models" -Force
     Copy-Item -LiteralPath $app -Destination "$bundle/speakeasy.exe"
@@ -26,6 +26,7 @@ try {
     Copy-Item -LiteralPath "$runtime/share/licenses" -Destination "$bundle/engine/licenses" -Recurse
     Copy-Item -LiteralPath $modelPath -Destination "$bundle/models/parakeet-v3-q8.gguf"
     Copy-Item -Path "$root/packaging/windows-portable/*" -Destination $bundle
+    Copy-Item -LiteralPath "$root/crates/app/assets/JosefinSans-OFL.txt" -Destination $bundle
     $settings = [ordered]@{
         engine = 'parakeet'
         engine_executable = 'engine/bin/nemo-speech.exe'

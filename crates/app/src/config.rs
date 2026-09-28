@@ -1,3 +1,4 @@
+use crate::theme::Theme;
 use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -29,6 +30,8 @@ pub struct Config {
     pub reduced_motion: bool,
     #[serde(default)]
     pub preserve_clipboard: bool,
+    #[serde(default)]
+    pub theme: Theme,
 }
 fn language() -> String {
     "en".into()
@@ -125,6 +128,7 @@ impl Default for Config {
             use_gpu: true,
             reduced_motion: false,
             preserve_clipboard: false,
+            theme: Theme::default(),
             microphone: None,
         }
     }

@@ -2,8 +2,8 @@
 
 Speakeasy is a native Rust dictation app for Windows and macOS. Keep it fast,
 small, and usable offline with local speech engines. Read `README.md` for setup
-and behavior, `docs/architecture.md` for module boundaries, and
-`docs/standards.md` for the scoped adoption of `~/devr/standards`.
+and behavior and `docs/architecture.md` for module boundaries. The rules below
+adapt `~/devr/standards` to this app.
 
 ## Ownership
 
@@ -37,7 +37,7 @@ cargo test --workspace --locked
 Regenerate lockfiles through Cargo. Use `#[expect(..., reason = "...")]` for a
 necessary lint exception. Keep tests focused on real failure boundaries such as
 cancellation, timers, device failure, process termination, and clipboard ownership.
-Fuzzing, mutation, coverage targets, and ADR gates are outside the requested scope.
+Fuzzing, mutation, coverage targets, and ADR gates are out of scope.
 
 Default tests use fakes or public fixtures. They must not record live microphone
 audio, install a global hook, or modify the user's clipboard or focused app.

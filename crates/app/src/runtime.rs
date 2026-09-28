@@ -62,6 +62,9 @@ impl Default for Snapshot {
     }
 }
 
+// The loading notice clears once the first model is ready, unless replaced.
+pub const LOADING: &str = "Loading local model…";
+
 pub enum Event {
     Ready(u64),
     Level(u64, f32),
@@ -222,7 +225,7 @@ async fn run<P: Ports>(
     let mut gesture = Gesture::default();
     let mut snapshot = Snapshot {
         model: ModelState::Loading,
-        message: "Loading local model…".into(),
+        message: LOADING.into(),
         ..Snapshot::default()
     };
     output.send_replace(snapshot.clone());
@@ -256,7 +259,9 @@ async fn run<P: Ports>(
             event = input.recv() => {
                 let Ok(event) = event else {
                     snapshot.phase = Phase::Error;
-                    snapshot.message = "Shortcut monitoring stopped. Open Speakeasy and enable dictation again.".into();
+                    snapshot.message =
+                        "Shortcut monitoring stopped. Open Speakeasy and enable dictation again."
+                            .into();
                     output.send_replace(snapshot.clone());
                     break;
                 };
@@ -269,7 +274,9 @@ async fn run<P: Ports>(
                 };
             }
             changed = changes.changed() => {
-                if changed.is_err() { break; }
+                if changed.is_err() {
+                    break;
+                }
                 let next = changes.borrow_and_update().clone();
                 let reload = config.speech_changed(&next);
                 config = next;
@@ -279,58 +286,101 @@ async fn run<P: Ports>(
                 pending_text = None;
                 if reload && let Some(previous) = job.take() {
                     previous.task.abort();
-                    if let Ok(Ok((worker, _))) = previous.task.await { server = Some(worker); }
-                } else if job.as_ref().is_some_and(|job| job.session.is_some()) && let Some(previous) = job.take() {
+                    if let Ok(Ok((worker, _))) = previous.task.await {
+                        server = Some(worker);
+                    }
+                } else if job.as_ref().is_some_and(|job| job.session.is_some())
+                    && let Some(previous) = job.take()
+                {
                     (server, job) = cancel(previous, &ports, &config).await;
                 }
-                if reload && let Some(mut worker) = server.take() { worker.stop().await; }
+                if reload && let Some(mut worker) = server.take() {
+                    worker.stop().await;
+                }
                 if server.is_none() && job.is_none() {
                     job = Some(warm(&ports, &config));
                 }
                 snapshot.phase = Phase::Idle;
-                snapshot.message = if server.is_none() { "Loading local model…" } else { "Settings applied" }.into();
+                snapshot.message = if server.is_none() {
+                    LOADING
+                } else {
+                    "Settings applied"
+                }
+                .into();
             }
-            event = audio.recv() => {
-                match event {
-                    Ok(Event::Ready(id)) if id == snapshot.id && capture.is_some() => {
-                        if snapshot.phase == Phase::Starting { snapshot.phase = if gesture.state == State::Processing { Phase::Stopping } else { Phase::Recording }; }
+            event = audio.recv() => match event {
+                Ok(Event::Ready(id)) if id == snapshot.id && capture.is_some() => {
+                    if snapshot.phase == Phase::Starting {
+                        snapshot.phase = if gesture.state == State::Processing {
+                            Phase::Stopping
+                        } else {
+                            Phase::Recording
+                        };
                     }
-                    Ok(Event::Level(id, level)) if id == snapshot.id && capture.is_some() => {
-                        snapshot.level = level;
-                        snapshot.meter_tick = snapshot.meter_tick.wrapping_add(1);
-                    },
-                    Ok(Event::AudioDone(id, result)) if id == snapshot.id && capture.is_some() => {
-                        capture.take();
-                        gesture.finish();
-                        match result {
-                            Ok(Some(wav)) => { snapshot.phase = Phase::Processing; waiting_audio = Some(wav); }
-                            Ok(None) => { gesture.complete(); snapshot.phase = Phase::Empty; }
-                            Err(error) => { gesture.cancel(); snapshot.phase = Phase::Error; snapshot.message = error.to_string(); }
+                }
+                Ok(Event::Level(id, level)) if id == snapshot.id && capture.is_some() => {
+                    snapshot.level = level;
+                    snapshot.meter_tick = snapshot.meter_tick.wrapping_add(1);
+                }
+                Ok(Event::AudioDone(id, result)) if id == snapshot.id && capture.is_some() => {
+                    capture.take();
+                    gesture.finish();
+                    match result {
+                        Ok(Some(wav)) => {
+                            snapshot.phase = Phase::Processing;
+                            waiting_audio = Some(wav);
+                        }
+                        Ok(None) => {
+                            gesture.complete();
+                            snapshot.phase = Phase::Empty;
+                        }
+                        Err(error) => {
+                            gesture.cancel();
+                            snapshot.phase = Phase::Error;
+                            snapshot.message = error.to_string();
                         }
                     }
-                    _ => {}
                 }
-            }
+                _ => {}
+            },
             result = completion => {
                 job.take();
                 let (session, result) = result;
                 match result {
                     Ok(Ok((worker, text))) => {
                         server = Some(worker);
-                        if session.is_none() && snapshot.phase != Phase::Error && snapshot.message == "Loading local model…" { snapshot.message.clear(); }
+                        if session.is_none()
+                            && snapshot.phase != Phase::Error
+                            && snapshot.message == LOADING
+                        {
+                            snapshot.message.clear();
+                        }
                         if let Some(text) = text.filter(|_| session == Some(snapshot.id)) {
-                            if text.is_empty() { gesture.complete(); snapshot.phase = Phase::Empty; }
-                            else { pending_text = Some((text, Instant::now())); }
+                            if text.is_empty() {
+                                gesture.complete();
+                                snapshot.phase = Phase::Empty;
+                            } else {
+                                pending_text = Some((text, Instant::now()));
+                            }
                         }
                     }
                     failure => {
-                        if gesture.state == State::Processing { gesture.complete(); }
+                        if gesture.state == State::Processing {
+                            gesture.complete();
+                        }
                         waiting_audio = None;
-                        if capture.is_none() { snapshot.phase = Phase::Error; }
-                        snapshot.message = match failure { Ok(Err(error)) => error.to_string(), _ => "Transcription worker stopped unexpectedly. Try again.".into() };
+                        if capture.is_none() {
+                            snapshot.phase = Phase::Error;
+                        }
+                        snapshot.message = match failure {
+                            Ok(Err(error)) => error.to_string(),
+                            _ => "Transcription worker stopped unexpectedly. Try again.".into(),
+                        };
                         // A failed session lost its owned worker. Reload in the
                         // background; a failed warmup itself must never retry-loop.
-                        if session.is_some() { job = Some(warm(&ports, &config)); }
+                        if session.is_some() {
+                            job = Some(warm(&ports, &config));
+                        }
                     }
                 }
             }
@@ -396,11 +446,7 @@ async fn run<P: Ports>(
                 match ports.insert(&text, &gate, config.preserve_clipboard) {
                     Ok(Inserted::Sent) => snapshot.phase = Phase::Done,
                     Ok(Inserted::Cancelled) => snapshot.phase = Phase::Cancelled,
-                    Ok(Inserted::Unavailable(message)) => {
-                        snapshot.phase = Phase::Error;
-                        snapshot.message = message.into();
-                    }
-                    Ok(Inserted::Copied(message)) => {
+                    Ok(Inserted::Unavailable(message) | Inserted::Copied(message)) => {
                         snapshot.phase = Phase::Error;
                         snapshot.message = message.into();
                     }

@@ -24,38 +24,32 @@ impl InputMonitor {
         let (ready, started) = mpsc::sync_channel(1);
         let thread = thread::Builder::new().name("shortcut".into()).spawn(move || {
             let held = Cell::new(false);
-            let tap = CGEventTap::new(CGEventTapLocation::Session, CGEventTapPlacement::HeadInsertEventTap,
-                CGEventTapOptions::Default, vec![CGEventType::KeyDown, CGEventType::KeyUp], move |_, kind, event| {
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        if matches!(kind, CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput) {
-                            tx.close(); return CallbackResult::Keep;
-                        }
-                        if event.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA) == OWN_INPUT { return CallbackResult::Keep; }
-                        let code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
-                        if code == 53 && matches!(kind, CGEventType::KeyDown) { deliver(&tx, Input::Cancel); return CallbackResult::Keep; }
-                        if code == 49 {
-                            if matches!(kind, CGEventType::KeyDown) && held.get() && event.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT) == 0 {
-                                held.set(false);
-                                deliver(&tx, Input::Release);
-                            }
-                            let flags = event.get_flags();
-                            let chord = flags.contains(CGEventFlags::CGEventFlagControl | CGEventFlags::CGEventFlagAlternate);
-                            if matches!(kind, CGEventType::KeyDown) && (chord || held.get()) {
-                                if !held.replace(true) { deliver(&tx, Input::Press); }
-                                return CallbackResult::Drop;
-                            }
-                            if matches!(kind, CGEventType::KeyUp) && held.replace(false) {
-                                deliver(&tx, Input::Release); return CallbackResult::Drop;
-                            }
-                        }
+            let tap = CGEventTap::new(
+                CGEventTapLocation::Session,
+                CGEventTapPlacement::HeadInsertEventTap,
+                CGEventTapOptions::Default,
+                vec![CGEventType::KeyDown, CGEventType::KeyUp],
+                move |_, kind, event| {
+                    // Never unwind through the OS callback. A closed channel
+                    // makes the owner cancel rather than continue with lost edges.
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        shortcut(&tx, &held, kind, event)
+                    }))
+                    .unwrap_or_else(|_| {
+                        tx.close();
                         CallbackResult::Keep
-                    }));
-                    result.unwrap_or_else(|_| { tx.close(); CallbackResult::Keep })
-                });
-            let Ok(tap) = tap else { let _ = ready.send(Err("Allow Speakeasy in System Settings → Privacy & Security → Accessibility, then reopen it.")); return; };
-            let source = match tap.mach_port().create_runloop_source(0) {
-                Ok(source) => source,
-                Err(_) => { let _ = ready.send(Err("Cannot create shortcut run loop")); return; }
+                    })
+                },
+            );
+            let Ok(tap) = tap else {
+                let _ = ready.send(Err(
+                    "Allow Speakeasy in System Settings → Privacy & Security → Accessibility, then reopen it.",
+                ));
+                return;
+            };
+            let Ok(source) = tap.mach_port().create_runloop_source(0) else {
+                let _ = ready.send(Err("Cannot create shortcut run loop"));
+                return;
             };
             let run_loop = CFRunLoop::get_current();
             // SAFETY: this is Core Foundation's permanent mode constant.
@@ -74,6 +68,54 @@ impl InputMonitor {
             _observers: observers,
         })
     }
+}
+
+/// Ctrl+Option+Space and passive Escape, on the event tap's run-loop thread.
+fn shortcut(
+    tx: &InputSender,
+    held: &Cell<bool>,
+    kind: CGEventType,
+    event: &CGEvent,
+) -> CallbackResult {
+    if matches!(
+        kind,
+        CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
+    ) {
+        tx.close();
+        return CallbackResult::Keep;
+    }
+    if event.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA) == OWN_INPUT {
+        return CallbackResult::Keep;
+    }
+    let down = matches!(kind, CGEventType::KeyDown);
+    match event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) {
+        53 if down => deliver(tx, Input::Cancel),
+        49 => {
+            // A fresh Space press while held means its release was missed.
+            if down
+                && held.get()
+                && event.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT) == 0
+            {
+                held.set(false);
+                deliver(tx, Input::Release);
+            }
+            let chord = event
+                .get_flags()
+                .contains(CGEventFlags::CGEventFlagControl | CGEventFlags::CGEventFlagAlternate);
+            if down && (chord || held.get()) {
+                if !held.replace(true) {
+                    deliver(tx, Input::Press);
+                }
+                return CallbackResult::Drop;
+            }
+            if matches!(kind, CGEventType::KeyUp) && held.replace(false) {
+                deliver(tx, Input::Release);
+                return CallbackResult::Drop;
+            }
+        }
+        _ => {}
+    }
+    CallbackResult::Keep
 }
 
 impl Drop for InputMonitor {
@@ -208,7 +250,9 @@ pub fn insert(
         events.push(event);
     }
     if clipboard_sequence() != sequence {
-        return Ok(Inserted::Unavailable("Clipboard changed before paste."));
+        return Ok(Inserted::Unavailable(
+            "Clipboard changed before paste. New contents were preserved.",
+        ));
     }
     if !gate.commit() {
         return Ok(Inserted::Cancelled);
@@ -250,34 +294,30 @@ fn insert_direct(text: &str, gate: &InputSender) -> anyhow::Result<Inserted> {
     let source = CGEventSource::new(CGEventSourceStateID::Private)
         .map_err(|_| anyhow!("Cannot create keyboard event source"))?;
     let mut events = Vec::new();
+    let mut push = |chunk: &str| -> anyhow::Result<()> {
+        let press = CGEvent::new_keyboard_event(source.clone(), 0, true)
+            .map_err(|_| anyhow!("Cannot create text event"))?;
+        press.set_string(chunk);
+        let release = CGEvent::new_keyboard_event(source.clone(), 0, false)
+            .map_err(|_| anyhow!("Cannot create text release"))?;
+        for event in [press, release] {
+            event.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, OWN_INPUT);
+            events.push(event);
+        }
+        Ok(())
+    };
     // CoreGraphics unicode payloads have bounded size. Split on scalar values,
     // keeping surrogate pairs intact, and create every event before committing.
     let mut chunk = String::new();
     for ch in text.chars() {
         chunk.push(ch);
         if chunk.encode_utf16().count() >= 16 {
-            let event = CGEvent::new_keyboard_event(source.clone(), 0, true)
-                .map_err(|_| anyhow!("Cannot create text event"))?;
-            event.set_string(&chunk);
-            event.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, OWN_INPUT);
-            events.push(event);
-            let release = CGEvent::new_keyboard_event(source.clone(), 0, false)
-                .map_err(|_| anyhow!("Cannot create text release"))?;
-            release.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, OWN_INPUT);
-            events.push(release);
+            push(&chunk)?;
             chunk.clear();
         }
     }
     if !chunk.is_empty() {
-        let event = CGEvent::new_keyboard_event(source.clone(), 0, true)
-            .map_err(|_| anyhow!("Cannot create text event"))?;
-        event.set_string(&chunk);
-        event.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, OWN_INPUT);
-        events.push(event);
-        let release = CGEvent::new_keyboard_event(source, 0, false)
-            .map_err(|_| anyhow!("Cannot create text release"))?;
-        release.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, OWN_INPUT);
-        events.push(release);
+        push(&chunk)?;
     }
     if !gate.commit() {
         return Ok(Inserted::Cancelled);
