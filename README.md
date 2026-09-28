@@ -175,8 +175,9 @@ and insertion. They never record, install a global hook, or touch the clipboard.
   demo pill stays nonactivating and passes clicks through.
   `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks minimize,
   close, relaunch, and configuration preservation with owned `--demo-tray` windows.
-- `.github/workflows/ci.yml` builds, tests, and packages natively on Windows and
-  macOS.
+- `.github/workflows/release.yml` builds the Windows and macOS packages on each
+  push to `main` and publishes them to the GitHub release for the workspace
+  version.
 
 Live microphone-to-editor dictation and interactive macOS use still need
 hands-on acceptance.
