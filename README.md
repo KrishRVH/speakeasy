@@ -37,14 +37,43 @@ app; **No speech detected** means nothing was sent.
 
 ## What's said here stays here
 
-- Speech runs in a local whisper.cpp or NeMo-Speech.cpp process that Speakeasy
-  owns and stops.
+- Speech runs in a local NeMo-Speech.cpp or whisper.cpp process that Speakeasy
+  owns and stops. Setup downloads the engine and model once; nothing is uploaded.
 - The microphone opens only while you dictate. Audio, transcripts, and engine
   output are never logged.
 - There are no accounts, cloud providers, telemetry, automatic editing, or
   transcript history.
 
 ## Get started
+
+Download the Windows or Mac zip from the
+[latest release](https://github.com/KrishRVH/speakeasy/releases/latest), unzip
+it, and open Speakeasy. On a Mac, allow Microphone and Accessibility access when
+asked.
+
+The first launch sets everything up. Speakeasy checks the machine, downloads the
+matching [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) build and
+NVIDIA's Parakeet v3 model, about 0.8 GB in all, and turns dictation on:
+
+| Machine | Engine build | Speech runs on |
+| --- | --- | --- |
+| Windows, NVIDIA GPU with 6 GB or more | CUDA | GPU |
+| Windows, another GPU with 6 GB or more | Vulkan | GPU |
+| Any other Windows PC | Vulkan, or CPU without a Vulkan driver | CPU |
+| Mac with Apple silicon | Metal | GPU |
+
+Then hold <kbd>Ctrl</kbd> + <kbd>Win</kbd> (Windows) or <kbd>Fn</kbd> (Mac) in any
+editor and speak.
+
+Downloads come from pinned GitHub and Hugging Face URLs and are checked against
+their SHA-256 before use. They live in `%LOCALAPPDATA%\speakeasy` on Windows and
+`~/Library/Application Support/speakeasy` on Mac. **Cancel** pauses setup, and
+the next attempt resumes where it stopped.
+
+<details>
+<summary>Build from source</summary>
+
+<br>
 
 Speakeasy targets Windows 11 x64 and macOS 14+ on Apple Silicon. Use the pinned
 Rust toolchain. Windows builds need the Visual Studio C++ Build Tools and the
@@ -55,15 +84,6 @@ cargo run --locked -p speakeasy -- --demo   # simulated preview
 cargo run --locked -p speakeasy             # the app
 ```
 
-1. In **Settings**, choose an engine, then its executable and model.
-2. Select **Enable dictation**. Speakeasy moves to the tray or menu bar.
-3. Hold <kbd>Ctrl</kbd> + <kbd>Win</kbd> (Windows) or <kbd>Fn</kbd> (Mac) in any editor and speak.
-
-Settings also choose the microphone, language, GPU use, clipboard behavior,
-reduced motion, and theme: **Jet & Champagne**, **Emerald Lounge**, **Iris**, or
-**Midnight Chrome**. Changes apply when you save. Appearance, microphone, and
-language changes keep the model loaded.
-
 `--demo` uses simulated audio without the microphone, global shortcut, model, or
 clipboard. It previews hands-free, the countdown, submission, interrupted
 dismissal, cancellation, silence, and an error. On Windows and macOS,
@@ -71,50 +91,29 @@ dismissal, cancellation, silence, and an error. On Windows and macOS,
 dictation disabled. Linux runs the preview only; GPUI's X11 build needs ALSA,
 fontconfig, X11/XCB, xkbcommon, and Vulkan development packages.
 
+</details>
+
+Settings also choose the microphone, GPU use, clipboard behavior, reduced motion,
+and theme: **Jet & Champagne**, **Emerald Lounge**, **Iris**, or **Midnight
+Chrome**. Changes apply when you save. Appearance, microphone, and language
+changes keep the model loaded.
+
 ## Speech engines
 
-**Whisper** is the default. It runs a local whisper.cpp server with a GGML model;
-the known-good Windows CUDA build is
-[whisper.cpp b5130](https://github.com/ggml-org/whisper.cpp/releases/tag/b5130).
-Extract the complete runtime and choose `Release/whisper-server.exe`. **Prefer
-GPU** cannot accelerate a CPU-only build, so turn it off there. The `threads`
-setting applies to Whisper and defaults to four.
+**Parakeet** is the default: NVIDIA's Parakeet TDT 0.6B v3, run by
+NeMo-Speech.cpp. It detects the language automatically and needs microphone
+audio at 8–96 kHz. Setup chooses its build, and **Prefer GPU** switches between
+the GPU and the CPU. After a five-minute recording the GPU worker holds about
+3.8 GB of memory until **Pause** releases it. The model is by NVIDIA, under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
-**Parakeet** runs NVIDIA's NeMo-Speech.cpp with a Parakeet v3 model. It needs GPU
-acceleration and microphone audio at 8–96 kHz, and it detects the language
-automatically. Set `"engine": "parakeet"` or choose it in Settings; switching
-engines is always explicit.
-
-<details>
-<summary>Known-good Parakeet setup and the portable Windows bundle</summary>
-
-<br>
-
-On Windows with an RTX 4090:
-
-- [NeMo-Speech.cpp v0.1.0 CUDA ZIP](https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-windows-x86_64-cuda.zip).
-  Extract the complete archive and choose `bin/nemo-speech.exe`.
-  SHA-256: `ba024204e76ca2fa4eefa8787506c3c49e418147f627f60cf9206a582b60089c`.
-- [NVIDIA Parakeet TDT 0.6B v3 q8 GGUF](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/parakeet-tdt-0.6b-v3.q8_0.gguf),
-  by NVIDIA, distributed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
-  SHA-256: `e3880d0aaaaf2c308ea2c35016b2b895c423eb3fda924c1b463d1c19b7f4d32e`.
-
-After a five-minute recording the worker holds about 3.8 GB of GPU memory until
-**Pause** releases it. CPU-only Parakeet and Parakeet on Mac are untested.
-
-The self-contained bundle packs the app, engine, model, notices, and
-relative-path settings:
-
-```powershell
-./scripts/package-parakeet-windows.ps1 -RuntimeDirectory <extracted-nemo-release> -Model <parakeet-v3-q8.gguf>
-```
-
-It writes `artifacts/speakeasy-windows-parakeet-x64.zip`. Extract the whole
-`Speakeasy` folder to a Windows drive and run **Speakeasy.cmd**. It starts in the
-tray with dictation enabled and keeps its own settings. `Speakeasy.cmd --demo`
-and `Speakeasy.cmd --demo-tray` preview it safely; quit the running app first.
-
-</details>
+**Whisper** runs a local whisper.cpp server with a GGML model. Switch the engine
+under **Local speech**, choose its executable and model, and save; switching is
+always explicit. The known-good Windows build is
+[whisper.cpp b5130](https://github.com/ggml-org/whisper.cpp/releases/tag/b5130):
+extract the complete runtime and choose `Release/whisper-server.exe`. Turn off
+**Prefer GPU** for a CPU-only build. The `threads` setting applies to Whisper and
+defaults to four.
 
 The worker stays warm on loopback. With a GPU, one silent request initializes
 its kernels before the first dictation. Cancelling GPU work keeps a healthy
@@ -157,7 +156,8 @@ and insertion. They never record, install a global hook, or touch the clipboard.
 <br>
 
 - `scripts/package-windows.ps1` and `bash scripts/package-macos.sh` package the
-  app into `artifacts/`, without models or engines. The Mac bundle carries its
+  app into `artifacts/`. Packages carry no engine or model; setup downloads
+  them on first launch. The Mac bundle carries its
   microphone usage declaration and a local signature; grant it Microphone and
   Accessibility access. Distribution needs Developer ID signing and notarization.
 - With `SPEAKEASY_FIXTURE_CONFIG` pointing at a settings file and
@@ -170,7 +170,10 @@ and insertion. They never record, install a global hook, or touch the clipboard.
 
   The first checks recognition and worker shutdown. The second times the real
   controller and engine with fake capture and insertion; it excludes microphone
-  teardown and OS paste latency.
+  teardown and OS paste latency. With only `SPEAKEASY_FIXTURE_WAV`,
+  `cargo test -p speakeasy install_chooses -- --ignored` runs setup into a
+  temporary directory, downloading about 0.8 GB, and recognizes the fixture with
+  the build this machine would get.
 - `scripts/check-demo-windows.ps1 -Executable <speakeasy.exe>` checks that the
   demo pill stays nonactivating and passes clicks through.
   `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks minimize,

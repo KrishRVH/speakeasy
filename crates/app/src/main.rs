@@ -7,6 +7,7 @@ mod local_speech;
 mod pill;
 mod ports;
 mod runtime;
+mod setup;
 mod shell;
 mod status;
 mod theme;
@@ -68,11 +69,7 @@ fn run() -> anyhow::Result<()> {
         config::Config::read(&path)
     };
     let (mut config, mut message, mut invalid) = match loaded {
-        Ok(config) => (
-            config,
-            "Choose your local engine and model, then enable dictation.".to_owned(),
-            false,
-        ),
+        Ok(config) => (config, "Speakeasy is not set up yet.".to_owned(), false),
         Err(error) => (config::Config::default(), error.to_string(), true),
     };
     let configured = if !config.engine_executable.as_os_str().is_empty() {

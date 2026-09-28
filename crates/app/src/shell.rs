@@ -3,6 +3,7 @@ use crate::{
     config::{Config, Engine},
     pill::Pill,
     runtime::{ModelState, Phase, Runtime, Snapshot},
+    setup::{self, Progress},
     status,
     theme::{Palette, alpha, mix},
 };
@@ -218,6 +219,10 @@ pub fn open(cx: &mut App) -> anyhow::Result<()> {
     }
     let config = cx.global::<Services>().config.clone();
     let demo = cx.global::<Services>().demo;
+    // A fresh install sets itself up; later launches leave engine choice alone.
+    let first_run = !demo
+        && cfg!(any(target_os = "windows", target_os = "macos"))
+        && !cx.global::<Services>().path.exists();
     let tray_lifecycle = !demo || cx.global::<Services>().demo_tray;
     let mut updates = cx.global::<Services>().output.subscribe();
     #[cfg(target_os = "windows")]
@@ -314,6 +319,8 @@ pub fn open(cx: &mut App) -> anyhow::Result<()> {
                     dialog: None,
                     devices: None,
                     preview: None,
+                    setup: None,
+                    progress: Progress::default(),
                     _updates: task,
                     demo,
                     #[cfg(target_os = "windows")]
@@ -321,6 +328,9 @@ pub fn open(cx: &mut App) -> anyhow::Result<()> {
                 };
                 if !demo {
                     view.refresh_devices(cx);
+                }
+                if first_run {
+                    view.set_up(cx);
                 }
                 view
             })
@@ -346,6 +356,8 @@ pub struct Settings {
     dialog: Option<Task<()>>,
     devices: Option<Task<()>>,
     preview: Option<Task<()>>,
+    setup: Option<(setup::Setup, Task<()>)>,
+    progress: Progress,
     _updates: Task<()>,
     demo: bool,
     #[cfg(target_os = "windows")]
@@ -353,6 +365,7 @@ pub struct Settings {
 }
 #[derive(Clone, Copy)]
 enum Action {
+    Setup,
     Engine,
     Executable,
     Model,
@@ -386,6 +399,79 @@ impl Settings {
                 cx.notify();
             });
         }));
+    }
+    /// Starts automatic setup, or cancels it while running.
+    fn set_up(&mut self, cx: &mut Context<Self>) {
+        if self.setup.take().is_some() {
+            self.notice = Some("Setup paused. Downloads resume where they stopped.".into());
+            return;
+        }
+        let setup = match setup::Setup::start() {
+            Ok(setup) => setup,
+            Err(error) => {
+                self.notice = Some(error.to_string());
+                return;
+            }
+        };
+        let mut progress = setup.progress.clone();
+        let result = setup.result.clone();
+        self.notice = None;
+        let task = cx.spawn(async move |this, cx| {
+            while progress.changed().await.is_ok() {
+                let current = progress.borrow_and_update().clone();
+                if this
+                    .update(cx, |view, cx| {
+                        view.progress = current;
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+                Timer::after(Duration::from_millis(100)).await;
+            }
+            let result = result.recv().await;
+            let _ = this.update(cx, |view, cx| {
+                view.setup = None;
+                view.progress = Progress::default();
+                match result {
+                    Ok(Ok(installed)) => {
+                        view.config.engine = installed.engine;
+                        view.config.engine_executable = installed.engine_executable;
+                        view.config.model = installed.model;
+                        view.config.use_gpu = installed.use_gpu;
+                        view.save(cx);
+                    }
+                    Ok(Err(error)) => view.notice = Some(error.to_string()),
+                    Err(_) => view.notice = Some("Setup stopped unexpectedly. Try again.".into()),
+                }
+                cx.notify();
+            });
+        });
+        self.setup = Some((setup, task));
+    }
+    fn save(&mut self, cx: &mut Context<Self>) {
+        let path = cx.global::<Services>().path.clone();
+        let result = self
+            .config
+            .validate(&path)
+            .and_then(|()| self.config.save(&path))
+            .and_then(|()| {
+                cx.update_global::<Services, _>(|services, cx| {
+                    services.apply(self.config.clone(), cx)
+                })
+            });
+        self.notice = match result {
+            Ok(()) => None,
+            Err(error) => Some(error.to_string()),
+        };
+        let pill = cx.global::<Services>().pill;
+        let reduced = self.config.reduced_motion || speakeasy_platform::reduced_motion();
+        let _ = pill.update(cx, |view, _, cx| {
+            view.set_reduced(reduced);
+            cx.notify();
+        });
+        show_theme(cx.global::<Services>().config.theme, cx);
     }
     fn choose(&mut self, model: bool, window: &Window, cx: &mut Context<Self>) {
         if self.dialog.is_some() {
@@ -425,14 +511,12 @@ impl Settings {
     }
     fn act(&mut self, action: Action, window: &Window, cx: &mut Context<Self>) {
         match action {
+            Action::Setup => self.set_up(cx),
             Action::Engine => {
                 self.config.engine = match self.config.engine {
                     Engine::Whisper => Engine::Parakeet,
                     Engine::Parakeet => Engine::Whisper,
                 };
-                if self.config.engine == Engine::Parakeet {
-                    self.config.use_gpu = true;
-                }
                 self.notice =
                     Some("Choose the executable and model for this engine, then save.".into());
             }
@@ -468,9 +552,6 @@ impl Settings {
                 self.notice = Some("Unsaved changes".into());
             }
             Action::Gpu => {
-                if self.config.engine == Engine::Parakeet {
-                    return;
-                }
                 self.config.use_gpu = !self.config.use_gpu;
                 self.notice = Some("Unsaved changes".into());
             }
@@ -507,28 +588,7 @@ impl Settings {
                     self.notice =
                         Some("Preview only. Run without --demo to enable dictation.".into());
                 } else {
-                    let path = cx.global::<Services>().path.clone();
-                    let result = self
-                        .config
-                        .validate(&path)
-                        .and_then(|()| self.config.save(&path))
-                        .and_then(|()| {
-                            cx.update_global::<Services, _>(|services, cx| {
-                                services.apply(self.config.clone(), cx)
-                            })
-                        });
-                    self.notice = match result {
-                        Ok(()) => None,
-                        Err(error) => Some(error.to_string()),
-                    };
-                    let pill = cx.global::<Services>().pill;
-                    let reduced =
-                        self.config.reduced_motion || speakeasy_platform::reduced_motion();
-                    let _ = pill.update(cx, |view, _, cx| {
-                        view.set_reduced(reduced);
-                        cx.notify();
-                    });
-                    show_theme(cx.global::<Services>().config.theme, cx);
+                    self.save(cx);
                 }
             }
             Action::Pause => {
@@ -539,6 +599,66 @@ impl Settings {
             Action::Quit => cx.quit(),
         }
         cx.notify();
+    }
+    fn setup_card(&self, palette: &'static Palette, cx: &Context<Self>) -> impl IntoElement {
+        let running = self.setup.is_some();
+        let Progress { step, done, total } = self.progress;
+        let detail = if !running {
+            format!(
+                "Speakeasy downloads the Parakeet speech model and the engine that suits this {}, about 0.8 GB, then turns dictation on.",
+                if cfg!(target_os = "macos") {
+                    "Mac"
+                } else {
+                    "PC"
+                }
+            )
+        } else if total > 0 {
+            format!("{step} · {} of {} MB", done / 1_000_000, total / 1_000_000)
+        } else if step.is_empty() {
+            "Checking this machine…".into()
+        } else {
+            format!("{step}…")
+        };
+        panel(palette)
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            .child(div().text_size(px(13.0)).child(if running {
+                "Setting up dictation"
+            } else {
+                "Set up dictation"
+            }))
+            .child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(palette.muted))
+                    .child(detail),
+            )
+            .when(running, |card| {
+                card.child(
+                    div()
+                        .h(px(3.0))
+                        .rounded(px(2.0))
+                        .bg(alpha(palette.lamp, 0.16))
+                        .child(
+                            div()
+                                .h_full()
+                                .rounded(px(2.0))
+                                .bg(rgb(palette.lamp))
+                                .w(relative(done as f32 / total.max(1) as f32)),
+                        ),
+                )
+            })
+            .child(div().flex().child(button(
+                if running {
+                    "Cancel"
+                } else {
+                    "Set up automatically"
+                },
+                Action::Setup,
+                palette,
+                cx,
+            )))
     }
     fn play(&mut self, cx: &mut Context<Self>) {
         let tx = cx.global::<Services>().output.clone();
@@ -679,6 +799,14 @@ fn choose_file(
     });
     async move { Ok(paths.await??.and_then(|paths| paths.into_iter().next())) }
 }
+fn panel(palette: &'static Palette) -> Div {
+    div()
+        .p(px(16.0))
+        .rounded(px(4.0))
+        .bg(rgb(palette.panel))
+        .border_1()
+        .border_color(alpha(palette.lamp, 0.14))
+}
 fn label(text: &'static str, palette: &'static Palette) -> impl IntoElement {
     div()
         .text_size(px(12.0))
@@ -764,6 +892,8 @@ impl Render for Settings {
                 ),
         };
         let running = cx.global::<Services>().running();
+        // Setup chooses the engine, so its manual controls wait until it ends.
+        let installing = self.setup.is_some();
         div()
             .id("settings")
             .on_key_down(|event, window, cx| {
@@ -806,71 +936,80 @@ impl Render for Settings {
                     .child(keystone_rule(palette)),
             )
             .child(
-                div()
-                    .p(px(16.0))
-                    .rounded(px(4.0))
-                    .bg(rgb(palette.panel))
-                    .border_1()
-                    .border_color(alpha(palette.lamp, 0.14))
-                    .text_size(px(13.0))
-                    .line_height(px(23.0))
-                    .child(format!("Hold {} to speak.", speakeasy_platform::SHORTCUT))
-                    .child(
-                        div().child("Add Space, or double-tap, for hands-free. Escape cancels."),
-                    ),
+                if installing || !self.demo && self.config.engine_executable.as_os_str().is_empty()
+                {
+                    self.setup_card(palette, cx).into_any_element()
+                } else {
+                    panel(palette)
+                        .text_size(px(13.0))
+                        .line_height(px(23.0))
+                        .child(format!("Hold {} to speak.", speakeasy_platform::SHORTCUT))
+                        .child(
+                            div()
+                                .child("Add Space, or double-tap, for hands-free. Escape cancels."),
+                        )
+                        .into_any_element()
+                },
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.0))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(label("LOCAL SPEECH", palette))
-                            .child(button(
-                                match self.config.engine {
-                                    Engine::Whisper => "Engine: Whisper",
-                                    Engine::Parakeet => "Engine: Parakeet",
-                                },
-                                Action::Engine,
-                                palette,
-                                cx,
-                            )),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(12.0))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .overflow_hidden()
-                                    .text_size(px(12.0))
-                                    .child(filename(&self.config.engine_executable)),
-                            )
-                            .child(button("Choose executable", Action::Executable, palette, cx)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(12.0))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .overflow_hidden()
-                                    .text_size(px(12.0))
-                                    .child(filename(&self.config.model)),
-                            )
-                            .child(button("Choose model", Action::Model, palette, cx)),
-                    ),
-            )
+            .when(!installing, |settings| {
+                settings.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.0))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(label("LOCAL SPEECH", palette))
+                                .child(button(
+                                    match self.config.engine {
+                                        Engine::Whisper => "Engine: Whisper",
+                                        Engine::Parakeet => "Engine: Parakeet",
+                                    },
+                                    Action::Engine,
+                                    palette,
+                                    cx,
+                                )),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap(px(12.0))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .overflow_hidden()
+                                        .text_size(px(12.0))
+                                        .child(filename(&self.config.engine_executable)),
+                                )
+                                .child(button(
+                                    "Choose executable",
+                                    Action::Executable,
+                                    palette,
+                                    cx,
+                                )),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap(px(12.0))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .overflow_hidden()
+                                        .text_size(px(12.0))
+                                        .child(filename(&self.config.model)),
+                                )
+                                .child(button("Choose model", Action::Model, palette, cx)),
+                        ),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -891,27 +1030,30 @@ impl Render for Settings {
                     .flex_col()
                     .gap(px(8.0))
                     .child(label("PREFERENCES", palette))
-                    .child(div().flex().gap(px(8.0)).child(
-                        if self.config.engine == Engine::Parakeet {
-                            div()
-                                .py(px(8.0))
-                                .text_size(px(12.0))
-                                .child("Language: Automatic · GPU required")
-                                .into_any_element()
-                        } else {
+                    .when(!installing, |section| {
+                        section.child(
                             div()
                                 .flex()
                                 .gap(px(8.0))
-                                .child(button(
-                                    match self.config.language.as_str() {
-                                        "auto" => "Language: Auto".to_owned(),
-                                        "en" => "Language: English".to_owned(),
-                                        language => format!("Language: {language}"),
-                                    },
-                                    Action::Language,
-                                    palette,
-                                    cx,
-                                ))
+                                .child(if self.config.engine == Engine::Parakeet {
+                                    div()
+                                        .py(px(8.0))
+                                        .text_size(px(12.0))
+                                        .child("Language: Automatic")
+                                        .into_any_element()
+                                } else {
+                                    button(
+                                        match self.config.language.as_str() {
+                                            "auto" => "Language: Auto".to_owned(),
+                                            "en" => "Language: English".to_owned(),
+                                            language => format!("Language: {language}"),
+                                        },
+                                        Action::Language,
+                                        palette,
+                                        cx,
+                                    )
+                                    .into_any_element()
+                                })
                                 .child(button(
                                     if self.config.use_gpu {
                                         "Prefer GPU: On"
@@ -921,10 +1063,9 @@ impl Render for Settings {
                                     Action::Gpu,
                                     palette,
                                     cx,
-                                ))
-                                .into_any_element()
-                        },
-                    ))
+                                )),
+                        )
+                    })
                     .child(
                         div()
                             .flex()
@@ -961,22 +1102,24 @@ impl Render for Settings {
                 div()
                     .flex()
                     .gap(px(8.0))
-                    .child(button(
-                        if self.demo {
-                            "Replay preview"
-                        } else if running {
-                            "Save changes"
-                        } else {
-                            "Enable dictation"
-                        },
-                        if self.demo {
-                            Action::Preview
-                        } else {
-                            Action::Save
-                        },
-                        palette,
-                        cx,
-                    ))
+                    .when(!installing, |row| {
+                        row.child(button(
+                            if self.demo {
+                                "Replay preview"
+                            } else if running {
+                                "Save changes"
+                            } else {
+                                "Enable dictation"
+                            },
+                            if self.demo {
+                                Action::Preview
+                            } else {
+                                Action::Save
+                            },
+                            palette,
+                            cx,
+                        ))
+                    })
                     .when(running, |row| {
                         row.child(button("Pause", Action::Pause, palette, cx))
                     })

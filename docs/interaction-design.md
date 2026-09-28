@@ -73,10 +73,14 @@ clock and recording-limit cue.
 ## Tray and Settings
 
 Configured native launches stay in the tray/menu bar. First setup and invalid
-configuration open Settings. Close hides the existing window, preserving edits;
-Windows minimize also hides it. macOS minimize retains normal Dock behavior.
-Relaunch and the tray's Settings action reveal the same window. A brief first-hide
-hint explains the tray/menu bar when the pill is idle.
+configuration open Settings. A fresh install sets itself up there: a card names
+each step with its progress, **Cancel** pauses and later resumes, and completion
+enables dictation. The manual engine controls stay hidden while setup runs.
+
+Close hides the existing window, preserving edits; Windows minimize also hides
+it. macOS minimize retains normal Dock behavior. Relaunch and the tray's
+Settings action reveal the same window. A brief first-hide hint explains the
+tray/menu bar when the pill is idle.
 
 The tray shows the Grille mark with its slot lit in the theme's lamp color and
 its bars cut through. Recording turns the slot red; busy, paused, and attention
@@ -102,9 +106,10 @@ the pill's notice expires, including while there are unsaved edits.
   that speech before that buffer can be recovered.
 - Insertion does not steal focus. OS submission is the observable result;
   success in every editor cannot be inferred from submitting keystrokes.
-- Settings exposes local engine/model selection, microphone selection, language
-  and GPU preferences where applicable, clipboard preservation, reduced motion,
-  and theme. Errors remain visible there after the pill notice ends.
+- Settings exposes automatic setup, manual engine/model selection, microphone
+  selection, language where applicable, GPU preference, clipboard preservation,
+  reduced motion, and theme. Errors remain visible there after the pill notice
+  ends.
 
 ## Acceptance
 

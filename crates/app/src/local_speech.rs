@@ -22,9 +22,6 @@ impl LocalSpeech {
     pub async fn start(config: Config) -> anyhow::Result<Self> {
         let engine = config.engine;
         let nemo = engine == Engine::Parakeet;
-        if nemo && !config.use_gpu {
-            bail!("Parakeet requires GPU acceleration. Enable Prefer GPU or select Whisper.");
-        }
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let port = listener.local_addr()?.port();
         let directory = tempfile::Builder::new().prefix("speakeasy-").tempdir()?;
@@ -40,8 +37,8 @@ impl LocalSpeech {
                 .args(["serve", "--asr-model"])
                 .arg(&config.model)
                 .args([
-                    "--gpu",
-                    "0",
+                    "--device",
+                    if config.use_gpu { "auto" } else { "cpu" },
                     "--host",
                     "127.0.0.1",
                     "--port",

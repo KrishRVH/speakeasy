@@ -25,13 +25,14 @@ flowchart LR
 | Area | Responsibility |
 | --- | --- |
 | `crates/core` | Pure gesture deadlines and analytic motion springs. |
-| `crates/platform` | Native keyboard input, lifecycle notifications, pill windows, insertion, reduced-motion preference, and owned process containment. |
+| `crates/platform` | Native keyboard input, lifecycle notifications, pill windows, the Windows file dialog, insertion, reduced-motion preference, and owned process containment. |
 | `crates/app/src/runtime.rs` | One session owner; recording, inference, cancellation, settings changes, and final insertion ordering. |
 | `crates/app/src/audio.rs` | CPAL capture, bounded callback ring, audio levels, speech gate, quiet-edge trimming, and five-minute recording limit. |
 | `crates/app/src/local_speech.rs` | Warm Whisper or Parakeet process, loopback HTTP, bounded responses, and cancellation recovery. |
 | `crates/app/src/ports.rs` | Capture, speech, and insertion interfaces used by the session owner and unattended fixtures. |
 | `crates/app/src/pill.rs` | Grille pill, measured audio envelope, and frame-driven motion. |
-| `crates/app/src/shell.rs` | Settings, native file selection, microphone selection, pause, and runtime retirement. |
+| `crates/app/src/setup.rs` | Automatic setup: engine choice through NeMo's doctor, pinned resumable downloads, and extraction. |
+| `crates/app/src/shell.rs` | Settings, setup progress, file selection, microphone selection, pause, and runtime retirement. |
 | `crates/app/src/tray.rs` | Owned native tray icon, menu actions, and snapshot-driven status updates. |
 | `crates/app/src/status.rs` | Shared readiness and capture status for Settings and the tray. |
 | `crates/app/src/theme.rs` | Selectable color themes shared by Settings, the pill, and the tray. |
@@ -59,7 +60,9 @@ View-owned feedback timers redraw the current snapshot; they cannot publish
 session changes. Native visibility work resolves the latest pill state before
 showing or hiding it, so a queued dismissal cannot hide a later recording.
 
-Settings stays alive when hidden, preserving unsaved edits. Windows intercepts
+Settings stays alive when hidden, preserving unsaved edits. On Windows, file
+choices use a native Open dialog on its own thread; shown from GPUI's UI thread,
+the dialog stays unpainted while GPUI is idle. Windows intercepts
 the native minimize command with a window-owned subclass and enqueues a hide;
 macOS retains its normal minimize behavior. Native show/hide runs outside GPUI
 borrows. Tray tasks are cancelled before session services are retired at quit.
@@ -77,13 +80,29 @@ grows only up to the recording limit. After stopping, it requires 100 ms of
 audible 20 ms windows, trims quiet edges of at least one second while retaining
 500 ms padding, and preserves interior pauses. WAV preparation stays off the UI.
 
+## Setup
+
+A fresh install opens Settings and starts setup; later launches offer it only
+while no engine is configured. Setup runs on its own thread and runtime, and
+dropping it cancels the work. It chooses a NeMo-Speech.cpp build by asking each
+candidate's `doctor` command whether its accelerator works: CUDA when an NVIDIA
+driver is present, then Vulkan with a discrete GPU of at least 6 GB, then the
+CPU. Apple silicon uses Metal.
+
+Downloads use pinned GitHub release and Hugging Face revision URLs. Each is
+written beside its destination as a `.part` file, resumed with an HTTP range
+request, and renamed into place only after its size and SHA-256 match. The
+system `tar` unpacks engine archives into a staging directory that is then
+renamed, and unused builds are removed. The result is saved like a manual
+choice and enables dictation.
+
 ## Local recognition
 
 The configured `engine_executable` and model select one explicitly chosen engine:
-Whisper or GPU-backed Parakeet. These are external native inference processes;
-the desktop application is Rust. Audio is posted from memory to the owned worker
-on loopback. HTTP clients disable proxies and redirects. Worker output and
-transcripts are not retained in diagnostic logs.
+Parakeet, on the GPU or CPU, or Whisper. These are external native inference
+processes; the desktop application is Rust. Audio is posted from memory to the
+owned worker on loopback, through a client without proxies or redirects. Worker
+output and transcripts are not retained in diagnostic logs.
 
 Model loading starts in the background. GPU preference adds a silent warmup
 request before readiness. Whisper language travels with each request, so a

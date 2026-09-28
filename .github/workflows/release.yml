@@ -51,7 +51,7 @@ jobs:
         run: |
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml)
           tag="v$version"
-          notes="Windows and macOS builds of ${GITHUB_SHA::7}. Speech engines and models are separate downloads; see the README."
+          notes="Windows and macOS builds of ${GITHUB_SHA::7}. On first launch, Speakeasy downloads the speech engine and model that suit the machine."
           git tag --force "$tag"
           git push --force origin "refs/tags/$tag"
           if gh release view "$tag" > /dev/null 2>&1; then

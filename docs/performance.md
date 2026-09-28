@@ -33,6 +33,11 @@ option. These times run the real session owner with fake capture and insertion:
 | 10.4 seconds | 96 ms | 20 ms |
 | 293.7 seconds | 2,489 ms | 929 ms |
 
+Setup picks the Parakeet backend from what the machine can run. On the reference
+machine, the 11-second JFK clip took 17–44 ms per request on CUDA, about 50 ms on
+Vulkan after a 1.3-second first request and a five-second startup, and about
+680 ms on the CPU.
+
 Across the corpus, Parakeet made fewer word errors than Whisper (124 versus 212
 per 5,230 short words; 100 versus 130 per 7,488 long words), with slightly
 weaker long-form punctuation. It accepts native 48 kHz capture: the added

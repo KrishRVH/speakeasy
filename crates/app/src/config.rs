@@ -72,9 +72,6 @@ impl Config {
     }
 
     pub fn validate(&mut self, path: &Path) -> anyhow::Result<()> {
-        if self.engine == Engine::Parakeet && !self.use_gpu {
-            bail!("Parakeet requires GPU acceleration. Enable Prefer GPU or select Whisper.");
-        }
         let directory = path.parent().unwrap_or(Path::new("."));
         for file in [&mut self.engine_executable, &mut self.model] {
             if file.as_os_str().is_empty() {
