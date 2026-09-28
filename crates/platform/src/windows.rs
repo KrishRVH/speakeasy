@@ -13,6 +13,9 @@ use windows_sys::Win32::{
 };
 
 const OWN_INPUT: usize = 0x53504541;
+const MASK_START: u32 = WM_APP + 1;
+// Either Ctrl with either Windows key, as left and right keys report separately.
+const CHORD: [VIRTUAL_KEY; 4] = [VK_LCONTROL, VK_RCONTROL, VK_LWIN, VK_RWIN];
 
 unsafe extern "system" fn lifecycle(
     hwnd: HWND,
@@ -30,8 +33,7 @@ unsafe extern "system" fn lifecycle(
             {
                 deliver(&state.tx, Input::Cancel);
                 deliver(&state.tx, Input::Release);
-                state.held = false;
-                state.rearm = true;
+                state.chord.interrupt();
             }
         });
     }
@@ -40,8 +42,85 @@ unsafe extern "system" fn lifecycle(
 }
 struct HookState {
     tx: InputSender,
-    held: bool,
-    rearm: bool,
+    chord: Chord,
+    down: [bool; 4],
+}
+
+impl HookState {
+    /// Returns whether to swallow the event. Only Space that locks hands-free is
+    /// swallowed; the chord, Escape, and every other key reach the focused app.
+    fn observe(&mut self, key: u32, down: bool) -> bool {
+        if key == u32::from(VK_ESCAPE) {
+            if down {
+                deliver(&self.tx, Input::Cancel);
+            }
+            return false;
+        }
+        if key == u32::from(VK_SPACE) && self.chord.space(down) {
+            if down {
+                deliver(&self.tx, Input::Lock);
+            }
+            return true;
+        }
+        let Some(index) = CHORD.iter().position(|&vk| u32::from(vk) == key) else {
+            if down && self.chord.interrupt() {
+                deliver(&self.tx, Input::Cancel);
+                deliver(&self.tx, Input::Release);
+            }
+            return false;
+        };
+        let fresh = down && !self.down[index];
+        self.down[index] = down;
+        for (other, &vk) in CHORD.iter().enumerate() {
+            // A release missed during a desktop switch must not keep the chord held.
+            // SAFETY: GetAsyncKeyState has no pointer or lifetime requirements.
+            if other != index && self.down[other] && unsafe { GetAsyncKeyState(i32::from(vk)) } >= 0
+            {
+                self.down[other] = false;
+            }
+        }
+        let held = (self.down[0] || self.down[1]) && (self.down[2] || self.down[3]);
+        match self.chord.modifiers(held, fresh) {
+            Some(Input::Press) => {
+                deliver(&self.tx, Input::Press);
+                // Send the mask after this callback returns, while Win is still down.
+                // SAFETY: posts a message to this hook's own message-loop thread.
+                unsafe {
+                    PostThreadMessageW(GetCurrentThreadId(), MASK_START, 0, 0);
+                }
+            }
+            Some(input) => deliver(&self.tx, input),
+            None => {}
+        }
+        false
+    }
+}
+
+/// Releasing Win without another key opens Start. An unassigned key while the
+/// chord is held marks Win as used, as other shortcut tools do.
+fn mask_start_menu() {
+    let key = |flags| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: 0xe8,
+                wScan: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: OWN_INPUT,
+            },
+        },
+    };
+    let input = [key(0), key(KEYEVENTF_KEYUP)];
+    // SAFETY: both keyboard records are initialized for this synchronous call;
+    // our marker keeps them out of the shortcut hook.
+    unsafe {
+        SendInput(
+            input.len() as u32,
+            input.as_ptr(),
+            std::mem::size_of::<INPUT>() as i32,
+        );
+    }
 }
 thread_local! {
     // WH_KEYBOARD_LL has no context parameter. The hook and its state live on
@@ -63,8 +142,8 @@ impl InputMonitor {
                 HOOK.with(|slot| {
                     *slot.borrow_mut() = Some(HookState {
                         tx,
-                        held: false,
-                        rearm: false,
+                        chord: Chord::default(),
+                        down: [false; 4],
                     })
                 });
                 // SAFETY: this thread owns the hook, pumps its messages, and removes
@@ -117,6 +196,10 @@ impl InputMonitor {
                     }
                     let _ = ready.send(Ok(GetCurrentThreadId()));
                     while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
+                        if msg.message == MASK_START {
+                            mask_start_menu();
+                            continue;
+                        }
                         TranslateMessage(&msg);
                         DispatchMessageW(&msg);
                     }
@@ -153,81 +236,36 @@ impl Drop for InputMonitor {
 unsafe extern "system" fn keyboard(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     // Never unwind through the OS callback. A poisoned input path closes its
     // channel, causing the owner to cancel rather than continuing with lost edges.
-    let handled = std::panic::catch_unwind(|| {
-        if code < 0 {
-            return false;
-        }
-        // SAFETY: for nonnegative WH_KEYBOARD_LL callbacks lparam points to a
-        // KBDLLHOOKSTRUCT valid for this invocation.
-        let key = unsafe { &*(lparam as *const KBDLLHOOKSTRUCT) };
-        if key.dwExtraInfo == OWN_INPUT {
-            return false;
-        }
-        let down = wparam as u32 == WM_KEYDOWN || wparam as u32 == WM_SYSKEYDOWN;
-        HOOK.with(|slot| {
-            let mut state = slot.borrow_mut();
-            let Some(state) = state.as_mut() else {
-                return false;
-            };
-            // A suppressed Space is not reflected reliably in async key state.
-            // After a desktop transition, wait for release or a fresh chord.
-            if state.rearm {
-                if key.vkCode == u32::from(VK_SPACE) && !down {
-                    state.rearm = false;
-                    return true;
-                }
-                // SAFETY: these unsuppressed modifier keys have native state.
-                if unsafe {
-                    GetAsyncKeyState(i32::from(VK_CONTROL)) >= 0
-                        && GetAsyncKeyState(i32::from(VK_MENU)) >= 0
-                } {
-                    state.rearm = false;
-                } else {
-                    return false;
-                }
-            }
-            if key.vkCode == u32::from(VK_ESCAPE) && down {
-                deliver(&state.tx, Input::Cancel);
+    let swallow = code >= 0
+        && std::panic::catch_unwind(|| {
+            // SAFETY: for nonnegative WH_KEYBOARD_LL callbacks lparam points to a
+            // KBDLLHOOKSTRUCT valid for this invocation.
+            let key = unsafe { &*(lparam as *const KBDLLHOOKSTRUCT) };
+            if key.dwExtraInfo == OWN_INPUT {
                 return false;
             }
-            if key.vkCode == u32::from(VK_SPACE) {
-                // SAFETY: GetAsyncKeyState has no pointer/lifetime requirements.
-                let chord = unsafe {
-                    GetAsyncKeyState(i32::from(VK_CONTROL)) < 0
-                        && GetAsyncKeyState(i32::from(VK_MENU)) < 0
-                };
-                if down && (chord || state.held) {
-                    if !state.held {
-                        state.held = true;
-                        deliver(&state.tx, Input::Press);
-                    }
-                    return true;
-                }
-                if !down && state.held {
-                    state.held = false;
-                    deliver(&state.tx, Input::Release);
-                    return true;
-                }
-            }
-            false
+            let down = wparam as u32 == WM_KEYDOWN || wparam as u32 == WM_SYSKEYDOWN;
+            HOOK.with(|slot| {
+                slot.borrow_mut()
+                    .as_mut()
+                    .is_some_and(|state| state.observe(key.vkCode, down))
+            })
         })
-    });
-    match handled {
-        Ok(true) => 1,
-        result => {
-            if result.is_err() {
-                HOOK.with(|slot| {
-                    if let Ok(state) = slot.try_borrow()
-                        && let Some(state) = state.as_ref()
-                    {
-                        state.tx.close();
-                    }
-                });
-            }
-            // SAFETY: forward the original callback arguments, including Escape.
-            unsafe { CallNextHookEx(null_mut(), code, wparam, lparam) }
-        }
+        .unwrap_or_else(|_| {
+            HOOK.with(|slot| {
+                if let Ok(state) = slot.try_borrow()
+                    && let Some(state) = state.as_ref()
+                {
+                    state.tx.close();
+                }
+            });
+            false
+        });
+    if swallow {
+        return 1;
     }
+    // SAFETY: forward the original callback arguments, including Escape.
+    unsafe { CallNextHookEx(null_mut(), code, wparam, lparam) }
 }
 
 pub fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {

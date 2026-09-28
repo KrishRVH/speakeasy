@@ -794,8 +794,10 @@ impl Render for Settings {
                     .border_color(alpha(palette.lamp, 0.14))
                     .text_size(px(13.0))
                     .line_height(px(23.0))
-                    .child("Hold Ctrl + Alt + Space to speak.")
-                    .child(div().child("Double-tap for hands-free. Escape cancels.")),
+                    .child(format!("Hold {} to speak.", speakeasy_platform::SHORTCUT))
+                    .child(
+                        div().child("Add Space, or double-tap, for hands-free. Escape cancels."),
+                    ),
             )
             .child(
                 div()

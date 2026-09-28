@@ -9,7 +9,7 @@ use core_graphics::{
     event_source::{CGEventSource, CGEventSourceStateID},
 };
 use objc2::{msg_send, runtime::AnyObject};
-use std::{cell::Cell, sync::mpsc, thread};
+use std::{cell::RefCell, sync::mpsc, thread};
 
 const OWN_INPUT: i64 = 0x53504541;
 pub struct InputMonitor {
@@ -23,17 +23,21 @@ impl InputMonitor {
         let observers = lifecycle_observers(&tx);
         let (ready, started) = mpsc::sync_channel(1);
         let thread = thread::Builder::new().name("shortcut".into()).spawn(move || {
-            let held = Cell::new(false);
+            let chord = RefCell::new(Chord::default());
             let tap = CGEventTap::new(
                 CGEventTapLocation::Session,
                 CGEventTapPlacement::HeadInsertEventTap,
                 CGEventTapOptions::Default,
-                vec![CGEventType::KeyDown, CGEventType::KeyUp],
+                vec![
+                    CGEventType::KeyDown,
+                    CGEventType::KeyUp,
+                    CGEventType::FlagsChanged,
+                ],
                 move |_, kind, event| {
                     // Never unwind through the OS callback. A closed channel
                     // makes the owner cancel rather than continue with lost edges.
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        shortcut(&tx, &held, kind, event)
+                        shortcut(&tx, &mut chord.borrow_mut(), kind, event)
                     }))
                     .unwrap_or_else(|_| {
                         tx.close();
@@ -70,10 +74,10 @@ impl InputMonitor {
     }
 }
 
-/// Ctrl+Option+Space and passive Escape, on the event tap's run-loop thread.
+/// Fn, Fn+Space, and passive Escape, on the event tap's run-loop thread.
 fn shortcut(
     tx: &InputSender,
-    held: &Cell<bool>,
+    chord: &mut Chord,
     kind: CGEventType,
     event: &CGEvent,
 ) -> CallbackResult {
@@ -87,30 +91,31 @@ fn shortcut(
     if event.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA) == OWN_INPUT {
         return CallbackResult::Keep;
     }
-    let down = matches!(kind, CGEventType::KeyDown);
-    match event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) {
-        53 if down => deliver(tx, Input::Cancel),
-        49 => {
-            // A fresh Space press while held means its release was missed.
-            if down
-                && held.get()
-                && event.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT) == 0
-            {
-                held.set(false);
-                deliver(tx, Input::Release);
-            }
-            let chord = event
+    let key = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
+    match kind {
+        // kVK_Function: Fn (Globe) changes arrive as modifier transitions.
+        CGEventType::FlagsChanged if key == 63 => {
+            let down = event
                 .get_flags()
-                .contains(CGEventFlags::CGEventFlagControl | CGEventFlags::CGEventFlagAlternate);
-            if down && (chord || held.get()) {
-                if !held.replace(true) {
-                    deliver(tx, Input::Press);
+                .contains(CGEventFlags::CGEventFlagSecondaryFn);
+            if let Some(input) = chord.modifiers(down, down) {
+                deliver(tx, input);
+            }
+        }
+        CGEventType::KeyDown | CGEventType::KeyUp => {
+            let down = matches!(kind, CGEventType::KeyDown);
+            if key == 53 {
+                if down {
+                    deliver(tx, Input::Cancel);
+                }
+            } else if key == 49 && chord.space(down) {
+                if down {
+                    deliver(tx, Input::Lock);
                 }
                 return CallbackResult::Drop;
-            }
-            if matches!(kind, CGEventType::KeyUp) && held.replace(false) {
+            } else if down && chord.interrupt() {
+                deliver(tx, Input::Cancel);
                 deliver(tx, Input::Release);
-                return CallbackResult::Drop;
             }
         }
         _ => {}
@@ -204,7 +209,8 @@ pub fn modifiers_down() -> bool {
                 CGEventFlags::CGEventFlagControl
                     | CGEventFlags::CGEventFlagAlternate
                     | CGEventFlags::CGEventFlagCommand
-                    | CGEventFlags::CGEventFlagShift,
+                    | CGEventFlags::CGEventFlagShift
+                    | CGEventFlags::CGEventFlagSecondaryFn,
             )
         })
         .unwrap_or(true)

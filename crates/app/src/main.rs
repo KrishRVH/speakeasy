@@ -40,7 +40,8 @@ fn run() -> anyhow::Result<()> {
             "--config" => path = args.next().context("--config needs a path")?.into(),
             "--help" | "-h" => {
                 println!(
-                    "speakeasy [--config PATH] [--demo | --demo-tray]\nCtrl+Alt+Space: hold to dictate; double tap for hands-free. Escape cancels.\n--demo uses simulated audio without microphone, hook, or clipboard access.\n--demo-tray also previews native tray, minimize, close and relaunch behavior."
+                    "speakeasy [--config PATH] [--demo | --demo-tray]\n{}: hold to dictate; add Space or double-tap for hands-free. Escape cancels.\n--demo uses simulated audio without microphone, hook, or clipboard access.\n--demo-tray also previews native tray, minimize, close and relaunch behavior.",
+                    speakeasy_platform::SHORTCUT
                 );
                 return Ok(());
             }

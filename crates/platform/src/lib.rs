@@ -7,13 +7,65 @@ use std::sync::{
     atomic::{AtomicU8, Ordering},
 };
 
+/// The hold-to-talk shortcut as people see it.
+#[cfg(target_os = "macos")]
+pub const SHORTCUT: &str = "Fn";
+#[cfg(not(target_os = "macos"))]
+pub const SHORTCUT: &str = "Ctrl + Win";
+
 #[derive(Debug, Clone, Copy)]
 pub enum Input {
     Press,
     Release,
+    Lock,
     Cancel,
     Toggle,
     Quit,
+}
+
+/// Hold state for the modifier-only shortcut: Ctrl+Win on Windows, Fn on macOS.
+/// Modifiers are observed, never swallowed. Space during a hold locks
+/// hands-free; any other key belongs to a different shortcut, so it cancels
+/// dictation and waits for the chord's release.
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+#[derive(Default)]
+struct Chord {
+    held: bool,
+    blocked: bool,
+    space: bool,
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+impl Chord {
+    /// `down` is the chord after this event; `fresh` marks a new press rather
+    /// than autorepeat or a second key on the same side of the chord.
+    fn modifiers(&mut self, down: bool, fresh: bool) -> Option<Input> {
+        if !down {
+            self.blocked = false;
+            return std::mem::take(&mut self.held).then_some(Input::Release);
+        }
+        if fresh && !self.held && !self.blocked {
+            self.held = true;
+            return Some(Input::Press);
+        }
+        None
+    }
+
+    /// Space while held locks hands-free. Returns whether to swallow the event,
+    /// so neither the press nor its release types a space or switches input.
+    fn space(&mut self, down: bool) -> bool {
+        if down && self.held {
+            self.space = true;
+        }
+        down && self.held || !down && std::mem::take(&mut self.space)
+    }
+
+    /// Another key ends an active hold. Returns whether one was interrupted.
+    fn interrupt(&mut self) -> bool {
+        let held = std::mem::take(&mut self.held);
+        self.blocked |= held;
+        held
+    }
 }
 
 /// The hook never waits. Closing on overflow wakes the owner and disables
@@ -133,6 +185,38 @@ mod tests {
         assert!(input.commit());
         deliver(&input, Input::Cancel);
         assert!(!input.commit()); // never submit the same result twice
+    }
+
+    #[test]
+    fn chord_ignores_repeats_and_yields_to_other_shortcuts() {
+        let mut chord = Chord::default();
+        assert!(matches!(chord.modifiers(true, true), Some(Input::Press)));
+        assert!(
+            chord.modifiers(true, false).is_none(),
+            "autorepeat restarted"
+        );
+        assert!(matches!(
+            chord.modifiers(false, false),
+            Some(Input::Release)
+        ));
+        // Ctrl+Win+Left belongs to Windows: cancel, then wait for release.
+        assert!(matches!(chord.modifiers(true, true), Some(Input::Press)));
+        assert!(chord.interrupt());
+        assert!(
+            chord.modifiers(true, true).is_none(),
+            "interrupted chord restarted"
+        );
+        assert!(chord.modifiers(false, false).is_none());
+        assert!(matches!(chord.modifiers(true, true), Some(Input::Press)));
+        // Space locks hands-free; its press and release never reach the app.
+        assert!(chord.space(true));
+        assert!(chord.space(false));
+        assert!(!chord.space(false));
+        assert!(matches!(
+            chord.modifiers(false, false),
+            Some(Input::Release)
+        ));
+        assert!(!chord.space(true), "Space was swallowed without a hold");
     }
 
     #[test]

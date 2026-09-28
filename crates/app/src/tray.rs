@@ -141,8 +141,9 @@ pub fn install(cx: &mut App) -> anyhow::Result<()> {
                 }
                 status.set_text(&presentation.description);
                 let _ = updating_icon.set_tooltip(Some(format!(
-                    "Speakeasy · {}\nCtrl+Alt+Space",
-                    presentation.description
+                    "Speakeasy · {}\nHold {} to dictate",
+                    presentation.description,
+                    speakeasy_platform::SHORTCUT
                 )));
                 pause.set_text(if pausing {
                     "Pausing…"

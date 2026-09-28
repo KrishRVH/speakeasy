@@ -89,8 +89,13 @@ the pill's notice expires, including while there are unsaved edits.
 
 ## Interaction contracts
 
-- Hold Ctrl+Alt+Space to dictate; release to finish. Double-tap for hands-free,
-  then press again to finish. A short single tap finishes after its tap window.
+- Hold Ctrl+Win on Windows or Fn on macOS to dictate; release to finish. Adding
+  Space during the hold, or double-tapping, switches to hands-free; press the
+  shortcut again to finish. A short single tap finishes after its tap window.
+- The shortcut's modifiers are observed, never swallowed. Only the Space that
+  locks hands-free is withheld from the focused app. Any other key during a hold
+  belongs to a different shortcut: dictation cancels and waits for release. On
+  Windows, an unassigned mask key keeps the released Win key from opening Start.
 - Escape cancels immediately and continues to the focused app. Animation never
   delays cancellation or owns the microphone lifetime.
 - Readiness follows the first captured buffer. Startup feedback does not imply

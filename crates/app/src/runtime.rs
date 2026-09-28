@@ -268,6 +268,7 @@ async fn run<P: Ports>(
                 action = match event {
                     Input::Press => gesture.press(Instant::now()),
                     Input::Release => gesture.release(Instant::now()),
+                    Input::Lock => gesture.lock(),
                     Input::Toggle => gesture.toggle(Instant::now()),
                     Input::Cancel => gesture.cancel(),
                     Input::Quit => break,

@@ -44,8 +44,8 @@ explanations. Tests live beside the Rust modules they exercise.
 ## Session ownership
 
 Capture starts on the first shortcut press. Hold/release finishes a recording;
-double-tap enables hands-free capture, and another press finishes it. A short
-single tap finishes after the double-tap window. Escape passes to the focused
+Space during the hold or a double-tap enables hands-free capture, and another
+press finishes it. A short single tap finishes after the double-tap window. Escape passes to the focused
 app and invalidates the insertion gate immediately. The five-minute cap is
 independent of UI animation.
 

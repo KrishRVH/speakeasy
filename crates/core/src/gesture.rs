@@ -74,6 +74,15 @@ impl Gesture {
         }
     }
 
+    /// Space during a hold keeps the capture and switches it to hands-free.
+    pub fn lock(&mut self) -> Option<Action> {
+        if self.state != State::Held {
+            return None;
+        }
+        self.state = State::HandsFree;
+        Some(Action::ModeChanged)
+    }
+
     pub fn toggle(&mut self, now: Instant) -> Option<Action> {
         match self.state {
             State::Idle => {
@@ -152,6 +161,19 @@ mod tests {
         );
         assert_eq!(g.state, State::HandsFree);
         assert_eq!(g.started, Some(t));
+    }
+
+    #[test]
+    fn locking_a_hold_keeps_its_capture_until_the_next_press() {
+        let t = Instant::now();
+        let mut g = Gesture::default();
+        assert_eq!(g.press(t), Some(Action::Start));
+        assert_eq!(g.lock(), Some(Action::ModeChanged));
+        assert_eq!(g.release(t + Duration::from_secs(1)), None);
+        assert_eq!(g.state, State::HandsFree);
+        assert_eq!(g.started, Some(t));
+        assert_eq!(g.lock(), None);
+        assert_eq!(g.press(t + Duration::from_secs(2)), Some(Action::Finish));
     }
 
     #[test]

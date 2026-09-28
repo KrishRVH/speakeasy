@@ -6,9 +6,10 @@ GPU and works offline without an account.
 1. Extract the entire Speakeasy folder to a Windows drive. Keep its files together.
 2. Double-click Speakeasy.cmd. The app starts in the system tray.
 3. Open Settings from the tray to check readiness or select your microphone.
-   Wait for the model to load, then hold Ctrl+Alt+Space, speak, and release.
+   Wait for the model to load, then hold Ctrl+Win, speak, and release.
 
-Double-tap the shortcut for hands-free dictation; tap again to finish.
+Add Space while holding, or double-tap, for hands-free dictation; press
+Ctrl+Win again to finish.
 Escape cancels. Recordings stop after five minutes.
 The microphone starts only when you trigger dictation.
 

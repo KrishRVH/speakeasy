@@ -23,15 +23,17 @@ keeps every word on your machine.
   <img src="docs/assets/pill.png" alt="The pill opening the microphone, listening, recording hands-free, and confirming typed text" width="760">
 </p>
 
-| Gesture | Result |
-| --- | --- |
-| Hold <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Space</kbd> | Dictate while held; release to type. |
-| Double-tap the shortcut | Hands-free. Press once more to finish. |
-| <kbd>Escape</kbd> | Cancel. The key still reaches your app. |
+| Gesture | Windows | Mac |
+| --- | --- | --- |
+| Dictate while held; release to type | <kbd>Ctrl</kbd> + <kbd>Win</kbd> | <kbd>Fn</kbd> |
+| Hands-free; press the shortcut again to finish | <kbd>Ctrl</kbd> + <kbd>Win</kbd> + <kbd>Space</kbd> | <kbd>Fn</kbd> + <kbd>Space</kbd> |
+| Cancel; the key still reaches your app | <kbd>Escape</kbd> | <kbd>Escape</kbd> |
 
-On Mac, Alt is Option. Recordings stop at five minutes, with a countdown for the
-last 30 seconds. A check means the text was submitted to your app; **No speech
-detected** means nothing was sent.
+The shortcuts match Wispr Flow's defaults, and double-tapping the shortcut also
+starts hands-free. On Mac, set **System Settings › Keyboard › Press 🌐 key to**
+to **Do Nothing** so Fn only dictates. Recordings stop at five minutes, with a
+countdown for the last 30 seconds. A check means the text was submitted to your
+app; **No speech detected** means nothing was sent.
 
 ## What's said here stays here
 
@@ -55,7 +57,7 @@ cargo run --locked -p speakeasy             # the app
 
 1. In **Settings**, choose an engine, then its executable and model.
 2. Select **Enable dictation**. Speakeasy moves to the tray or menu bar.
-3. Hold <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Space</kbd> in any editor and speak.
+3. Hold <kbd>Ctrl</kbd> + <kbd>Win</kbd> (Windows) or <kbd>Fn</kbd> (Mac) in any editor and speak.
 
 Settings also choose the microphone, language, GPU use, clipboard behavior,
 reduced motion, and theme: **Jet & Champagne**, **Emerald Lounge**, **Iris**, or

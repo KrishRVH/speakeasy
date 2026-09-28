@@ -23,14 +23,15 @@ See the [VB-CABLE signal path](https://vb-audio.com/Cable/).
 
 Use the receiver or Windows input meter to confirm that client speech reaches
 the selected recording device. Then focus a scratch editor, hold
-**Ctrl+Alt+Space**, speak, and release. This is a live dictation test and can
+**Ctrl+Win**, speak, and release. This is a live dictation test and can
 change the clipboard and editor text. Stop the client's microphone sender when
 finished; Speakeasy's five-minute limit controls only its own recording.
 
 ## Troubleshooting
 
 - **No pill:** confirm that dictation is enabled and the remote client forwards
-  Ctrl+Alt+Space to the host. The shortcut is fixed.
+  Ctrl+Win to the host. Many clients send Windows-key combinations only in full
+  screen; check the client's keyboard setting. The shortcut is fixed.
 - **Pill without a level:** check the sender, receiver, mixer route, and selected
   recording device in that order. Check host microphone permissions as well.
 - **Level follows desktop sound:** separate playback from the microphone bus.
