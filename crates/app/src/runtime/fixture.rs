@@ -74,27 +74,26 @@ impl Ports for Fixture {
         }
     }
 
-    fn modifiers_down(&self) -> bool {
-        false
-    }
-
     fn insert(
         &self,
-        text: &str,
-        gate: &speakeasy_platform::InputSender,
+        text: String,
+        gate: speakeasy_platform::InsertPermit,
         _: bool,
-    ) -> anyhow::Result<Inserted> {
-        if !text.to_lowercase().contains("ask not what your country") {
-            return Ok(Inserted::Unavailable("Fixture phrase missing"));
+    ) -> impl std::future::Future<Output = anyhow::Result<Inserted>> + Send + 'static {
+        let inserted = self.inserted.clone();
+        async move {
+            if !text.to_lowercase().contains("ask not what your country") {
+                return Ok(Inserted::Unavailable("Fixture phrase missing"));
+            }
+            if text.contains(['\r', '\n']) {
+                return Ok(Inserted::Unavailable("Segment layout reached insertion"));
+            }
+            if !gate.commit() {
+                return Ok(Inserted::Unavailable("Fixture insertion was cancelled"));
+            }
+            inserted.try_send(())?;
+            Ok(Inserted::Sent)
         }
-        if text.contains(['\r', '\n']) {
-            return Ok(Inserted::Unavailable("Segment layout reached insertion"));
-        }
-        if !gate.commit() {
-            return Ok(Inserted::Unavailable("Fixture insertion was cancelled"));
-        }
-        self.inserted.try_send(())?;
-        Ok(Inserted::Sent)
     }
 }
 

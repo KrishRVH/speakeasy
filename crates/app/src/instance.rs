@@ -8,18 +8,27 @@ use std::{
     time::Duration,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Request {
+    Reveal,
+    Toggle,
+    Cancel,
+}
+
 /// Owns the configuration-directory lock and a sleeping, loopback-only reopen
-/// listener. Connecting requests Settings; no audio, text or commands cross it.
+/// listener. Only fixed reveal/toggle/cancel requests cross it; never text.
 pub struct Instance {
     _lock: File,
     endpoint: PathBuf,
     address: SocketAddr,
-    requests: async_channel::Sender<()>,
+    requests: async_channel::Sender<Request>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
 impl Instance {
-    pub fn acquire(path: &Path) -> anyhow::Result<Option<(Self, async_channel::Receiver<()>)>> {
+    pub fn acquire(
+        path: &Path,
+    ) -> anyhow::Result<Option<(Self, async_channel::Receiver<Request>)>> {
         let directory = path.parent().context("Settings path has no directory")?;
         std::fs::create_dir_all(directory)?;
         let lock_path = directory.join("instance.lock");
@@ -49,6 +58,7 @@ impl Instance {
                             stream.set_read_timeout(Some(Duration::from_millis(100)))?;
                             let mut reply = [0; 9];
                             if stream.read_exact(&mut reply).is_ok() && &reply == b"SPEAKEASY" {
+                                stream.write_all(&[0])?;
                                 return Ok(None);
                             }
                         }
@@ -78,7 +88,23 @@ impl Instance {
                     {
                         continue;
                     }
-                    let _ = sender.try_send(());
+                    if stream
+                        .set_read_timeout(Some(Duration::from_millis(100)))
+                        .is_err()
+                    {
+                        continue;
+                    }
+                    let mut command = [0];
+                    let request = match stream.read_exact(&mut command) {
+                        Ok(()) => match command[0] {
+                            0 => Request::Reveal,
+                            1 => Request::Toggle,
+                            2 => Request::Cancel,
+                            _ => continue,
+                        },
+                        Err(_) => continue,
+                    };
+                    let _ = sender.try_send(request);
                 }
             })?;
         Ok(Some((
@@ -91,6 +117,29 @@ impl Instance {
             },
             receiver,
         )))
+    }
+    pub fn command(path: &Path, command: Request) -> anyhow::Result<()> {
+        let endpoint = path.with_file_name("instance.port");
+        let port: u16 = std::fs::read_to_string(endpoint)
+            .context("Start Speakeasy before using a desktop shortcut")?
+            .trim()
+            .parse()?;
+        let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        let mut stream = TcpStream::connect_timeout(&address, Duration::from_millis(100))?;
+        stream.set_read_timeout(Some(Duration::from_millis(100)))?;
+        stream.set_write_timeout(Some(Duration::from_millis(100)))?;
+        let mut reply = [0; 9];
+        stream.read_exact(&mut reply)?;
+        anyhow::ensure!(
+            &reply == b"SPEAKEASY",
+            "Speakeasy instance could not be verified"
+        );
+        stream.write_all(&[match command {
+            Request::Reveal => 0,
+            Request::Toggle => 1,
+            Request::Cancel => 2,
+        }])?;
+        Ok(())
     }
 }
 
@@ -115,14 +164,24 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("settings.json");
         let (instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
-        assert!(Instance::acquire(&path)?.is_none());
-        let deadline = std::time::Instant::now() + Duration::from_secs(2);
-        while requests.try_recv().is_err() {
-            anyhow::ensure!(
-                std::time::Instant::now() < deadline,
-                "Reopen was not delivered"
-            );
-            thread::sleep(Duration::from_millis(5));
+        for command in [Request::Reveal, Request::Toggle, Request::Cancel] {
+            if command == Request::Reveal {
+                assert!(Instance::acquire(&path)?.is_none());
+            } else {
+                Instance::command(&path, command)?;
+            }
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            loop {
+                if let Ok(received) = requests.try_recv() {
+                    assert_eq!(received, command);
+                    break;
+                }
+                anyhow::ensure!(
+                    std::time::Instant::now() < deadline,
+                    "Instance command was not delivered"
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
         }
         drop(instance);
         assert!(requests.is_closed());

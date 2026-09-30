@@ -1,7 +1,7 @@
 //! The three side effects used by the session owner. Tests replace devices and
 //! speech at this boundary; gesture, cancellation, and insertion ordering stay real.
 use crate::{audio::Capture, config::Config, local_speech::LocalSpeech, runtime::Event};
-use speakeasy_platform::{InputSender, Inserted};
+use speakeasy_platform::{InsertPermit, Inserted, Inserter};
 use std::future::Future;
 
 pub trait Recording: Send {
@@ -33,6 +33,9 @@ impl Speech for LocalSpeech {
     }
 }
 pub trait Ports: Send + 'static {
+    fn prepares_desktop(&self) -> bool {
+        false
+    }
     type Recording: Recording;
     type Speech: Speech;
     fn record(
@@ -45,11 +48,20 @@ pub trait Ports: Send + 'static {
         &self,
         config: Config,
     ) -> impl Future<Output = anyhow::Result<Self::Speech>> + Send + 'static;
-    fn modifiers_down(&self) -> bool;
-    fn insert(&self, text: &str, gate: &InputSender, preserve: bool) -> anyhow::Result<Inserted>;
+    fn insert(
+        &self,
+        text: String,
+        permit: InsertPermit,
+        preserve: bool,
+    ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static;
 }
-pub struct Desktop;
+pub struct Desktop {
+    pub inserter: Inserter,
+}
 impl Ports for Desktop {
+    fn prepares_desktop(&self) -> bool {
+        cfg!(target_os = "linux")
+    }
     type Recording = Capture;
     type Speech = LocalSpeech;
     fn record(
@@ -66,10 +78,13 @@ impl Ports for Desktop {
     ) -> impl Future<Output = anyhow::Result<LocalSpeech>> + Send + 'static {
         LocalSpeech::start(config)
     }
-    fn modifiers_down(&self) -> bool {
-        speakeasy_platform::modifiers_down()
-    }
-    fn insert(&self, text: &str, gate: &InputSender, preserve: bool) -> anyhow::Result<Inserted> {
-        speakeasy_platform::insert(text, gate, preserve)
+    fn insert(
+        &self,
+        text: String,
+        permit: InsertPermit,
+        preserve: bool,
+    ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static {
+        let inserter = self.inserter.clone();
+        async move { inserter.insert(text, permit, preserve).await }
     }
 }

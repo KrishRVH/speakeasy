@@ -1,9 +1,12 @@
 # Remote dictation
 
 Run Speakeasy on the host where the destination app is open. Remote keyboard
-input and remote microphone audio are separate routes. Speakeasy accepts injected
+input and remote microphone audio are separate routes. Windows Speakeasy accepts injected
 shortcut events and ignores its own insertion events, but the host must also have
 a recording device receiving the client's voice.
+
+The routing steps below describe a Windows host. Linux desktop portals and macOS
+remote-input permissions need acceptance with the chosen remote client.
 
 ## Route the microphone
 

@@ -8,9 +8,9 @@ use crate::{
     theme::{Palette, alpha, mix},
 };
 use gpui::{prelude::*, *};
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use raw_window_handle::HasWindowHandle;
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use speakeasy_platform::Input;
 use speakeasy_platform::InputMonitor;
 use std::{
@@ -34,9 +34,9 @@ pub struct Services {
     pub window: Option<WindowHandle<Settings>>,
     pub demo: bool,
     pub demo_tray: bool,
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     pub visibility: Option<Task<()>>,
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     pub tray_hint_seen: bool,
     pub _reopen: Option<Task<()>>,
     pub _instance: Option<crate::instance::Instance>,
@@ -60,6 +60,13 @@ impl Services {
             self.pending = Some(config);
             return Ok(());
         }
+        #[cfg(target_os = "linux")]
+        if self.runtime.is_some() && self.config.linux != config.linux {
+            self.stop(cx);
+            self.pending = Some(config.clone());
+            self.config = config;
+            return Ok(());
+        }
         if let Some(runtime) = &self.runtime {
             runtime.configure(config.clone());
         } else {
@@ -68,18 +75,7 @@ impl Services {
                 snapshot.model = ModelState::Loading;
                 snapshot.message = crate::runtime::LOADING.into();
             });
-            let runtime = Runtime::start(config.clone(), self.output.clone())?;
-            let monitor = match InputMonitor::start(runtime.input.clone()) {
-                Ok(monitor) => monitor,
-                Err(error) => {
-                    drop(runtime);
-                    self.output.send_modify(|snapshot| {
-                        snapshot.phase = Phase::Error;
-                        snapshot.message = error.to_string();
-                    });
-                    return Err(error);
-                }
-            };
+            let (runtime, monitor) = Runtime::start(config.clone(), self.output.clone())?;
             self.monitor = Some(monitor);
             self.runtime = Some(runtime);
         }
@@ -90,13 +86,24 @@ impl Services {
         if let Some(runtime) = &self.runtime {
             runtime.request_stop();
         }
-        self.monitor.take();
+        let monitor = self.monitor.take();
+        #[cfg(target_os = "linux")]
+        if let Some(monitor) = &monitor {
+            monitor.request_stop();
+        }
+        #[cfg(not(target_os = "linux"))]
+        drop(monitor);
         self.pending = None;
         if let Some(runtime) = self.runtime.take() {
             let stopped = runtime.stopped();
             self.retiring = Some(runtime);
             self.retirement = Some(cx.spawn(async move |cx| {
                 stopped.await;
+                #[cfg(target_os = "linux")]
+                if let Some(monitor) = monitor {
+                    monitor.stopped().await;
+                    drop(monitor);
+                }
                 let _ = cx.update(|cx| {
                     cx.update_global::<Services, _>(|services, cx| {
                         // The owner has stopped publishing and released its
@@ -143,7 +150,7 @@ pub fn reveal(cx: &mut App) {
     }
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 pub fn toggle_enabled(cx: &mut App) {
     if cx.global::<Services>().demo {
         return;
@@ -173,7 +180,7 @@ pub fn toggle_enabled(cx: &mut App) {
 
 // Resolve native handles immediately before use, outside GPUI's window borrow.
 // Replacing the task cancels a queued hide if the app is reopened first.
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 fn settings_visible(handle: WindowHandle<Settings>, visible: bool, cx: &mut App) {
     let task = cx.spawn(async move |cx| {
         let raw = handle.update(cx, |_, window, _| {
@@ -211,9 +218,9 @@ pub fn open(cx: &mut App) -> anyhow::Result<()> {
     if let Some(window) = cx.global::<Services>().window
         && window.update(cx, |_, _, _| ()).is_ok()
     {
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
         settings_visible(window, true, cx);
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
         let _ = window.update(cx, |_, window, _| window.activate_window());
         return Ok(());
     }
@@ -221,7 +228,11 @@ pub fn open(cx: &mut App) -> anyhow::Result<()> {
     let demo = cx.global::<Services>().demo;
     // A fresh install sets itself up; later launches leave engine choice alone.
     let first_run = !demo
-        && cfg!(any(target_os = "windows", target_os = "macos"))
+        && cfg!(any(
+            target_os = "windows",
+            target_os = "macos",
+            target_os = "linux"
+        ))
         && !cx.global::<Services>().path.exists();
     let tray_lifecycle = !demo || cx.global::<Services>().demo_tray;
     let mut updates = cx.global::<Services>().output.subscribe();
@@ -229,6 +240,8 @@ pub fn open(cx: &mut App) -> anyhow::Result<()> {
     let mut native_result = Ok(());
     let window = cx.open_window(
         WindowOptions {
+            #[cfg(target_os = "linux")]
+            app_id: Some(speakeasy_platform::APPLICATION_ID.into()),
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,
                 size(px(560.0), px(720.0)),
@@ -241,13 +254,20 @@ pub fn open(cx: &mut App) -> anyhow::Result<()> {
             ..Default::default()
         },
         |window, cx| {
-            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+            #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
             let _ = (window, tray_lifecycle);
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
             if tray_lifecycle {
                 window.on_window_should_close(cx, |_, cx| {
                     if !cx.has_global::<Services>() {
                         return true;
+                    }
+                    #[cfg(target_os = "linux")]
+                    if !cx.has_global::<crate::tray::Tray>()
+                        || !cx.global::<crate::tray::Tray>().available
+                    {
+                        cx.quit();
+                        return false;
                     }
                     if let Some(handle) = cx.global::<Services>().window {
                         settings_visible(handle, false, cx);
@@ -282,23 +302,33 @@ pub fn open(cx: &mut App) -> anyhow::Result<()> {
             };
             cx.new(|cx: &mut Context<Settings>| {
                 let task = cx.spawn(async move |this, cx| {
+                    let mut previous = None;
                     loop {
                         let snapshot = updates.borrow_and_update().clone();
                         if this
                             .update(cx, |view, cx| {
                                 let services = cx.global::<Services>();
+                                let running = services.running() || services.demo;
+                                let pausing = services.retiring.is_some();
+                                let presentation = (
+                                    status::indicator(&snapshot, running, pausing),
+                                    snapshot.shortcut.clone(),
+                                    snapshot.cancel_shortcut.clone(),
+                                );
                                 let status = if !snapshot.message.is_empty() {
                                     snapshot.message.clone()
                                 } else {
                                     status::description(
                                         &snapshot,
-                                        services.running() || services.demo,
-                                        services.retiring.is_some(),
+                                        running,
+                                        pausing,
                                         services.config.engine,
                                     )
                                 };
-                                if view.status != status {
+                                if view.status != status || previous.as_ref() != Some(&presentation)
+                                {
                                     view.status = status;
+                                    previous = Some(presentation);
                                     cx.notify();
                                 }
                             })
@@ -380,6 +410,9 @@ enum Action {
     Pause,
     Preview,
     Quit,
+    LinuxManual,
+    LinuxTerminal,
+    LinuxExternal,
 }
 
 impl Settings {
@@ -487,6 +520,8 @@ impl Settings {
             (Engine::Whisper, true) => ("Choose a Whisper GGML model", ["Whisper models", "*.bin"]),
             (Engine::Whisper, false) => ("Choose whisper-server", ["Programs", "*.exe"]),
         };
+        #[cfg(not(target_os = "windows"))]
+        let filter = if model { filter } else { ["Programs", "*"] };
         let picker = choose_file(window, title, filter, cx);
         self.dialog = Some(cx.spawn(async move |this, cx| {
             let result = picker.await;
@@ -558,6 +593,18 @@ impl Settings {
             }
             Action::Clipboard => {
                 self.config.preserve_clipboard = !self.config.preserve_clipboard;
+                self.notice = Some("Unsaved changes".into());
+            }
+            Action::LinuxManual => {
+                self.config.linux.manual_paste = !self.config.linux.manual_paste;
+                self.notice = Some("Unsaved changes".into());
+            }
+            Action::LinuxTerminal => {
+                self.config.linux.terminal_paste = !self.config.linux.terminal_paste;
+                self.notice = Some("Unsaved changes".into());
+            }
+            Action::LinuxExternal => {
+                self.config.linux.external_shortcut = !self.config.linux.external_shortcut;
                 self.notice = Some("Unsaved changes".into());
             }
             Action::Motion => {
@@ -865,13 +912,31 @@ fn filename(path: &std::path::Path) -> String {
 }
 impl Render for Settings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let indicator = {
+        let (indicator, shortcut, cancel_shortcut) = {
             let services = cx.global::<Services>();
-            status::indicator(
-                &services.output.borrow(),
-                services.running() || services.demo,
-                services.retiring.is_some(),
+            let snapshot = services.output.borrow();
+            (
+                status::indicator(
+                    &snapshot,
+                    services.running() || services.demo,
+                    services.retiring.is_some(),
+                ),
+                snapshot.shortcut.clone(),
+                snapshot.cancel_shortcut.clone(),
             )
+        };
+        let desktop_bindings = cfg!(target_os = "linux") && self.config.linux.external_shortcut;
+        let shortcut_hint = if desktop_bindings {
+            "Use your desktop shortcut to start or finish dictation.".into()
+        } else {
+            format!("Hold {shortcut} to speak.")
+        };
+        let gesture_hint = if desktop_bindings {
+            "Use your desktop's cancel binding to discard a recording.".into()
+        } else if cfg!(target_os = "linux") {
+            format!("Double-tap for hands-free. {cancel_shortcut} cancels.")
+        } else {
+            "Add Space, or double-tap, for hands-free. Escape cancels.".into()
         };
         let palette = self.config.theme.palette();
         let dim = mix(palette.room, palette.muted, 0.6);
@@ -944,11 +1009,8 @@ impl Render for Settings {
                     panel(palette)
                         .text_size(px(13.0))
                         .line_height(px(23.0))
-                        .child(format!("Hold {} to speak.", speakeasy_platform::SHORTCUT))
-                        .child(
-                            div()
-                                .child("Add Space, or double-tap, for hands-free. Escape cancels."),
-                        )
+                        .child(shortcut_hint)
+                        .child(div().child(gesture_hint))
                         .into_any_element()
                 },
             )
@@ -1009,6 +1071,50 @@ impl Render for Settings {
                                 )
                                 .child(button("Choose model", Action::Model, palette, cx)),
                         ),
+                )
+            })
+            .when(cfg!(target_os = "linux"), |form| {
+                form.child(
+                    panel(palette)
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.0))
+                        .child(label("LINUX DESKTOP", palette))
+                        .child(div().text_size(px(12.0)).child(format!("Shortcut: {shortcut}")))
+                        .child(div().text_size(px(12.0)).child(format!("Cancel: {cancel_shortcut}")))
+                        .child(button(
+                            if self.config.linux.external_shortcut {
+                                "Shortcuts: Desktop bindings"
+                            } else {
+                                "Shortcuts: Native desktop"
+                            },
+                            Action::LinuxExternal,
+                            palette,
+                            cx,
+                        ))
+                        .child(div().text_size(px(12.0)).child(
+                            "Desktop bindings: assign speakeasy --toggle and speakeasy --cancel in your desktop's shortcut settings.",
+                        ))
+                        .child(button(
+                            if self.config.linux.manual_paste {
+                                "Copy for manual paste: On"
+                            } else {
+                                "Copy for manual paste: Off"
+                            },
+                            Action::LinuxManual,
+                            palette,
+                            cx,
+                        ))
+                        .child(button(
+                            if self.config.linux.terminal_paste {
+                                "Paste shortcut: Ctrl+Shift+V"
+                            } else {
+                                "Paste shortcut: Ctrl+V"
+                            },
+                            Action::LinuxTerminal,
+                            palette,
+                            cx,
+                        )),
                 )
             })
             .child(
@@ -1152,7 +1258,7 @@ impl Render for Settings {
     }
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 pub fn send(action: Input, cx: &App) {
     if let Some(runtime) = &cx.global::<Services>().runtime {
         speakeasy_platform::deliver(&runtime.input, action);

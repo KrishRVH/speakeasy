@@ -1,7 +1,7 @@
 use crate::runtime::{Phase, Snapshot};
 use crate::theme::{Palette, Theme, alpha, mix};
 use gpui::{prelude::*, *};
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use raw_window_handle::HasWindowHandle;
 use speakeasy_core::{gesture::RECORDING_LIMIT, motion::Spring};
 use std::time::{Duration, Instant};
@@ -61,7 +61,7 @@ pub struct Pill {
     frame_pending: bool,
     frame_due: Instant,
     wake: Option<Task<()>>,
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     visibility: Option<Task<()>>,
     _updates: Task<()>,
 }
@@ -98,7 +98,7 @@ impl Pill {
         self.theme = theme;
     }
 
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     pub fn tray_hint(&mut self, cx: &mut Context<Self>) -> bool {
         if self.visible {
             return false;
@@ -166,12 +166,20 @@ impl Pill {
                             && !pill.visible
                         {
                             pill.visible = true;
-                            #[cfg(any(target_os = "windows", target_os = "macos"))]
+                            #[cfg(any(
+                                target_os = "windows",
+                                target_os = "macos",
+                                target_os = "linux"
+                            ))]
                             {
                                 pill.visibility =
                                     Some(set_visible(Window::window_handle(window), cx));
                             }
-                            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+                            #[cfg(not(any(
+                                target_os = "windows",
+                                target_os = "macos",
+                                target_os = "linux"
+                            )))]
                             let _ = window;
                         }
                         pill.snapshot = snapshot;
@@ -210,7 +218,7 @@ impl Pill {
             frame_pending: false,
             frame_due: Instant::now(),
             wake: None,
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
             visibility: None,
             _updates: task,
         }
@@ -338,7 +346,7 @@ impl Render for Pill {
         }
         if visible != self.visible {
             self.visible = visible;
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
             {
                 self.visibility = Some(set_visible(Window::window_handle(window), cx));
             }
@@ -769,7 +777,7 @@ pub fn keystone(window: &mut Window, x: f32, y: f32, radius: f32, color: Rgba) {
 
 // Native show/resize can synchronously request a GPUI frame. Run it after
 // releasing the app/window borrow, and resolve the handle just before use.
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 fn set_visible(handle: AnyWindowHandle, cx: &mut App) -> Task<()> {
     cx.spawn(async move |cx| {
         let raw = cx.update_window(handle, |root, window, cx| {
@@ -805,19 +813,17 @@ pub fn open(
         ),
         size(px(400.0), px(100.0)),
     );
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     let mut native_result = Ok(());
     let handle = cx.open_window(
         WindowOptions {
+            #[cfg(target_os = "linux")]
+            app_id: Some(speakeasy_platform::APPLICATION_ID.into()),
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: None,
             focus: false,
-            show: cfg!(target_os = "linux"),
-            kind: if cfg!(target_os = "linux") {
-                WindowKind::Normal
-            } else {
-                WindowKind::PopUp
-            },
+            show: false,
+            kind: WindowKind::PopUp,
             is_movable: false,
             is_resizable: false,
             is_minimizable: false,
@@ -826,9 +832,9 @@ pub fn open(
         },
         |window, cx| {
             window.set_window_title("Speakeasy pill");
-            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+            #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
             let _ = window;
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
             {
                 native_result = window
                     .window_handle()
@@ -838,7 +844,7 @@ pub fn open(
             cx.new(|cx| Pill::new(updates, reduced, theme, window, cx))
         },
     )?;
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     native_result?;
     Ok(handle)
 }

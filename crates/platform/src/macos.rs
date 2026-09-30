@@ -62,10 +62,17 @@ impl InputMonitor {
             let _ = ready.send(Ok(run_loop));
             CFRunLoop::run_current();
         })?;
-        let run_loop = started
+        let run_loop = match started
             .recv()
-            .context("Shortcut thread stopped")?
-            .map_err(|message| anyhow!(message))?;
+            .context("Shortcut thread stopped")
+            .and_then(|result| result.map_err(|message| anyhow!(message)))
+        {
+            Ok(run_loop) => run_loop,
+            Err(error) => {
+                let _ = thread.join();
+                return Err(error);
+            }
+        };
         Ok(Self {
             run_loop,
             thread: Some(thread),
@@ -224,7 +231,7 @@ pub fn modifiers_down() -> bool {
 
 pub fn insert(
     text: &str,
-    gate: &InputSender,
+    gate: &InsertPermit,
     preserve_clipboard: bool,
 ) -> anyhow::Result<Inserted> {
     if !gate.active() {
@@ -234,6 +241,9 @@ pub fn insert(
         return insert_direct(text, gate);
     }
     let mut clipboard = arboard::Clipboard::new()?;
+    if !gate.active() {
+        return Ok(Inserted::Cancelled);
+    }
     clipboard.set_text(text)?;
     let sequence = clipboard_sequence();
     if clipboard.get_text()? != text || clipboard_sequence() != sequence {
@@ -292,7 +302,7 @@ fn clipboard_sequence() -> isize {
     }
 }
 
-fn insert_direct(text: &str, gate: &InputSender) -> anyhow::Result<Inserted> {
+fn insert_direct(text: &str, gate: &InsertPermit) -> anyhow::Result<Inserted> {
     if !has_external_target() {
         return Ok(Inserted::Unavailable(
             "Focus an editor and try again. Clipboard preserved.",

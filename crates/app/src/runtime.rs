@@ -46,6 +46,9 @@ pub struct Snapshot {
     pub started: Instant,
     pub message: String,
     pub model: ModelState,
+    pub desktop_ready: bool,
+    pub shortcut: std::sync::Arc<str>,
+    pub cancel_shortcut: std::sync::Arc<str>,
 }
 impl Default for Snapshot {
     fn default() -> Self {
@@ -58,6 +61,14 @@ impl Default for Snapshot {
             started: Instant::now(),
             message: String::new(),
             model: ModelState::Unavailable,
+            desktop_ready: true,
+            shortcut: speakeasy_platform::SHORTCUT.into(),
+            cancel_shortcut: if cfg!(target_os = "linux") {
+                "Ctrl + Super + Escape"
+            } else {
+                "Escape"
+            }
+            .into(),
         }
     }
 }
@@ -87,9 +98,18 @@ pub struct Runtime {
     finished: async_channel::Receiver<()>,
 }
 impl Runtime {
-    pub fn start(config: Config, snapshots: watch::Sender<Snapshot>) -> anyhow::Result<Self> {
-        Self::start_with(config, snapshots, Desktop)
+    pub fn start(
+        config: Config,
+        snapshots: watch::Sender<Snapshot>,
+    ) -> anyhow::Result<(Self, speakeasy_platform::InputMonitor)> {
+        let (sender, receiver) = async_channel::bounded(64);
+        let input = speakeasy_platform::InputSender::new(sender);
+        let (monitor, inserter) =
+            speakeasy_platform::prepare(input.clone(), config.desktop_options())?;
+        let runtime = Self::spawn(config, snapshots, Desktop { inserter }, input, receiver)?;
+        Ok((runtime, monitor))
     }
+    #[cfg(test)]
     fn start_with<P: Ports>(
         config: Config,
         snapshots: watch::Sender<Snapshot>,
@@ -97,6 +117,15 @@ impl Runtime {
     ) -> anyhow::Result<Self> {
         let (input, receiver) = async_channel::bounded(64);
         let input = speakeasy_platform::InputSender::new(input);
+        Self::spawn(config, snapshots, ports, input, receiver)
+    }
+    fn spawn<P: Ports>(
+        config: Config,
+        snapshots: watch::Sender<Snapshot>,
+        ports: P,
+        input: speakeasy_platform::InputSender,
+        receiver: Receiver<Input>,
+    ) -> anyhow::Result<Self> {
         let gate = input.clone();
         let (configuration, changes) = watch::channel(config);
         let (stop, stopping) = async_channel::bounded(1);
@@ -224,6 +253,7 @@ async fn run<P: Ports>(
     let (events, audio) = async_channel::bounded(64);
     let mut gesture = Gesture::default();
     let mut snapshot = Snapshot {
+        desktop_ready: !ports.prepares_desktop(),
         model: ModelState::Loading,
         message: LOADING.into(),
         ..Snapshot::default()
@@ -233,13 +263,12 @@ async fn run<P: Ports>(
     let mut server: Option<P::Speech> = None;
     let mut job = Some(warm(&ports, &config));
     let mut waiting_audio = None;
-    let mut pending_text: Option<(String, Instant)> = None;
+    let mut pending_text: Option<String> = None;
+    let mut permit = None;
+    let mut insertion: Option<(u64, JoinHandle<anyhow::Result<Inserted>>)> = None;
+    let mut retiring_insertions = Vec::new();
     loop {
-        let deadline = if pending_text.is_some() {
-            Some(Instant::now() + Duration::from_millis(10))
-        } else {
-            gesture.deadline()
-        };
+        let deadline = gesture.deadline();
         let timer = async {
             match deadline {
                 Some(at) => tokio::time::sleep_until(at.into()).await,
@@ -249,6 +278,12 @@ async fn run<P: Ports>(
         let completion = async {
             match job.as_mut() {
                 Some(job) => (job.session, (&mut job.task).await),
+                None => std::future::pending().await,
+            }
+        };
+        let inserted = async {
+            match insertion.as_mut() {
+                Some((id, task)) => (*id, task.await),
                 None => std::future::pending().await,
             }
         };
@@ -266,12 +301,26 @@ async fn run<P: Ports>(
                     break;
                 };
                 action = match event {
-                    Input::Press => gesture.press(Instant::now()),
+                    Input::Press if snapshot.desktop_ready => gesture.press(Instant::now()),
+                    Input::Press => None,
                     Input::Release => gesture.release(Instant::now()),
                     Input::Lock => gesture.lock(),
-                    Input::Toggle => gesture.toggle(Instant::now()),
+                    Input::Toggle if snapshot.desktop_ready => gesture.toggle(Instant::now()),
+                    Input::Toggle => None,
                     Input::Cancel => gesture.cancel(),
                     Input::Quit => break,
+                    Input::Unavailable(message) => {
+                        snapshot.phase = Phase::Error;
+                        snapshot.message = message;
+                        output.send_replace(snapshot.clone());
+                        break;
+                    }
+                    Input::DesktopReady { shortcut, cancel } => {
+                        snapshot.desktop_ready = true;
+                        snapshot.shortcut = shortcut.into();
+                        snapshot.cancel_shortcut = cancel.into();
+                        None
+                    }
                 };
             }
             changed = changes.changed() => {
@@ -285,6 +334,9 @@ async fn run<P: Ports>(
                 capture.take();
                 waiting_audio = None;
                 pending_text = None;
+                if let Some((_, task)) = insertion.take() {
+                    retiring_insertions.push(task);
+                }
                 if reload && let Some(previous) = job.take() {
                     previous.task.abort();
                     if let Ok(Ok((worker, _))) = previous.task.await {
@@ -361,7 +413,7 @@ async fn run<P: Ports>(
                                 gesture.complete();
                                 snapshot.phase = Phase::Empty;
                             } else {
-                                pending_text = Some((text, Instant::now()));
+                                pending_text = Some(text);
                             }
                         }
                     }
@@ -385,17 +437,41 @@ async fn run<P: Ports>(
                     }
                 }
             }
+            (id, result) = inserted => {
+                insertion.take();
+                if id == snapshot.id && snapshot.phase == Phase::Processing {
+                    match result {
+                        Ok(Ok(Inserted::Sent)) => snapshot.phase = Phase::Done,
+                        Ok(Ok(Inserted::Cancelled)) => snapshot.phase = Phase::Cancelled,
+                        Ok(Ok(Inserted::Unavailable(message) | Inserted::Copied(message))) => {
+                            snapshot.phase = Phase::Error;
+                            snapshot.message = message.into();
+                        }
+                        _ => {
+                            snapshot.phase = Phase::Error;
+                            snapshot.message = "Could not submit text. Check desktop permissions and clipboard access, then try again.".into();
+                        }
+                    }
+                    gesture.complete();
+                }
+            }
             _ = timer => {
                 action = gesture.tick(Instant::now());
             }
         }
         match action {
             Some(Action::Start) => {
-                gate.begin();
+                permit = gate.begin();
+                if permit.is_none() {
+                    break;
+                }
                 let Some(id) = snapshot.id.checked_add(1) else {
                     break;
                 };
                 snapshot = Snapshot {
+                    desktop_ready: snapshot.desktop_ready,
+                    shortcut: snapshot.shortcut.clone(),
+                    cancel_shortcut: snapshot.cancel_shortcut.clone(),
                     id,
                     phase: Phase::Starting,
                     started: Instant::now(),
@@ -422,6 +498,9 @@ async fn run<P: Ports>(
                 capture.take();
                 waiting_audio = None;
                 pending_text = None;
+                if let Some((_, task)) = insertion.take() {
+                    retiring_insertions.push(task);
+                }
                 // Model loading and recovery are independent of a recording.
                 if job.as_ref().is_some_and(|job| job.session.is_some())
                     && let Some(previous) = job.take()
@@ -435,31 +514,13 @@ async fn run<P: Ports>(
             }
             _ => {}
         }
-        // Ready text can be submitted in this owner turn. Only held modifiers
-        // need the retry timer; cancellation actions above still clear the result.
-        if let Some((_, since)) = &pending_text
-            && (!ports.modifiers_down() || since.elapsed() >= Duration::from_millis(800))
+        if let Some(text) = pending_text.take()
+            && let Some(permit) = permit.clone()
         {
-            if input.is_closed() {
-                break;
-            }
-            if let Some((text, _)) = pending_text.take() {
-                match ports.insert(&text, &gate, config.preserve_clipboard) {
-                    Ok(Inserted::Sent) => snapshot.phase = Phase::Done,
-                    Ok(Inserted::Cancelled) => snapshot.phase = Phase::Cancelled,
-                    Ok(Inserted::Unavailable(message) | Inserted::Copied(message)) => {
-                        snapshot.phase = Phase::Error;
-                        snapshot.message = message.into();
-                    }
-                    Err(_) => {
-                        snapshot.phase = Phase::Error;
-                        snapshot.message = "Could not access the clipboard. Close the app holding it and try again.".into();
-                    }
-                }
-                // Submission has committed. Later Escape cannot claim to undo it.
-                gesture.complete();
-            }
+            let work = ports.insert(text, permit, config.preserve_clipboard);
+            insertion = Some((snapshot.id, tokio::spawn(work)));
         }
+        retiring_insertions.retain(|task| !task.is_finished());
         if job.is_none()
             && let Some(wav) = waiting_audio.take()
         {
@@ -504,8 +565,15 @@ async fn run<P: Ports>(
             true
         });
     }
+    gate.close();
     audio.close();
     capture.take();
+    if let Some((_, task)) = insertion {
+        retiring_insertions.push(task);
+    }
+    for task in retiring_insertions {
+        let _ = task.await;
+    }
     if let Some(job) = job {
         job.task.abort();
         let _ = job.task.await;
@@ -521,7 +589,9 @@ mod tests {
     use async_channel::{Receiver, Sender};
     use tokio::sync::oneshot;
 
+    type InsertControls = (Sender<speakeasy_platform::InsertPermit>, Receiver<()>);
     struct FakePorts {
+        insertion: Option<InsertControls>,
         captures: Sender<(u64, Sender<Event>)>,
         jobs: Sender<(String, oneshot::Sender<anyhow::Result<String>>)>,
         pasted: Sender<String>,
@@ -597,20 +667,25 @@ mod tests {
                 })
             }
         }
-        fn modifiers_down(&self) -> bool {
-            false
-        }
         fn insert(
             &self,
-            text: &str,
-            gate: &speakeasy_platform::InputSender,
+            text: String,
+            gate: speakeasy_platform::InsertPermit,
             _: bool,
-        ) -> anyhow::Result<Inserted> {
-            if !gate.commit() {
-                return Ok(Inserted::Cancelled);
+        ) -> impl std::future::Future<Output = anyhow::Result<Inserted>> + Send + 'static {
+            let pasted = self.pasted.clone();
+            let insertion = self.insertion.clone();
+            async move {
+                if let Some((entered, release)) = insertion {
+                    entered.send(gate.clone()).await?;
+                    release.recv().await?;
+                }
+                if !gate.commit() {
+                    return Ok(Inserted::Cancelled);
+                }
+                pasted.try_send(text)?;
+                Ok(Inserted::Sent)
             }
-            self.pasted.try_send(text.to_owned())?;
-            Ok(Inserted::Sent)
         }
     }
     struct Harness {
@@ -629,6 +704,13 @@ mod tests {
             stop: Option<(Sender<()>, Receiver<()>)>,
             recovery: Option<Receiver<anyhow::Result<()>>>,
         ) -> anyhow::Result<Self> {
+            Self::with_insertion(stop, recovery, None)
+        }
+        fn with_insertion(
+            stop: Option<(Sender<()>, Receiver<()>)>,
+            recovery: Option<Receiver<anyhow::Result<()>>>,
+            insertion: Option<InsertControls>,
+        ) -> anyhow::Result<Self> {
             let (capture_tx, captures) = async_channel::bounded(8);
             let (job_tx, jobs) = async_channel::bounded(8);
             let (paste_tx, pasted) = async_channel::bounded(8);
@@ -638,6 +720,7 @@ mod tests {
                 Config::default(),
                 output,
                 FakePorts {
+                    insertion,
                     captures: capture_tx,
                     jobs: job_tx,
                     pasted: paste_tx,
@@ -684,6 +767,51 @@ mod tests {
     }
     async fn receive<T>(receiver: &Receiver<T>) -> anyhow::Result<T> {
         Ok(tokio::time::timeout(Duration::from_secs(2), receiver.recv()).await??)
+    }
+
+    #[tokio::test]
+    async fn preparing_insertion_cancels_without_blocking_a_new_recording() -> anyhow::Result<()> {
+        let (entered, preparing) = async_channel::bounded(2);
+        let (release, waiting) = async_channel::bounded(2);
+        let mut h = Harness::with_insertion(None, None, Some((entered, waiting)))?;
+        h.start().await?;
+        assert!(h.finish().await?.send(Ok("old fixture".into())).is_ok());
+        let old = receive(&preparing).await?;
+        h.input(Input::Cancel);
+        h.phase(Phase::Cancelled).await?;
+        h.start().await?;
+        assert!(!old.active(), "A newer capture authorized stale insertion");
+        release.send(()).await?;
+        assert!(h.finish().await?.send(Ok("new fixture".into())).is_ok());
+        let next = receive(&preparing).await?;
+        assert!(next.active());
+        assert!(!old.commit());
+        release.send(()).await?;
+        assert_eq!(receive(&h.pasted).await?, "new fixture");
+        h.phase(Phase::Done).await?;
+        assert!(h.pasted.try_recv().is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn shutdown_revokes_and_owns_pending_insertion_cleanup() -> anyhow::Result<()> {
+        let (entered, preparing) = async_channel::bounded(1);
+        let (release, waiting) = async_channel::bounded(1);
+        let mut h = Harness::with_insertion(None, None, Some((entered, waiting)))?;
+        h.start().await?;
+        assert!(h.finish().await?.send(Ok("fixture".into())).is_ok());
+        let permit = receive(&preparing).await?;
+        h.runtime.request_stop();
+        assert!(!permit.active());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), h.runtime.stopped())
+                .await
+                .is_err()
+        );
+        release.send(()).await?;
+        tokio::time::timeout(Duration::from_secs(2), h.runtime.stopped()).await?;
+        assert!(h.pasted.try_recv().is_err());
+        Ok(())
     }
 
     #[tokio::test]
@@ -863,7 +991,7 @@ mod tests {
         h.runtime.request_stop();
         receive(&stopping).await?;
         assert!(h.runtime.input.is_closed());
-        assert!(!h.runtime.input.commit());
+        assert!(!h.runtime.input.active());
         let mut stopped = std::pin::pin!(h.runtime.stopped());
         assert!(
             std::future::Future::poll(

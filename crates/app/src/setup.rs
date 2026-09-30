@@ -2,10 +2,6 @@
 //! and the Parakeet v3 model. Every download is pinned by URL, size, and
 //! SHA-256, resumes after interruption, and is renamed into place only once
 //! verified.
-#![cfg_attr(
-    not(any(target_os = "windows", target_os = "macos")),
-    expect(dead_code, reason = "Linux runs the preview only")
-)]
 
 use crate::config::{Config, Engine};
 use anyhow::{Context, bail};
@@ -62,6 +58,24 @@ const CPU: Download = Download {
     size: 4_730_421,
     sha256: "5e4ea81046012edcd77fd8848de8eefb5a4ba38cc26f52eb544ab184695a75d6",
 };
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const CUDA: Download = Download {
+    url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-linux-x86_64-cuda.tar.gz",
+    size: 107_310_946,
+    sha256: "e68628f396489c98fb353e070efaea5bc4977409ae7734fce56c251a79e29147",
+};
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const VULKAN: Download = Download {
+    url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-linux-x86_64-vulkan.tar.gz",
+    size: 18_014_113,
+    sha256: "ce7b7c3c8771cb7450b26e6d4bd8fb2c5e35bcd9fe0076387f35052e9b9523ae",
+};
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const CPU: Download = Download {
+    url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-linux-x86_64-cpu.tar.gz",
+    size: 4_583_913,
+    sha256: "0f74131d631ad2c694cf0ec53490866bb6461147959589a69fb6fc231944065b",
+};
 #[cfg(target_os = "macos")]
 const METAL: Download = Download {
     url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-macos-aarch64-metal.tar.gz",
@@ -71,11 +85,13 @@ const METAL: Download = Download {
 
 #[cfg(target_os = "windows")]
 const EXECUTABLE: &str = r"bin\nemo-speech.exe";
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 const EXECUTABLE: &str = "nemo-speech/bin/nemo-speech";
+#[cfg(target_os = "linux")]
+const EXECUTABLE: &str = "bin/nemo-speech";
 
 // After a five-minute recording, Parakeet holds about 3.8 GB of GPU memory.
-#[cfg(any(target_os = "windows", test))]
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
 const GPU_MEMORY: u64 = 6_000_000_000;
 
 /// A running setup. Dropping it cancels; partial downloads resume next time.
@@ -208,9 +224,14 @@ impl Installation {
 fn root() -> PathBuf {
     #[cfg(target_os = "windows")]
     let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
     let base = std::env::var_os("HOME")
         .map(|home| PathBuf::from(home).join("Library/Application Support"));
+    #[cfg(target_os = "linux")]
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")));
     base.unwrap_or_else(|| PathBuf::from(".")).join("speakeasy")
 }
 
@@ -241,17 +262,20 @@ async fn install(
     })
 }
 
-/// NVIDIA drivers install nvidia-smi; NeMo's own doctor then confirms that the
-/// CUDA build runs here. Other discrete GPUs use Vulkan. The Vulkan build also
-/// runs on the CPU, and the CPU build covers machines without a Vulkan loader.
-#[cfg(target_os = "windows")]
+/// Try CUDA with an NVIDIA driver, then Vulkan, then CPU. Doctor checks runtime
+/// dependencies and accelerator availability; LocalSpeech verifies inference
+/// before model readiness is reported.
+#[cfg(any(
+    target_os = "windows",
+    all(target_os = "linux", target_arch = "x86_64")
+))]
 async fn engine(
     client: &Client,
     root: &Path,
     progress: &watch::Sender<Progress>,
     installation: &mut Installation,
 ) -> anyhow::Result<(PathBuf, bool)> {
-    if system32().join("nvidia-smi.exe").is_file() {
+    if nvidia_driver() {
         let cuda = unpack(client, &CUDA, root, progress, installation).await?;
         if doctor(&cuda, installation)
             .await
@@ -265,6 +289,12 @@ async fn engine(
         return keep(root, vulkan, discrete_gpu(&report));
     }
     let cpu = unpack(client, &CPU, root, progress, installation).await?;
+    #[cfg(target_os = "linux")]
+    if doctor(&cpu, installation).await.is_none() {
+        bail!(
+            "The downloaded engine cannot run on this Linux CPU. Choose a portable NeMo-Speech.cpp build in Settings."
+        );
+    }
     keep(root, cpu, false)
 }
 
@@ -282,14 +312,35 @@ async fn engine(
     keep(root, metal, accelerated(&report))
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(not(any(
+    target_os = "windows",
+    target_os = "macos",
+    all(target_os = "linux", target_arch = "x86_64")
+)))]
 async fn engine(
     _: &Client,
     _: &Path,
     _: &watch::Sender<Progress>,
     _: &mut Installation,
 ) -> anyhow::Result<(PathBuf, bool)> {
-    bail!("Automatic setup supports Windows and macOS.")
+    bail!(
+        "Automatic Linux setup requires x86_64. Choose a local speech executable and model for this architecture."
+    )
+}
+
+#[cfg(any(
+    target_os = "windows",
+    all(target_os = "linux", target_arch = "x86_64")
+))]
+fn nvidia_driver() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        system32().join("nvidia-smi.exe").is_file()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Path::new("/proc/driver/nvidia/version").is_file()
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -319,14 +370,18 @@ async fn doctor(directory: &Path, installation: &mut Installation) -> Option<ser
     command.creation_flags(0x08000000); // CREATE_NO_WINDOW
     let output = timeout(Duration::from_secs(60), installation.output(&mut command)).await;
     installation.stop().await;
-    serde_json::from_slice(&output.ok()?.ok()?.stdout).ok()
+    let output = output.ok()?.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    serde_json::from_slice(&output.stdout).ok()
 }
 
 fn accelerated(report: &serde_json::Value) -> bool {
     report["accelerator_available"] == true && report["driver_runtime_compatible"] == true
 }
 
-#[cfg(any(target_os = "windows", test))]
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
 fn discrete_gpu(report: &serde_json::Value) -> bool {
     accelerated(report)
         && report["devices"].as_array().is_some_and(|devices| {
@@ -390,10 +445,33 @@ async fn unpack(
     if !installation.output(&mut command).await?.status.success() {
         bail!("Cannot unpack the speech engine. Check free disk space, then try again.");
     }
+    #[cfg(target_os = "linux")]
+    normalize_linux_archive(&staging)?;
     let _ = fs::remove_dir_all(&directory);
     fs::rename(&staging, &directory)?;
     let _ = fs::remove_file(&file);
     Ok(directory)
+}
+
+#[cfg(target_os = "linux")]
+fn normalize_linux_archive(staging: &Path) -> anyhow::Result<()> {
+    if staging.join(EXECUTABLE).is_file() {
+        return Ok(());
+    }
+    let directories: Vec<_> = fs::read_dir(staging)?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .collect();
+    if directories.len() != 1 || !directories[0].path().join(EXECUTABLE).is_file() {
+        bail!("The engine archive has an unexpected layout.");
+    }
+    for entry in fs::read_dir(directories[0].path())? {
+        let entry = entry?;
+        fs::rename(entry.path(), staging.join(entry.file_name()))?;
+    }
+    fs::remove_dir(directories[0].path())?;
+    Ok(())
 }
 
 /// Downloads into `directory`, resuming a partial file when the server honors
@@ -480,6 +558,49 @@ mod tests {
     };
 
     const BODY: &[u8] = b"Say the word. The door opens, and what is said stays inside.";
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_archives_preserve_the_complete_runtime_layout() -> anyhow::Result<()> {
+        for wrapper in ["", "nemo-speech"] {
+            let directory = tempfile::tempdir()?;
+            let runtime = directory.path().join(wrapper);
+            fs::create_dir_all(runtime.join("bin"))?;
+            fs::create_dir_all(runtime.join("lib"))?;
+            fs::write(runtime.join(EXECUTABLE), b"engine fixture")?;
+            fs::write(runtime.join("lib/runtime.so"), b"dependency fixture")?;
+            normalize_linux_archive(directory.path())?;
+            assert_eq!(
+                fs::read(directory.path().join(EXECUTABLE))?,
+                b"engine fixture"
+            );
+            assert_eq!(
+                fs::read(directory.path().join("lib/runtime.so"))?,
+                b"dependency fixture"
+            );
+            if !wrapper.is_empty() {
+                assert!(!runtime.exists());
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_archives_reject_an_ambiguous_runtime_layout() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        fs::create_dir_all(directory.path().join("first/bin"))?;
+        fs::create_dir_all(directory.path().join("second/bin"))?;
+        for wrapper in ["first", "second"] {
+            fs::write(directory.path().join(wrapper).join(EXECUTABLE), b"fixture")?;
+        }
+        let failure = normalize_linux_archive(directory.path())
+            .err()
+            .context("An ambiguous engine archive was accepted")?;
+        assert!(failure.to_string().contains("unexpected layout"));
+        assert!(!directory.path().join(EXECUTABLE).exists());
+        Ok(())
+    }
 
     #[test]
     #[ignore = "Owned subprocess fixture for setup cancellation tests"]

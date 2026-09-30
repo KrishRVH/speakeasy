@@ -1,21 +1,32 @@
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use crate::shell;
+#[cfg(target_os = "linux")]
+mod linux;
 use crate::{
     runtime::Phase,
-    shell::{self, Services},
+    shell::Services,
     status::{self, Indicator},
     theme::Theme,
 };
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use gpui::{App, Global, Task};
+#[cfg(target_os = "linux")]
+pub use linux::{Tray, install};
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use speakeasy_platform::Input;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use tray_icon::{
     Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent,
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
 };
 
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 pub struct Tray {
     _icon: TrayIcon,
     _events: Task<()>,
     _updates: Task<()>,
 }
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 impl Global for Tray {}
 
 #[derive(PartialEq, Eq)]
@@ -27,8 +38,10 @@ struct TrayState {
     pausing: bool,
     capturing: bool,
     active: bool,
+    ready: bool,
 }
 
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 pub fn install(cx: &mut App) -> anyhow::Result<()> {
     let menu = Menu::new();
     let status = MenuItem::new("Loading…", false, None);
@@ -108,24 +121,16 @@ pub fn install(cx: &mut App) -> anyhow::Result<()> {
             let snapshot = updates.borrow_and_update().clone();
             let result = cx.update(|cx| {
                 let services = cx.global::<Services>();
-                let running = services.running() || services.demo;
-                let pausing = services.retiring.is_some();
-                let indicator = status::indicator(&snapshot, running, pausing);
-                let description =
-                    status::description(&snapshot, running, pausing, services.config.engine);
-                let capturing = matches!(snapshot.phase, Phase::Starting | Phase::Recording);
-                let active =
-                    capturing || matches!(snapshot.phase, Phase::Stopping | Phase::Processing);
-                let theme = services.config.theme;
-                let presentation = TrayState {
+                let presentation = state(services, &snapshot);
+                let TrayState {
                     indicator,
                     theme,
-                    description,
                     running,
                     pausing,
                     capturing,
                     active,
-                };
+                    ..
+                } = presentation;
                 if previous.as_ref() == Some(&presentation) {
                     return;
                 }
@@ -175,9 +180,25 @@ pub fn install(cx: &mut App) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn state(services: &Services, snapshot: &crate::runtime::Snapshot) -> TrayState {
+    let running = services.running() || services.demo;
+    let pausing = services.retiring.is_some();
+    let capturing = matches!(snapshot.phase, Phase::Starting | Phase::Recording);
+    TrayState {
+        indicator: status::indicator(snapshot, running, pausing),
+        theme: services.config.theme,
+        description: status::description(snapshot, running, pausing, services.config.engine),
+        running,
+        pausing,
+        capturing,
+        active: capturing || matches!(snapshot.phase, Phase::Stopping | Phase::Processing),
+        ready: snapshot.desktop_ready,
+    }
+}
 // The Grille mark: a lamp-lit door slot with its stepped bars cut through.
 // Recording turns the slot red. Other states add a cut-jewel badge whose shape
 // stays distinct when macOS renders the icon as a template.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn draw_icon(state: Indicator, theme: Theme) -> anyhow::Result<Icon> {
     Ok(Icon::from_rgba(
         raster(state, theme, cfg!(target_os = "macos")),

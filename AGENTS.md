@@ -1,6 +1,6 @@
 # Speakeasy agent guide
 
-Speakeasy is a native Rust dictation app for Windows and macOS. Keep it fast,
+Speakeasy is a native Rust dictation app for Windows, macOS, and Linux. Keep it fast,
 small, and usable offline with local speech engines. Read `README.md` for setup
 and behavior and `docs/architecture.md` for module boundaries. The rules below
 adapt `~/devr/standards` to this app.
@@ -14,8 +14,9 @@ adapt `~/devr/standards` to this app.
   calls; the session owner receives other changes as messages.
 - Own asynchronous work, cancellation, and native resources. Old callbacks must
   never stop a newer recording, overwrite its state, or paste stale text.
-- Preserve hold-to-talk, double-tap hands-free, passive Escape, and the hard
-  five-minute recording limit. Observe Escape without swallowing it.
+- Preserve hold-to-talk, double-tap hands-free, and the hard five-minute recording
+  limit. Windows/macOS observe passive Escape without swallowing it; Linux uses
+  an explicit reserved cancel chord or desktop command binding.
 - Keep the UI thread responsive and keyboard/audio callbacks small. Measure
   performance before adding caching or background services.
 - Prefer explicit inputs and direct calls. Add abstractions for actual duplication

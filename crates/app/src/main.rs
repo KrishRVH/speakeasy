@@ -11,7 +11,7 @@ mod setup;
 mod shell;
 mod status;
 mod theme;
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 mod tray;
 use anyhow::{Context as _, bail};
 use gpui::*;
@@ -29,6 +29,7 @@ fn main() {
 fn run() -> anyhow::Result<()> {
     let mut demo = false;
     let mut demo_tray = false;
+    let mut command = None;
     let mut path = config::default_path();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -39,9 +40,16 @@ fn run() -> anyhow::Result<()> {
                 demo_tray = true;
             }
             "--config" => path = args.next().context("--config needs a path")?.into(),
+            "--toggle" => command = Some(instance::Request::Toggle),
+            "--cancel" => command = Some(instance::Request::Cancel),
             "--help" | "-h" => {
+                let gestures = if cfg!(target_os = "linux") {
+                    "Ctrl+Super+Space: hold to dictate or double-tap for hands-free. Ctrl+Super+Escape cancels. Desktop-approved bindings may differ.\n--toggle / --cancel control a running app when Desktop bindings is enabled."
+                } else {
+                    "Hold the dictation shortcut; add Space or double-tap for hands-free. Escape cancels."
+                };
                 println!(
-                    "speakeasy [--config PATH] [--demo | --demo-tray]\n{}: hold to dictate; add Space or double-tap for hands-free. Escape cancels.\n--demo uses simulated audio without microphone, hook, or clipboard access.\n--demo-tray also previews native tray, minimize, close and relaunch behavior.",
+                    "speakeasy [--config PATH] [--demo | --demo-tray]\nShortcut: {}\n{gestures}\n--demo uses simulated audio without microphone, hook, or clipboard access.\n--demo-tray also previews native tray, minimize, close and relaunch behavior.",
                     speakeasy_platform::SHORTCUT
                 );
                 return Ok(());
@@ -49,11 +57,25 @@ fn run() -> anyhow::Result<()> {
             _ => bail!("Unknown option: {arg}"),
         }
     }
-    if demo_tray && !cfg!(any(target_os = "windows", target_os = "macos")) {
-        bail!("Tray preview requires Windows or macOS. Use --demo for the motion preview.");
+    if demo_tray
+        && !cfg!(any(
+            target_os = "windows",
+            target_os = "macos",
+            target_os = "linux"
+        ))
+    {
+        bail!("Tray preview requires Windows, macOS or Linux. Use --demo for the motion preview.");
     }
     if path.is_relative() {
         path = std::env::current_dir()?.join(path);
+    }
+    if let Some(command) = command {
+        anyhow::ensure!(!demo, "Desktop commands cannot be combined with a demo");
+        anyhow::ensure!(
+            cfg!(target_os = "linux"),
+            "Desktop commands are available on Linux"
+        );
+        return instance::Instance::command(&path, command);
     }
     let (instance, reopen) = if demo && !demo_tray {
         (None, None)
@@ -124,17 +146,40 @@ fn run() -> anyhow::Result<()> {
             window: None,
             demo,
             demo_tray,
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
             visibility: None,
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
             tray_hint_seen: false,
             _reopen: None,
             _instance: instance,
         });
         if let Some(reopen) = reopen {
             let task = cx.spawn(async move |cx| {
-                while reopen.recv().await.is_ok() {
-                    if cx.update(shell::reveal).is_err() {
+                while let Ok(request) = reopen.recv().await {
+                    if cx
+                        .update(|cx| match request {
+                            instance::Request::Reveal => shell::reveal(cx),
+                            instance::Request::Toggle | instance::Request::Cancel => {
+                                #[cfg(target_os = "linux")]
+                                if cx
+                                    .global::<shell::Services>()
+                                    .config
+                                    .linux
+                                    .external_shortcut
+                                {
+                                    shell::send(
+                                        if request == instance::Request::Toggle {
+                                            speakeasy_platform::Input::Toggle
+                                        } else {
+                                            speakeasy_platform::Input::Cancel
+                                        },
+                                        cx,
+                                    );
+                                }
+                            }
+                        })
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -142,7 +187,7 @@ fn run() -> anyhow::Result<()> {
             cx.global_mut::<shell::Services>()._reopen = Some(task);
         }
         cx.on_app_quit(|cx| {
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
             if cx.has_global::<tray::Tray>() {
                 drop(cx.remove_global::<tray::Tray>());
             }
@@ -160,7 +205,7 @@ fn run() -> anyhow::Result<()> {
                 s.message = error.to_string();
             });
         }
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
         if (!demo || demo_tray)
             && let Err(error) = tray::install(cx)
         {
@@ -168,7 +213,11 @@ fn run() -> anyhow::Result<()> {
             cx.quit();
             return;
         }
-        if demo || !configured || !cx.global::<shell::Services>().running() {
+        if demo
+            || !configured
+            || !cx.global::<shell::Services>().running()
+            || cfg!(target_os = "linux")
+        {
             shell::reveal(cx);
         }
         if demo && !demo_tray {

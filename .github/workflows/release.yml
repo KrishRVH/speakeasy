@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['crates/**', 'Cargo.*', 'rust-toolchain.toml', 'settings.example.json', 'packaging/**', 'scripts/package-*', '.github/workflows/release.yml']
+    paths: ['crates/**', 'Cargo.*', 'rust-toolchain.toml', 'settings.example.json', 'packaging/**', 'scripts/package-*', 'docs/releases/**', '.github/workflows/release.yml']
 
 permissions:
   contents: read
@@ -17,21 +17,56 @@ jobs:
   package:
     strategy:
       matrix:
-        os: [windows-2025, macos-15]
+        os: [windows-2025, macos-15, ubuntu-22.04]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libfontconfig1-dev libfreetype6-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev libssl-dev pkg-config ripgrep
+      - name: Verify
+        shell: bash
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
       - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/package-windows.ps1
+      - name: Check Windows script syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($script in Get-ChildItem scripts/*.ps1) {
+            $parseErrors = $null
+            $tokens = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors) { throw ($parseErrors | Out-String) }
+          }
       - name: Package macOS
         if: runner.os == 'macOS'
         run: bash scripts/package-macos.sh
+      - name: Package Linux against glibc 2.35
+        if: runner.os == 'Linux'
+        run: bash scripts/package-linux.sh
+      - name: Check Linux packaged launcher
+        if: runner.os == 'Linux'
+        run: |
+          APPIMAGE_EXTRACT_AND_RUN=1 artifacts/speakeasy-linux-x86_64.AppImage --help
+          directory=$(mktemp -d)
+          trap 'rm -rf -- "$directory"' EXIT
+          tar -xzf artifacts/speakeasy-linux-x86_64.tar.gz -C "$directory"
+          "$directory/Speakeasy.AppDir/AppRun" --help
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: speakeasy-${{ runner.os }}
-          path: artifacts/*.zip
+          path: |
+            artifacts/*.zip
+            artifacts/*.AppImage
+            artifacts/*.tar.gz
           if-no-files-found: error
 
   release:
@@ -45,18 +80,30 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
-      - name: Update the release for the workspace version
+      - name: Publish the workspace version
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml)
           tag="v$version"
-          notes="Windows and macOS builds of ${GITHUB_SHA::7}. On first launch, Speakeasy downloads the speech engine and model that suit the machine."
-          git tag --force "$tag"
-          git push --force origin "refs/tags/$tag"
-          if gh release view "$tag" > /dev/null 2>&1; then
-            gh release upload "$tag" artifacts/*.zip --clobber
-            gh release edit "$tag" --notes "$notes"
+          notes="docs/releases/$version.md"
+          test -f "$notes"
+          assets=(speakeasy-windows-x64.zip speakeasy-macos.zip speakeasy-linux-x86_64.AppImage speakeasy-linux-x86_64.tar.gz)
+          cd artifacts
+          sha256sum "${assets[@]}" > SHA256SUMS
+          cd ..
+          for index in "${!assets[@]}"; do assets[$index]="artifacts/${assets[$index]}"; done
+          assets+=(artifacts/SHA256SUMS)
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            git fetch origin "refs/tags/$tag:refs/tags/$tag"
+            test "$(git rev-list -n 1 "$tag")" = "$GITHUB_SHA" || { echo "Version $version already belongs to another commit; bump the version." >&2; exit 1; }
           else
-            gh release create "$tag" artifacts/*.zip --title "Speakeasy $version" --notes "$notes"
+            git tag "$tag" "$GITHUB_SHA"
+            git push origin "refs/tags/$tag"
           fi
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release upload "$tag" "${assets[@]}" --clobber
+          else
+            gh release create "$tag" "${assets[@]}" --verify-tag --draft --title "Speakeasy $version" --notes-file "$notes"
+          fi
+          gh release edit "$tag" --draft=false --title "Speakeasy $version" --notes-file "$notes"

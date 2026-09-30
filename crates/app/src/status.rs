@@ -19,6 +19,8 @@ pub fn indicator(snapshot: &Snapshot, running: bool, pausing: bool) -> Indicator
         Indicator::Attention
     } else if !running {
         Indicator::Paused
+    } else if !snapshot.desktop_ready {
+        Indicator::Busy
     } else {
         match snapshot.phase {
             Phase::Recording | Phase::Stopping => Indicator::Recording,
@@ -41,6 +43,9 @@ pub fn description(snapshot: &Snapshot, running: bool, pausing: bool, engine: En
     }
     if !running {
         return "Dictation paused".into();
+    }
+    if !snapshot.desktop_ready {
+        return "Waiting for desktop access…".into();
     }
     match snapshot.phase {
         Phase::Starting => "Opening microphone…".into(),
@@ -87,5 +92,37 @@ mod tests {
         assert_eq!(indicator(&snapshot, false, false), Indicator::Paused);
         snapshot.phase = Phase::Error;
         assert_eq!(indicator(&snapshot, false, false), Indicator::Attention);
+    }
+
+    #[test]
+    fn desktop_access_gates_readiness_and_keeps_pause_and_errors_visible() {
+        let mut snapshot = Snapshot {
+            model: ModelState::Ready,
+            desktop_ready: false,
+            ..Snapshot::default()
+        };
+        assert_eq!(indicator(&snapshot, true, false), Indicator::Busy);
+        assert_eq!(
+            description(&snapshot, true, false, Engine::Parakeet),
+            "Waiting for desktop access…"
+        );
+        assert_eq!(indicator(&snapshot, false, false), Indicator::Paused);
+        assert_eq!(
+            description(&snapshot, false, false, Engine::Parakeet),
+            "Dictation paused"
+        );
+        assert_eq!(
+            description(&snapshot, true, true, Engine::Parakeet),
+            "Pausing dictation…"
+        );
+        snapshot.phase = Phase::Error;
+        assert_eq!(indicator(&snapshot, true, false), Indicator::Attention);
+        assert_eq!(
+            description(&snapshot, true, false, Engine::Parakeet),
+            "Needs attention · Open Settings"
+        );
+        snapshot.phase = Phase::Idle;
+        snapshot.desktop_ready = true;
+        assert_eq!(indicator(&snapshot, true, false), Indicator::Ready);
     }
 }

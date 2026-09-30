@@ -4,16 +4,18 @@ mod process;
 pub use process::ProcessGroup;
 use std::sync::{
     Arc,
-    atomic::{AtomicU8, Ordering},
+    atomic::{AtomicU64, Ordering},
 };
 
 /// The hold-to-talk shortcut as people see it.
 #[cfg(target_os = "macos")]
 pub const SHORTCUT: &str = "Fn";
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
 pub const SHORTCUT: &str = "Ctrl + Win";
+#[cfg(target_os = "linux")]
+pub const SHORTCUT: &str = "Ctrl + Super + Space";
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Input {
     Press,
     Release,
@@ -21,6 +23,8 @@ pub enum Input {
     Cancel,
     Toggle,
     Quit,
+    Unavailable(String),
+    DesktopReady { shortcut: String, cancel: String },
 }
 
 /// Hold state for the modifier-only shortcut: Ctrl+Win on Windows, Fn on macOS.
@@ -71,7 +75,7 @@ impl Chord {
 /// The hook never waits. Closing on overflow wakes the owner and disables
 /// dictation rather than losing an Escape or a release and continuing unsafely.
 pub fn deliver(tx: &InputSender, event: Input) {
-    if matches!(event, Input::Cancel | Input::Quit) {
+    if matches!(event, Input::Cancel | Input::Quit | Input::Unavailable(_)) {
         tx.cancel();
     }
     if tx.sender.try_send(event).is_err() {
@@ -79,39 +83,80 @@ pub fn deliver(tx: &InputSender, event: Input) {
     }
 }
 
-/// A single atomic commit gate bridges an OS callback and the session owner.
+/// A generation-aware commit gate bridges an OS callback and the session owner.
 /// Clipboard preparation may block; Escape must still be able to invalidate
 /// the pending paste. Successful compare_exchange is the commit point.
 #[derive(Clone)]
 pub struct InputSender {
     sender: Sender<Input>,
-    gate: Arc<AtomicU8>,
+    gate: Arc<AtomicU64>,
+}
+/// Authorization for exactly one recording. Starting another recording never
+/// authorizes an old clipboard operation that is still preparing its input.
+#[derive(Clone)]
+pub struct InsertPermit {
+    gate: Arc<AtomicU64>,
+    generation: u64,
+}
+impl InsertPermit {
+    #[cfg(target_os = "linux")]
+    fn same_recording(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.gate, &other.gate) && self.generation == other.generation
+    }
+    #[cfg(target_os = "linux")]
+    fn revoke(&self) {
+        let _ = self.gate.compare_exchange(
+            self.generation,
+            self.generation | 2,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
+    pub fn active(&self) -> bool {
+        self.gate.load(Ordering::Acquire) == self.generation
+    }
+    pub fn commit(&self) -> bool {
+        self.gate
+            .compare_exchange(
+                self.generation,
+                self.generation | 2,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
 }
 impl InputSender {
     pub fn new(sender: Sender<Input>) -> Self {
         Self {
             sender,
-            gate: Arc::new(AtomicU8::new(0)),
+            gate: Arc::new(AtomicU64::new(0)),
         }
     }
     pub fn is_closed(&self) -> bool {
         self.sender.is_closed()
     }
-    pub fn begin(&self) {
-        self.gate.store(1, Ordering::Release);
+    pub fn begin(&self) -> Option<InsertPermit> {
+        let previous = self
+            .gate
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |old| {
+                (old & !3).checked_add(4).map(|next| next | 1)
+            })
+            .ok()?;
+        Some(InsertPermit {
+            gate: self.gate.clone(),
+            generation: ((previous & !3) + 4) | 1,
+        })
     }
     pub fn active(&self) -> bool {
-        self.gate.load(Ordering::Acquire) == 1
-    }
-    pub fn commit(&self) -> bool {
-        self.gate
-            .compare_exchange(1, 3, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
+        self.gate.load(Ordering::Acquire) & 3 == 1
     }
     fn cancel(&self) {
         let _ = self
             .gate
-            .compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire);
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |old| {
+                (old & 3 == 1).then_some((old & !3) | 2)
+            });
     }
     pub fn close(&self) {
         self.cancel();
@@ -127,6 +172,69 @@ pub enum Inserted {
     Unavailable(&'static str),
 }
 
+#[derive(Clone)]
+pub struct DesktopOptions {
+    pub shortcut: String,
+    pub cancel: String,
+    pub terminal_paste: bool,
+    pub manual_paste: bool,
+    pub external_shortcut: bool,
+}
+impl Default for DesktopOptions {
+    fn default() -> Self {
+        Self {
+            shortcut: "CTRL+LOGO+space".into(),
+            cancel: "CTRL+LOGO+Escape".into(),
+            terminal_paste: false,
+            manual_paste: false,
+            external_shortcut: false,
+        }
+    }
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[derive(Clone)]
+pub struct Inserter {
+    serial: Arc<tokio::sync::Mutex<()>>,
+}
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+impl Inserter {
+    pub async fn insert(
+        &self,
+        text: String,
+        permit: InsertPermit,
+        preserve: bool,
+    ) -> anyhow::Result<Inserted> {
+        let serial = self.serial.clone().lock_owned().await;
+        if !permit.active() {
+            return Ok(Inserted::Cancelled);
+        }
+        tokio::task::spawn_blocking(move || {
+            // One owned clipboard/input operation at a time. Waiting cancelled
+            // requests never consume blocking threads or race a newer copy.
+            let _serial = serial;
+            let started = std::time::Instant::now();
+            while permit.active()
+                && modifiers_down()
+                && started.elapsed() < std::time::Duration::from_millis(800)
+            {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            insert(&text, &permit, preserve)
+        })
+        .await?
+    }
+}
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub fn prepare(input: InputSender, _: DesktopOptions) -> anyhow::Result<(InputMonitor, Inserter)> {
+    Ok((
+        InputMonitor::start(input)?,
+        Inserter {
+            serial: Arc::new(tokio::sync::Mutex::new(())),
+        },
+    ))
+}
+
 #[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "windows")]
@@ -136,55 +244,37 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::*;
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-mod preview {
-    use super::*;
-    pub struct InputMonitor;
-    impl InputMonitor {
-        pub fn start(_: InputSender) -> anyhow::Result<Self> {
-            anyhow::bail!(
-                "System dictation requires Windows or macOS. Use --demo for the pill preview."
-            )
-        }
-    }
-    pub fn configure_pill(_: RawWindowHandle) -> anyhow::Result<()> {
-        Ok(())
-    }
-    pub fn set_pill_visible(_: RawWindowHandle, _: bool) {}
-    pub fn modifiers_down() -> bool {
-        false
-    }
-    pub fn insert(_: &str, _: &InputSender, _: bool) -> anyhow::Result<Inserted> {
-        anyhow::bail!("Text insertion is available on Windows and macOS.")
-    }
-    pub fn show_error(message: &str) {
-        eprintln!("Speakeasy: {message}");
-    }
-    pub fn reduced_motion() -> bool {
-        false
-    }
-}
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-pub use preview::*;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::*;
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+compile_error!("Speakeasy supports Windows, macOS, and Linux.");
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn escape_during_clipboard_preparation_prevents_commit() {
+    fn escape_during_clipboard_preparation_prevents_commit() -> anyhow::Result<()> {
+        use anyhow::Context;
         let (tx, _rx) = async_channel::bounded(4);
         let input = InputSender::new(tx);
-        input.begin();
+        let permit = input.begin().context("First insertion permit")?;
         assert!(input.active());
         // A native callback can invalidate preparation while the owner is in
         // an OS clipboard call. No queue-drain or UI tick is required.
         deliver(&input, Input::Cancel);
-        assert!(!input.commit());
-        input.begin();
-        assert!(input.commit());
+        assert!(!permit.commit());
+        let next = input.begin().context("New insertion permit")?;
+        assert!(!permit.commit(), "New recording authorized an old paste");
+        #[cfg(target_os = "linux")]
+        permit.revoke();
+        assert!(next.commit());
         deliver(&input, Input::Cancel);
-        assert!(!input.commit()); // never submit the same result twice
+        assert!(!next.commit()); // never submit the same result twice
+        Ok(())
     }
 
     #[test]
@@ -220,14 +310,17 @@ mod tests {
     }
 
     #[test]
-    fn full_input_queue_cancels_instead_of_losing_escape() {
+    fn full_input_queue_cancels_instead_of_losing_escape() -> anyhow::Result<()> {
+        use anyhow::Context;
         let (tx, rx) = async_channel::bounded(1);
         let input = InputSender::new(tx);
-        input.begin();
+        let permit = input.begin().context("Insertion permit")?;
+        assert!(permit.active());
         deliver(&input, Input::Press);
         deliver(&input, Input::Cancel);
         assert!(rx.is_closed());
-        assert!(!input.commit());
+        assert!(!permit.commit());
+        Ok(())
     }
 
     #[test]

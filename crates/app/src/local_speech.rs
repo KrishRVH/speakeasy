@@ -111,7 +111,7 @@ impl LocalSpeech {
             client,
             directory,
         };
-        timeout(Duration::from_secs(120), async {
+        let readiness = timeout(Duration::from_secs(120), async {
             loop {
                 if server.child.try_wait()?.is_some() {
                     #[cfg(unix)]
@@ -132,19 +132,35 @@ impl LocalSpeech {
             }
         })
         .await
-        .context("Local model startup timed out")??;
-        if config.use_gpu {
-            // Loading weights does not initialize every GPU kernel. Exercise the
-            // normal request path while loading, using one second of synthetic
-            // silence. The response is discarded and never reaches insertion.
-            timeout(Duration::from_secs(120), server.idle())
-                .await
-                .context(
+        .context("Local model startup timed out")
+        .and_then(|result| result);
+        if let Err(error) = readiness {
+            server.stop().await;
+            return Err(error);
+        }
+        if config.use_gpu || cfg!(target_os = "linux") {
+            // Loading weights does not initialize every GPU kernel or prove a
+            // Linux binary can execute its CPU kernels. Exercise inference with
+            // one second of synthetic silence before publishing readiness.
+            let (timed_out, failed) = if config.use_gpu {
+                (
                     "Local GPU warmup timed out. Check the selected engine and GPU dependencies.",
-                )?
-                .context(
                     "Local GPU warmup failed. Check the selected engine and GPU dependencies.",
-                )?;
+                )
+            } else {
+                (
+                    "Local CPU inference timed out. Choose a smaller model or a compatible engine executable in Settings.",
+                    "Local CPU inference failed. Check the model and CPU compatibility; choose a compatible engine executable in Settings.",
+                )
+            };
+            let warmup = timeout(Duration::from_secs(120), server.idle())
+                .await
+                .context(timed_out)
+                .and_then(|result| result.context(failed));
+            if let Err(error) = warmup {
+                server.stop().await;
+                return Err(error);
+            }
         }
         Ok(server)
     }

@@ -46,8 +46,8 @@ an app-side resampler.
 
 ## Responsiveness
 
-- Ready text is submitted in the owner turn that receives it when modifiers are
-  already released; the controller adds tens of microseconds before OS insertion.
+- Ready text begins owned asynchronous insertion when the controller receives
+  it; fake-device timings add tens of microseconds before native work.
 - Cancelling GPU inference keeps the worker when a bounded silent request proves
   it healthy within two seconds. This cut the median cancel-to-next-result from
   637 to 87 ms. A failed check terminates and replaces the worker; CPU
@@ -63,8 +63,8 @@ an app-side resampler.
 
 - Capture reserves ten seconds of mono PCM and grows on its consumer thread up
   to the five-minute limit; the audio callback never allocates. A one-second
-  recording uses 1.8 MB of private memory instead of 29.7 MB for an up-front
-  five-minute reservation.
+  recording used 1.8 MB of private memory in the reference measurement; an
+  up-front five-minute reservation used 29.7 MB.
 - Edge trimming uses an exact integer energy scan: 2.4 ms for five minutes of
   48 kHz audio.
 - Parakeet's worker retains its largest GPU buffers, about 3.8 GB after a
@@ -283,3 +283,99 @@ requires dependency updates from Speakeasy's pinned 0.2.2. Native platform crate
 must disable their default framework manifest when using Speakeasy's own
 manifest. Adoption needs broader native regression checks and a benefit beyond
 this pill workload; the production dependency stays pinned.
+
+## Linux port and shared audio pass
+
+Release profiles on September 29, 2026 used Rust 1.98.1, official GPUI 0.2.2,
+an AMD Ryzen 9 9950X3D, and WSL2 with 32 logical CPUs. These are synthetic
+component timings, not native application utilization. The audio fixture calls
+the production callback and PCM consumer with 480-frame f32 packets at 48 kHz;
+each run takes the median of 21 groups of 3,000 packets. Three alternating before/after
+runs used retained release binaries, each pinned to logical CPU 31. The table reports the median of those
+three medians; no microphone, hook, clipboard, or renderer was opened.
+
+| Callback plus PCM work | Before | After | Reduction |
+| --- | ---: | ---: | ---: |
+| Mono | 2.028 µs/packet | 1.104 µs/packet | 46% |
+| Stereo | 2.132 µs/packet | 1.128 µs/packet | 47% |
+| Eight channels | 2.145 µs/packet | 1.294 µs/packet | 40% |
+
+The producer publishes a packet once through rtrb's safe chunk iterator, and the
+consumer releases a read chunk once after conversion. Both remain allocation-free
+in the callback; rate, channel averaging, PCM conversion, meter cadence, ring
+capacity, cancellation and the hard recording limit are unchanged. There is no
+additional batching timer. Tests cover wraparound, partial overflow, invalid
+samples, the sample limit, cancellation and native stream notifications.
+The gain is small in absolute CPU time and cannot be presented as a 47% reduction
+in app CPU. Native capture timing under gaming load remains a separate check.
+
+Ready text to fake insertion was 63 µs median before and after, with p95 97 µs
+and 93 µs respectively (100 results each). Five-minute edge trimming remained
+about 2.4 ms; it was not changed. Immutable shortcut labels are shared between
+snapshots instead of allocating strings on every level update. Linux tray
+subscriptions filter host and watcher changes instead of receiving every bus
+signal. Native insertion owns bounded/serialized work so cancelled queued requests
+do not create overlapping clipboard operations or blocking threads. These latter
+changes have no claimed native CPU or memory percentage yet.
+
+The native Linux release binary was 24,825,240 bytes and its unbundled development
+tar was 9,384,485 bytes at this measurement. It requires glibc 2.43. This is disk
+size, not resident memory or a portable package size; the speech engine and model
+are separate. The release packaging workflow targets glibc 2.35 and checks
+bundled dependencies before producing distribution artifacts.
+
+### Native process sampling
+
+`profile-linux.py` reads numeric `/proc` metadata, including CPU time, RSS, PSS,
+private resident pages, threads and descriptors. It detects process exit and PID
+reuse. Linux context-switch counters describe the main thread, not all threads.
+The sampler's synthetic single-core check measured 99.7% CPU and detected exit;
+this validates sampling, not Speakeasy utilization.
+
+`profile-windows.ps1` samples process CPU, working set, private committed memory,
+threads and handles. Windows private committed memory and Linux private resident
+pages are different metrics; compare each on the same OS. The Windows script
+has not been executed here because WSL interop is denied in this sandbox.
+
+Pass explicit app and worker PIDs, reported separately. For example:
+
+```sh
+python3 scripts/profile-linux.py --pid 1234 --pid 1235 --label idle-hidden \
+  --seconds 30 --output artifacts/profiles/linux-idle.json
+cargo test -p speakeasy --release --locked profile_audio_pipeline -- --ignored --nocapture
+cargo test -p speakeasy --release --locked profile_ready_text_latency -- --ignored --nocapture
+```
+
+```powershell
+./scripts/profile-windows.ps1 -ProcessIds 1234,1235 -Label idle-hidden `
+  -Seconds 30 -OutputPath artifacts/profiles/windows-idle.json
+```
+
+100% CPU means one logical core; machine-normalized samples divide by the logical
+CPU count. Use at least 30 seconds for low idle CPU, where OS tick quantization
+matters. Keep raw reports under ignored `artifacts/`. The scripts read no command
+lines, audio, transcripts, keystrokes or engine output. Do not add app and worker
+RSS as unique physical memory: shared pages can be counted twice. Linux PSS can
+be apportioned; report Windows process working sets individually.
+
+For each candidate, collect paired runs after warmup with the same hardware,
+model, backend, display refresh, competing load and settings:
+
+| Phase | Footprint | UX checks |
+| --- | --- | --- |
+| Launch and warmup | CPU time, elapsed readiness, peak memory, worker lifetime | Settings and Cancel remain responsive |
+| Hidden idle and visible Settings | CPU, resident/private memory, threads, descriptors/handles | Reopen and save latency |
+| Recording and pill motion | App CPU, memory growth, GPU activity, displayed frame pacing | Audio onset, 60/144/200/high-refresh pacing and no lost speech |
+| Short and long inference | Worker CPU/GPU memory, peak app PCM memory | Stop-to-insertion p50/p95 and recognition quality |
+| Cancel, Pause and Quit | Cleanup time, returning memory and resource counts | No stale paste, stuck keys or surviving owned work |
+
+Process sampling cannot measure GPU energy, displayed frames, microphone onset
+or editor acceptance. Use the native platform's frame/CPU/GPU profiler for those
+checks, and report live microphone/input/clipboard acceptance separately. Keep
+the 200-FPS ceiling, native display pacing, speech quality and interaction policy
+as constraints. No cache, worker pool or background microphone is introduced.
+
+The full workspace fake checks pass, including loopback download and instance
+tests. Native Windows process sampling and Linux GNOME/KDE/X11 acceptance were
+not performed for this pass. Whole-app CPU, GPU, memory and energy improvements
+from this candidate remain unmeasured.

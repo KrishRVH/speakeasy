@@ -1,9 +1,11 @@
 # Architecture
 
-Speakeasy is a Rust desktop app for Windows and macOS. GPUI renders Settings and
-one non-activating dictation pill. A session owner coordinates native input,
+Speakeasy is a Rust desktop app for Windows, macOS, and Linux. GPUI renders
+Settings and one non-activating dictation pill. A session owner coordinates native input,
 CPAL capture, a local speech worker, and insertion into the focused application.
-Linux supports the UI preview and portable checks.
+Linux has experimental X11/Wayland desktop support; native desktop acceptance
+is pending. [Linux implementation](linux-implementation.md) records its support
+limits and remaining checks.
 
 ```mermaid
 flowchart LR
@@ -15,7 +17,7 @@ flowchart LR
     Session --> Insert[Native insertion]
     Insert --> Editor[Focused application]
     Session --> Pill[GPUI pill]
-    Escape[Passive Escape] --> Gate[Cancellation gate]
+    Cancel[Native cancellation] --> Gate[Cancellation gate]
     Gate --> Session
     Gate --> Insert
 ```
@@ -45,10 +47,11 @@ explanations. Tests live beside the Rust modules they exercise.
 ## Session ownership
 
 Capture starts on the first shortcut press. Hold/release finishes a recording;
-Space during the hold or a double-tap enables hands-free capture, and another
-press finishes it. A short single tap finishes after the double-tap window. Escape passes to the focused
-app and invalidates the insertion gate immediately. The five-minute cap is
-independent of UI animation.
+Space during the hold on Windows/macOS or a double-tap enables hands-free capture,
+and another press finishes it. A short single tap finishes after the double-tap
+window. Windows/macOS Escape passes to the focused app; Linux uses a reserved
+cancel chord or explicit desktop command. Both invalidate the insertion gate
+immediately. The five-minute cap is independent of UI animation.
 
 Every recording and inference result carries its session identity. Late audio,
 cancelled inference, and stale completion messages cannot insert text for a newer
@@ -74,8 +77,9 @@ loop. Visible paint reaches GPUI. Tray tasks are cancelled before session
 services are retired at quit.
 
 Relaunch discovery uses `instance.port` next to the locked `instance.lock`.
-The loopback listener accepts only a request to show Settings, returns a fixed
-identification response, and carries no audio or transcript data. Its thread
+The loopback listener accepts fixed Reveal, Toggle, and Cancel commands, returns
+a fixed identification response, and carries no audio or transcript data. Linux
+exposes Toggle/Cancel only when desktop command bindings are enabled. Its thread
 sleeps in accept, is explicitly woken and joined at shutdown, and holds the lock
 until cleanup finishes. The first-hide hint is remembered in `tray-hint-seen`
 beside settings without rewriting the user's configuration.
@@ -121,7 +125,9 @@ owned worker on loopback, through a client without proxies or redirects. Worker
 output and transcripts are not retained in diagnostic logs.
 
 Model loading starts in the background. GPU preference adds a silent warmup
-request before readiness. Whisper language travels with each request, so a
+request before readiness. Linux CPU workers also validate one synthetic inference
+before readiness, because model loading alone cannot establish CPU compatibility.
+Whisper language travels with each request, so a
 language change does not reload the model. Whisper uses full context and default
 timestamp decoding; returned segment whitespace is normalized before insertion.
 
@@ -135,12 +141,19 @@ warmup does not retry-loop.
 
 ## Insertion and privacy
 
+Insertion is asynchronous and owns a generation-bound commit permit. Native
+preparation cannot block the session owner or authorize a newer recording.
+Completions also carry the session ID; shutdown awaits owned cleanup.
+
 Insertion waits briefly for physical modifiers to be released. Normal mode
-writes text to the clipboard and submits the platform paste shortcut. Clipboard
-sequence checks preserve a newer copy from another app. If automatic paste cannot
+writes text to the clipboard and submits the platform paste shortcut. Windows clipboard
+sequence and Mac change-count checks preserve newer copies. Linux uses X11
+selection ownership or portal ownership notifications; it never restores a
+stale clipboard payload during cleanup. If automatic paste cannot
 proceed after copying, Settings explains how to paste manually.
 
-**Keep clipboard** uses direct Unicode input and leaves the clipboard untouched.
+**Keep clipboard** uses native Unicode input and leaves the clipboard untouched.
+Linux requires advertised EI text support; X11 reports this mode as unavailable.
 Both paths check cancellation before committing native input. Submission cannot
 prove that an editor accepted the text, and Escape cannot retract input already
 submitted to the OS.

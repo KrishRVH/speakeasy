@@ -222,7 +222,17 @@ impl InputMonitor {
                     }
                 });
             })?;
-        let thread_id = started.recv().context("Shortcut thread stopped")??;
+        let thread_id = match started
+            .recv()
+            .context("Shortcut thread stopped")
+            .and_then(|result| result.map_err(Into::into))
+        {
+            Ok(thread_id) => thread_id,
+            Err(error) => {
+                let _ = thread.join();
+                return Err(error);
+            }
+        };
         Ok(Self {
             thread_id,
             thread: Some(thread),
@@ -544,7 +554,7 @@ pub fn set_pill_visible(handle: RawWindowHandle, visible: bool) {
 }
 
 // Clipboard listeners can briefly hold it immediately after a change. Retry
-// with a short wall-clock budget on the dictation owner, never the UI thread.
+// with a short wall-clock budget on the insertion worker, never the UI thread.
 fn open_clipboard() -> anyhow::Result<clipboard_win::Clipboard> {
     let until = std::time::Instant::now() + std::time::Duration::from_millis(50);
     loop {
@@ -558,7 +568,7 @@ fn open_clipboard() -> anyhow::Result<clipboard_win::Clipboard> {
 
 pub fn insert(
     text: &str,
-    gate: &InputSender,
+    gate: &InsertPermit,
     preserve_clipboard: bool,
 ) -> anyhow::Result<Inserted> {
     if !gate.active() {
@@ -657,7 +667,7 @@ pub fn reduced_motion() -> bool {
     enabled == 0
 }
 
-fn insert_direct(text: &str, gate: &InputSender) -> anyhow::Result<Inserted> {
+fn insert_direct(text: &str, gate: &InsertPermit) -> anyhow::Result<Inserted> {
     if modifiers_down() {
         return Ok(Inserted::Unavailable(
             "Release the shortcut and try again. Clipboard preserved.",

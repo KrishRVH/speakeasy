@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>Private dictation for Windows and macOS.</strong><br>
+  <strong>Private dictation for Windows, macOS, and Linux.</strong><br>
   Hold a shortcut, speak, and your words appear wherever you are typing.<br>
   Local speech engines. No account, no upload, no history.
 </p>
@@ -49,7 +49,7 @@ app; **No speech detected** means nothing was sent.
 Download the Windows or Mac zip from the
 [latest release](https://github.com/KrishRVH/speakeasy/releases/latest), unzip
 it, and open Speakeasy. On a Mac, allow Microphone and Accessibility access when
-asked.
+asked. Linux's experimental AppImage and tar packages are described below.
 
 The first launch sets everything up. Speakeasy checks the machine, downloads the
 matching [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) build and
@@ -61,9 +61,10 @@ NVIDIA's Parakeet v3 model, about 0.8 GB in all, and turns dictation on:
 | Windows, another GPU with 6 GB or more | Vulkan | GPU |
 | Any other Windows PC | Vulkan, or CPU without a Vulkan driver | CPU |
 | Mac with Apple silicon | Metal | GPU |
+| Linux x86_64 | CUDA, Vulkan, or CPU after compatibility checks | GPU or CPU |
 
-Then hold <kbd>Ctrl</kbd> + <kbd>Win</kbd> (Windows) or <kbd>Fn</kbd> (Mac) in any
-editor and speak.
+Then hold <kbd>Ctrl</kbd> + <kbd>Win</kbd> (Windows), <kbd>Fn</kbd> (Mac), or
+<kbd>Ctrl</kbd> + <kbd>Super</kbd> + <kbd>Space</kbd> (Linux) in an editor and speak.
 
 Downloads come from pinned GitHub and Hugging Face URLs and are checked against
 their SHA-256 before use. They live in `%LOCALAPPDATA%\speakeasy` on Windows and
@@ -75,7 +76,8 @@ the next attempt resumes where it stopped.
 
 <br>
 
-Speakeasy targets Windows 11 x64 and macOS 14+ on Apple Silicon. Use the pinned
+Speakeasy targets Windows 11 x64, macOS 14+ on Apple silicon, and experimental
+Linux x86_64 builds with glibc 2.35 or later. Use the pinned
 Rust toolchain. Windows builds need the Visual Studio C++ Build Tools and the
 Windows SDK; macOS builds need the Xcode command line tools.
 
@@ -88,8 +90,9 @@ cargo run --locked -p speakeasy             # the app
 clipboard. It previews hands-free, the countdown, submission, interrupted
 dismissal, cancellation, silence, and an error. On Windows and macOS,
 `--demo-tray` adds the tray and the Settings hide-and-reopen behavior with
-dictation disabled. Linux runs the preview only; GPUI's X11 build needs ALSA,
-fontconfig, X11/XCB, xkbcommon, and Vulkan development packages.
+dictation disabled. Linux has experimental desktop support; see the Linux
+instructions below. GPUI's X11 build needs ALSA, fontconfig, X11/XCB, xkbcommon,
+and Vulkan development packages.
 
 </details>
 
@@ -97,6 +100,67 @@ Settings also choose the microphone, GPU use, clipboard behavior, reduced motion
 and theme: **Jet & Champagne**, **Emerald Lounge**, **Iris**, or **Midnight
 Chrome**. Changes apply when you save. Appearance, microphone, and language
 changes keep the model loaded.
+
+## Linux (experimental)
+
+Download the x86_64 AppImage or tar archive from the release. The application
+targets glibc 2.35 or later and needs X11 or Xwayland, Vulkan, and desktop audio
+support. It shares audio, engines, the session controller, Settings and the pill
+with Windows and Mac. Native GNOME/KDE/X11 acceptance is pending; see
+[implementation and acceptance](docs/linux-implementation.md) for support limits.
+
+The defaults are **Ctrl+Super+Space** to hold or double-tap for hands-free and
+**Ctrl+Super+Escape** to cancel. Linux's cancel chord is reserved; bare Escape is
+not globally captured. Wayland requests desktop shortcut and keyboard permissions;
+Settings shows the actual accepted bindings. Install the supplied
+`io.github.krvh.speakeasy.desktop` file in `~/.local/share/applications` (or the
+corresponding XDG data directory), and make the executable available as `speakeasy`
+on your PATH. Portals use this installed launcher identity. For source builds:
+
+```sh
+cargo build --release --locked -p speakeasy
+mkdir -p "$HOME/.local/bin"
+ln -s "$PWD/target/release/speakeasy" "$HOME/.local/bin/speakeasy"
+install -Dm644 packaging/linux/io.github.krvh.speakeasy.desktop \
+  "${XDG_DATA_HOME:-$HOME/.local/share}/applications/io.github.krvh.speakeasy.desktop"
+```
+
+For the tar package, link its absolute `Speakeasy.AppDir/AppRun` path instead,
+and install the desktop file from `usr/share/applications` inside that directory.
+For AppImage, make it executable, link its absolute path as `speakeasy`, and
+install the desktop file from this repository or its `--appimage-extract` output.
+The executable stays in the chosen location. Automatic paste needs compositor
+modifier feedback and libei; **Keep clipboard** additionally needs direct text
+support. Choose **Copy for manual paste** if automatic insertion is unavailable.
+For terminals, select **Ctrl+Shift+V** as the paste shortcut. X11 automatic paste
+uses the first keyboard layout with an unshifted V key; other layouts copy and
+explain how to paste manually.
+
+For a desktop without suitable shortcut permissions, enable **Desktop bindings**
+and assign `speakeasy --toggle` and `speakeasy --cancel` in its shortcut settings.
+This mode starts/finishes hands-free. Enable manual paste as well to avoid requesting
+keyboard-control access. On X11, native chords can be set in the optional `linux`
+settings object: `shortcut`, `cancel`, `terminal_paste`, `manual_paste`, and
+`external_shortcut`. Ordinary chord keys use the portal syntax, such as
+`CTRL+LOGO+space`. Save and resume after changing bindings or keyboard maps.
+
+Rendering uses X11 or Xwayland with Vulkan. A tray host is optional: without one,
+closing Settings quits and the launcher reopens the app. Configuration lives under
+`$XDG_CONFIG_HOME/speakeasy`, downloads under `$XDG_DATA_HOME/speakeasy`, and private
+portal restore credentials under `$XDG_STATE_HOME/speakeasy`, with standard home
+directory defaults. The pinned upstream Linux CPU engine has a reported
+illegal-instruction failure on some CPUs without AVX-512. A synthetic inference
+check precedes readiness, and an incompatible build produces an error; choose
+a compatible engine in Settings. This check does not establish a universal CPU
+fallback. Engine and desktop compatibility remain separate from the app's glibc
+baseline.
+
+`bash scripts/package-linux.sh` prepares an x86_64 AppImage and bundled tar on an
+older builder, checking glibc 2.35. `--native-tar` makes an unbundled archive for the
+current machine; extract it and run `Speakeasy.AppDir/AppRun`. The release workflow
+builds Linux on Ubuntu 22.04; Linux pull-request checks also upload test artifacts.
+CPU, memory, latency, and frame pacing checks are described in
+[performance](docs/performance.md).
 
 ## Speech engines
 
@@ -116,7 +180,8 @@ extract the complete runtime and choose `Release/whisper-server.exe`. Turn off
 defaults to four.
 
 The worker stays warm on loopback. With a GPU, one silent request initializes
-its kernels before the first dictation. Cancelling GPU work keeps a healthy
+its kernels before the first dictation; Linux CPU workers also validate inference
+before readiness. Cancelling GPU work keeps a healthy
 worker and replaces it if a two-second recovery check fails; CPU cancellation
 always replaces the worker. **Pause dictation** releases the shortcut and the
 model. Relative engine and model paths resolve beside the settings file.
@@ -155,7 +220,8 @@ and insertion. They never record, install a global hook, or touch the clipboard.
 
 <br>
 
-- `scripts/package-windows.ps1` and `bash scripts/package-macos.sh` package the
+- `scripts/package-windows.ps1`, `bash scripts/package-macos.sh`, and
+  `bash scripts/package-linux.sh` package the
   app into `artifacts/`. Packages carry no engine or model; setup downloads
   them on first launch. The Mac bundle carries its
   microphone usage declaration and a local signature; grant it Microphone and
@@ -181,9 +247,9 @@ and insertion. They never record, install a global hook, or touch the clipboard.
   On Windows, `cargo test -p speakeasy-platform hidden_pill_consumes_paint -- --ignored`
   checks hidden and visible paint dispatch with an owned native window and fake
   renderer, without microphone, hook, clipboard, or input access.
-- `.github/workflows/release.yml` builds the Windows and macOS packages on each
-  push to `main` and publishes them to the GitHub release for the workspace
-  version.
+- `.github/workflows/release.yml` verifies and builds Windows, macOS, and Linux
+  packages on each push to `main` and publishes them to the GitHub release for
+  the workspace version.
 
 Live microphone-to-editor dictation and interactive macOS use still need
 hands-on acceptance.

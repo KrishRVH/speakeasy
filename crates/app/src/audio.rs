@@ -4,7 +4,7 @@ use cpal::{
     SampleFormat, SizedSample,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
-use rtrb::{Producer, RingBuffer};
+use rtrb::{Consumer, Producer, RingBuffer};
 use speakeasy_core::gesture::RECORDING_LIMIT;
 use std::{
     sync::{
@@ -146,26 +146,13 @@ fn record(
             let _ = command.compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire);
             drop(stream.take());
         }
-        while let Ok(sample) = consumer.pop() {
-            if !ready {
-                ready = true;
-                tx.send_blocking(Event::Ready(id))?;
-            }
-            if (pcm.len() - 44) / 2 < limit {
-                let sample = if sample.is_finite() {
-                    sample.clamp(-1.0, 1.0)
-                } else {
-                    0.0
-                };
-                energy += f64::from(sample * sample);
-                count += 1;
-                if pcm.len() + 2 > pcm.capacity() {
-                    let capacity = (pcm.capacity() * 2).min(limit * 2 + 44);
-                    pcm.reserve_exact(capacity - pcm.len());
-                }
-                pcm.extend_from_slice(&((sample * 32767.0) as i16).to_le_bytes());
-            }
+        if !ready && !consumer.is_empty() {
+            ready = true;
+            tx.send_blocking(Event::Ready(id))?;
         }
+        let (added_energy, added_count) = consume_pcm(&mut consumer, &mut pcm, limit);
+        energy += added_energy;
+        count += added_count;
         if last_level.elapsed() >= Duration::from_millis(32) {
             let rms = (energy / f64::from(count.max(1))).sqrt() as f32;
             let level = ((20.0 * rms.max(0.000_001).log10() + 60.0) / 54.0).clamp(0.0, 1.0);
@@ -192,6 +179,33 @@ fn record(
         return Ok(None);
     }
     Ok(Some(wave(pcm, rate)))
+}
+
+fn consume_pcm(consumer: &mut Consumer<f32>, pcm: &mut Vec<u8>, limit: usize) -> (f64, u32) {
+    let mut energy = 0.0;
+    let mut count = 0;
+    let Ok(chunk) = consumer.read_chunk(consumer.slots()) else {
+        return (energy, count);
+    };
+    let (first, second) = chunk.as_slices();
+    for &sample in first.iter().chain(second) {
+        if (pcm.len() - 44) / 2 < limit {
+            let sample = if sample.is_finite() {
+                sample.clamp(-1.0, 1.0)
+            } else {
+                0.0
+            };
+            energy += f64::from(sample * sample);
+            count += 1;
+            if pcm.len() + 2 > pcm.capacity() {
+                let capacity = (pcm.capacity() * 2).min(limit * 2 + 44);
+                pcm.reserve_exact(capacity - pcm.len());
+            }
+            pcm.extend_from_slice(&((sample * 32767.0) as i16).to_le_bytes());
+        }
+    }
+    chunk.commit_all();
+    (energy, count)
 }
 
 #[expect(
@@ -248,23 +262,27 @@ where
             if command.load(Ordering::Acquire) != 0 || started.elapsed() >= RECORDING_LIMIT {
                 return;
             }
-            for frame in data.chunks_exact(channels) {
-                if samples >= limit {
-                    break;
-                }
-                let mono = frame
+            let frames = (data.len() / channels).min(limit - samples);
+            let queued = frames.min(producer.slots());
+            let Ok(chunk) = producer.write_chunk_uninit(queued) else {
+                overran.store(true, Ordering::Release);
+                return;
+            };
+            // This safe rtrb operation initializes and publishes a whole
+            // callback packet once, without scratch buffers or allocation.
+            chunk.fill_from_iter(data.chunks_exact(channels).take(queued).map(|frame| {
+                frame
                     .iter()
                     .map(|sample| sample.to_sample::<f32>())
                     .sum::<f32>()
-                    / channels as f32;
-                if producer.push(mono).is_err() {
-                    overran.store(true, Ordering::Release);
-                    break;
-                }
-                if samples == 0 {
-                    audio_started.store(true, Ordering::Release);
-                }
-                samples += 1;
+                    / channels as f32
+            }));
+            if queued > 0 && samples == 0 {
+                audio_started.store(true, Ordering::Release);
+            }
+            samples += queued;
+            if queued < frames {
+                overran.store(true, Ordering::Release);
             }
         },
         move |error| handle_stream_error(error, &errors, active.load(Ordering::Acquire)),
@@ -420,6 +438,87 @@ fn enumerate_microphones() -> anyhow::Result<Vec<(String, String)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pcm_chunks_wrap_clamp_invalid_samples_and_enforce_the_limit() -> anyhow::Result<()> {
+        let (mut producer, mut consumer) = RingBuffer::new(4);
+        producer.push_entire_slice(&[0.0, 0.0, 0.0])?;
+        consumer.read_chunk(3)?.commit_all();
+        producer.push_entire_slice(&[0.5, f32::NAN, 2.0, -2.0])?;
+        let mut pcm = vec![0; 44];
+        let (energy, count) = consume_pcm(&mut consumer, &mut pcm, 3);
+        assert_eq!(count, 3);
+        assert_eq!(energy, 1.25);
+        let expected = [16383_i16, 0, 32767]
+            .into_iter()
+            .flat_map(i16::to_le_bytes)
+            .collect::<Vec<_>>();
+        assert_eq!(&pcm[44..], expected);
+        assert!(consumer.is_empty());
+        assert_eq!(producer.slots(), 4);
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "opt-in synthetic release profiling; never opens a microphone"]
+    fn profile_audio_pipeline() -> anyhow::Result<()> {
+        use std::hint::black_box;
+        for channels in [1, 2, 8] {
+            let mut timings = Vec::new();
+            for _ in 0..21 {
+                let (producer, mut consumer) = RingBuffer::new(48_000);
+                let (errors, receiver) = async_channel::bounded(1);
+                let overran = Arc::new(AtomicBool::new(false));
+                let (mut data, _) = capture_callbacks::<f32>(
+                    channels,
+                    producer,
+                    Arc::new(AtomicU8::new(0)),
+                    overran.clone(),
+                    errors,
+                    Instant::now(),
+                    480 * 3000,
+                );
+                let samples = vec![0.125; 480 * channels];
+                let mut pcm = vec![0; 44];
+                pcm.reserve(960);
+                let started = Instant::now();
+                for _ in 0..3000 {
+                    data(black_box(&samples));
+                    black_box(consume_pcm(&mut consumer, &mut pcm, 480));
+                    black_box(&pcm);
+                    pcm.truncate(44);
+                }
+                timings.push(started.elapsed().as_secs_f64() * 1e6 / 3000.0);
+                capture_failure(&overran, &receiver)?;
+            }
+            timings.sort_by(f64::total_cmp);
+            eprintln!(
+                "audio_pipeline: channels={channels} frames=480 median_us={:.3} p95_us={:.3} runs=21 batches_per_run=3000",
+                timings[10], timings[19]
+            );
+        }
+        let mut fixture = vec![0; 44 + 48_000 * 300 * 2];
+        for pair in fixture[44 + 96_000..44 + 96_000 * 299]
+            .as_chunks_mut::<2>()
+            .0
+        {
+            pair.copy_from_slice(&3000_i16.to_le_bytes());
+        }
+        let mut timings = Vec::new();
+        for _ in 0..21 {
+            let mut pcm = fixture.clone();
+            let started = Instant::now();
+            assert!(trim_quiet_edges(black_box(&mut pcm), 48_000));
+            timings.push(started.elapsed().as_secs_f64() * 1000.0);
+            black_box(pcm);
+        }
+        timings.sort_by(f64::total_cmp);
+        eprintln!(
+            "audio_trim: seconds=300 median_ms={:.3} p95_ms={:.3} runs=21",
+            timings[10], timings[19]
+        );
+        Ok(())
+    }
 
     #[test]
     fn startup_xrun_is_allowed_but_an_interruption_after_samples_is_fatal() -> anyhow::Result<()> {

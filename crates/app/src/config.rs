@@ -14,6 +14,8 @@ pub enum Engine {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default, skip_serializing_if = "LinuxSettings::is_default")]
+    pub linux: LinuxSettings,
     #[serde(default)]
     pub engine: Engine,
     #[serde(default)]
@@ -33,6 +35,32 @@ pub struct Config {
     #[serde(default)]
     pub theme: Theme,
 }
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct LinuxSettings {
+    pub shortcut: String,
+    pub cancel: String,
+    pub terminal_paste: bool,
+    pub manual_paste: bool,
+    pub external_shortcut: bool,
+}
+impl Default for LinuxSettings {
+    fn default() -> Self {
+        let options = speakeasy_platform::DesktopOptions::default();
+        Self {
+            shortcut: options.shortcut,
+            cancel: options.cancel,
+            terminal_paste: false,
+            manual_paste: false,
+            external_shortcut: false,
+        }
+    }
+}
+impl LinuxSettings {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
 fn language() -> String {
     "en".into()
 }
@@ -44,6 +72,15 @@ fn yes() -> bool {
 }
 
 impl Config {
+    pub fn desktop_options(&self) -> speakeasy_platform::DesktopOptions {
+        speakeasy_platform::DesktopOptions {
+            shortcut: self.linux.shortcut.clone(),
+            cancel: self.linux.cancel.clone(),
+            terminal_paste: self.linux.terminal_paste,
+            manual_paste: self.linux.manual_paste,
+            external_shortcut: self.linux.external_shortcut,
+        }
+    }
     pub fn read(path: &Path) -> anyhow::Result<Self> {
         serde_json::from_slice(
             &std::fs::read(path).with_context(|| format!("Cannot read {}", path.display()))?,
@@ -87,6 +124,15 @@ impl Config {
                 bail!("Expected a file: {}", file.display());
             }
         }
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if self.engine_executable.metadata()?.permissions().mode() & 0o111 == 0 {
+                bail!(
+                    "Speech executable is not executable. Choose an installed engine or enable its executable permission."
+                );
+            }
+        }
         if self.threads == 0 || self.threads > 256 {
             bail!("threads must be between 1 and 256");
         }
@@ -117,6 +163,7 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            linux: LinuxSettings::default(),
             engine: Engine::default(),
             engine_executable: PathBuf::new(),
             model: PathBuf::new(),
@@ -140,7 +187,66 @@ pub fn default_path() -> PathBuf {
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")));
     base.unwrap_or_else(|| PathBuf::from("."))
         .join("speakeasy/settings.json")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saved_settings_preserve_linux_bindings_and_skip_defaults() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("settings.json");
+        let mut config = Config::default();
+        config.save(&path)?;
+        let defaults: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+        assert!(defaults.get("linux").is_none());
+        assert!(Config::read(&path)?.linux.is_default());
+
+        config.linux = LinuxSettings {
+            shortcut: "CTRL+ALT+d".into(),
+            cancel: "CTRL+ALT+Escape".into(),
+            terminal_paste: true,
+            manual_paste: true,
+            external_shortcut: true,
+        };
+        config.save(&path)?;
+        let restored = Config::read(&path)?;
+        assert!(restored.linux == config.linux);
+        let options = restored.desktop_options();
+        assert_eq!(options.shortcut, "CTRL+ALT+d");
+        assert_eq!(options.cancel, "CTRL+ALT+Escape");
+        assert!(options.terminal_paste && options.manual_paste && options.external_shortcut);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn validation_requires_an_executable_engine() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir()?;
+        let executable = directory.path().join("engine");
+        let model = directory.path().join("model.gguf");
+        std::fs::write(&executable, b"fixture")?;
+        std::fs::write(&model, b"fixture")?;
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o600))?;
+        let mut config = Config {
+            engine_executable: executable.clone(),
+            model,
+            ..Config::default()
+        };
+        let path = directory.path().join("settings.json");
+        let failure = config
+            .validate(&path)
+            .err()
+            .context("An engine without executable permission was accepted")?;
+        assert!(failure.to_string().contains("not executable"));
+        std::fs::set_permissions(executable, std::fs::Permissions::from_mode(0o700))?;
+        config.validate(&path)?;
+        Ok(())
+    }
 }

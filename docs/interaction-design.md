@@ -50,7 +50,8 @@ text. The pill is non-activating and click-through.
 Windows places the pill at the bottom center of the foreground window's monitor
 work area. macOS uses the screen under the pointer. Both place the capsule about
 28 DIP above the work area's bottom edge when shown. Position stays fixed while
-the pill remains visible; it does not follow the caret.
+the pill remains visible; it does not follow the caret. Linux uses GPUI's display
+placement and passive X11 hints; native monitor/fullscreen acceptance is pending.
 
 Width, height, opacity, vertical entry, lid, and meter values use analytic
 critically damped springs. Changing the target preserves velocity. Geometry uses
@@ -79,11 +80,13 @@ Configured native launches stay in the tray/menu bar. First setup and invalid
 configuration open Settings. A fresh install sets itself up there: a card names
 each step with its progress, **Cancel** pauses and later resumes, and completion
 enables dictation. The manual engine controls stay hidden while setup runs.
+Linux opens Settings at startup to expose desktop permissions and tray state.
 
 Close hides the existing window, preserving edits; Windows minimize also hides
 it. macOS minimize retains normal Dock behavior. Relaunch and the tray's
 Settings action reveal the same window. A brief first-hide hint explains the
 tray/menu bar when the pill is idle.
+On Linux, closing Settings without a tray host quits; the launcher reopens it.
 
 The tray shows the Grille mark with its slot lit in the theme's lamp color and
 its bars cut through. Recording turns the slot red; busy, paused, and attention
@@ -99,12 +102,16 @@ the pill's notice expires, including while there are unsaved edits.
 - Hold Ctrl+Win on Windows or Fn on macOS to dictate; release to finish. Adding
   Space during the hold, or double-tapping, switches to hands-free; press the
   shortcut again to finish. A short single tap finishes after its tap window.
-- The shortcut's modifiers are observed, never swallowed. Only the Space that
+- Linux holds Ctrl+Super+Space or double-taps it for hands-free; its accepted
+  binding is shown in Settings. Desktop command bindings start/finish hands-free.
+- On Windows/macOS, the shortcut's modifiers are observed, never swallowed. Only the Space that
   locks hands-free is withheld from the focused app. Any other key during a hold
   belongs to a different shortcut: dictation cancels and waits for release. On
   Windows, an unassigned mask key keeps the released Win key from opening Start.
-- Escape cancels immediately and continues to the focused app. Animation never
-  delays cancellation or owns the microphone lifetime.
+- Windows/macOS Escape cancels immediately and continues to the focused app.
+  Linux uses a reserved Ctrl+Super+Escape chord or an explicit command binding;
+  bare Escape is not globally captured. Animation never delays cancellation or
+  owns the microphone lifetime.
 - Readiness follows the first captured buffer. Startup feedback does not imply
   that speech before that buffer can be recovered.
 - Insertion does not steal focus. OS submission is the observable result;
