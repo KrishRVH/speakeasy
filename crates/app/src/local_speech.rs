@@ -4,6 +4,7 @@ use reqwest::{Client, multipart};
 use std::{net::TcpListener, process::Stdio, time::Duration};
 use tokio::{
     process::{Child, Command},
+    sync::watch,
     time::{sleep, timeout},
 };
 
@@ -19,7 +20,11 @@ pub struct LocalSpeech {
 }
 
 impl LocalSpeech {
-    pub async fn start(config: Config) -> anyhow::Result<Self> {
+    pub async fn start(
+        config: Config,
+        mut cancelled: watch::Receiver<bool>,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(!*cancelled.borrow(), "Local model startup cancelled");
         let engine = config.engine;
         let nemo = engine == Engine::Parakeet;
         let listener = TcpListener::bind("127.0.0.1:0")?;
@@ -88,17 +93,24 @@ impl LocalSpeech {
             command.as_std_mut().process_group(0);
         }
         drop(listener);
-        let child = command.spawn().context(
-            "Cannot start local speech. Check the selected engine executable and its native dependencies.",
-        )?;
-        let group = speakeasy_platform::ProcessGroup::attach(
-            child.id().context("Worker exited before containment")?,
-        )?;
         let client = Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(2))
             .build()?;
+        let mut child = command.spawn().context(
+            "Cannot start local speech. Check the selected engine executable and its native dependencies.",
+        )?;
+        let group = match speakeasy_platform::ProcessGroup::attach(
+            child.id().context("Worker exited before containment")?,
+        ) {
+            Ok(group) => group,
+            Err(error) => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                return Err(error);
+            }
+        };
         let mut server = Self {
             engine,
             group,
@@ -111,7 +123,10 @@ impl LocalSpeech {
             client,
             directory,
         };
-        let readiness = timeout(Duration::from_secs(120), async {
+        let readiness = tokio::select! {
+            biased;
+            _ = cancelled.changed() => Err(anyhow::anyhow!("Local model startup cancelled")),
+            result = timeout(Duration::from_secs(120), async {
             loop {
                 if server.child.try_wait()?.is_some() {
                     #[cfg(unix)]
@@ -131,9 +146,9 @@ impl LocalSpeech {
                 sleep(Duration::from_millis(25)).await;
             }
         })
-        .await
-        .context("Local model startup timed out")
-        .and_then(|result| result);
+        => result.context("Local model startup timed out")
+        .and_then(|result| result),
+        };
         if let Err(error) = readiness {
             server.stop().await;
             return Err(error);
@@ -153,14 +168,20 @@ impl LocalSpeech {
                     "Local CPU inference failed. Check the model and CPU compatibility; choose a compatible engine executable in Settings.",
                 )
             };
-            let warmup = timeout(Duration::from_secs(120), server.idle())
-                .await
-                .context(timed_out)
-                .and_then(|result| result.context(failed));
+            let warmup = tokio::select! {
+                biased;
+                _ = cancelled.changed() => Err(anyhow::anyhow!("Local model startup cancelled")),
+                result = timeout(Duration::from_secs(120), server.idle()) =>
+                    result.context(timed_out).and_then(|result| result.context(failed)),
+            };
             if let Err(error) = warmup {
                 server.stop().await;
                 return Err(error);
             }
+        }
+        if *cancelled.borrow() {
+            server.stop().await;
+            bail!("Local model startup cancelled");
         }
         Ok(server)
     }
@@ -259,13 +280,58 @@ impl LocalSpeech {
     pub async fn stop(&mut self) {
         self.group.terminate();
         let _ = self.child.start_kill();
-        let _ = timeout(Duration::from_secs(3), self.child.wait()).await;
+        // Replacement and Pause wait for actual process exit. A timeout here
+        // would hand the OS an unreaped child while a new model starts.
+        let _ = self.child.wait().await;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn startup_cancellation_reaps_the_owned_process() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir()?;
+        let executable = directory.path().join("worker");
+        std::fs::write(
+            &executable,
+            "#!/bin/sh\nprintf '%s' \"$$\" > \"$(dirname \"$0\")/worker.pid\"\nexec sleep 60\n",
+        )?;
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))?;
+        let config = Config {
+            engine_executable: executable,
+            use_gpu: false,
+            ..Config::default()
+        };
+        let (cancel, cancelled) = watch::channel(false);
+        let task = tokio::spawn(LocalSpeech::start(config, cancelled));
+        let pid = timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(pid) =
+                    tokio::fs::read_to_string(directory.path().join("worker.pid")).await
+                    && let Ok(pid) = pid.parse::<u32>()
+                {
+                    break pid;
+                }
+                sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await?;
+        cancel.send_replace(true);
+        assert!(
+            timeout(Duration::from_secs(5), task)
+                .await?
+                .is_ok_and(|result| result.is_err())
+        );
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "Cancelled startup left a live or unreaped worker"
+        );
+        Ok(())
+    }
 
     // A real provider check, separate from the fast portable tests. The caller
     // supplies public fixture audio; this never opens a microphone or clipboard.
@@ -278,7 +344,8 @@ mod tests {
         let wav = std::fs::read(std::env::var("SPEAKEASY_FIXTURE_WAV")?)?;
         let language = config.language.clone();
         let started = std::time::Instant::now();
-        let mut worker = LocalSpeech::start(config).await?;
+        let (_cancel, cancelled) = watch::channel(false);
+        let mut worker = LocalSpeech::start(config, cancelled).await?;
         let startup = started.elapsed();
         let started = std::time::Instant::now();
         let result = worker.transcribe(wav, &language).await?;

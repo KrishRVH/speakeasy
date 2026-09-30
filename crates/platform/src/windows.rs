@@ -1,12 +1,11 @@
 use super::*;
-use anyhow::{Context, bail};
+use anyhow::bail;
 use std::{
     cell::RefCell,
     ffi::OsString,
     os::windows::ffi::OsStringExt,
     path::PathBuf,
     ptr::{null, null_mut},
-    sync::mpsc,
     thread,
 };
 use windows_sys::Win32::{
@@ -138,114 +137,147 @@ thread_local! {
 }
 
 pub struct InputMonitor {
-    thread_id: u32,
+    control: Arc<MonitorControl<u32>>,
+    finished: async_channel::Receiver<()>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
 impl InputMonitor {
     pub fn start(tx: InputSender) -> anyhow::Result<Self> {
-        let (ready, started) = mpsc::sync_channel(1);
+        let control = Arc::new(MonitorControl::default());
+        let native_control = control.clone();
+        let (complete, finished) = async_channel::bounded(1);
         let thread = thread::Builder::new()
             .name("shortcut".into())
             .spawn(move || {
                 HOOK.with(|slot| {
                     *slot.borrow_mut() = Some(HookState {
-                        tx,
+                        tx: tx.clone(),
                         chord: Chord::default(),
                         down: [false; 4],
                     })
                 });
-                // SAFETY: this thread owns the hook, pumps its messages, and removes
-                // it before the thread-local callback state is destroyed.
-                unsafe {
-                    let mut msg = std::mem::zeroed();
-                    PeekMessageW(&mut msg, null_mut(), 0, 0, PM_NOREMOVE);
-                    let hook = SetWindowsHookExW(
-                        WH_KEYBOARD_LL,
-                        Some(keyboard),
-                        GetModuleHandleW(std::ptr::null()),
-                        0,
+                if let Err(error) = run_monitor(&tx, &native_control)
+                    && !native_control.stopping()
+                    && !tx.is_closed()
+                {
+                    deliver(
+                        &tx,
+                        Input::Unavailable(format!(
+                            "Cannot monitor the dictation shortcut: {error}. Pause and resume dictation to try again."
+                        )),
                     );
-                    if hook.is_null() {
-                        let _ = ready.send(Err(std::io::Error::last_os_error()));
-                        return;
-                    }
-                    let class_name: Vec<u16> = "SpeakeasyEvents\0".encode_utf16().collect();
-                    let class = WNDCLASSW {
-                        lpfnWndProc: Some(lifecycle),
-                        hInstance: GetModuleHandleW(std::ptr::null()),
-                        lpszClassName: class_name.as_ptr(),
-                        ..std::mem::zeroed()
-                    };
-                    RegisterClassW(&class);
-                    let window = CreateWindowExW(
-                        0,
-                        class_name.as_ptr(),
-                        class_name.as_ptr(),
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        null_mut(),
-                        null_mut(),
-                        class.hInstance,
-                        std::ptr::null(),
-                    );
-                    if window.is_null()
-                        || WTSRegisterSessionNotification(window, NOTIFY_FOR_THIS_SESSION) == 0
-                    {
-                        let error = std::io::Error::last_os_error();
-                        if !window.is_null() {
-                            DestroyWindow(window);
-                        }
-                        UnhookWindowsHookEx(hook);
-                        let _ = ready.send(Err(error));
-                        return;
-                    }
-                    let _ = ready.send(Ok(GetCurrentThreadId()));
-                    while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
-                        if msg.message == MASK_START {
-                            mask_start_menu();
-                            continue;
-                        }
-                        TranslateMessage(&msg);
-                        DispatchMessageW(&msg);
-                    }
-                    WTSUnRegisterSessionNotification(window);
-                    DestroyWindow(window);
-                    UnhookWindowsHookEx(hook);
                 }
-                HOOK.with(|slot| {
-                    if let Some(state) = slot.borrow_mut().take() {
-                        state.tx.close();
-                    }
-                });
+                native_control.clear();
+                drop(HOOK.with(|slot| slot.borrow_mut().take()));
+                tx.close();
+                let _ = complete.try_send(());
             })?;
-        let thread_id = match started
-            .recv()
-            .context("Shortcut thread stopped")
-            .and_then(|result| result.map_err(Into::into))
-        {
-            Ok(thread_id) => thread_id,
-            Err(error) => {
-                let _ = thread.join();
-                return Err(error);
-            }
-        };
         Ok(Self {
-            thread_id,
+            control,
+            finished,
             thread: Some(thread),
         })
+    }
+
+    pub fn request_stop(&self) {
+        self.control.request_stop(|thread_id| {
+            // SAFETY: publication follows message-queue creation. The control
+            // lock prevents this ID from being used after its thread retires.
+            unsafe { PostThreadMessageW(*thread_id, WM_QUIT, 0, 0) };
+        });
+    }
+
+    pub fn stopped(&self) -> impl std::future::Future<Output = ()> + use<> {
+        let finished = self.finished.clone();
+        async move {
+            let _ = finished.recv().await;
+        }
+    }
+}
+
+fn run_monitor(tx: &InputSender, control: &MonitorControl<u32>) -> anyhow::Result<()> {
+    if control.stopping() {
+        return Ok(());
+    }
+    // SAFETY: this thread owns the hook and window, pumps their messages, and
+    // removes them before the thread-local callback state is destroyed.
+    unsafe {
+        let mut msg = std::mem::zeroed();
+        PeekMessageW(&mut msg, null_mut(), 0, 0, PM_NOREMOVE);
+        let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard), GetModuleHandleW(null()), 0);
+        if hook.is_null() {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let class_name: Vec<u16> = "SpeakeasyEvents\0".encode_utf16().collect();
+        let class = WNDCLASSW {
+            lpfnWndProc: Some(lifecycle),
+            hInstance: GetModuleHandleW(null()),
+            lpszClassName: class_name.as_ptr(),
+            ..std::mem::zeroed()
+        };
+        RegisterClassW(&class);
+        let window = CreateWindowExW(
+            0,
+            class_name.as_ptr(),
+            class_name.as_ptr(),
+            0,
+            0,
+            0,
+            0,
+            0,
+            null_mut(),
+            null_mut(),
+            class.hInstance,
+            null(),
+        );
+        if window.is_null() || WTSRegisterSessionNotification(window, NOTIFY_FOR_THIS_SESSION) == 0
+        {
+            let error = std::io::Error::last_os_error();
+            if !window.is_null() {
+                DestroyWindow(window);
+            }
+            UnhookWindowsHookEx(hook);
+            return Err(error.into());
+        }
+        let mut result = Ok(());
+        if control.start(GetCurrentThreadId(), || {
+            deliver(
+                tx,
+                Input::DesktopReady {
+                    shortcut: SHORTCUT.into(),
+                    cancel: "Escape".into(),
+                },
+            );
+        }) {
+            loop {
+                match GetMessageW(&mut msg, null_mut(), 0, 0) {
+                    -1 => {
+                        result = Err(std::io::Error::last_os_error().into());
+                        break;
+                    }
+                    0 => break,
+                    _ => {}
+                }
+                if msg.message == MASK_START {
+                    mask_start_menu();
+                    continue;
+                }
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+        control.clear();
+        WTSUnRegisterSessionNotification(window);
+        DestroyWindow(window);
+        UnhookWindowsHookEx(hook);
+        result
     }
 }
 
 impl Drop for InputMonitor {
     fn drop(&mut self) {
-        // SAFETY: the ID belongs to our live message-loop thread.
-        unsafe {
-            PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0);
-        }
+        self.request_stop();
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -743,6 +775,7 @@ fn has_external_target() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context;
     use std::{cell::Cell, num::NonZeroIsize};
 
     thread_local! {

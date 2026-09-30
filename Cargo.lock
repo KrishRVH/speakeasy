@@ -5490,7 +5490,7 @@ dependencies = [
 
 [[package]]
 name = "speakeasy"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
@@ -5512,11 +5512,11 @@ dependencies = [
 
 [[package]]
 name = "speakeasy-core"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "speakeasy-platform"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "arboard",

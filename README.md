@@ -100,6 +100,8 @@ Settings also choose the microphone, GPU use, clipboard behavior, reduced motion
 and theme: **Jet & Champagne**, **Emerald Lounge**, **Iris**, or **Midnight
 Chrome**. Changes apply when you save. Appearance, microphone, and language
 changes keep the model loaded.
+Saving stays responsive and preserves edits made while the save is running.
+Pausing during a save keeps dictation paused; Quit finishes requested saves.
 
 ## Linux (experimental)
 

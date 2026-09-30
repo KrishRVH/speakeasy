@@ -25,10 +25,13 @@ pub struct Services {
     // A paused owner stays here until native cleanup completes. Its task only
     // waits for acknowledgement; dropping Services still joins the runtime.
     pub retiring: Option<Runtime>,
+    pub retiring_monitor: Option<InputMonitor>,
     pub retirement: Option<Task<()>>,
     pub pending: Option<Config>,
     pub path: PathBuf,
     pub config: Config,
+    pub configuration_epoch: u64,
+    pub validation: Option<(u64, Task<()>)>,
     pub output: watch::Sender<Snapshot>,
     pub pill: WindowHandle<Pill>,
     pub window: Option<WindowHandle<Settings>>,
@@ -43,11 +46,31 @@ pub struct Services {
 }
 impl Global for Services {}
 
+impl Drop for Services {
+    fn drop(&mut self) {
+        // Signal every owner before field disposal joins any native work.
+        for runtime in [&self.runtime, &self.retiring].into_iter().flatten() {
+            runtime.request_stop();
+        }
+        for monitor in [&self.monitor, &self.retiring_monitor]
+            .into_iter()
+            .flatten()
+        {
+            monitor.request_stop();
+        }
+    }
+}
+
 impl Services {
     pub fn running(&self) -> bool {
         self.runtime.as_ref().is_some_and(Runtime::is_running)
+            || self
+                .validation
+                .as_ref()
+                .is_some_and(|(epoch, _)| *epoch == self.configuration_epoch)
     }
     pub fn apply(&mut self, config: Config, cx: &mut App) -> anyhow::Result<()> {
+        self.configuration_epoch = self.configuration_epoch.wrapping_add(1);
         if self
             .runtime
             .as_ref()
@@ -82,33 +105,85 @@ impl Services {
         self.config = config;
         Ok(())
     }
+
+    fn resume(&mut self, cx: &mut App) {
+        self.configuration_epoch = self.configuration_epoch.wrapping_add(1);
+        let epoch = self.configuration_epoch;
+        let mut config = self.config.clone();
+        let path = self.path.clone();
+        let validation = cx.background_executor().spawn(async move {
+            config.validate(&path)?;
+            Ok::<_, anyhow::Error>(config)
+        });
+        self.output.send_modify(|snapshot| {
+            snapshot.phase = Phase::Idle;
+            snapshot.model = ModelState::Loading;
+            snapshot.message = "Checking local speech settings…".into();
+        });
+        self.validation = Some((
+            epoch,
+            cx.spawn(async move |cx| {
+                let result = validation.await;
+                let _ = cx.update(|cx| {
+                    if !cx.has_global::<Services>() {
+                        return;
+                    }
+                    let result = cx.update_global::<Services, _>(|services, cx| {
+                        let result = if services.configuration_epoch == epoch {
+                            result.and_then(|config| services.apply(config, cx))
+                        } else {
+                            Ok(())
+                        };
+                        if services
+                            .validation
+                            .as_ref()
+                            .is_some_and(|(pending, _)| *pending == epoch)
+                        {
+                            // All awaiting work has finished before releasing
+                            // the foreground task's own handle.
+                            services.validation.take();
+                        }
+                        result
+                    });
+                    if let Err(error) = result {
+                        cx.global::<Services>().output.send_modify(|snapshot| {
+                            snapshot.phase = Phase::Error;
+                            snapshot.message = error.to_string();
+                        });
+                        reveal(cx);
+                    }
+                });
+            }),
+        ));
+    }
     pub fn stop(&mut self, cx: &mut App) {
+        self.configuration_epoch = self.configuration_epoch.wrapping_add(1);
         if let Some(runtime) = &self.runtime {
             runtime.request_stop();
         }
         let monitor = self.monitor.take();
-        #[cfg(target_os = "linux")]
         if let Some(monitor) = &monitor {
             monitor.request_stop();
         }
-        #[cfg(not(target_os = "linux"))]
-        drop(monitor);
         self.pending = None;
         if let Some(runtime) = self.runtime.take() {
             let stopped = runtime.stopped();
+            let monitor_stopped = monitor.as_ref().map(InputMonitor::stopped);
             self.retiring = Some(runtime);
+            self.retiring_monitor = monitor;
             self.retirement = Some(cx.spawn(async move |cx| {
                 stopped.await;
-                #[cfg(target_os = "linux")]
-                if let Some(monitor) = monitor {
-                    monitor.stopped().await;
-                    drop(monitor);
+                if let Some(stopped) = monitor_stopped {
+                    stopped.await;
                 }
                 let _ = cx.update(|cx| {
                     cx.update_global::<Services, _>(|services, cx| {
                         // The owner has stopped publishing and released its
                         // worker, so joining here does not wait for native work.
                         services.retiring.take();
+                        // Keep native ownership in Services through Quit, and
+                        // remove macOS lifecycle observers on the UI thread.
+                        services.retiring_monitor.take();
                         if let Some(config) = services.pending.take() {
                             if let Err(error) = services.apply(config, cx) {
                                 services.output.send_modify(|snapshot| {
@@ -155,27 +230,16 @@ pub fn toggle_enabled(cx: &mut App) {
     if cx.global::<Services>().demo {
         return;
     }
-    let result = cx.update_global::<Services, _>(|services, cx| {
+    cx.update_global::<Services, _>(|services, cx| {
         if services.retiring.is_some() {
-            return Ok(());
+            return;
         }
         if services.running() {
             services.stop(cx);
-            Ok(())
         } else {
-            let mut config = services.config.clone();
-            config
-                .validate(&services.path)
-                .and_then(|()| services.apply(config, cx))
+            services.resume(cx);
         }
     });
-    if let Err(error) = result {
-        cx.global::<Services>().output.send_modify(|snapshot| {
-            snapshot.phase = Phase::Error;
-            snapshot.message = error.to_string();
-        });
-        reveal(cx);
-    }
 }
 
 // Resolve native handles immediately before use, outside GPUI's window borrow.
@@ -350,6 +414,10 @@ pub fn open(cx: &mut App) -> anyhow::Result<()> {
                     devices: None,
                     preview: None,
                     setup: None,
+                    retiring_setups: Vec::new(),
+                    saving: None,
+                    save_work: None,
+                    saves: SaveQueue::default(),
                     progress: Progress::default(),
                     _updates: task,
                     demo,
@@ -378,6 +446,112 @@ pub fn open(cx: &mut App) -> anyhow::Result<()> {
     Ok(())
 }
 
+struct SaveRequest {
+    draft: Config,
+    epoch: u64,
+    path: PathBuf,
+}
+
+struct SavedConfig {
+    submitted: SaveRequest,
+    validated: Config,
+}
+
+impl SavedConfig {
+    fn update_draft(&self, draft: &mut Config) -> bool {
+        if *draft == self.submitted.draft {
+            *draft = self.validated.clone();
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn save_may_enable(request_epoch: u64, current_epoch: u64, enabled: bool) -> bool {
+    request_epoch == current_epoch || enabled
+}
+
+#[derive(Default)]
+struct SaveQueue {
+    pending: Option<SaveRequest>,
+    saved: Option<SavedConfig>,
+}
+
+enum SaveProgress {
+    Next(SaveRequest),
+    Finished {
+        saved: Option<Box<SavedConfig>>,
+        error: Option<String>,
+        epoch: u64,
+    },
+}
+
+impl SaveQueue {
+    fn finish(&mut self, submitted: SaveRequest, result: anyhow::Result<Config>) -> SaveProgress {
+        let epoch = submitted.epoch;
+        let error = match result {
+            Ok(validated) => {
+                self.saved = Some(SavedConfig {
+                    submitted,
+                    validated,
+                });
+                None
+            }
+            Err(error) => Some(error.to_string()),
+        };
+        if let Some(next) = self.pending.take() {
+            SaveProgress::Next(next)
+        } else {
+            SaveProgress::Finished {
+                saved: self.saved.take().map(Box::new),
+                error,
+                epoch,
+            }
+        }
+    }
+}
+
+// One short-lived worker owns each durable write. Settings retains it until
+// completion, or joins it at Quit before flushing the latest queued request.
+struct SaveWork {
+    result: async_channel::Receiver<anyhow::Result<Config>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl SaveWork {
+    fn start(mut config: Config, path: PathBuf) -> anyhow::Result<Self> {
+        Self::spawn(move || {
+            config.validate(&path)?;
+            config.save(&path)?;
+            Ok(config)
+        })
+    }
+
+    fn spawn(
+        write: impl FnOnce() -> anyhow::Result<Config> + Send + 'static,
+    ) -> anyhow::Result<Self> {
+        let (complete, result) = async_channel::bounded(1);
+        let thread = std::thread::Builder::new()
+            .name("settings-save".into())
+            .spawn(move || {
+                let _ = complete.try_send(write());
+            })?;
+        Ok(Self {
+            result,
+            thread: Some(thread),
+        })
+    }
+}
+
+impl Drop for SaveWork {
+    fn drop(&mut self) {
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 pub struct Settings {
     config: Config,
     status: String,
@@ -387,11 +561,36 @@ pub struct Settings {
     devices: Option<Task<()>>,
     preview: Option<Task<()>>,
     setup: Option<(setup::Setup, Task<()>)>,
+    retiring_setups: Vec<(setup::Setup, Task<()>)>,
+    saving: Option<Task<()>>,
+    save_work: Option<SaveWork>,
+    saves: SaveQueue,
     progress: Progress,
     _updates: Task<()>,
     demo: bool,
     #[cfg(target_os = "windows")]
     _minimize: Option<Task<()>>,
+}
+
+impl Drop for Settings {
+    fn drop(&mut self) {
+        if let Some((setup, _)) = &self.setup {
+            setup.request_stop();
+        }
+        for (setup, _) in &self.retiring_setups {
+            setup.request_stop();
+        }
+        // Quit may release the view before its foreground task observes the
+        // completion. Keep filesystem writes ordered and own the latest Save.
+        drop(self.save_work.take());
+        if let Some(pending) = self.saves.pending.take()
+            && let Ok(work) = SaveWork::start(pending.draft, pending.path)
+        {
+            drop(work);
+        }
+        drop(self.setup.take());
+        self.retiring_setups.clear();
+    }
 }
 #[derive(Clone, Copy)]
 enum Action {
@@ -435,7 +634,19 @@ impl Settings {
     }
     /// Starts automatic setup, or cancels it while running.
     fn set_up(&mut self, cx: &mut Context<Self>) {
-        if self.setup.take().is_some() {
+        if let Some((setup, updates)) = self.setup.take() {
+            drop(updates);
+            setup.request_stop();
+            let stopped = setup.stopped();
+            let identity = setup.result.clone();
+            let retirement = cx.spawn(async move |this, cx| {
+                stopped.await;
+                let _ = this.update(cx, |view, _| {
+                    view.retiring_setups
+                        .retain(|(setup, _)| !setup.result.same_channel(&identity));
+                });
+            });
+            self.retiring_setups.push((setup, retirement));
             self.notice = Some("Setup paused. Downloads resume where they stopped.".into());
             return;
         }
@@ -448,6 +659,7 @@ impl Settings {
         };
         let mut progress = setup.progress.clone();
         let result = setup.result.clone();
+        let stopped = setup.stopped();
         self.notice = None;
         let task = cx.spawn(async move |this, cx| {
             while progress.changed().await.is_ok() {
@@ -464,6 +676,7 @@ impl Settings {
                 Timer::after(Duration::from_millis(100)).await;
             }
             let result = result.recv().await;
+            stopped.await;
             let _ = this.update(cx, |view, cx| {
                 view.setup = None;
                 view.progress = Progress::default();
@@ -484,20 +697,114 @@ impl Settings {
         self.setup = Some((setup, task));
     }
     fn save(&mut self, cx: &mut Context<Self>) {
-        let path = cx.global::<Services>().path.clone();
-        let result = self
-            .config
-            .validate(&path)
-            .and_then(|()| self.config.save(&path))
-            .and_then(|()| {
-                cx.update_global::<Services, _>(|services, cx| {
-                    services.apply(self.config.clone(), cx)
-                })
-            });
-        self.notice = match result {
-            Ok(()) => None,
-            Err(error) => Some(error.to_string()),
+        let services = cx.global::<Services>();
+        let epoch = services.configuration_epoch;
+        let path = services.path.clone();
+        self.saves.pending = Some(SaveRequest {
+            draft: self.config.clone(),
+            epoch,
+            path,
+        });
+        self.notice = Some("Saving changes…".into());
+        if self.saving.is_some() {
+            cx.notify();
+            return;
+        }
+        let Some(request) = self.saves.pending.take() else {
+            return;
         };
+        let Some((mut request, mut result)) = self.advance_save(SaveProgress::Next(request), cx)
+        else {
+            cx.notify();
+            return;
+        };
+        self.saving = Some(cx.spawn(async move |this, cx| {
+            loop {
+                let completed = result.recv().await.unwrap_or_else(|_| {
+                    Err(anyhow::anyhow!(
+                        "Saving settings stopped unexpectedly. Try saving again."
+                    ))
+                });
+                let next = this.update(cx, |view, cx| {
+                    // The acknowledgement follows the durable write. Joining
+                    // here cannot wait for storage or native work.
+                    drop(view.save_work.take());
+                    let progress = view.saves.finish(request, completed);
+                    let next = view.advance_save(progress, cx);
+                    cx.notify();
+                    next
+                });
+                match next {
+                    Ok(Some((next, incoming))) => {
+                        request = next;
+                        result = incoming;
+                    }
+                    Ok(None) | Err(_) => break,
+                }
+            }
+        }));
+        cx.notify();
+    }
+
+    fn advance_save(
+        &mut self,
+        mut progress: SaveProgress,
+        cx: &mut Context<Self>,
+    ) -> Option<(SaveRequest, async_channel::Receiver<anyhow::Result<Config>>)> {
+        loop {
+            match progress {
+                SaveProgress::Next(next) => {
+                    match SaveWork::start(next.draft.clone(), next.path.clone()) {
+                        Ok(work) => {
+                            let result = work.result.clone();
+                            self.save_work = Some(work);
+                            return Some((next, result));
+                        }
+                        Err(error) => progress = self.saves.finish(next, Err(error)),
+                    }
+                }
+                SaveProgress::Finished {
+                    saved,
+                    error,
+                    epoch,
+                } => {
+                    self.finish_save(saved, error, epoch, cx);
+                    self.saving = None;
+                    return None;
+                }
+            }
+        }
+    }
+
+    fn finish_save(
+        &mut self,
+        saved: Option<Box<SavedConfig>>,
+        error: Option<String>,
+        epoch: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(saved) = saved else {
+            self.notice = error;
+            return;
+        };
+        let unchanged = saved.update_draft(&mut self.config);
+        let result = cx.update_global::<Services, _>(|services, cx| {
+            if save_may_enable(
+                epoch,
+                services.configuration_epoch,
+                services.running() || services.pending.is_some(),
+            ) {
+                services.apply(saved.validated, cx)
+            } else {
+                // Pause after Save wins over its delayed completion. Appearance
+                // and persisted settings still update without resuming dictation.
+                services.config = saved.validated;
+                Ok(())
+            }
+        });
+        self.notice = error
+            .or_else(|| result.err().map(|error| error.to_string()))
+            .or_else(|| (!unchanged).then(|| "Unsaved changes".into()));
         let pill = cx.global::<Services>().pill;
         let reduced =
             cx.global::<Services>().config.reduced_motion || speakeasy_platform::reduced_motion();
@@ -1262,5 +1569,200 @@ impl Render for Settings {
 pub fn send(action: Input, cx: &App) {
     if let Some(runtime) = &cx.global::<Services>().runtime {
         speakeasy_platform::deliver(&runtime.input, action);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        Config, SaveProgress, SaveQueue, SaveRequest, SaveWork, SavedConfig, Settings,
+        save_may_enable,
+    };
+    use std::{path::PathBuf, time::Duration};
+
+    fn request(threads: u16, epoch: u64) -> SaveRequest {
+        SaveRequest {
+            draft: Config {
+                threads,
+                ..Config::default()
+            },
+            epoch,
+            path: PathBuf::from("settings.json"),
+        }
+    }
+
+    #[test]
+    fn queued_save_applies_only_latest_successful_draft() -> anyhow::Result<()> {
+        let mut queue = SaveQueue::default();
+        let first = request(4, 0);
+        let first_saved = first.draft.clone();
+        queue.pending = Some(request(8, 0));
+        // Repeated Save replaces the queued draft without overlapping writes.
+        queue.pending = Some(request(16, 0));
+        let SaveProgress::Next(next) = queue.finish(first, Ok(first_saved)) else {
+            anyhow::bail!("Queued save was lost");
+        };
+        assert_eq!(next.draft.threads, 16);
+        let saved = next.draft.clone();
+        let SaveProgress::Finished {
+            saved,
+            error,
+            epoch,
+        } = queue.finish(next, Ok(saved))
+        else {
+            anyhow::bail!("Latest save did not finish");
+        };
+        let saved = saved.ok_or_else(|| anyhow::anyhow!("Successful save was lost"))?;
+        assert_eq!(saved.validated.threads, 16);
+        assert_eq!(epoch, 0);
+        assert!(error.is_none());
+        assert!(queue.pending.is_none());
+        assert!(queue.saved.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn queued_failure_retains_previous_durable_save_and_reports_latest_error() -> anyhow::Result<()>
+    {
+        let mut queue = SaveQueue::default();
+        let first = request(4, 0);
+        let first_saved = first.draft.clone();
+        queue.pending = Some(request(8, 1));
+        let SaveProgress::Next(next) = queue.finish(first, Ok(first_saved)) else {
+            anyhow::bail!("Queued save was lost");
+        };
+        let SaveProgress::Finished {
+            saved,
+            error,
+            epoch,
+        } = queue.finish(next, Err(anyhow::anyhow!("Storage unavailable")))
+        else {
+            anyhow::bail!("Failed save did not finish");
+        };
+        let saved = saved.ok_or_else(|| anyhow::anyhow!("Previous durable save was lost"))?;
+        assert_eq!(saved.validated.threads, 4);
+        assert_eq!(error.as_deref(), Some("Storage unavailable"));
+        assert!(save_may_enable(epoch, 1, false));
+        assert!(!save_may_enable(epoch, 2, false));
+        assert!(queue.pending.is_none());
+        assert!(queue.saved.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn save_completion_preserves_new_edits_and_a_later_pause() {
+        let original = request(4, 5);
+        let mut draft = original.draft.clone();
+        let mut validated = original.draft.clone();
+        validated.model = PathBuf::from("/resolved/model.gguf");
+        let saved = SavedConfig {
+            submitted: original,
+            validated,
+        };
+        draft.threads = 8;
+        assert!(!saved.update_draft(&mut draft));
+        assert_eq!(draft.threads, 8);
+        assert!(draft.model.as_os_str().is_empty());
+        assert!(save_may_enable(5, 5, false));
+        assert!(!save_may_enable(5, 6, false));
+        // A deliberate Resume after Pause still receives the durable settings.
+        assert!(save_may_enable(5, 6, true));
+        draft = saved.submitted.draft.clone();
+        assert!(saved.update_draft(&mut draft));
+        assert!(draft == saved.validated);
+    }
+
+    #[test]
+    fn save_worker_returns_before_storage_and_joins_owned_work() -> anyhow::Result<()> {
+        let (entered, started) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let work = SaveWork::spawn(move || {
+            entered.send(())?;
+            released.recv()?;
+            Ok(Config::default())
+        })?;
+        started.recv_timeout(Duration::from_secs(2))?;
+        assert!(work.result.try_recv().is_err());
+        let (joining, joined) = std::sync::mpsc::channel();
+        let (finished, completion) = std::sync::mpsc::channel();
+        let cleanup = std::thread::spawn(move || {
+            let _ = joining.send(());
+            drop(work);
+            let _ = finished.send(());
+        });
+        joined.recv_timeout(Duration::from_secs(2))?;
+        assert!(completion.recv_timeout(Duration::from_millis(10)).is_err());
+        release.send(())?;
+        completion.recv_timeout(Duration::from_secs(2))?;
+        cleanup
+            .join()
+            .map_err(|_| anyhow::anyhow!("Save cleanup failed"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn settings_drop_finishes_current_write_before_latest_queued_save() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let executable = directory.path().join("engine");
+        let model = directory.path().join("model.gguf");
+        std::fs::write(&executable, b"fake engine")?;
+        std::fs::write(&model, b"fake model")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))?;
+        }
+        let path = directory.path().join("settings.json");
+        let first = Config {
+            engine_executable: executable,
+            model,
+            threads: 4,
+            ..Config::default()
+        };
+        let mut latest = first.clone();
+        latest.threads = 8;
+        let (entered, started) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let first_path = path.clone();
+        let work = SaveWork::spawn(move || {
+            entered.send(())?;
+            released.recv()?;
+            first.save(&first_path)?;
+            Ok(first)
+        })?;
+        started.recv_timeout(Duration::from_secs(2))?;
+        let view = Settings {
+            config: latest.clone(),
+            status: String::new(),
+            notice: None,
+            microphones: Vec::new(),
+            dialog: None,
+            devices: None,
+            preview: None,
+            setup: None,
+            retiring_setups: Vec::new(),
+            saving: None,
+            save_work: Some(work),
+            saves: SaveQueue {
+                pending: Some(SaveRequest {
+                    draft: latest,
+                    epoch: 1,
+                    path: path.clone(),
+                }),
+                saved: None,
+            },
+            progress: super::Progress::default(),
+            _updates: gpui::Task::ready(()),
+            demo: true,
+            #[cfg(target_os = "windows")]
+            _minimize: None,
+        };
+        let cleanup = std::thread::spawn(move || drop(view));
+        release.send(())?;
+        cleanup
+            .join()
+            .map_err(|_| anyhow::anyhow!("Settings cleanup failed"))?;
+        assert_eq!(Config::read(&path)?.threads, 8);
+        Ok(())
     }
 }

@@ -15,10 +15,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// The session owner must retire capture explicitly to await native teardown.
 pub struct Capture {
     // The real-time callback cannot wait on the session owner. This flag only
     // controls this capture; audio and completion return through the ring/channel.
     command: Arc<AtomicU8>,
+    finished: async_channel::Receiver<()>,
+    thread: Option<thread::JoinHandle<()>>,
 }
 
 impl Capture {
@@ -27,15 +30,38 @@ impl Capture {
         microphone: Option<String>,
         tx: async_channel::Sender<Event>,
     ) -> anyhow::Result<Self> {
+        Self::spawn(id, tx, move |tx, command| {
+            record(id, microphone.as_deref(), tx, command)
+        })
+    }
+
+    fn spawn(
+        id: u64,
+        tx: async_channel::Sender<Event>,
+        work: impl FnOnce(
+            &async_channel::Sender<Event>,
+            &Arc<AtomicU8>,
+        ) -> anyhow::Result<Option<Vec<u8>>>
+        + Send
+        + 'static,
+    ) -> anyhow::Result<Self> {
         let command = Arc::new(AtomicU8::new(0));
         let control = command.clone();
-        thread::Builder::new()
+        let (completed, finished) = async_channel::bounded(1);
+        let thread = thread::Builder::new()
             .name("microphone".into())
             .spawn(move || {
-                let result = record(id, microphone.as_deref(), &tx, &control);
+                let result = work(&tx, &control);
                 let _ = tx.send_blocking(Event::AudioDone(id, result));
+                // Publish completion after native teardown and the event send.
+                // A panic closes this lane, waking retirement as well.
+                let _ = completed.try_send(());
             })?;
-        Ok(Self { command })
+        Ok(Self {
+            command,
+            finished,
+            thread: Some(thread),
+        })
     }
     pub fn finish(&self) {
         let _ = self
@@ -45,11 +71,27 @@ impl Capture {
     pub fn cancel(&self) {
         self.command.store(2, Ordering::Release);
     }
+
+    pub fn retire(mut self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        self.cancel();
+        async move {
+            let _ = self.finished.recv().await;
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
+        }
+    }
 }
 impl Drop for Capture {
     fn drop(&mut self) {
+        // Emergency cancellation only; explicit retirement owns the join so
+        // dropping an owner never waits for a native driver on the input path.
         self.cancel();
     }
+}
+
+fn startup_stopped(command: &AtomicU8, tx: &async_channel::Sender<Event>) -> bool {
+    command.load(Ordering::Acquire) != 0 || tx.is_closed()
 }
 
 fn record(
@@ -58,18 +100,41 @@ fn record(
     tx: &async_channel::Sender<Event>,
     command: &Arc<AtomicU8>,
 ) -> anyhow::Result<Option<Vec<u8>>> {
+    if startup_stopped(command, tx) {
+        return Ok(None);
+    }
     let host = cpal::default_host();
+    if startup_stopped(command, tx) {
+        return Ok(None);
+    }
     let device = if let Some(id) = microphone {
-        host.input_devices()?
-            .find(|device| device.id().is_ok_and(|actual| actual.to_string() == id))
-            .context(
-                "Selected microphone is disconnected. Reconnect it or choose another in Settings.",
-            )?
+        let mut selected = None;
+        for device in host.input_devices()? {
+            if startup_stopped(command, tx) {
+                return Ok(None);
+            }
+            if device.id().is_ok_and(|actual| actual.to_string() == id) {
+                selected = Some(device);
+                break;
+            }
+        }
+        if startup_stopped(command, tx) {
+            return Ok(None);
+        }
+        selected.context(
+            "Selected microphone is disconnected. Reconnect it or choose another in Settings.",
+        )?
     } else {
         host.default_input_device()
             .context("No microphone found. Connect a microphone and try again.")?
     };
+    if startup_stopped(command, tx) {
+        return Ok(None);
+    }
     let format = device.default_input_config().map_err(microphone_error)?;
+    if startup_stopped(command, tx) {
+        return Ok(None);
+    }
     let rate = format.sample_rate();
     let channels = usize::from(format.channels());
     if rate == 0 || rate > 192_000 || channels == 0 || channels > 32 {
@@ -116,12 +181,15 @@ fn record(
         ),
         _ => bail!("Microphone sample format is unsupported. Choose a standard PCM microphone."),
     }?;
+    if startup_stopped(command, tx) {
+        return Ok(None);
+    }
     // Keep mono PCM at the device's native rate; the local engine resamples it.
     // Reserve for an ordinary utterance; long recordings grow on this consumer
     // thread, never in the real-time callback.
     let mut pcm = Vec::with_capacity(rate as usize * 10 * 2 + 44);
     pcm.resize(44, 0_u8);
-    if command.load(Ordering::Acquire) != 0 || tx.is_closed() {
+    if startup_stopped(command, tx) {
         return Ok(None);
     }
     stream.play().map_err(microphone_error)?;
@@ -388,7 +456,16 @@ fn trim_quiet_edges(pcm: &mut Vec<u8>, rate: u32) -> bool {
         pcm.copy_within(44 + start..44 + end, 44);
     }
     pcm.truncate(44 + end - start);
+    compact_trimmed_pcm(pcm);
     true
+}
+
+fn compact_trimmed_pcm(pcm: &mut Vec<u8>) {
+    // Keep ordinary utterances allocation-free after trimming. Reclaim only
+    // large reservations whose remaining audio occupies at most a quarter.
+    if pcm.capacity() - pcm.len() >= 8 * 1024 * 1024 && pcm.capacity() / 4 >= pcm.len() {
+        pcm.shrink_to_fit();
+    }
 }
 
 pub(crate) fn wave(mut pcm: Vec<u8>, rate: u32) -> Vec<u8> {
@@ -438,6 +515,70 @@ fn enumerate_microphones() -> anyhow::Result<Vec<(String, String)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stopped_startup_returns_without_audio() -> anyhow::Result<()> {
+        for command in [1, 2] {
+            let (events, _audio) = async_channel::bounded(1);
+            assert!(record(1, None, &events, &Arc::new(AtomicU8::new(command)))?.is_none());
+        }
+        let (events, _audio) = async_channel::bounded(1);
+        events.close();
+        assert!(record(1, None, &events, &Arc::new(AtomicU8::new(0)))?.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn capture_retirement_signals_cancel_and_waits_for_teardown() -> anyhow::Result<()> {
+        let (events, _audio) = async_channel::bounded(1);
+        let (started, starting) = async_channel::bounded(1);
+        let (release, waiting) = async_channel::bounded(1);
+        let capture = Capture::spawn(1, events, move |_, command| {
+            started.send_blocking(command.clone())?;
+            waiting.recv_blocking()?;
+            Ok(None)
+        })?;
+        let command = starting.recv().await?;
+        let retirement = capture.retire();
+        assert_eq!(command.load(Ordering::Acquire), 2);
+        tokio::pin!(retirement);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), retirement.as_mut())
+                .await
+                .is_err()
+        );
+        release.send(()).await?;
+        tokio::time::timeout(Duration::from_secs(2), retirement).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn closing_audio_events_unblocks_owned_capture_retirement() -> anyhow::Result<()> {
+        let (events, audio) = async_channel::bounded(1);
+        events.try_send(Event::Ready(1))?;
+        let capture = Capture::spawn(1, events, |_, _| Ok(None))?;
+        let retirement = capture.retire();
+        tokio::pin!(retirement);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), retirement.as_mut())
+                .await
+                .is_err()
+        );
+        audio.close();
+        tokio::time::timeout(Duration::from_secs(2), retirement).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn retirement_wakes_when_a_worker_panics_before_reporting_completion()
+    -> anyhow::Result<()> {
+        let (events, _) = async_channel::bounded(1);
+        let capture = Capture::spawn(1, events, |_, _| {
+            std::panic::resume_unwind(Box::new(()));
+        })?;
+        tokio::time::timeout(Duration::from_secs(2), capture.retire()).await?;
+        Ok(())
+    }
 
     #[test]
     fn pcm_chunks_wrap_clamp_invalid_samples_and_enforce_the_limit() -> anyhow::Result<()> {
@@ -666,5 +807,39 @@ mod tests {
             pair.copy_from_slice(&3000_i16.to_le_bytes());
         }
         assert!(!trim_quiet_edges(&mut click, rate as u32));
+    }
+
+    #[test]
+    fn sparse_long_recording_releases_capacity_without_changing_padded_audio() {
+        let rate = 48_000;
+        let mut pcm = vec![0; 44 + rate * 300 * 2];
+        for pair in pcm[44 + rate * 40 * 2..44 + rate * 50 * 2]
+            .as_chunks_mut::<2>()
+            .0
+        {
+            pair.copy_from_slice(&3000_i16.to_le_bytes());
+        }
+        let expected = pcm[44 + rate * 79..44 + rate * 101].to_vec();
+        assert!(trim_quiet_edges(&mut pcm, rate as u32));
+        assert_eq!(&pcm[44..], expected);
+        assert_eq!(pcm.capacity(), pcm.len());
+    }
+
+    #[test]
+    fn trimmed_capacity_is_kept_unless_both_slack_thresholds_are_met() {
+        for (capacity, length) in [
+            (1024 * 1024, 44),
+            (8 * 1024 * 1024, 1024 * 1024),
+            (12 * 1024 * 1024, 4 * 1024 * 1024),
+        ] {
+            let mut pcm = Vec::with_capacity(capacity);
+            pcm.resize(length, 0x5a);
+            let allocation = pcm.as_ptr();
+            compact_trimmed_pcm(&mut pcm);
+            assert_eq!(pcm.capacity(), capacity);
+            assert_eq!(pcm.as_ptr(), allocation);
+            assert_eq!(pcm.len(), length);
+            assert!(pcm.iter().all(|&byte| byte == 0x5a));
+        }
     }
 }

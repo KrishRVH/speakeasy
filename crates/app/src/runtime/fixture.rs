@@ -34,6 +34,7 @@ async fn wait_for_event(
 }
 
 impl Recording for FixtureRecording {
+    async fn retire(self) {}
     fn finish(&self) {
         let wav = self.wav.borrow_mut().take();
         assert!(
@@ -65,10 +66,11 @@ impl Ports for Fixture {
     fn load(
         &self,
         config: Config,
+        cancelled: watch::Receiver<bool>,
     ) -> impl std::future::Future<Output = anyhow::Result<LocalSpeech>> + Send + 'static {
         let loaded = self.loaded.clone();
         async move {
-            let worker = LocalSpeech::start(config).await?;
+            let worker = LocalSpeech::start(config, cancelled).await?;
             loaded.send(()).await?;
             Ok(worker)
         }

@@ -27,6 +27,63 @@ pub enum Input {
     DesktopReady { shortcut: String, cancel: String },
 }
 
+// Publishing the native wake handle and requesting stop share one lock. A stop
+// before initialization stays effective, and a wake cannot use a retired handle.
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+struct MonitorControl<T> {
+    state: std::sync::Mutex<MonitorState<T>>,
+}
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+struct MonitorState<T> {
+    stopping: bool,
+    native: Option<T>,
+}
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+impl<T> Default for MonitorControl<T> {
+    fn default() -> Self {
+        Self {
+            state: std::sync::Mutex::new(MonitorState {
+                stopping: false,
+                native: None,
+            }),
+        }
+    }
+}
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+impl<T> MonitorControl<T> {
+    fn start(&self, native: T, ready: impl FnOnce()) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.stopping {
+            return false;
+        }
+        state.native = Some(native);
+        ready();
+        true
+    }
+
+    fn request_stop(&self, wake: impl FnOnce(&T)) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.stopping = true;
+        if let Some(native) = &state.native {
+            wake(native);
+        }
+    }
+
+    fn stopping(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .stopping
+    }
+
+    fn clear(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .native = None;
+    }
+}
+
 /// Hold state for the modifier-only shortcut: Ctrl+Win on Windows, Fn on macOS.
 /// Modifiers are observed, never swallowed. Space during a hold locks
 /// hands-free; any other key belongs to a different shortcut, so it cancels
@@ -255,6 +312,54 @@ compile_error!("Speakeasy supports Windows, macOS, and Linux.");
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn monitor_stop_before_delayed_start_never_publishes_ready() -> anyhow::Result<()> {
+        let control = Arc::new(MonitorControl::default());
+        let native = control.clone();
+        let (initialized, entered) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let (ready, events) = async_channel::bounded(1);
+        let thread = std::thread::spawn(move || {
+            let _ = initialized.send(());
+            let _ = released.recv();
+            let started = native.start(42, || {
+                let _ = ready.try_send(());
+            });
+            native.clear();
+            started
+        });
+        entered.recv_timeout(std::time::Duration::from_secs(2))?;
+        let mut woke = false;
+        control.request_stop(|_| woke = true);
+        release.send(())?;
+        let started = thread
+            .join()
+            .map_err(|_| anyhow::anyhow!("Fake monitor failed"))?;
+        assert!(!started);
+        assert!(!woke);
+        assert!(control.stopping());
+        assert!(events.recv_blocking().is_err());
+        // Retirement cannot make a stop-before-start monitor ready later.
+        assert!(!control.start(43, || {}));
+        Ok(())
+    }
+
+    #[test]
+    fn monitor_stop_wakes_only_its_published_native_resource() {
+        let control = MonitorControl::default();
+        let mut ready = false;
+        assert!(control.start(42, || ready = true));
+        assert!(ready);
+        let mut woken = None;
+        control.request_stop(|native| woken = Some(*native));
+        assert_eq!(woken, Some(42));
+        control.clear();
+        woken = None;
+        control.request_stop(|native| woken = Some(*native));
+        assert_eq!(woken, None);
+        assert!(!control.start(43, || {}));
+    }
 
     #[test]
     fn escape_during_clipboard_preparation_prevents_commit() -> anyhow::Result<()> {

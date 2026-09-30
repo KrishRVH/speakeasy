@@ -67,6 +67,12 @@ layout with an unshifted V key; other layouts receive manual-paste guidance.
 Clipboard writes are followed by ownership and
 cancellation checks; cleanup never restores a stale clipboard payload. Submitted
 synthetic keys receive release cleanup even after partial failure.
+X11 queues each paste and its releases before one server synchronization and
+checks every submission. Manual copy skips the modifier wait. Wayland serves
+bounded, asynchronous clipboard transfers while receiving input and cancellation;
+clipboard calls through Xwayland run on a serialized, owned worker. A committed
+clipboard selection remains available until ownership changes or the service
+retires.
 
 **Copy for manual paste** is an explicit option. **Keep clipboard** requires
 advertised EI text support on Wayland; X11 reports direct insertion as unavailable.

@@ -1,6 +1,12 @@
 use super::*;
-use anyhow::{Context, anyhow, bail};
-use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes};
+use anyhow::{anyhow, bail};
+use core_foundation::{
+    base::{TCFType, kCFAllocatorDefault},
+    runloop::{
+        CFRunLoop, CFRunLoopActivity, CFRunLoopObserver, CFRunLoopObserverContext,
+        CFRunLoopObserverCreate, CFRunLoopObserverRef, kCFRunLoopCommonModes, kCFRunLoopEntry,
+    },
+};
 use core_graphics::{
     event::{
         CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
@@ -9,11 +15,12 @@ use core_graphics::{
     event_source::{CGEventSource, CGEventSourceStateID},
 };
 use objc2::{msg_send, runtime::AnyObject};
-use std::{cell::RefCell, sync::mpsc, thread};
+use std::{cell::RefCell, ffi::c_void, thread};
 
 const OWN_INPUT: i64 = 0x53504541;
 pub struct InputMonitor {
-    run_loop: CFRunLoop,
+    control: Arc<MonitorControl<CFRunLoop>>,
+    finished: async_channel::Receiver<()>,
     thread: Option<thread::JoinHandle<()>>,
     _observers: Vec<Observer>,
 }
@@ -21,64 +28,144 @@ pub struct InputMonitor {
 impl InputMonitor {
     pub fn start(tx: InputSender) -> anyhow::Result<Self> {
         let observers = lifecycle_observers(&tx);
-        let (ready, started) = mpsc::sync_channel(1);
-        let thread = thread::Builder::new().name("shortcut".into()).spawn(move || {
-            let chord = RefCell::new(Chord::default());
-            let tap = CGEventTap::new(
-                CGEventTapLocation::Session,
-                CGEventTapPlacement::HeadInsertEventTap,
-                CGEventTapOptions::Default,
-                vec![
-                    CGEventType::KeyDown,
-                    CGEventType::KeyUp,
-                    CGEventType::FlagsChanged,
-                ],
-                move |_, kind, event| {
-                    // Never unwind through the OS callback. A closed channel
-                    // makes the owner cancel rather than continue with lost edges.
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        shortcut(&tx, &mut chord.borrow_mut(), kind, event)
-                    }))
-                    .unwrap_or_else(|_| {
-                        tx.close();
-                        CallbackResult::Keep
-                    })
-                },
-            );
-            let Ok(tap) = tap else {
-                let _ = ready.send(Err(
-                    "Allow Speakeasy in System Settings → Privacy & Security → Accessibility, then reopen it.",
-                ));
-                return;
-            };
-            let Ok(source) = tap.mach_port().create_runloop_source(0) else {
-                let _ = ready.send(Err("Cannot create shortcut run loop"));
-                return;
-            };
-            let run_loop = CFRunLoop::get_current();
-            // SAFETY: this is Core Foundation's permanent mode constant.
-            run_loop.add_source(&source, unsafe { kCFRunLoopCommonModes });
-            tap.enable();
-            let _ = ready.send(Ok(run_loop));
-            CFRunLoop::run_current();
-        })?;
-        let run_loop = match started
-            .recv()
-            .context("Shortcut thread stopped")
-            .and_then(|result| result.map_err(|message| anyhow!(message)))
-        {
-            Ok(run_loop) => run_loop,
-            Err(error) => {
-                let _ = thread.join();
-                return Err(error);
-            }
-        };
+        let control = Arc::new(MonitorControl::default());
+        let native_control = control.clone();
+        let (complete, finished) = async_channel::bounded(1);
+        let thread = thread::Builder::new()
+            .name("shortcut".into())
+            .spawn(move || {
+                if let Err(error) = run_monitor(&tx, &native_control)
+                    && !native_control.stopping()
+                    && !tx.is_closed()
+                {
+                    deliver(&tx, Input::Unavailable(error.to_string()));
+                }
+                native_control.clear();
+                tx.close();
+                let _ = complete.try_send(());
+            })?;
         Ok(Self {
-            run_loop,
+            control,
+            finished,
             thread: Some(thread),
             _observers: observers,
         })
     }
+
+    pub fn request_stop(&self) {
+        self.control.request_stop(CFRunLoop::stop);
+    }
+
+    pub fn stopped(&self) -> impl std::future::Future<Output = ()> + use<> {
+        let finished = self.finished.clone();
+        async move {
+            let _ = finished.recv().await;
+        }
+    }
+}
+
+struct RunLoopReady<'a> {
+    control: &'a MonitorControl<CFRunLoop>,
+    input: &'a InputSender,
+}
+
+extern "C" fn run_loop_ready(_: CFRunLoopObserverRef, _: CFRunLoopActivity, context: *mut c_void) {
+    // SAFETY: run_monitor keeps this stack context alive until the run loop has
+    // returned and removes its observer before releasing the context.
+    let ready = unsafe { &*context.cast::<RunLoopReady<'_>>() };
+    // Publish only once the run loop has entered. CFRunLoopStop before entry
+    // does not reliably stop a subsequent run; an early stop is checked here.
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let run_loop = CFRunLoop::get_current();
+        if !ready.control.start(run_loop.clone(), || {
+            deliver(
+                ready.input,
+                Input::DesktopReady {
+                    shortcut: SHORTCUT.into(),
+                    cancel: "Escape".into(),
+                },
+            );
+        }) {
+            run_loop.stop();
+        }
+    }))
+    .is_err()
+    {
+        ready.input.close();
+        CFRunLoop::get_current().stop();
+    }
+}
+
+fn run_monitor(tx: &InputSender, control: &MonitorControl<CFRunLoop>) -> anyhow::Result<()> {
+    if control.stopping() {
+        return Ok(());
+    }
+    let chord = RefCell::new(Chord::default());
+    let callback_input = tx.clone();
+    let tap = CGEventTap::new(
+        CGEventTapLocation::Session,
+        CGEventTapPlacement::HeadInsertEventTap,
+        CGEventTapOptions::Default,
+        vec![
+            CGEventType::KeyDown,
+            CGEventType::KeyUp,
+            CGEventType::FlagsChanged,
+        ],
+        move |_, kind, event| {
+            // Never unwind through the OS callback. A closed channel makes
+            // the owner cancel rather than continue with lost edges.
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                shortcut(&callback_input, &mut chord.borrow_mut(), kind, event)
+            }))
+            .unwrap_or_else(|_| {
+                callback_input.close();
+                CallbackResult::Keep
+            })
+        },
+    )
+    .map_err(|_| {
+        anyhow!(
+            "Allow Speakeasy in System Settings → Privacy & Security → Accessibility, then pause and resume dictation."
+        )
+    })?;
+    let source = tap.mach_port().create_runloop_source(0).map_err(|_| {
+        anyhow!("Cannot create shortcut run loop. Pause and resume dictation to try again.")
+    })?;
+    let run_loop = CFRunLoop::get_current();
+    let mut ready = RunLoopReady { control, input: tx };
+    let mut context = CFRunLoopObserverContext {
+        version: 0,
+        info: (&mut ready as *mut RunLoopReady<'_>).cast(),
+        retain: None,
+        release: None,
+        copyDescription: None,
+    };
+    // SAFETY: this thread owns the observer and its stack context throughout
+    // CFRunLoopRun. Entry fires once, and the observer is removed before return.
+    let observer = unsafe {
+        let raw = CFRunLoopObserverCreate(
+            kCFAllocatorDefault,
+            kCFRunLoopEntry,
+            0,
+            0,
+            run_loop_ready,
+            &mut context,
+        );
+        if raw.is_null() {
+            bail!("Cannot prepare shortcut monitoring. Pause and resume dictation to try again.");
+        }
+        CFRunLoopObserver::wrap_under_create_rule(raw)
+    };
+    // SAFETY: this is Core Foundation's permanent mode constant.
+    let modes = unsafe { kCFRunLoopCommonModes };
+    run_loop.add_source(&source, modes);
+    run_loop.add_observer(&observer, modes);
+    tap.enable();
+    CFRunLoop::run_current();
+    control.clear();
+    run_loop.remove_observer(&observer, modes);
+    run_loop.remove_source(&source, modes);
+    Ok(())
 }
 
 /// Fn, Fn+Space, and passive Escape, on the event tap's run-loop thread.
@@ -132,7 +219,7 @@ fn shortcut(
 
 impl Drop for InputMonitor {
     fn drop(&mut self) {
-        self.run_loop.stop();
+        self.request_stop();
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }

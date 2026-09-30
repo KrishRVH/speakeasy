@@ -94,21 +94,21 @@ const EXECUTABLE: &str = "bin/nemo-speech";
 #[cfg(any(target_os = "windows", target_os = "linux", test))]
 const GPU_MEMORY: u64 = 6_000_000_000;
 
-/// A running setup. Dropping it cancels; partial downloads resume next time.
+/// A running setup. Cancellation preserves partial downloads for the next run.
+/// The owner waits for stopped before ordinary disposal; Quit joins cleanup.
 pub struct Setup {
     pub progress: watch::Receiver<Progress>,
     pub result: async_channel::Receiver<anyhow::Result<Config>>,
-    _cancel: async_channel::Sender<()>,
+    cancel: async_channel::Sender<()>,
+    finished: async_channel::Receiver<()>,
+    thread: Option<thread::JoinHandle<()>>,
 }
 
 impl Setup {
     pub fn start() -> anyhow::Result<Self> {
-        let (report, progress) = watch::channel(Progress::default());
-        let (finish, result) = async_channel::bounded(1);
-        let (cancel, cancelled) = async_channel::bounded::<()>(1);
-        thread::Builder::new().name("setup".into()).spawn(move || {
+        Self::spawn(|report, cancelled| {
             let root = root();
-            let outcome = match tokio::runtime::Builder::new_current_thread()
+            match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
             {
@@ -119,16 +119,56 @@ impl Setup {
                     async |installation| install(&root, &report, installation).await,
                 )),
                 Err(error) => Some(Err(error.into())),
-            };
-            if let Some(result) = outcome {
-                let _ = finish.send_blocking(result);
             }
+        })
+    }
+
+    // A setup thread owns installation and native cleanup until acknowledgement.
+    fn spawn(
+        work: impl FnOnce(
+            watch::Sender<Progress>,
+            async_channel::Receiver<()>,
+        ) -> Option<anyhow::Result<Config>>
+        + Send
+        + 'static,
+    ) -> anyhow::Result<Self> {
+        let (report, progress) = watch::channel(Progress::default());
+        let (finish, result) = async_channel::bounded(1);
+        let (cancel, cancelled) = async_channel::bounded::<()>(1);
+        let (completed, finished) = async_channel::bounded(1);
+        let thread = thread::Builder::new().name("setup".into()).spawn(move || {
+            if let Some(result) = work(report, cancelled) {
+                let _ = finish.try_send(result);
+            }
+            let _ = completed.try_send(());
         })?;
         Ok(Self {
             progress,
             result,
-            _cancel: cancel,
+            cancel,
+            finished,
+            thread: Some(thread),
         })
+    }
+
+    pub fn request_stop(&self) {
+        self.cancel.close();
+    }
+
+    pub fn stopped(&self) -> impl std::future::Future<Output = ()> + use<> {
+        let finished = self.finished.clone();
+        async move {
+            let _ = finished.recv().await;
+        }
+    }
+}
+
+impl Drop for Setup {
+    fn drop(&mut self) {
+        self.request_stop();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 
@@ -492,7 +532,15 @@ async fn fetch(
         .with_context(|| format!("Cannot write to {}", directory.display()))?;
     let partial = directory.join(format!("{name}.part"));
     let mut done = fs::metadata(&partial).map_or(0, |metadata| metadata.len());
-    if done >= download.size {
+    if done == download.size {
+        let hasher = hash_partial(&partial, done, progress).await?;
+        if format!("{:x}", hasher.finalize()) == download.sha256 {
+            fs::rename(&partial, &path)?;
+            return Ok(path);
+        }
+        fs::remove_file(&partial)?;
+        done = 0;
+    } else if done > download.size {
         done = 0;
     }
     let mut request = client.get(download.url);
@@ -506,7 +554,7 @@ async fn fetch(
         .context("Cannot download. Check your internet connection, then try again.")?;
     let mut hasher = Sha256::new();
     let mut file = if done > 0 && response.status() == StatusCode::PARTIAL_CONTENT {
-        std::io::copy(&mut File::open(&partial)?, &mut hasher)?;
+        hasher = hash_partial(&partial, done, progress).await?;
         OpenOptions::new().append(true).open(&partial)?
     } else {
         done = 0;
@@ -545,6 +593,33 @@ async fn fetch(
     Ok(path)
 }
 
+async fn hash_partial(
+    partial: &Path,
+    size: u64,
+    progress: &watch::Sender<Progress>,
+) -> anyhow::Result<Sha256> {
+    progress.send_replace(Progress {
+        step: "Verifying downloaded data",
+        done: 0,
+        total: size,
+    });
+    let mut file = tokio::fs::File::open(partial).await?;
+    let mut buffer = vec![0; 64 * 1024];
+    let mut hasher = Sha256::new();
+    loop {
+        let count = file.read(&mut buffer).await?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+        progress.send_modify(|progress| progress.done += count as u64);
+        // Cached reads can complete immediately. Let setup cancellation run
+        // between bounded hash chunks as well as while waiting for disk I/O.
+        tokio::task::yield_now().await;
+    }
+    Ok(hasher)
+}
+
 fn file_name(url: &str) -> &str {
     url.rsplit('/').next().unwrap_or(url)
 }
@@ -558,6 +633,119 @@ mod tests {
     };
 
     const BODY: &[u8] = b"Say the word. The door opens, and what is said stays inside.";
+
+    #[tokio::test]
+    async fn cancelled_setup_remains_owned_while_cleanup_is_pending() -> anyhow::Result<()> {
+        let (entered, cleaning) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let setup = Setup::spawn(move |_, cancelled| {
+            let _ = cancelled.recv_blocking();
+            let _ = entered.send(());
+            // Assertion failure must not strand the owned cleanup thread.
+            let _ = released.recv_timeout(Duration::from_secs(2));
+            None
+        })?;
+        setup.request_stop();
+        let stopped = setup.stopped();
+        let mut retiring = vec![setup];
+        cleaning.recv_timeout(Duration::from_secs(2))?;
+        // Cancellation retains its owner while an async timer still advances.
+        assert!(
+            timeout(Duration::from_millis(30), retiring[0].stopped())
+                .await
+                .is_err()
+        );
+        assert!(
+            retiring[0]
+                .thread
+                .as_ref()
+                .is_some_and(|thread| !thread.is_finished())
+        );
+        release.send(())?;
+        timeout(Duration::from_secs(2), stopped).await?;
+        retiring.clear();
+        Ok(())
+    }
+
+    #[test]
+    fn setup_drop_joins_cancelled_cleanup_before_returning() -> anyhow::Result<()> {
+        let (entered, cleaning) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let setup = Setup::spawn(move |_, cancelled| {
+            let _ = cancelled.recv_blocking();
+            let _ = entered.send(());
+            let _ = released.recv_timeout(Duration::from_secs(2));
+            None
+        })?;
+        let (finished, joined) = std::sync::mpsc::channel();
+        let quit = thread::spawn(move || {
+            drop(setup);
+            let _ = finished.send(());
+        });
+        cleaning.recv_timeout(Duration::from_secs(2))?;
+        assert!(joined.recv_timeout(Duration::from_millis(30)).is_err());
+        release.send(())?;
+        joined.recv_timeout(Duration::from_secs(2))?;
+        quit.join()
+            .map_err(|_| anyhow::anyhow!("Setup cleanup failed"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn setup_drop_reaps_its_child_before_releasing_the_directory() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().to_path_buf();
+        let installation_root = root.clone();
+        let setup = Setup::spawn(move |progress, cancelled| {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(error) => return Some(Err(error.into())),
+            };
+            runtime.block_on(Installation::run(
+                &installation_root,
+                &progress,
+                &cancelled,
+                async |installation| {
+                    let mut command = Command::new(std::env::current_exe()?);
+                    command
+                        .args(["--exact", "setup::tests::setup_child_fixture", "--ignored"])
+                        .env("SPEAKEASY_SETUP_TEST_ROOT", &installation_root)
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null());
+                    installation.output(&mut command).await?;
+                    Ok(Config::default())
+                },
+            ))
+        })?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !root.join("child.ready").exists() {
+            anyhow::ensure!(
+                std::time::Instant::now() < deadline,
+                "Setup child did not start"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        let child_lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.join("child.lock"))?;
+        assert!(matches!(
+            child_lock.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+        drop(setup);
+        child_lock.try_lock()?;
+        let setup_lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.join("setup.lock"))?;
+        setup_lock.try_lock()?;
+        Ok(())
+    }
 
     #[cfg(target_os = "linux")]
     #[test]
@@ -766,6 +954,108 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fetch_promotes_a_verified_complete_partial_without_a_request() -> anyhow::Result<()> {
+        let (base, requests) = serve().await?;
+        let url = format!("{base}/model.gguf");
+        let sha = sha256(BODY);
+        let download = Download {
+            url: &url,
+            size: BODY.len() as u64,
+            sha256: &sha,
+        };
+        let directory = tempfile::tempdir()?;
+        let partial = directory.path().join("model.gguf.part");
+        fs::write(&partial, BODY)?;
+        let (progress, _) = watch::channel(Progress::default());
+        let path = fetch(
+            &Client::new(),
+            &download,
+            directory.path(),
+            "fixture",
+            &progress,
+        )
+        .await?;
+        assert_eq!(fs::read(path)?, BODY);
+        assert!(!partial.exists());
+        assert!(
+            requests.try_recv().is_err(),
+            "Complete verified audio model was downloaded again"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fetch_replaces_a_corrupt_complete_partial() -> anyhow::Result<()> {
+        let (base, requests) = serve().await?;
+        let url = format!("{base}/model.gguf");
+        let sha = sha256(BODY);
+        let download = Download {
+            url: &url,
+            size: BODY.len() as u64,
+            sha256: &sha,
+        };
+        let directory = tempfile::tempdir()?;
+        fs::write(
+            directory.path().join("model.gguf.part"),
+            vec![0; BODY.len()],
+        )?;
+        let (progress, _) = watch::channel(Progress::default());
+        let path = fetch(
+            &Client::new(),
+            &download,
+            directory.path(),
+            "fixture",
+            &progress,
+        )
+        .await?;
+        assert_eq!(fs::read(path)?, BODY);
+        assert_eq!(requests.recv().await?, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancellation_during_verification_keeps_the_partial_for_retry() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let partial = directory.path().join("model.gguf.part");
+        let bytes = vec![0; 4 * 1024 * 1024];
+        fs::write(&partial, &bytes)?;
+        let sha = sha256(&bytes);
+        let download = Download {
+            url: "http://127.0.0.1:1/model.gguf",
+            size: bytes.len() as u64,
+            sha256: &sha,
+        };
+        let (progress, mut updates) = watch::channel(Progress::default());
+        let (cancel, cancelled) = async_channel::bounded::<()>(1);
+        let cancel_when_verifying = async {
+            updates
+                .wait_for(|progress| progress.step == "Verifying downloaded data")
+                .await?;
+            drop(cancel);
+            Ok::<_, anyhow::Error>(())
+        };
+        let work = Installation::run(directory.path(), &progress, &cancelled, async |_| {
+            fetch(
+                &Client::new(),
+                &download,
+                directory.path(),
+                "fixture",
+                &progress,
+            )
+            .await
+        });
+        let (result, cancellation) = timeout(Duration::from_secs(5), async {
+            tokio::join!(work, cancel_when_verifying)
+        })
+        .await?;
+        cancellation?;
+        assert!(result.is_none());
+        assert_eq!(fs::read(partial)?, bytes);
+        assert!(!directory.path().join("model.gguf").exists());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn fetch_resumes_a_partial_download_and_verifies_the_whole_file() -> anyhow::Result<()> {
         let (base, requests) = serve().await?;
         let url = format!("{base}/model.gguf");
@@ -830,7 +1120,8 @@ mod tests {
             config.engine_executable.display(),
             config.use_gpu
         );
-        let mut worker = crate::local_speech::LocalSpeech::start(config).await?;
+        let (_cancel, cancelled) = watch::channel(false);
+        let mut worker = crate::local_speech::LocalSpeech::start(config, cancelled).await?;
         let result = worker.transcribe(wav, "en").await;
         worker.stop().await;
         // Never include the recognized text in failure output.

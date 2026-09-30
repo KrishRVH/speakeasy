@@ -379,3 +379,69 @@ The full workspace fake checks pass, including loopback download and instance
 tests. Native Windows process sampling and Linux GNOME/KDE/X11 acceptance were
 not performed for this pass. Whole-app CPU, GPU, memory and energy improvements
 from this candidate remain unmeasured.
+
+
+## Performance audit for 0.2.1
+
+The audit examined application CPU/rendering, memory/resource lifetime, native
+interaction latency, setup, and distribution across Windows, macOS, and Linux.
+Findings were reviewed against the code at `bf3582b` and challenged individually
+before implementation. The additional measurements below used release builds
+on Linux/WSL2, Rust 1.98.1, synthetic PCM, fake devices, loopback HTTP, and owned
+fixture subprocesses. They did not exercise a live microphone, global hook,
+clipboard, focused editor, real model, or displayed frame pacing.
+
+### Implemented findings
+
+| Driver | Evidence and decision |
+| --- | --- |
+| Settings storage on the UI thread | Validation, canonicalization, durable writes, and sync ran synchronously. Save and Resume validate off the UI thread; requested writes serialize and preserve later edits and Pause intent. Controlled tests hold save completion pending and exercise queued saves and lifecycle generations. |
+| Windows/macOS shortcut startup | Native monitor constructors waited synchronously for initialization. Constructors return an owned monitor immediately; readiness arrives as an input message after native setup. Stop-before-ready remains effective, and completion precedes UI-thread resource disposal. The session service retains retiring monitors directly, so Quit does not depend on canceled UI tasks being dispatched again. Native startup latency is unmeasured. |
+| Capture startup and teardown | The capture thread was detached, with cancellation checked late in startup. Capture owns completion and its join; retries wait for device teardown, and startup checks cancellation between native stages. Tests hold teardown pending while input and Pause proceed. Actual driver contention and onset latency are unmeasured. |
+| Speech startup cancellation and replacement | Abort bypassed explicit process reaping. An isolated production-code probe left 10/10 children as zombies after retiring its Tokio runtime; cooperative cancellation and explicit stop left 0/10. Other live Linux runtimes can reap Tokio's orphan queue, so this does not establish a permanent app-wide leak. Zombies retain no model RSS or VRAM. Replacement waits for actual exit while input remains responsive. |
+| Shutdown serialization | Microphone teardown could delay inference cancellation and model release. Shutdown signals cancellation immediately and cleans independent resources concurrently, then acknowledges completion. Controlled fixtures verify both cleanups begin before either is released. |
+| X11 manual-copy delay | Manual copy shared automatic paste's physical modifier wait, up to 800 ms. Manual copy skips that wait while preserving cancellation and clipboard ownership checks. The focused test forbids even querying held modifiers in this mode. |
+| X11 paste round trips | Each fresh XTEST cookie check synchronized separately: four round trips normally, six for terminal paste. Paste queues its complete key sequence and releases before one synchronization, then checks every cookie. Partial enqueue failures still attempt all releases; ambiguous input is never replayed. Native elapsed savings are unmeasured. |
+| Wayland/Xwayland clipboard blocking | Native X11 clipboard initialization, copy, and ownership checks shared the current-thread desktop runtime. Foreign-owner reads can wait for another application. One bounded, serialized, owned clipboard worker keeps these calls off that runtime; initialization still gates readiness. An in-flight native call can delay cleanup, but cannot run after a newer queued copy. |
+| Portal insertion and clipboard transfers | Insertion preparation and selection RPC/pipe waits blocked desktop-service progress. Preparation and bounded transfers remain pending in the existing select loop, with RPC/pipe deadlines and backpressure. Selection lifetime is separate from insertion commitment, so editors can read committed clipboard data; replacement invalidates only the preceding selection's transfers. |
+| Completed setup partials | A correctly sized `.part` reset download progress and issued a full GET. A loopback fixture reproduced this; completed data is verified and promoted locally. Corrupt completed data is replaced and verified. This can avoid downloading the 714 MB model again. |
+| Resume hashing and cancellation | Synchronous SHA-256 over a 512 MiB cached sparse file took 218 ms median across five runs, blocking cancellation on the setup runtime. Hashing uses asynchronous reads and 64 KiB chunks with an explicit yield between chunks. Cancellation preserves the partial for retry. This bounds uninterrupted hashing work, not physical disk latency. |
+| Setup cancellation and Quit | Setup's detached thread could outlive Quit while cleaning an extraction or detection child. Cancel now retains an owned thread until completion without waiting on the UI thread; Quit signals every active/retiring setup and joins their cleanup. Controlled tests hold cleanup pending, and a fixture subprocess verifies its child and setup-directory locks are released before disposal returns. Native OS cleanup duration remains unmeasured. |
+| Trimmed audio capacity | A five-minute 48 kHz allocation retaining ten seconds of speech plus padding held 28,800,044 bytes for 1,056,044 bytes of audio. Selective compaction releases 27,744,000 bytes (26.5 MiB) of capacity when spare space is at least 8 MiB and capacity is at least four times length. Ordinary captures keep their allocation. Cost varied by allocator state: one separate shrink probe took 1.49 ms median; a paired trim probe found no consistent added cost. HTTP upload or queued startup can retain this capacity; it is not necessarily held for all inference. RSS savings remain unmeasured. |
+
+### Findings deferred or rejected
+
+| Candidate | Adversarial conclusion |
+| --- | --- |
+| Settled/hidden framework wakeups | GPUI's native scheduling can wake even when application drawing has stopped. The app already stops requesting settled frames; the measured Windows hidden idle cost is small. Changing upstream scheduling needs native energy and visibility checks, so no framework fork or idle service was added. |
+| Linux refresh-rate selection | Pinned GPUI's X11 client chooses the first active RandR CRTC and does not track window/display changes. Wrong-output cadence is a real source-level risk; it belongs in a tested upstream platform change. Mixed-display native verification is unavailable here. |
+| Slower processing-highlight animation | A subtle periodic highlight keeps Processing animated at the existing frame budget. A lower cadence could reduce render count, but smoothness and whole-app savings need displayed-frame checks. Animation behavior is preserved. |
+| Frame-budget divisors on high-refresh displays | Nondivisor refresh rates can produce alternating eligible-frame intervals. Source cadence alone does not establish visible judder. No display policy changed without native evidence. |
+| Filtering meter-only Settings/tray notifications | Observers perform small snapshot/string work around 30 times per second, while equality checks already prevent unchanged redraws. A naive filter breaks theme refresh because theme changes republish the same snapshot; running and retiring state also matter. No separate publication framework was justified by profiling. |
+| Spring/clock calculations | Thirty production spring evaluations cost roughly 0.08 microseconds per frame; clock formatting about 0.03 microseconds per call. Caches or extra settled checks would add complexity for negligible savings and can worsen moving frames. |
+| Tray raster and grille caches | Tray state updates are already filtered, and the grille already paints in one canvas. These are not established dominant costs; extra caches were rejected. |
+| Destroying hidden Settings | Reference measurements attribute about 17.6 MiB private memory to opening Settings. Destroying the view loses unsaved edits and adds reopen/device-enumeration work. Retaining the view preserves the interaction contract. |
+| Capture polling and finish wakeups | The consumer wakes every 5 ms while recording. Changing its wake strategy could reduce wakeups or shave polling latency, but native callback/driver costs and power are unmeasured. The bounded callback path is preserved. |
+| Automatic model unloading or recycling | Parakeet's large retained accelerator buffers trade memory for warm latency. Pause releases them. Automatic unloading would introduce cold starts and policy complexity without a demonstrated UX gain. |
+| macOS dependency default features | AppKit/Foundation default features pull a broad dependency graph. Linker elimination and native footprint gains are unknown; selective feature changes would need macOS validation. No dependency policy changed. |
+| More aggressive distribution stripping | A fresh Linux release executable shrank from 24,875,400 to 20,586,832 bytes with symbol stripping (17.2%); gzip output shrank 7.2%. This measures disk/download size, not RSS or launch speed; packaging may already strip, and symbols aid profiling. The release profile is retained. |
+| Native startup allocation failure | If the dictation thread cannot be created after its monitor starts, constructor cleanup still joins the monitor synchronously. This rare resource-exhaustion path retains native ownership; removing the join or adding a startup broker would add risk and complexity without measured benefit. Normal startup and Pause remain asynchronous. |
+| Linux pill visibility connections | X11 visibility work opens a connection and waits for native replies. Frequency and user-visible cost are unmeasured. A persistent connection/cache adds resource and display-lifecycle ownership; no speculative cache was added. |
+| Recognition/resampling/worker pools | Existing corpus measurements favor full-context recognition, native-rate capture, and one warm worker. Timestamp disabling, chunking, speculative requests, app resampling, always-on capture, and provider switching risk quality, latency, privacy, or footprint. No recognition policy changed. |
+
+The safe pre-change profiles put 480-frame 48 kHz packet work at roughly
+0.90 microseconds for mono/stereo and 1.02 microseconds for eight channels;
+five-minute trimming took 2.09 ms median and 2.25 ms p95. Fake ready-text insertion
+took 52 microseconds median and 67 microseconds p95 over 100 requests. These
+component figures guide prioritization; native interaction, energy, model memory,
+and displayed-frame measurements remain separate acceptance work.
+
+The final release fixtures measured 0.78/0.81/1.00 microseconds per packet for
+mono/stereo/eight channels, 2.08 ms median and 2.23 ms p95 for five-minute
+trimming, and 55 microseconds median and 62 microseconds p95 for fake ready-text
+insertion. These single-run component results show no material regression and
+do not isolate a whole-app improvement. The local workspace passed 83 tests
+with six opt-in fixtures ignored, formatting, and Clippy. Windows GNU workspace
+and Apple silicon platform cross-Clippy also passed; native release builds and
+packaging are checked by the release workflow. Live native acceptance remains
+separate.

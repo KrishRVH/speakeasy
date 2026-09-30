@@ -134,9 +134,12 @@ fn run() -> anyhow::Result<()> {
             }
         };
         cx.set_global(shell::Services {
+            configuration_epoch: 0,
+            validation: None,
             monitor: None,
             runtime: None,
             retiring: None,
+            retiring_monitor: None,
             retirement: None,
             pending: None,
             path,

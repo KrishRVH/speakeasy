@@ -9,10 +9,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tokio::{
-    sync::{oneshot, watch},
-    task::JoinHandle,
-};
+use tokio::{sync::watch, task::JoinHandle};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum Phase {
@@ -83,7 +80,7 @@ pub enum Event {
 }
 struct Job<W> {
     session: Option<u64>,
-    cancel: Option<oneshot::Sender<()>>,
+    cancel: watch::Sender<bool>,
     task: JoinHandle<anyhow::Result<(W, Option<String>)>>,
 }
 
@@ -190,54 +187,59 @@ impl Drop for Runtime {
     }
 }
 
+// Retirement runs inside the replacement job, so input stays responsive while
+// the previous worker exits. The replacement cannot overlap its native resources.
 fn warm<P: Ports>(ports: &P, config: &Config) -> Job<P::Speech> {
-    let load = ports.load(config.clone());
-    Job {
-        session: None,
-        cancel: None,
-        task: tokio::spawn(async move { Ok((load.await?, None)) }),
-    }
+    renew(ports, config, None, None, false)
 }
 
-async fn cancel<P: Ports>(
-    mut job: Job<P::Speech>,
+fn renew<P: Ports>(
     ports: &P,
     config: &Config,
-) -> (Option<P::Speech>, Option<Job<P::Speech>>) {
-    if config.use_gpu
-        && let Some(signal) = job.cancel.take()
-    {
-        let _ = signal.send(());
-    } else {
-        job.task.abort();
+    previous: Option<Job<P::Speech>>,
+    existing: Option<P::Speech>,
+    reuse: bool,
+) -> Job<P::Speech> {
+    if let Some(previous) = &previous {
+        previous.cancel.send_replace(true);
     }
-    match job.task.await {
-        // Already completed: discard the text and keep the usable model.
-        Ok(Ok((worker, Some(_)))) => (Some(worker), None),
-        Ok(Ok((mut worker, None))) if config.use_gpu => {
-            let load = ports.load(config.clone());
-            let task = tokio::spawn(async move {
-                // Request cancellation closes the socket. The inference barrier
-                // runs off the input path and bounds native cooperative cleanup.
-                if !matches!(
-                    tokio::time::timeout(Duration::from_secs(2), worker.idle()).await,
-                    Ok(Ok(()))
-                ) {
-                    worker.stop().await;
-                    return Ok((load.await?, None));
-                }
-                Ok((worker, None))
-            });
-            (
-                None,
-                Some(Job {
-                    session: None,
-                    cancel: None,
-                    task,
-                }),
-            )
+    let (cancel, mut cancelled) = watch::channel(false);
+    let load = ports.load(config.clone(), cancelled.clone());
+    let gpu = config.use_gpu;
+    let task = tokio::spawn(async move {
+        let mut worker = existing;
+        let mut completed = false;
+        if let Some(previous) = previous
+            && let Ok(Ok((owned, text))) = previous.task.await
+        {
+            worker = Some(owned);
+            completed = text.is_some();
         }
-        _ => (None, Some(warm(ports, config))),
+        if let Some(mut worker) = worker {
+            let healthy = if reuse && !*cancelled.borrow() {
+                completed
+                    || (gpu
+                        && tokio::select! {
+                            biased;
+                            _ = cancelled.changed() => false,
+                            result = tokio::time::timeout(Duration::from_secs(2), worker.idle()) =>
+                                matches!(result, Ok(Ok(()))),
+                        })
+            } else {
+                false
+            };
+            if healthy && !*cancelled.borrow() {
+                return Ok((worker, None));
+            }
+            worker.stop().await;
+        }
+        anyhow::ensure!(!*cancelled.borrow(), "Local model startup cancelled");
+        Ok((load.await?, None))
+    });
+    Job {
+        session: None,
+        cancel,
+        task,
     }
 }
 
@@ -260,6 +262,8 @@ async fn run<P: Ports>(
     };
     output.send_replace(snapshot.clone());
     let mut capture: Option<P::Recording> = None;
+    let mut retiring_capture: Option<JoinHandle<()>> = None;
+    let mut pending_capture = None;
     let mut server: Option<P::Speech> = None;
     let mut job = Some(warm(&ports, &config));
     let mut waiting_audio = None;
@@ -284,6 +288,14 @@ async fn run<P: Ports>(
         let inserted = async {
             match insertion.as_mut() {
                 Some((id, task)) => (*id, task.await),
+                None => std::future::pending().await,
+            }
+        };
+        let retired = async {
+            match retiring_capture.as_mut() {
+                Some(task) => {
+                    let _ = task.await;
+                }
                 None => std::future::pending().await,
             }
         };
@@ -331,24 +343,19 @@ async fn run<P: Ports>(
                 let reload = config.speech_changed(&next);
                 config = next;
                 gesture.cancel();
-                capture.take();
+                pending_capture = None;
+                if let Some(recording) = capture.take() {
+                    retiring_capture = Some(tokio::spawn(recording.retire()));
+                }
                 waiting_audio = None;
                 pending_text = None;
                 if let Some((_, task)) = insertion.take() {
                     retiring_insertions.push(task);
                 }
-                if reload && let Some(previous) = job.take() {
-                    previous.task.abort();
-                    if let Ok(Ok((worker, _))) = previous.task.await {
-                        server = Some(worker);
-                    }
-                } else if job.as_ref().is_some_and(|job| job.session.is_some())
-                    && let Some(previous) = job.take()
-                {
-                    (server, job) = cancel(previous, &ports, &config).await;
-                }
-                if reload && let Some(mut worker) = server.take() {
-                    worker.stop().await;
+                if reload {
+                    job = Some(renew(&ports, &config, job.take(), server.take(), false));
+                } else if job.as_ref().is_some_and(|job| job.session.is_some()) {
+                    job = Some(renew(&ports, &config, job.take(), None, true));
                 }
                 if server.is_none() && job.is_none() {
                     job = Some(warm(&ports, &config));
@@ -376,7 +383,10 @@ async fn run<P: Ports>(
                     snapshot.meter_tick = snapshot.meter_tick.wrapping_add(1);
                 }
                 Ok(Event::AudioDone(id, result)) if id == snapshot.id && capture.is_some() => {
-                    capture.take();
+                    pending_capture = None;
+                    if let Some(recording) = capture.take() {
+                        retiring_capture = Some(tokio::spawn(recording.retire()));
+                    }
                     gesture.finish();
                     match result {
                         Ok(Some(wav)) => {
@@ -396,6 +406,9 @@ async fn run<P: Ports>(
                 }
                 _ => {}
             },
+            _ = retired => {
+                retiring_capture = None;
+            }
             result = completion => {
                 job.take();
                 let (session, result) = result;
@@ -477,14 +490,7 @@ async fn run<P: Ports>(
                     started: Instant::now(),
                     ..Snapshot::default()
                 };
-                match ports.record(id, config.microphone.clone(), events.clone()) {
-                    Ok(recording) => capture = Some(recording),
-                    Err(_) => {
-                        gesture.cancel();
-                        snapshot.phase = Phase::Error;
-                        snapshot.message = "Could not start microphone worker".into();
-                    }
-                }
+                pending_capture = Some((id, config.microphone.clone()));
             }
             Some(Action::Finish) => {
                 if let Some(recording) = &capture {
@@ -495,7 +501,10 @@ async fn run<P: Ports>(
                 }
             }
             Some(Action::Cancel) => {
-                capture.take();
+                pending_capture = None;
+                if let Some(recording) = capture.take() {
+                    retiring_capture = Some(tokio::spawn(recording.retire()));
+                }
                 waiting_audio = None;
                 pending_text = None;
                 if let Some((_, task)) = insertion.take() {
@@ -505,7 +514,7 @@ async fn run<P: Ports>(
                 if job.as_ref().is_some_and(|job| job.session.is_some())
                     && let Some(previous) = job.take()
                 {
-                    (server, job) = cancel(previous, &ports, &config).await;
+                    job = Some(renew(&ports, &config, Some(previous), None, true));
                 }
                 if server.is_none() && job.is_none() {
                     job = Some(warm(&ports, &config));
@@ -513,6 +522,23 @@ async fn run<P: Ports>(
                 snapshot.phase = Phase::Cancelled;
             }
             _ => {}
+        }
+        if retiring_capture.is_none()
+            && let Some((id, microphone)) = pending_capture.take()
+        {
+            match ports.record(id, microphone, events.clone()) {
+                Ok(recording) => {
+                    if gesture.state == State::Processing {
+                        recording.finish();
+                    }
+                    capture = Some(recording);
+                }
+                Err(_) => {
+                    gesture.cancel();
+                    snapshot.phase = Phase::Error;
+                    snapshot.message = "Could not start microphone worker".into();
+                }
+            }
         }
         if let Some(text) = pending_text.take()
             && let Some(permit) = permit.clone()
@@ -525,30 +551,33 @@ async fn run<P: Ports>(
             && let Some(wav) = waiting_audio.take()
         {
             let existing = server.take();
-            let load = ports.load(config.clone());
+            let (cancel, mut cancelled) = watch::channel(false);
+            let load = ports.load(config.clone(), cancelled.clone());
             let language = config.language.clone();
-            let (cancel, mut cancelled) = oneshot::channel();
             job = Some(Job {
                 session: Some(snapshot.id),
-                cancel: Some(cancel),
+                cancel,
                 task: tokio::spawn(async move {
-                    let worker = match existing {
+                    let mut worker = match existing {
                         Some(worker) => worker,
-                        None => tokio::select! {
-                            biased;
-                            _ = &mut cancelled => anyhow::bail!("Transcription cancelled"),
-                            worker = load => worker?,
-                        },
+                        None => load.await?,
                     };
-                    let text = tokio::select! {
+                    let result = tokio::select! {
                         biased;
-                        _ = &mut cancelled => None,
-                        result = worker.transcribe(wav, &language) => Some(result?),
+                        _ = cancelled.changed() => Ok(None),
+                        result = worker.transcribe(wav, &language) => result.map(Some),
                     };
-                    Ok((worker, text))
+                    match result {
+                        Ok(text) => Ok((worker, text)),
+                        Err(error) => {
+                            worker.stop().await;
+                            Err(error)
+                        }
+                    }
                 }),
             });
         }
+
         snapshot.hands_free = gesture.state == State::HandsFree;
         snapshot.model = if job.as_ref().is_some_and(|job| job.session.is_none()) {
             ModelState::Loading
@@ -567,20 +596,34 @@ async fn run<P: Ports>(
     }
     gate.close();
     audio.close();
-    capture.take();
+    if let Some(job) = &job {
+        job.cancel.send_replace(true);
+    }
+    if let Some(recording) = capture.take() {
+        retiring_capture = Some(tokio::spawn(recording.retire()));
+    }
     if let Some((_, task)) = insertion {
         retiring_insertions.push(task);
     }
-    for task in retiring_insertions {
-        let _ = task.await;
-    }
-    if let Some(job) = job {
-        job.task.abort();
-        let _ = job.task.await;
-    }
-    if let Some(mut worker) = server {
-        worker.stop().await;
-    }
+    let speech = async {
+        if let Some(job) = job
+            && let Ok(Ok((mut worker, _))) = job.task.await
+        {
+            worker.stop().await;
+        }
+        if let Some(mut worker) = server {
+            worker.stop().await;
+        }
+    };
+    let desktop = async {
+        if let Some(task) = retiring_capture {
+            let _ = task.await;
+        }
+        for task in retiring_insertions {
+            let _ = task.await;
+        }
+    };
+    tokio::join!(speech, desktop);
 }
 
 #[cfg(test)]
@@ -593,6 +636,7 @@ mod tests {
     struct FakePorts {
         insertion: Option<InsertControls>,
         captures: Sender<(u64, Sender<Event>)>,
+        retirement: Option<(Sender<()>, Receiver<()>)>,
         jobs: Sender<(String, oneshot::Sender<anyhow::Result<String>>)>,
         pasted: Sender<String>,
         loads: Sender<()>,
@@ -600,10 +644,19 @@ mod tests {
         recovery: Option<Receiver<anyhow::Result<()>>>,
     }
     struct FakeRecording {
+        retirement: Option<(Sender<()>, Receiver<()>)>,
         id: u64,
         events: Sender<Event>,
     }
     impl Recording for FakeRecording {
+        async fn retire(self) {
+            if let Some((entered, release)) = self.retirement {
+                let _ = entered.send(()).await;
+                // Bound the fake on assertion failure; Runtime::drop still
+                // waits for cleanup, and must not strand the test harness.
+                let _ = tokio::time::timeout(Duration::from_secs(2), release.recv()).await;
+            }
+        }
         fn finish(&self) {
             assert!(
                 self.events
@@ -647,11 +700,16 @@ mod tests {
         ) -> anyhow::Result<FakeRecording> {
             self.captures.try_send((id, events.clone()))?;
             events.try_send(Event::Ready(id))?;
-            Ok(FakeRecording { id, events })
+            Ok(FakeRecording {
+                id,
+                events,
+                retirement: self.retirement.clone(),
+            })
         }
         fn load(
             &self,
             _: Config,
+            _: watch::Receiver<bool>,
         ) -> impl std::future::Future<Output = anyhow::Result<FakeSpeech>> + Send + 'static
         {
             let jobs = self.jobs.clone();
@@ -711,15 +769,25 @@ mod tests {
             recovery: Option<Receiver<anyhow::Result<()>>>,
             insertion: Option<InsertControls>,
         ) -> anyhow::Result<Self> {
+            Self::with_options(Config::default(), stop, recovery, insertion, None)
+        }
+        fn with_options(
+            config: Config,
+            stop: Option<(Sender<()>, Receiver<()>)>,
+            recovery: Option<Receiver<anyhow::Result<()>>>,
+            insertion: Option<InsertControls>,
+            retirement: Option<(Sender<()>, Receiver<()>)>,
+        ) -> anyhow::Result<Self> {
             let (capture_tx, captures) = async_channel::bounded(8);
             let (job_tx, jobs) = async_channel::bounded(8);
             let (paste_tx, pasted) = async_channel::bounded(8);
             let (load_tx, loads) = async_channel::bounded(8);
             let (output, updates) = watch::channel(Snapshot::default());
             let runtime = Runtime::start_with(
-                Config::default(),
+                config,
                 output,
                 FakePorts {
+                    retirement,
                     insertion,
                     captures: capture_tx,
                     jobs: job_tx,
@@ -767,6 +835,172 @@ mod tests {
     }
     async fn receive<T>(receiver: &Receiver<T>) -> anyhow::Result<T> {
         Ok(tokio::time::timeout(Duration::from_secs(2), receiver.recv()).await??)
+    }
+
+    #[tokio::test]
+    async fn cancelled_capture_retires_before_retry_and_pause_waits_for_it() -> anyhow::Result<()> {
+        let (entered, retiring) = async_channel::bounded(2);
+        let (release, waiting) = async_channel::bounded(2);
+        let mut h = Harness::with_options(
+            Config::default(),
+            None,
+            None,
+            None,
+            Some((entered, waiting)),
+        )?;
+        h.start().await?;
+        h.input(Input::Cancel);
+        h.phase(Phase::Cancelled).await?;
+        receive(&retiring).await?;
+        h.input(Input::Toggle);
+        h.phase(Phase::Starting).await?;
+        assert!(
+            h.captures.try_recv().is_err(),
+            "Retry overlapped a retiring microphone"
+        );
+        release.send(()).await?;
+        h.phase(Phase::Recording).await?;
+        receive(&h.captures).await?;
+        h.runtime.request_stop();
+        receive(&retiring).await?;
+        let stopped = h.runtime.stopped();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), stopped)
+                .await
+                .is_err()
+        );
+        release.send(()).await?;
+        tokio::time::timeout(Duration::from_secs(2), h.runtime.stopped()).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pause_during_a_queued_capture_never_opens_the_new_device() -> anyhow::Result<()> {
+        let (entered, retiring) = async_channel::bounded(1);
+        let (release, waiting) = async_channel::bounded(1);
+        let mut h = Harness::with_options(
+            Config::default(),
+            None,
+            None,
+            None,
+            Some((entered, waiting)),
+        )?;
+        h.start().await?;
+        h.input(Input::Cancel);
+        h.phase(Phase::Cancelled).await?;
+        receive(&retiring).await?;
+        h.input(Input::Toggle);
+        h.phase(Phase::Starting).await?;
+        h.runtime.request_stop();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), h.runtime.stopped())
+                .await
+                .is_err()
+        );
+        release.send(()).await?;
+        tokio::time::timeout(Duration::from_secs(2), h.runtime.stopped()).await?;
+        assert!(h.captures.try_recv().is_err());
+        assert!(h.pasted.try_recv().is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn completed_audio_does_not_allow_retry_before_device_teardown() -> anyhow::Result<()> {
+        let (entered, retiring) = async_channel::bounded(2);
+        let (release, waiting) = async_channel::bounded(2);
+        let mut h = Harness::with_options(
+            Config::default(),
+            None,
+            None,
+            None,
+            Some((entered, waiting)),
+        )?;
+        h.start().await?;
+        assert!(h.finish().await?.send(Ok("fixture".into())).is_ok());
+        receive(&retiring).await?;
+        receive(&h.pasted).await?;
+        h.phase(Phase::Done).await?;
+        h.input(Input::Toggle);
+        h.phase(Phase::Starting).await?;
+        assert!(h.captures.try_recv().is_err());
+        release.send(()).await?;
+        h.phase(Phase::Recording).await?;
+        receive(&h.captures).await?;
+        h.runtime.request_stop();
+        receive(&retiring).await?;
+        release.send(()).await?;
+        tokio::time::timeout(Duration::from_secs(2), h.runtime.stopped()).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pause_starts_capture_and_model_cleanup_together() -> anyhow::Result<()> {
+        let (capture_entered, captures) = async_channel::bounded(1);
+        let (capture_release, capture_waiting) = async_channel::bounded(1);
+        let (speech_entered, speech) = async_channel::bounded(1);
+        let (speech_release, speech_waiting) = async_channel::bounded(1);
+        let mut h = Harness::with_options(
+            Config::default(),
+            Some((speech_entered, speech_waiting)),
+            None,
+            None,
+            Some((capture_entered, capture_waiting)),
+        )?;
+        receive(&h.loads).await?;
+        h.start().await?;
+        h.runtime.request_stop();
+        receive(&captures).await?;
+        receive(&speech).await?;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), h.runtime.stopped())
+                .await
+                .is_err()
+        );
+        capture_release.send(()).await?;
+        speech_release.send(()).await?;
+        tokio::time::timeout(Duration::from_secs(2), h.runtime.stopped()).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cpu_cancellation_reaps_before_replacement_without_blocking_input() -> anyhow::Result<()>
+    {
+        let (entered, stopping) = async_channel::bounded(2);
+        let (release, waiting) = async_channel::bounded(2);
+        let mut h = Harness::with_options(
+            Config {
+                use_gpu: false,
+                ..Config::default()
+            },
+            Some((entered, waiting)),
+            None,
+            None,
+            None,
+        )?;
+        receive(&h.loads).await?;
+        h.start().await?;
+        let mut old_reply = h.finish().await?;
+        h.input(Input::Cancel);
+        h.phase(Phase::Cancelled).await?;
+        receive(&stopping).await?;
+        tokio::time::timeout(Duration::from_secs(2), old_reply.closed()).await?;
+        assert!(old_reply.send(Ok("stale fixture".into())).is_err());
+        assert!(
+            h.loads.try_recv().is_err(),
+            "Replacement started before old worker exit"
+        );
+        h.start().await?;
+        h.input(Input::Toggle);
+        h.phase(Phase::Processing).await?;
+        assert!(h.jobs.try_recv().is_err());
+        release.send(()).await?;
+        receive(&h.loads).await?;
+        let (_, reply) = receive(&h.jobs).await?;
+        assert!(reply.send(Ok("current fixture".into())).is_ok());
+        assert_eq!(receive(&h.pasted).await?, "current fixture");
+        h.phase(Phase::Done).await?;
+        release.send(()).await?;
+        Ok(())
     }
 
     #[tokio::test]
@@ -872,9 +1106,10 @@ mod tests {
         let mut h = Harness::new()?;
         receive(&h.loads).await?;
         let (old_id, old_events) = h.start().await?;
-        let old_reply = h.finish().await?;
+        let mut old_reply = h.finish().await?;
         h.input(Input::Cancel);
         h.phase(Phase::Cancelled).await?;
+        tokio::time::timeout(Duration::from_secs(2), old_reply.closed()).await?;
         assert!(
             old_reply.send(Ok("discard this".into())).is_err(),
             "Cancelled inference stayed alive"
@@ -947,9 +1182,10 @@ mod tests {
         let mut h = Harness::with_controls(Some((entered, waiting)), Some(recovery))?;
         receive(&h.loads).await?;
         h.start().await?;
-        let old_reply = h.finish().await?;
+        let mut old_reply = h.finish().await?;
         h.input(Input::Cancel);
         h.phase(Phase::Cancelled).await?;
+        tokio::time::timeout(Duration::from_secs(2), old_reply.closed()).await?;
         assert!(old_reply.send(Ok("discard this".into())).is_err());
         recover
             .send(Err(anyhow::anyhow!("Recovery failed")))

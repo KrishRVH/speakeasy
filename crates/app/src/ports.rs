@@ -3,13 +3,18 @@
 use crate::{audio::Capture, config::Config, local_speech::LocalSpeech, runtime::Event};
 use speakeasy_platform::{InsertPermit, Inserted, Inserter};
 use std::future::Future;
+use tokio::sync::watch;
 
-pub trait Recording: Send {
+pub trait Recording: Send + 'static {
     fn finish(&self);
+    fn retire(self) -> impl Future<Output = ()> + Send + 'static;
 }
 impl Recording for Capture {
     fn finish(&self) {
         Capture::finish(self);
+    }
+    fn retire(self) -> impl Future<Output = ()> + Send + 'static {
+        Capture::retire(self)
     }
 }
 pub trait Speech: Send + Sync + 'static {
@@ -47,6 +52,7 @@ pub trait Ports: Send + 'static {
     fn load(
         &self,
         config: Config,
+        cancelled: watch::Receiver<bool>,
     ) -> impl Future<Output = anyhow::Result<Self::Speech>> + Send + 'static;
     fn insert(
         &self,
@@ -60,7 +66,7 @@ pub struct Desktop {
 }
 impl Ports for Desktop {
     fn prepares_desktop(&self) -> bool {
-        cfg!(target_os = "linux")
+        true
     }
     type Recording = Capture;
     type Speech = LocalSpeech;
@@ -75,8 +81,9 @@ impl Ports for Desktop {
     fn load(
         &self,
         config: Config,
+        cancelled: watch::Receiver<bool>,
     ) -> impl Future<Output = anyhow::Result<LocalSpeech>> + Send + 'static {
-        LocalSpeech::start(config)
+        LocalSpeech::start(config, cancelled)
     }
     fn insert(
         &self,

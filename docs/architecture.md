@@ -53,6 +53,14 @@ window. Windows/macOS Escape passes to the focused app; Linux uses a reserved
 cancel chord or explicit desktop command. Both invalidate the insertion gate
 immediately. The five-minute cap is independent of UI animation.
 
+Capture owns its microphone thread. Finishing and cancellation retire it
+asynchronously; a retry waits for device teardown before opening another capture.
+Shortcut monitoring initializes off the UI thread on every platform and reports
+desktop readiness through the session's input channel. Pause starts microphone,
+speech, and shortcut cleanup together and waits for their owned completion.
+The session service retains native monitors through retirement; Quit joins them
+directly even if their UI completion task is canceled.
+
 Every recording and inference result carries its session identity. Late audio,
 cancelled inference, and stale completion messages cannot insert text for a newer
 session. Callback atomics control capture and cancellation; other state changes
@@ -76,6 +84,12 @@ cycle; merely validating its region can leave paint pending and spin the message
 loop. Visible paint reaches GPUI. Tray tasks are cancelled before session
 services are retired at quit.
 
+Settings validation and durable saves run off the UI thread. Saves serialize the
+requested drafts, coalescing queued requests to the latest one. Completion
+preserves edits made after Save, and Pause invalidates a pending enable request.
+Quit waits for requested writes. Resume validates configured files in the
+background before enabling dictation.
+
 Relaunch discovery uses `instance.port` next to the locked `instance.lock`.
 The loopback listener accepts fixed Reveal, Toggle, and Cancel commands, returns
 a fixed identification response, and carries no audio or transcript data. Linux
@@ -96,12 +110,15 @@ it requires 100 ms of audible 20 ms windows, trims quiet edges of at least one
 second while retaining 500 ms padding, and preserves interior pauses. WAV
 preparation stays off the UI. Native measurements under gaming load are in
 [performance](performance.md#native-capture-with-valorant).
+Heavily trimmed recordings release excess PCM capacity when at least 8 MiB is
+unused and capacity is at least four times the remaining length.
 
 ## Setup
 
 A fresh install opens Settings and starts setup; later launches offer it only
-while no engine is configured. Setup runs on its own thread and runtime, and
-dropping it cancels the work. A machine-local `setup.lock` serializes directory
+while no engine is configured. Setup owns its thread and runtime. Cancel signals
+it immediately and retains it until cleanup acknowledges; Quit joins active and
+retiring setup work. A machine-local `setup.lock` serializes directory
 writes across retries and app instances. Cancellation terminates and waits for
 the owned extraction or doctor process before releasing that lock; partial
 downloads remain available to resume. It chooses a NeMo-Speech.cpp build by asking
@@ -111,8 +128,10 @@ CPU. Apple silicon uses Metal.
 
 Downloads use pinned GitHub release and Hugging Face revision URLs. Each is
 written beside its destination as a `.part` file, resumed with an HTTP range
-request, and renamed into place only after its size and SHA-256 match. The
-system `tar` unpacks engine archives into a staging directory that is then
+request, and renamed into place only after its size and SHA-256 match. A
+complete partial file is verified locally without another download. Resumed
+data is hashed in bounded chunks with cancellation opportunities between reads.
+The system `tar` unpacks engine archives into a staging directory that is then
 renamed, and unused builds are removed. The result is saved like a manual
 choice and enables dictation.
 
@@ -138,6 +157,9 @@ Objects terminate owned children when the app exits. Unix process groups are
 cleaned up during orderly shutdown; a force-quit can leave a worker running.
 Pause retires the runtime asynchronously; Quit waits for owned cleanup. A failed
 warmup does not retry-loop.
+Model startup and inference receive cooperative cancellation. Retirement waits
+for process exit before loading a replacement, while the session owner continues
+receiving input.
 
 ## Insertion and privacy
 
@@ -151,6 +173,12 @@ sequence and Mac change-count checks preserve newer copies. Linux uses X11
 selection ownership or portal ownership notifications; it never restores a
 stale clipboard payload during cleanup. If automatic paste cannot
 proceed after copying, Settings explains how to paste manually.
+Linux manual copy skips modifier waiting. X11 enqueues the entire paste and its
+releases before one server synchronization, then checks every submission.
+Wayland clipboard preparation and bounded selection transfers remain owned by
+the desktop service; blocking X11 fallback clipboard calls use a serialized
+worker. Serving a committed clipboard selection outlives its paste permit and
+ends when that selection loses ownership or the service retires.
 
 **Keep clipboard** uses native Unicode input and leaves the clipboard untouched.
 Linux requires advertised EI text support; X11 reports this mode as unavailable.

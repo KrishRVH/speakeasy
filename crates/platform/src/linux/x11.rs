@@ -55,12 +55,144 @@ impl Clipboard {
     pub fn owns(&self, owner: u32) -> anyhow::Result<bool> {
         Ok(owner != 0 && self.owner()? == owner)
     }
-    pub fn set_text(&mut self, text: &str) -> anyhow::Result<Option<u32>> {
+    pub fn set_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<Option<u32>> {
+        if !permit.active() {
+            return Ok(None);
+        }
         self.native.set_text(text)?;
         let owner = self.owner()?;
         // Another application can take ownership as soon as set_text returns.
         // Verify both the payload and its stable owner before authorizing paste.
         Ok((owner != 0 && self.native.get_text()? == text && self.owns(owner)?).then_some(owner))
+    }
+}
+
+// Clipboard calls can wait on Xwayland or another application. Keep them off
+// the portal's input thread, with one owner and one bounded command queue.
+pub(super) struct ClipboardWorker {
+    input: InputSender,
+    requests: async_channel::Sender<ClipboardRequest>,
+    ready: async_channel::Receiver<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+enum ClipboardRequest {
+    Set {
+        text: String,
+        permit: InsertPermit,
+        reply: async_channel::Sender<anyhow::Result<Option<u32>>>,
+    },
+    Owns {
+        owner: u32,
+        permit: InsertPermit,
+        reply: async_channel::Sender<anyhow::Result<bool>>,
+    },
+}
+trait ClipboardAccess {
+    fn set_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<Option<u32>>;
+    fn owns(&self, owner: u32) -> anyhow::Result<bool>;
+}
+impl ClipboardAccess for Clipboard {
+    fn set_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<Option<u32>> {
+        self.set_text(text, permit)
+    }
+    fn owns(&self, owner: u32) -> anyhow::Result<bool> {
+        self.owns(owner)
+    }
+}
+impl ClipboardWorker {
+    pub fn new(input: InputSender) -> anyhow::Result<Self> {
+        Self::start(input, Clipboard::new)
+    }
+    fn start<C: ClipboardAccess + 'static>(
+        input: InputSender,
+        open: impl FnOnce() -> anyhow::Result<C> + Send + 'static,
+    ) -> anyhow::Result<Self> {
+        let (requests, incoming) = async_channel::bounded(1);
+        let (ready, started) = async_channel::bounded(1);
+        let worker_input = input.clone();
+        let thread = std::thread::Builder::new()
+            .name("linux-clipboard".into())
+            .spawn(move || {
+                let result = (|| {
+                    let mut clipboard = open()?;
+                    let _ = ready.try_send(());
+                    while let Ok(request) = incoming.recv_blocking() {
+                        match request {
+                            ClipboardRequest::Set { text, permit, reply } => {
+                                let result = if permit.active() {
+                                    clipboard.set_text(&text, &permit)
+                                } else {
+                                    Ok(None)
+                                };
+                                let _ = reply.try_send(result);
+                            }
+                            ClipboardRequest::Owns { owner, permit, reply } => {
+                                let result = if permit.active() {
+                                    clipboard.owns(owner)
+                                } else {
+                                    Ok(false)
+                                };
+                                let _ = reply.try_send(result);
+                            }
+                        }
+                    }
+                    Ok::<_, anyhow::Error>(())
+                })();
+                if let Err(error) = result {
+                    deliver(&worker_input, Input::Unavailable(format!("X11 clipboard is unavailable: {error}. Check your desktop connection, then resume.")));
+                    worker_input.close();
+                }
+            })?;
+        Ok(Self {
+            input,
+            requests,
+            ready: started,
+            thread: Some(thread),
+        })
+    }
+    pub async fn ready(&self) -> anyhow::Result<()> {
+        self.ready.recv().await.context("Clipboard setup stopped")
+    }
+    pub async fn set_text(
+        &self,
+        text: String,
+        permit: InsertPermit,
+    ) -> anyhow::Result<Option<u32>> {
+        let (reply, result) = async_channel::bounded(1);
+        self.requests
+            .send(ClipboardRequest::Set {
+                text,
+                permit,
+                reply,
+            })
+            .await?;
+        result
+            .recv()
+            .await
+            .context("Clipboard preparation stopped")?
+    }
+    pub async fn owns(&self, owner: u32, permit: InsertPermit) -> anyhow::Result<bool> {
+        let (reply, result) = async_channel::bounded(1);
+        self.requests
+            .send(ClipboardRequest::Owns {
+                owner,
+                permit,
+                reply,
+            })
+            .await?;
+        result
+            .recv()
+            .await
+            .context("Clipboard ownership monitoring stopped")?
+    }
+}
+impl Drop for ClipboardWorker {
+    fn drop(&mut self) {
+        self.input.close();
+        self.requests.close();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 impl Keyboard {
@@ -338,14 +470,9 @@ fn paste(
     let previous_owner = clipboard.owner()?;
     let locks =
         keyboard.modifier("Caps_Lock").unwrap_or(0) | keyboard.modifier("Num_Lock").unwrap_or(0);
-    let started = Instant::now();
-    let modifiers = loop {
-        let modifiers = keyboard.held(&clipboard.connection.query_keymap()?.reply()?.keys) & !locks;
-        if modifiers == 0 || started.elapsed() >= MODIFIER_WAIT || !request.permit.active() {
-            break modifiers;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    };
+    let modifiers = wait_modifiers(options.manual_paste, &request.permit, || {
+        Ok(keyboard.held(&clipboard.connection.query_keymap()?.reply()?.keys) & !locks)
+    })?;
     if !request.permit.active() {
         return Ok(Inserted::Cancelled);
     }
@@ -354,7 +481,10 @@ fn paste(
             "Clipboard changed while waiting for shortcut release. Dictate again when your keys are released.",
         ));
     }
-    let Some(owned) = clipboard.set_text(&request.text)? else {
+    let Some(owned) = clipboard.set_text(&request.text, &request.permit)? else {
+        if !request.permit.active() {
+            return Ok(Inserted::Cancelled);
+        }
         return Ok(Inserted::Unavailable(
             "Clipboard changed before paste. Dictate again.",
         ));
@@ -409,37 +539,75 @@ fn paste(
     let connection = &clipboard.connection;
     // Once committed, finish the key sequence even if cancellation arrives.
     // Always attempt releases after a partial submission failure.
-    let sent = (|| {
-        connection
-            .xtest_fake_input(xproto::KEY_PRESS_EVENT, control, 0, 0, 0, 0, 0)?
-            .check()?;
-        if let Some(shift) = shift {
-            connection
-                .xtest_fake_input(xproto::KEY_PRESS_EVENT, shift, 0, 0, 0, 0, 0)?
-                .check()?;
-        }
-        connection
-            .xtest_fake_input(xproto::KEY_PRESS_EVENT, v, 0, 0, 0, 0, 0)?
-            .check()?;
-        Ok::<_, anyhow::Error>(())
-    })();
-    let release = |code| -> anyhow::Result<()> {
-        connection
-            .xtest_fake_input(xproto::KEY_RELEASE_EVENT, code, 0, 0, 0, 0, 0)?
-            .check()?;
-        Ok(())
-    };
-    let released_v = release(v);
-    let released_shift = shift.map_or(Ok(()), release);
-    let released_control = release(control);
-    connection.flush()?;
-    if sent.is_err() || released_v.is_err() || released_shift.is_err() || released_control.is_err()
+    if submit_paste(
+        control,
+        shift,
+        v,
+        |kind, code| Ok(connection.xtest_fake_input(kind, code, 0, 0, 0, 0, 0)?),
+        || {
+            connection.get_input_focus()?.reply()?;
+            Ok(())
+        },
+        |cookie| Ok(cookie.check()?),
+    )
+    .is_err()
     {
         return Ok(Inserted::Copied(
             "Text copied, but input submission failed. Paste manually; automatic paste was not repeated.",
         ));
     }
     Ok(Inserted::Sent)
+}
+fn wait_modifiers(
+    manual: bool,
+    permit: &InsertPermit,
+    mut held: impl FnMut() -> anyhow::Result<u16>,
+) -> anyhow::Result<u16> {
+    if manual {
+        return Ok(0);
+    }
+    let started = Instant::now();
+    loop {
+        let modifiers = held()?;
+        if modifiers == 0 || started.elapsed() >= MODIFIER_WAIT || !permit.active() {
+            return Ok(modifiers);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+fn submit_paste<C>(
+    control: u8,
+    shift: Option<u8>,
+    v: u8,
+    mut enqueue: impl FnMut(u8, u8) -> anyhow::Result<C>,
+    synchronize: impl FnOnce() -> anyhow::Result<()>,
+    mut check: impl FnMut(C) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let mut cookies = Vec::with_capacity(6);
+    let mut failed = false;
+    for code in Some(control).into_iter().chain(shift).chain(Some(v)) {
+        match enqueue(xproto::KEY_PRESS_EVENT, code) {
+            Ok(cookie) => cookies.push(cookie),
+            Err(_) => {
+                failed = true;
+                break;
+            }
+        }
+    }
+    // Releases are attempted even when a press could not be enqueued. Checking
+    // only after this barrier avoids round trips with synthetic modifiers held.
+    for code in Some(v).into_iter().chain(shift).chain(Some(control)) {
+        match enqueue(xproto::KEY_RELEASE_EVENT, code) {
+            Ok(cookie) => cookies.push(cookie),
+            Err(_) => failed = true,
+        }
+    }
+    synchronize()?;
+    for cookie in cookies {
+        failed |= check(cookie).is_err();
+    }
+    ensure!(!failed, "Input submission failed");
+    Ok(())
 }
 fn window(handle: RawWindowHandle) -> anyhow::Result<(RustConnection, u32)> {
     let id = match handle {
@@ -512,6 +680,196 @@ pub(super) fn visible(handle: RawWindowHandle, visible: bool) -> anyhow::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn manual_copy_does_not_query_or_wait_for_held_modifiers() -> anyhow::Result<()> {
+        let (events, _) = async_channel::bounded(1);
+        let input = InputSender::new(events);
+        let permit = input.begin().context("Recording")?;
+        assert_eq!(
+            wait_modifiers(true, &permit, || anyhow::bail!(
+                "Manual copy queried a held modifier"
+            ))?,
+            0
+        );
+        let queried = std::cell::Cell::new(false);
+        assert_eq!(
+            wait_modifiers(false, &permit, || {
+                queried.set(true);
+                Ok(0)
+            })?,
+            0
+        );
+        assert!(
+            queried.get(),
+            "Automatic paste skipped modifier verification"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paste_checks_once_after_all_releases_and_preserves_error_cleanup() -> anyhow::Result<()> {
+        use std::cell::{Cell, RefCell};
+        for shift in [None, Some(2)] {
+            let events = RefCell::new(Vec::new());
+            let synchronized = Cell::new(false);
+            let checked = Cell::new(0);
+            submit_paste(
+                1,
+                shift,
+                3,
+                |kind, code| {
+                    assert!(!synchronized.get());
+                    events.borrow_mut().push((kind, code));
+                    Ok(())
+                },
+                || {
+                    synchronized.set(true);
+                    Ok(())
+                },
+                |_| {
+                    assert!(synchronized.get());
+                    checked.set(checked.get() + 1);
+                    Ok(())
+                },
+            )?;
+            assert_eq!(checked.get(), if shift.is_some() { 6 } else { 4 });
+            assert_eq!(
+                events.borrow().last(),
+                Some(&(xproto::KEY_RELEASE_EVENT, 1))
+            );
+        }
+        for fail_at in [None, Some(0), Some(2), Some(3)] {
+            let events = RefCell::new(Vec::new());
+            let synchronized = Cell::new(false);
+            let checked = Cell::new(0);
+            let queued = Cell::new(0);
+            let result = submit_paste(
+                1,
+                Some(2),
+                3,
+                |kind, code| {
+                    assert!(!synchronized.get());
+                    let mut events = events.borrow_mut();
+                    let position = events.len();
+                    events.push((kind, code));
+                    if fail_at == Some(position) {
+                        anyhow::bail!("Synthetic enqueue failure");
+                    }
+                    queued.set(queued.get() + 1);
+                    Ok(position)
+                },
+                || {
+                    synchronized.set(true);
+                    Ok(())
+                },
+                |_| {
+                    assert!(
+                        synchronized.get(),
+                        "Checked before the sequence was released"
+                    );
+                    checked.set(checked.get() + 1);
+                    if checked.get() == 1 {
+                        anyhow::bail!("Synthetic server rejection");
+                    }
+                    Ok(())
+                },
+            );
+            assert!(result.is_err());
+            assert_eq!(
+                checked.get(),
+                queued.get(),
+                "An earlier rejection skipped later error checks"
+            );
+            let events = events.borrow();
+            for code in [3, 2, 1] {
+                assert_eq!(
+                    events
+                        .iter()
+                        .filter(|&&event| event == (xproto::KEY_RELEASE_EVENT, code))
+                        .count(),
+                    1
+                );
+            }
+            assert_eq!(
+                &events[events.len() - 3..],
+                &[
+                    (xproto::KEY_RELEASE_EVENT, 3),
+                    (xproto::KEY_RELEASE_EVENT, 2),
+                    (xproto::KEY_RELEASE_EVENT, 1)
+                ]
+            );
+            if fail_at.is_none() {
+                assert_eq!(events.len(), 6);
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn clipboard_setup_does_not_block_cancel_and_skips_a_stale_queued_copy()
+    -> anyhow::Result<()> {
+        use futures_util::FutureExt;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        struct FakeClipboard(Arc<AtomicUsize>);
+        impl ClipboardAccess for FakeClipboard {
+            fn set_text(&mut self, _: &str, permit: &InsertPermit) -> anyhow::Result<Option<u32>> {
+                assert!(permit.active());
+                self.0.fetch_add(1, Ordering::Relaxed);
+                Ok(Some(7))
+            }
+            fn owns(&self, owner: u32) -> anyhow::Result<bool> {
+                Ok(owner == 7)
+            }
+        }
+        let (events, _event_receiver) = async_channel::bounded(4);
+        let input = InputSender::new(events);
+        let previous = input.begin().context("Previous recording")?;
+        let copies = Arc::new(AtomicUsize::new(0));
+        let seen = copies.clone();
+        let (entered, opening) = async_channel::bounded(1);
+        let (release, waiting) = std::sync::mpsc::channel();
+        let worker = ClipboardWorker::start(input.clone(), move || {
+            let _ = entered.try_send(());
+            waiting.recv_timeout(Duration::from_secs(2))?;
+            Ok(FakeClipboard(seen))
+        })?;
+        tokio::time::timeout(Duration::from_secs(1), opening.recv()).await??;
+        let mut ready = Box::pin(worker.ready());
+        assert!(
+            ready.as_mut().now_or_never().is_none(),
+            "Desktop readiness preceded clipboard setup"
+        );
+        let mut previous_copy = Box::pin(worker.set_text("fixture".into(), previous.clone()));
+        assert!(previous_copy.as_mut().now_or_never().is_none());
+        deliver(&input, Input::Cancel);
+        assert!(!previous.active());
+        let current = input.begin().context("Current recording")?;
+        // A local task still advances while clipboard setup waits on its own thread.
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            tokio::time::sleep(Duration::from_millis(1)),
+        )
+        .await?;
+        release.send(())?;
+        ready.await?;
+        assert!(previous_copy.await?.is_none());
+        assert_eq!(
+            worker.set_text("fixture".into(), current.clone()).await?,
+            Some(7)
+        );
+        assert_eq!(copies.load(Ordering::Relaxed), 1);
+        assert!(worker.owns(7, current).await?);
+        drop(worker);
+        assert!(
+            input.is_closed(),
+            "Clipboard retirement left its input generation active"
+        );
+        Ok(())
+    }
+
     #[test]
     fn invalid_native_descriptor_is_reported_before_borrowing_it() {
         assert!(readiness(-1).is_err());
