@@ -126,9 +126,9 @@ model. Relative engine and model paths resolve beside the settings file.
 Settings live in `%APPDATA%/speakeasy/settings.json` on Windows and
 `~/Library/Application Support/speakeasy/settings.json` on Mac. Start from
 `settings.example.json` and pass `--config <path>` to use another file.
-Configured launches go straight to the tray or menu bar. Closing or minimizing
-Settings hides it and keeps unsaved edits; reopening Speakeasy or choosing
-**Settings…** in the tray brings it back.
+Configured launches go straight to the tray or menu bar. Closing Settings hides
+it and keeps unsaved edits; Windows minimize also hides it. Reopening Speakeasy
+or choosing **Settings…** in the tray brings it back.
 
 The tray icon shows loading, ready, recording, processing, paused, and attention
 states. Its menu pauses or resumes dictation, starts or finishes a recording,
@@ -178,6 +178,9 @@ and insertion. They never record, install a global hook, or touch the clipboard.
   demo pill stays nonactivating and passes clicks through.
   `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks minimize,
   close, relaunch, and configuration preservation with owned `--demo-tray` windows.
+  On Windows, `cargo test -p speakeasy-platform hidden_pill_consumes_paint -- --ignored`
+  checks hidden and visible paint dispatch with an owned native window and fake
+  renderer, without microphone, hook, clipboard, or input access.
 - `.github/workflows/release.yml` builds the Windows and macOS packages on each
   push to `main` and publishes them to the GitHub release for the workspace
   version.

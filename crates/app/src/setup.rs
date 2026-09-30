@@ -15,11 +15,16 @@ use std::{
     fs::{self, File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
-    process::Stdio,
+    process::{Output, Stdio},
     thread,
     time::Duration,
 };
-use tokio::{process::Command, sync::watch, time::timeout};
+use tokio::{
+    io::AsyncReadExt,
+    process::{Child, Command},
+    sync::watch,
+    time::timeout,
+};
 
 #[derive(Clone, Default)]
 pub struct Progress {
@@ -91,12 +96,12 @@ impl Setup {
                 .enable_all()
                 .build()
             {
-                Ok(runtime) => runtime.block_on(async {
-                    tokio::select! {
-                        result = install(&root, &report) => Some(result),
-                        _ = cancelled.recv() => None,
-                    }
-                }),
+                Ok(runtime) => runtime.block_on(Installation::run(
+                    &root,
+                    &report,
+                    &cancelled,
+                    async |installation| install(&root, &report, installation).await,
+                )),
                 Err(error) => Some(Err(error.into())),
             };
             if let Some(result) = outcome {
@@ -111,6 +116,94 @@ impl Setup {
     }
 }
 
+/// Keeps the shared setup directory locked until its native child is reaped.
+struct Installation {
+    _lock: File,
+    child: Option<Child>,
+}
+
+impl Installation {
+    async fn run<T>(
+        root: &Path,
+        progress: &watch::Sender<Progress>,
+        cancelled: &async_channel::Receiver<()>,
+        work: impl AsyncFnOnce(&mut Self) -> anyhow::Result<T>,
+    ) -> Option<anyhow::Result<T>> {
+        let lock = tokio::select! {
+            biased;
+            _ = cancelled.recv() => return None,
+            lock = Self::lock(root, progress) => match lock {
+                Ok(lock) => lock,
+                Err(error) => return Some(Err(error)),
+            },
+        };
+        let mut installation = Self {
+            _lock: lock,
+            child: None,
+        };
+        let result = tokio::select! {
+            biased;
+            _ = cancelled.recv() => None,
+            result = work(&mut installation) => Some(result),
+        };
+        installation.stop().await;
+        result
+    }
+
+    async fn lock(root: &Path, progress: &watch::Sender<Progress>) -> anyhow::Result<File> {
+        fs::create_dir_all(root)?;
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.join("setup.lock"))?;
+        loop {
+            match lock.try_lock() {
+                Ok(()) => {
+                    progress.send_replace(Progress::default());
+                    return Ok(lock);
+                }
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    progress.send_replace(Progress {
+                        step: "Waiting for another setup to finish",
+                        ..Progress::default()
+                    });
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+
+    async fn output(&mut self, command: &mut Command) -> anyhow::Result<Output> {
+        self.child = Some(command.spawn()?);
+        let child = self.child.as_mut().context("Setup process did not start")?;
+        let mut stdout = child.stdout.take();
+        let (status, stdout) = tokio::try_join!(child.wait(), async {
+            let mut bytes = Vec::new();
+            if let Some(stdout) = &mut stdout {
+                stdout.read_to_end(&mut bytes).await?;
+            }
+            Ok::<_, std::io::Error>(bytes)
+        })?;
+        self.child = None;
+        Ok(Output {
+            status,
+            stdout,
+            stderr: Vec::new(),
+        })
+    }
+
+    async fn stop(&mut self) {
+        if let Some(child) = &mut self.child {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+        }
+        self.child = None;
+    }
+}
+
 /// Engines and models are machine-local, so they stay out of roaming settings.
 fn root() -> PathBuf {
     #[cfg(target_os = "windows")]
@@ -121,12 +214,16 @@ fn root() -> PathBuf {
     base.unwrap_or_else(|| PathBuf::from(".")).join("speakeasy")
 }
 
-async fn install(root: &Path, progress: &watch::Sender<Progress>) -> anyhow::Result<Config> {
+async fn install(
+    root: &Path,
+    progress: &watch::Sender<Progress>,
+    installation: &mut Installation,
+) -> anyhow::Result<Config> {
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(15))
         .read_timeout(Duration::from_secs(30))
         .build()?;
-    let (engine_executable, use_gpu) = engine(&client, root, progress).await?;
+    let (engine_executable, use_gpu) = engine(&client, root, progress, installation).await?;
     let model = fetch(
         &client,
         &MODEL,
@@ -152,21 +249,22 @@ async fn engine(
     client: &Client,
     root: &Path,
     progress: &watch::Sender<Progress>,
+    installation: &mut Installation,
 ) -> anyhow::Result<(PathBuf, bool)> {
     if system32().join("nvidia-smi.exe").is_file() {
-        let cuda = unpack(client, &CUDA, root, progress).await?;
-        if doctor(&cuda)
+        let cuda = unpack(client, &CUDA, root, progress, installation).await?;
+        if doctor(&cuda, installation)
             .await
             .is_some_and(|report| discrete_gpu(&report))
         {
             return keep(root, cuda, true);
         }
     }
-    let vulkan = unpack(client, &VULKAN, root, progress).await?;
-    if let Some(report) = doctor(&vulkan).await {
+    let vulkan = unpack(client, &VULKAN, root, progress, installation).await?;
+    if let Some(report) = doctor(&vulkan, installation).await {
         return keep(root, vulkan, discrete_gpu(&report));
     }
-    let cpu = unpack(client, &CPU, root, progress).await?;
+    let cpu = unpack(client, &CPU, root, progress, installation).await?;
     keep(root, cpu, false)
 }
 
@@ -175,9 +273,10 @@ async fn engine(
     client: &Client,
     root: &Path,
     progress: &watch::Sender<Progress>,
+    installation: &mut Installation,
 ) -> anyhow::Result<(PathBuf, bool)> {
-    let metal = unpack(client, &METAL, root, progress).await?;
-    let report = doctor(&metal)
+    let metal = unpack(client, &METAL, root, progress, installation).await?;
+    let report = doctor(&metal, installation)
         .await
         .context("The speech engine cannot run on this Mac.")?;
     keep(root, metal, accelerated(&report))
@@ -188,6 +287,7 @@ async fn engine(
     _: &Client,
     _: &Path,
     _: &watch::Sender<Progress>,
+    _: &mut Installation,
 ) -> anyhow::Result<(PathBuf, bool)> {
     bail!("Automatic setup supports Windows and macOS.")
 }
@@ -207,20 +307,19 @@ fn keep(root: &Path, directory: PathBuf, gpu: bool) -> anyhow::Result<(PathBuf, 
     Ok((directory.join(EXECUTABLE), gpu))
 }
 
-async fn doctor(directory: &Path) -> Option<serde_json::Value> {
+async fn doctor(directory: &Path, installation: &mut Installation) -> Option<serde_json::Value> {
     let mut command = Command::new(directory.join(EXECUTABLE));
     command
         .args(["doctor", "--json"])
+        .stdout(Stdio::piped())
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true);
     #[cfg(target_os = "windows")]
     command.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    let output = timeout(Duration::from_secs(60), command.output())
-        .await
-        .ok()?
-        .ok()?;
-    serde_json::from_slice(&output.stdout).ok()
+    let output = timeout(Duration::from_secs(60), installation.output(&mut command)).await;
+    installation.stop().await;
+    serde_json::from_slice(&output.ok()?.ok()?.stdout).ok()
 }
 
 fn accelerated(report: &serde_json::Value) -> bool {
@@ -244,6 +343,7 @@ async fn unpack(
     archive: &Download<'_>,
     root: &Path,
     progress: &watch::Sender<Progress>,
+    installation: &mut Installation,
 ) -> anyhow::Result<PathBuf> {
     let name = file_name(archive.url);
     let stem = name
@@ -287,7 +387,7 @@ async fn unpack(
         .kill_on_drop(true);
     #[cfg(target_os = "windows")]
     command.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    if !command.status().await?.success() {
+    if !installation.output(&mut command).await?.status.success() {
         bail!("Cannot unpack the speech engine. Check free disk space, then try again.");
     }
     let _ = fs::remove_dir_all(&directory);
@@ -380,6 +480,111 @@ mod tests {
     };
 
     const BODY: &[u8] = b"Say the word. The door opens, and what is said stays inside.";
+
+    #[test]
+    #[ignore = "Owned subprocess fixture for setup cancellation tests"]
+    fn setup_child_fixture() -> anyhow::Result<()> {
+        let root = PathBuf::from(
+            std::env::var_os("SPEAKEASY_SETUP_TEST_ROOT").context("Missing fixture root")?,
+        );
+        let lock = File::create(root.join("child.lock"))?;
+        lock.lock()?;
+        fs::write(root.join("child.ready"), b"")?;
+        thread::sleep(Duration::from_secs(60));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancellation_stops_the_child_before_another_setup_owns_the_directory()
+    -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().to_path_buf();
+        fs::write(root.join("model.gguf.part"), &BODY[..20])?;
+        let (progress, _) = watch::channel(Progress::default());
+        let (cancel, cancelled) = async_channel::bounded::<()>(1);
+        let first_root = root.clone();
+        let first = tokio::spawn(async move {
+            Installation::run(&first_root, &progress, &cancelled, async |installation| {
+                let mut command = Command::new(std::env::current_exe()?);
+                command
+                    .args(["--exact", "setup::tests::setup_child_fixture", "--ignored"])
+                    .env("SPEAKEASY_SETUP_TEST_ROOT", &first_root)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+                // Require explicit termination and reaping by the owner;
+                // command drop must not hide a missing cleanup step.
+                installation.output(&mut command).await
+            })
+            .await
+        });
+        timeout(Duration::from_secs(10), async {
+            while !root.join("child.ready").exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await?;
+        let child_lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.join("child.lock"))?;
+        assert!(matches!(
+            child_lock.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+
+        let (progress, mut updates) = watch::channel(Progress::default());
+        let (_second_cancel, second_cancelled) = async_channel::bounded::<()>(1);
+        let second_root = root.clone();
+        let second = tokio::spawn(async move {
+            Installation::run(&second_root, &progress, &second_cancelled, async |_| {
+                // The process holds this lock until it exits. A retry must not
+                // enter its directory while that process can still write there.
+                child_lock.try_lock()?;
+                assert_eq!(fs::read(second_root.join("model.gguf.part"))?, &BODY[..20]);
+                Ok(())
+            })
+            .await
+        });
+        timeout(Duration::from_secs(5), updates.changed()).await??;
+        assert_eq!(updates.borrow().step, "Waiting for another setup to finish");
+        assert!(!second.is_finished());
+        drop(cancel);
+        assert!(timeout(Duration::from_secs(5), first).await??.is_none());
+        timeout(Duration::from_secs(5), second)
+            .await??
+            .context("Retry was cancelled")??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancellation_while_waiting_for_setup_leaves_the_owner_locked() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let (progress, _) = watch::channel(Progress::default());
+        let _owner = Installation::lock(directory.path(), &progress).await?;
+        let (progress, mut updates) = watch::channel(Progress::default());
+        let (cancel, cancelled) = async_channel::bounded::<()>(1);
+        let root = directory.path().to_path_buf();
+        let waiting = tokio::spawn(async move {
+            Installation::run(&root, &progress, &cancelled, async |_| {
+                anyhow::bail!("A waiting setup entered the owned directory")
+            })
+            .await
+        });
+        timeout(Duration::from_secs(5), updates.changed()).await??;
+        drop(cancel);
+        let result: Option<anyhow::Result<()>> = timeout(Duration::from_secs(5), waiting).await??;
+        assert!(result.is_none());
+        let contender = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(directory.path().join("setup.lock"))?;
+        assert!(matches!(
+            contender.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+        Ok(())
+    }
 
     /// Serves `BODY` on loopback and honors `Range: bytes=N-`. Returns the
     /// base URL and the range start each request asked for.
@@ -493,7 +698,12 @@ mod tests {
         let wav = fs::read(std::env::var("SPEAKEASY_FIXTURE_WAV")?)?;
         let root = tempfile::tempdir()?;
         let (progress, _) = watch::channel(Progress::default());
-        let config = install(root.path(), &progress).await?;
+        let (_cancel, cancelled) = async_channel::bounded::<()>(1);
+        let config = Installation::run(root.path(), &progress, &cancelled, async |installation| {
+            install(root.path(), &progress, installation).await
+        })
+        .await
+        .context("Setup was cancelled")??;
         eprintln!(
             "Setup chose {} with GPU {}",
             config.engine_executable.display(),

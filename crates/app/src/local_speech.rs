@@ -15,7 +15,7 @@ pub struct LocalSpeech {
     client: Client,
     // Whisper serves an empty directory. Its random basename also supplies the
     // private Whisper route or the loopback NeMo API key for this owned process.
-    _directory: tempfile::TempDir,
+    directory: tempfile::TempDir,
 }
 
 impl LocalSpeech {
@@ -109,7 +109,7 @@ impl LocalSpeech {
                 format!("http://127.0.0.1:{port}/{route}")
             },
             client,
-            _directory: directory,
+            directory,
         };
         timeout(Duration::from_secs(120), async {
             loop {
@@ -195,7 +195,7 @@ impl LocalSpeech {
         let mut request = self.client.post(format!("{}/{path}", self.endpoint));
         if self.engine == Engine::Parakeet {
             request = request.bearer_auth(
-                self._directory
+                self.directory
                     .path()
                     .file_name()
                     .context("Missing key")?

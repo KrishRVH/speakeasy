@@ -51,13 +51,13 @@ impl Chord {
         None
     }
 
-    /// Space while held locks hands-free. Returns whether to swallow the event,
-    /// so neither the press nor its release types a space or switches input.
+    /// Space while held locks hands-free. Swallow it through its release,
+    /// including repeats after the shortcut modifiers are released.
     fn space(&mut self, down: bool) -> bool {
         if down && self.held {
             self.space = true;
         }
-        down && self.held || !down && std::mem::take(&mut self.space)
+        down && self.space || !down && std::mem::take(&mut self.space)
     }
 
     /// Another key ends an active hold. Returns whether one was interrupted.
@@ -228,5 +228,27 @@ mod tests {
         deliver(&input, Input::Cancel);
         assert!(rx.is_closed());
         assert!(!input.commit());
+    }
+
+    #[test]
+    fn hands_free_space_stays_swallowed_until_its_release() {
+        let mut chord = Chord::default();
+        assert!(matches!(chord.modifiers(true, true), Some(Input::Press)));
+        assert!(chord.space(true));
+        assert!(
+            chord.space(true),
+            "A held shortcut must swallow Space repeats"
+        );
+        assert!(matches!(
+            chord.modifiers(false, false),
+            Some(Input::Release)
+        ));
+        assert!(
+            chord.space(true),
+            "Releasing the shortcut must not leak a held Space into the editor"
+        );
+        assert!(chord.space(false));
+        assert!(!chord.space(true), "A fresh Space belongs to the editor");
+        assert!(!chord.space(false));
     }
 }

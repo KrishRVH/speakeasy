@@ -6,6 +6,7 @@ use raw_window_handle::HasWindowHandle;
 use speakeasy_core::{gesture::RECORDING_LIMIT, motion::Spring};
 use std::time::{Duration, Instant};
 
+const FRAME_INTERVAL: Duration = Duration::from_millis(5); // 200 FPS
 const SUBMITTED_FOR: Duration = Duration::from_millis(350);
 const EMPTY_FOR: Duration = Duration::from_millis(1200);
 const ERROR_FOR: Duration = Duration::from_secs(8);
@@ -20,6 +21,15 @@ fn feedback_remaining(phase: Phase, elapsed: Duration) -> Option<Duration> {
         _ => return None,
     };
     duration.checked_sub(elapsed).filter(|left| !left.is_zero())
+}
+
+fn next_frame_deadline(previous: Instant, now: Instant) -> Instant {
+    let next = previous + FRAME_INTERVAL;
+    if next > now {
+        next
+    } else {
+        now + FRAME_INTERVAL
+    }
 }
 
 fn recording_clock(seconds: u64) -> (bool, String) {
@@ -48,6 +58,8 @@ pub struct Pill {
     theme: Theme,
     visible: bool,
     animating: bool,
+    frame_pending: bool,
+    frame_due: Instant,
     wake: Option<Task<()>>,
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     visibility: Option<Task<()>>,
@@ -55,6 +67,29 @@ pub struct Pill {
 }
 
 impl Pill {
+    // Check the deadline on native frames, preserving display synchronization
+    // without redrawing between deadlines or creating a repeating timer.
+    fn request_frame(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if self.frame_pending {
+            return;
+        }
+        self.frame_pending = true;
+        let this = cx.entity().downgrade();
+        window.on_next_frame(move |window, cx| {
+            let _ = this.update(cx, |pill, cx| {
+                pill.frame_pending = false;
+                if !pill.animating {
+                    return;
+                }
+                if Instant::now() >= pill.frame_due {
+                    cx.notify();
+                } else {
+                    pill.request_frame(window, cx);
+                }
+            });
+        });
+    }
+
     pub fn set_reduced(&mut self, reduced: bool) {
         self.reduced = reduced;
     }
@@ -140,7 +175,9 @@ impl Pill {
                             let _ = window;
                         }
                         pill.snapshot = snapshot;
-                        if state_changed || old_history != pill.history {
+                        // Moving meters paint the latest history on their pending
+                        // frame. Session changes and settled meters redraw immediately.
+                        if state_changed || (old_history != pill.history && !pill.animating) {
                             cx.notify();
                         }
                     })
@@ -170,6 +207,8 @@ impl Pill {
             theme,
             visible: false,
             animating: false,
+            frame_pending: false,
+            frame_due: Instant::now(),
             wake: None,
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             visibility: None,
@@ -305,8 +344,9 @@ impl Render for Pill {
             }
         }
         self.animating = visible && (moving || (phase == Phase::Processing && !self.reduced));
+        self.frame_due = next_frame_deadline(self.frame_due, now);
         if self.animating {
-            window.request_animation_frame();
+            self.request_frame(window, cx);
         }
         let wake_after = remaining.or(hint).or_else(|| {
             if capturing {
@@ -805,9 +845,29 @@ pub fn open(
 
 #[cfg(test)]
 mod tests {
-    use super::{ERROR_FOR, SUBMITTED_FOR, feedback_remaining, recording_clock};
+    use super::{
+        ERROR_FOR, FRAME_INTERVAL, SUBMITTED_FOR, feedback_remaining, next_frame_deadline,
+        recording_clock,
+    };
     use crate::runtime::Phase;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn delayed_frames_skip_missed_deadlines_and_on_time_frames_keep_cadence() {
+        let deadline = Instant::now();
+        let slightly_late = deadline + Duration::from_millis(1);
+        assert_eq!(
+            next_frame_deadline(deadline, slightly_late),
+            deadline + FRAME_INTERVAL
+        );
+        for delay in [FRAME_INTERVAL, Duration::from_secs(60)] {
+            let late = deadline + delay;
+            assert_eq!(next_frame_deadline(deadline, late), late + FRAME_INTERVAL);
+        }
+        // Slower displays remain eligible on every native frame.
+        let at_60_hz = deadline + Duration::from_nanos(1_000_000_000 / 60);
+        assert!(next_frame_deadline(deadline, deadline) < at_60_hz);
+    }
 
     #[test]
     fn feedback_deadlines_expire_and_never_apply_to_recording_or_cancellation() {

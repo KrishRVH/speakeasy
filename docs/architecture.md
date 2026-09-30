@@ -57,15 +57,21 @@ arrive as messages. The UI receives coalesced snapshots and never reads PCM.
 Snapshots distinguish model readiness from capture state, and empty recognition
 from submitted input. Only native input submission produces the completion check.
 View-owned feedback timers redraw the current snapshot; they cannot publish
-session changes. Native visibility work resolves the latest pill state before
-showing or hiding it, so a queued dismissal cannot hide a later recording.
+session changes. A weak view callback checks animation deadlines on native
+frames, budgeting 200 redraws per second without a repeating timer. Meter
+updates coalesce into the pending frame; session changes redraw immediately.
+Native visibility work resolves the latest pill state before showing or hiding
+it, so a queued dismissal cannot hide a later recording.
 
 Settings stays alive when hidden, preserving unsaved edits. On Windows, file
 choices use a native Open dialog on its own thread; shown from GPUI's UI thread,
 the dialog stays unpainted while GPUI is idle. Windows intercepts
 the native minimize command with a window-owned subclass and enqueues a hide;
 macOS retains its normal minimize behavior. Native show/hide runs outside GPUI
-borrows. Tray tasks are cancelled before session services are retired at quit.
+borrows. The Windows pill consumes hidden paint messages with a native paint
+cycle; merely validating its region can leave paint pending and spin the message
+loop. Visible paint reaches GPUI. Tray tasks are cancelled before session
+services are retired at quit.
 
 Relaunch discovery uses `instance.port` next to the locked `instance.lock`.
 The loopback listener accepts only a request to show Settings, returns a fixed
@@ -76,16 +82,26 @@ beside settings without rewriting the user's configuration.
 
 The audio callback writes to a bounded ring without allocating. A consumer owns
 mono PCM at the device's sample rate, begins with a ten-second reservation, and
-grows only up to the recording limit. After stopping, it requires 100 ms of
-audible 20 ms windows, trims quiet edges of at least one second while retaining
-500 ms padding, and preserves interior pauses. WAV preparation stays off the UI.
+grows only up to the recording limit. A native discontinuity before the first
+sample is queued does not abort startup. After that, a discontinuity fails the
+recording rather than silently transcribing potentially incomplete speech.
+Refused real-time priority and automatic route changes keep the stream active.
+Fatal stream errors return through a bounded, nonblocking channel with their
+driver details, while a full application ring has a separate error. After stopping,
+it requires 100 ms of audible 20 ms windows, trims quiet edges of at least one
+second while retaining 500 ms padding, and preserves interior pauses. WAV
+preparation stays off the UI. Native measurements under gaming load are in
+[performance](performance.md#native-capture-with-valorant).
 
 ## Setup
 
 A fresh install opens Settings and starts setup; later launches offer it only
 while no engine is configured. Setup runs on its own thread and runtime, and
-dropping it cancels the work. It chooses a NeMo-Speech.cpp build by asking each
-candidate's `doctor` command whether its accelerator works: CUDA when an NVIDIA
+dropping it cancels the work. A machine-local `setup.lock` serializes directory
+writes across retries and app instances. Cancellation terminates and waits for
+the owned extraction or doctor process before releasing that lock; partial
+downloads remain available to resume. It chooses a NeMo-Speech.cpp build by asking
+each candidate's `doctor` command whether its accelerator works: CUDA when an NVIDIA
 driver is present, then Vulkan with a discrete GPU of at least 6 GB, then the
 CPU. Apple silicon uses Metal.
 

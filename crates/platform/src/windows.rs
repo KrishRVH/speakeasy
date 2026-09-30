@@ -278,12 +278,14 @@ unsafe extern "system" fn keyboard(code: i32, wparam: WPARAM, lparam: LPARAM) ->
 }
 
 pub fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
+    use windows_sys::Win32::UI::Shell::SetWindowSubclass;
     let RawWindowHandle::Win32(raw) = handle else {
         bail!("Expected a Windows window");
     };
     let hwnd = raw.hwnd.get() as HWND;
     // SAFETY: the caller holds a live GPUI window on its owning UI thread, and
-    // both DWM values are 32-bit locals that outlive their synchronous calls.
+    // both DWM values outlive their synchronous calls. The window owns its
+    // subclass until WM_NCDESTROY on this same thread.
     unsafe {
         // GPUI creates an overlapped window, whose frame Windows 11 outlines
         // and shadows around the whole transparent surface. The pill is a
@@ -303,7 +305,7 @@ pub fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
                 (&corners as *const i32).cast(),
             ),
         ] {
-            // Windows 10 lacks these attributes; its popups draw neither anyway.
+            // Decoration hints are best effort.
             let _ = DwmSetWindowAttribute(hwnd, attribute as u32, value, 4);
         }
         let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
@@ -331,8 +333,37 @@ pub fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
         {
             return Err(std::io::Error::last_os_error().into());
         }
+        if SetWindowSubclass(hwnd, Some(pill_window), 1, 0) == 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
     }
     Ok(())
+}
+
+unsafe extern "system" fn pill_window(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    id: usize,
+    _: usize,
+) -> LRESULT {
+    use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
+    // SAFETY: this window-owned subclass runs on the pill's UI thread and
+    // is removed at destruction. PAINTSTRUCT lives through its paint cycle.
+    unsafe {
+        if message == WM_NCDESTROY {
+            RemoveWindowSubclass(hwnd, Some(pill_window), id);
+        } else if message == WM_PAINT && IsWindowVisible(hwnd) == 0 {
+            // ValidateRect alone leaves this hidden window's paint pending.
+            // Complete the native paint cycle without drawing or calling GPUI.
+            let mut paint = std::mem::zeroed();
+            BeginPaint(hwnd, &mut paint);
+            EndPaint(hwnd, &paint);
+            return 0;
+        }
+        DefSubclassProc(hwnd, message, wparam, lparam)
+    }
 }
 
 pub fn modifiers_down() -> bool {
@@ -696,5 +727,108 @@ fn has_external_target() -> bool {
         !window.is_null()
             && GetWindowThreadProcessId(window, &mut pid) != 0
             && pid != GetCurrentProcessId()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{cell::Cell, num::NonZeroIsize};
+
+    thread_local! {
+        static PAINTS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    unsafe extern "system" fn renderer(
+        hwnd: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        // SAFETY: this procedure serves only the window owned by the test below.
+        unsafe {
+            if message == WM_PAINT {
+                PAINTS.set(PAINTS.get() + 1);
+                ValidateRect(hwnd, null());
+                return 0;
+            }
+            DefWindowProcW(hwnd, message, wparam, lparam)
+        }
+    }
+
+    struct Window {
+        hwnd: HWND,
+        class: Vec<u16>,
+    }
+
+    impl Drop for Window {
+        fn drop(&mut self) {
+            // SAFETY: this test thread owns both the window and its class;
+            // destruction removes subclasses before the class is released.
+            unsafe {
+                DestroyWindow(self.hwnd);
+                UnregisterClassW(self.class.as_ptr(), GetModuleHandleW(null()));
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "Creates an owned native window; no microphone, hook, clipboard, or injected input"]
+    fn hidden_pill_consumes_paint_and_visible_pill_reaches_renderer() -> anyhow::Result<()> {
+        let class: Vec<u16> = "SpeakeasyPaintTest\0".encode_utf16().collect();
+        // SAFETY: the NUL-terminated class name lives until Window drops;
+        // renderer has the native signature and all resources belong to this thread.
+        let hwnd = unsafe {
+            let instance = GetModuleHandleW(null());
+            let definition = WNDCLASSW {
+                lpfnWndProc: Some(renderer),
+                hInstance: instance,
+                lpszClassName: class.as_ptr(),
+                ..std::mem::zeroed()
+            };
+            if RegisterClassW(&definition) == 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            CreateWindowExW(
+                WS_EX_NOACTIVATE,
+                class.as_ptr(),
+                class.as_ptr(),
+                WS_POPUP,
+                0,
+                0,
+                1,
+                1,
+                null_mut(),
+                null_mut(),
+                instance,
+                null(),
+            )
+        };
+        let window = Window { hwnd, class };
+        let raw = NonZeroIsize::new(hwnd as isize).context("Cannot create paint test window")?;
+        configure_pill(RawWindowHandle::Win32(
+            raw_window_handle::Win32WindowHandle::new(raw),
+        ))?;
+        PAINTS.set(0);
+        // SAFETY: synchronous messages target this thread's owned window;
+        // showing uses no activation and no input or clipboard operations.
+        unsafe {
+            InvalidateRect(window.hwnd, null(), 0);
+            SendMessageW(window.hwnd, WM_PAINT, 0, 0);
+            assert_eq!(PAINTS.get(), 0, "A hidden pill must not call its renderer");
+            assert_eq!(GetUpdateRect(window.hwnd, null_mut(), 0), 0);
+            ShowWindow(window.hwnd, SW_SHOWNOACTIVATE);
+            PAINTS.set(0);
+            InvalidateRect(window.hwnd, null(), 0);
+            SendMessageW(window.hwnd, WM_PAINT, 0, 0);
+            assert_eq!(PAINTS.get(), 1, "Visible paint must reach the renderer");
+            ShowWindow(window.hwnd, SW_HIDE);
+            PAINTS.set(0);
+            InvalidateRect(window.hwnd, null(), 0);
+            SendMessageW(window.hwnd, WM_PAINT, 0, 0);
+            assert_eq!(PAINTS.get(), 0, "Hiding must restore idle paint handling");
+            assert_eq!(GetUpdateRect(window.hwnd, null_mut(), 0), 0);
+        }
+        Ok(())
     }
 }

@@ -100,7 +100,7 @@ impl Services {
                 let _ = cx.update(|cx| {
                     cx.update_global::<Services, _>(|services, cx| {
                         // The owner has stopped publishing and released its
-                        // worker. Joining here no longer waits for native work.
+                        // worker, so joining here does not wait for native work.
                         services.retiring.take();
                         if let Some(config) = services.pending.take() {
                             if let Err(error) = services.apply(config, cx) {
@@ -466,7 +466,8 @@ impl Settings {
             Err(error) => Some(error.to_string()),
         };
         let pill = cx.global::<Services>().pill;
-        let reduced = self.config.reduced_motion || speakeasy_platform::reduced_motion();
+        let reduced =
+            cx.global::<Services>().config.reduced_motion || speakeasy_platform::reduced_motion();
         let _ = pill.update(cx, |view, _, cx| {
             view.set_reduced(reduced);
             cx.notify();

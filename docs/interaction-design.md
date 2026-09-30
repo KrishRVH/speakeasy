@@ -64,6 +64,9 @@ dismiss a later session.
 The audio envelope keeps 24 recent levels and paints the grille in one canvas,
 mirrored outward from the newest level; bars near the slot's rounded ends stay
 inside its curve. Capture supplies RMS summaries; the UI animates between them.
+Pill animation follows native display frames with a 200 FPS budget. Meter
+updates share the pending frame; session changes redraw immediately. Delayed
+frames skip expired deadlines, and springs advance by the actual elapsed time.
 Silence settles to short bars. Demo mode alone supplies simulated levels.
 Reduced motion snaps transitions, the lid, and level changes, uses one level bar,
 and keeps the processing highlight still.

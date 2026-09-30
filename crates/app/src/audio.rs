@@ -69,16 +69,15 @@ fn record(
         host.default_input_device()
             .context("No microphone found. Connect a microphone and try again.")?
     };
-    let format = device
-        .default_input_config()
-        .context("Cannot open microphone. Check OS microphone permission.")?;
+    let format = device.default_input_config().map_err(microphone_error)?;
     let rate = format.sample_rate();
     let channels = usize::from(format.channels());
     if rate == 0 || rate > 192_000 || channels == 0 || channels > 32 {
         bail!("Unsupported microphone format");
     }
     let (producer, mut consumer) = RingBuffer::new(rate as usize);
-    let failed = Arc::new(AtomicBool::new(false));
+    let overran = Arc::new(AtomicBool::new(false));
+    let (errors, stream_errors) = async_channel::bounded(1);
     let started = Instant::now();
     let limit = rate as usize * RECORDING_LIMIT.as_secs() as usize;
     let stream = match format.sample_format() {
@@ -88,7 +87,8 @@ fn record(
             channels,
             producer,
             command.clone(),
-            failed.clone(),
+            overran.clone(),
+            errors,
             started,
             limit,
         ),
@@ -98,7 +98,8 @@ fn record(
             channels,
             producer,
             command.clone(),
-            failed.clone(),
+            overran.clone(),
+            errors,
             started,
             limit,
         ),
@@ -108,7 +109,8 @@ fn record(
             channels,
             producer,
             command.clone(),
-            failed.clone(),
+            overran.clone(),
+            errors,
             started,
             limit,
         ),
@@ -122,7 +124,7 @@ fn record(
     if command.load(Ordering::Acquire) != 0 || tx.is_closed() {
         return Ok(None);
     }
-    stream.play().context("Microphone could not start")?;
+    stream.play().map_err(microphone_error)?;
     let mut stream = Some(stream);
     let mut ready = false;
     let mut energy = 0.0_f64;
@@ -133,9 +135,9 @@ fn record(
             pcm.fill(0_u8);
             return Ok(None);
         }
-        if failed.load(Ordering::Acquire) {
+        if let Err(error) = capture_failure(&overran, &stream_errors) {
             pcm.fill(0_u8);
-            bail!("Microphone disconnected or audio buffer overran. Try recording again.");
+            return Err(error);
         }
         if command.load(Ordering::Acquire) == 1
             || started.elapsed() >= RECORDING_LIMIT
@@ -177,12 +179,14 @@ fn record(
         }
         thread::sleep(Duration::from_millis(5));
     }
-    // The callback observes the stop flag even if closing a driver blocks.
-    let _ = command.compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire);
-    drop(stream);
     if command.load(Ordering::Acquire) == 2 {
         pcm.fill(0);
         return Ok(None);
+    }
+    // A callback may have failed between the last poll and stream teardown.
+    if let Err(error) = capture_failure(&overran, &stream_errors) {
+        pcm.fill(0);
+        return Err(error);
     }
     if (pcm.len() - 44) / 2 < rate as usize / 5 || !trim_quiet_edges(&mut pcm, rate) {
         return Ok(None);
@@ -198,9 +202,10 @@ fn stream<T>(
     device: &cpal::Device,
     config: cpal::StreamConfig,
     channels: usize,
-    mut producer: Producer<f32>,
+    producer: Producer<f32>,
     command: Arc<AtomicU8>,
-    failed: Arc<AtomicBool>,
+    overran: Arc<AtomicBool>,
+    errors: async_channel::Sender<cpal::Error>,
     started: Instant,
     limit: usize,
 ) -> anyhow::Result<cpal::Stream>
@@ -208,11 +213,38 @@ where
     T: SizedSample,
     f32: cpal::FromSample<T>,
 {
-    let error = failed.clone();
+    let (mut data, error) =
+        capture_callbacks::<T>(channels, producer, command, overran, errors, started, limit);
+    device
+        .build_input_stream(config, move |samples, _| data(samples), error, None)
+        .map_err(microphone_error)
+}
+
+// The callback pair owns one capture. Keeping it independent of device creation
+// lets tests replay native callback ordering without opening a microphone.
+fn capture_callbacks<T>(
+    channels: usize,
+    mut producer: Producer<f32>,
+    command: Arc<AtomicU8>,
+    overran: Arc<AtomicBool>,
+    errors: async_channel::Sender<cpal::Error>,
+    started: Instant,
+    limit: usize,
+) -> (
+    impl FnMut(&[T]) + Send + 'static,
+    impl FnMut(cpal::Error) + Send + 'static,
+)
+where
+    T: SizedSample,
+    f32: cpal::FromSample<T>,
+{
     let mut samples = 0_usize;
-    Ok(device.build_input_stream(
-        config,
-        move |data: &[T], _| {
+    // This capture-local flag controls whether a discontinuity may discard
+    // speech already queued by the data callback. It never publishes UI state.
+    let audio_started = Arc::new(AtomicBool::new(false));
+    let active = audio_started.clone();
+    (
+        move |data: &[T]| {
             if command.load(Ordering::Acquire) != 0 || started.elapsed() >= RECORDING_LIMIT {
                 return;
             }
@@ -226,17 +258,69 @@ where
                     .sum::<f32>()
                     / channels as f32;
                 if producer.push(mono).is_err() {
-                    failed.store(true, Ordering::Release);
+                    overran.store(true, Ordering::Release);
                     break;
+                }
+                if samples == 0 {
+                    audio_started.store(true, Ordering::Release);
                 }
                 samples += 1;
             }
         },
-        move |_| {
-            error.store(true, Ordering::Release);
-        },
-        None,
-    )?)
+        move |error| handle_stream_error(error, &errors, active.load(Ordering::Acquire)),
+    )
+}
+
+fn handle_stream_error(
+    error: cpal::Error,
+    errors: &async_channel::Sender<cpal::Error>,
+    audio_started: bool,
+) {
+    // WASAPI can report a discontinuity before its first packet. No previously
+    // queued speech can be lost then. Once samples have arrived, stop on Xrun
+    // rather than silently transcribing an utterance with potentially lost words.
+    if (error.kind() == cpal::ErrorKind::Xrun && !audio_started)
+        || matches!(
+            error.kind(),
+            cpal::ErrorKind::RealtimeDenied | cpal::ErrorKind::DeviceChanged
+        )
+    {
+        return;
+    }
+    // Keep the first fatal error without blocking or formatting on the callback.
+    let _ = errors.try_send(error);
+}
+
+fn capture_failure(
+    overran: &AtomicBool,
+    errors: &async_channel::Receiver<cpal::Error>,
+) -> anyhow::Result<()> {
+    if overran.load(Ordering::Acquire) {
+        bail!(
+            "Recording buffer filled because capture could not keep up. Reduce system load and try again."
+        );
+    }
+    if let Ok(error) = errors.try_recv() {
+        return Err(microphone_error(error));
+    }
+    Ok(())
+}
+
+fn microphone_error(error: cpal::Error) -> anyhow::Error {
+    let guidance = match error.kind() {
+        cpal::ErrorKind::DeviceBusy => {
+            "Close other apps using the microphone or choose another microphone in Settings."
+        }
+        cpal::ErrorKind::PermissionDenied => "Check OS microphone permission and try again.",
+        cpal::ErrorKind::DeviceNotAvailable => {
+            "Reconnect the microphone or choose another in Settings."
+        }
+        cpal::ErrorKind::Xrun => {
+            "Audio was interrupted during recording. Check your audio routing or reduce system load, then try again."
+        }
+        _ => "Try recording again or choose another microphone in Settings.",
+    };
+    anyhow::anyhow!("Microphone failed ({:?}): {error} {guidance}", error.kind())
 }
 
 // Use 20 ms energy windows, at least 100 ms audible audio, and 500 ms
@@ -336,6 +420,134 @@ fn enumerate_microphones() -> anyhow::Result<Vec<(String, String)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_xrun_is_allowed_but_an_interruption_after_samples_is_fatal() -> anyhow::Result<()> {
+        let (producer, mut consumer) = RingBuffer::new(4);
+        let (errors, receiver) = async_channel::bounded(1);
+        let overran = Arc::new(AtomicBool::new(false));
+        let (mut data, mut error) = capture_callbacks::<f32>(
+            2,
+            producer,
+            Arc::new(AtomicU8::new(0)),
+            overran.clone(),
+            errors,
+            Instant::now(),
+            4,
+        );
+        error(cpal::ErrorKind::Xrun.into());
+        assert!(capture_failure(&overran, &receiver).is_ok());
+        data(&[0.25, 0.75]);
+        assert_eq!(consumer.pop()?, 0.5);
+        error(cpal::ErrorKind::Xrun.into());
+        let failure = capture_failure(&overran, &receiver)
+            .err()
+            .context("An interruption after samples must not silently discard speech")?;
+        assert!(failure.to_string().contains("Xrun"));
+        Ok(())
+    }
+
+    #[test]
+    fn callback_overflow_is_fatal_but_recording_limit_and_cancellation_do_not_overflow()
+    -> anyhow::Result<()> {
+        for limit in [2, 3] {
+            let (producer, mut consumer) = RingBuffer::new(2);
+            let (errors, receiver) = async_channel::bounded(1);
+            let overran = Arc::new(AtomicBool::new(false));
+            let command = Arc::new(AtomicU8::new(0));
+            let (mut data, _) = capture_callbacks::<f32>(
+                1,
+                producer,
+                command.clone(),
+                overran.clone(),
+                errors,
+                Instant::now(),
+                limit,
+            );
+            data(&[0.25, 0.5, 0.75]);
+            assert_eq!(capture_failure(&overran, &receiver).is_err(), limit == 3);
+            assert_eq!(consumer.pop()?, 0.25);
+            assert_eq!(consumer.pop()?, 0.5);
+            command.store(2, Ordering::Release);
+            data(&[1.0]);
+            assert!(consumer.pop().is_err());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn recoverable_stream_notifications_do_not_abort_recording() {
+        let (errors, receiver) = async_channel::bounded(1);
+        for kind in [
+            cpal::ErrorKind::RealtimeDenied,
+            cpal::ErrorKind::DeviceChanged,
+        ] {
+            for active in [false, true] {
+                handle_stream_error(kind.into(), &errors, active);
+                assert!(receiver.try_recv().is_err(), "{kind} aborted capture");
+                assert!(capture_failure(&AtomicBool::new(false), &receiver).is_ok());
+            }
+        }
+    }
+
+    #[test]
+    fn fatal_stream_errors_keep_the_first_cause_without_blocking() -> anyhow::Result<()> {
+        let (errors, receiver) = async_channel::bounded(1);
+        handle_stream_error(
+            cpal::Error::with_message(cpal::ErrorKind::DeviceBusy, "fixture device is busy"),
+            &errors,
+            false,
+        );
+        for _ in 0..10 {
+            handle_stream_error(cpal::ErrorKind::Xrun.into(), &errors, false);
+            handle_stream_error(cpal::ErrorKind::DeviceNotAvailable.into(), &errors, false);
+        }
+        let error = capture_failure(&AtomicBool::new(false), &receiver)
+            .err()
+            .context("fatal driver error must abort recording")?
+            .to_string();
+        assert!(error.contains("DeviceBusy"));
+        assert!(error.contains("fixture device is busy"));
+        assert!(error.contains("Close other apps"));
+        assert!(!error.contains("buffer"));
+        Ok(())
+    }
+
+    #[test]
+    fn device_loss_and_backend_failures_abort_recording() -> anyhow::Result<()> {
+        for kind in [
+            cpal::ErrorKind::DeviceNotAvailable,
+            cpal::ErrorKind::StreamInvalidated,
+            cpal::ErrorKind::PermissionDenied,
+            cpal::ErrorKind::BackendError,
+        ] {
+            let (errors, receiver) = async_channel::bounded(1);
+            handle_stream_error(
+                cpal::Error::with_message(kind, "fixture driver failure"),
+                &errors,
+                false,
+            );
+            let error = capture_failure(&AtomicBool::new(false), &receiver)
+                .err()
+                .context("fatal driver error must abort recording")?
+                .to_string();
+            assert!(error.contains(&format!("{kind:?}")));
+            assert!(error.contains("fixture driver failure"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn recording_buffer_overflow_has_its_own_actionable_error() -> anyhow::Result<()> {
+        let (_errors, receiver) = async_channel::bounded(1);
+        let error = capture_failure(&AtomicBool::new(true), &receiver)
+            .err()
+            .context("application ring overflow must abort recording")?
+            .to_string();
+        assert!(error.contains("Recording buffer filled"));
+        assert!(error.contains("Reduce system load"));
+        Ok(())
+    }
 
     #[test]
     fn quiet_edges_keep_word_padding_and_interior_pauses_but_clicks_are_rejected() {
