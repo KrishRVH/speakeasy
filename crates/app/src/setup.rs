@@ -604,7 +604,9 @@ async fn hash_partial(
         total: size,
     });
     let mut file = tokio::fs::File::open(partial).await?;
-    let mut buffer = vec![0; 64 * 1024];
+    // Each asynchronous file read crosses the blocking I/O executor. A bounded
+    // MiB read avoids thousands of round trips when verifying a cached model.
+    let mut buffer = vec![0; 1024 * 1024];
     let mut hasher = Sha256::new();
     loop {
         let count = file.read(&mut buffer).await?;
@@ -1029,7 +1031,11 @@ mod tests {
         let (cancel, cancelled) = async_channel::bounded::<()>(1);
         let cancel_when_verifying = async {
             updates
-                .wait_for(|progress| progress.step == "Verifying downloaded data")
+                .wait_for(|progress| {
+                    progress.step == "Verifying downloaded data"
+                        && progress.done > 0
+                        && progress.done < progress.total
+                })
                 .await?;
             drop(cancel);
             Ok::<_, anyhow::Error>(())

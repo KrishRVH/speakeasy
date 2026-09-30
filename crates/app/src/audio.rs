@@ -67,9 +67,15 @@ impl Capture {
         let _ = self
             .command
             .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire);
+        if let Some(thread) = &self.thread {
+            thread.thread().unpark();
+        }
     }
     pub fn cancel(&self) {
         self.command.store(2, Ordering::Release);
+        if let Some(thread) = &self.thread {
+            thread.thread().unpark();
+        }
     }
 
     pub fn retire(mut self) -> impl std::future::Future<Output = ()> + Send + 'static {
@@ -232,7 +238,9 @@ fn record(
         if stream.is_none() {
             break;
         }
-        thread::sleep(Duration::from_millis(5));
+        // Finish/cancel can wake this owned consumer immediately. An unpark
+        // arriving before the wait remains pending; audio polling stays bounded.
+        thread::park_timeout(Duration::from_millis(5));
     }
     if command.load(Ordering::Acquire) == 2 {
         pcm.fill(0);
@@ -549,6 +557,82 @@ mod tests {
         );
         release.send(()).await?;
         tokio::time::timeout(Duration::from_secs(2), retirement).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn finish_and_retirement_wake_the_owned_consumer_even_before_it_parks()
+    -> anyhow::Result<()> {
+        use std::sync::{Condvar, Mutex};
+
+        let mut missed = Vec::new();
+        for cancel in [false, true] {
+            for wake_before_park in [false, true] {
+                let (events, audio) = async_channel::bounded(1);
+                let (armed, arming) = async_channel::bounded(1);
+                let gate = Arc::new((Mutex::new(!wake_before_park), Condvar::new()));
+                let waiting = gate.clone();
+                let capture = Capture::spawn(1, events, move |_, command| {
+                    // Arm after reading the command, so a missing notification
+                    // cannot pass by finishing before the worker enters its wait.
+                    anyhow::ensure!(command.load(Ordering::Acquire) == 0);
+                    armed.send_blocking(thread::current())?;
+                    let (lock, ready) = &*waiting;
+                    let guard = lock
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("Capture fixture gate was poisoned"))?;
+                    drop(
+                        ready
+                            .wait_while(guard, |released| !*released)
+                            .map_err(|_| anyhow::anyhow!("Capture fixture gate was poisoned"))?,
+                    );
+                    thread::park_timeout(Duration::from_secs(5));
+                    while command.load(Ordering::Acquire) == 0 {
+                        thread::park_timeout(Duration::from_secs(5));
+                    }
+                    Ok(None)
+                })?;
+                let worker = tokio::time::timeout(Duration::from_secs(2), arming.recv()).await??;
+                let release = || -> anyhow::Result<()> {
+                    let (lock, ready) = &*gate;
+                    *lock
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("Capture fixture gate was poisoned"))? = true;
+                    ready.notify_one();
+                    Ok(())
+                };
+                if cancel {
+                    let retirement = capture.retire();
+                    tokio::pin!(retirement);
+                    release()?;
+                    let completed =
+                        tokio::time::timeout(Duration::from_millis(400), retirement.as_mut()).await;
+                    // Reap even when exercising a broken notification path.
+                    worker.unpark();
+                    if completed.is_err() {
+                        tokio::time::timeout(Duration::from_secs(2), retirement).await?;
+                    }
+                    if completed.is_err() {
+                        missed.push((cancel, wake_before_park));
+                    }
+                } else {
+                    capture.finish();
+                    assert_eq!(capture.command.load(Ordering::Acquire), 1);
+                    release()?;
+                    let completed =
+                        tokio::time::timeout(Duration::from_millis(400), audio.recv()).await;
+                    worker.unpark();
+                    tokio::time::timeout(Duration::from_secs(2), capture.retire()).await?;
+                    if !matches!(completed, Ok(Ok(Event::AudioDone(1, Ok(None))))) {
+                        missed.push((cancel, wake_before_park));
+                    }
+                }
+            }
+        }
+        assert!(
+            missed.is_empty(),
+            "Capture wake missed (cancel, before park): {missed:?}"
+        );
         Ok(())
     }
 

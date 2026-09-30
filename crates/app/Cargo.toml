@@ -28,6 +28,9 @@ embed-resource = "3.0.11"
 gpui = { version = "=0.2.2", default-features = false, features = ["x11"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+x11rb = { version = "0.13", features = ["shape"] }
+
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 # Setup downloads over the operating system's TLS stack and trust store.
 reqwest = { version = "0.12", default-features = false, features = ["native-tls"] }

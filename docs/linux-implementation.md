@@ -81,10 +81,18 @@ transcript history, automatic provider switch, or repeated ambiguous paste.
 
 ## Presentation and lifecycle
 
-Official GPUI's X11 renderer supplies Settings and the pill. Wayland hosts need
-Xwayland for presentation. The pill uses notification hints, override-redirect,
+The pinned GPUI X11 renderer supplies Settings and the pill, with the native
+contracts recorded in [the dependency patch](../vendor/gpui/README.speakeasy.md).
+Wayland hosts need Xwayland for presentation. The pill uses notification hints,
+override-redirect,
 no keyboard focus, and an empty input shape before mapping. These hints still
 need native acceptance for stacking, fullscreen, mixed scaling, and focus.
+
+Private-Xvfb checks exercise actual Settings rendering, pill startup visibility,
+input shape, and simulated show/hide without microphone, shortcuts, or clipboard
+access. They cover queued XCB startup events, which must be drained even when
+checked requests leave no unread bytes in the socket. Virtual-desktop checks do
+not establish compositor, desktop input, or editor compatibility.
 
 The StatusNotifier/DBusMenu adapter reuses shared tray states and menu policy,
 with subscriptions limited to relevant host changes. Without a tray host,
@@ -115,7 +123,9 @@ establishing broad CPU coverage. GPU builds also require compatible host drivers
 check for the app and bundled libraries. `--native-tar` produces an unbundled
 development archive for the builder's ABI. The release workflow builds Linux
 on Ubuntu 22.04, runs the required Cargo checks, and checks both packaged launchers
-without opening desktop resources. Models and engines remain separate downloads.
+on a private virtual display, including rendered Settings, simulated pill
+show/hide, and hidden-window display disconnect. Models and engines remain
+separate downloads.
 
 ## Native acceptance still required
 

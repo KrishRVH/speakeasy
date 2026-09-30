@@ -5,9 +5,11 @@ fn main() {
         println!("cargo:rerun-if-changed=../../packaging/windows/speakeasy.rc");
         println!("cargo:rerun-if-changed=../../packaging/windows/speakeasy.ico");
         println!("cargo:rerun-if-changed=../../packaging/windows/speakeasy.manifest");
-        if let Err(error) =
-            embed_resource::compile("../../packaging/windows/speakeasy.rc", embed_resource::NONE)
-                .manifest_required()
+        if let Err(error) = embed_resource::compile_for_everything(
+            "../../packaging/windows/speakeasy.rc",
+            embed_resource::NONE,
+        )
+        .manifest_required()
         {
             // Cargo reports a build error without a panic or a partial executable.
             println!("cargo::error=Cannot embed the Windows manifest: {error}");

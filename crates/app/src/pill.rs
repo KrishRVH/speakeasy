@@ -763,7 +763,7 @@ impl Grille {
     }
 }
 
-pub fn keystone(window: &mut Window, x: f32, y: f32, radius: f32, color: Rgba) {
+fn keystone(window: &mut Window, x: f32, y: f32, radius: f32, color: Rgba) {
     let mut path = PathBuilder::fill();
     path.move_to(point(px(x), px(y - radius)));
     path.line_to(point(px(x + radius), px(y)));
@@ -857,6 +857,195 @@ mod tests {
     };
     use crate::runtime::Phase;
     use std::time::{Duration, Instant};
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "Native GUI check; requires explicit opt-in on a private Xvfb display, never microphone/input/clipboard"]
+    fn idle_native_pill_starts_unmapped_and_can_show_and_hide() -> anyhow::Result<()> {
+        use anyhow::{Context as _, ensure};
+        use raw_window_handle::{
+            HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
+        };
+        use std::{cell::RefCell, rc::Rc};
+        use x11rb::protocol::{
+            shape::{self, ConnectionExt as _},
+            xproto::{AtomEnum, ConnectionExt as _, MapState},
+        };
+
+        let outcome = Rc::new(RefCell::new(None));
+        let completed = outcome.clone();
+        gpui::Application::new().run(move |cx| {
+            cx.spawn(async move |cx| {
+                let _ = cx.update(move |cx| {
+                    let result = (|| {
+                        // This real GPUI window receives only an idle synthetic snapshot.
+                        // No Services, session runtime, monitor, or audio device is created.
+                        let (_owner, updates) =
+                            tokio::sync::watch::channel(crate::runtime::Snapshot::default());
+                        let pill = super::open(updates, true, crate::theme::Theme::default(), cx)?;
+                        let (raw, display) = pill.update(cx, |_, window, _| {
+                            Ok::<_, anyhow::Error>((
+                                HasWindowHandle::window_handle(window)
+                                    .map_err(|error| anyhow::anyhow!("Window handle: {error}"))?
+                                    .as_raw(),
+                                HasDisplayHandle::display_handle(window)
+                                    .map_err(|error| anyhow::anyhow!("Display handle: {error}"))?
+                                    .as_raw(),
+                            ))
+                        })??;
+                        let id = match (raw, display) {
+                            (RawWindowHandle::Xcb(window), RawDisplayHandle::Xcb(display)) => {
+                                ensure!(
+                                    display.connection.is_some(),
+                                    "Missing live XCB display handle"
+                                );
+                                window.window.get()
+                            }
+                            (RawWindowHandle::Xlib(window), RawDisplayHandle::Xlib(display)) => {
+                                ensure!(
+                                    display.display.is_some(),
+                                    "Missing live Xlib display handle"
+                                );
+                                u32::try_from(window.window)?
+                            }
+                            _ => anyhow::bail!("Expected matching X11 window and display handles"),
+                        };
+                        let (connection, _) = x11rb::connect(None)?;
+                        // open_window has completed its mandatory initial draw here.
+                        let attributes = connection.get_window_attributes(id)?.reply()?;
+                        ensure!(
+                            attributes.map_state == MapState::UNMAPPED,
+                            "Idle pill is natively mapped after open and its initial draw"
+                        );
+                        ensure!(
+                            attributes.override_redirect,
+                            "Pill is managed as an ordinary window"
+                        );
+                        let hints = connection
+                            .get_property(false, id, AtomEnum::WM_HINTS, AtomEnum::WM_HINTS, 0, 9)?
+                            .reply()?;
+                        let hints: Vec<_> = hints
+                            .value32()
+                            .context("Invalid WM_HINTS format")?
+                            .collect();
+                        ensure!(
+                            hints.len() == 9 && hints[0] & 1 != 0 && hints[1] == 0,
+                            "Pill accepts input focus"
+                        );
+                        ensure!(
+                            connection
+                                .shape_get_rectangles(id, shape::SK::INPUT)?
+                                .reply()?
+                                .rectangles
+                                .is_empty(),
+                            "Pill input region intercepts the pointer"
+                        );
+
+                        speakeasy_platform::set_pill_visible(raw, true);
+                        ensure!(
+                            connection.get_window_attributes(id)?.reply()?.map_state
+                                == MapState::VIEWABLE,
+                            "Pill did not become viewable"
+                        );
+                        speakeasy_platform::set_pill_visible(raw, false);
+                        ensure!(
+                            connection.get_window_attributes(id)?.reply()?.map_state
+                                == MapState::UNMAPPED,
+                            "Pill did not become unmapped"
+                        );
+                        Ok(())
+                    })();
+                    *completed.borrow_mut() = Some(result);
+                    // Quit on either outcome so an assertion failure cannot strand the
+                    // native loop. Window disposal owns renderer and observer cleanup.
+                    cx.quit();
+                });
+            })
+            .detach();
+        });
+        let result = outcome.borrow_mut().take();
+        result.context("Native pill check did not complete")?
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "opt-in native windows; run on a private Xvfb display, without microphone, hook, or clipboard"]
+    fn idle_native_pill_can_render_a_window_opened_after_launch() -> anyhow::Result<()> {
+        use anyhow::{Context as _, ensure};
+        use gpui::{prelude::*, *};
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        use std::{cell::RefCell, collections::HashSet, rc::Rc};
+        use x11rb::protocol::xproto::{ConnectionExt as _, ImageFormat};
+
+        struct Colors;
+        impl Render for Colors {
+            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .bg(rgb(0x113355))
+                    .child(div().w(px(32.0)).h_full().bg(rgb(0x557799)))
+            }
+        }
+
+        let outcome = Rc::new(RefCell::new(None));
+        let completed = outcome.clone();
+        Application::new().run(move |cx| {
+            cx.spawn(async move |cx| {
+                // Window creation happens after the native event loop has
+                // started, so draining only startup events cannot satisfy this.
+                Timer::after(Duration::from_millis(100)).await;
+                let result = async {
+                    let id = cx.update(|cx| {
+                        let (_owner, updates) =
+                            tokio::sync::watch::channel(crate::runtime::Snapshot::default());
+                        let _pill = super::open(updates, true, crate::theme::Theme::default(), cx)?;
+                        let colors = cx.open_window(
+                            WindowOptions {
+                                window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                                    point(px(0.0), px(0.0)),
+                                    size(px(64.0), px(64.0)),
+                                ))),
+                                titlebar: None,
+                                ..Default::default()
+                            },
+                            |_, cx| cx.new(|_| Colors),
+                        )?;
+                        colors.update(cx, |_, window, _| {
+                            match HasWindowHandle::window_handle(window)
+                                .map_err(|error| anyhow::anyhow!("Window handle: {error}"))?
+                                .as_raw()
+                            {
+                                RawWindowHandle::Xcb(handle) => Ok(handle.window.get()),
+                                _ => anyhow::bail!("Expected XCB window"),
+                            }
+                        })?
+                    })??;
+                    let (connection, _) = x11rb::connect(None)?;
+                    let deadline = Instant::now() + Duration::from_secs(3);
+                    loop {
+                        Timer::after(Duration::from_millis(50)).await;
+                        let image = connection
+                            .get_image(ImageFormat::Z_PIXMAP, id, 0, 0, 64, 64, u32::MAX)?
+                            .reply()?;
+                        let colors: HashSet<_> = image.data.as_chunks::<4>().0.iter().collect();
+                        if colors.len() > 1 {
+                            return Ok(());
+                        }
+                        ensure!(
+                            Instant::now() < deadline,
+                            "Window opened after launch never presented its two colors"
+                        );
+                    }
+                }
+                .await;
+                *completed.borrow_mut() = Some(result);
+                let _ = cx.update(|cx| cx.quit());
+            })
+            .detach();
+        });
+        let result = outcome.borrow_mut().take();
+        result.context("Delayed native window check did not complete")?
+    }
 
     #[test]
     fn delayed_frames_skip_missed_deadlines_and_on_time_frames_keep_cadence() {

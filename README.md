@@ -249,9 +249,21 @@ and insertion. They never record, install a global hook, or touch the clipboard.
   On Windows, `cargo test -p speakeasy-platform hidden_pill_consumes_paint -- --ignored`
   checks hidden and visible paint dispatch with an owned native window and fake
   renderer, without microphone, hook, clipboard, or input access.
+- On Linux, `python3 scripts/check-demo-linux.py target/release/speakeasy`
+  opens a private Xvfb display, checks rendered Settings and the pill's input
+  shape, and waits for the simulated preview to hide. It needs Xvfb, x11-utils,
+  and a Vulkan driver; Mesa's software driver supports headless builders.
+  The release workflow runs it against packaged launchers. The separate
+  `idle_native_pill_starts_unmapped_and_can_show_and_hide` opt-in test verifies
+  the pill starts hidden and supports native show/hide on that private display.
+- `cargo run --locked -p speakeasy --example check_native_rendering -- --native-gui`
+  opens an owned nonactivating window, renders an embedded SVG and paths,
+  resizes, and repeats show/hide. It runs on the process main thread for AppKit.
+  Linux needs a private display, such as `xvfb-run -a`; Windows and Mac use
+  their native desktop. It accesses no microphone, global hook, or clipboard.
 - `.github/workflows/release.yml` verifies and builds Windows, macOS, and Linux
-  packages on each push to `main` and publishes them to the GitHub release for
-  the workspace version.
+  packages and runs owned-window rendering checks. Only `main` publishes the
+  GitHub release for the workspace version; manual branch runs verify packages.
 
 Live microphone-to-editor dictation and interactive macOS use still need
 hands-on acceptance.

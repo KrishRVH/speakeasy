@@ -445,3 +445,209 @@ with six opt-in fixtures ignored, formatting, and Clippy. Windows GNU workspace
 and Apple silicon platform cross-Clippy also passed; native release builds and
 packaging are checked by the release workflow. Live native acceptance remains
 separate.
+
+## Shared performance audit for 0.2.2
+
+This follow-up challenged shared audio, setup, rendering, native scheduling,
+resource ownership, and cancellation. The changes below preserve recognition,
+the five-minute limit, native display pacing, and owned asynchronous cleanup.
+Measurements used public model data or synthetic devices; they accessed no live
+microphone, global hook, clipboard, or focused editor.
+
+### Settings and rendering memory
+
+Settings' two static diamonds use the existing SVG atlas. The pill retains its
+animated paths. Metal, DirectX, and Blade allocate full-window path targets only
+when a scene first contains paths, and invalidate them on resize. DirectX also
+unbinds path resources from shader slots before releasing them. This avoids
+allocating a resolve texture and four-sample antialiasing texture for Settings;
+the first pill path keeps the existing format and antialiasing quality.
+
+Native Windows measurements used two paired runs in reversed orders, identical
+release builds apart from the rendering changes, and owned simulated-demo
+windows. The Settings client was 980 × 1260 physical pixels at 168 DPI:
+
+| Measurement | Before | After | Reduction |
+| --- | ---: | ---: | ---: |
+| GPU committed memory, settled Settings | 61.93–62.05 MiB | 37.78–38.14 MiB | 38.5–39.0% |
+| Process private commit, settled Settings | 97.61–101.26 MiB | 74.76–75.61 MiB | 23.4–25.3% |
+| GPU committed memory, restored after 12 resizes | 169.77–169.87 MiB | 45.49–45.50 MiB | 73.2% |
+| Process private commit, restored after 12 resizes | 243.42–246.32 MiB | 74.86–75.83 MiB | 69.2% |
+
+Windows RSS was essentially flat. These figures measure committed memory; they
+do not demonstrate a frame-rate, CPU, or battery gain, or establish an unbounded
+driver leak. Handles and thread counts stayed unchanged. Complete Settings image
+comparisons differed at only 66 pixels on the two diamonds' antialiased edges;
+the other 1,234,734 pixels matched. Owned native demo captures confirmed the
+pill's microphone, lock, animated grille, clock, and recording-limit warning.
+
+Linux/WSL2 used private Xvfb displays, Mesa's lavapipe software renderer, four
+renderer threads, and no model. Six runs exercised 72 resize/hide/show cycles:
+
+| Scale and measurement | Before | After | Saved |
+| --- | ---: | ---: | ---: |
+| 1× settled RSS, one pair | 145.80 MiB | 138.76 MiB | 7.04 MiB |
+| 2× settled RSS, two reversed-order pairs | 192.07 MiB | 161.21 MiB | 30.86 MiB (16.1%) |
+| 2× settled private resident memory | 135.90 MiB | 105.09 MiB | 30.81 MiB (22.7%) |
+| 2× RSS after 12 resize/hide/show cycles | 186.27 MiB | 155.32 MiB | 30.95 MiB (16.6%) |
+
+Linux private resident memory is `smaps` private clean plus dirty memory, separate
+from Windows private commitment. Both variants retained 51 threads and had no
+swap. Physical GPU memory and native compositor behavior remain unmeasured.
+Header images differed only at the diamond edges, with identical remaining
+pixels. The measurements match the avoided targets' nominal footprint: 7.69 MiB
+at 560 × 720 physical pixels and 30.76 MiB at twice that scale, before atlas and
+driver overhead.
+
+The main-thread native rendering fixture starts with an SVG-only scene, adds its
+first path, resizes, and performs 25 show/hide cycles. Linux pixel checks passed
+at scales 1, 1.25, 1.5, and 2. Omitting production path compositing failed the
+path-color assertion; restoring it passed. Windows/macOS use native redraw
+checks in this fixture; those counters alone do not prove GPU pixel correctness.
+
+### macOS frame-source ownership
+
+GPUI's prior per-window display-link destructor deliberately retained the
+CoreVideo link to avoid a callback-thread lifetime crash. Its dispatch source's
+creation reference was also retained. Repeated stop/start transitions could
+therefore accumulate both resources. The patch backports upstream's
+[display-link ownership fix](https://github.com/zed-industries/zed/commit/96ce8f2a05f8912851e5d20d808fe21f4134bd45):
+one process-retained link per encountered display ID and one owned dispatch
+source per live window. Hiding unsubscribes the source; window destruction
+cancels and releases it before its view is released. CoreVideo callbacks use the
+static display registry rather than a window pointer.
+
+Four portable fixtures exercise the actual registry with fake native handles.
+Two hundred visibility/display transitions created two links for two IDs and
+one dispatch source, released at window destruction. Six isolated faults failed
+their corresponding lifecycle assertions, covering reuse, unsubscribe, source
+cancellation, failed-start rollback, initial resume, and native stop outside the
+registry lock. This proves ownership behavior in the fixture; native macOS
+memory, timing, display sleep, and display removal remain unmeasured. Distinct
+display IDs encountered over the process lifetime can still add registry entries.
+
+### Recording completion
+
+The capture consumer polled its command every five milliseconds. Finish and
+Cancel signal the existing owned thread with `unpark`; its periodic audio wait
+uses `park_timeout`. Notification before the wait is retained. The callback,
+buffering, normal polling cadence, and teardown ordering are unchanged.
+
+Paired release component probes used the production Capture owner and completion
+event, synthetic consumer work, and evenly distributed command phases within the
+polling interval. Native Windows used three alternating-order sets of 400
+samples per variant; Linux used two paired sets of 400 per variant:
+
+| Host | Median before / after | p95 before / after | p99 before / after |
+| --- | ---: | ---: | ---: |
+| Native Windows | 2.914–2.949 / 0.015–0.021 ms | 5.129–5.157 / 0.026–0.035 ms | 5.391–5.438 / 0.034–0.055 ms |
+| Linux/WSL2 | 2.617–2.627 / 0.054–0.057 ms | 4.822–4.844 / 0.086 ms | 5.016–5.021 / 0.100–0.123 ms |
+
+These measure command-to-AudioDone polling delay. They exclude CPAL teardown,
+native input, inference, and editor insertion. The recognition timings above use
+fake capture and cannot establish a whole-dictation percentage for this change.
+The shared implementation serves macOS too; native macOS timing is unavailable.
+
+The regression exercises Finish and retirement with the consumer held before
+parking and with it free to enter the wait. It proves prompt notification and
+retained pre-wait tokens; scheduling does not guarantee the unrestricted case is
+already parked. Removing either production notification makes its corresponding
+cases fail; restoring the notifications passes. A fault cannot strand the
+fixture thread.
+
+### Verification of resumed downloads
+
+Asynchronous 64 KiB reads crossed Tokio's blocking I/O executor thousands of
+times while hashing a cached model. Bounded 1 MiB reads reduce that overhead and
+retain an explicit yield between chunks. Seven alternating-order component
+rounds verified the same 713,975,456-byte public Parakeet model:
+
+| Host and storage | Before | After | Reduction |
+| --- | ---: | ---: | ---: |
+| Linux/WSL2, local ext4 copy | 880.736 ms | 339.557 ms | 61.4% |
+| Native Windows, local AppData | 505.275 ms | 370.662 ms | 26.6% |
+| Linux/WSL2, Windows-mounted file | 5,490.002 ms | 3,389.834 ms | 38.3% |
+
+The Windows probe used the production hash interfaces and dependencies with
+optimization level 3; both variants ran in the same binary. It did not use the
+workspace's thin LTO and single codegen unit. Windows Application Control blocked
+a follow-up executable using those options and the owned-cancellation probe;
+policy was left intact. These figures measure partial verification, not fresh
+download throughput, inference, or complete setup. The Windows-mounted result is
+a Linux filesystem measurement, separate from native Windows.
+
+The buffer adds 960 KiB of bounded temporary memory during verification. Thirty
+Linux cancellation samples after hashing began measured request-to-acknowledgement
+and owned thread join: 0.258 ms median, 0.562 ms p95, and 0.686 ms maximum. This
+does not bound slow physical disk I/O. The strengthened regression cancels after
+progress advances, checks partial preservation, and fails when active-work
+cancellation is removed.
+
+### Native scheduling defects
+
+The audit also reproduced Linux GUI startup failure from unimplemented public
+X11 raw-handle methods, an idle pill mapped before its input hints were applied,
+and black windows when checked XCB requests buffered native events. The patched
+GPUI source implements borrowed native handles, respects initial visibility, and
+drains queued events before startup and after foreground dispatch. Native tests
+inspect initial map state, input shape, and actual pixels in a window opened
+after launch. Removing the visibility condition or post-dispatch drain reproduces
+their respective failure.
+
+With every window hidden, a disconnected private X server left the event socket
+continuously readable. Logging the polling error and returning success retried
+that dead socket indefinitely: 2.50 seconds of CPU over 2.50 seconds elapsed,
+approximately one core. The patch propagates connection errors and ends dispatch
+and refresh loops. The GUI check hides its owned windows, disconnects its private
+server, and requires clean process exit.
+
+Windows frame timing had a separate arithmetic fault: the fallback calculation
+truncated a refresh frequency to whole MHz, so valid ratios such as 60/1 could
+divide by zero and kill its scheduler thread. Fractional QPC frequencies also
+lost precision. The helper converts complete rational durations, keeps valid QPC
+timing first, and uses the existing default when neither source is valid. Eight
+portable production-helper tests reproduce the arithmetic failures. The native
+DWM fallback trigger has not been observed; this is a correctness fix, not a
+measured Windows speedup.
+
+The narrow dependency patch and its removal conditions are recorded in
+[the GPUI patch](../vendor/gpui/README.speakeasy.md). Linux packaged GUI checks
+exercise rendered Settings, nonactivating input shape, preview show/hide, and
+hidden display disconnect. Windows release checks exercise hidden paint
+acknowledgement and visible renderer forwarding on an owned native window.
+
+### Further candidates challenged
+
+- Skipping non-Wayland frame-completion bookkeeping showed about 1% fewer
+  cycles in three paired native Windows runs at an observed 60 Hz, with one pair
+  moving in the opposite direction and no consistent CPU gain. The proposed
+  change was reverted; native frame pacing and bookkeeping are preserved.
+- Five minutes of synthetic stereo callback/PCM work cost about 39 ms total;
+  trimming and selective capacity release cost about 1.5 ms. Extra callback
+  notifications, conversion caches, or trim threads lack a material benefit.
+- Ready-text controller work remains tens of microseconds. Snapshot equality
+  already prevents unchanged Settings and tray redraws; additional publication
+  machinery is not justified by the measured costs.
+- CPU cancellation replaces busy inference so a retry cannot queue behind old
+  work. Automatic unloading would trade warm latency for memory without changing
+  the model's large accelerator allocations. Pause retains explicit ownership of
+  that tradeoff.
+- Moving setup writes to detached asynchronous I/O could release the directory
+  lock while a write still owns the partial. Slow-device cancellation needs
+  measured, owned I/O completion before changing this boundary.
+
+Native macOS profiling, live microphone-to-editor acceptance, GNOME/KDE portal
+behavior, mixed-display pacing, display sleep, GPU energy, and slow-storage
+cancellation remain unmeasured. Shared-code gains do not establish identical
+native gains on all three operating systems.
+
+The final repo-wide polish reviewed every maintained file and the owned dependency
+patches, preserving unmodified upstream files, licensed binary assets, and
+Cargo-owned output. Local formatting and Clippy passed, including Windows GNU
+workspace and Apple silicon platform cross-checks. The default workspace passed
+96 tests with eight opt-in fixtures ignored. Native Windows demo/tray, hidden
+paint, and 25-cycle rendering checks passed; Linux native visibility, delayed
+rendering, pixel checks at four scales, and full simulated GUI/disconnect checks
+passed. The example carries the application's Windows manifest so GPUI's Common
+Controls imports resolve before startup. Native builds, macOS rendering, and
+packaged launchers are gated by the release workflow.

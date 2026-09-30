@@ -2207,8 +2207,6 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "979b45cfa6ec723b6f42330915a1b3769b930d02b2d505f9697f8ca602bee707"
 dependencies = [
  "anyhow",
  "as-raw-xcb-connection",
@@ -2232,6 +2230,7 @@ dependencies = [
  "cosmic-text",
  "ctor",
  "derive_more",
+ "dispatch2",
  "embed-resource",
  "etagere",
  "filedescriptor",
@@ -5490,7 +5489,7 @@ dependencies = [
 
 [[package]]
 name = "speakeasy"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
@@ -5508,15 +5507,16 @@ dependencies = [
  "tempfile",
  "tokio",
  "tray-icon",
+ "x11rb",
 ]
 
 [[package]]
 name = "speakeasy-core"
-version = "0.2.1"
+version = "0.2.2"
 
 [[package]]
 name = "speakeasy-platform"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "arboard",

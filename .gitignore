@@ -1,6 +1,7 @@
 # Generated build output.
 /artifacts/
 /target/
+__pycache__/
 
 # Local configuration, credentials, downloaded models, and runtime tools.
 /settings.json

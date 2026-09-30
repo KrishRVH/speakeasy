@@ -38,11 +38,19 @@ flowchart LR
 | `crates/app/src/tray.rs` | Owned native tray icon, menu actions, and snapshot-driven status updates. |
 | `crates/app/src/status.rs` | Shared readiness and capture status for Settings and the tray. |
 | `crates/app/src/theme.rs` | Selectable color themes shared by Settings, the pill, and the tray. |
+| `crates/app/src/icons.rs` | Embedded Settings icon assets for GPUI's existing SVG atlas. |
 | `crates/app/src/instance.rs` | Configuration-directory lock and an owned loopback listener for revealing the existing Settings window. |
 | `crates/app/src/config.rs` | Typed settings, path resolution, validation, and atomic saves. |
 
 Core and app forbid unsafe code. Platform contains native FFI with local safety
-explanations. Tests live beside the Rust modules they exercise.
+explanations. Application tests live beside their modules; dependency regression
+fixtures under `crates/app/tests` include the patched helpers directly.
+
+The root Cargo patch selects a narrowly patched GPUI 0.2.2 source under
+`vendor/gpui`, outside the workspace. Its native handle, visibility, queued-event,
+timing, frame-source lifetime, and rendering-resource contracts are documented in
+[the dependency patch](../vendor/gpui/README.speakeasy.md). Unmodified upstream
+files and the license are preserved; regression checks cover the patched behavior.
 
 ## Session ownership
 

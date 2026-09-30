@@ -1170,21 +1170,11 @@ fn label(text: &'static str, palette: &'static Palette) -> impl IntoElement {
 }
 // A cut-jewel status mark, matching the tray badges.
 fn jewel(color: u32, size: f32) -> impl IntoElement {
-    canvas(
-        |_, _, _| (),
-        move |bounds, _, window, _| {
-            let center = bounds.center();
-            crate::pill::keystone(
-                window,
-                f32::from(center.x),
-                f32::from(center.y),
-                size / 2.0,
-                rgb(color),
-            );
-        },
-    )
-    .size(px(size))
-    .flex_none()
+    svg()
+        .path(crate::icons::KEYSTONE)
+        .size(px(size))
+        .text_color(rgb(color))
+        .flex_none()
 }
 // GPUI text has no tracking, so the wordmark spaces its capitals as glyphs.
 fn wordmark(palette: &'static Palette) -> impl IntoElement {

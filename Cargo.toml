@@ -1,9 +1,13 @@
 [workspace]
 members = ["crates/core", "crates/platform", "crates/app"]
+exclude = ["vendor/gpui"]
 resolver = "3"
 
+[patch.crates-io]
+gpui = { path = "vendor/gpui" }
+
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 rust-version = "1.98.1"
 publish = false

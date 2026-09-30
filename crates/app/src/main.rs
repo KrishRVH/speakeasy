@@ -2,6 +2,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod audio;
 mod config;
+mod icons;
 mod instance;
 mod local_speech;
 mod pill;
@@ -115,7 +116,7 @@ fn run() -> anyhow::Result<()> {
         },
         ..Snapshot::default()
     });
-    let application = Application::new();
+    let application = Application::new().with_assets(icons::Icons);
     application.on_reopen(shell::reveal);
     application.run(move |cx| {
         // Without the brand face, the wordmark falls back to the system font.
