@@ -2,7 +2,7 @@ name: Linux checks
 on:
   workflow_dispatch:
   pull_request:
-    paths: ['crates/**', 'vendor/**', 'Cargo.*', 'rust-toolchain.toml', 'packaging/linux/**', 'scripts/package-linux.sh', 'scripts/check-demo-linux.py', '.github/workflows/linux.yml']
+    paths: ['crates/**', 'vendor/**', 'Cargo.*', 'rust-toolchain.toml', 'packaging/linux/**', 'scripts/package-linux.sh', 'scripts/check-demo-linux.py', 'scripts/check-rendering-linux.sh', '.github/workflows/linux.yml']
 permissions:
   contents: read
 jobs:
@@ -13,21 +13,17 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libfontconfig1-dev libfreetype6-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev libssl-dev mesa-vulkan-drivers xvfb xauth x11-utils pkg-config ripgrep
+          sudo apt-get install -y libasound2-dev libfontconfig1-dev libfreetype6-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev libssl-dev pkg-config ripgrep
       - name: Verify
         run: |
           cargo fmt --all --check
           cargo clippy --workspace --all-targets --locked -- -D warnings
           cargo test --workspace --locked
-      - name: Check native pill visibility on a private display
-        run: xvfb-run -a -s '-screen 0 1280x720x24' cargo test --locked -p speakeasy idle_native_pill_ -- --ignored --test-threads=1
-      - name: Check native rendering on a private display
-        timeout-minutes: 3
-        run: xvfb-run -a -s '-screen 0 1280x720x24' cargo run --locked -p speakeasy --example check_native_rendering -- --native-gui
       - name: Package against glibc 2.35
         run: bash scripts/package-linux.sh
-      - name: Check the rendered Linux GUI
-        run: python3 scripts/check-demo-linux.py target/release/speakeasy
+      - name: Check the rendered Linux GUI with stock Mesa
+        timeout-minutes: 5
+        run: bash scripts/check-rendering-linux.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: speakeasy-Linux

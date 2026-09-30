@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['crates/**', 'vendor/**', 'Cargo.*', 'rust-toolchain.toml', 'settings.example.json', 'packaging/**', 'scripts/package-*', 'scripts/check-demo-linux.py', 'docs/releases/**', '.github/workflows/release.yml']
+    paths: ['crates/**', 'vendor/**', 'Cargo.*', 'rust-toolchain.toml', 'settings.example.json', 'packaging/**', 'scripts/package-*', 'scripts/check-demo-linux.py', 'scripts/check-rendering-linux.sh', 'docs/releases/**', '.github/workflows/release.yml']
 
 permissions:
   contents: read
@@ -25,20 +25,13 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libfontconfig1-dev libfreetype6-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev libssl-dev mesa-vulkan-drivers xvfb xauth x11-utils pkg-config ripgrep
+          sudo apt-get install -y libasound2-dev libfontconfig1-dev libfreetype6-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev libssl-dev pkg-config ripgrep
       - name: Verify
         shell: bash
         run: |
           cargo fmt --all --check
           cargo clippy --workspace --all-targets --locked -- -D warnings
           cargo test --workspace --locked
-      - name: Check native pill visibility on a private display
-        if: runner.os == 'Linux'
-        run: xvfb-run -a -s '-screen 0 1280x720x24' cargo test --locked -p speakeasy idle_native_pill_ -- --ignored --test-threads=1
-      - name: Check native rendering on a private Linux display
-        if: runner.os == 'Linux'
-        timeout-minutes: 3
-        run: xvfb-run -a -s '-screen 0 1280x720x24' cargo run --locked -p speakeasy --example check_native_rendering -- --native-gui
       - name: Check native rendering and frame-source lifetime
         if: runner.os != 'Linux'
         timeout-minutes: 3
@@ -67,16 +60,10 @@ jobs:
       - name: Package Linux against glibc 2.35
         if: runner.os == 'Linux'
         run: bash scripts/package-linux.sh
-      - name: Check Linux packaged launcher
+      - name: Check Linux rendering and packaged launchers with stock Mesa
         if: runner.os == 'Linux'
-        run: |
-          APPIMAGE_EXTRACT_AND_RUN=1 artifacts/speakeasy-linux-x86_64.AppImage --help
-          APPIMAGE_EXTRACT_AND_RUN=1 python3 scripts/check-demo-linux.py artifacts/speakeasy-linux-x86_64.AppImage
-          directory=$(mktemp -d)
-          trap 'rm -rf -- "$directory"' EXIT
-          tar -xzf artifacts/speakeasy-linux-x86_64.tar.gz -C "$directory"
-          "$directory/Speakeasy.AppDir/AppRun" --help
-          python3 scripts/check-demo-linux.py "$directory/Speakeasy.AppDir/AppRun" --startup-only
+        timeout-minutes: 5
+        run: bash scripts/check-rendering-linux.sh --packages
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: speakeasy-${{ runner.os }}

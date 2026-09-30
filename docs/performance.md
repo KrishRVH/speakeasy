@@ -594,6 +594,24 @@ inspect initial map state, input shape, and actual pixels in a window opened
 after launch. Removing the visibility condition or post-dispatch drain reproduces
 their respective failure.
 
+The delayed-window fixture reads the full physical client geometry and requires
+both expected colors, so it also discriminates rendering at 2× scale. It still
+fails within three seconds when the post-dispatch drain is removed.
+
+Ubuntu 22.04's Mesa 23.2.1 introduced a separate CI obstacle: its X11 software
+fallback sends depth-24 images to GPUI's depth-32 windows under Xvfb without DRI3.
+Both the eager renderer baseline and the candidate rendered black. Tracing the
+driver call and changing only its depth in an ignored diagnostic probe made the
+pixel tests pass. Upstream's
+[Mesa 24.1 fix](https://docs.mesa3d.org/relnotes/24.1.0.html) uses the swapchain depth.
+The stock Ubuntu 24.04 Mesa 25.2.8 graphics stack passed both native pill tests,
+100 SVG/path resize/show/hide cycles at four scales, and the full simulated
+GUI/disconnect check locally, without the diagnostic shim. Distribution builds
+retain Ubuntu 22.04 and their glibc 2.35 check; native graphics gates run those
+exact compiled binaries and packaged launchers in an Ubuntu 24.04 container.
+This isolates a software-driver requirement without changing application
+transparency or establishing compatibility for unmeasured hardware drivers.
+
 With every window hidden, a disconnected private X server left the event socket
 continuously readable. Logging the polling error and returning success retried
 that dead socket indefinitely: 2.50 seconds of CPU over 2.50 seconds elapsed,

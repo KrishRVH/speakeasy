@@ -161,6 +161,8 @@ baseline.
 older builder, checking glibc 2.35. `--native-tar` makes an unbundled archive for the
 current machine; extract it and run `Speakeasy.AppDir/AppRun`. The release workflow
 builds Linux on Ubuntu 22.04; Linux pull-request checks also upload test artifacts.
+Native graphics checks run those binaries in an Ubuntu 24.04 container with
+stock Mesa, preserving the build ABI while exercising a corrected software driver.
 CPU, memory, latency, and frame pacing checks are described in
 [performance](docs/performance.md).
 
@@ -252,8 +254,11 @@ and insertion. They never record, install a global hook, or touch the clipboard.
 - On Linux, `python3 scripts/check-demo-linux.py target/release/speakeasy`
   opens a private Xvfb display, checks rendered Settings and the pill's input
   shape, and waits for the simulated preview to hide. It needs Xvfb, x11-utils,
-  and a Vulkan driver; Mesa's software driver supports headless builders.
-  The release workflow runs it against packaged launchers. The separate
+  and a Vulkan driver. Headless Xvfb checks need Mesa's X11 software presentation
+  fix, included in Mesa 24.1. `bash scripts/check-rendering-linux.sh` builds the
+  native fixtures and runs them plus the release binary in an Ubuntu 24.04 Docker
+  container with stock Mesa; `--packages` checks the AppImage and tar launchers.
+  The release workflow uses this packaged check. The separate
   `idle_native_pill_starts_unmapped_and_can_show_and_hide` opt-in test verifies
   the pill starts hidden and supports native show/hide on that private display.
 - `cargo run --locked -p speakeasy --example check_native_rendering -- --native-gui`

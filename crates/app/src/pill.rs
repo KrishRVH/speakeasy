@@ -1021,19 +1021,36 @@ mod tests {
                         })?
                     })??;
                     let (connection, _) = x11rb::connect(None)?;
+                    let geometry = connection.get_geometry(id)?.reply()?;
                     let deadline = Instant::now() + Duration::from_secs(3);
                     loop {
                         Timer::after(Duration::from_millis(50)).await;
                         let image = connection
-                            .get_image(ImageFormat::Z_PIXMAP, id, 0, 0, 64, 64, u32::MAX)?
+                            .get_image(
+                                ImageFormat::Z_PIXMAP,
+                                id,
+                                0,
+                                0,
+                                geometry.width,
+                                geometry.height,
+                                u32::MAX,
+                            )?
                             .reply()?;
-                        let colors: HashSet<_> = image.data.as_chunks::<4>().0.iter().collect();
-                        if colors.len() > 1 {
+                        let colors: HashSet<_> = image
+                            .data
+                            .as_chunks::<4>()
+                            .0
+                            .iter()
+                            .map(|pixel| u32::from_ne_bytes(*pixel) & 0x00ff_ffff)
+                            .collect();
+                        if colors.contains(&0x113355) && colors.contains(&0x557799) {
                             return Ok(());
                         }
                         ensure!(
                             Instant::now() < deadline,
-                            "Window opened after launch never presented its two colors"
+                            "Window opened after launch never presented its two colors ({}×{} pixels)",
+                            geometry.width,
+                            geometry.height
                         );
                     }
                 }
