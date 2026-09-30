@@ -32,6 +32,8 @@ def check(executable, startup_only, directory):
         env.pop(name, None)
     env["XDG_SESSION_TYPE"] = "x11"
     env["XDG_RUNTIME_DIR"] = str(directory)
+    # Keep the 720-DIP Settings window within this private 720-pixel display.
+    env["GPUI_X11_SCALE_FACTOR"] = "1"
     # Prefer Mesa's CPU renderer so the check also works without a physical GPU.
     software_drivers = sorted(Path("/usr/share/vulkan/icd.d").glob("lvp_icd*.json"))
     if software_drivers:
@@ -174,6 +176,11 @@ def verify(app, env, startup_only):
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             alive()
+            # Window metadata can arrive before mapping; XGetImage requires a
+            # viewable window, otherwise Xlib terminates this checker on BadMatch.
+            if "Map State: IsViewable" not in command("xwininfo", "-id", owned["Speakeasy"], env=env):
+                time.sleep(0.05)
+                continue
             image = x11.XGetImage(display, int(owned["Speakeasy"], 16), 0, 0, 400, 300,
                                  ctypes.c_ulong(-1).value, 2)
             if image:
