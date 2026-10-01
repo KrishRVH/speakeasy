@@ -50,6 +50,14 @@ The source patches cover native windows, frame scheduling, and path resources:
   Settings does not require full-window path scratch textures. The pill
   retains its existing path rendering.
 
+- `src/taffy.rs` gives grid fractions explicit `f32` literals for the pinned
+  nightly's stricter float fallback diagnostics. `platform/linux/platform.rs`
+  compiles its Wayland-only descriptor reader and imports only with Wayland.
+  The X11 build no longer carries dead code or its unused imports.
+- `Cargo.toml` updates the macOS Core Foundation requirement to `0.10.1`.
+  The matching media requirement is documented in the
+  [media compatibility patch](../gpui_media/README.speakeasy.md).
+
 The Linux native pill tests and `scripts/check-demo-linux.py` exercise real
 windows in a private X server without microphone, shortcut, or clipboard access.
 They verify initial visibility, delayed rendering, and hidden display disconnect.
@@ -63,3 +71,10 @@ workspace. Remove the override and this directory when a compatible published
 GPUI release covers these native-handle, visibility, event-draining, timing,
 frame-source lifetime, and path-resource contracts and passes the regression
 checks. Remove the portable dependency integration tests along with the override.
+
+The app's forced-exit fallback retains its instance lock in the future returned
+from `on_app_quit`. Re-check `App::shutdown` ordering on GPUI updates: observers
+must run before window disposal/Settings saves, and returned futures must be
+polled after window disposal. Settings must remain owned by its window only.
+The standalone GPUI manifest carries the same media override as the root so
+its Cargo-regenerated lockfile remains resolvable.

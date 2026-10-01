@@ -9,9 +9,14 @@ use std::{
 use std::{
     ffi::OsString,
     fs::File,
-    io::Read as _,
-    os::fd::{AsFd, AsRawFd, FromRawFd},
+    os::fd::AsFd,
     time::Duration,
+};
+
+#[cfg(feature = "wayland")]
+use std::{
+    io::Read as _,
+    os::fd::{AsRawFd, FromRawFd},
 };
 
 use anyhow::{Context as _, anyhow};
@@ -685,7 +690,7 @@ pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::S
     state
 }
 
-#[cfg(any(feature = "wayland", feature = "x11"))]
+#[cfg(feature = "wayland")]
 pub(super) unsafe fn read_fd(mut fd: filedescriptor::FileDescriptor) -> Result<Vec<u8>> {
     let mut file = unsafe { File::from_raw_fd(fd.as_raw_fd()) };
     let mut buffer = Vec::new();

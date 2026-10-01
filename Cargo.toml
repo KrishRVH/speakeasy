@@ -1,16 +1,48 @@
 [workspace]
 members = ["crates/core", "crates/platform", "crates/app"]
-exclude = ["vendor/gpui"]
+exclude = ["vendor/gpui", "vendor/gpui_media"]
 resolver = "3"
 
 [patch.crates-io]
 gpui = { path = "vendor/gpui" }
+gpui_media = { path = "vendor/gpui_media" }
 
 [workspace.package]
 version = "0.2.2"
 edition = "2024"
 rust-version = "1.98.1"
 publish = false
+
+[workspace.dependencies]
+anyhow = "1.0.104"
+arboard = { version = "3.6.1", default-features = false }
+async-channel = "2.5.0"
+block2 = "0.6.2"
+clipboard-win = "5.4.1"
+core-foundation = "0.10.1"
+core-graphics = "0.25.0"
+cpal = "0.18.2"
+embed-resource = "3.0.11"
+futures-util = "0.3.34"
+gpui = { version = "=0.2.2", default-features = false }
+libc = "0.2.189"
+libloading = "0.9.0"
+objc2 = "0.6.4"
+objc2-app-kit = "0.3.2"
+objc2-foundation = "0.3.2"
+raw-window-handle = "0.6.2"
+reqwest = { version = "0.13.5", default-features = false }
+rtrb = "0.4.0"
+serde = "1.0.229"
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+tempfile = "3.27.0"
+tokio = "1.53.1"
+tray-icon = { version = "0.26.0", default-features = false }
+windows-sys = "0.61.2"
+x11rb = "0.14.0"
+xkbcommon = "0.9.0"
+zbus = { version = "5.19.0", default-features = false }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

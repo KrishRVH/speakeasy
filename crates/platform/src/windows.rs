@@ -3,7 +3,10 @@ use anyhow::bail;
 use std::{
     cell::RefCell,
     ffi::OsString,
-    os::windows::ffi::OsStringExt,
+    os::windows::{
+        ffi::OsStringExt,
+        io::{AsRawHandle, FromRawHandle, OwnedHandle},
+    },
     path::PathBuf,
     ptr::{null, null_mut},
     thread,
@@ -15,7 +18,7 @@ use windows_sys::Win32::{
         Com::{COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize},
         LibraryLoader::GetModuleHandleW,
         RemoteDesktop::*,
-        Threading::{GetCurrentProcessId, GetCurrentThreadId},
+        Threading::{CreateEventW, GetCurrentProcessId, GetCurrentThreadId, INFINITE, SetEvent},
     },
     UI::{Controls::Dialogs::*, HiDpi::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
 };
@@ -41,7 +44,7 @@ unsafe extern "system" fn lifecycle(
             {
                 deliver(&state.tx, Input::Cancel);
                 deliver(&state.tx, Input::Release);
-                state.chord.interrupt();
+                state.policy.interrupt();
             }
         });
     }
@@ -50,57 +53,25 @@ unsafe extern "system" fn lifecycle(
 }
 struct HookState {
     tx: InputSender,
-    chord: Chord,
-    down: [bool; 4],
+    policy: keyboard::Windows,
 }
-
 impl HookState {
-    /// Returns whether to swallow the event. Only Space that locks hands-free is
-    /// swallowed; the chord, Escape, and every other key reach the focused app.
     fn observe(&mut self, key: u32, down: bool) -> bool {
-        if key == u32::from(VK_ESCAPE) {
-            if down {
-                deliver(&self.tx, Input::Cancel);
-            }
-            return false;
-        }
-        if key == u32::from(VK_SPACE) && self.chord.space(down) {
-            if down {
-                deliver(&self.tx, Input::Lock);
-            }
-            return true;
-        }
-        let Some(index) = CHORD.iter().position(|&vk| u32::from(vk) == key) else {
-            if down && self.chord.interrupt() {
-                deliver(&self.tx, Input::Cancel);
-                deliver(&self.tx, Input::Release);
-            }
-            return false;
-        };
-        let fresh = down && !self.down[index];
-        self.down[index] = down;
-        for (other, &vk) in CHORD.iter().enumerate() {
-            // A release missed during a desktop switch must not keep the chord held.
-            // SAFETY: GetAsyncKeyState has no pointer or lifetime requirements.
-            if other != index && self.down[other] && unsafe { GetAsyncKeyState(i32::from(vk)) } >= 0
-            {
-                self.down[other] = false;
+        // The callback's own key has not yet updated GetAsyncKeyState. Policy
+        // overrides it with this event and uses this snapshot for missed releases.
+        let physical = CHORD.map(|vk| {
+            // SAFETY: GetAsyncKeyState accepts a value, with no pointer lifetime.
+            unsafe { GetAsyncKeyState(i32::from(vk)) < 0 }
+        });
+        let decision = self.policy.observe(key, down, physical);
+        decision.deliver(&self.tx);
+        if decision.starts() {
+            // SAFETY: posts the Start-menu mask to this hook's own thread.
+            unsafe {
+                PostThreadMessageW(GetCurrentThreadId(), MASK_START, 0, 0);
             }
         }
-        let held = (self.down[0] || self.down[1]) && (self.down[2] || self.down[3]);
-        match self.chord.modifiers(held, fresh) {
-            Some(Input::Press) => {
-                deliver(&self.tx, Input::Press);
-                // Send the mask after this callback returns, while Win is still down.
-                // SAFETY: posts a message to this hook's own message-loop thread.
-                unsafe {
-                    PostThreadMessageW(GetCurrentThreadId(), MASK_START, 0, 0);
-                }
-            }
-            Some(input) => deliver(&self.tx, input),
-            None => {}
-        }
-        false
+        decision.swallow
     }
 }
 
@@ -137,7 +108,8 @@ thread_local! {
 }
 
 pub struct InputMonitor {
-    control: Arc<MonitorControl<u32>>,
+    control: Arc<MonitorControl<()>>,
+    wake: Arc<OwnedHandle>,
     finished: async_channel::Receiver<()>,
     thread: Option<thread::JoinHandle<()>>,
 }
@@ -146,6 +118,16 @@ impl InputMonitor {
     pub fn start(tx: InputSender) -> anyhow::Result<Self> {
         let control = Arc::new(MonitorControl::default());
         let native_control = control.clone();
+        // SAFETY: a successful CreateEventW transfers the sole owning handle.
+        // OwnedHandle closes it only after both monitor owners have released it.
+        let wake = unsafe {
+            let event = CreateEventW(null(), 1, 0, null());
+            if event.is_null() {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            Arc::new(OwnedHandle::from_raw_handle(event.cast()))
+        };
+        let native_wake = wake.clone();
         let (complete, finished) = async_channel::bounded(1);
         let thread = thread::Builder::new()
             .name("shortcut".into())
@@ -153,11 +135,10 @@ impl InputMonitor {
                 HOOK.with(|slot| {
                     *slot.borrow_mut() = Some(HookState {
                         tx: tx.clone(),
-                        chord: Chord::default(),
-                        down: [false; 4],
+                        policy: keyboard::Windows::default(),
                     })
                 });
-                if let Err(error) = run_monitor(&tx, &native_control)
+                if let Err(error) = run_monitor(&tx, &native_control, &native_wake)
                     && !native_control.stopping()
                     && !tx.is_closed()
                 {
@@ -175,16 +156,19 @@ impl InputMonitor {
             })?;
         Ok(Self {
             control,
+            wake,
             finished,
             thread: Some(thread),
         })
     }
 
     pub fn request_stop(&self) {
-        self.control.request_stop(|thread_id| {
-            // SAFETY: publication follows message-queue creation. The control
-            // lock prevents this ID from being used after its thread retires.
-            unsafe { PostThreadMessageW(*thread_id, WM_QUIT, 0, 0) };
+        self.control.request_stop(|_| {
+            // SAFETY: the shared owning handle remains live through native exit;
+            // setting a manual-reset event wakes a running or future wait.
+            unsafe {
+                SetEvent(self.wake.as_raw_handle().cast());
+            }
         });
     }
 
@@ -196,7 +180,11 @@ impl InputMonitor {
     }
 }
 
-fn run_monitor(tx: &InputSender, control: &MonitorControl<u32>) -> anyhow::Result<()> {
+fn run_monitor(
+    tx: &InputSender,
+    control: &MonitorControl<()>,
+    wake: &OwnedHandle,
+) -> anyhow::Result<()> {
     if control.stopping() {
         return Ok(());
     }
@@ -216,7 +204,11 @@ fn run_monitor(tx: &InputSender, control: &MonitorControl<u32>) -> anyhow::Resul
             lpszClassName: class_name.as_ptr(),
             ..std::mem::zeroed()
         };
-        RegisterClassW(&class);
+        if RegisterClassW(&class) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS {
+            let error = std::io::Error::last_os_error();
+            UnhookWindowsHookEx(hook);
+            return Err(error.into());
+        }
         let window = CreateWindowExW(
             0,
             class_name.as_ptr(),
@@ -241,7 +233,7 @@ fn run_monitor(tx: &InputSender, control: &MonitorControl<u32>) -> anyhow::Resul
             return Err(error.into());
         }
         let mut result = Ok(());
-        if control.start(GetCurrentThreadId(), || {
+        if control.start((), || {
             deliver(
                 tx,
                 Input::DesktopReady {
@@ -250,21 +242,38 @@ fn run_monitor(tx: &InputSender, control: &MonitorControl<u32>) -> anyhow::Resul
                 },
             );
         }) {
-            loop {
-                match GetMessageW(&mut msg, null_mut(), 0, 0) {
-                    -1 => {
+            'pump: loop {
+                // Drain queued messages before waiting, including thread-only
+                // Start-menu masks. Stop wins even under continuous input.
+                while PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
+                    if control.stopping() || msg.message == WM_QUIT {
+                        break 'pump;
+                    }
+                    if msg.message == MASK_START {
+                        mask_start_menu();
+                        continue;
+                    }
+                    TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+                if control.stopping() {
+                    break;
+                }
+                let handles = [wake.as_raw_handle().cast()];
+                match MsgWaitForMultipleObjectsEx(
+                    1,
+                    handles.as_ptr(),
+                    INFINITE,
+                    QS_ALLINPUT,
+                    MWMO_INPUTAVAILABLE,
+                ) {
+                    WAIT_OBJECT_0 => break,
+                    WAIT_FAILED => {
                         result = Err(std::io::Error::last_os_error().into());
                         break;
                     }
-                    0 => break,
                     _ => {}
                 }
-                if msg.message == MASK_START {
-                    mask_start_menu();
-                    continue;
-                }
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
             }
         }
         control.clear();
@@ -628,10 +637,12 @@ pub fn insert(
             ));
         }
     }
-    if modifiers_down() {
-        return Ok(Inserted::Copied(
-            "Copied. Release the shortcut and press Ctrl+V.",
-        ));
+    if let Some(outcome) = insertion::preflight(
+        has_external_target(),
+        !modifiers_down(),
+        insertion::Mode::Paste,
+    ) {
+        return Ok(outcome);
     }
     // SAFETY: INPUT records contain initialized keyboard payloads. The OS
     // copies them synchronously; our marker excludes them from shortcut handling.
@@ -700,10 +711,12 @@ pub fn reduced_motion() -> bool {
 }
 
 fn insert_direct(text: &str, gate: &InsertPermit) -> anyhow::Result<Inserted> {
-    if modifiers_down() {
-        return Ok(Inserted::Unavailable(
-            "Release the shortcut and try again. Clipboard preserved.",
-        ));
+    if let Some(outcome) = insertion::preflight(
+        has_external_target(),
+        !modifiers_down(),
+        insertion::Mode::Direct,
+    ) {
+        return Ok(outcome);
     }
     let mut input = Vec::with_capacity(text.len() * 2);
     for unit in text.replace("\r\n", "\n").encode_utf16() {

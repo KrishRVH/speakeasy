@@ -78,8 +78,10 @@ the next attempt resumes where it stopped.
 
 Speakeasy targets Windows 11 x64, macOS 14+ on Apple silicon, and experimental
 Linux x86_64 builds with glibc 2.35 or later. Use the pinned
-Rust toolchain. Windows builds need the Visual Studio C++ Build Tools and the
-Windows SDK; macOS builds need the Xcode command line tools.
+nightly Rust toolchain in `rust-toolchain.toml` (including rustfmt and Clippy).
+Workspace dependencies are declared centrally in the root `Cargo.toml`.
+Windows builds need the Visual Studio C++ Build Tools and the Windows SDK;
+macOS builds need the Xcode command line tools.
 
 ```sh
 cargo run --locked -p speakeasy -- --demo   # simulated preview
@@ -217,7 +219,10 @@ cargo test --workspace --locked
 ```
 
 Default tests drive the real session owner with mocked microphone, inference,
-and insertion. They never record, install a global hook, or touch the clipboard.
+and insertion. A paused clock exercises gesture deadlines and the five-minute cap.
+They never record, install a global hook, or touch the clipboard. PR CI runs these
+checks on Linux, Windows, and macOS. See the
+[architecture change and test map](docs/architecture.md#change-and-test-map).
 
 <details>
 <summary>Packaging, fixture tests, and native checks</summary>

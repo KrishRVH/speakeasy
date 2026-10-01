@@ -128,10 +128,10 @@ impl LocalSpeech {
             _ = cancelled.changed() => Err(anyhow::anyhow!("Local model startup cancelled")),
             result = timeout(Duration::from_secs(120), async {
             loop {
-                if server.child.try_wait()?.is_some() {
+                if let Some(status) = server.child.try_wait()? {
                     #[cfg(unix)]
                     server.group.disarm();
-                    bail!("Local speech stopped. Check the model, CPU compatibility, and GPU dependencies.");
+                    bail!("{}", startup_exit(status));
                 }
                 if let Ok(response) = server
                     .client
@@ -286,8 +286,84 @@ impl LocalSpeech {
     }
 }
 
+// Exit status carries no engine output, credentials, audio, or transcript. Keep
+// stderr discarded: a private engine may print dictated text there after ready.
+fn startup_exit(status: std::process::ExitStatus) -> String {
+    #[cfg(unix)]
+    let illegal_instruction = {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal() == Some(4)
+    }; // SIGILL on supported Unix platforms
+    #[cfg(not(unix))]
+    let illegal_instruction = false;
+    format!(
+        "Local speech exited before becoming ready ({status}). {}",
+        exit_remedy(status.code(), illegal_instruction)
+    )
+}
+fn exit_remedy(code: Option<i32>, illegal_instruction: bool) -> &'static str {
+    match code.map(|code| code as u32) {
+        _ if illegal_instruction => {
+            "This engine uses CPU instructions unavailable on this machine. Choose a compatible engine executable in Settings."
+        }
+        Some(0xc000001d) => {
+            "This engine uses CPU instructions unavailable on this machine. Choose a compatible engine executable in Settings."
+        }
+        Some(0xc0000135 | 0xc0000139 | 0xc000007b) => {
+            "This engine needs missing or incompatible native libraries. Run automatic setup or install the matching engine dependencies."
+        }
+        Some(2) => {
+            "Check that the selected engine supports Speakeasy's server arguments. Run automatic setup to install the supported engine, or choose its executable in Settings."
+        }
+        _ => {
+            "Check the selected model and engine dependencies. Run automatic setup to install the supported engine, or choose a compatible executable in Settings."
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn exit_diagnostics_identify_actions_without_engine_output() {
+        assert!(super::exit_remedy(Some(2), false).contains("server arguments"));
+        assert!(super::exit_remedy(None, true).contains("CPU instructions"));
+        assert!(
+            super::exit_remedy(Some(0xc0000135_u32 as i32), false).contains("native libraries")
+        );
+        assert!(super::exit_remedy(Some(1), false).contains("selected model"));
+    }
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn argument_failure_reports_exit_status_and_keeps_stderr_private() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir()?;
+        let executable = directory.path().join("worker");
+        std::fs::write(
+            &executable,
+            "#!/bin/sh\nprintf 'private transcript or credential' >&2\nexit 2\n",
+        )?;
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))?;
+        let (cancel, cancelled) = watch::channel(false);
+        let result = LocalSpeech::start(
+            Config {
+                engine_executable: executable,
+                use_gpu: false,
+                ..Config::default()
+            },
+            cancelled,
+        )
+        .await;
+        drop(cancel);
+        let error = result
+            .err()
+            .context("Engine unexpectedly became ready")?
+            .to_string();
+        assert!(error.contains("exit status: 2"));
+        assert!(error.contains("server arguments"));
+        assert!(!error.contains("private transcript"));
+        Ok(())
+    }
+
     use super::*;
 
     #[cfg(target_os = "linux")]

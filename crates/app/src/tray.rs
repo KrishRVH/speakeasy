@@ -104,7 +104,7 @@ pub fn install(cx: &mut App) -> anyhow::Result<()> {
                     } else if id.as_ref() == Some(&cancel_id) {
                         shell::send(Input::Cancel, cx);
                     } else if id.as_ref() == Some(&quit_id) {
-                        cx.quit();
+                        shell::request_quit(cx);
                     }
                 })
                 .is_err()
@@ -182,7 +182,7 @@ pub fn install(cx: &mut App) -> anyhow::Result<()> {
 
 fn state(services: &Services, snapshot: &crate::runtime::Snapshot) -> TrayState {
     let running = services.running() || services.demo;
-    let pausing = services.retiring.is_some();
+    let pausing = services.pausing();
     let capturing = matches!(snapshot.phase, Phase::Starting | Phase::Recording);
     TrayState {
         indicator: status::indicator(snapshot, running, pausing),

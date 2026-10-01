@@ -19,202 +19,11 @@ use std::{
 };
 use tokio::sync::watch;
 
-pub struct Services {
-    pub monitor: Option<InputMonitor>,
-    pub runtime: Option<Runtime>,
-    // A paused owner stays here until native cleanup completes. Its task only
-    // waits for acknowledgement; dropping Services still joins the runtime.
-    pub retiring: Option<Runtime>,
-    pub retiring_monitor: Option<InputMonitor>,
-    pub retirement: Option<Task<()>>,
-    pub pending: Option<Config>,
-    pub path: PathBuf,
-    pub config: Config,
-    pub configuration_epoch: u64,
-    pub validation: Option<(u64, Task<()>)>,
-    pub output: watch::Sender<Snapshot>,
-    pub pill: WindowHandle<Pill>,
-    pub window: Option<WindowHandle<Settings>>,
-    pub demo: bool,
-    pub demo_tray: bool,
-    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-    pub visibility: Option<Task<()>>,
-    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-    pub tray_hint_seen: bool,
-    pub _reopen: Option<Task<()>>,
-    pub _instance: Option<crate::instance::Instance>,
-}
-impl Global for Services {}
-
-impl Drop for Services {
-    fn drop(&mut self) {
-        // Signal every owner before field disposal joins any native work.
-        for runtime in [&self.runtime, &self.retiring].into_iter().flatten() {
-            runtime.request_stop();
-        }
-        for monitor in [&self.monitor, &self.retiring_monitor]
-            .into_iter()
-            .flatten()
-        {
-            monitor.request_stop();
-        }
-    }
-}
-
-impl Services {
-    pub fn running(&self) -> bool {
-        self.runtime.as_ref().is_some_and(Runtime::is_running)
-            || self
-                .validation
-                .as_ref()
-                .is_some_and(|(epoch, _)| *epoch == self.configuration_epoch)
-    }
-    pub fn apply(&mut self, config: Config, cx: &mut App) -> anyhow::Result<()> {
-        self.configuration_epoch = self.configuration_epoch.wrapping_add(1);
-        if self
-            .runtime
-            .as_ref()
-            .is_some_and(|runtime| !runtime.is_running())
-        {
-            self.stop(cx);
-        }
-        if self.retiring.is_some() {
-            self.config = config.clone();
-            self.pending = Some(config);
-            return Ok(());
-        }
-        #[cfg(target_os = "linux")]
-        if self.runtime.is_some() && self.config.linux != config.linux {
-            self.stop(cx);
-            self.pending = Some(config.clone());
-            self.config = config;
-            return Ok(());
-        }
-        if let Some(runtime) = &self.runtime {
-            runtime.configure(config.clone());
-        } else {
-            self.output.send_modify(|snapshot| {
-                snapshot.phase = Phase::Idle;
-                snapshot.model = ModelState::Loading;
-                snapshot.message = crate::runtime::LOADING.into();
-            });
-            let (runtime, monitor) = Runtime::start(config.clone(), self.output.clone())?;
-            self.monitor = Some(monitor);
-            self.runtime = Some(runtime);
-        }
-        self.config = config;
-        Ok(())
-    }
-
-    fn resume(&mut self, cx: &mut App) {
-        self.configuration_epoch = self.configuration_epoch.wrapping_add(1);
-        let epoch = self.configuration_epoch;
-        let mut config = self.config.clone();
-        let path = self.path.clone();
-        let validation = cx.background_executor().spawn(async move {
-            config.validate(&path)?;
-            Ok::<_, anyhow::Error>(config)
-        });
-        self.output.send_modify(|snapshot| {
-            snapshot.phase = Phase::Idle;
-            snapshot.model = ModelState::Loading;
-            snapshot.message = "Checking local speech settings…".into();
-        });
-        self.validation = Some((
-            epoch,
-            cx.spawn(async move |cx| {
-                let result = validation.await;
-                let _ = cx.update(|cx| {
-                    if !cx.has_global::<Services>() {
-                        return;
-                    }
-                    let result = cx.update_global::<Services, _>(|services, cx| {
-                        let result = if services.configuration_epoch == epoch {
-                            result.and_then(|config| services.apply(config, cx))
-                        } else {
-                            Ok(())
-                        };
-                        if services
-                            .validation
-                            .as_ref()
-                            .is_some_and(|(pending, _)| *pending == epoch)
-                        {
-                            // All awaiting work has finished before releasing
-                            // the foreground task's own handle.
-                            services.validation.take();
-                        }
-                        result
-                    });
-                    if let Err(error) = result {
-                        cx.global::<Services>().output.send_modify(|snapshot| {
-                            snapshot.phase = Phase::Error;
-                            snapshot.message = error.to_string();
-                        });
-                        reveal(cx);
-                    }
-                });
-            }),
-        ));
-    }
-    pub fn stop(&mut self, cx: &mut App) {
-        self.configuration_epoch = self.configuration_epoch.wrapping_add(1);
-        if let Some(runtime) = &self.runtime {
-            runtime.request_stop();
-        }
-        let monitor = self.monitor.take();
-        if let Some(monitor) = &monitor {
-            monitor.request_stop();
-        }
-        self.pending = None;
-        if let Some(runtime) = self.runtime.take() {
-            let stopped = runtime.stopped();
-            let monitor_stopped = monitor.as_ref().map(InputMonitor::stopped);
-            self.retiring = Some(runtime);
-            self.retiring_monitor = monitor;
-            self.retirement = Some(cx.spawn(async move |cx| {
-                stopped.await;
-                if let Some(stopped) = monitor_stopped {
-                    stopped.await;
-                }
-                let _ = cx.update(|cx| {
-                    cx.update_global::<Services, _>(|services, cx| {
-                        // The owner has stopped publishing and released its
-                        // worker, so joining here does not wait for native work.
-                        services.retiring.take();
-                        // Keep native ownership in Services through Quit, and
-                        // remove macOS lifecycle observers on the UI thread.
-                        services.retiring_monitor.take();
-                        if let Some(config) = services.pending.take() {
-                            if let Err(error) = services.apply(config, cx) {
-                                services.output.send_modify(|snapshot| {
-                                    snapshot.phase = Phase::Error;
-                                    snapshot.message = error.to_string();
-                                });
-                            }
-                        } else {
-                            services.output.send_replace(Snapshot {
-                                message: "Dictation paused".into(),
-                                ..Snapshot::default()
-                            });
-                        }
-                        // Release our task handle after all completion work;
-                        // nothing after this point may await further work.
-                        services.retirement.take();
-                    });
-                });
-            }));
-        }
-        self.output.send_replace(Snapshot {
-            message: if self.retiring.is_some() {
-                "Pausing dictation…"
-            } else {
-                "Dictation paused"
-            }
-            .into(),
-            ..Snapshot::default()
-        });
-    }
-}
+mod lifecycle;
+mod services;
+mod shutdown;
+pub use services::Services;
+pub use shutdown::request_quit;
 
 pub fn reveal(cx: &mut App) {
     if !cx.has_global::<Services>() {
@@ -231,7 +40,7 @@ pub fn toggle_enabled(cx: &mut App) {
         return;
     }
     cx.update_global::<Services, _>(|services, cx| {
-        if services.retiring.is_some() {
+        if services.pausing() {
             return;
         }
         if services.running() {
@@ -330,7 +139,7 @@ pub fn open(cx: &mut App) -> anyhow::Result<()> {
                     if !cx.has_global::<crate::tray::Tray>()
                         || !cx.global::<crate::tray::Tray>().available
                     {
-                        cx.quit();
+                        request_quit(cx);
                         return false;
                     }
                     if let Some(handle) = cx.global::<Services>().window {
@@ -373,7 +182,7 @@ pub fn open(cx: &mut App) -> anyhow::Result<()> {
                             .update(cx, |view, cx| {
                                 let services = cx.global::<Services>();
                                 let running = services.running() || services.demo;
-                                let pausing = services.retiring.is_some();
+                                let pausing = services.pausing();
                                 let presentation = (
                                     status::indicator(&snapshot, running, pausing),
                                     snapshot.shortcut.clone(),
@@ -634,6 +443,9 @@ impl Settings {
     }
     /// Starts automatic setup, or cancels it while running.
     fn set_up(&mut self, cx: &mut Context<Self>) {
+        if cx.global::<Services>().quitting() {
+            return;
+        }
         if let Some((setup, updates)) = self.setup.take() {
             drop(updates);
             setup.request_stop();
@@ -697,6 +509,9 @@ impl Settings {
         self.setup = Some((setup, task));
     }
     fn save(&mut self, cx: &mut Context<Self>) {
+        if cx.global::<Services>().quitting() {
+            return;
+        }
         let services = cx.global::<Services>();
         let epoch = services.configuration_epoch;
         let path = services.path.clone();
@@ -792,7 +607,7 @@ impl Settings {
             if save_may_enable(
                 epoch,
                 services.configuration_epoch,
-                services.running() || services.pending.is_some(),
+                services.running() || services.has_pending(),
             ) {
                 services.apply(saved.validated, cx)
             } else {
@@ -853,6 +668,9 @@ impl Settings {
         }));
     }
     fn act(&mut self, action: Action, window: &Window, cx: &mut Context<Self>) {
+        if cx.global::<Services>().quitting() {
+            return;
+        }
         match action {
             Action::Setup => self.set_up(cx),
             Action::Engine => {
@@ -951,7 +769,7 @@ impl Settings {
                 self.notice = None;
             }
             Action::Preview => self.play(cx),
-            Action::Quit => cx.quit(),
+            Action::Quit => request_quit(cx),
         }
         cx.notify();
     }
@@ -1216,7 +1034,7 @@ impl Render for Settings {
                 status::indicator(
                     &snapshot,
                     services.running() || services.demo,
-                    services.retiring.is_some(),
+                    services.pausing(),
                 ),
                 snapshot.shortcut.clone(),
                 snapshot.cancel_shortcut.clone(),
@@ -1557,7 +1375,7 @@ impl Render for Settings {
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 pub fn send(action: Input, cx: &App) {
-    if let Some(runtime) = &cx.global::<Services>().runtime {
+    if let Some(runtime) = cx.global::<Services>().runtime() {
         speakeasy_platform::deliver(&runtime.input, action);
     }
 }

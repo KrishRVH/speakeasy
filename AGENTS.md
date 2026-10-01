@@ -5,6 +5,11 @@ small, and usable offline with local speech engines. Read `README.md` for setup
 and behavior and `docs/architecture.md` for module boundaries. The rules below
 adapt `~/devr/standards` to this app.
 
+For session, shutdown, keyboard, insertion, or dependency changes, use the
+[change and test map](docs/architecture.md#change-and-test-map) to find the owner,
+native adapter, and relevant checks. Keep portable decisions beside their tests;
+retain native resources until cleanup acknowledges before opening replacements.
+
 ## Ownership
 
 - `crates/core` owns pure gestures and motion; `crates/app` owns GPUI, session

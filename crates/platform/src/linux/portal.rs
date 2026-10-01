@@ -218,6 +218,11 @@ struct Preparing<'a> {
     task: LocalBoxFuture<'a, anyhow::Result<Prepared>>,
 }
 enum Prepared {
+    Target {
+        external: bool,
+        owned: bool,
+        direct: bool,
+    },
     SelectionSet,
     Copied(Option<u32>),
     Owned(bool),
@@ -441,18 +446,14 @@ async fn serve(
             pump_input.close();
         }
     }));
-    let x11_clipboard = if !bound.clipboard {
-        Some(x11::ClipboardWorker::new(input.clone())?)
-    } else {
-        None
-    };
-    if let Some(worker) = &x11_clipboard {
-        tokio::select! {
-            biased;
-            _ = stop.recv() => return Ok(()),
-            _ = input.sender.closed() => return Ok(()),
-            ready = worker.ready() => ready?,
-        }
+    // Focus checks share the owned X worker. It opens the native clipboard
+    // lazily, so portal clipboard/direct text never touch clipboard contents.
+    let x11_clipboard = x11::ClipboardWorker::new(input.clone())?;
+    tokio::select! {
+        biased;
+        _ = stop.recv() => return Ok(()),
+        _ = input.sender.closed() => return Ok(()),
+        ready = x11_clipboard.ready() => ready?,
     }
     let mut selection: Option<Selection> = None;
     let mut pending: Option<(Insertion, Instant)> = None;
@@ -494,8 +495,12 @@ async fn serve(
                 if !request.permit.active() {
                     respond(request, Ok(Inserted::Cancelled)).await;
                 } else if request.preserve {
-                    let result = insert_direct(&mut bound, &request);
-                    respond(request, result).await;
+                    let task = prepare_target(&x11_clipboard, &request, true, true);
+                    preparing = Some(Preparing {
+                        request,
+                        setting_selection: false,
+                        task,
+                    });
                 } else {
                     let task = prepare_clipboard(&clipboard, &bound, &x11_clipboard, &request);
                     preparing = Some(Preparing {
@@ -559,7 +564,7 @@ async fn serve(
                     }
                     Ok(Prepared::Copied(Some(owner))) => {
                         let permit = request.permit.clone();
-                        let worker = x11_clipboard.as_ref().context("Clipboard is unavailable")?;
+                        let worker = &x11_clipboard;
                         let task = async move { Ok(Prepared::Owned(worker.owns(owner, permit).await?)) }.boxed_local();
                         preparing = Some(Preparing { request, setting_selection: false, task });
                     }
@@ -570,13 +575,16 @@ async fn serve(
                         respond(request, Ok(result)).await;
                     }
                     Ok(Prepared::Owned(owned)) => {
-                        // Preparation yields while desktop feedback and ownership
-                        // change. Drain both before selecting a binding or committing.
-                        while let Ok(notice) = invalidated.try_recv() {
-                            apply_notice(notice, &mut bound, &mut selection);
-                        }
+                        let task = prepare_target(&x11_clipboard, &request, owned, false);
+                        preparing = Some(Preparing { request, setting_selection: false, task });
+                    }
+                    Ok(Prepared::Target { external, owned, direct }) => {
+                        // Preparation yields while focus/clipboard OS calls block.
+                        // Keep native cancellation and selection loss responsive.
+                        while let Ok(notice) = invalidated.try_recv() { apply_notice(notice, &mut bound, &mut selection); }
                         if !owned && bound.clipboard { selection = None; }
-                        let result = finish_paste(&mut bound, &request, settings, owned);
+                        let result = if direct { insert_direct(&mut bound, &request, external) }
+                            else { finish_paste(&mut bound, &request, settings, owned, external) };
                         respond(request, result).await;
                     }
                     Err(error) => respond(request, Err(error)).await,
@@ -783,7 +791,7 @@ fn shortcut_event(held: &mut bool, action: &str, activated: bool) -> Option<Inpu
 fn prepare_clipboard<'a>(
     proxy: &Proxy<'static>,
     bound: &Bound,
-    clipboard: &'a Option<x11::ClipboardWorker>,
+    clipboard: &'a x11::ClipboardWorker,
     request: &Insertion,
 ) -> LocalBoxFuture<'a, anyhow::Result<Prepared>> {
     let permit = request.permit.clone();
@@ -809,14 +817,41 @@ fn prepare_clipboard<'a>(
         .boxed_local()
     } else {
         let text = request.text.clone();
-        async move {
-            let worker = clipboard.as_ref().context("Clipboard is unavailable")?;
-            Ok(Prepared::Copied(worker.set_text(text, permit).await?))
-        }
-        .boxed_local()
+        async move { Ok(Prepared::Copied(clipboard.set_text(text, permit).await?)) }.boxed_local()
     }
 }
-fn insert_direct(bound: &mut Bound, request: &Insertion) -> anyhow::Result<Inserted> {
+fn prepare_target<'a>(
+    worker: &'a x11::ClipboardWorker,
+    request: &Insertion,
+    owned: bool,
+    direct: bool,
+) -> LocalBoxFuture<'a, anyhow::Result<Prepared>> {
+    let permit = request.permit.clone();
+    async move {
+        let external = worker.external_target(permit).await.unwrap_or(false);
+        Ok(Prepared::Target {
+            external,
+            owned,
+            direct,
+        })
+    }
+    .boxed_local()
+}
+fn insert_direct(
+    bound: &mut Bound,
+    request: &Insertion,
+    external: bool,
+) -> anyhow::Result<Inserted> {
+    if let Some(outcome) =
+        crate::insertion::preflight(external, true, crate::insertion::Mode::Direct)
+    {
+        return Ok(outcome);
+    }
+    if request.text.contains('\0') {
+        return Ok(Inserted::Unavailable(
+            "Direct input cannot contain a null character. Turn off Keep clipboard to use paste.",
+        ));
+    }
     if let Some(sender) = &mut bound.sender {
         sender.dispatch()?;
     }
@@ -832,7 +867,11 @@ fn insert_direct(bound: &mut Bound, request: &Insertion) -> anyhow::Result<Inser
     if !request.permit.commit() {
         return Ok(Inserted::Cancelled);
     }
-    sender.text(&request.text)?;
+    if sender.text(&request.text).is_err() {
+        return Ok(Inserted::Unavailable(
+            "Direct text input could not complete. Check your editor before dictating again; submission was not repeated.",
+        ));
+    }
     Ok(Inserted::Sent)
 }
 fn finish_paste(
@@ -840,6 +879,7 @@ fn finish_paste(
     request: &Insertion,
     settings: &DesktopOptions,
     owned: bool,
+    external: bool,
 ) -> anyhow::Result<Inserted> {
     if let Some(sender) = &mut bound.sender {
         sender.dispatch()?;
@@ -854,6 +894,11 @@ fn finish_paste(
             "Clipboard changed before paste. Dictate again."
         }));
     }
+    if let Some(outcome) =
+        crate::insertion::preflight(external, true, crate::insertion::Mode::Paste)
+    {
+        return Ok(outcome);
+    }
     let Some(sender) = bound.sender.as_mut().filter(|sender| {
         sender.keyboard_available()
             && sender.modifiers() == ei::Modifiers::Released
@@ -866,7 +911,11 @@ fn finish_paste(
     if !request.permit.commit() {
         return Ok(Inserted::Cancelled);
     }
-    sender.paste(settings.terminal_paste)?;
+    if sender.paste(settings.terminal_paste).is_err() {
+        return Ok(Inserted::Copied(
+            "Text copied, but input submission failed. Paste manually; automatic paste was not repeated.",
+        ));
+    }
     Ok(Inserted::Sent)
 }
 async fn transfer<D: Future<Output = anyhow::Result<()>>>(
@@ -941,7 +990,7 @@ mod tests {
     #[tokio::test]
     async fn stalled_transfers_allow_new_work_and_retire_without_detached_writes()
     -> anyhow::Result<()> {
-        let (events, _) = async_channel::bounded(1);
+        let (events, _receiver) = async_channel::bounded(1);
         let input = InputSender::new(events);
         let permit = input.begin().context("Recording")?;
         let selection = Selection::new(&"fixture".repeat(128 * 1024), permit);
@@ -987,7 +1036,7 @@ mod tests {
     #[tokio::test]
     async fn clipboard_transfer_survives_paste_commit_and_only_its_selection_invalidates_it()
     -> anyhow::Result<()> {
-        let (events, _) = async_channel::bounded(1);
+        let (events, _receiver) = async_channel::bounded(1);
         let input = InputSender::new(events);
         let previous = input.begin().context("Previous recording")?;
         let selected = Selection::new("fixture", previous.clone());
@@ -1048,7 +1097,7 @@ mod tests {
 
     #[tokio::test]
     async fn stalled_transfer_rpcs_are_bounded() -> anyhow::Result<()> {
-        let (events, _) = async_channel::bounded(1);
+        let (events, _receiver) = async_channel::bounded(1);
         let input = InputSender::new(events);
         let selected = Selection::new("fixture", input.begin().context("Recording")?);
         let (sent, reported) = async_channel::bounded(1);
@@ -1076,7 +1125,7 @@ mod tests {
 
     #[test]
     fn preceding_clipboard_loss_cannot_revoke_or_clear_a_new_selection() -> anyhow::Result<()> {
-        let (events, _) = async_channel::bounded(1);
+        let (events, _receiver) = async_channel::bounded(1);
         let input = InputSender::new(events);
         let previous = input.begin().context("Preceding recording")?;
         let next = input.begin().context("Current recording")?;

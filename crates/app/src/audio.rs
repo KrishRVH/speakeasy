@@ -1,4 +1,4 @@
-use crate::runtime::Event;
+use crate::runtime::{Event, SessionId};
 use anyhow::{Context, bail};
 use cpal::{
     SampleFormat, SizedSample,
@@ -26,7 +26,7 @@ pub struct Capture {
 
 impl Capture {
     pub fn start(
-        id: u64,
+        id: SessionId,
         microphone: Option<String>,
         tx: async_channel::Sender<Event>,
     ) -> anyhow::Result<Self> {
@@ -36,7 +36,7 @@ impl Capture {
     }
 
     fn spawn(
-        id: u64,
+        id: SessionId,
         tx: async_channel::Sender<Event>,
         work: impl FnOnce(
             &async_channel::Sender<Event>,
@@ -101,7 +101,7 @@ fn startup_stopped(command: &AtomicU8, tx: &async_channel::Sender<Event>) -> boo
 }
 
 fn record(
-    id: u64,
+    id: SessionId,
     microphone: Option<&str>,
     tx: &async_channel::Sender<Event>,
     command: &Arc<AtomicU8>,
@@ -229,6 +229,8 @@ fn record(
         count += added_count;
         if last_level.elapsed() >= Duration::from_millis(32) {
             let rms = (energy / f64::from(count.max(1))).sqrt() as f32;
+            // Speech meter spans -60 to -6 dBFS; the top is a speech reference,
+            // rather than a clipping indicator at 0 dBFS.
             let level = ((20.0 * rms.max(0.000_001).log10() + 60.0) / 54.0).clamp(0.0, 1.0);
             let _ = tx.try_send(Event::Level(id, level));
             energy = 0.0;
@@ -252,6 +254,7 @@ fn record(
         return Err(error);
     }
     if (pcm.len() - 44) / 2 < rate as usize / 5 || !trim_quiet_edges(&mut pcm, rate) {
+        pcm.fill(0); // Best effort for this owned buffer, as on cancellation.
         return Ok(None);
     }
     Ok(Some(wave(pcm, rate)))
@@ -528,11 +531,19 @@ mod tests {
     fn stopped_startup_returns_without_audio() -> anyhow::Result<()> {
         for command in [1, 2] {
             let (events, _audio) = async_channel::bounded(1);
-            assert!(record(1, None, &events, &Arc::new(AtomicU8::new(command)))?.is_none());
+            assert!(
+                record(
+                    SessionId::FIRST,
+                    None,
+                    &events,
+                    &Arc::new(AtomicU8::new(command))
+                )?
+                .is_none()
+            );
         }
         let (events, _audio) = async_channel::bounded(1);
         events.close();
-        assert!(record(1, None, &events, &Arc::new(AtomicU8::new(0)))?.is_none());
+        assert!(record(SessionId::FIRST, None, &events, &Arc::new(AtomicU8::new(0)))?.is_none());
         Ok(())
     }
 
@@ -541,7 +552,7 @@ mod tests {
         let (events, _audio) = async_channel::bounded(1);
         let (started, starting) = async_channel::bounded(1);
         let (release, waiting) = async_channel::bounded(1);
-        let capture = Capture::spawn(1, events, move |_, command| {
+        let capture = Capture::spawn(SessionId::FIRST, events, move |_, command| {
             started.send_blocking(command.clone())?;
             waiting.recv_blocking()?;
             Ok(None)
@@ -572,7 +583,7 @@ mod tests {
                 let (armed, arming) = async_channel::bounded(1);
                 let gate = Arc::new((Mutex::new(!wake_before_park), Condvar::new()));
                 let waiting = gate.clone();
-                let capture = Capture::spawn(1, events, move |_, command| {
+                let capture = Capture::spawn(SessionId::FIRST, events, move |_, command| {
                     // Arm after reading the command, so a missing notification
                     // cannot pass by finishing before the worker enters its wait.
                     anyhow::ensure!(command.load(Ordering::Acquire) == 0);
@@ -623,7 +634,10 @@ mod tests {
                         tokio::time::timeout(Duration::from_millis(400), audio.recv()).await;
                     worker.unpark();
                     tokio::time::timeout(Duration::from_secs(2), capture.retire()).await?;
-                    if !matches!(completed, Ok(Ok(Event::AudioDone(1, Ok(None))))) {
+                    if !matches!(
+                        completed,
+                        Ok(Ok(Event::AudioDone(SessionId::FIRST, Ok(None))))
+                    ) {
                         missed.push((cancel, wake_before_park));
                     }
                 }
@@ -639,8 +653,8 @@ mod tests {
     #[tokio::test]
     async fn closing_audio_events_unblocks_owned_capture_retirement() -> anyhow::Result<()> {
         let (events, audio) = async_channel::bounded(1);
-        events.try_send(Event::Ready(1))?;
-        let capture = Capture::spawn(1, events, |_, _| Ok(None))?;
+        events.try_send(Event::Ready(SessionId::FIRST))?;
+        let capture = Capture::spawn(SessionId::FIRST, events, |_, _| Ok(None))?;
         let retirement = capture.retire();
         tokio::pin!(retirement);
         assert!(
@@ -657,7 +671,7 @@ mod tests {
     async fn retirement_wakes_when_a_worker_panics_before_reporting_completion()
     -> anyhow::Result<()> {
         let (events, _) = async_channel::bounded(1);
-        let capture = Capture::spawn(1, events, |_, _| {
+        let capture = Capture::spawn(SessionId::FIRST, events, |_, _| {
             std::panic::resume_unwind(Box::new(()));
         })?;
         tokio::time::timeout(Duration::from_secs(2), capture.retire()).await?;

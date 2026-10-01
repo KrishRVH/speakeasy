@@ -599,7 +599,7 @@ version = "=0.26.0"
 version = "=0.2.0"
 
 [target.'cfg(target_os = "macos")'.dependencies.core-foundation]
-version = "=0.10.0"
+version = "0.10.1"
 
 [target.'cfg(target_os = "macos")'.dependencies.core-foundation-sys]
 version = "0.8.6"
@@ -752,3 +752,7 @@ priority = -1
 [lints.rust.unexpected_cfgs]
 level = "allow"
 priority = 0
+
+# Keep the standalone dependency lockfile consistent with the root override.
+[patch.crates-io]
+gpui_media = { path = "../gpui_media" }

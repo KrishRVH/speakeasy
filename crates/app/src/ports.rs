@@ -1,6 +1,11 @@
 //! The three side effects used by the session owner. Tests replace devices and
 //! speech at this boundary; gesture, cancellation, and insertion ordering stay real.
-use crate::{audio::Capture, config::Config, local_speech::LocalSpeech, runtime::Event};
+use crate::{
+    audio::Capture,
+    config::Config,
+    local_speech::LocalSpeech,
+    runtime::{Event, SessionId},
+};
 use speakeasy_platform::{InsertPermit, Inserted, Inserter};
 use std::future::Future;
 use tokio::sync::watch;
@@ -38,14 +43,13 @@ impl Speech for LocalSpeech {
     }
 }
 pub trait Ports: Send + 'static {
-    fn prepares_desktop(&self) -> bool {
-        false
-    }
+    /// Whether input must await DesktopReady before it can start capture.
+    fn prepares_desktop(&self) -> bool;
     type Recording: Recording;
     type Speech: Speech;
     fn record(
         &self,
-        id: u64,
+        id: SessionId,
         microphone: Option<String>,
         events: async_channel::Sender<Event>,
     ) -> anyhow::Result<Self::Recording>;
@@ -72,7 +76,7 @@ impl Ports for Desktop {
     type Speech = LocalSpeech;
     fn record(
         &self,
-        id: u64,
+        id: SessionId,
         microphone: Option<String>,
         events: async_channel::Sender<Event>,
     ) -> anyhow::Result<Capture> {

@@ -151,6 +151,12 @@ impl Setup {
         })
     }
 
+    pub fn is_finished(&self) -> bool {
+        self.thread
+            .as_ref()
+            .is_none_or(thread::JoinHandle::is_finished)
+    }
+
     pub fn request_stop(&self) {
         self.cancel.close();
     }
@@ -534,7 +540,7 @@ async fn fetch(
     let mut done = fs::metadata(&partial).map_or(0, |metadata| metadata.len());
     if done == download.size {
         let hasher = hash_partial(&partial, done, progress).await?;
-        if format!("{:x}", hasher.finalize()) == download.sha256 {
+        if hex_digest(&hasher.finalize()) == download.sha256 {
             fs::rename(&partial, &path)?;
             return Ok(path);
         }
@@ -580,17 +586,23 @@ async fn fetch(
     }
     file.sync_all()?;
     drop(file);
-    let digest: String = hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let digest = hex_digest(&hasher.finalize());
     if done != download.size || digest != download.sha256 {
         let _ = fs::remove_file(&partial);
         bail!("A download did not match its published checksum. Try again.");
     }
     fs::rename(&partial, &path)?;
     Ok(path)
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        text.push(char::from(HEX[usize::from(byte >> 4)]));
+        text.push(char::from(HEX[usize::from(byte & 15)]));
+    }
+    text
 }
 
 async fn hash_partial(
@@ -949,10 +961,7 @@ mod tests {
     }
 
     fn sha256(bytes: &[u8]) -> String {
-        Sha256::digest(bytes)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
+        hex_digest(&Sha256::digest(bytes))
     }
 
     #[tokio::test]

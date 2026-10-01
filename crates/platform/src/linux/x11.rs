@@ -23,6 +23,53 @@ pub(super) fn readiness(fd: i32) -> anyhow::Result<AsyncFd<OwnedFd>> {
     let duplicate = unsafe { BorrowedFd::borrow_raw(fd) }.try_clone_to_owned()?;
     Ok(AsyncFd::new(duplicate)?)
 }
+// GPUI renders through X11/Xwayland on Linux. Its top-level windows publish
+// _NET_WM_PID; walk parents because focus may be on a child text field.
+pub(super) fn has_external_target(
+    connection: &RustConnection,
+    wayland: bool,
+) -> anyhow::Result<bool> {
+    let atom = connection.intern_atom(false, b"_NET_WM_PID")?.reply()?.atom;
+    let focused = connection.get_input_focus()?.reply()?.focus;
+    // Wayland may clear Xwayland focus when a native editor gains focus. None
+    // then proves no app X window is focused; PointerRoot remains ambiguous.
+    if wayland && focused == 0 {
+        return Ok(true);
+    }
+    external_target(focused, std::process::id(), |window| {
+        let property = connection
+            .get_property(false, window, atom, xproto::AtomEnum::CARDINAL, 0, 1)?
+            .reply()?;
+        let pid = property.value32().and_then(|mut values| values.next());
+        let parent = connection.query_tree(window)?.reply()?.parent;
+        Ok((pid, parent))
+    })
+}
+fn external_target(
+    mut window: u32,
+    own_pid: u32,
+    mut parent: impl FnMut(u32) -> anyhow::Result<(Option<u32>, u32)>,
+) -> anyhow::Result<bool> {
+    // None and PointerRoot do not identify an editor. Broken or cyclic trees
+    // fail closed; a native Wayland editor normally releases Xwayland focus.
+    if window <= 1 {
+        return Ok(false);
+    }
+    for _ in 0..32 {
+        let (pid, next) = parent(window)?;
+        if let Some(pid) = pid {
+            return Ok(pid != own_pid);
+        }
+        if next == 0 {
+            return Ok(true);
+        }
+        if next == window {
+            return Ok(false);
+        }
+        window = next;
+    }
+    Ok(false)
+}
 struct Keyboard {
     first: u8,
     columns: usize,
@@ -32,7 +79,7 @@ struct Keyboard {
 }
 pub(super) struct Clipboard {
     connection: RustConnection,
-    native: arboard::Clipboard,
+    native: Option<arboard::Clipboard>,
     selection: u32,
 }
 impl Clipboard {
@@ -41,9 +88,17 @@ impl Clipboard {
         let selection = connection.intern_atom(false, b"CLIPBOARD")?.reply()?.atom;
         Ok(Self {
             connection,
-            native: arboard::Clipboard::new()?,
+            native: None,
             selection,
         })
+    }
+    fn native(&mut self) -> anyhow::Result<&mut arboard::Clipboard> {
+        if self.native.is_none() {
+            self.native = Some(arboard::Clipboard::new()?);
+        }
+        self.native
+            .as_mut()
+            .context("Clipboard initialization failed")
     }
     pub fn owner(&self) -> anyhow::Result<u32> {
         Ok(self
@@ -59,11 +114,14 @@ impl Clipboard {
         if !permit.active() {
             return Ok(None);
         }
-        self.native.set_text(text)?;
+        self.native()?.set_text(text)?;
         let owner = self.owner()?;
         // Another application can take ownership as soon as set_text returns.
         // Verify both the payload and its stable owner before authorizing paste.
-        Ok((owner != 0 && self.native.get_text()? == text && self.owns(owner)?).then_some(owner))
+        Ok(
+            (owner != 0 && self.native()?.get_text()? == text && self.owns(owner)?)
+                .then_some(owner),
+        )
     }
 }
 
@@ -76,6 +134,10 @@ pub(super) struct ClipboardWorker {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 enum ClipboardRequest {
+    Target {
+        permit: InsertPermit,
+        reply: async_channel::Sender<anyhow::Result<bool>>,
+    },
     Set {
         text: String,
         permit: InsertPermit,
@@ -88,10 +150,14 @@ enum ClipboardRequest {
     },
 }
 trait ClipboardAccess {
+    fn external_target(&self) -> anyhow::Result<bool>;
     fn set_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<Option<u32>>;
     fn owns(&self, owner: u32) -> anyhow::Result<bool>;
 }
 impl ClipboardAccess for Clipboard {
+    fn external_target(&self) -> anyhow::Result<bool> {
+        has_external_target(&self.connection, true)
+    }
     fn set_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<Option<u32>> {
         self.set_text(text, permit)
     }
@@ -118,6 +184,10 @@ impl ClipboardWorker {
                     let _ = ready.try_send(());
                     while let Ok(request) = incoming.recv_blocking() {
                         match request {
+                            ClipboardRequest::Target { permit, reply } => {
+                                let result = if permit.active() { clipboard.external_target() } else { Ok(false) };
+                                let _ = reply.try_send(result);
+                            }
                             ClipboardRequest::Set { text, permit, reply } => {
                                 let result = if permit.active() {
                                     clipboard.set_text(&text, &permit)
@@ -152,6 +222,13 @@ impl ClipboardWorker {
     }
     pub async fn ready(&self) -> anyhow::Result<()> {
         self.ready.recv().await.context("Clipboard setup stopped")
+    }
+    pub async fn external_target(&self, permit: InsertPermit) -> anyhow::Result<bool> {
+        let (reply, result) = async_channel::bounded(1);
+        self.requests
+            .send(ClipboardRequest::Target { permit, reply })
+            .await?;
+        result.recv().await.context("Target focus check stopped")?
     }
     pub async fn set_text(
         &self,
@@ -533,6 +610,13 @@ fn paste(
             "Clipboard ownership changed before paste. Dictate again.",
         ));
     }
+    if let Some(outcome) = crate::insertion::preflight(
+        has_external_target(&clipboard.connection, false).unwrap_or(false),
+        true,
+        crate::insertion::Mode::Paste,
+    ) {
+        return Ok(outcome);
+    }
     if !request.permit.commit() {
         return Ok(Inserted::Cancelled);
     }
@@ -679,10 +763,76 @@ pub(super) fn visible(handle: RawWindowHandle, visible: bool) -> anyhow::Result<
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn focus_guard_rejects_own_child_windows_and_unknown_focus() -> anyhow::Result<()> {
+        assert!(!super::external_target(20, 7, |window| Ok(
+            if window == 20 {
+                (None, 10)
+            } else {
+                (Some(7), 0)
+            }
+        ))?);
+        assert!(super::external_target(20, 7, |_| Ok((Some(8), 0)))?);
+        assert!(!super::external_target(1, 7, |_| anyhow::bail!(
+            "Must not query PointerRoot"
+        ))?);
+        assert!(!super::external_target(20, 7, |_| Ok((None, 20)))?);
+        assert!(super::external_target(20, 7, |_| anyhow::bail!("Disconnected")).is_err());
+        Ok(())
+    }
+
     use super::*;
+    #[tokio::test]
+    async fn blocked_focus_query_keeps_cancellation_responsive_and_never_accesses_clipboard()
+    -> anyhow::Result<()> {
+        struct FocusOnly {
+            entered: async_channel::Sender<()>,
+            release: std::sync::mpsc::Receiver<()>,
+        }
+        impl ClipboardAccess for FocusOnly {
+            fn external_target(&self) -> anyhow::Result<bool> {
+                self.entered.try_send(())?;
+                self.release.recv_timeout(Duration::from_secs(2))?;
+                Ok(false)
+            }
+            fn set_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<Option<u32>> {
+                anyhow::bail!("Focus accessed clipboard contents")
+            }
+            fn owns(&self, _: u32) -> anyhow::Result<bool> {
+                anyhow::bail!("Focus accessed clipboard ownership")
+            }
+        }
+        let (sender, _events) = async_channel::bounded(4);
+        let input = InputSender::new(sender);
+        let permit = input.begin().context("Missing focus permit")?;
+        let (entered, blocked) = async_channel::bounded(1);
+        let (release, waiting) = std::sync::mpsc::channel();
+        let worker = ClipboardWorker::start(input.clone(), || {
+            Ok(FocusOnly {
+                entered,
+                release: waiting,
+            })
+        })?;
+        worker.ready().await?;
+        {
+            let mut target = std::pin::pin!(worker.external_target(permit.clone()));
+            tokio::select! {
+                result = &mut target => anyhow::bail!("Focus did not block: {result:?}"),
+                started = tokio::time::timeout(Duration::from_secs(1), blocked.recv()) => { started??; }
+            }
+            deliver(&input, Input::Cancel);
+            assert!(!permit.active());
+            release.send(())?;
+            assert!(!target.await?);
+            assert!(!permit.commit());
+        }
+        drop(worker);
+        Ok(())
+    }
+
     #[test]
     fn manual_copy_does_not_query_or_wait_for_held_modifiers() -> anyhow::Result<()> {
-        let (events, _) = async_channel::bounded(1);
+        let (events, _receiver) = async_channel::bounded(1);
         let input = InputSender::new(events);
         let permit = input.begin().context("Recording")?;
         assert_eq!(
@@ -815,6 +965,9 @@ mod tests {
         };
         struct FakeClipboard(Arc<AtomicUsize>);
         impl ClipboardAccess for FakeClipboard {
+            fn external_target(&self) -> anyhow::Result<bool> {
+                Ok(false)
+            }
             fn set_text(&mut self, _: &str, permit: &InsertPermit) -> anyhow::Result<Option<u32>> {
                 assert!(permit.active());
                 self.0.fetch_add(1, Ordering::Relaxed);
@@ -855,6 +1008,7 @@ mod tests {
         .await?;
         release.send(())?;
         ready.await?;
+
         assert!(previous_copy.await?.is_none());
         assert_eq!(
             worker.set_text("fixture".into(), current.clone()).await?,

@@ -3,6 +3,7 @@
 use super::*;
 use crate::local_speech::LocalSpeech;
 use async_channel::Sender;
+use speakeasy_platform::Inserted;
 use std::cell::RefCell;
 
 struct Fixture {
@@ -12,7 +13,7 @@ struct Fixture {
 }
 
 struct FixtureRecording {
-    id: u64,
+    id: SessionId,
     wav: RefCell<Option<Vec<u8>>>,
     events: Sender<Event>,
 }
@@ -46,12 +47,15 @@ impl Recording for FixtureRecording {
 }
 
 impl Ports for Fixture {
+    fn prepares_desktop(&self) -> bool {
+        false
+    }
     type Recording = FixtureRecording;
     type Speech = LocalSpeech;
 
     fn record(
         &self,
-        id: u64,
+        id: SessionId,
         _: Option<String>,
         events: Sender<Event>,
     ) -> anyhow::Result<Self::Recording> {

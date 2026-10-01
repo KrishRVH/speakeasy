@@ -1,5 +1,8 @@
 use async_channel::Sender;
 use raw_window_handle::RawWindowHandle;
+mod insertion;
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+mod keyboard;
 mod process;
 pub use process::ProcessGroup;
 use std::sync::{
@@ -22,7 +25,6 @@ pub enum Input {
     Lock,
     Cancel,
     Toggle,
-    Quit,
     Unavailable(String),
     DesktopReady { shortcut: String, cancel: String },
 }
@@ -132,7 +134,7 @@ impl Chord {
 /// The hook never waits. Closing on overflow wakes the owner and disables
 /// dictation rather than losing an Escape or a release and continuing unsafely.
 pub fn deliver(tx: &InputSender, event: Input) {
-    if matches!(event, Input::Cancel | Input::Quit | Input::Unavailable(_)) {
+    if matches!(event, Input::Cancel | Input::Unavailable(_)) {
         tx.cancel();
     }
     if tx.sender.try_send(event).is_err() {
@@ -160,8 +162,9 @@ impl InsertPermit {
     fn same_recording(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.gate, &other.gate) && self.generation == other.generation
     }
-    #[cfg(target_os = "linux")]
-    fn revoke(&self) {
+    /// Revoke only this recording, including while an OS operation is blocked.
+    /// An obsolete permit cannot revoke a newer recording.
+    pub fn revoke(&self) {
         let _ = self.gate.compare_exchange(
             self.generation,
             self.generation | 2,
@@ -194,30 +197,42 @@ impl InputSender {
         self.sender.is_closed()
     }
     pub fn begin(&self) -> Option<InsertPermit> {
-        let previous = self
-            .gate
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |old| {
-                (old & !3).checked_add(4).map(|next| next | 1)
-            })
-            .ok()?;
-        Some(InsertPermit {
-            gate: self.gate.clone(),
-            generation: ((previous & !3) + 4) | 1,
-        })
+        if self.is_closed() {
+            return None;
+        }
+        let mut previous = self.gate.load(Ordering::Acquire);
+        loop {
+            let generation = (previous & !3).checked_add(4)? | 1;
+            match self.gate.compare_exchange_weak(
+                previous,
+                generation,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    let permit = InsertPermit {
+                        gate: self.gate.clone(),
+                        generation,
+                    };
+                    if self.is_closed() {
+                        permit.revoke();
+                        return None;
+                    }
+                    return Some(permit);
+                }
+                Err(current) => previous = current,
+            }
+        }
     }
     pub fn active(&self) -> bool {
         self.gate.load(Ordering::Acquire) & 3 == 1
     }
-    fn cancel(&self) {
-        let _ = self
-            .gate
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |old| {
-                (old & 3 == 1).then_some((old & !3) | 2)
-            });
+    pub fn cancel(&self) {
+        self.gate.fetch_or(2, Ordering::AcqRel);
     }
     pub fn close(&self) {
-        self.cancel();
         self.sender.close();
+        self.cancel();
     }
 }
 
@@ -311,6 +326,20 @@ compile_error!("Speakeasy supports Windows, macOS, and Linux.");
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn closed_input_cannot_grant_new_insertion_authority() -> anyhow::Result<()> {
+        let (sender, _receiver) = async_channel::bounded(1);
+        let input = super::InputSender::new(sender);
+        let permit = input
+            .begin()
+            .ok_or_else(|| anyhow::anyhow!("Missing initial permit"))?;
+        input.close();
+        assert!(!permit.active());
+        assert!(input.begin().is_none());
+        assert!(!input.active());
+        Ok(())
+    }
+
     use super::*;
 
     #[test]

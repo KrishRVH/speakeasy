@@ -134,29 +134,10 @@ fn run() -> anyhow::Result<()> {
                 return;
             }
         };
-        cx.set_global(shell::Services {
-            configuration_epoch: 0,
-            validation: None,
-            monitor: None,
-            runtime: None,
-            retiring: None,
-            retiring_monitor: None,
-            retirement: None,
-            pending: None,
-            path,
-            config: config.clone(),
-            output,
-            pill,
-            window: None,
-            demo,
-            demo_tray,
-            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-            visibility: None,
-            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-            tray_hint_seen: false,
-            _reopen: None,
-            _instance: instance,
-        });
+        let mut services = shell::Services::new(path, config.clone(), output, pill, instance);
+        services.demo = demo;
+        services.demo_tray = demo_tray;
+        cx.set_global(services);
         if let Some(reopen) = reopen {
             let task = cx.spawn(async move |cx| {
                 while let Ok(request) = reopen.recv().await {
@@ -195,8 +176,14 @@ fn run() -> anyhow::Result<()> {
             if cx.has_global::<tray::Tray>() {
                 drop(cx.remove_global::<tray::Tray>());
             }
-            drop(cx.remove_global::<shell::Services>());
-            async {}
+            let mut services = cx.remove_global::<shell::Services>();
+            let instance = services._instance.take();
+            drop(services);
+            // GPUI clears windows (and final Settings writers) before polling
+            // this future, so a relaunch cannot race the final durable save.
+            async move {
+                drop(instance);
+            }
         })
         .detach();
         if !demo
@@ -214,7 +201,7 @@ fn run() -> anyhow::Result<()> {
             && let Err(error) = tray::install(cx)
         {
             speakeasy_platform::show_error(&error.to_string());
-            cx.quit();
+            shell::request_quit(cx);
             return;
         }
         if demo
@@ -225,7 +212,7 @@ fn run() -> anyhow::Result<()> {
             shell::reveal(cx);
         }
         if demo && !demo_tray {
-            cx.on_window_closed(|cx| cx.quit()).detach();
+            cx.on_window_closed(shell::request_quit).detach();
         }
     });
     Ok(())

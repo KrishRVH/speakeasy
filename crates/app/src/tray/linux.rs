@@ -29,7 +29,7 @@ pub fn install(cx: &mut App) -> anyhow::Result<()> {
                     TrayAction::Pause => shell::toggle_enabled(cx),
                     TrayAction::Toggle => shell::send(Input::Toggle, cx),
                     TrayAction::Cancel => shell::send(Input::Cancel, cx),
-                    TrayAction::Quit => cx.quit(),
+                    TrayAction::Quit => shell::request_quit(cx),
                 })
                 .is_err()
             {

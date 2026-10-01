@@ -1,8 +1,8 @@
-name: Linux checks
+name: Cross-platform checks
 on:
   workflow_dispatch:
   pull_request:
-    paths: ['crates/**', 'vendor/**', 'Cargo.*', 'rust-toolchain.toml', 'packaging/linux/**', 'scripts/package-linux.sh', 'scripts/check-demo-linux.py', 'scripts/check-rendering-linux.sh', '.github/workflows/linux.yml']
+    paths: ['crates/**', 'vendor/**', 'Cargo.*', 'rust-toolchain.toml', 'packaging/**', 'scripts/**', '.github/workflows/linux.yml']
 permissions:
   contents: read
 jobs:
@@ -32,3 +32,17 @@ jobs:
             artifacts/*.tar.gz
             artifacts/*.sha256
           if-no-files-found: error
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify
+        shell: bash
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked

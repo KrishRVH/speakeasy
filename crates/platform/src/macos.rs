@@ -100,7 +100,7 @@ fn run_monitor(tx: &InputSender, control: &MonitorControl<CFRunLoop>) -> anyhow:
     if control.stopping() {
         return Ok(());
     }
-    let chord = RefCell::new(Chord::default());
+    let chord = RefCell::new(keyboard::Mac::default());
     let callback_input = tx.clone();
     let tap = CGEventTap::new(
         CGEventTapLocation::Session,
@@ -171,7 +171,7 @@ fn run_monitor(tx: &InputSender, control: &MonitorControl<CFRunLoop>) -> anyhow:
 /// Fn, Fn+Space, and passive Escape, on the event tap's run-loop thread.
 fn shortcut(
     tx: &InputSender,
-    chord: &mut Chord,
+    chord: &mut keyboard::Mac,
     kind: CGEventType,
     event: &CGEvent,
 ) -> CallbackResult {
@@ -185,36 +185,26 @@ fn shortcut(
     if event.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA) == OWN_INPUT {
         return CallbackResult::Keep;
     }
-    let key = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
-    match kind {
-        // kVK_Function: Fn (Globe) changes arrive as modifier transitions.
-        CGEventType::FlagsChanged if key == 63 => {
-            let down = event
-                .get_flags()
-                .contains(CGEventFlags::CGEventFlagSecondaryFn);
-            if let Some(input) = chord.modifiers(down, down) {
-                deliver(tx, input);
-            }
-        }
-        CGEventType::KeyDown | CGEventType::KeyUp => {
-            let down = matches!(kind, CGEventType::KeyDown);
-            if key == 53 {
-                if down {
-                    deliver(tx, Input::Cancel);
-                }
-            } else if key == 49 && chord.space(down) {
-                if down {
-                    deliver(tx, Input::Lock);
-                }
-                return CallbackResult::Drop;
-            } else if down && chord.interrupt() {
-                deliver(tx, Input::Cancel);
-                deliver(tx, Input::Release);
-            }
-        }
-        _ => {}
+    if !matches!(
+        kind,
+        CGEventType::KeyDown | CGEventType::KeyUp | CGEventType::FlagsChanged
+    ) {
+        return CallbackResult::Keep;
     }
-    CallbackResult::Keep
+    let decision = chord.observe(
+        event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE),
+        matches!(kind, CGEventType::KeyDown),
+        matches!(kind, CGEventType::FlagsChanged),
+        event
+            .get_flags()
+            .contains(CGEventFlags::CGEventFlagSecondaryFn),
+    );
+    decision.deliver(tx);
+    if decision.swallow {
+        CallbackResult::Drop
+    } else {
+        CallbackResult::Keep
+    }
 }
 
 impl Drop for InputMonitor {
@@ -338,15 +328,12 @@ pub fn insert(
             "Clipboard changed. New contents were preserved; paste was not sent.",
         ));
     }
-    if !has_external_target() {
-        return Ok(Inserted::Copied(
-            "Copied. Focus an editor and press Command+V.",
-        ));
-    }
-    if modifiers_down() {
-        return Ok(Inserted::Copied(
-            "Copied. Release the shortcut and press Command+V.",
-        ));
+    if let Some(outcome) = insertion::preflight(
+        has_external_target(),
+        !modifiers_down(),
+        insertion::Mode::Paste,
+    ) {
+        return Ok(outcome);
     }
     let source = CGEventSource::new(CGEventSourceStateID::Private)
         .map_err(|_| anyhow!("Cannot create keyboard event source"))?;
@@ -390,15 +377,12 @@ fn clipboard_sequence() -> isize {
 }
 
 fn insert_direct(text: &str, gate: &InsertPermit) -> anyhow::Result<Inserted> {
-    if !has_external_target() {
-        return Ok(Inserted::Unavailable(
-            "Focus an editor and try again. Clipboard preserved.",
-        ));
-    }
-    if modifiers_down() {
-        return Ok(Inserted::Unavailable(
-            "Release the shortcut and try again. Clipboard preserved.",
-        ));
+    if let Some(outcome) = insertion::preflight(
+        has_external_target(),
+        !modifiers_down(),
+        insertion::Mode::Direct,
+    ) {
+        return Ok(outcome);
     }
     let source = CGEventSource::new(CGEventSourceStateID::Private)
         .map_err(|_| anyhow!("Cannot create keyboard event source"))?;
