@@ -1,3 +1,5 @@
+//! Native dictation UI and the single-owner recording runtime.
+
 #![forbid(unsafe_code)]
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod audio;
@@ -15,7 +17,7 @@ mod theme;
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 mod tray;
 use anyhow::{Context as _, bail};
-use gpui::*;
+use gpui::{Application, BorrowAppContext};
 use runtime::Snapshot;
 
 // Josefin Sans SemiBold, SIL Open Font License 1.1 (assets/JosefinSans-OFL.txt).
@@ -39,7 +41,7 @@ fn run() -> anyhow::Result<()> {
             "--demo-tray" => {
                 demo = true;
                 demo_tray = true;
-            }
+            },
             "--config" => path = args.next().context("--config needs a path")?.into(),
             "--toggle" => command = Some(instance::Request::Toggle),
             "--cancel" => command = Some(instance::Request::Cancel),
@@ -54,7 +56,7 @@ fn run() -> anyhow::Result<()> {
                     speakeasy_platform::SHORTCUT
                 );
                 return Ok(());
-            }
+            },
             _ => bail!("Unknown option: {arg}"),
         }
     }
@@ -95,17 +97,17 @@ fn run() -> anyhow::Result<()> {
         Ok(config) => (config, "Speakeasy is not set up yet.".to_owned(), false),
         Err(error) => (config::Config::default(), error.to_string(), true),
     };
-    let configured = if !config.engine_executable.as_os_str().is_empty() {
+    let configured = if config.engine_executable.as_os_str().is_empty() {
+        false
+    } else {
         match config.validate(&path) {
             Ok(()) => true,
             Err(error) => {
                 message = error.to_string();
                 invalid = true;
                 false
-            }
+            },
         }
-    } else {
-        false
     };
     let (output, updates) = tokio::sync::watch::channel(Snapshot {
         message,
@@ -119,7 +121,10 @@ fn run() -> anyhow::Result<()> {
     let application = Application::new().with_assets(icons::Icons);
     application.on_reopen(shell::reveal);
     application.run(move |cx| {
-        // Without the brand face, the wordmark falls back to the system font.
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "An unavailable embedded brand face falls back to the system font"
+        )]
         let _ = cx
             .text_system()
             .add_fonts(vec![std::borrow::Cow::Borrowed(include_bytes!(
@@ -132,44 +137,16 @@ fn run() -> anyhow::Result<()> {
                 speakeasy_platform::show_error(&format!("Cannot open pill: {error}"));
                 cx.quit();
                 return;
-            }
+            },
         };
         let mut services = shell::Services::new(path, config.clone(), output, pill, instance);
         services.demo = demo;
         services.demo_tray = demo_tray;
         cx.set_global(services);
         if let Some(reopen) = reopen {
-            let task = cx.spawn(async move |cx| {
-                while let Ok(request) = reopen.recv().await {
-                    if cx
-                        .update(|cx| match request {
-                            instance::Request::Reveal => shell::reveal(cx),
-                            instance::Request::Toggle | instance::Request::Cancel => {
-                                #[cfg(target_os = "linux")]
-                                if cx
-                                    .global::<shell::Services>()
-                                    .config
-                                    .linux
-                                    .external_shortcut
-                                {
-                                    shell::send(
-                                        if request == instance::Request::Toggle {
-                                            speakeasy_platform::Input::Toggle
-                                        } else {
-                                            speakeasy_platform::Input::Cancel
-                                        },
-                                        cx,
-                                    );
-                                }
-                            }
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
+            cx.update_global::<shell::Services, _>(|services, cx| {
+                services.listen_for_reopen(reopen, cx);
             });
-            cx.global_mut::<shell::Services>().reopen = Some(task);
         }
         cx.on_app_quit(|cx| {
             #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]

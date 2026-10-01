@@ -8,7 +8,7 @@ use std::{
 
 pub(super) struct TokenStore(PathBuf);
 impl TokenStore {
-    pub fn open() -> Option<Self> {
+    pub(super) fn open() -> Option<Self> {
         let root = std::env::var_os("XDG_STATE_HOME")
             .map(PathBuf::from)
             .filter(|path| path.is_absolute())
@@ -28,7 +28,11 @@ impl TokenStore {
         std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))?;
         Ok(Self(directory.join("desktop-token")))
     }
-    pub fn take(&self) -> anyhow::Result<Option<String>> {
+    #[expect(
+        clippy::verbose_bit_mask,
+        reason = "The octal mode mask directly names forbidden group and other permissions"
+    )]
+    pub(super) fn take(&self) -> anyhow::Result<Option<String>> {
         let file = match std::fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW)
@@ -55,7 +59,7 @@ impl TokenStore {
         std::fs::remove_file(&self.0)?;
         Ok((!token.is_empty()).then_some(token))
     }
-    pub fn save(&self, token: &str) -> anyhow::Result<()> {
+    pub(super) fn save(&self, token: &str) -> anyhow::Result<()> {
         ensure!(
             !token.is_empty() && token.len() <= 4096 && !token.contains('\0'),
             "Invalid portal token"

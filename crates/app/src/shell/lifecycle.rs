@@ -14,7 +14,7 @@ pub(super) enum Lifecycle<T, C> {
 }
 
 impl<T, C> Lifecycle<T, C> {
-    pub fn validate(&mut self, epoch: u64) -> bool {
+    pub(super) fn validate(&mut self, epoch: u64) -> bool {
         if matches!(self, Self::Disabled | Self::Validating(_)) {
             *self = Self::Validating(epoch);
             true
@@ -22,28 +22,28 @@ impl<T, C> Lifecycle<T, C> {
             false
         }
     }
-    pub fn active(&self) -> Option<&T> {
+    pub(super) fn active(&self) -> Option<&T> {
         match self {
             Self::Running(owners) => Some(owners),
             _ => None,
         }
     }
-    pub fn retiring(&self) -> Option<&T> {
+    pub(super) fn retiring(&self) -> Option<&T> {
         match self {
             Self::Stopping { owners, .. } | Self::Quitting(Some(owners)) => Some(owners),
             _ => None,
         }
     }
-    pub fn pausing(&self) -> bool {
+    pub(super) fn pausing(&self) -> bool {
         matches!(self, Self::Stopping { .. } | Self::Quitting(_))
     }
-    pub fn quitting(&self) -> bool {
+    pub(super) fn quitting(&self) -> bool {
         matches!(self, Self::Quitting(_))
     }
-    pub fn validating(&self, epoch: u64) -> bool {
+    pub(super) fn validating(&self, epoch: u64) -> bool {
         matches!(self, Self::Validating(current) if *current == epoch)
     }
-    pub fn queue(&mut self, config: C) -> bool {
+    pub(super) fn queue(&mut self, config: C) -> bool {
         if let Self::Stopping { pending, .. } = self {
             *pending = Some(config);
             true
@@ -51,7 +51,7 @@ impl<T, C> Lifecycle<T, C> {
             false
         }
     }
-    pub fn has_pending(&self) -> bool {
+    pub(super) fn has_pending(&self) -> bool {
         matches!(
             self,
             Self::Stopping {
@@ -60,7 +60,7 @@ impl<T, C> Lifecycle<T, C> {
             }
         )
     }
-    pub fn pause(&mut self) -> bool {
+    pub(super) fn pause(&mut self) -> bool {
         match std::mem::take(self) {
             Self::Running(owners) => {
                 *self = Self::Stopping {
@@ -68,44 +68,44 @@ impl<T, C> Lifecycle<T, C> {
                     pending: None,
                 };
                 true
-            }
+            },
             Self::Stopping { owners, .. } => {
                 *self = Self::Stopping {
                     owners,
                     pending: None,
                 };
                 false
-            }
+            },
             state @ Self::Quitting(_) => {
                 *self = state;
                 false
-            }
+            },
             _ => false,
         }
     }
-    pub fn quit(&mut self) -> bool {
+    pub(super) fn quit(&mut self) -> bool {
         let owners = match std::mem::take(self) {
             Self::Running(owners) | Self::Stopping { owners, .. } => Some(owners),
             state @ Self::Quitting(_) => {
                 *self = state;
                 return false;
-            }
+            },
             _ => None,
         };
         *self = Self::Quitting(owners);
         true
     }
-    pub fn retired(&mut self) -> Option<C> {
+    pub(super) fn retired(&mut self) -> Option<C> {
         match std::mem::take(self) {
             Self::Stopping { pending, .. } => pending,
             Self::Quitting(_) => {
                 *self = Self::Quitting(None);
                 None
-            }
+            },
             state => {
                 *self = state;
                 None
-            }
+            },
         }
     }
 }
@@ -115,22 +115,23 @@ mod tests {
     use super::Lifecycle;
     #[test]
     fn validating_never_discards_live_or_retiring_owners() {
-        use std::{cell::Cell, rc::Rc};
-        struct Owner(Rc<Cell<bool>>);
+        use std::sync::mpsc;
+
+        struct Owner(mpsc::Sender<()>);
         impl Drop for Owner {
             fn drop(&mut self) {
-                self.0.set(true);
+                self.0.send(()).unwrap();
             }
         }
-        let dropped = Rc::new(Cell::new(false));
-        let mut state = Lifecycle::<_, ()>::Running(Owner(dropped.clone()));
+        let (completion, dropped) = mpsc::channel();
+        let mut state = Lifecycle::<_, ()>::Running(Owner(completion));
         assert!(!state.validate(1));
-        assert!(!dropped.get());
+        assert!(dropped.try_recv().is_err());
         assert!(state.pause());
         assert!(!state.validate(2));
-        assert!(!dropped.get());
+        assert!(dropped.try_recv().is_err());
         state.retired();
-        assert!(dropped.get());
+        dropped.try_recv().unwrap();
         assert!(state.validate(3));
         assert!(state.validating(3));
         assert!(state.quit());

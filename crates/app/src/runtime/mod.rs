@@ -18,7 +18,7 @@ use std::{thread, time::Instant};
 use tokio::sync::watch;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub enum Phase {
+pub(crate) enum Phase {
     #[default]
     Idle,
     Starting,
@@ -32,7 +32,7 @@ pub enum Phase {
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub enum ModelState {
+pub(crate) enum ModelState {
     Loading,
     Ready,
     #[default]
@@ -40,7 +40,7 @@ pub enum ModelState {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct Snapshot {
+pub(crate) struct Snapshot {
     pub epoch: u64,
     pub id: u64,
     pub phase: Phase,
@@ -78,10 +78,20 @@ impl Default for Snapshot {
     }
 }
 
-// The loading notice clears once the first model is ready, unless replaced.
-pub const LOADING: &str = "Loading local model…";
+impl Snapshot {
+    fn startup_failed(&mut self, epoch: u64, error: &impl std::fmt::Display) {
+        if self.epoch != epoch {
+            return;
+        }
+        self.phase = Phase::Error;
+        self.message = format!("Could not start dictation worker: {error}");
+    }
+}
 
-pub enum Event {
+// The loading notice clears once the first model is ready, unless replaced.
+pub(crate) const LOADING: &str = "Loading local model…";
+
+pub(crate) enum Event {
     Ready(SessionId),
     Level(SessionId, f32),
     AudioDone(SessionId, anyhow::Result<Option<Vec<u8>>>),
@@ -90,7 +100,7 @@ pub enum Event {
 #[cfg(test)]
 mod fixture;
 
-pub struct Runtime {
+pub(crate) struct Runtime {
     pub input: speakeasy_platform::InputSender,
     thread: Option<thread::JoinHandle<()>>,
     configuration: watch::Sender<Config>,
@@ -98,7 +108,7 @@ pub struct Runtime {
     finished: async_channel::Receiver<()>,
 }
 impl Runtime {
-    pub fn start(
+    pub(crate) fn start(
         config: Config,
         snapshots: watch::Sender<Snapshot>,
     ) -> anyhow::Result<(Self, speakeasy_platform::InputMonitor)> {
@@ -142,17 +152,13 @@ impl Runtime {
                         runtime.block_on(run(
                             changes, receiver, snapshots, gate, stopping, ports, epoch,
                         ));
-                    }
-                    Err(error) => {
-                        snapshots.send_modify(|s| {
-                            if s.epoch != epoch {
-                                return;
-                            }
-                            s.phase = Phase::Error;
-                            s.message = format!("Could not start dictation worker: {error}");
-                        });
-                    }
+                    },
+                    Err(error) => snapshots.send_modify(|s| s.startup_failed(epoch, &error)),
                 }
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "Closing the one-shot receiver means the UI owner no longer waits for runtime retirement"
+                )]
                 let _ = finished_tx.try_send(());
             })?;
         Ok(Self {
@@ -163,26 +169,34 @@ impl Runtime {
             finished,
         })
     }
-    pub fn is_running(&self) -> bool {
+    pub(crate) fn is_running(&self) -> bool {
         !self.input.is_closed()
             && self
                 .thread
                 .as_ref()
                 .is_some_and(|thread| !thread.is_finished())
     }
-    pub fn configure(&self, config: Config) {
+    pub(crate) fn configure(&self, config: Config) {
         self.input.cancel();
         self.configuration.send_replace(config);
     }
-    pub fn request_stop(&self) {
+    pub(crate) fn request_stop(&self) {
         // Wake the owner through a separate lane before closing input, so a
         // normal pause never reports shortcut failure or drains queued presses.
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "A full stop lane already requests shutdown; a closed lane belongs to an exited owner"
+        )]
         let _ = self.stop.try_send(());
         self.input.close();
     }
-    pub fn stopped(&self) -> impl std::future::Future<Output = ()> + use<> {
+    pub(crate) fn stopped(&self) -> impl std::future::Future<Output = ()> + use<> {
         let finished = self.finished.clone();
         async move {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Completion or sender closure after a runtime panic both permit joining its owned thread"
+            )]
             let _ = finished.recv().await;
         }
     }
@@ -191,6 +205,10 @@ impl Drop for Runtime {
     fn drop(&mut self) {
         self.request_stop();
         if let Some(thread) = self.thread.take() {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Joining reaps the owner even after panic; drop cannot publish a new session error"
+            )]
             let _ = thread.join();
         }
     }

@@ -5,18 +5,21 @@ mod portal;
 mod token;
 mod tray;
 mod x11;
-use super::*;
+use super::{DesktopOptions, Input, InputSender, InsertPermit, Inserted, RawWindowHandle, deliver};
 use anyhow::Context;
 use std::{thread, time::Duration};
 pub use tray::{NativeTray, TrayAction, TrayPresentation};
+/// Desktop launcher and portal registration identity.
 pub const APPLICATION_ID: &str = "io.github.krvh.speakeasy";
 
+/// Owns the desktop observation thread until explicit stop and acknowledged cleanup.
 pub struct InputMonitor {
     stop: async_channel::Sender<()>,
     finished: async_channel::Receiver<()>,
     thread: Option<thread::JoinHandle<()>>,
 }
 #[derive(Clone)]
+/// Sends insertion requests to the thread that owns the Linux desktop resources.
 pub struct Inserter {
     requests: async_channel::Sender<Insertion>,
 }
@@ -27,6 +30,10 @@ struct Insertion {
     reply: async_channel::Sender<anyhow::Result<Inserted>>,
 }
 impl Inserter {
+    /// Submit text under the recording permit; `preserve` requests direct input.
+    ///
+    /// # Errors
+    /// Returns native insertion failures or closure of the desktop request lane.
     pub async fn insert(
         &self,
         text: String,
@@ -49,6 +56,10 @@ impl Inserter {
         result.recv().await.context("Desktop insertion stopped")?
     }
 }
+/// Start desktop preparation; readiness is delivered through `Input::DesktopReady`.
+///
+/// # Errors
+/// Returns a desktop-thread startup failure; permission failures arrive as input events.
 pub fn prepare(
     input: InputSender,
     options: DesktopOptions,
@@ -86,6 +97,7 @@ pub fn prepare(
                 );
             }
             input.close();
+            #[expect(clippy::let_underscore_must_use, reason = "The completion receiver can disappear during shutdown; channel closure also acknowledges retirement")]
             let _ = complete.try_send(());
         })?;
     Ok((
@@ -98,12 +110,22 @@ pub fn prepare(
     ))
 }
 impl InputMonitor {
+    /// Request native observation shutdown without joining its thread.
     pub fn request_stop(&self) {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "A full stop lane already contains the stop request; a closed lane means the desktop thread stopped"
+        )]
         let _ = self.stop.try_send(());
     }
+    /// Wait for native resources to retire before replacing or dropping the monitor.
     pub fn stopped(&self) -> impl std::future::Future<Output = ()> + use<> {
         let finished = self.finished.clone();
         async move {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Both completion and sender closure acknowledge desktop-thread retirement"
+            )]
             let _ = finished.recv().await;
         }
     }
@@ -112,6 +134,10 @@ impl Drop for InputMonitor {
     fn drop(&mut self) {
         self.request_stop();
         if let Some(thread) = self.thread.take() {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Resources are already retired; a worker panic must not unwind a destructor"
+            )]
             let _ = thread.join();
         }
     }
@@ -123,23 +149,44 @@ fn wayland_session(kind: Option<&str>, wayland_display: bool) -> bool {
         _ => wayland_display,
     }
 }
+/// Configure an owned UI-thread window for nonactivating, click-through presentation.
+///
+/// # Errors
+/// Returns an error for the wrong window kind or failed native configuration.
 pub fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
     x11::configure_pill(handle)
 }
+/// Show or hide the owned pill without activating it; call on its UI thread.
 pub fn set_pill_visible(handle: RawWindowHandle, visible: bool) {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "The owned window may already be destroyed or its display disconnected during presentation teardown"
+    )]
     let _ = x11::visible(handle, visible);
 }
+/// Show or hide the owned Settings window; call on its UI thread.
 pub fn set_settings_visible(handle: RawWindowHandle, visible: bool) {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "The owned window may already be destroyed or its display disconnected during presentation teardown"
+    )]
     let _ = x11::visible(handle, visible);
 }
+#[must_use]
+/// Query the native reduced-motion preference; Linux uses the app setting.
 pub fn reduced_motion() -> bool {
     false
 }
+/// Present a local startup error; callers never include audio, transcripts, or credentials.
 pub fn show_error(message: &str) {
     eprintln!("Speakeasy: {message}");
 }
 
 async fn respond(request: Insertion, result: anyhow::Result<Inserted>) {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "The recording owner may abandon insertion and drop its reply lane while native work completes"
+    )]
     let _ = request.reply.send(result).await;
 }
 const MODIFIER_WAIT: Duration = Duration::from_millis(800);

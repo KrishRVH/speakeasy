@@ -20,12 +20,12 @@ impl Decision {
         Self { action, swallow }
     }
     #[cfg(any(target_os = "windows", test))]
-    pub fn starts(&self) -> bool {
+    pub(crate) fn starts(&self) -> bool {
         self.action == Action::Press
     }
-    pub fn deliver(&self, input: &InputSender) {
+    pub(crate) fn deliver(&self, input: &InputSender) {
         match self.action {
-            Action::None => {}
+            Action::None => {},
             Action::Press => deliver(input, Input::Press),
             Action::Release => deliver(input, Input::Release),
             Action::Lock => deliver(input, Input::Lock),
@@ -33,7 +33,7 @@ impl Decision {
             Action::Interrupt => {
                 deliver(input, Input::Cancel);
                 deliver(input, Input::Release);
-            }
+            },
         }
     }
 }
@@ -45,10 +45,10 @@ pub(super) struct Windows {
 }
 #[cfg(any(target_os = "windows", test))]
 impl Windows {
-    pub fn interrupt(&mut self) {
+    pub(crate) fn interrupt(&mut self) {
         self.chord.interrupt();
     }
-    pub fn observe(&mut self, key: u32, down: bool, physical: [bool; 4]) -> Decision {
+    pub(crate) fn observe(&mut self, key: u32, down: bool, physical: [bool; 4]) -> Decision {
         if key == 0x1b {
             return Decision::new(if down { Action::Cancel } else { Action::None }, false);
         }
@@ -65,14 +65,17 @@ impl Windows {
                 false,
             );
         };
-        let fresh = down && !self.down[index];
-        self.down[index] = down;
-        for (other, held) in physical.into_iter().enumerate() {
-            if other != index && !held {
-                self.down[other] = false;
+        let mut fresh = false;
+        for (other, (state, physically_down)) in self.down.iter_mut().zip(physical).enumerate() {
+            if other == index {
+                fresh = down && !*state;
+                *state = down;
+            } else if !physically_down {
+                *state = false;
             }
         }
-        let held = (self.down[0] || self.down[1]) && (self.down[2] || self.down[3]);
+        let [left_control, right_control, left_super, right_super] = self.down;
+        let held = (left_control || right_control) && (left_super || right_super);
         Decision::new(
             match self.chord.modifiers(held, fresh) {
                 Some(Input::Press) => Action::Press,
@@ -90,7 +93,13 @@ pub(super) struct Mac {
 }
 #[cfg(any(target_os = "macos", test))]
 impl Mac {
-    pub fn observe(&mut self, key: i64, down: bool, modifiers: bool, function: bool) -> Decision {
+    pub(crate) fn observe(
+        &mut self,
+        key: i64,
+        down: bool,
+        modifiers: bool,
+        function: bool,
+    ) -> Decision {
         if modifiers {
             return Decision::new(
                 if key == 63 {

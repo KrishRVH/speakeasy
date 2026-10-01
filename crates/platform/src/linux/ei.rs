@@ -74,7 +74,7 @@ pub(super) struct Sender {
     pub ready: AsyncFd<OwnedFd>,
 }
 impl Sender {
-    pub fn connect(fd: OwnedFd) -> anyhow::Result<Self> {
+    pub(super) fn connect(fd: OwnedFd) -> anyhow::Result<Self> {
         let api = Api::load()?;
         // SAFETY: constructing an owned libei context with no callback userdata.
         let context = unsafe { (api.ei_new_sender)(std::ptr::null_mut()) };
@@ -98,7 +98,7 @@ impl Sender {
                     (api.ei_unref)(context);
                 }
                 return Err(error);
-            }
+            },
         };
         // SAFETY: these optional symbols use the public ABI; absence means no
         // usable capability. Api owns the library throughout their use.
@@ -134,19 +134,19 @@ impl Sender {
             ready,
         })
     }
-    pub fn invalidate(&mut self) {
+    pub(super) fn invalidate(&mut self) {
         self.modifiers = Modifiers::Unknown;
     }
-    pub fn modifiers(&self) -> Modifiers {
+    pub(super) fn modifiers(&self) -> Modifiers {
         self.modifiers
     }
-    pub fn text_available(&self) -> bool {
+    pub(super) fn text_available(&self) -> bool {
         self.text_ready && self.utf8.is_some()
     }
-    pub fn keyboard_available(&self) -> bool {
+    pub(super) fn keyboard_available(&self) -> bool {
         self.keyboard_ready && self.keys.is_some()
     }
-    pub fn dispatch(&mut self) -> anyhow::Result<()> {
+    pub(super) fn dispatch(&mut self) -> anyhow::Result<()> {
         // SAFETY: only this owned desktop thread accesses the context/devices.
         // Every returned event is unreferenced before leaving this method.
         unsafe {
@@ -162,7 +162,7 @@ impl Sender {
                     2 => {
                         (self.api.ei_event_unref)(event);
                         anyhow::bail!("Wayland input permission was disconnected");
-                    }
+                    },
                     3 => {
                         let seat = (self.api.ei_event_get_seat)(event);
                         if !seat.is_null() && (self.api.ei_seat_has_capability)(seat, 4) {
@@ -181,7 +181,7 @@ impl Sender {
                                 );
                             }
                         }
-                    }
+                    },
                     5 if !device.is_null() => {
                         if (self.api.ei_device_has_capability)(device, 4) {
                             if !self.keyboard.is_null() {
@@ -200,7 +200,7 @@ impl Sender {
                             self.text = (self.api.ei_device_ref)(device);
                             self.text_ready = false;
                         }
-                    }
+                    },
                     6 | 7 => {
                         if device == self.keyboard {
                             self.keyboard_ready = false;
@@ -209,7 +209,7 @@ impl Sender {
                         if device == self.text {
                             self.text_ready = false;
                         }
-                    }
+                    },
                     8 => {
                         if device == self.keyboard {
                             self.keyboard_ready = true;
@@ -218,7 +218,7 @@ impl Sender {
                         if device == self.text {
                             self.text_ready = true;
                         }
-                    }
+                    },
                     9 if device == self.keyboard => {
                         if let (Some(get), Some(map)) = (self.feedback, self.map.as_ref()) {
                             self.keys = map.paste_keys(get[3](event));
@@ -229,15 +229,15 @@ impl Sender {
                                 Modifiers::Held
                             };
                         }
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
                 (self.api.ei_event_unref)(event);
             }
         }
         Ok(())
     }
-    pub fn paste(&mut self, terminal: bool) -> anyhow::Result<()> {
+    pub(super) fn paste(&mut self, terminal: bool) -> anyhow::Result<()> {
         ensure!(
             self.keyboard_ready && self.modifiers == Modifiers::Released,
             "Wayland modifier state is unavailable"
@@ -266,7 +266,7 @@ impl Sender {
         }
         Ok(())
     }
-    pub fn text(&mut self, text: &str) -> anyhow::Result<()> {
+    pub(super) fn text(&mut self, text: &str) -> anyhow::Result<()> {
         ensure!(
             self.text_available(),
             "Direct UTF-8 input is unavailable on this desktop"
@@ -295,11 +295,7 @@ fn utf8_chunks(mut text: &str) -> impl Iterator<Item = &str> {
         if text.is_empty() {
             return None;
         }
-        let mut end = text.len().min(254);
-        while !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        let (chunk, rest) = text.split_at(end);
+        let (chunk, rest) = text.split_at(text.floor_char_boundary(254));
         text = rest;
         Some(chunk)
     })
@@ -362,11 +358,10 @@ impl KeyboardMap {
         let mut shift = None;
         let mut v = None;
         self.map.key_for_each(|map, key| {
-            let layouts = map.num_layouts_for_key(key);
-            if layouts == 0 {
+            let Some(layout) = group.checked_rem(map.num_layouts_for_key(key)) else {
                 return;
-            }
-            let syms = map.key_get_syms_by_level(key, group % layouts, 0);
+            };
+            let syms = map.key_get_syms_by_level(key, layout, 0);
             let Some(code) = key.raw().checked_sub(8) else {
                 return;
             };

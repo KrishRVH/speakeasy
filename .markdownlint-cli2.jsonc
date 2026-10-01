@@ -1,0 +1,33 @@
+{
+  "$schema": "https://raw.githubusercontent.com/DavidAnson/markdownlint-cli2/v0.23.2/schema/markdownlint-cli2-config-schema.json",
+  "globs": ["**/*.md"],
+  "gitignore": true,
+  "ignores": ["vendor/**"],
+  "noBanner": true,
+  "noProgress": true,
+  "config": {
+    "default": true,
+    "MD003": { "style": "atx" },
+    "MD013": { "line_length": 120, "code_blocks": false, "tables": false, "headings": false },
+    "MD024": { "siblings_only": true },
+    "MD033": { "allowed_elements": ["a", "aside", "br", "details", "kbd", "span", "strong", "sub", "summary", "sup"] },
+    "MD040": { "language_only": false }
+  },
+  "overrides": [
+    {
+      "filter": ["README.md"],
+      "combine": "merge",
+      "config": {
+        // The product landing page uses an accessible banner and centered artwork.
+        "MD041": false,
+        "MD033": { "allowed_elements": ["a", "br", "details", "img", "kbd", "p", "strong", "summary"] }
+      }
+    },
+    {
+      "filter": ["CLAUDE.md"],
+      "combine": "merge",
+      // Claude's entry point imports the single agent guide.
+      "config": { "MD041": false }
+    }
+  ]
+}

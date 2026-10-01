@@ -20,8 +20,11 @@ fn retrieve_duration(counts: u64, ticks_per_second: u64) -> Option<Duration> {
     let seconds = counts.checked_div(ticks_per_second)?;
     // Scale the remainder before division to preserve fractional clock rates.
     // The u64 remainder times 1e9 fits in u128; the result is below 1e9.
-    let nanoseconds = (u128::from(counts % ticks_per_second) * 1_000_000_000
-        / u128::from(ticks_per_second)) as u32;
+    let remainder = counts.checked_rem(ticks_per_second)?;
+    let nanoseconds = u128::from(remainder)
+        .checked_mul(1_000_000_000)?
+        .checked_div(u128::from(ticks_per_second))?;
+    let nanoseconds = u32::try_from(nanoseconds).ok()?;
     Some(Duration::new(seconds, nanoseconds))
 }
 

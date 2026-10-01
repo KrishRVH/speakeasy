@@ -1,3 +1,8 @@
+//! Native desktop input, presentation, and child-process ownership.
+//!
+//! Callbacks deliver events to the session owner. Insertion permits authorize
+//! one recording and can be revoked while a native clipboard call is blocked.
+
 use async_channel::Sender;
 use raw_window_handle::RawWindowHandle;
 mod insertion;
@@ -13,26 +18,45 @@ use std::sync::{
 /// The hold-to-talk shortcut as people see it.
 #[cfg(target_os = "macos")]
 pub const SHORTCUT: &str = "Fn";
+/// The hold-to-talk shortcut as people see it.
 #[cfg(target_os = "windows")]
 pub const SHORTCUT: &str = "Ctrl + Win";
+/// The hold-to-talk shortcut as people see it.
 #[cfg(target_os = "linux")]
 pub const SHORTCUT: &str = "Ctrl + Super + Space";
 
 #[derive(Debug, Clone)]
+/// Desktop observations and explicit dictation commands sent to the owner.
 pub enum Input {
+    /// The physical shortcut became held.
     Press,
+    /// The physical shortcut was released.
     Release,
+    /// Space during a hold requests hands-free capture.
     Lock,
+    /// Discard the active session and revoke pending insertion.
     Cancel,
+    /// Start or finish hands-free capture.
     Toggle,
+    /// Desktop access failed; the message explains how to resume.
     Unavailable(String),
-    DesktopReady { shortcut: String, cancel: String },
+    /// Shortcut and insertion preparation has completed.
+    DesktopReady {
+        /// The accepted dictation shortcut for display in Settings.
+        shortcut: String,
+        /// The accepted cancellation shortcut for display in Settings.
+        cancel: String,
+    },
 }
 
 // Publishing the native wake handle and requesting stop share one lock. A stop
 // before initialization stays effective, and a wake cannot use a retired handle.
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 struct MonitorControl<T> {
+    #[expect(
+        clippy::disallowed_types,
+        reason = "Stop and native handle publication must be atomic while the native loop cannot receive owner messages"
+    )]
     state: std::sync::Mutex<MonitorState<T>>,
 }
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
@@ -42,6 +66,10 @@ struct MonitorState<T> {
 }
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 impl<T> Default for MonitorControl<T> {
+    #[expect(
+        clippy::disallowed_types,
+        reason = "The same lock serializes native handle publication, waking, and retirement to prevent waking a freed handle"
+    )]
     fn default() -> Self {
         Self {
             state: std::sync::Mutex::new(MonitorState {
@@ -53,8 +81,15 @@ impl<T> Default for MonitorControl<T> {
 }
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 impl<T> MonitorControl<T> {
+    #[expect(
+        clippy::significant_drop_tightening,
+        reason = "Readiness must publish under the same lock as native initialization so stop cannot interleave"
+    )]
     fn start(&self, native: T, ready: impl FnOnce()) -> bool {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if state.stopping {
             return false;
         }
@@ -64,7 +99,10 @@ impl<T> MonitorControl<T> {
     }
 
     fn request_stop(&self, wake: impl FnOnce(&T)) {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.stopping = true;
         if let Some(native) = &state.native {
             wake(native);
@@ -74,14 +112,14 @@ impl<T> MonitorControl<T> {
     fn stopping(&self) -> bool {
         self.state
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .stopping
     }
 
     fn clear(&self) {
         self.state
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .native = None;
     }
 }
@@ -143,17 +181,26 @@ pub fn deliver(tx: &InputSender, event: Input) {
 }
 
 /// A generation-aware commit gate bridges an OS callback and the session owner.
+///
 /// Clipboard preparation may block; Escape must still be able to invalidate
-/// the pending paste. Successful compare_exchange is the commit point.
+/// the pending paste. Successful `compare_exchange` is the commit point.
 #[derive(Clone)]
 pub struct InputSender {
     sender: Sender<Input>,
+    #[expect(
+        clippy::disallowed_types,
+        reason = "Native Escape must revoke this recording while its owner is blocked in a clipboard OS call"
+    )]
     gate: Arc<AtomicU64>,
 }
 /// Authorization for exactly one recording. Starting another recording never
 /// authorizes an old clipboard operation that is still preparing its input.
 #[derive(Clone)]
 pub struct InsertPermit {
+    #[expect(
+        clippy::disallowed_types,
+        reason = "Native Escape must revoke this recording while its owner is blocked in a clipboard OS call"
+    )]
     gate: Arc<AtomicU64>,
     generation: u64,
 }
@@ -165,6 +212,10 @@ impl InsertPermit {
     /// Revoke only this recording, including while an OS operation is blocked.
     /// An obsolete permit cannot revoke a newer recording.
     pub fn revoke(&self) {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "A failed exchange means this permit was already revoked or superseded; it must never revoke a newer recording"
+        )]
         let _ = self.gate.compare_exchange(
             self.generation,
             self.generation | 2,
@@ -172,9 +223,13 @@ impl InsertPermit {
             Ordering::Acquire,
         );
     }
+    /// Whether this recording still has insertion authority.
+    #[must_use]
     pub fn active(&self) -> bool {
         self.gate.load(Ordering::Acquire) == self.generation
     }
+    /// Consume this recording’s authority immediately before submitting native input.
+    #[must_use]
     pub fn commit(&self) -> bool {
         self.gate
             .compare_exchange(
@@ -187,15 +242,25 @@ impl InsertPermit {
     }
 }
 impl InputSender {
+    /// Create an input lane with no recording authorized.
+    #[must_use]
+    #[expect(
+        clippy::disallowed_types,
+        reason = "Construct the callback-visible generation gate; the owner cannot receive cancellation while blocked in native insertion"
+    )]
     pub fn new(sender: Sender<Input>) -> Self {
         Self {
             sender,
             gate: Arc::new(AtomicU64::new(0)),
         }
     }
+    /// Whether native input and insertion are permanently disabled.
+    #[must_use]
     pub fn is_closed(&self) -> bool {
         self.sender.is_closed()
     }
+    /// Authorize a new recording, invalidating every older permit; returns none after closure or generation exhaustion.
+    #[must_use]
     pub fn begin(&self) -> Option<InsertPermit> {
         if self.is_closed() {
             return None;
@@ -219,17 +284,21 @@ impl InputSender {
                         return None;
                     }
                     return Some(permit);
-                }
+                },
                 Err(current) => previous = current,
             }
         }
     }
+    /// Whether this recording still has insertion authority.
+    #[must_use]
     pub fn active(&self) -> bool {
         self.gate.load(Ordering::Acquire) & 3 == 1
     }
+    /// Revoke the current recording without waiting for the owner.
     pub fn cancel(&self) {
         self.gate.fetch_or(2, Ordering::AcqRel);
     }
+    /// Disable native input and revoke every outstanding insertion permit.
     pub fn close(&self) {
         self.sender.close();
         self.cancel();
@@ -237,19 +306,30 @@ impl InputSender {
 }
 
 #[derive(Debug)]
+/// Submission outcome; native input cannot prove that the target accepted text.
 pub enum Inserted {
+    /// Native input was submitted once.
     Sent,
+    /// Text remains on the clipboard with a manual-paste remedy.
     Copied(&'static str),
+    /// Insertion authority was revoked before submission.
     Cancelled,
+    /// No text was submitted; the message explains how to retry.
     Unavailable(&'static str),
 }
 
 #[derive(Clone)]
+/// Explicit desktop shortcut and insertion choices.
 pub struct DesktopOptions {
+    /// Reserved Linux dictation chord in portal syntax.
     pub shortcut: String,
+    /// Reserved Linux cancellation chord in portal syntax.
     pub cancel: String,
+    /// Use Ctrl+Shift+V when submitting through the clipboard.
     pub terminal_paste: bool,
+    /// Copy text and let the user paste it without keyboard-control permission.
     pub manual_paste: bool,
+    /// Use desktop command bindings instead of observing a native shortcut.
     pub external_shortcut: bool,
 }
 impl Default for DesktopOptions {
@@ -266,11 +346,20 @@ impl Default for DesktopOptions {
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 #[derive(Clone)]
+/// Serializes native clipboard/input operations without blocking the session owner.
 pub struct Inserter {
+    #[expect(
+        clippy::disallowed_types,
+        reason = "Serialize irreversible clipboard preparation on blocking native workers; cancellation remains on the independent generation gate"
+    )]
     serial: Arc<tokio::sync::Mutex<()>>,
 }
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 impl Inserter {
+    /// Submit authorized text; `preserve` requests direct input instead of changing the clipboard.
+    ///
+    /// # Errors
+    /// Returns native input failures or a failed blocking worker.
     pub async fn insert(
         &self,
         text: String,
@@ -298,6 +387,14 @@ impl Inserter {
     }
 }
 #[cfg(any(target_os = "windows", target_os = "macos"))]
+/// Start desktop observation and create its matching insertion adapter.
+///
+/// # Errors
+/// Returns thread startup or native desktop initialization failures.
+#[expect(
+    clippy::disallowed_types,
+    reason = "The native insertion adapter serializes blocked clipboard calls while the generation gate handles cancellation"
+)]
 pub fn prepare(input: InputSender, _: DesktopOptions) -> anyhow::Result<(InputMonitor, Inserter)> {
     Ok((
         InputMonitor::start(input)?,
@@ -350,10 +447,12 @@ mod tests {
         let (release, released) = std::sync::mpsc::channel();
         let (ready, events) = async_channel::bounded(1);
         let thread = std::thread::spawn(move || {
-            let _ = initialized.send(());
-            let _ = released.recv();
+            initialized
+                .send(())
+                .expect("Fake monitor startup lane is open");
+            released.recv().expect("Test releases the fake monitor");
             let started = native.start(42, || {
-                let _ = ready.try_send(());
+                ready.try_send(()).expect("Fake readiness lane is open");
             });
             native.clear();
             started
@@ -364,7 +463,7 @@ mod tests {
         release.send(())?;
         let started = thread
             .join()
-            .map_err(|_| anyhow::anyhow!("Fake monitor failed"))?;
+            .map_err(|_panic| anyhow::anyhow!("Fake monitor failed"))?;
         assert!(!started);
         assert!(!woke);
         assert!(control.stopping());

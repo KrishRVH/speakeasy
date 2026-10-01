@@ -25,6 +25,10 @@ struct FakeRecording {
     events: Sender<Event>,
 }
 impl Recording for FakeRecording {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "Harness disposal closes fake cleanup gates after an assertion fails; teardown must still finish"
+    )]
     async fn retire(self) {
         if let Some((entered, release)) = self.retirement {
             let _ = entered.send(()).await;
@@ -60,6 +64,10 @@ impl Speech for FakeSpeech {
             None => Ok(()),
         }
     }
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "Harness disposal closes fake worker gates after assertion failure so owned shutdown can finish"
+    )]
     async fn stop(&mut self) {
         if let Some((entered, release)) = &self.stop {
             let _ = entered.send(()).await;
@@ -212,8 +220,8 @@ impl Harness {
         )?;
         Ok(Self {
             cleanup,
-            output,
             runtime,
+            output,
             updates,
             captures,
             jobs,
@@ -241,7 +249,7 @@ impl Harness {
         self.phase(Phase::Recording).await?;
         receive(&self.captures).await
     }
-    async fn finish(&mut self) -> anyhow::Result<oneshot::Sender<anyhow::Result<String>>> {
+    async fn finish(&self) -> anyhow::Result<oneshot::Sender<anyhow::Result<String>>> {
         self.input(Input::Toggle);
         let (language, reply) = receive(&self.jobs).await?;
         assert_eq!(language, self.runtime.configuration.borrow().language);
@@ -298,6 +306,10 @@ impl PausedHarness {
         let publisher = output.clone();
         let owner = tokio::spawn(async move {
             run(changes, input, output, owner_gate, stopping, ports, epoch).await;
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A closed fake completion lane means the harness no longer waits for owner retirement"
+            )]
             let _ = complete.try_send(());
         });
         Self {
@@ -399,7 +411,7 @@ async fn locking_a_hold_keeps_the_same_capture_until_the_next_press() -> anyhow:
     observed(&mut h.updates, |s| s.hands_free).await?;
     h.input(Input::Release);
     events.send(Event::Level(id, 0.25)).await?;
-    observed(&mut h.updates, |s| s.level == 0.25).await?;
+    observed(&mut h.updates, |s| s.level.to_bits() == 0.25_f32.to_bits()).await?;
     tokio::time::advance(Duration::from_secs(1)).await;
     assert!(h.jobs.try_recv().is_err());
     assert!(h.captures.try_recv().is_err());
@@ -418,7 +430,7 @@ async fn double_tap_uses_one_capture_and_single_tap_obeys_its_deadline() -> anyh
     tokio::time::advance(Duration::from_millis(50)).await;
     h.input(Input::Release);
     events.send(Event::Level(id, 0.25)).await?;
-    observed(&mut h.updates, |s| s.level == 0.25).await?;
+    observed(&mut h.updates, |s| s.level.to_bits() == 0.25_f32.to_bits()).await?;
     tokio::time::advance(Duration::from_millis(100)).await;
     h.input(Input::Press);
     observed(&mut h.updates, |s| s.hands_free).await?;
@@ -435,7 +447,7 @@ async fn double_tap_uses_one_capture_and_single_tap_obeys_its_deadline() -> anyh
     h.input(Input::Release);
     let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
     events.send(Event::Level(id, 0.5)).await?;
-    observed(&mut h.updates, |s| s.level == 0.5).await?;
+    observed(&mut h.updates, |s| s.level.to_bits() == 0.5_f32.to_bits()).await?;
     tokio::time::advance(Duration::from_millis(299)).await;
     assert!(h.jobs.try_recv().is_err());
     tokio::time::advance(Duration::from_millis(1)).await;
@@ -451,7 +463,7 @@ async fn owner_finishes_capture_at_the_five_minute_deadline() -> anyhow::Result<
     h.start().await?;
     let limit = Duration::from_secs(300);
     let deadline = tokio::time::Instant::now() + limit;
-    tokio::time::advance(limit - Duration::from_millis(1)).await;
+    tokio::time::advance(limit.checked_sub(Duration::from_millis(1)).unwrap()).await;
     assert!(h.jobs.try_recv().is_err());
     tokio::time::advance(Duration::from_millis(1)).await;
     receive(&h.jobs).await?;
@@ -901,7 +913,10 @@ async fn warmup_failure_while_stopping_retains_capture_and_retries_on_demand() -
     assert!(matches!(h.harness.updates.borrow().phase, Phase::Stopping));
     h.harness.input(Input::Press);
     events.send(Event::Level(id, 0.4)).await?;
-    observed(&mut h.harness.updates, |s| s.level == 0.4).await?;
+    observed(&mut h.harness.updates, |s| {
+        s.level.to_bits() == 0.4_f32.to_bits()
+    })
+    .await?;
     assert!(h.harness.captures.try_recv().is_err());
     assert!(
         h.harness.loads.try_recv().is_err(),
@@ -916,7 +931,7 @@ async fn warmup_failure_while_stopping_retains_capture_and_retries_on_demand() -
     assert!(reply.send(Ok("fixture".into())).is_ok());
     assert_eq!(receive(&h.harness.pasted).await?, "fixture");
     h.harness.phase(Phase::Done).await?;
-    assert!(h.harness.updates.borrow().message.is_empty());
+    assert_eq!(h.harness.updates.borrow().message, "");
     h.close().await?;
     Ok(())
 }
@@ -1008,7 +1023,7 @@ async fn recovery_failure_keeps_a_queued_dictation_until_microphone_retirement()
     assert!(reply.send(Ok("fixture".into())).is_ok());
     receive(&h.harness.pasted).await?;
     h.harness.phase(Phase::Done).await?;
-    assert!(h.harness.updates.borrow().message.is_empty());
+    assert_eq!(h.harness.updates.borrow().message, "");
     receive(&retiring).await?;
     release.send(()).await?;
     h.close().await?;

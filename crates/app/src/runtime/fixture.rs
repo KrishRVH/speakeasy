@@ -4,7 +4,6 @@ use super::*;
 use crate::local_speech::LocalSpeech;
 use async_channel::Sender;
 use speakeasy_platform::Inserted;
-use std::cell::RefCell;
 
 struct Fixture {
     wav: Vec<u8>,
@@ -14,7 +13,11 @@ struct Fixture {
 
 struct FixtureRecording {
     id: SessionId,
-    wav: RefCell<Option<Vec<u8>>>,
+    #[expect(
+        clippy::disallowed_types,
+        reason = "The capture port signals finish through &self; this single-owner fake must take its public fixture audio exactly once"
+    )]
+    wav: std::cell::RefCell<Option<Vec<u8>>>,
     events: Sender<Event>,
 }
 
@@ -60,11 +63,12 @@ impl Ports for Fixture {
         events: Sender<Event>,
     ) -> anyhow::Result<Self::Recording> {
         events.try_send(Event::Ready(id))?;
-        Ok(FixtureRecording {
-            id,
-            wav: RefCell::new(Some(self.wav.clone())),
-            events,
-        })
+        #[expect(
+            clippy::disallowed_types,
+            reason = "Only this fake capture owns the fixture buffer; finish takes it once through the production &self port"
+        )]
+        let wav = std::cell::RefCell::new(Some(self.wav.clone()));
+        Ok(FixtureRecording { id, wav, events })
     }
 
     fn load(

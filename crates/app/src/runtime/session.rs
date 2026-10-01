@@ -43,25 +43,25 @@ pub(super) enum Stage {
 }
 
 impl Session {
-    pub fn phase(&self) -> Phase {
+    pub(super) fn phase(&self) -> Phase {
         match self.stage {
             Stage::Queued { .. } | Stage::Opening => Phase::Starting,
             Stage::Recording => Phase::Recording,
             Stage::Stopping => Phase::Stopping,
             Stage::AwaitingWorker(_) | Stage::Transcribing | Stage::Inserting(_) => {
                 Phase::Processing
-            }
+            },
         }
     }
 
-    pub fn capturing(&self) -> bool {
+    pub(super) fn capturing(&self) -> bool {
         matches!(
             self.stage,
             Stage::Opening | Stage::Recording | Stage::Stopping
         )
     }
 
-    pub fn ready(mut self, finishing: bool) -> Self {
+    pub(super) fn ready(mut self, finishing: bool) -> Self {
         self.stage = match self.stage {
             Stage::Opening if finishing => Stage::Stopping,
             Stage::Opening => Stage::Recording,
@@ -70,7 +70,7 @@ impl Session {
         self
     }
 
-    pub fn finish(mut self) -> Self {
+    pub(super) fn finish(mut self) -> Self {
         self.stage = match self.stage {
             Stage::Recording => Stage::Stopping,
             stage => stage,

@@ -30,6 +30,7 @@ libloading = "0.9.0"
 objc2 = "0.6.4"
 objc2-app-kit = "0.3.2"
 objc2-foundation = "0.3.2"
+proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 raw-window-handle = "0.6.2"
 reqwest = { version = "0.13.5", default-features = false }
 rtrb = "0.4.0"
@@ -45,19 +46,88 @@ xkbcommon = "0.9.0"
 zbus = { version = "5.19.0", default-features = false }
 
 [workspace.lints.rust]
-unsafe_op_in_unsafe_fn = "deny"
+future_incompatible = { level = "deny", priority = -1 }
+# Public API is a context budget: anything `pub` is documented and reachable,
+# or it is not `pub`.
+missing_docs = "deny"
 unexpected_cfgs = "deny"
+unreachable_pub = "deny"
+# Native FFI lives in platform; core and the application forbid unsafe locally.
+unsafe_op_in_unsafe_fn = "deny"
 unfulfilled_lint_expectations = "deny"
 
+[workspace.lints.rustdoc]
+all = { level = "deny", priority = -1 }
+
 [workspace.lints.clippy]
-undocumented_unsafe_blocks = "deny"
+# Lint groups at lower priority so the named lints below override them. The
+# rust:lint gate runs with warnings denied, so `warn` here changes nothing at
+# the gate; nursery is marked `warn` anyway to document lower trust, and its
+# known false-positive offenders are allowed out explicitly below.
+all = { level = "deny", priority = -1 }
+correctness = { level = "deny", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+
+# Exceptions are visible and self-expiring or they do not exist: no bare
+# `#[allow]`, ever. `#[expect]` fails the build once the lint stops firing,
+# so stale exceptions cannot accumulate.
 allow_attributes = "deny"
-unwrap_used = "deny"
+allow_attributes_without_reason = "deny"
+
+# Panic-free production code: a reachable panic is an invariant the types
+# failed to carry. Tests are exempt from unwrap/expect/panic/indexing only,
+# via the four clippy.toml `allow-*-in-tests` knobs; the rest apply everywhere.
+arithmetic_side_effects = "deny"
+dbg_macro = "deny"
+exit = "deny"
 expect_used = "deny"
+indexing_slicing = "deny"
+mem_forget = "deny"
 panic = "deny"
+string_slice = "deny"
 todo = "deny"
 unimplemented = "deny"
-dbg_macro = "deny"
+unreachable = "deny"
+unwrap_used = "deny"
+
+# Results are handled or visibly, reasons-attached discarded.
+let_underscore_must_use = "deny"
+map_err_ignore = "deny"
+unused_result_ok = "deny"
+
+# Dependency hygiene.
+wildcard_dependencies = "deny"
+undocumented_unsafe_blocks = "deny"
+
+# Deep nesting is context-hostile; the threshold lives in clippy.toml.
+excessive_nesting = "deny"
+
+# Lossy casts (truncation, wrap, sign loss) are denied by pedantic above:
+# conversions go through From/TryFrom or checked methods. These two remain
+# allowed: int-to-float precision loss is usually intended, and widening `as`
+# casts are harmless in systems code.
+cast_lossless = "allow"
+cast_precision_loss = "allow"
+
+# Known ping-pong with `unreachable_pub` (narrowing to `pub(crate)` trips
+# this nursery lint); an exception forced by a lint interaction is not a real
+# invariant, so the lint loses.
+redundant_pub_crate = "allow"
+
+# Deliberately relaxed style lints: size and repetition counts are poor
+# proxies for wrongness and generate churn instead of findings.
+cognitive_complexity = "allow"
+enum_variant_names = "allow"
+missing_const_for_fn = "allow"
+module_name_repetitions = "allow"
+needless_pass_by_value = "allow"
+only_used_in_recursion = "allow"
+option_if_let_else = "allow"
+too_many_lines = "allow"
+use_self = "allow"
+
 
 [profile.release]
 lto = "thin"

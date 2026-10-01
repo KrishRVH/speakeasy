@@ -1,3 +1,5 @@
+//! Embed Windows application resources before linking.
+
 #![forbid(unsafe_code)]
 
 fn main() {

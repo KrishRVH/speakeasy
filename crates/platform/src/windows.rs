@@ -1,7 +1,9 @@
-use super::*;
-use anyhow::bail;
+use super::{
+    Arc, Input, InputSender, InsertPermit, Inserted, MonitorControl, RawWindowHandle, SHORTCUT,
+    Sender, deliver, insertion, keyboard,
+};
+use anyhow::{Context as _, bail};
 use std::{
-    cell::RefCell,
     ffi::OsString,
     os::windows::{
         ffi::OsStringExt,
@@ -12,18 +14,59 @@ use std::{
     thread,
 };
 use windows_sys::Win32::{
-    Foundation::*,
-    Graphics::{Dwm::*, Gdi::*},
+    Foundation::{
+        ERROR_CLASS_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, WAIT_FAILED,
+        WAIT_OBJECT_0, WPARAM,
+    },
+    Graphics::{
+        Dwm::{
+            DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_WINDOW_CORNER_PREFERENCE,
+            DWMWCP_DONOTROUND, DwmSetWindowAttribute,
+        },
+        Gdi::{
+            BeginPaint, EndPaint, GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
+            MonitorFromWindow,
+        },
+    },
     System::{
         Com::{COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize},
         LibraryLoader::GetModuleHandleW,
-        RemoteDesktop::*,
+        RemoteDesktop::{
+            NOTIFY_FOR_THIS_SESSION, WTSRegisterSessionNotification,
+            WTSUnRegisterSessionNotification,
+        },
         Threading::{CreateEventW, GetCurrentProcessId, GetCurrentThreadId, INFINITE, SetEvent},
     },
-    UI::{Controls::Dialogs::*, HiDpi::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
+    UI::{
+        Controls::Dialogs::{
+            CommDlgExtendedError, GetOpenFileNameW, OFN_EXPLORER, OFN_FILEMUSTEXIST,
+            OFN_HIDEREADONLY, OFN_NOCHANGEDIR, OFN_PATHMUSTEXIST, OPENFILENAMEW,
+        },
+        HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
+        Input::KeyboardAndMouse::{
+            GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+            KEYEVENTF_UNICODE, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_LCONTROL, VK_LWIN, VK_MENU,
+            VK_RCONTROL, VK_RWIN, VK_SHIFT,
+        },
+        WindowsAndMessaging::{
+            CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
+            GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, GetWindowLongPtrW,
+            GetWindowThreadProcessId, HWND_TOPMOST, IsWindowVisible, KBDLLHOOKSTRUCT, LWA_ALPHA,
+            MB_ICONERROR, MB_OK, MWMO_INPUTAVAILABLE, MessageBoxW, MsgWaitForMultipleObjectsEx,
+            PBT_APMSUSPEND, PM_NOREMOVE, PM_REMOVE, PeekMessageW, PostThreadMessageW, QS_ALLINPUT,
+            RegisterClassW, SC_MINIMIZE, SIZE_MINIMIZED, SPI_GETCLIENTAREAANIMATION, SW_HIDE,
+            SW_RESTORE, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+            SWP_NOSIZE, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW,
+            SetWindowPos, SetWindowsHookExW, ShowWindow, SystemParametersInfoW, TranslateMessage,
+            UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_APP, WM_KEYDOWN, WM_NCDESTROY, WM_PAINT,
+            WM_POWERBROADCAST, WM_QUERYENDSESSION, WM_QUIT, WM_SIZE, WM_SYSCOMMAND, WM_SYSKEYDOWN,
+            WM_WTSSESSION_CHANGE, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+            WS_EX_TRANSPARENT, WS_OVERLAPPEDWINDOW, WS_POPUP,
+        },
+    },
 };
 
-const OWN_INPUT: usize = 0x53504541;
+const OWN_INPUT: usize = 0x5350_4541;
 const MASK_START: u32 = WM_APP + 1;
 // Either Ctrl with either Windows key, as left and right keys report separately.
 const CHORD: [VIRTUAL_KEY; 4] = [VK_LCONTROL, VK_RCONTROL, VK_LWIN, VK_RWIN];
@@ -91,22 +134,25 @@ fn mask_start_menu() {
         },
     };
     let input = [key(0), key(KEYEVENTF_KEYUP)];
-    // SAFETY: both keyboard records are initialized for this synchronous call;
-    // our marker keeps them out of the shortcut hook.
-    unsafe {
-        SendInput(
-            input.len() as u32,
-            input.as_ptr(),
-            std::mem::size_of::<INPUT>() as i32,
-        );
-    }
-}
-thread_local! {
-    // WH_KEYBOARD_LL has no context parameter. The hook and its state live on
-    // the same message-loop thread; no state is shared with the UI.
-    static HOOK: RefCell<Option<HookState>> = const { RefCell::new(None) };
+    // Our marker keeps these records out of the shortcut hook.
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "Marking Win as used is a best-effort shell hint; blocked synthetic input must not stop dictation"
+    )]
+    let _ = send_input(&input);
 }
 
+thread_local! {
+    // WH_KEYBOARD_LL has no context argument. This storage belongs to the
+    // monitor's native thread and is cleared before that thread exits.
+    #[expect(
+        clippy::disallowed_types,
+        reason = "The context-free Windows hook mutates state confined to its own native thread; callbacks never share the UI owner"
+    )]
+    static HOOK: std::cell::RefCell<Option<HookState>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Owns the desktop observation thread until explicit stop and acknowledged cleanup.
 pub struct InputMonitor {
     control: Arc<MonitorControl<()>>,
     wake: Arc<OwnedHandle>,
@@ -115,7 +161,7 @@ pub struct InputMonitor {
 }
 
 impl InputMonitor {
-    pub fn start(tx: InputSender) -> anyhow::Result<Self> {
+    pub(super) fn start(tx: InputSender) -> anyhow::Result<Self> {
         let control = Arc::new(MonitorControl::default());
         let native_control = control.clone();
         // SAFETY: a successful CreateEventW transfers the sole owning handle.
@@ -136,7 +182,7 @@ impl InputMonitor {
                     *slot.borrow_mut() = Some(HookState {
                         tx: tx.clone(),
                         policy: keyboard::Windows::default(),
-                    })
+                    });
                 });
                 if let Err(error) = run_monitor(&tx, &native_control, &native_wake)
                     && !native_control.stopping()
@@ -152,6 +198,10 @@ impl InputMonitor {
                 native_control.clear();
                 drop(HOOK.with(|slot| slot.borrow_mut().take()));
                 tx.close();
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "The one-shot receiver can close only when the owner no longer waits for monitor retirement"
+                )]
                 let _ = complete.try_send(());
             })?;
         Ok(Self {
@@ -162,8 +212,9 @@ impl InputMonitor {
         })
     }
 
+    /// Request native observation shutdown without joining its thread.
     pub fn request_stop(&self) {
-        self.control.request_stop(|_| {
+        self.control.request_stop(|()| {
             // SAFETY: the shared owning handle remains live through native exit;
             // setting a manual-reset event wakes a running or future wait.
             unsafe {
@@ -172,9 +223,14 @@ impl InputMonitor {
         });
     }
 
+    /// Wait for native resources to retire before replacing or dropping the monitor.
     pub fn stopped(&self) -> impl std::future::Future<Output = ()> + use<> {
         let finished = self.finished.clone();
         async move {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Completion and sender closure both acknowledge that the native monitor thread has exited"
+            )]
             let _ = finished.recv().await;
         }
     }
@@ -192,7 +248,7 @@ fn run_monitor(
     // removes them before the thread-local callback state is destroyed.
     unsafe {
         let mut msg = std::mem::zeroed();
-        PeekMessageW(&mut msg, null_mut(), 0, 0, PM_NOREMOVE);
+        PeekMessageW(&raw mut msg, null_mut(), 0, 0, PM_NOREMOVE);
         let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard), GetModuleHandleW(null()), 0);
         if hook.is_null() {
             return Err(std::io::Error::last_os_error().into());
@@ -204,7 +260,7 @@ fn run_monitor(
             lpszClassName: class_name.as_ptr(),
             ..std::mem::zeroed()
         };
-        if RegisterClassW(&class) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS {
+        if RegisterClassW(&raw const class) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS {
             let error = std::io::Error::last_os_error();
             UnhookWindowsHookEx(hook);
             return Err(error.into());
@@ -245,7 +301,7 @@ fn run_monitor(
             'pump: loop {
                 // Drain queued messages before waiting, including thread-only
                 // Start-menu masks. Stop wins even under continuous input.
-                while PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
+                while PeekMessageW(&raw mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
                     if control.stopping() || msg.message == WM_QUIT {
                         break 'pump;
                     }
@@ -253,8 +309,8 @@ fn run_monitor(
                         mask_start_menu();
                         continue;
                     }
-                    TranslateMessage(&msg);
-                    DispatchMessageW(&msg);
+                    TranslateMessage(&raw const msg);
+                    DispatchMessageW(&raw const msg);
                 }
                 if control.stopping() {
                     break;
@@ -271,8 +327,8 @@ fn run_monitor(
                     WAIT_FAILED => {
                         result = Err(std::io::Error::last_os_error().into());
                         break;
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
             }
         }
@@ -288,6 +344,10 @@ impl Drop for InputMonitor {
     fn drop(&mut self) {
         self.request_stop();
         if let Some(thread) = self.thread.take() {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Joining reaps the monitor even after a callback panic; the input lane already reports unavailability"
+            )]
             let _ = thread.join();
         }
     }
@@ -304,7 +364,7 @@ unsafe extern "system" fn keyboard(code: i32, wparam: WPARAM, lparam: LPARAM) ->
             if key.dwExtraInfo == OWN_INPUT {
                 return false;
             }
-            let down = wparam as u32 == WM_KEYDOWN || wparam as u32 == WM_SYSKEYDOWN;
+            let down = wparam == WM_KEYDOWN as usize || wparam == WM_SYSKEYDOWN as usize;
             HOOK.with(|slot| {
                 slot.borrow_mut()
                     .as_mut()
@@ -328,6 +388,10 @@ unsafe extern "system" fn keyboard(code: i32, wparam: WPARAM, lparam: LPARAM) ->
     unsafe { CallNextHookEx(null_mut(), code, wparam, lparam) }
 }
 
+/// Configure an owned UI-thread window for nonactivating, click-through presentation.
+///
+/// # Errors
+/// Returns an error for the wrong window kind or failed native configuration.
 pub fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
     use windows_sys::Win32::UI::Shell::SetWindowSubclass;
     let RawWindowHandle::Win32(raw) = handle else {
@@ -345,19 +409,17 @@ pub fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
         SetWindowLongPtrW(
             hwnd,
             GWL_STYLE,
-            (style & !(WS_OVERLAPPEDWINDOW as isize)) | WS_POPUP as isize,
+            (style & !(WS_OVERLAPPEDWINDOW.cast_signed() as isize))
+                | WS_POPUP.cast_signed() as isize,
         );
         let border = DWMWA_COLOR_NONE;
         let corners = DWMWCP_DONOTROUND;
         for (attribute, value) in [
-            (DWMWA_BORDER_COLOR, (&border as *const u32).cast()),
-            (
-                DWMWA_WINDOW_CORNER_PREFERENCE,
-                (&corners as *const i32).cast(),
-            ),
+            (DWMWA_BORDER_COLOR, (&raw const border).cast()),
+            (DWMWA_WINDOW_CORNER_PREFERENCE, (&raw const corners).cast()),
         ] {
             // Decoration hints are best effort.
-            let _ = DwmSetWindowAttribute(hwnd, attribute as u32, value, 4);
+            DwmSetWindowAttribute(hwnd, attribute.cast_unsigned(), value, 4);
         }
         let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         SetWindowLongPtrW(
@@ -365,7 +427,7 @@ pub fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
             GWL_EXSTYLE,
             style
                 | (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_LAYERED)
-                    as isize,
+                    .cast_signed() as isize,
         );
         // WS_EX_TRANSPARENT only affects paint ordering on an ordinary window.
         // Layering makes the entire noninteractive pill pass mouse hit testing.
@@ -409,15 +471,15 @@ unsafe extern "system" fn pill_window(
             // ValidateRect alone leaves this hidden window's paint pending.
             // Complete the native paint cycle without drawing or calling GPUI.
             let mut paint = std::mem::zeroed();
-            BeginPaint(hwnd, &mut paint);
-            EndPaint(hwnd, &paint);
+            BeginPaint(hwnd, &raw mut paint);
+            EndPaint(hwnd, &raw const paint);
             return 0;
         }
         DefSubclassProc(hwnd, message, wparam, lparam)
     }
 }
 
-pub fn modifiers_down() -> bool {
+pub(super) fn modifiers_down() -> bool {
     // SAFETY: querying virtual key state requires no owned resources.
     unsafe {
         [VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN]
@@ -427,7 +489,9 @@ pub fn modifiers_down() -> bool {
 }
 
 /// Install once per Settings window. The window owns the callback context until
-/// WM_NCDESTROY; callbacks only enqueue work, avoiding reentrant GPUI updates.
+/// `WM_NCDESTROY`; callbacks only enqueue work, avoiding reentrant GPUI updates.
+/// # Errors
+/// Returns an error if the window is invalid or callback installation fails.
 pub fn minimize_to_tray(handle: RawWindowHandle, hide: Sender<()>) -> anyhow::Result<()> {
     use windows_sys::Win32::UI::Shell::SetWindowSubclass;
     let RawWindowHandle::Win32(raw) = handle else {
@@ -451,6 +515,10 @@ pub fn minimize_to_tray(handle: RawWindowHandle, hide: Sender<()>) -> anyhow::Re
     Ok(())
 }
 
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "Minimize notifications coalesce in a one-slot lane; a closed lane belongs to a destroyed settings owner"
+)]
 unsafe extern "system" fn settings_window(
     hwnd: HWND,
     message: u32,
@@ -478,6 +546,7 @@ unsafe extern "system" fn settings_window(
     }
 }
 
+/// Show or hide the owned Settings window; call on its UI thread.
 pub fn set_settings_visible(handle: RawWindowHandle, visible: bool) {
     if let RawWindowHandle::Win32(raw) = handle {
         // SAFETY: caller resolves a live Settings window on its owning UI thread,
@@ -493,41 +562,54 @@ pub fn set_settings_visible(handle: RawWindowHandle, visible: bool) {
 }
 
 /// Asks for one existing file, offering `filter` (a name and pattern) before
-/// all files. The dialog runs its own message loop on a dedicated thread:
-/// shown from GPUI's UI thread, it stays unpainted while GPUI is idle.
-pub async fn choose_file(
+/// all files, without blocking the UI owner.
+///
+/// The dialog runs its own message loop on a dedicated thread; shown from
+/// GPUI's UI thread, it stays unpainted while GPUI is idle.
+///
+/// # Errors
+/// Returns native dialog or worker failures; cancellation returns no path.
+pub fn choose_file(
     owner: RawWindowHandle,
     title: &str,
     filter: [&str; 2],
-) -> anyhow::Result<Option<PathBuf>> {
-    let RawWindowHandle::Win32(raw) = owner else {
-        bail!("Expected a Windows window");
+) -> impl std::future::Future<Output = anyhow::Result<Option<PathBuf>>> + Send + use<> {
+    // Resolve the UI-only handle before constructing the Send completion future.
+    let owner = match owner {
+        RawWindowHandle::Win32(raw) => Ok(raw.hwnd.get()),
+        _ => Err(anyhow::anyhow!("Expected a Windows window")),
     };
-    let owner = raw.hwnd.get();
     let title: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
     let filter: Vec<u16> = [filter[0], filter[1], "All files", "*.*", ""]
         .join("\0")
         .encode_utf16()
         .chain(Some(0))
         .collect();
-    let (tx, rx) = async_channel::bounded(1);
-    thread::Builder::new()
-        .name("file dialog".into())
-        .spawn(move || {
-            let _ = tx.send_blocking(open_file(owner as HWND, &title, &filter));
-        })?;
-    rx.recv().await?
+    async move {
+        let owner = owner?;
+        let (tx, rx) = async_channel::bounded(1);
+        thread::Builder::new()
+            .name("file dialog".into())
+            .spawn(move || {
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "A closed completion lane means the settings owner no longer needs the dialog result"
+                )]
+                let _ = tx.send_blocking(open_file(owner as HWND, &title, &filter));
+            })?;
+        rx.recv().await?
+    }
 }
 
 fn open_file(owner: HWND, title: &[u16], filter: &[u16]) -> anyhow::Result<Option<PathBuf>> {
     let mut file = vec![0u16; 32_768];
     let mut dialog = OPENFILENAMEW {
-        lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
+        lStructSize: u32::try_from(std::mem::size_of::<OPENFILENAMEW>())?,
         hwndOwner: owner,
         lpstrFilter: filter.as_ptr(),
         nFilterIndex: 1,
         lpstrFile: file.as_mut_ptr(),
-        nMaxFile: file.len() as u32,
+        nMaxFile: u32::try_from(file.len())?,
         lpstrTitle: title.as_ptr(),
         Flags: OFN_EXPLORER
             | OFN_FILEMUSTEXIST
@@ -541,9 +623,9 @@ fn open_file(owner: HWND, title: &[u16], filter: &[u16]) -> anyhow::Result<Optio
     let error = unsafe {
         let apartment = CoInitializeEx(
             null(),
-            (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32,
+            (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE).cast_unsigned(),
         );
-        let error = if GetOpenFileNameW(&mut dialog) == 0 {
+        let error = if GetOpenFileNameW(&raw mut dialog) == 0 {
             CommDlgExtendedError()
         } else {
             0
@@ -557,29 +639,51 @@ fn open_file(owner: HWND, title: &[u16], filter: &[u16]) -> anyhow::Result<Optio
         bail!("The file dialog failed with code {error:#x}");
     }
     let length = file.iter().position(|&unit| unit == 0).unwrap_or(0);
-    Ok((length > 0).then(|| OsString::from_wide(&file[..length]).into()))
+    Ok(file
+        .get(..length)
+        .filter(|path| !path.is_empty())
+        .map(|path| OsString::from_wide(path).into()))
 }
 
+/// Show or hide the owned pill without activating it; call on its UI thread.
 pub fn set_pill_visible(handle: RawWindowHandle, visible: bool) {
+    let Ok(monitor_bytes) = u32::try_from(std::mem::size_of::<MONITORINFO>()) else {
+        return;
+    };
     if let RawWindowHandle::Win32(raw) = handle {
         // SAFETY: called with a live window handle on its UI thread.
         unsafe {
             if visible {
                 let monitor = MonitorFromWindow(GetForegroundWindow(), MONITOR_DEFAULTTOPRIMARY);
                 let mut info: MONITORINFO = std::mem::zeroed();
-                info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                info.cbSize = monitor_bytes;
                 let mut dpi_x = 96;
                 let mut dpi_y = 96;
-                GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y);
-                if GetMonitorInfoW(monitor, &mut info) != 0 {
-                    let scale = dpi_x as f32 / 96.0;
-                    let width = (400.0 * scale) as i32;
-                    let height = (100.0 * scale) as i32;
+                GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &raw mut dpi_x, &raw mut dpi_y);
+                if GetMonitorInfoW(monitor, &raw mut info) != 0 {
+                    let scaled = |logical: u32| {
+                        i32::try_from(u64::from(logical).saturating_mul(u64::from(dpi_x)) / 96)
+                            .unwrap_or(i32::MAX)
+                    };
+                    let width = scaled(400);
+                    let height = scaled(100);
+                    // Widen before centering so monitor coordinates may span
+                    // both ends of the signed desktop coordinate range.
+                    let center = i64::from(info.rcWork.left)
+                        .saturating_add(i64::from(info.rcWork.right))
+                        .saturating_sub(i64::from(width))
+                        / 2;
+                    let left =
+                        i32::try_from(center.clamp(i64::from(i32::MIN), i64::from(i32::MAX)))
+                            .unwrap_or(info.rcWork.left);
                     SetWindowPos(
                         raw.hwnd.get() as HWND,
                         HWND_TOPMOST,
-                        (info.rcWork.left + info.rcWork.right - width) / 2,
-                        info.rcWork.bottom - height - (2.0 * scale) as i32,
+                        left,
+                        info.rcWork
+                            .bottom
+                            .saturating_sub(height)
+                            .saturating_sub(scaled(2)),
                         width,
                         height,
                         SWP_NOACTIVATE,
@@ -597,7 +701,10 @@ pub fn set_pill_visible(handle: RawWindowHandle, visible: bool) {
 // Clipboard listeners can briefly hold it immediately after a change. Retry
 // with a short wall-clock budget on the insertion worker, never the UI thread.
 fn open_clipboard() -> anyhow::Result<clipboard_win::Clipboard> {
-    let until = std::time::Instant::now() + std::time::Duration::from_millis(50);
+    let started = std::time::Instant::now();
+    let until = started
+        .checked_add(std::time::Duration::from_millis(50))
+        .unwrap_or(started);
     loop {
         match clipboard_win::Clipboard::new() {
             Ok(clipboard) => return Ok(clipboard),
@@ -607,7 +714,7 @@ fn open_clipboard() -> anyhow::Result<clipboard_win::Clipboard> {
     }
 }
 
-pub fn insert(
+pub(super) fn insert(
     text: &str,
     gate: &InsertPermit,
     preserve_clipboard: bool,
@@ -644,68 +751,60 @@ pub fn insert(
     ) {
         return Ok(outcome);
     }
-    // SAFETY: INPUT records contain initialized keyboard payloads. The OS
-    // copies them synchronously; our marker excludes them from shortcut handling.
-    unsafe {
-        if let Some(outcome) =
-            insertion::preflight(has_external_target(), true, insertion::Mode::Paste)
-        {
-            return Ok(outcome);
-        }
-        let key = |vk, flags| INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT {
-                    wVk: vk,
-                    wScan: 0,
-                    dwFlags: flags,
-                    time: 0,
-                    dwExtraInfo: OWN_INPUT,
-                },
+    if let Some(outcome) = insertion::preflight(has_external_target(), true, insertion::Mode::Paste)
+    {
+        return Ok(outcome);
+    }
+    let key = |vk, flags| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: OWN_INPUT,
             },
-        };
-        let input = [
-            key(VK_CONTROL, 0),
-            key(0x56, 0),
-            key(0x56, KEYEVENTF_KEYUP),
-            key(VK_CONTROL, KEYEVENTF_KEYUP),
-        ];
-        if sequence != clipboard_win::raw::seq_num() {
-            return Ok(Inserted::Unavailable(
-                "Clipboard changed before paste. New contents were preserved.",
-            ));
+        },
+    };
+    let input = [
+        key(VK_CONTROL, 0),
+        key(0x56, 0),
+        key(0x56, KEYEVENTF_KEYUP),
+        key(VK_CONTROL, KEYEVENTF_KEYUP),
+    ];
+    if sequence != clipboard_win::raw::seq_num() {
+        return Ok(Inserted::Unavailable(
+            "Clipboard changed before paste. New contents were preserved.",
+        ));
+    }
+    if !gate.commit() {
+        return Ok(Inserted::Cancelled);
+    }
+    let sent = send_input(&input)?;
+    if sent != input.len() {
+        let release = [key(0x56, KEYEVENTF_KEYUP), key(VK_CONTROL, KEYEVENTF_KEYUP)];
+        if sent > 0 {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Release stuck synthetic modifiers after partial input even if the target also blocks cleanup"
+            )]
+            let _ = send_input(&release);
         }
-        if !gate.commit() {
-            return Ok(Inserted::Cancelled);
-        }
-        let sent = SendInput(
-            input.len() as u32,
-            input.as_ptr(),
-            std::mem::size_of::<INPUT>() as i32,
-        );
-        if sent != input.len() as u32 {
-            let release = [key(0x56, KEYEVENTF_KEYUP), key(VK_CONTROL, KEYEVENTF_KEYUP)];
-            if sent > 0 {
-                SendInput(2, release.as_ptr(), std::mem::size_of::<INPUT>() as i32);
-            }
-            return Ok(Inserted::Copied(
-                "Copied. This app blocked paste; press Ctrl+V.",
-            ));
-        }
+        return Ok(Inserted::Copied(
+            "Copied. This app blocked paste; press Ctrl+V.",
+        ));
     }
     Ok(Inserted::Sent)
 }
 
+/// Query the native reduced-motion preference; Linux uses the app setting.
+#[must_use]
 pub fn reduced_motion() -> bool {
     let mut enabled: i32 = 1;
     // SAFETY: SPI_GETCLIENTAREAANIMATION writes a BOOL into this live variable.
     unsafe {
-        SystemParametersInfoW(
-            SPI_GETCLIENTAREAANIMATION,
-            0,
-            (&mut enabled as *mut i32).cast(),
-            0,
-        );
+        SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, (&raw mut enabled).cast(), 0);
     }
     enabled == 0
 }
@@ -718,7 +817,7 @@ fn insert_direct(text: &str, gate: &InsertPermit) -> anyhow::Result<Inserted> {
     ) {
         return Ok(outcome);
     }
-    let mut input = Vec::with_capacity(text.len() * 2);
+    let mut input = Vec::with_capacity(text.len().saturating_mul(2));
     for unit in text.replace("\r\n", "\n").encode_utf16() {
         for flags in [KEYEVENTF_UNICODE, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP] {
             input.push(INPUT {
@@ -743,16 +842,9 @@ fn insert_direct(text: &str, gate: &InsertPermit) -> anyhow::Result<Inserted> {
     if !gate.commit() {
         return Ok(Inserted::Cancelled);
     }
-    // SAFETY: all UTF-16 keyboard records are initialized and stay alive for
-    // this synchronous OS submission. No clipboard format is read or changed.
-    let sent = unsafe {
-        SendInput(
-            input.len() as u32,
-            input.as_ptr(),
-            std::mem::size_of::<INPUT>() as i32,
-        )
-    };
-    if sent != input.len() as u32 {
+    // Direct input leaves every clipboard format untouched.
+    let sent = send_input(&input)?;
+    if sent != input.len() {
         return Ok(Inserted::Unavailable(
             "Direct input was blocked or only partly sent. Clipboard preserved.",
         ));
@@ -760,6 +852,16 @@ fn insert_direct(text: &str, gate: &InsertPermit) -> anyhow::Result<Inserted> {
     Ok(Inserted::Sent)
 }
 
+fn send_input(input: &[INPUT]) -> anyhow::Result<usize> {
+    let count = u32::try_from(input.len()).context("Text is too long for native keyboard input")?;
+    let size = i32::try_from(std::mem::size_of::<INPUT>())?;
+    // SAFETY: initialized keyboard records and their buffer outlive this
+    // synchronous submission; both lengths are checked against the native ABI.
+    let sent = unsafe { SendInput(count, input.as_ptr(), size) };
+    Ok(usize::try_from(sent)?)
+}
+
+/// Present a local startup error; callers never include audio, transcripts, or credentials.
 pub fn show_error(message: &str) {
     let text: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
     let title: Vec<u16> = "Speakeasy".encode_utf16().chain(Some(0)).collect();
@@ -780,7 +882,7 @@ fn has_external_target() -> bool {
         let window = GetForegroundWindow();
         let mut pid = 0;
         !window.is_null()
-            && GetWindowThreadProcessId(window, &mut pid) != 0
+            && GetWindowThreadProcessId(window, &raw mut pid) != 0
             && pid != GetCurrentProcessId()
     }
 }
@@ -790,8 +892,16 @@ mod tests {
     use super::*;
     use anyhow::Context;
     use std::{cell::Cell, num::NonZeroIsize};
+    use windows_sys::Win32::{
+        Graphics::Gdi::{GetUpdateRect, InvalidateRect, ValidateRect},
+        UI::WindowsAndMessaging::{SendMessageW, UnregisterClassW},
+    };
 
     thread_local! {
+        #[expect(
+            clippy::disallowed_types,
+            reason = "The native renderer increments a test-only counter on the same thread that asserts paint delivery"
+        )]
         static PAINTS: Cell<usize> = const { Cell::new(0) };
     }
 
@@ -804,7 +914,7 @@ mod tests {
         // SAFETY: this procedure serves only the window owned by the test below.
         unsafe {
             if message == WM_PAINT {
-                PAINTS.set(PAINTS.get() + 1);
+                PAINTS.set(PAINTS.get().saturating_add(1));
                 ValidateRect(hwnd, null());
                 return 0;
             }
@@ -842,7 +952,7 @@ mod tests {
                 lpszClassName: class.as_ptr(),
                 ..std::mem::zeroed()
             };
-            if RegisterClassW(&definition) == 0 {
+            if RegisterClassW(&raw const definition) == 0 {
                 return Err(std::io::Error::last_os_error().into());
             }
             CreateWindowExW(

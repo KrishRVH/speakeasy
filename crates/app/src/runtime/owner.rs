@@ -149,10 +149,10 @@ impl<P: Ports> Owner<P> {
             event = self.input.recv() => Wake::Input(event),
             changed = self.changes.changed() => Wake::Configuration(changed),
             event = self.audio.recv() => Wake::Audio(event),
-            _ = self.microphone.retired() => Wake::Retired,
+            () = self.microphone.retired() => Wake::Retired,
             result = self.worker.completed() => Wake::Worker(result),
             result = insertion => Wake::Insertion(result),
-            _ = timer => Wake::Timer,
+            () = timer => Wake::Timer,
         }
     }
 
@@ -160,7 +160,7 @@ impl<P: Ports> Owner<P> {
         let action = match wake {
             Wake::Stop | Wake::Configuration(Err(_)) => {
                 return false;
-            }
+            },
             Wake::Input(Err(_)) => {
                 self.fail(
                     "Shortcut monitoring stopped. Open Speakeasy and enable dictation again."
@@ -168,34 +168,34 @@ impl<P: Ports> Owner<P> {
                 );
                 self.publish();
                 return false;
-            }
+            },
             Wake::Input(Ok(Input::Unavailable(message))) => {
                 self.fail(message);
                 self.publish();
                 return false;
-            }
+            },
             Wake::Input(Ok(input)) => self.handle_input(input),
             Wake::Configuration(Ok(())) => {
                 self.configure();
                 None
-            }
+            },
             Wake::Audio(Ok(event)) => {
                 self.handle_audio(event);
                 None
-            }
+            },
             Wake::Audio(Err(_)) => None,
             Wake::Worker(result) => {
                 self.handle_worker(result);
                 None
-            }
+            },
             Wake::Insertion(result) => {
                 self.handle_insertion(result);
                 None
-            }
+            },
             Wake::Retired => {
                 self.microphone = Microphone::Free;
                 None
-            }
+            },
             Wake::Timer => self.gesture.tick(now()),
         };
         self.handle_action(action)
@@ -205,7 +205,7 @@ impl<P: Ports> Owner<P> {
         match input {
             Input::Press if self.desktop_ready => self.gesture.press(now()),
             Input::Toggle if self.desktop_ready => self.gesture.toggle(now()),
-            Input::Press | Input::Toggle => None,
+            Input::Press | Input::Toggle | Input::Unavailable(_) => None,
             Input::Release => self.gesture.release(now()),
             Input::Lock => self.gesture.lock(),
             Input::Cancel => self.gesture.cancel(),
@@ -214,8 +214,7 @@ impl<P: Ports> Owner<P> {
                 self.shortcut = shortcut.into();
                 self.cancel_shortcut = cancel.into();
                 None
-            }
-            Input::Unavailable(_) => None,
+            },
         }
     }
 
@@ -258,16 +257,16 @@ impl<P: Ports> Owner<P> {
         match event {
             Event::Ready(id) => {
                 if let Some(session) = self.take_capture(id) {
-                    self.session = Some(session.ready(self.gesture.state == State::Processing));
+                    self.session = Some(session.ready(self.gesture.state() == State::Processing));
                 }
-            }
+            },
             Event::Level(id, level) => {
                 if let Some(mut session) = self.take_capture(id) {
                     session.level = level;
                     session.meter_tick = session.meter_tick.wrapping_add(1);
                     self.session = Some(session);
                 }
-            }
+            },
             Event::AudioDone(id, result) => {
                 let Some(mut session) = self.take_capture(id) else {
                     return;
@@ -278,18 +277,18 @@ impl<P: Ports> Owner<P> {
                     Ok(Some(wav)) => {
                         session.stage = Stage::AwaitingWorker(wav);
                         self.session = Some(session);
-                    }
+                    },
                     Ok(None) => {
                         session.permit.revoke();
                         self.gesture.complete();
                         self.feedback = Feedback::Empty;
-                    }
+                    },
                     Err(error) => {
                         session.permit.revoke();
                         self.fail(error.to_string());
-                    }
+                    },
                 }
-            }
+            },
         }
     }
 
@@ -326,7 +325,7 @@ impl<P: Ports> Owner<P> {
                         session.stage = Stage::Inserting(tokio::spawn(work));
                     }
                 }
-            }
+            },
             failure => {
                 let message = match failure {
                     Ok(Err(error)) => error.to_string(),
@@ -347,7 +346,7 @@ impl<P: Ports> Owner<P> {
                 if inference {
                     self.worker.replace(&self.ports, &self.config, false);
                 }
-            }
+            },
         }
     }
 
@@ -365,11 +364,11 @@ impl<P: Ports> Owner<P> {
             Ok(Ok(Inserted::Unavailable(message) | Inserted::Copied(message))) => {
                 self.feedback = Feedback::Error;
                 self.message = message.into();
-            }
+            },
             _ => {
                 self.feedback = Feedback::Error;
                 self.message = "Could not submit text. Check desktop permissions and clipboard access, then try again.".into();
-            }
+            },
         }
         self.gesture.complete();
     }
@@ -397,7 +396,7 @@ impl<P: Ports> Owner<P> {
                         microphone: self.config.microphone.clone(),
                     },
                 });
-            }
+            },
             Some(Action::Finish) => {
                 if let Some(recording) = self.microphone.recording() {
                     recording.finish();
@@ -405,15 +404,15 @@ impl<P: Ports> Owner<P> {
                 if let Some(session) = self.session.take() {
                     self.session = Some(session.finish());
                 }
-            }
+            },
             Some(Action::Cancel) => {
                 self.abandon();
                 if matches!(self.worker, Worker::Unavailable) {
                     self.worker.replace(&self.ports, &self.config, false);
                 }
                 self.feedback = Feedback::Cancelled;
-            }
-            _ => {}
+            },
+            _ => {},
         }
         true
     }
@@ -425,13 +424,13 @@ impl<P: Ports> Owner<P> {
             match session.stage {
                 Stage::Opening | Stage::Recording | Stage::Stopping => {
                     self.microphone.retire();
-                }
+                },
                 Stage::Inserting(task) => self.retiring_insertions.push(task),
                 Stage::AwaitingWorker(mut wav) => wav.fill(0),
                 Stage::Transcribing if self.worker.is_transcribing() => {
                     self.worker.replace(&self.ports, &self.config, true);
-                }
-                Stage::Queued { .. } | Stage::Transcribing => {}
+                },
+                Stage::Queued { .. } | Stage::Transcribing => {},
             }
         }
     }
@@ -460,17 +459,17 @@ impl<P: Ports> Owner<P> {
                 .record(session.id, microphone, self.events.clone())
             {
                 Ok(recording) => {
-                    if self.gesture.state == State::Processing {
+                    if self.gesture.state() == State::Processing {
                         recording.finish();
                     }
                     self.microphone = Microphone::Open(recording);
                     session.stage = Stage::Opening;
                     self.session = Some(session);
-                }
+                },
                 Err(error) => {
                     session.permit.revoke();
                     self.fail(format!("Could not start microphone worker: {error}"));
-                }
+                },
             }
         }
         if self
@@ -497,23 +496,28 @@ impl<P: Ports> Owner<P> {
         }
         // Reap completed obsolete insertions without allowing their result to
         // change the current session. Cleanup tasks are never aborted on cancel.
-        for index in (0..self.retiring_insertions.len()).rev() {
-            if self.retiring_insertions[index].is_finished() {
-                let _ = self.retiring_insertions.swap_remove(index).await;
-            }
+        for task in self
+            .retiring_insertions
+            .extract_if(.., |task| task.is_finished())
+        {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Obsolete insertion results cannot affect a newer session; awaiting still reaps their owned cleanup"
+            )]
+            let _ = task.await;
         }
     }
 
     fn publish(&self) {
-        debug_assert_eq!(self.gesture.state == State::Idle, self.session.is_none());
+        debug_assert_eq!(self.gesture.state() == State::Idle, self.session.is_none());
         let snapshot = Snapshot {
             epoch: self.epoch,
             id: self.latest_id.get(),
             phase: self
                 .session
                 .as_ref()
-                .map_or(self.feedback.phase(), Session::phase),
-            hands_free: self.gesture.state == State::HandsFree,
+                .map_or_else(|| self.feedback.phase(), Session::phase),
+            hands_free: self.gesture.state() == State::HandsFree,
             level: self.session.as_ref().map_or(0.0, |session| session.level),
             meter_tick: self
                 .session
@@ -545,6 +549,10 @@ impl<P: Ports> Owner<P> {
         self.worker.request_stop();
         let insertions = async {
             for task in self.retiring_insertions {
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "Shutdown reaps every obsolete insertion without publishing stale results or replacing current session state"
+                )]
                 let _ = task.await;
             }
         };

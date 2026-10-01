@@ -22,20 +22,20 @@ pub(super) enum Worker<W> {
     Recovering(Job<W>),
 }
 impl<W: Speech> Worker<W> {
-    pub fn model(&self) -> ModelState {
+    pub(super) fn model(&self) -> ModelState {
         match self {
             Self::Unavailable => ModelState::Unavailable,
             Self::Loading(_) | Self::Recovering(_) => ModelState::Loading,
             Self::Ready(_) | Self::Transcribing(_) => ModelState::Ready,
         }
     }
-    pub fn is_transcribing(&self) -> bool {
+    pub(super) fn is_transcribing(&self) -> bool {
         matches!(self, Self::Transcribing(_))
     }
-    pub fn is_ready(&self) -> bool {
+    pub(super) fn is_ready(&self) -> bool {
         matches!(self, Self::Ready(_))
     }
-    pub async fn completed(&mut self) -> Completion<W> {
+    pub(super) async fn completed(&mut self) -> Completion<W> {
         match self {
             Self::Loading(job) | Self::Recovering(job) => Completion::Loaded((&mut job.task).await),
             Self::Transcribing(job) => Completion::Transcribed((&mut job.task).await),
@@ -48,7 +48,7 @@ impl<W: Speech> Worker<W> {
             Self::Ready(worker) => Some((worker, false)),
             Self::Loading(job) | Self::Recovering(job) => {
                 job.task.await.ok()?.ok().map(|worker| (worker, false))
-            }
+            },
             Self::Transcribing(job) => job
                 .task
                 .await
@@ -58,7 +58,12 @@ impl<W: Speech> Worker<W> {
             Self::Unavailable => None,
         }
     }
-    pub fn replace<P: Ports<Speech = W>>(&mut self, ports: &P, config: &Config, reuse: bool) {
+    pub(super) fn replace<P: Ports<Speech = W>>(
+        &mut self,
+        ports: &P,
+        config: &Config,
+        reuse: bool,
+    ) {
         let previous = std::mem::replace(self, Self::Unavailable);
         previous.request_stop();
         let (cancel, mut cancelled) = watch::channel(false);
@@ -90,7 +95,7 @@ impl<W: Speech> Worker<W> {
             Self::Loading(job)
         };
     }
-    pub fn transcribe(&mut self, wav: Vec<u8>, language: String) -> Result<(), Vec<u8>> {
+    pub(super) fn transcribe(&mut self, wav: Vec<u8>, language: String) -> Result<(), Vec<u8>> {
         let previous = std::mem::replace(self, Self::Unavailable);
         let Self::Ready(mut worker) = previous else {
             *self = previous;
@@ -108,24 +113,24 @@ impl<W: Speech> Worker<W> {
                 Err(error) => {
                     worker.stop().await;
                     Err(error)
-                }
+                },
             }
         });
         *self = Self::Transcribing(Job { cancel, task });
         Ok(())
     }
-    pub fn request_stop(&self) {
+    pub(super) fn request_stop(&self) {
         match self {
             Self::Loading(job) | Self::Recovering(job) => {
                 job.cancel.send_replace(true);
-            }
+            },
             Self::Transcribing(job) => {
                 job.cancel.send_replace(true);
-            }
-            Self::Unavailable | Self::Ready(_) => {}
+            },
+            Self::Unavailable | Self::Ready(_) => {},
         }
     }
-    pub async fn stop(self) {
+    pub(super) async fn stop(self) {
         self.request_stop();
         if let Some((mut worker, _)) = self.into_worker().await {
             worker.stop().await;

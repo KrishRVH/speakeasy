@@ -4,7 +4,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Indicator {
+pub(crate) enum Indicator {
     Ready,
     Paused,
     Busy,
@@ -12,7 +12,7 @@ pub enum Indicator {
     Attention,
 }
 
-pub fn indicator(snapshot: &Snapshot, running: bool, pausing: bool) -> Indicator {
+pub(crate) fn indicator(snapshot: &Snapshot, running: bool, pausing: bool) -> Indicator {
     if pausing {
         Indicator::Busy
     } else if snapshot.phase == Phase::Error {
@@ -34,7 +34,12 @@ pub fn indicator(snapshot: &Snapshot, running: bool, pausing: bool) -> Indicator
     }
 }
 
-pub fn description(snapshot: &Snapshot, running: bool, pausing: bool, engine: Engine) -> String {
+pub(crate) fn description(
+    snapshot: &Snapshot,
+    running: bool,
+    pausing: bool,
+    engine: Engine,
+) -> String {
     if pausing {
         return "Pausing dictation…".into();
     }

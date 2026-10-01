@@ -1,0 +1,95 @@
+# Clippy reads the MSRV from Cargo.toml's `rust-version`; a second pin here
+# would override it and drift silently on a toolchain bump.
+
+# The panic-free wall applies to production code; tests may assert invariants
+# the test itself established.
+allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-panic-in-tests = true
+allow-unwrap-in-tests = true
+
+# Shared-mutable-state doctrine (AGENTS.md): state lives in one place as a
+# pure function of (state, event); cross-thread data moves over channels to
+# the owning thread. Escape per site with
+# `#[expect(clippy::disallowed_types, reason = "...")]` where the reason
+# names the value being shared and why it cannot live on the root model or
+# arrive as an event.
+disallowed-types = [
+    { path = "std::sync::Mutex", reason = "send the event to the state's owning thread over a channel instead of reaching into state through a lock (AGENTS.md ownership and state)" },
+    { path = "std::sync::RwLock", reason = "send the event to the state's owning thread over a channel instead of reaching into state through a lock (AGENTS.md ownership and state)" },
+    { path = "std::rc::Rc", reason = "shared ownership hides the owner; give the value one owner and pass it as an event or borrow (AGENTS.md ownership and state)" },
+    { path = "std::cell::RefCell", reason = "runtime borrow panics replace compile-time ownership; restructure so the owner mutates directly (AGENTS.md ownership and state)" },
+    { path = "std::cell::Cell", reason = "interior mutability hides writes; restructure so the owner mutates directly (AGENTS.md ownership and state)" },
+    { path = "std::sync::atomic::AtomicBool", reason = "ambient flags are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
+    { path = "std::sync::atomic::AtomicI8", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
+    { path = "std::sync::atomic::AtomicI16", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
+    { path = "std::sync::atomic::AtomicI32", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
+    { path = "std::sync::atomic::AtomicI64", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
+    { path = "std::sync::atomic::AtomicIsize", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
+    { path = "std::sync::atomic::AtomicPtr", reason = "ambient shared pointers are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
+    { path = "std::sync::atomic::AtomicU8", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
+    { path = "std::sync::atomic::AtomicU16", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
+    { path = "std::sync::atomic::AtomicU32", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
+    { path = "std::sync::atomic::AtomicU64", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
+    { path = "std::sync::atomic::AtomicUsize", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
+    # Ecosystem equivalents inherit the doctrine unchanged: routing around a
+    # disallowed std primitive through a dependency is a violation, not an
+    # escape. These entries are inert until the crate enters the graph.
+    { path = "tokio::sync::Mutex", reason = "send the event to the task that owns the state over a channel instead of reaching into state through a lock (AGENTS.md ownership and state)" },
+    { path = "tokio::sync::RwLock", reason = "send the event to the task that owns the state over a channel instead of reaching into state through a lock (AGENTS.md ownership and state)" },
+    { path = "parking_lot::Mutex", reason = "send the event to the state's owning thread over a channel instead of reaching into state through a lock (AGENTS.md ownership and state)" },
+    { path = "parking_lot::RwLock", reason = "send the event to the state's owning thread over a channel instead of reaching into state through a lock (AGENTS.md ownership and state)" },
+    { path = "dashmap::DashMap", reason = "a concurrent map is shared mutable state; give the map one owner and send it events (AGENTS.md ownership and state)" },
+    { path = "crossbeam_utils::atomic::AtomicCell", reason = "ambient cells are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
+    { path = "portable_atomic::AtomicU64", reason = "an atomic behind a dependency is still ambient state; put the value on the root model (AGENTS.md ownership and state)" },
+]
+
+# Native Windows callbacks require thread-local storage because the API has
+# no context parameter. Clippy's thread_local macro diagnostic ignores narrow
+# expectations on this toolchain; the disallowed mutable types above still
+# require a reason at every storage site. AGENTS.md confines TLS to that adapter.
+
+disallowed-methods = [
+    { path = "std::process::abort", reason = "no unwind, no destructors, no message; return an error from main or use the panic path the doctrine already forbids you to reach (AGENTS.md invariants and errors)" },
+    { path = "std::boxed::Box::leak", reason = "a deliberate leak is ambient 'static state; own the value on the root model or justify the leak at the use site (AGENTS.md ownership and state)" },
+    { path = "std::mem::ManuallyDrop::new", reason = "suppressing Drop is a leak or an ownership dodge; restructure ownership instead (AGENTS.md invariants and errors)" },
+]
+
+# Accepted identifiers for documentation prose checked by doc_markdown.
+# The ".." entry extends clippy's default list instead of replacing it.
+doc-valid-idents = [
+    "..",
+    "API",
+    "APIs",
+    "ASCII",
+    "CLI",
+    "CPU",
+    "FFI",
+    "HTTP",
+    "HTTPS",
+    "ID",
+    "IDs",
+    "IO",
+    "JSON",
+    "MSRV",
+    "OS",
+    "TLS",
+    "URI",
+    "URL",
+    "URLs",
+    "UTF-8",
+    "UUID",
+]
+
+# enum-variant-size, bool-params, single-char, and too-many-arguments pin
+# Clippy's current defaults so an upstream change cannot silently loosen the
+# wall; the nesting threshold tightens the default.
+enum-variant-size-threshold = 200
+excessive-nesting-threshold = 5
+max-fn-params-bools = 3
+single-char-binding-names-threshold = 4
+too-many-arguments-threshold = 7
+
+# GPUI's transparent f32 coordinate wrapper has the same non-panicking
+# arithmetic as primitive floats; integer sizes, counters and deadlines do not.
+arithmetic-side-effects-allowed = ["gpui::Pixels"]

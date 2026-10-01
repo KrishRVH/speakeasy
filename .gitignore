@@ -1,23 +1,236 @@
-# Generated build output.
-/artifacts/
-/target/
-__pycache__/
+# Intent: ignore generated/local artifacts only. Keep lockfiles, fixtures,
+# corpora, examples, Makefiles, and shared editor config visible by default.
 
-# Local configuration, credentials, downloaded models, and runtime tools.
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor temporary files, not editor project config
+*.swp
+*.swo
+*~
+.#*
+
+# Local environment/secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+/.tmp/
+/tmp/
+/.scratch/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Dependency directories
+node_modules/
+/vendor/
+
+# Generic generated output
+/.gstack/
+/.lycheecache
+/.cache/
+/build/
+/coverage/
+/dist/
+/out/
+/sbom/
+
+# mise
+mise.local.toml
+mise.*.local.toml
+.mise.local.toml
+.mise.*.local.toml
+mise.local.lock
+mise.*.local.lock
+.mise.local.lock
+.mise.*.local.lock
+
+# Dagger module local output
+/dagger/.turbo/
+/dagger/dist/
+
+# Ada / SPARK
+/alire/build_hash_inputs
+/alire/flags/
+/alire/settings.toml
+/config/*_config.ads
+/config/*_config.gpr
+/config/*_config.h
+
+# C / CMake
+/CMakeCache.txt
+/CMakeFiles/
+/CMakeUserPresets.json
+/CTestTestfile.cmake
+/DartConfiguration.tcl
+/Testing/
+/cmake_install.cmake
+/compile_commands.json
+/.ninja_deps
+/.ninja_log
+*.a
+*.dll
+*.dylib
+*.exe
+*.gch
+*.gcda
+*.gcno
+*.gcov
+*.ifc
+*.lib
+*.o
+*.obj
+*.pch
+*.pcm
+*.profdata
+*.profraw
+*.so
+*.dSYM/
+
+# C# / .NET
+/.vs/
+/artifacts/
+**/TestResults/
+**/StrykerOutput/
+**/[Bb]in/[Dd]ebug/
+**/[Bb]in/[Rr]elease/
+**/[Oo]bj/
+*.nupkg
+*.pdb
+*.snupkg
+*.rsuser
+*.sln.docstates
+*.suo
+*.user
+*.userosscache
+
+# Elixir / Erlang
+/_build/
+/deps/
+/.elixir_ls/
+/cover/
+/doc/
+erl_crash.dump
+rebar3.crashdump
+*.beam
+*.ez
+*.plt
+*.plt.hash
+
+# Fortran
+*.mod
+# Go's module file shares Fortran's extension; re-include it after *.mod.
+!go.mod
+*.smod
+
+# Go
+*.test
+
+# Godot
+/.godot/
+*.translation
+
+# Haskell
+/dist-newstyle/
+/.stack-work/
+cabal.project.local
+cabal.project.local~
+.ghc.environment.*
+.hpc/
+*.hi
+*.dyn_hi
+*.dyn_o
+*.hie
+*.hp
+*.prof
+*.tix
+*.eventlog
+
+# JavaScript / TypeScript
+*.tsbuildinfo
+.eslintcache
+**/.stryker-tmp/
+**/reports/.stryker-mutation.lock/
+**/reports/mutation/
+**/reports/stryker-incremental.json
+/.angular/
+/.astro/
+/.next/
+/.nuxt/
+/.nyc_output/
+/.parcel-cache/
+/.svelte-kit/
+/.turbo/
+/.vite/
+
+# JVM / Kotlin / Gradle
+/.gradle/
+/.kotlin/
+*.class
+hs_err_pid*
+replay_pid*
+
+# Lua
+.lua-language-server/
+.lua_modules/
+*.luac
+luac.out
+
+# PHP
+/.phpstan.cache/
+/.phpunit.cache/
+/.phpunit.result.cache
+/composer.phar
+/var/cache/
+/var/log/
+
+# Python
+.basedpyright/
+.coverage
+.coverage.*
+.hypothesis/
+/.mutmut-run.lock/
+.mutmut-cache
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+__pycache__/
+/mutants/
+*.py[codz]
+*.egg-info/
+/htmlcov/
+
+# Rust
+/target/
+**/target/
+**/mutants.out/
+**/mutants.out.old/
+**/*.rs.bk
+
+# Zig
+/.zig-cache/
+/zig-cache/
+/zig-out/
+/zig-pkg/
+
+# Speakeasy local files and native assets.
 /settings.json
 /instance.lock
 /instance.port
 /tray-hint-seen
-.env
-.env.*
 /models/
 /tools/
-
-# Temporary and operating-system files.
-*.log
-*.temp
-*.tmp
-/.tmp/
-/tmp/
-Desktop.ini
-Thumbs.db
+/.venv/
+/.ruff_cache/
+/node_modules/

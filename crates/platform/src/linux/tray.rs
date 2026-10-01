@@ -8,30 +8,55 @@ use zbus::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Tray host observations and commands routed to the UI owner.
 pub enum TrayAction {
+    /// Whether a compatible tray host is present.
     Available(bool),
+    /// Open Settings.
     Settings,
+    /// Pause or resume dictation.
     Pause,
+    /// Start or finish hands-free capture.
     Toggle,
+    /// Cancel the active recording or recognition.
     Cancel,
+    /// Request orderly application shutdown.
     Quit,
 }
+/// Immutable icon and menu snapshot sent to the native tray owner.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "These independent menu capabilities are an immutable presentation snapshot, not session state"
+)]
 pub struct TrayPresentation {
+    /// 32-by-32 straight-alpha icon pixels in RGBA order.
     pub rgba: Vec<u8>,
+    /// Accessible description of the current dictation phase.
     pub description: String,
+    /// A runtime owns the dictation resources.
     pub running: bool,
+    /// Native resources are retiring.
     pub pausing: bool,
+    /// Capture is starting or recording.
     pub capturing: bool,
+    /// A recording, recognition, or insertion is in progress.
     pub active: bool,
+    /// Dictation can be resumed.
     pub enabled: bool,
+    /// Capture can start immediately.
     pub ready: bool,
 }
+/// Owns the D-Bus tray thread and closes its channels before joining.
 pub struct NativeTray {
     updates: async_channel::Sender<TrayPresentation>,
     stop: async_channel::Sender<()>,
     thread: Option<thread::JoinHandle<()>>,
 }
 impl NativeTray {
+    /// Start tray registration without microphone, hook, or clipboard access.
+    ///
+    /// # Errors
+    /// Returns a thread startup failure; absent tray hosts arrive as availability events.
     pub fn start() -> anyhow::Result<(Self, async_channel::Receiver<TrayAction>)> {
         let (updates, incoming) = async_channel::bounded(1);
         let (events, outgoing) = async_channel::bounded(16);
@@ -43,9 +68,10 @@ impl NativeTray {
                     .enable_all()
                     .build()
                 {
+                    #[expect(clippy::let_underscore_must_use, reason = "Tray failure is reported by the following availability event; the application remains usable without a tray host")]
                     let _ = runtime.block_on(serve(incoming, &events, &stopping));
                 }
-                let _ = events.try_send(TrayAction::Available(false));
+                publish_availability(&events, false);
             })?;
         Ok((
             Self {
@@ -56,15 +82,25 @@ impl NativeTray {
             outgoing,
         ))
     }
+    /// Obtain the snapshot lane; a full lane coalesces updates at the caller.
+    #[must_use]
     pub fn updater(&self) -> async_channel::Sender<TrayPresentation> {
         self.updates.clone()
     }
 }
 impl Drop for NativeTray {
     fn drop(&mut self) {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "The stop lane is idempotent; full already requests stop and closed means the tray thread ended"
+        )]
         let _ = self.stop.try_send(());
         self.updates.close();
         if let Some(thread) = self.thread.take() {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Tray channels are closed before joining; a tray-worker panic must not unwind this destructor"
+            )]
             let _ = thread.join();
         }
     }
@@ -79,11 +115,19 @@ type ToolTip<'a> = (&'a str, &'a IconPixmaps, &'a str, &'a str);
 #[zbus::interface(name = "org.kde.StatusNotifierItem")]
 impl Item {
     #[zbus(property)]
-    fn category(&self) -> &str {
+    #[expect(
+        clippy::unused_self,
+        reason = "D-Bus dispatch requires an instance method even for this constant protocol response"
+    )]
+    fn category(&self) -> &'static str {
         "ApplicationStatus"
     }
     #[zbus(property)]
-    fn id(&self) -> &str {
+    #[expect(
+        clippy::unused_self,
+        reason = "D-Bus dispatch requires an instance method even for this constant protocol response"
+    )]
+    fn id(&self) -> &'static str {
         "speakeasy"
     }
     #[zbus(property)]
@@ -91,15 +135,27 @@ impl Item {
         &self.title
     }
     #[zbus(property)]
-    fn status(&self) -> &str {
+    #[expect(
+        clippy::unused_self,
+        reason = "D-Bus dispatch requires an instance method even for this constant protocol response"
+    )]
+    fn status(&self) -> &'static str {
         "Active"
     }
     #[zbus(property)]
+    #[expect(
+        clippy::unused_self,
+        reason = "D-Bus dispatch requires an instance method even for this constant protocol response"
+    )]
     fn window_id(&self) -> u32 {
         0
     }
     #[zbus(property)]
-    fn icon_name(&self) -> &str {
+    #[expect(
+        clippy::unused_self,
+        reason = "D-Bus dispatch requires an instance method even for this constant protocol response"
+    )]
+    fn icon_name(&self) -> &'static str {
         ""
     }
     #[zbus(property)]
@@ -111,21 +167,51 @@ impl Item {
         ("", &self.icon, "Speakeasy", &self.title)
     }
     #[zbus(property)]
+    #[expect(
+        clippy::unused_self,
+        reason = "D-Bus dispatch requires an instance method even for this constant protocol response"
+    )]
     fn item_is_menu(&self) -> bool {
         false
     }
     #[zbus(property)]
+    #[expect(
+        clippy::unused_self,
+        reason = "D-Bus dispatch requires an instance method even for this constant protocol response"
+    )]
     fn menu(&self) -> OwnedObjectPath {
         zbus::zvariant::ObjectPath::from_static_str_unchecked("/MenuBar").into()
     }
-    fn activate(&self, _x: i32, _y: i32) {
+    fn activate(&self, x: i32, y: i32) {
+        let _ = (x, y);
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "The bounded tray UI lane never blocks D-Bus callbacks; a busy or closed UI cannot accept this command"
+        )]
         let _ = self.events.try_send(TrayAction::Settings);
     }
-    fn secondary_activate(&self, _x: i32, _y: i32) {
+    fn secondary_activate(&self, x: i32, y: i32) {
+        let _ = (x, y);
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "The bounded tray UI lane never blocks D-Bus callbacks; a busy or closed UI cannot accept this command"
+        )]
         let _ = self.events.try_send(TrayAction::Toggle);
     }
-    fn context_menu(&self, _x: i32, _y: i32) {}
-    fn scroll(&self, _delta: i32, _orientation: &str) {}
+    #[expect(
+        clippy::unused_self,
+        reason = "D-Bus dispatch requires an instance method even for this constant protocol response"
+    )]
+    fn context_menu(&self, x: i32, y: i32) {
+        let _ = (x, y);
+    }
+    #[expect(
+        clippy::unused_self,
+        reason = "D-Bus dispatch requires an instance method even for this constant protocol response"
+    )]
+    fn scroll(&self, delta: i32, orientation: &str) {
+        let _ = (delta, orientation);
+    }
     #[zbus(signal)]
     async fn new_icon(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
     #[zbus(signal)]
@@ -148,22 +234,39 @@ fn properties(label: &str, enabled: bool) -> Properties {
 #[zbus::interface(name = "com.canonical.dbusmenu")]
 impl Menu {
     #[zbus(property)]
+    #[expect(
+        clippy::unused_self,
+        reason = "D-Bus dispatch requires an instance method even for this constant protocol response"
+    )]
     fn version(&self) -> u32 {
         3
     }
     #[zbus(property)]
-    fn text_direction(&self) -> &str {
+    #[expect(
+        clippy::unused_self,
+        reason = "D-Bus dispatch requires an instance method even for this constant protocol response"
+    )]
+    fn text_direction(&self) -> &'static str {
         "ltr"
     }
     #[zbus(property)]
-    fn status(&self) -> &str {
+    #[expect(
+        clippy::unused_self,
+        reason = "D-Bus dispatch requires an instance method even for this constant protocol response"
+    )]
+    fn status(&self) -> &'static str {
         "normal"
     }
     #[zbus(property)]
+    #[expect(
+        clippy::unused_self,
+        reason = "D-Bus dispatch requires an instance method even for this constant protocol response"
+    )]
     fn icon_theme_path(&self) -> Vec<String> {
         Vec::new()
     }
-    fn get_layout(&self, parent: i32, depth: i32, _property_names: Vec<String>) -> (u32, Layout) {
+    fn get_layout(&self, parent: i32, depth: i32, property_names: Vec<String>) -> (u32, Layout) {
+        let _ = (property_names,);
         let children = if parent == 0 && depth != 0 {
             self.items
                 .iter()
@@ -184,16 +287,16 @@ impl Menu {
             self.items
                 .iter()
                 .find(|item| item.0 == parent)
-                .map(|(_, label, enabled)| properties(label, *enabled))
-                .unwrap_or_default()
+                .map_or_default(|(_, label, enabled)| properties(label, *enabled))
         };
         (self.revision, (parent, root, children))
     }
     fn get_group_properties(
         &self,
         ids: Vec<i32>,
-        _property_names: Vec<String>,
+        property_names: Vec<String>,
     ) -> Vec<(i32, Properties)> {
+        let _ = (property_names,);
         self.items
             .iter()
             .filter(|item| ids.is_empty() || ids.contains(&item.0))
@@ -207,13 +310,24 @@ impl Menu {
             .and_then(|(_, label, enabled)| properties(label, *enabled).remove(name))
             .ok_or_else(|| zbus::fdo::Error::InvalidArgs("Unknown menu property".into()))
     }
-    fn about_to_show(&self, _id: i32) -> bool {
+    #[expect(
+        clippy::unused_self,
+        reason = "D-Bus dispatch requires an instance method even for this constant protocol response"
+    )]
+    fn about_to_show(&self, id: i32) -> bool {
+        let _ = (id,);
         false
     }
-    fn about_to_show_group(&self, _ids: Vec<i32>) -> (Vec<i32>, Vec<i32>) {
+    #[expect(
+        clippy::unused_self,
+        reason = "D-Bus dispatch requires an instance method even for this constant protocol response"
+    )]
+    fn about_to_show_group(&self, ids: Vec<i32>) -> (Vec<i32>, Vec<i32>) {
+        let _ = (ids,);
         (Vec::new(), Vec::new())
     }
-    fn event(&self, id: i32, event: &str, _data: Value<'_>, _timestamp: u32) {
+    fn event(&self, id: i32, event: &str, data: Value<'_>, timestamp: u32) {
+        let _ = (data, timestamp);
         if event != "clicked" || !self.items.iter().any(|item| item.0 == id && item.2) {
             return;
         }
@@ -225,6 +339,10 @@ impl Menu {
             5 => TrayAction::Quit,
             _ => return,
         };
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "The bounded tray UI lane never blocks D-Bus callbacks; a busy or closed UI cannot accept this command"
+        )]
         let _ = self.events.try_send(action);
     }
     fn event_group(&self, events: Vec<(i32, String, Value<'_>, u32)>) -> Vec<i32> {
@@ -239,6 +357,13 @@ impl Menu {
         revision: u32,
         parent: i32,
     ) -> zbus::Result<()>;
+}
+fn publish_availability(events: &async_channel::Sender<TrayAction>, available: bool) {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "Tray availability is an optional bounded UI notification; closure means the UI owner is gone"
+    )]
+    let _ = events.try_send(TrayAction::Available(available));
 }
 async fn register(connection: &Connection) -> bool {
     let result = tokio::time::timeout(std::time::Duration::from_millis(500), async {
@@ -318,6 +443,10 @@ async fn serve(
         MessageStream::for_match_rule(ownership_rule, &connection, Some(16)).await?,
     );
     let mut available = register(&connection).await;
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "Tray availability is an optional bounded UI notification; closure means the UI owner is gone"
+    )]
     let _ = events.try_send(TrayAction::Available(available));
     loop {
         tokio::select! {
@@ -330,14 +459,17 @@ async fn serve(
                 let ownership = header.member().is_some_and(|name| name.as_str() == "NameOwnerChanged") && signal.body().deserialize::<(String, String, String)>().is_ok_and(|(name, _, _)| name == "org.kde.StatusNotifierWatcher");
                 if watcher || ownership {
                     let now = register(&connection).await;
-                    if now != available { available = now; let _ = events.try_send(TrayAction::Available(now)); }
+                    if now != available {
+                        available = now;
+                        publish_availability(events, now);
+                    }
                 }
             }
             presentation = updates.recv() => {
                 let Ok(presentation) = presentation else { break; };
                 {
                     let mut item = item.get_mut().await;
-                    item.title = presentation.description.clone();
+                    item.title.clone_from(&presentation.description);
                     item.icon = vec![(32, 32, presentation.rgba.as_chunks::<4>().0.iter().flat_map(|pixel| [pixel[3], pixel[0], pixel[1], pixel[2]]).collect())];
                 }
                 Item::new_icon(item.signal_emitter()).await?;
@@ -346,11 +478,11 @@ async fn serve(
                     let mut menu = menu.get_mut().await;
                     menu.revision = menu.revision.wrapping_add(1);
                     menu.items = vec![
-                        (6, presentation.description, false),
-                        (1, if presentation.pausing { "Pausing…" } else if presentation.running { "Pause dictation" } else { "Resume dictation" }.into(), !presentation.pausing && presentation.enabled),
-                        (2, if presentation.capturing { "Finish dictation" } else { "Start dictation" }.into(), presentation.running && !presentation.pausing && (!presentation.active || presentation.capturing) && presentation.enabled && presentation.ready),
-                        (3, "Cancel dictation".into(), presentation.running && presentation.active && presentation.enabled),
-                        (4, "Settings…".into(), true), (5, "Quit Speakeasy".into(), true),
+                    (6, presentation.description, false),
+                    (1, if presentation.pausing { "Pausing…" } else if presentation.running { "Pause dictation" } else { "Resume dictation" }.into(), !presentation.pausing && presentation.enabled),
+                    (2, if presentation.capturing { "Finish dictation" } else { "Start dictation" }.into(), presentation.running && !presentation.pausing && (!presentation.active || presentation.capturing) && presentation.enabled && presentation.ready),
+                    (3, "Cancel dictation".into(), presentation.running && presentation.active && presentation.enabled),
+                    (4, "Settings…".into(), true), (5, "Quit Speakeasy".into(), true),
                     ];
                     menu.revision
                 };

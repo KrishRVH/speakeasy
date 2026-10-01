@@ -1,10 +1,16 @@
-use super::*;
+use super::{
+    DesktopOptions, Duration, Input, InputSender, InsertPermit, Inserted, Insertion, MODIFIER_WAIT,
+    RawWindowHandle, deliver,
+};
 use anyhow::{Context, ensure};
 use std::{
     os::fd::{AsRawFd, BorrowedFd, OwnedFd},
     time::Instant,
 };
 use tokio::io::unix::AsyncFd;
+use x11rb::protocol::{
+    shape::ConnectionExt as _, xinput::ConnectionExt as _, xkb::ConnectionExt as _,
+};
 use x11rb::{
     connection::Connection,
     protocol::{
@@ -83,7 +89,7 @@ pub(super) struct Clipboard {
     selection: u32,
 }
 impl Clipboard {
-    pub fn new() -> anyhow::Result<Self> {
+    pub(super) fn new() -> anyhow::Result<Self> {
         let (connection, _) = x11rb::connect(None)?;
         let selection = connection.intern_atom(false, b"CLIPBOARD")?.reply()?.atom;
         Ok(Self {
@@ -100,17 +106,21 @@ impl Clipboard {
             .as_mut()
             .context("Clipboard initialization failed")
     }
-    pub fn owner(&self) -> anyhow::Result<u32> {
+    pub(super) fn owner(&self) -> anyhow::Result<u32> {
         Ok(self
             .connection
             .get_selection_owner(self.selection)?
             .reply()?
             .owner)
     }
-    pub fn owns(&self, owner: u32) -> anyhow::Result<bool> {
+    pub(super) fn owns(&self, owner: u32) -> anyhow::Result<bool> {
         Ok(owner != 0 && self.owner()? == owner)
     }
-    pub fn set_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<Option<u32>> {
+    pub(super) fn set_text(
+        &mut self,
+        text: &str,
+        permit: &InsertPermit,
+    ) -> anyhow::Result<Option<u32>> {
         if !permit.active() {
             return Ok(None);
         }
@@ -165,15 +175,57 @@ impl ClipboardAccess for Clipboard {
         self.owns(owner)
     }
 }
+impl ClipboardRequest {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "Cancelled callers drop their reply lanes; each native operation still validates its recording permit"
+    )]
+    fn perform(self, clipboard: &mut impl ClipboardAccess) {
+        match self {
+            ClipboardRequest::Target { permit, reply } => {
+                let result = if permit.active() {
+                    clipboard.external_target()
+                } else {
+                    Ok(false)
+                };
+                let _ = reply.try_send(result);
+            },
+            ClipboardRequest::Set {
+                text,
+                permit,
+                reply,
+            } => {
+                let result = if permit.active() {
+                    clipboard.set_text(&text, &permit)
+                } else {
+                    Ok(None)
+                };
+                let _ = reply.try_send(result);
+            },
+            ClipboardRequest::Owns {
+                owner,
+                permit,
+                reply,
+            } => {
+                let result = if permit.active() {
+                    clipboard.owns(owner)
+                } else {
+                    Ok(false)
+                };
+                let _ = reply.try_send(result);
+            },
+        }
+    }
+}
 impl ClipboardWorker {
-    pub fn new(input: InputSender) -> anyhow::Result<Self> {
+    pub(super) fn new(input: InputSender) -> anyhow::Result<Self> {
         Self::start(input, Clipboard::new)
     }
     fn start<C: ClipboardAccess + 'static>(
         input: InputSender,
         open: impl FnOnce() -> anyhow::Result<C> + Send + 'static,
     ) -> anyhow::Result<Self> {
-        let (requests, incoming) = async_channel::bounded(1);
+        let (requests, incoming) = async_channel::bounded::<ClipboardRequest>(1);
         let (ready, started) = async_channel::bounded(1);
         let worker_input = input.clone();
         let thread = std::thread::Builder::new()
@@ -181,30 +233,10 @@ impl ClipboardWorker {
             .spawn(move || {
                 let result = (|| {
                     let mut clipboard = open()?;
+                    #[expect(clippy::let_underscore_must_use, reason = "A cancelled desktop preparation drops its readiness receiver; input closure also retires the worker")]
                     let _ = ready.try_send(());
                     while let Ok(request) = incoming.recv_blocking() {
-                        match request {
-                            ClipboardRequest::Target { permit, reply } => {
-                                let result = if permit.active() { clipboard.external_target() } else { Ok(false) };
-                                let _ = reply.try_send(result);
-                            }
-                            ClipboardRequest::Set { text, permit, reply } => {
-                                let result = if permit.active() {
-                                    clipboard.set_text(&text, &permit)
-                                } else {
-                                    Ok(None)
-                                };
-                                let _ = reply.try_send(result);
-                            }
-                            ClipboardRequest::Owns { owner, permit, reply } => {
-                                let result = if permit.active() {
-                                    clipboard.owns(owner)
-                                } else {
-                                    Ok(false)
-                                };
-                                let _ = reply.try_send(result);
-                            }
-                        }
+                        request.perform(&mut clipboard);
                     }
                     Ok::<_, anyhow::Error>(())
                 })();
@@ -220,17 +252,17 @@ impl ClipboardWorker {
             thread: Some(thread),
         })
     }
-    pub async fn ready(&self) -> anyhow::Result<()> {
+    pub(super) async fn ready(&self) -> anyhow::Result<()> {
         self.ready.recv().await.context("Clipboard setup stopped")
     }
-    pub async fn external_target(&self, permit: InsertPermit) -> anyhow::Result<bool> {
+    pub(super) async fn external_target(&self, permit: InsertPermit) -> anyhow::Result<bool> {
         let (reply, result) = async_channel::bounded(1);
         self.requests
             .send(ClipboardRequest::Target { permit, reply })
             .await?;
         result.recv().await.context("Target focus check stopped")?
     }
-    pub async fn set_text(
+    pub(super) async fn set_text(
         &self,
         text: String,
         permit: InsertPermit,
@@ -248,7 +280,7 @@ impl ClipboardWorker {
             .await
             .context("Clipboard preparation stopped")?
     }
-    pub async fn owns(&self, owner: u32, permit: InsertPermit) -> anyhow::Result<bool> {
+    pub(super) async fn owns(&self, owner: u32, permit: InsertPermit) -> anyhow::Result<bool> {
         let (reply, result) = async_channel::bounded(1);
         self.requests
             .send(ClipboardRequest::Owns {
@@ -268,6 +300,10 @@ impl Drop for ClipboardWorker {
         self.input.close();
         self.requests.close();
         if let Some(thread) = self.thread.take() {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "The worker has retired or panicked; a native-worker panic must not unwind this destructor"
+            )]
             let _ = thread.join();
         }
     }
@@ -276,7 +312,14 @@ impl Keyboard {
     fn load(connection: &RustConnection) -> anyhow::Result<Self> {
         let setup = connection.setup();
         let map = connection
-            .get_keyboard_mapping(setup.min_keycode, setup.max_keycode - setup.min_keycode + 1)?
+            .get_keyboard_mapping(
+                setup.min_keycode,
+                setup
+                    .max_keycode
+                    .checked_sub(setup.min_keycode)
+                    .and_then(|range| range.checked_add(1))
+                    .context("Invalid X11 keyboard range")?,
+            )?
             .reply()?;
         let modifiers = connection.get_modifier_mapping()?.reply()?;
         Ok(Self {
@@ -296,7 +339,9 @@ impl Keyboard {
             .chunks(self.columns)
             .position(|symbols| symbols.contains(&symbol))
             .context("Shortcut key is unavailable in this keyboard layout")?;
-        Ok(self.first + u8::try_from(position)?)
+        self.first
+            .checked_add(u8::try_from(position)?)
+            .context("Shortcut key is outside the X11 keyboard range")
     }
     fn unshifted_code(&self, symbol: u32) -> Option<u8> {
         if self.columns == 0 {
@@ -326,10 +371,12 @@ impl Keyboard {
             .chunks(self.per_modifier)
             .enumerate()
             .fold(0, |bits, (group, codes)| {
-                if codes
-                    .iter()
-                    .any(|&code| code != 0 && keys[usize::from(code / 8)] & (1 << (code % 8)) != 0)
-                {
+                if codes.iter().any(|&code| {
+                    code != 0
+                        && keys
+                            .get(usize::from(code / 8))
+                            .is_some_and(|bits| bits & (1 << (code % 8)) != 0)
+                }) {
                     bits | (1 << group)
                 } else {
                     bits
@@ -389,7 +436,12 @@ pub(super) async fn run(
     stop: &async_channel::Receiver<()>,
 ) -> anyhow::Result<()> {
     let (connection, screen) = x11rb::connect(None)?;
-    let root = connection.setup().roots[screen].root;
+    let root = connection
+        .setup()
+        .roots
+        .get(screen)
+        .context("X11 display has no screen")?
+        .root;
     let keyboard = Keyboard::load(&connection)?;
     let (dictate, cancel) = if options.external_shortcut {
         (None, None)
@@ -419,7 +471,6 @@ pub(super) async fn run(
                     .check()?;
             }
         }
-        use x11rb::protocol::xinput::ConnectionExt as _;
         connection.xinput_xi_query_version(2, 2)?.reply()?;
         connection
             .xinput_xi_select_events(
@@ -444,6 +495,7 @@ pub(super) async fn run(
                 let keyboard = Keyboard::load(&clipboard.connection)?;
                 while let Ok(request) = requests.recv_blocking() {
                     let result = paste(&keyboard, &mut clipboard, &request, &settings);
+                    #[expect(clippy::let_underscore_must_use, reason = "Cancellation drops the waiting insertion reply; the generation permit still controls native submission")]
                     let _ = request.reply.send_blocking(result);
                 }
                 Ok::<_, anyhow::Error>(())
@@ -489,28 +541,30 @@ pub(super) async fn run(
                     // to the focused app. XI2 observes release without a grab.
                     connection.ungrab_keyboard(key.time)?;
                     connection.flush()?;
-                }
+                },
                 Event::XinputRawKeyRelease(_) | Event::KeyRelease(_) if held => {
                     let Some(dictate) = dictate else {
                         continue;
                     };
                     let keys = connection.query_keymap()?.reply()?.keys;
-                    let main_down = keys[usize::from(dictate.0 / 8)] & (1 << (dictate.0 % 8)) != 0;
+                    let main_down = keys
+                        .get(usize::from(dictate.0 / 8))
+                        .is_some_and(|bits| bits & (1 << (dictate.0 % 8)) != 0);
                     if !main_down || keyboard.held(&keys) & dictate.1 != dictate.1 {
                         held = false;
                         deliver(input, Input::Release);
                     }
-                }
+                },
                 Event::MappingNotify(_) => anyhow::bail!(
                     "Keyboard mapping changed; resume dictation to bind the new layout"
                 ),
-                _ => {}
+                _ => {},
             }
         }
         tokio::select! {
             biased;
             _ = stop.recv() => break,
-            _ = input.sender.closed() => break,
+            () = input.sender.closed() => break,
             readable = ready.readable() => { readable?.clear_ready(); }
         }
     }
@@ -526,6 +580,10 @@ impl Drop for Worker {
         self.input.close();
         self.requests.close();
         if let Some(worker) = self.thread.take() {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "The input lane is closed before joining; a worker panic must not unwind this destructor"
+            )]
             let _ = worker.join();
         }
     }
@@ -571,7 +629,6 @@ fn paste(
             "Text copied. Release your shortcut keys and paste into your editor.",
         ));
     }
-    use x11rb::protocol::xkb::ConnectionExt as _;
     let first_layout = (|| {
         let connection = &clipboard.connection;
         ensure!(
@@ -669,18 +726,17 @@ fn submit_paste<C>(
 ) -> anyhow::Result<()> {
     let mut cookies = Vec::with_capacity(6);
     let mut failed = false;
-    for code in Some(control).into_iter().chain(shift).chain(Some(v)) {
-        match enqueue(xproto::KEY_PRESS_EVENT, code) {
-            Ok(cookie) => cookies.push(cookie),
-            Err(_) => {
-                failed = true;
-                break;
-            }
+    for code in std::iter::once(control).chain(shift).chain(Some(v)) {
+        if let Ok(cookie) = enqueue(xproto::KEY_PRESS_EVENT, code) {
+            cookies.push(cookie);
+        } else {
+            failed = true;
+            break;
         }
     }
     // Releases are attempted even when a press could not be enqueued. Checking
     // only after this barrier avoids round trips with synthetic modifiers held.
-    for code in Some(v).into_iter().chain(shift).chain(Some(control)) {
+    for code in std::iter::once(v).chain(shift).chain(Some(control)) {
         match enqueue(xproto::KEY_RELEASE_EVENT, code) {
             Ok(cookie) => cookies.push(cookie),
             Err(_) => failed = true,
@@ -736,7 +792,6 @@ pub(super) fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
             &[1, 0, 0, 0, 0, 0, 0, 0, 0],
         )?
         .check()?;
-    use x11rb::protocol::shape::ConnectionExt as _;
     connection
         .shape_rectangles(
             shape::SO::SET,
@@ -841,22 +896,23 @@ mod tests {
             ))?,
             0
         );
-        let queried = std::cell::Cell::new(false);
+        let mut queried = false;
         assert_eq!(
             wait_modifiers(false, &permit, || {
-                queried.set(true);
+                queried = true;
                 Ok(0)
             })?,
             0
         );
-        assert!(
-            queried.get(),
-            "Automatic paste skipped modifier verification"
-        );
+        assert!(queried, "Automatic paste skipped modifier verification");
         Ok(())
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_types,
+        reason = "Independent fake enqueue, flush, and check callbacks share only a test event log to assert native release ordering"
+    )]
     fn paste_checks_once_after_all_releases_and_preserves_error_cleanup() -> anyhow::Result<()> {
         use std::cell::{Cell, RefCell};
         for shift in [None, Some(2)] {
@@ -876,7 +932,7 @@ mod tests {
                     synchronized.set(true);
                     Ok(())
                 },
-                |_| {
+                |()| {
                     assert!(synchronized.get());
                     checked.set(checked.get() + 1);
                     Ok(())
@@ -963,7 +1019,13 @@ mod tests {
             Arc,
             atomic::{AtomicUsize, Ordering},
         };
-        struct FakeClipboard(Arc<AtomicUsize>);
+        struct FakeClipboard(
+            #[expect(
+                clippy::disallowed_types,
+                reason = "The test counts clipboard writes on the owned worker thread to prove cancelled requests cannot write"
+            )]
+            Arc<AtomicUsize>,
+        );
         impl ClipboardAccess for FakeClipboard {
             fn external_target(&self) -> anyhow::Result<bool> {
                 Ok(false)
@@ -980,12 +1042,16 @@ mod tests {
         let (events, _event_receiver) = async_channel::bounded(4);
         let input = InputSender::new(events);
         let previous = input.begin().context("Previous recording")?;
+        #[expect(
+            clippy::disallowed_types,
+            reason = "The test observes the worker’s copy count after retirement without accessing a real clipboard"
+        )]
         let copies = Arc::new(AtomicUsize::new(0));
         let seen = copies.clone();
         let (entered, opening) = async_channel::bounded(1);
         let (release, waiting) = std::sync::mpsc::channel();
         let worker = ClipboardWorker::start(input.clone(), move || {
-            let _ = entered.try_send(());
+            entered.try_send(())?;
             waiting.recv_timeout(Duration::from_secs(2))?;
             Ok(FakeClipboard(seen))
         })?;

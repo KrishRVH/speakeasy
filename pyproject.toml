@@ -1,0 +1,58 @@
+[project]
+name = "speakeasy-tooling"
+version = "0.3.0"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = ["basedpyright>=1.40.1", "pytest>=9.1.1", "ruff>=0.16.9"]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+required-version = ">=0.16.9"
+target-version = "py314"
+unsafe-fixes = false
+extend-exclude = ["vendor"]
+
+[tool.ruff.per-file-target-version]
+# Owned GUI checks also run with Ubuntu 24.04's Python inside the private display container.
+"scripts/check_demo_linux.py" = "py312"
+
+[tool.ruff.format]
+docstring-code-format = true
+line-ending = "lf"
+
+[tool.ruff.lint]
+select = ["ASYNC", "B", "DTZ", "E4", "E7", "E9", "F", "I", "PGH", "PLW0603", "RUF100", "RUF101", "RUF102", "TID251", "UP"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"os.environ".msg = "Read the environment at the composition root and pass it explicitly."
+"os.putenv".msg = "Pass a child environment instead of mutating process-global state."
+"os._exit".msg = "Return an exit code or raise SystemExit so owned resources are cleaned up."
+"time.time".msg = "Use an injected monotonic clock for elapsed time."
+
+[tool.basedpyright]
+include = ["scripts", "tests"]
+pythonVersion = "3.14"
+pythonPlatform = "All"
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "all"
+failOnWarnings = true
+reportAny = "error"
+reportExplicitAny = "error"
+reportImplicitOverride = "error"
+reportMissingTypeStubs = "error"
+reportUnreachable = "error"
+reportIgnoreCommentWithoutRule = "error"
+reportUnnecessaryTypeIgnoreComment = "error"
+reportUnusedCallResult = "none"
+
+[tool.pytest.ini_options]
+addopts = ["--strict-config", "--strict-markers", "--import-mode=importlib"]
+filterwarnings = ["error"]
+testpaths = ["tests"]
+pythonpath = ["."]

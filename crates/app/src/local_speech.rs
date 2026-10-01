@@ -8,7 +8,7 @@ use tokio::{
     time::{sleep, timeout},
 };
 
-pub struct LocalSpeech {
+pub(crate) struct LocalSpeech {
     engine: Engine,
     group: speakeasy_platform::ProcessGroup,
     child: Child,
@@ -20,7 +20,7 @@ pub struct LocalSpeech {
 }
 
 impl LocalSpeech {
-    pub async fn start(
+    pub(crate) async fn start(
         config: Config,
         mut cancelled: watch::Receiver<bool>,
     ) -> anyhow::Result<Self> {
@@ -86,7 +86,7 @@ impl LocalSpeech {
             command.arg("--no-gpu");
         }
         #[cfg(target_os = "windows")]
-        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -106,10 +106,18 @@ impl LocalSpeech {
         ) {
             Ok(group) => group,
             Err(error) => {
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "Containment failure remains the actionable error; kill-on-drop still owns a child that exits during cleanup"
+                )]
                 let _ = child.start_kill();
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "Reap the failed child before returning its containment error, including an already-reaped child"
+                )]
                 let _ = child.wait().await;
                 return Err(error);
-            }
+            },
         };
         let mut server = Self {
             engine,
@@ -186,17 +194,17 @@ impl LocalSpeech {
         Ok(server)
     }
 
-    pub async fn idle(&self) -> anyhow::Result<()> {
+    pub(crate) async fn idle(&self) -> anyhow::Result<()> {
         // Whisper serializes inference with its model lock; NeMo uses one HTTP
         // worker with batching disabled. A completed silent request waits behind
         // disconnected inference and confirms the model remains usable. Health
         // endpoints cannot provide that barrier. Discard the response.
-        let silence = crate::audio::wave(vec![0; 44 + 16_000 * 2], 16_000);
+        let silence = crate::audio::wave(vec![0; 44 + 16_000 * 2], 16_000)?;
         self.transcribe(silence, "en").await?;
         Ok(())
     }
 
-    pub async fn transcribe(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<String> {
+    pub(crate) async fn transcribe(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<String> {
         if self.engine == Engine::Parakeet {
             // Capture writes the fixed PCM header in audio::wave; no external
             // container parsing or resampling is needed at this boundary.
@@ -243,7 +251,7 @@ impl LocalSpeech {
             .multipart(form)
             // A five-minute recording on a CPU can exceed two minutes of work.
             // Escape drops the request; bounded recovery kills an unresponsive worker.
-            .timeout(Duration::from_secs(30 * 60))
+            .timeout(Duration::from_mins(30))
             .send()
             .await
             .map_err(|error| {
@@ -262,7 +270,7 @@ impl LocalSpeech {
         }
         let mut bytes = Vec::new();
         while let Some(chunk) = response.chunk().await? {
-            if bytes.len() + chunk.len() > 1024 * 1024 {
+            if chunk.len() > (1024 * 1024_usize).saturating_sub(bytes.len()) {
                 bail!("Local speech response exceeded the size limit");
             }
             bytes.extend_from_slice(&chunk);
@@ -277,11 +285,19 @@ impl LocalSpeech {
             .context("Local speech returned no transcript")
     }
 
-    pub async fn stop(&mut self) {
+    pub(crate) async fn stop(&mut self) {
         self.group.terminate();
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "Termination is idempotent and the process group already owns remaining children; still reap an exited leader"
+        )]
         let _ = self.child.start_kill();
         // Replacement and Pause wait for actual process exit. A timeout here
         // would hand the OS an unreaped child while a new model starts.
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "Waiting releases the child even when it was already reaped; worker retirement cannot update an abandoned session"
+        )]
         let _ = self.child.wait().await;
     }
 }
@@ -302,19 +318,19 @@ fn startup_exit(status: std::process::ExitStatus) -> String {
     )
 }
 fn exit_remedy(code: Option<i32>, illegal_instruction: bool) -> &'static str {
-    match code.map(|code| code as u32) {
-        code if illegal_instruction || code == Some(0xc000001d) => {
+    match code.map(i32::cast_unsigned) {
+        code if illegal_instruction || code == Some(0xc000_001d) => {
             "This engine uses CPU instructions unavailable on this machine. Choose a compatible engine executable in Settings."
-        }
-        Some(0xc0000135 | 0xc0000139 | 0xc000007b) => {
+        },
+        Some(0xc000_0135 | 0xc000_0139 | 0xc000_007b) => {
             "This engine needs missing or incompatible native libraries. Run automatic setup or install the matching engine dependencies."
-        }
+        },
         Some(2) => {
             "Check that the selected engine supports Speakeasy's server arguments. Run automatic setup to install the supported engine, or choose its executable in Settings."
-        }
+        },
         _ => {
             "Check the selected model and engine dependencies. Run automatic setup to install the supported engine, or choose a compatible executable in Settings."
-        }
+        },
     }
 }
 
@@ -326,9 +342,11 @@ mod tests {
     fn exit_diagnostics_identify_actions_without_engine_output() {
         assert!(exit_remedy(Some(2), false).contains("server arguments"));
         assert!(exit_remedy(None, true).contains("CPU instructions"));
-        assert!(exit_remedy(Some(0xc000001d_u32 as i32), false).contains("CPU instructions"));
-        for code in [0xc0000135_u32, 0xc0000139, 0xc000007b] {
-            assert!(exit_remedy(Some(code as i32), false).contains("native libraries"));
+        assert!(
+            exit_remedy(Some(0xc000_001d_u32.cast_signed()), false).contains("CPU instructions")
+        );
+        for code in [0xc000_0135_u32, 0xc000_0139, 0xc000_007b] {
+            assert!(exit_remedy(Some(code.cast_signed()), false).contains("native libraries"));
         }
         assert!(exit_remedy(Some(1), false).contains("selected model"));
     }
@@ -382,18 +400,7 @@ mod tests {
         };
         let (cancel, cancelled) = watch::channel(false);
         let task = tokio::spawn(LocalSpeech::start(config, cancelled));
-        let pid = timeout(Duration::from_secs(5), async {
-            loop {
-                if let Ok(pid) =
-                    tokio::fs::read_to_string(directory.path().join("worker.pid")).await
-                    && let Ok(pid) = pid.parse::<u32>()
-                {
-                    break pid;
-                }
-                sleep(Duration::from_millis(5)).await;
-            }
-        })
-        .await?;
+        let pid = timeout(Duration::from_secs(5), fixture_pid(directory.path())).await?;
         cancel.send_replace(true);
         assert!(
             timeout(Duration::from_secs(5), task)
@@ -405,6 +412,18 @@ mod tests {
             "Cancelled startup left a live or unreaped worker"
         );
         Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn fixture_pid(directory: &std::path::Path) -> u32 {
+        loop {
+            if let Ok(pid) = tokio::fs::read_to_string(directory.join("worker.pid")).await
+                && let Ok(pid) = pid.parse()
+            {
+                return pid;
+            }
+            sleep(Duration::from_millis(5)).await;
+        }
     }
 
     // A real provider check, separate from the fast portable tests. The caller
