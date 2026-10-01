@@ -8,51 +8,47 @@ allow-indexing-slicing-in-tests = true
 allow-panic-in-tests = true
 allow-unwrap-in-tests = true
 
-# Shared-mutable-state doctrine (AGENTS.md): state lives in one place as a
-# pure function of (state, event); cross-thread data moves over channels to
-# the owning thread. Escape per site with
-# `#[expect(clippy::disallowed_types, reason = "...")]` where the reason
-# names the value being shared and why it cannot live on the root model or
-# arrive as an event.
+# Shared mutable state (AGENTS.md ownership and interfaces): each value has one owner, and other
+# threads send it events over channels. Escape per site with
+# `#[expect(clippy::disallowed_types, reason = "...")]`, naming the shared value and why it cannot
+# belong to its owner or arrive as an event.
 disallowed-types = [
-    { path = "std::sync::Mutex", reason = "send the event to the state's owning thread over a channel instead of reaching into state through a lock (AGENTS.md ownership and state)" },
-    { path = "std::sync::RwLock", reason = "send the event to the state's owning thread over a channel instead of reaching into state through a lock (AGENTS.md ownership and state)" },
-    { path = "std::rc::Rc", reason = "shared ownership hides the owner; give the value one owner and pass it as an event or borrow (AGENTS.md ownership and state)" },
-    { path = "std::cell::RefCell", reason = "runtime borrow panics replace compile-time ownership; restructure so the owner mutates directly (AGENTS.md ownership and state)" },
-    { path = "std::cell::Cell", reason = "interior mutability hides writes; restructure so the owner mutates directly (AGENTS.md ownership and state)" },
-    { path = "std::sync::atomic::AtomicBool", reason = "ambient flags are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
-    { path = "std::sync::atomic::AtomicI8", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
-    { path = "std::sync::atomic::AtomicI16", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
-    { path = "std::sync::atomic::AtomicI32", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
-    { path = "std::sync::atomic::AtomicI64", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
-    { path = "std::sync::atomic::AtomicIsize", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
-    { path = "std::sync::atomic::AtomicPtr", reason = "ambient shared pointers are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
-    { path = "std::sync::atomic::AtomicU8", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
-    { path = "std::sync::atomic::AtomicU16", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
-    { path = "std::sync::atomic::AtomicU32", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
-    { path = "std::sync::atomic::AtomicU64", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
-    { path = "std::sync::atomic::AtomicUsize", reason = "ambient counters are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
+    { path = "std::sync::Mutex", reason = "send the event to the state's owning thread over a channel instead of reaching into state through a lock (AGENTS.md ownership and interfaces)" },
+    { path = "std::sync::RwLock", reason = "send the event to the state's owning thread over a channel instead of reaching into state through a lock (AGENTS.md ownership and interfaces)" },
+    { path = "std::rc::Rc", reason = "shared ownership hides the owner; give the value one owner and pass it as an event or borrow (AGENTS.md ownership and interfaces)" },
+    { path = "std::cell::RefCell", reason = "runtime borrow panics replace compile-time ownership; restructure so the owner mutates directly (AGENTS.md ownership and interfaces)" },
+    { path = "std::cell::Cell", reason = "interior mutability hides writes; restructure so the owner mutates directly (AGENTS.md ownership and interfaces)" },
+    { path = "std::sync::atomic::AtomicBool", reason = "ambient flags are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
+    { path = "std::sync::atomic::AtomicI8", reason = "ambient counters are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
+    { path = "std::sync::atomic::AtomicI16", reason = "ambient counters are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
+    { path = "std::sync::atomic::AtomicI32", reason = "ambient counters are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
+    { path = "std::sync::atomic::AtomicI64", reason = "ambient counters are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
+    { path = "std::sync::atomic::AtomicIsize", reason = "ambient counters are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
+    { path = "std::sync::atomic::AtomicPtr", reason = "ambient shared pointers are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
+    { path = "std::sync::atomic::AtomicU8", reason = "ambient counters are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
+    { path = "std::sync::atomic::AtomicU16", reason = "ambient counters are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
+    { path = "std::sync::atomic::AtomicU32", reason = "ambient counters are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
+    { path = "std::sync::atomic::AtomicU64", reason = "ambient counters are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
+    { path = "std::sync::atomic::AtomicUsize", reason = "ambient counters are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
     # Ecosystem equivalents inherit the doctrine unchanged: routing around a
     # disallowed std primitive through a dependency is a violation, not an
     # escape. These entries are inert until the crate enters the graph.
-    { path = "tokio::sync::Mutex", reason = "send the event to the task that owns the state over a channel instead of reaching into state through a lock (AGENTS.md ownership and state)" },
-    { path = "tokio::sync::RwLock", reason = "send the event to the task that owns the state over a channel instead of reaching into state through a lock (AGENTS.md ownership and state)" },
-    { path = "parking_lot::Mutex", reason = "send the event to the state's owning thread over a channel instead of reaching into state through a lock (AGENTS.md ownership and state)" },
-    { path = "parking_lot::RwLock", reason = "send the event to the state's owning thread over a channel instead of reaching into state through a lock (AGENTS.md ownership and state)" },
-    { path = "dashmap::DashMap", reason = "a concurrent map is shared mutable state; give the map one owner and send it events (AGENTS.md ownership and state)" },
-    { path = "crossbeam_utils::atomic::AtomicCell", reason = "ambient cells are state; put the value on the root model and thread it to use sites (AGENTS.md ownership and state)" },
-    { path = "portable_atomic::AtomicU64", reason = "an atomic behind a dependency is still ambient state; put the value on the root model (AGENTS.md ownership and state)" },
+    { path = "tokio::sync::Mutex", reason = "send the event to the task that owns the state over a channel instead of reaching into state through a lock (AGENTS.md ownership and interfaces)" },
+    { path = "tokio::sync::RwLock", reason = "send the event to the task that owns the state over a channel instead of reaching into state through a lock (AGENTS.md ownership and interfaces)" },
+    { path = "parking_lot::Mutex", reason = "send the event to the state's owning thread over a channel instead of reaching into state through a lock (AGENTS.md ownership and interfaces)" },
+    { path = "parking_lot::RwLock", reason = "send the event to the state's owning thread over a channel instead of reaching into state through a lock (AGENTS.md ownership and interfaces)" },
+    { path = "dashmap::DashMap", reason = "a concurrent map is shared mutable state; give the map one owner and send it events (AGENTS.md ownership and interfaces)" },
+    { path = "crossbeam_utils::atomic::AtomicCell", reason = "ambient cells are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
+    { path = "portable_atomic::AtomicU64", reason = "an atomic behind a dependency is still ambient state; give the value one owner (AGENTS.md ownership and interfaces)" },
 ]
 
-# Native Windows callbacks require thread-local storage because the API has
-# no context parameter. Clippy's thread_local macro diagnostic ignores narrow
-# expectations on this toolchain; the disallowed mutable types above still
-# require a reason at every storage site. AGENTS.md confines TLS to that adapter.
+# No thread_local! entry: Clippy's diagnostic for the macro ignores narrow expectations on this
+# toolchain, so the mutable types above carry the per-site reason instead.
 
 disallowed-methods = [
-    { path = "std::process::abort", reason = "no unwind, no destructors, no message; return an error from main or use the panic path the doctrine already forbids you to reach (AGENTS.md invariants and errors)" },
-    { path = "std::boxed::Box::leak", reason = "a deliberate leak is ambient 'static state; own the value on the root model or justify the leak at the use site (AGENTS.md ownership and state)" },
-    { path = "std::mem::ManuallyDrop::new", reason = "suppressing Drop is a leak or an ownership dodge; restructure ownership instead (AGENTS.md invariants and errors)" },
+    { path = "std::process::abort", reason = "no unwind, no destructors, no message; return an error from main or use the panic path the doctrine already forbids you to reach (AGENTS.md ownership and interfaces)" },
+    { path = "std::boxed::Box::leak", reason = "a deliberate leak is ambient 'static state; give the value one owner or justify the leak at the use site (AGENTS.md ownership and interfaces)" },
+    { path = "std::mem::ManuallyDrop::new", reason = "suppressing Drop is a leak or an ownership dodge; restructure ownership instead (AGENTS.md ownership and interfaces)" },
 ]
 
 # Accepted identifiers for documentation prose checked by doc_markdown.

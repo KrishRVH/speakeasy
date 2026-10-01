@@ -1,7 +1,17 @@
-use crate::theme::Theme;
-use anyhow::{Context, bail};
+//! Typed settings: path resolution, validation, and atomic saves. The JSON shape is a user-edited
+//! contract, so unknown fields are rejected and a default Linux block stays out of saved files.
+
+use std::{
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+};
+
+use anyhow::{Context, ensure};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use speakeasy_platform::{Delivery, DesktopOptions};
+
+use crate::theme::Theme;
 
 #[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -9,6 +19,15 @@ pub(crate) enum Engine {
     #[default]
     Whisper,
     Parakeet,
+}
+
+impl Engine {
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Whisper => "Whisper",
+            Self::Parakeet => "Parakeet",
+        }
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -22,11 +41,11 @@ pub(crate) struct Config {
     pub microphone: Option<String>,
     pub engine_executable: PathBuf,
     pub model: PathBuf,
-    #[serde(default = "language")]
+    #[serde(default = "default_language")]
     pub language: String,
-    #[serde(default = "threads")]
+    #[serde(default = "default_threads")]
     pub threads: u16,
-    #[serde(default = "yes")]
+    #[serde(default = "default_use_gpu")]
     pub use_gpu: bool,
     #[serde(default)]
     pub reduced_motion: bool,
@@ -35,45 +54,23 @@ pub(crate) struct Config {
     #[serde(default)]
     pub theme: Theme,
 }
-#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(default, deny_unknown_fields)]
-pub(crate) struct LinuxSettings {
-    pub shortcut: String,
-    pub cancel: String,
-    pub terminal_paste: bool,
-    pub manual_paste: bool,
-    pub external_shortcut: bool,
-}
-impl Default for LinuxSettings {
-    fn default() -> Self {
-        let options = speakeasy_platform::DesktopOptions::default();
-        Self {
-            shortcut: options.shortcut,
-            cancel: options.cancel,
-            terminal_paste: false,
-            manual_paste: false,
-            external_shortcut: false,
-        }
-    }
-}
-impl LinuxSettings {
-    fn is_default(&self) -> bool {
-        *self == Self::default()
-    }
-}
-fn language() -> String {
-    "en".into()
-}
-fn threads() -> u16 {
-    4
-}
-fn yes() -> bool {
-    true
-}
 
 impl Config {
-    pub(crate) fn desktop_options(&self) -> speakeasy_platform::DesktopOptions {
-        speakeasy_platform::DesktopOptions {
+    pub(crate) const fn delivery(&self) -> Delivery {
+        if self.preserve_clipboard {
+            Delivery::Direct
+        } else {
+            Delivery::Paste
+        }
+    }
+
+    /// Whether the user or the OS asks for reduced motion.
+    pub(crate) fn prefers_reduced_motion(&self) -> bool {
+        self.reduced_motion || speakeasy_platform::reduced_motion()
+    }
+
+    pub(crate) fn desktop_options(&self) -> DesktopOptions {
+        DesktopOptions {
             shortcut: self.linux.shortcut.clone(),
             cancel: self.linux.cancel.clone(),
             terminal_paste: self.linux.terminal_paste,
@@ -81,9 +78,10 @@ impl Config {
             external_shortcut: self.linux.external_shortcut,
         }
     }
+
     pub(crate) fn read(path: &Path) -> anyhow::Result<Self> {
         serde_json::from_slice(
-            &std::fs::read(path).with_context(|| format!("Cannot read {}", path.display()))?,
+            &fs::read(path).with_context(|| format!("Cannot read {}", path.display()))?,
         )
         .with_context(|| {
             format!(
@@ -100,6 +98,7 @@ impl Config {
         Ok(config)
     }
 
+    /// Whether `next` needs a different engine process.
     pub(crate) fn speech_changed(&self, next: &Self) -> bool {
         self.engine != next.engine
             || self.engine_executable != next.engine_executable
@@ -108,48 +107,49 @@ impl Config {
             || self.use_gpu != next.use_gpu
     }
 
+    /// Resolves the engine and model against the settings directory and canonicalizes them, then
+    /// checks that they exist and that the remaining values are in range.
     pub(crate) fn validate(&mut self, path: &Path) -> anyhow::Result<()> {
         let directory = path.parent().unwrap_or_else(|| Path::new("."));
         for file in [&mut self.engine_executable, &mut self.model] {
-            if file.as_os_str().is_empty() {
-                bail!("Choose the local speech executable and a matching model.");
-            }
+            ensure!(
+                !file.as_os_str().is_empty(),
+                "Choose the local speech executable and a matching model."
+            );
             if file.is_relative() {
                 *file = directory.join(&file);
             }
             *file = file
                 .canonicalize()
                 .with_context(|| format!("File not found: {}", file.display()))?;
-            if !file.is_file() {
-                bail!("Expected a file: {}", file.display());
-            }
+            ensure!(file.is_file(), "Expected a file: {}", file.display());
         }
         #[cfg(target_os = "linux")]
         {
             use std::os::unix::fs::PermissionsExt;
-            if self.engine_executable.metadata()?.permissions().mode() & 0o111 == 0 {
-                bail!(
-                    "Speech executable is not executable. Choose an installed engine or enable its executable permission."
-                );
-            }
+            ensure!(
+                self.engine_executable.metadata()?.permissions().mode() & 0o111 != 0,
+                "Speech executable is not executable. Choose an installed engine or enable its executable permission."
+            );
         }
-        if self.threads == 0 || self.threads > 256 {
-            bail!("threads must be between 1 and 256");
-        }
-        if self.language.is_empty() || self.language.len() > 16 {
-            bail!("Set language to a language code or auto");
-        }
+        ensure!(
+            (1..=256).contains(&self.threads),
+            "threads must be between 1 and 256"
+        );
+        ensure!(
+            (1..=16).contains(&self.language.len()),
+            "Set language to a language code or auto"
+        );
         Ok(())
     }
 
     pub(crate) fn save(&self, path: &Path) -> anyhow::Result<()> {
-        use std::io::Write;
-
         let directory = path
             .parent()
-            .filter(|p| !p.as_os_str().is_empty())
+            .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
-        std::fs::create_dir_all(directory)?;
+        fs::create_dir_all(directory)?;
+        // Never replace a file the user still has to repair.
         if path.exists() {
             Self::read(path)?;
         }
@@ -166,15 +166,44 @@ impl Default for Config {
         Self {
             linux: LinuxSettings::default(),
             engine: Engine::default(),
+            microphone: None,
             engine_executable: PathBuf::new(),
             model: PathBuf::new(),
-            language: language(),
-            threads: threads(),
-            use_gpu: true,
+            language: default_language(),
+            threads: default_threads(),
+            use_gpu: default_use_gpu(),
             reduced_motion: false,
             preserve_clipboard: false,
             theme: Theme::default(),
-            microphone: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct LinuxSettings {
+    pub shortcut: String,
+    pub cancel: String,
+    pub terminal_paste: bool,
+    pub manual_paste: bool,
+    pub external_shortcut: bool,
+}
+
+impl LinuxSettings {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl Default for LinuxSettings {
+    fn default() -> Self {
+        let options = DesktopOptions::default();
+        Self {
+            shortcut: options.shortcut,
+            cancel: options.cancel,
+            terminal_paste: false,
+            manual_paste: false,
+            external_shortcut: false,
         }
     }
 }
@@ -185,13 +214,25 @@ pub(crate) fn default_path() -> PathBuf {
     #[cfg(target_os = "macos")]
     let base = std::env::var_os("HOME")
         .map(|home| PathBuf::from(home).join("Library/Application Support"));
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(target_os = "linux")]
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")));
     base.unwrap_or_else(|| PathBuf::from("."))
         .join("speakeasy/settings.json")
+}
+
+fn default_language() -> String {
+    "en".into()
+}
+
+fn default_threads() -> u16 {
+    4
+}
+
+fn default_use_gpu() -> bool {
+    true
 }
 
 #[cfg(test)]
@@ -204,7 +245,7 @@ mod tests {
         let path = directory.path().join("settings.json");
         let mut config = Config::default();
         config.save(&path)?;
-        let defaults: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+        let defaults: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
         assert!(defaults.get("linux").is_none());
         assert!(Config::read(&path)?.linux.is_default());
 
@@ -217,7 +258,7 @@ mod tests {
         };
         config.save(&path)?;
         let restored = Config::read(&path)?;
-        assert!(restored.linux == config.linux);
+        assert_eq!(restored.linux, config.linux);
         let options = restored.desktop_options();
         assert_eq!(options.shortcut, "CTRL+ALT+d");
         assert_eq!(options.cancel, "CTRL+ALT+Escape");
@@ -232,9 +273,9 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let executable = directory.path().join("engine");
         let model = directory.path().join("model.gguf");
-        std::fs::write(&executable, b"fixture")?;
-        std::fs::write(&model, b"fixture")?;
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o600))?;
+        fs::write(&executable, b"fixture")?;
+        fs::write(&model, b"fixture")?;
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o600))?;
         let mut config = Config {
             engine_executable: executable.clone(),
             model,
@@ -246,7 +287,7 @@ mod tests {
             .err()
             .context("An engine without executable permission was accepted")?;
         assert!(failure.to_string().contains("not executable"));
-        std::fs::set_permissions(executable, std::fs::Permissions::from_mode(0o700))?;
+        fs::set_permissions(executable, fs::Permissions::from_mode(0o700))?;
         config.validate(&path)?;
         Ok(())
     }

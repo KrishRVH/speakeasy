@@ -1,20 +1,20 @@
-//! Automatic setup installs the NeMo-Speech.cpp build that suits this machine
-//! and the Parakeet v3 model. Every download is pinned by URL, size, and
-//! SHA-256, resumes after interruption, and is renamed into place only once
-//! verified.
+//! Automatic setup installs the NeMo-Speech.cpp build that suits this machine and the Parakeet v3
+//! model. Every download is pinned by URL, size, and SHA-256, resumes after interruption, and is
+//! renamed into place only once verified.
 
-use crate::config::{Config, Engine};
-use anyhow::{Context, bail};
-use reqwest::{Client, StatusCode, header::RANGE};
-use sha2::{Digest, Sha256};
 use std::{
+    convert::Infallible,
     fs::{self, File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
-    process::{Output, Stdio},
-    thread,
+    process::{ExitStatus, Stdio},
     time::Duration,
 };
+
+use anyhow::{Context, bail};
+use reqwest::{Client, StatusCode, header::RANGE};
+use sha2::{Digest, Sha256};
+use speakeasy_platform::OwnedThread;
 use tokio::{
     io::AsyncReadExt,
     process::{Child, Command},
@@ -22,60 +22,59 @@ use tokio::{
     time::timeout,
 };
 
-#[derive(Clone, Default)]
-pub(crate) struct Progress {
-    pub step: &'static str,
-    pub done: u64,
-    pub total: u64,
-}
-
-struct Download<'a> {
-    url: &'a str,
-    size: u64,
-    sha256: &'a str,
-}
+use crate::{
+    child::{hidden_command, kill_and_reap},
+    config::{Config, Engine},
+};
 
 const MODEL: Download = Download {
     url: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/parakeet-tdt-0.6b-v3.q8_0.gguf",
     size: 713_975_456,
     sha256: "e3880d0aaaaf2c308ea2c35016b2b895c423eb3fda924c1b463d1c19b7f4d32e",
 };
+
 #[cfg(target_os = "windows")]
 const CUDA: Download = Download {
     url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-windows-x86_64-cuda.zip",
     size: 106_044_768,
     sha256: "ba024204e76ca2fa4eefa8787506c3c49e418147f627f60cf9206a582b60089c",
 };
+
 #[cfg(target_os = "windows")]
 const VULKAN: Download = Download {
     url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-windows-x86_64-vulkan.zip",
     size: 21_967_184,
     sha256: "b5e7b04a637da4eb25a60253e2db65774998e8dfb48c08b4db763009b82ac7ac",
 };
+
 #[cfg(target_os = "windows")]
 const CPU: Download = Download {
     url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-windows-x86_64-cpu.zip",
     size: 4_730_421,
     sha256: "5e4ea81046012edcd77fd8848de8eefb5a4ba38cc26f52eb544ab184695a75d6",
 };
+
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const CUDA: Download = Download {
     url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-linux-x86_64-cuda.tar.gz",
     size: 107_310_946,
     sha256: "e68628f396489c98fb353e070efaea5bc4977409ae7734fce56c251a79e29147",
 };
+
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const VULKAN: Download = Download {
     url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-linux-x86_64-vulkan.tar.gz",
     size: 18_014_113,
     sha256: "ce7b7c3c8771cb7450b26e6d4bd8fb2c5e35bcd9fe0076387f35052e9b9523ae",
 };
+
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const CPU: Download = Download {
     url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-linux-x86_64-cpu.tar.gz",
     size: 4_583_913,
     sha256: "0f74131d631ad2c694cf0ec53490866bb6461147959589a69fb6fc231944065b",
 };
+
 #[cfg(target_os = "macos")]
 const METAL: Download = Download {
     url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-macos-aarch64-metal.tar.gz",
@@ -91,133 +90,172 @@ const EXECUTABLE: &str = "nemo-speech/bin/nemo-speech";
 const EXECUTABLE: &str = "bin/nemo-speech";
 
 // After a five-minute recording, Parakeet holds about 3.8 GB of GPU memory.
-#[cfg(any(target_os = "windows", target_os = "linux", test))]
+#[cfg(any(
+    target_os = "windows",
+    all(target_os = "linux", target_arch = "x86_64"),
+    test
+))]
 const GPU_MEMORY: u64 = 6_000_000_000;
 
-/// A running setup. Cancellation preserves partial downloads for the next run.
-/// The owner waits for stopped before ordinary disposal; Quit joins cleanup.
+struct Download<'a> {
+    url: &'a str,
+    size: u64,
+    sha256: &'a str,
+}
+
+/// What setup is doing. No step yet means it is checking this machine; `done` and `total` count the
+/// bytes of the current step.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Progress {
+    pub step: Option<&'static str>,
+    pub done: u64,
+    pub total: u64,
+}
+
+/// The engine build setup kept, and whether it should run on the GPU.
+struct ChosenEngine {
+    executable: PathBuf,
+    use_gpu: bool,
+}
+
+/// The engine and model a finished setup chose for this machine.
+pub(crate) struct Installed {
+    engine_executable: PathBuf,
+    model: PathBuf,
+    use_gpu: bool,
+}
+
+impl Installed {
+    pub(crate) fn apply_to(self, config: &mut Config) {
+        config.engine = Engine::Parakeet;
+        config.engine_executable = self.engine_executable;
+        config.model = self.model;
+        config.use_gpu = self.use_gpu;
+    }
+}
+
+/// A setup running on its own thread. Dropping it cancels the setup and joins the thread;
+/// cancellation keeps partial downloads for the next run.
 pub(crate) struct Setup {
-    pub progress: watch::Receiver<Progress>,
-    pub result: async_channel::Receiver<anyhow::Result<Config>>,
-    cancel: async_channel::Sender<()>,
-    finished: async_channel::Receiver<()>,
-    thread: Option<thread::JoinHandle<()>>,
+    thread: OwnedThread,
+    updates: watch::Receiver<Progress>,
+    result: async_channel::Receiver<anyhow::Result<Installed>>,
+    cancel: async_channel::Sender<Infallible>,
 }
 
 impl Setup {
     pub(crate) fn start() -> anyhow::Result<Self> {
-        Self::spawn(|report, cancelled| {
-            let root = root();
+        Self::spawn(|progress, cancelled| {
+            let root = data_root();
             match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
             {
                 Ok(runtime) => runtime.block_on(Installation::run(
                     &root,
-                    &report,
+                    &progress,
                     &cancelled,
-                    async |installation| install(&root, &report, installation).await,
+                    async |installation| install(&root, &progress, installation).await,
                 )),
                 Err(error) => Some(Err(error.into())),
             }
         })
     }
 
-    // A setup thread owns installation and native cleanup until acknowledgement.
     fn spawn(
         work: impl FnOnce(
             watch::Sender<Progress>,
-            async_channel::Receiver<()>,
-        ) -> Option<anyhow::Result<Config>>
+            async_channel::Receiver<Infallible>,
+        ) -> Option<anyhow::Result<Installed>>
         + Send
         + 'static,
     ) -> anyhow::Result<Self> {
-        let (report, progress) = watch::channel(Progress::default());
+        let (progress, updates) = watch::channel(Progress::default());
         let (finish, result) = async_channel::bounded(1);
-        let (cancel, cancelled) = async_channel::bounded::<()>(1);
-        let (completed, finished) = async_channel::bounded(1);
-        let thread = thread::Builder::new().name("setup".into()).spawn(move || {
-            if let Some(result) = work(report, cancelled) {
+        let (cancel, cancelled) = async_channel::bounded(1);
+        let thread = OwnedThread::spawn("setup", move || {
+            if let Some(result) = work(progress, cancelled) {
                 #[expect(
                     clippy::let_underscore_must_use,
-                    reason = "The single setup result has no caller after its receiver closes; cleanup must still acknowledge"
+                    reason = "A released owner no longer wants the result; native cleanup has already finished"
                 )]
                 let _ = finish.try_send(result);
             }
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "A dropped setup owner needs no acknowledgement; the thread has completed native cleanup"
-            )]
-            let _ = completed.try_send(());
         })?;
         Ok(Self {
-            progress,
+            thread,
+            updates,
             result,
             cancel,
-            finished,
-            thread: Some(thread),
         })
     }
 
+    pub(crate) fn progress(&self) -> Progress {
+        *self.updates.borrow()
+    }
+
+    pub(crate) fn progress_changes(&self) -> watch::Receiver<Progress> {
+        self.updates.clone()
+    }
+
+    /// Resolves once the thread has stopped, with its result, or `None` when it stopped without
+    /// one.
+    pub(crate) fn outcome(
+        &self,
+    ) -> impl Future<Output = Option<anyhow::Result<Installed>>> + use<> {
+        let result = self.result.clone();
+        let stopped = self.stopped();
+        async move {
+            let outcome = result.recv().await.ok();
+            stopped.await;
+            outcome
+        }
+    }
+
+    pub(crate) fn stopped(&self) -> impl Future<Output = ()> + use<> {
+        self.thread.exited()
+    }
+
     pub(crate) fn is_finished(&self) -> bool {
-        self.thread
-            .as_ref()
-            .is_none_or(thread::JoinHandle::is_finished)
+        self.thread.is_finished()
     }
 
     pub(crate) fn request_stop(&self) {
         self.cancel.close();
-    }
-
-    pub(crate) fn stopped(&self) -> impl std::future::Future<Output = ()> + use<> {
-        let finished = self.finished.clone();
-        async move {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "Acknowledgement or sender disposal both mean the owned setup thread has stopped"
-            )]
-            let _ = finished.recv().await;
-        }
     }
 }
 
 impl Drop for Setup {
     fn drop(&mut self) {
         self.request_stop();
-        if let Some(thread) = self.thread.take() {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "Drop cannot report a worker panic; joining still retains the owner until cleanup ends"
-            )]
-            let _ = thread.join();
-        }
     }
 }
 
 /// Keeps the shared setup directory locked until its native child is reaped.
 struct Installation {
-    _lock: File,
+    // Declared first, so an unwinding drop kills the child before releasing the lock.
     child: Option<Child>,
+    _lock: File,
 }
 
 impl Installation {
     async fn run<T>(
         root: &Path,
         progress: &watch::Sender<Progress>,
-        cancelled: &async_channel::Receiver<()>,
+        cancelled: &async_channel::Receiver<Infallible>,
         work: impl AsyncFnOnce(&mut Self) -> anyhow::Result<T>,
     ) -> Option<anyhow::Result<T>> {
         let lock = tokio::select! {
             biased;
             _ = cancelled.recv() => return None,
-            lock = Self::lock(root, progress) => match lock {
-                Ok(lock) => lock,
-                Err(error) => return Some(Err(error)),
-            },
+            lock = Self::lock(root, progress) => lock,
         };
-        let mut installation = Self {
-            _lock: lock,
-            child: None,
+        let mut installation = match lock {
+            Ok(lock) => Self {
+                child: None,
+                _lock: lock,
+            },
+            Err(error) => return Some(Err(error)),
         };
         let result = tokio::select! {
             biased;
@@ -242,9 +280,9 @@ impl Installation {
                     progress.send_replace(Progress::default());
                     return Ok(lock);
                 },
-                Err(std::fs::TryLockError::WouldBlock) => {
+                Err(fs::TryLockError::WouldBlock) => {
                     progress.send_replace(Progress {
-                        step: "Waiting for another setup to finish",
+                        step: Some("Waiting for another setup to finish"),
                         ..Progress::default()
                     });
                     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -254,44 +292,32 @@ impl Installation {
         }
     }
 
-    async fn output(&mut self, command: &mut Command) -> anyhow::Result<Output> {
-        self.child = Some(command.spawn()?);
-        let child = self.child.as_mut().context("Setup process did not start")?;
-        let mut stdout = child.stdout.take();
-        let (status, stdout) = tokio::try_join!(child.wait(), async {
+    /// Runs `command` as the owned child; returns its exit status and whatever it piped to stdout.
+    async fn output(&mut self, command: &mut Command) -> anyhow::Result<(ExitStatus, Vec<u8>)> {
+        let child = self.child.insert(command.spawn()?);
+        let mut pipe = child.stdout.take();
+        let output = tokio::try_join!(child.wait(), async {
             let mut bytes = Vec::new();
-            if let Some(stdout) = &mut stdout {
-                stdout.read_to_end(&mut bytes).await?;
+            if let Some(pipe) = &mut pipe {
+                pipe.read_to_end(&mut bytes).await?;
             }
             Ok::<_, std::io::Error>(bytes)
         })?;
         self.child = None;
-        Ok(Output {
-            status,
-            stdout,
-            stderr: Vec::new(),
-        })
+        Ok(output)
     }
 
     async fn stop(&mut self) {
+        // Reap in place: a caller cancelled mid-wait leaves the child here for `run` to reap.
         if let Some(child) = &mut self.child {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "An already exited process may reject termination; cleanup still waits and drops its kill-on-drop owner"
-            )]
-            let _ = child.start_kill();
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "Cancellation has no result caller; disposal retains Tokio's kill-on-drop fallback after waiting"
-            )]
-            let _ = child.wait().await;
+            kill_and_reap(child).await;
         }
         self.child = None;
     }
 }
 
 /// Engines and models are machine-local, so they stay out of roaming settings.
-fn root() -> PathBuf {
+fn data_root() -> PathBuf {
     #[cfg(target_os = "windows")]
     let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
     #[cfg(target_os = "macos")]
@@ -309,12 +335,12 @@ async fn install(
     root: &Path,
     progress: &watch::Sender<Progress>,
     installation: &mut Installation,
-) -> anyhow::Result<Config> {
+) -> anyhow::Result<Installed> {
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(15))
         .read_timeout(Duration::from_secs(30))
         .build()?;
-    let (engine_executable, use_gpu) = engine(&client, root, progress, installation).await?;
+    let engine = choose_engine(&client, root, progress, installation).await?;
     let model = fetch(
         &client,
         &MODEL,
@@ -323,40 +349,43 @@ async fn install(
         progress,
     )
     .await?;
-    Ok(Config {
-        engine: Engine::Parakeet,
-        engine_executable,
+    Ok(Installed {
+        engine_executable: engine.executable,
         model,
-        use_gpu,
-        ..Config::default()
+        use_gpu: engine.use_gpu,
     })
 }
 
-/// Try CUDA with an NVIDIA driver, then Vulkan, then CPU. Doctor checks runtime
-/// dependencies and accelerator availability; `LocalSpeech` verifies inference
-/// before model readiness is reported.
+/// Tries CUDA with an NVIDIA driver, then Vulkan, then CPU. `LocalSpeech` verifies inference before
+/// reporting readiness.
 #[cfg(any(
     target_os = "windows",
     all(target_os = "linux", target_arch = "x86_64")
 ))]
-async fn engine(
+async fn choose_engine(
     client: &Client,
     root: &Path,
     progress: &watch::Sender<Progress>,
     installation: &mut Installation,
-) -> anyhow::Result<(PathBuf, bool)> {
+) -> anyhow::Result<ChosenEngine> {
     if nvidia_driver() {
         let cuda = unpack(client, &CUDA, root, progress, installation).await?;
         if doctor(&cuda, installation)
             .await
-            .is_some_and(|report| discrete_gpu(&report))
+            .is_some_and(|report| has_discrete_gpu(&report))
         {
-            return keep(root, cuda, true);
+            return Ok(ChosenEngine {
+                executable: keep_only(root, &cuda)?,
+                use_gpu: true,
+            });
         }
     }
     let vulkan = unpack(client, &VULKAN, root, progress, installation).await?;
     if let Some(report) = doctor(&vulkan, installation).await {
-        return keep(root, vulkan, discrete_gpu(&report));
+        return Ok(ChosenEngine {
+            executable: keep_only(root, &vulkan)?,
+            use_gpu: has_discrete_gpu(&report),
+        });
     }
     let cpu = unpack(client, &CPU, root, progress, installation).await?;
     #[cfg(target_os = "linux")]
@@ -365,34 +394,36 @@ async fn engine(
             "The downloaded engine cannot run on this Linux CPU. Choose a portable NeMo-Speech.cpp build in Settings."
         );
     }
-    keep(root, cpu, false)
+    Ok(ChosenEngine {
+        executable: keep_only(root, &cpu)?,
+        use_gpu: false,
+    })
 }
 
 #[cfg(target_os = "macos")]
-async fn engine(
+async fn choose_engine(
     client: &Client,
     root: &Path,
     progress: &watch::Sender<Progress>,
     installation: &mut Installation,
-) -> anyhow::Result<(PathBuf, bool)> {
+) -> anyhow::Result<ChosenEngine> {
     let metal = unpack(client, &METAL, root, progress, installation).await?;
     let report = doctor(&metal, installation)
         .await
         .context("The speech engine cannot run on this Mac.")?;
-    keep(root, metal, accelerated(&report))
+    Ok(ChosenEngine {
+        executable: keep_only(root, &metal)?,
+        use_gpu: is_accelerated(&report),
+    })
 }
 
-#[cfg(not(any(
-    target_os = "windows",
-    target_os = "macos",
-    all(target_os = "linux", target_arch = "x86_64")
-)))]
-async fn engine(
+#[cfg(all(target_os = "linux", not(target_arch = "x86_64")))]
+async fn choose_engine(
     _: &Client,
     _: &Path,
     _: &watch::Sender<Progress>,
     _: &mut Installation,
-) -> anyhow::Result<(PathBuf, bool)> {
+) -> anyhow::Result<ChosenEngine> {
     bail!(
         "Automatic Linux setup requires x86_64. Choose a local speech executable and model for this architecture."
     )
@@ -419,8 +450,8 @@ fn system32() -> PathBuf {
         .join("System32")
 }
 
-/// Removes other engine builds and returns the chosen executable.
-fn keep(root: &Path, directory: PathBuf, gpu: bool) -> anyhow::Result<(PathBuf, bool)> {
+/// Removes every other engine build and returns this build's executable.
+fn keep_only(root: &Path, directory: &Path) -> anyhow::Result<PathBuf> {
     for entry in fs::read_dir(root.join("engines"))?.flatten() {
         if entry.path() != directory {
             #[expect(
@@ -430,39 +461,38 @@ fn keep(root: &Path, directory: PathBuf, gpu: bool) -> anyhow::Result<(PathBuf, 
             let _ = fs::remove_dir_all(entry.path());
         }
     }
-    Ok((directory.join(EXECUTABLE), gpu))
+    Ok(directory.join(EXECUTABLE))
 }
 
 async fn doctor(directory: &Path, installation: &mut Installation) -> Option<serde_json::Value> {
-    let mut command = Command::new(directory.join(EXECUTABLE));
-    command
-        .args(["doctor", "--json"])
-        .stdout(Stdio::piped())
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    #[cfg(target_os = "windows")]
-    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    let mut command = hidden_command(directory.join(EXECUTABLE));
+    command.args(["doctor", "--json"]).stdout(Stdio::piped());
     let output = timeout(Duration::from_secs(60), installation.output(&mut command)).await;
     installation.stop().await;
-    let output = output.ok()?.ok()?;
-    if !output.status.success() {
+    let (status, stdout) = output.ok()?.ok()?;
+    if !status.success() {
         return None;
     }
-    serde_json::from_slice(&output.stdout).ok()
+    serde_json::from_slice(&stdout).ok()
 }
 
-fn accelerated(report: &serde_json::Value) -> bool {
+fn is_accelerated(report: &serde_json::Value) -> bool {
     report["accelerator_available"] == true && report["driver_runtime_compatible"] == true
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux", test))]
-fn discrete_gpu(report: &serde_json::Value) -> bool {
-    accelerated(report)
+#[cfg(any(
+    target_os = "windows",
+    all(target_os = "linux", target_arch = "x86_64"),
+    test
+))]
+fn has_discrete_gpu(report: &serde_json::Value) -> bool {
+    is_accelerated(report)
         && report["devices"].as_array().is_some_and(|devices| {
             devices.iter().any(|device| {
                 device["type"] == "gpu"
-                    && device["memory_total"].as_u64().unwrap_or(0) >= GPU_MEMORY
+                    && device["memory_total"]
+                        .as_u64()
+                        .is_some_and(|memory| memory >= GPU_MEMORY)
             })
         })
 }
@@ -494,30 +524,26 @@ async fn unpack(
     )
     .await?;
     progress.send_replace(Progress {
-        step: "Unpacking the speech engine",
+        step: Some("Unpacking the speech engine"),
         ..Progress::default()
     });
     let staging = engines.join(format!("{stem}.part"));
     remove_engine_directory(&staging)?;
     fs::create_dir_all(&staging)?;
-    // The system bsdtar reads both archive formats; a tar earlier in PATH may not.
+    // The system tar reads this platform's archives; a tar earlier in PATH may not.
     #[cfg(target_os = "windows")]
     let tar = system32().join("tar.exe");
     #[cfg(not(target_os = "windows"))]
     let tar = PathBuf::from("/usr/bin/tar");
-    let mut command = Command::new(tar);
+    let mut command = hidden_command(tar);
     command
         .arg("-xf")
         .arg(&file)
         .arg("-C")
         .arg(&staging)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    #[cfg(target_os = "windows")]
-    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    if !installation.output(&mut command).await?.status.success() {
+        .stdout(Stdio::null());
+    let (status, _) = installation.output(&mut command).await?;
+    if !status.success() {
         bail!("Cannot unpack the speech engine. Check free disk space, then try again.");
     }
     #[cfg(target_os = "linux")]
@@ -550,19 +576,18 @@ fn normalize_linux_archive(staging: &Path) -> anyhow::Result<()> {
     if staging.join(EXECUTABLE).is_file() {
         return Ok(());
     }
-    let directories: Vec<_> = fs::read_dir(staging)?
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-        .collect();
-    let [directory] = directories.as_slice() else {
-        bail!("The engine archive has an unexpected layout.");
-    };
-    let directory = directory.path();
-    if !directory.join(EXECUTABLE).is_file() {
-        bail!("The engine archive has an unexpected layout.");
+    let mut directories = Vec::new();
+    for entry in fs::read_dir(staging)? {
+        let entry = entry?;
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            directories.push(entry.path());
+        }
     }
-    for entry in fs::read_dir(&directory)? {
+    let directory = match directories.as_slice() {
+        [directory] if directory.join(EXECUTABLE).is_file() => directory,
+        _ => bail!("The engine archive has an unexpected layout."),
+    };
+    for entry in fs::read_dir(directory)? {
         let entry = entry?;
         fs::rename(entry.path(), staging.join(entry.file_name()))?;
     }
@@ -570,8 +595,8 @@ fn normalize_linux_archive(staging: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Downloads into `directory`, resuming a partial file when the server honors
-/// the range. Returns the verified file.
+/// Downloads into `directory`, resuming a partial file when the server honors the range. Returns
+/// the verified file.
 async fn fetch(
     client: &Client,
     download: &Download<'_>,
@@ -608,16 +633,17 @@ async fn fetch(
         .await
         .and_then(reqwest::Response::error_for_status)
         .context("Cannot download. Check your internet connection, then try again.")?;
-    let mut hasher = Sha256::new();
-    let mut file = if done > 0 && response.status() == StatusCode::PARTIAL_CONTENT {
-        hasher = hash_partial(&partial, done, progress).await?;
-        OpenOptions::new().append(true).open(&partial)?
+    let (mut hasher, mut file) = if done > 0 && response.status() == StatusCode::PARTIAL_CONTENT {
+        (
+            hash_partial(&partial, done, progress).await?,
+            OpenOptions::new().append(true).open(&partial)?,
+        )
     } else {
         done = 0;
-        File::create(&partial)?
+        (Sha256::new(), File::create(&partial)?)
     };
     progress.send_replace(Progress {
-        step,
+        step: Some(step),
         done,
         total: download.size,
     });
@@ -638,8 +664,7 @@ async fn fetch(
     }
     file.sync_all()?;
     drop(file);
-    let digest = hex_digest(&hasher.finalize());
-    if done != download.size || digest != download.sha256 {
+    if done != download.size || hex_digest(&hasher.finalize()) != download.sha256 {
         fs::remove_file(&partial).context(
             "Cannot remove an invalid download. Check directory permissions, then try again.",
         )?;
@@ -650,16 +675,11 @@ async fn fetch(
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
-    let mut text = String::with_capacity(bytes.len().saturating_mul(2));
-    for digit in bytes.iter().flat_map(|byte| [byte >> 4, byte & 15]) {
-        let ascii = if digit < 10 {
-            b'0'.saturating_add(digit)
-        } else {
-            b'a'.saturating_add(digit.saturating_sub(10))
-        };
-        text.push(char::from(ascii));
-    }
-    text
+    bytes
+        .iter()
+        .flat_map(|byte| [byte >> 4, byte & 0xF])
+        .filter_map(|digit| char::from_digit(digit.into(), 16))
+        .collect()
 }
 
 async fn hash_partial(
@@ -668,13 +688,12 @@ async fn hash_partial(
     progress: &watch::Sender<Progress>,
 ) -> anyhow::Result<Sha256> {
     progress.send_replace(Progress {
-        step: "Verifying downloaded data",
+        step: Some("Verifying downloaded data"),
         done: 0,
         total: size,
     });
     let mut file = tokio::fs::File::open(partial).await?;
-    // Each asynchronous file read crosses the blocking I/O executor. A bounded
-    // MiB read avoids thousands of round trips when verifying a cached model.
+    // Every asynchronous read is a blocking-pool round trip, so read a MiB at a time.
     let mut buffer = vec![0; 1024 * 1024];
     let mut hasher = Sha256::new();
     loop {
@@ -689,8 +708,7 @@ async fn hash_partial(
         progress.send_modify(|progress| {
             progress.done = progress.done.saturating_add(count as u64);
         });
-        // Cached reads can complete immediately. Let setup cancellation run
-        // between bounded hash chunks as well as while waiting for disk I/O.
+        // Cached reads can complete without yielding; let cancellation run between chunks.
         tokio::task::yield_now().await;
     }
     Ok(hasher)
@@ -702,11 +720,13 @@ fn file_name(url: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::{TcpListener, TcpStream},
     };
+
+    use super::*;
+    use crate::{local_speech::LocalSpeech, ports::Speech};
 
     const BODY: &[u8] = b"Say the word. The door opens, and what is said stays inside.";
 
@@ -717,7 +737,7 @@ mod tests {
         let setup = Setup::spawn(move |_, cancelled| {
             assert!(cancelled.recv_blocking().is_err());
             entered.send(()).unwrap();
-            // Assertion failure must not strand the owned cleanup thread.
+            // A timeout, so a failing test cannot strand this owned thread.
             released.recv_timeout(Duration::from_secs(2)).unwrap();
             None
         })?;
@@ -725,11 +745,11 @@ mod tests {
         let stopped = setup.stopped();
         let mut retiring = vec![setup];
         cleaning.recv_timeout(Duration::from_secs(2))?;
-        // Cancellation retains its owner while an async timer still advances.
         assert!(
             timeout(Duration::from_millis(30), retiring[0].stopped())
                 .await
-                .is_err()
+                .is_err(),
+            "A cancelled setup reported stopping before its cleanup finished"
         );
         assert!(!retiring[0].is_finished());
         release.send(())?;
@@ -749,7 +769,7 @@ mod tests {
             None
         })?;
         let (finished, joined) = std::sync::mpsc::channel();
-        let quit = thread::spawn(move || {
+        let quit = std::thread::spawn(move || {
             drop(setup);
             finished.send(()).unwrap();
         });
@@ -779,15 +799,14 @@ mod tests {
                 &progress,
                 &cancelled,
                 async |installation| {
-                    let mut command = Command::new(std::env::current_exe()?);
-                    command
-                        .args(["--exact", "setup::tests::setup_child_fixture", "--ignored"])
-                        .env("SPEAKEASY_SETUP_TEST_ROOT", &installation_root)
-                        .stdin(Stdio::null())
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null());
-                    installation.output(&mut command).await?;
-                    Ok(Config::default())
+                    installation
+                        .output(&mut fixture_child(&installation_root)?)
+                        .await?;
+                    Ok(Installed {
+                        engine_executable: PathBuf::new(),
+                        model: PathBuf::new(),
+                        use_gpu: false,
+                    })
                 },
             ))
         })?;
@@ -797,7 +816,7 @@ mod tests {
                 std::time::Instant::now() < deadline,
                 "Setup child did not start"
             );
-            thread::sleep(Duration::from_millis(10));
+            std::thread::sleep(Duration::from_millis(10));
         }
         let child_lock = OpenOptions::new()
             .read(true)
@@ -805,7 +824,7 @@ mod tests {
             .open(root.join("child.lock"))?;
         assert!(matches!(
             child_lock.try_lock(),
-            Err(std::fs::TryLockError::WouldBlock)
+            Err(fs::TryLockError::WouldBlock)
         ));
         drop(setup);
         child_lock.try_lock()?;
@@ -870,8 +889,8 @@ mod tests {
         fs::write(root.join("engines/fixture.part"), b"not a directory")?;
         let (progress, _) = watch::channel(Progress::default());
         let mut installation = Installation {
-            _lock: Installation::lock(root, &progress).await?,
             child: None,
+            _lock: Installation::lock(root, &progress).await?,
         };
         let archive = Download {
             url: "http://127.0.0.1:0/fixture.tar.gz",
@@ -901,8 +920,20 @@ mod tests {
         let lock = File::create(root.join("child.lock"))?;
         lock.lock()?;
         fs::write(root.join("child.ready"), b"")?;
-        thread::sleep(Duration::from_secs(60));
+        std::thread::sleep(Duration::from_secs(60));
         Ok(())
+    }
+
+    fn fixture_child(root: &Path) -> anyhow::Result<Command> {
+        let mut command = Command::new(std::env::current_exe()?);
+        // No `kill_on_drop`: only the owner's explicit cleanup may stop this child.
+        command
+            .args(["--exact", "setup::tests::setup_child_fixture", "--ignored"])
+            .env("SPEAKEASY_SETUP_TEST_ROOT", root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        Ok(command)
     }
 
     #[tokio::test]
@@ -912,20 +943,11 @@ mod tests {
         let root = directory.path().to_path_buf();
         fs::write(root.join("model.gguf.part"), &BODY[..20])?;
         let (progress, _) = watch::channel(Progress::default());
-        let (cancel, cancelled) = async_channel::bounded::<()>(1);
+        let (cancel, cancelled) = async_channel::bounded::<Infallible>(1);
         let first_root = root.clone();
         let first = tokio::spawn(async move {
             Installation::run(&first_root, &progress, &cancelled, async |installation| {
-                let mut command = Command::new(std::env::current_exe()?);
-                command
-                    .args(["--exact", "setup::tests::setup_child_fixture", "--ignored"])
-                    .env("SPEAKEASY_SETUP_TEST_ROOT", &first_root)
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null());
-                // Require explicit termination and reaping by the owner;
-                // command drop must not hide a missing cleanup step.
-                installation.output(&mut command).await
+                installation.output(&mut fixture_child(&first_root)?).await
             })
             .await
         });
@@ -941,24 +963,27 @@ mod tests {
             .open(root.join("child.lock"))?;
         assert!(matches!(
             child_lock.try_lock(),
-            Err(std::fs::TryLockError::WouldBlock)
+            Err(fs::TryLockError::WouldBlock)
         ));
 
         let (progress, mut updates) = watch::channel(Progress::default());
-        let (_second_cancel, second_cancelled) = async_channel::bounded::<()>(1);
+        let (_second_cancel, second_cancelled) = async_channel::bounded::<Infallible>(1);
         let second_root = root.clone();
         let second = tokio::spawn(async move {
             Installation::run(&second_root, &progress, &second_cancelled, async |_| {
-                // The process holds this lock until it exits. A retry must not
-                // enter its directory while that process can still write there.
-                child_lock.try_lock()?;
+                child_lock.try_lock().context(
+                    "A retry entered the directory while the cancelled child could still write there",
+                )?;
                 assert_eq!(fs::read(second_root.join("model.gguf.part"))?, &BODY[..20]);
                 Ok(())
             })
             .await
         });
         timeout(Duration::from_secs(5), updates.changed()).await??;
-        assert_eq!(updates.borrow().step, "Waiting for another setup to finish");
+        assert_eq!(
+            updates.borrow().step,
+            Some("Waiting for another setup to finish")
+        );
         assert!(!second.is_finished());
         drop(cancel);
         assert!(timeout(Duration::from_secs(5), first).await??.is_none());
@@ -974,7 +999,7 @@ mod tests {
         let (progress, _) = watch::channel(Progress::default());
         let _owner = Installation::lock(directory.path(), &progress).await?;
         let (progress, mut updates) = watch::channel(Progress::default());
-        let (cancel, cancelled) = async_channel::bounded::<()>(1);
+        let (cancel, cancelled) = async_channel::bounded::<Infallible>(1);
         let root = directory.path().to_path_buf();
         let waiting = tokio::spawn(async move {
             Installation::run(&root, &progress, &cancelled, async |_| {
@@ -992,25 +1017,25 @@ mod tests {
             .open(directory.path().join("setup.lock"))?;
         assert!(matches!(
             contender.try_lock(),
-            Err(std::fs::TryLockError::WouldBlock)
+            Err(fs::TryLockError::WouldBlock)
         ));
         Ok(())
     }
 
-    /// Serves `BODY` on loopback and honors `Range: bytes=N-`. Returns the
-    /// base URL and the range start each request asked for.
-    async fn serve() -> anyhow::Result<(String, async_channel::Receiver<Option<u64>>)> {
+    /// Serves `BODY` on loopback, honoring `Range: bytes=N-`. The receiver yields the range start
+    /// each request asked for.
+    async fn serve_body() -> anyhow::Result<(String, async_channel::Receiver<Option<u64>>)> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let url = format!("http://{}", listener.local_addr()?);
-        let (tx, rx) = async_channel::unbounded();
+        let (requests, starts) = async_channel::unbounded();
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
-                if respond(stream, &tx).await.is_err() {
+                if respond(stream, &requests).await.is_err() {
                     break;
                 }
             }
         });
-        Ok((url, rx))
+        Ok((url, starts))
     }
 
     async fn respond(
@@ -1053,19 +1078,12 @@ mod tests {
     }
 
     fn sha256(bytes: &[u8]) -> String {
-        use std::fmt::Write as _;
-
-        Sha256::digest(bytes)
-            .iter()
-            .fold(String::new(), |mut text, byte| {
-                write!(text, "{byte:02x}").unwrap();
-                text
-            })
+        hex_digest(&Sha256::digest(bytes))
     }
 
     #[tokio::test]
     async fn fetch_promotes_a_verified_complete_partial_without_a_request() -> anyhow::Result<()> {
-        let (base, requests) = serve().await?;
+        let (base, requests) = serve_body().await?;
         let url = format!("{base}/model.gguf");
         let sha = sha256(BODY);
         let download = Download {
@@ -1096,7 +1114,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_replaces_a_corrupt_complete_partial() -> anyhow::Result<()> {
-        let (base, requests) = serve().await?;
+        let (base, requests) = serve_body().await?;
         let url = format!("{base}/model.gguf");
         let sha = sha256(BODY);
         let download = Download {
@@ -1136,11 +1154,11 @@ mod tests {
             sha256: &sha,
         };
         let (progress, mut updates) = watch::channel(Progress::default());
-        let (cancel, cancelled) = async_channel::bounded::<()>(1);
+        let (cancel, cancelled) = async_channel::bounded::<Infallible>(1);
         let cancel_when_verifying = async {
             updates
                 .wait_for(|progress| {
-                    progress.step == "Verifying downloaded data"
+                    progress.step == Some("Verifying downloaded data")
                         && progress.done > 0
                         && progress.done < progress.total
                 })
@@ -1171,7 +1189,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_resumes_a_partial_download_and_verifies_the_whole_file() -> anyhow::Result<()> {
-        let (base, requests) = serve().await?;
+        let (base, requests) = serve_body().await?;
         let url = format!("{base}/model.gguf");
         let sha = sha256(BODY);
         let download = Download {
@@ -1182,7 +1200,14 @@ mod tests {
         let directory = tempfile::tempdir()?;
         fs::write(directory.path().join("model.gguf.part"), &BODY[..20])?;
         let (progress, _) = watch::channel(Progress::default());
-        let path = fetch(&Client::new(), &download, directory.path(), "", &progress).await?;
+        let path = fetch(
+            &Client::new(),
+            &download,
+            directory.path(),
+            "fixture",
+            &progress,
+        )
+        .await?;
         assert_eq!(requests.recv().await?, Some(20));
         assert_eq!(fs::read(&path)?, BODY);
         assert!(!directory.path().join("model.gguf.part").exists());
@@ -1192,7 +1217,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_discards_a_download_that_fails_its_checksum() -> anyhow::Result<()> {
-        let (base, _) = serve().await?;
+        let (base, _) = serve_body().await?;
         let url = format!("{base}/model.gguf");
         let sha = sha256(b"a different model");
         let download = Download {
@@ -1202,7 +1227,14 @@ mod tests {
         };
         let directory = tempfile::tempdir()?;
         let (progress, _) = watch::channel(Progress::default());
-        let result = fetch(&Client::new(), &download, directory.path(), "", &progress).await;
+        let result = fetch(
+            &Client::new(),
+            &download,
+            directory.path(),
+            "fixture",
+            &progress,
+        )
+        .await;
         let error = result.err().map(|error| format!("{error:#}"));
         assert!(
             error
@@ -1215,27 +1247,28 @@ mod tests {
         Ok(())
     }
 
-    // The real sources and engine, installed into a temporary directory. Uses
-    // public fixture audio; never opens a microphone, hook, or clipboard.
     #[tokio::test]
     #[ignore = "Downloads about 0.8 GB; requires SPEAKEASY_FIXTURE_WAV (whisper.cpp samples/jfk.wav)"]
     async fn install_chooses_an_engine_that_recognizes_fixture_speech() -> anyhow::Result<()> {
         let wav = fs::read(std::env::var("SPEAKEASY_FIXTURE_WAV")?)?;
         let root = tempfile::tempdir()?;
         let (progress, _) = watch::channel(Progress::default());
-        let (_cancel, cancelled) = async_channel::bounded::<()>(1);
-        let config = Installation::run(root.path(), &progress, &cancelled, async |installation| {
-            install(root.path(), &progress, installation).await
-        })
-        .await
-        .context("Setup was cancelled")??;
+        let (_cancel, cancelled) = async_channel::bounded::<Infallible>(1);
+        let installed =
+            Installation::run(root.path(), &progress, &cancelled, async |installation| {
+                install(root.path(), &progress, installation).await
+            })
+            .await
+            .context("Setup was cancelled")??;
         eprintln!(
             "Setup chose {} with GPU {}",
-            config.engine_executable.display(),
-            config.use_gpu
+            installed.engine_executable.display(),
+            installed.use_gpu
         );
+        let mut config = Config::default();
+        installed.apply_to(&mut config);
         let (_cancel, cancelled) = watch::channel(false);
-        let mut worker = crate::local_speech::LocalSpeech::start(config, cancelled).await?;
+        let mut worker = LocalSpeech::start(config, cancelled).await?;
         let result = worker.transcribe(wav, "en").await;
         worker.stop().await;
         // Never include the recognized text in failure output.
@@ -1255,13 +1288,13 @@ mod tests {
                 "devices": [{ "type": kind, "memory_total": memory }],
             })
         };
-        assert!(discrete_gpu(&report(true, "gpu", 25_756_696_576)));
-        assert!(!discrete_gpu(&report(true, "gpu", 4_294_967_296)));
-        assert!(!discrete_gpu(&report(
+        assert!(has_discrete_gpu(&report(true, "gpu", 25_756_696_576)));
+        assert!(!has_discrete_gpu(&report(true, "gpu", 4_294_967_296)));
+        assert!(!has_discrete_gpu(&report(
             true,
             "integrated-gpu",
             51_061_784_576
         )));
-        assert!(!discrete_gpu(&report(false, "gpu", 25_756_696_576)));
+        assert!(!has_discrete_gpu(&report(false, "gpu", 25_756_696_576)));
     }
 }

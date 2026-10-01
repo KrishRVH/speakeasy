@@ -1,17 +1,26 @@
-/// Analytic critically damped spring. Retargeting preserves velocity; evaluation
-/// is independent of refresh rate and remains stable after a delayed frame.
+//! Analytic critically damped springs for frame-rate independent animation.
+
+use std::time::Duration;
+
+const POSITION_TOLERANCE: f32 = 0.05;
+const VELOCITY_TOLERANCE: f32 = 0.1;
+
+/// A critically damped spring evaluated in closed form.
+///
+/// Stepping is independent of refresh rate and stays stable after a delayed frame. Retargeting
+/// keeps the current position and velocity, so interrupted motion stays continuous.
+#[derive(Debug)]
 pub struct Spring {
-    /// Current position, read by the renderer after stepping.
-    pub value: f32,
+    value: f32,
     velocity: f32,
-    /// Destination; changing it preserves the current position and velocity.
+    /// Destination the spring settles toward.
     pub target: f32,
 }
 
 impl Spring {
-    /// Start at rest at `value`.
+    /// Creates a spring resting at `value`.
     #[must_use]
-    pub fn new(value: f32) -> Self {
+    pub const fn new(value: f32) -> Self {
         Self {
             value,
             velocity: 0.0,
@@ -19,28 +28,38 @@ impl Spring {
         }
     }
 
-    /// Advances by `seconds`; a higher positive `omega` settles sooner.
-    pub fn step(&mut self, seconds: f32, omega: f32) {
-        let seconds = seconds.max(0.0);
+    /// Returns the current position.
+    #[must_use]
+    pub const fn value(&self) -> f32 {
+        self.value
+    }
+
+    /// Advances by `elapsed`; a higher positive `omega` settles sooner.
+    pub fn step(&mut self, elapsed: Duration, omega: f32) {
+        // With displacement x₀ and velocity v₀: x(t) = (x₀ + slope·t)·e^(−ωt) and
+        // v(t) = (v₀ − ω·slope·t)·e^(−ωt), where slope = v₀ + ω·x₀.
+        let seconds = elapsed.as_secs_f32();
         let displacement = self.value - self.target;
-        let c = omega.mul_add(displacement, self.velocity);
+        let slope = omega.mul_add(displacement, self.velocity);
         let decay = (-omega * seconds).exp();
-        self.value = c.mul_add(seconds, displacement).mul_add(decay, self.target);
-        self.velocity = (omega * c).mul_add(-seconds, self.velocity) * decay;
+        self.value = slope
+            .mul_add(seconds, displacement)
+            .mul_add(decay, self.target);
+        self.velocity = (omega * slope).mul_add(-seconds, self.velocity) * decay;
         if self.settled() {
-            self.value = self.target;
-            self.velocity = 0.0;
+            self.snap();
         }
     }
 
     /// Whether position and velocity are within the rendering tolerance.
     #[must_use]
     pub fn settled(&self) -> bool {
-        (self.value - self.target).abs() < 0.05 && self.velocity.abs() < 0.1
+        (self.value - self.target).abs() < POSITION_TOLERANCE
+            && self.velocity.abs() < VELOCITY_TOLERANCE
     }
 
-    /// Settle immediately at the target for reduced-motion rendering.
-    pub fn snap(&mut self) {
+    /// Settles immediately at the target, for reduced-motion rendering.
+    pub const fn snap(&mut self) {
         self.value = self.target;
         self.velocity = 0.0;
     }
@@ -48,43 +67,29 @@ impl Spring {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::time::Duration;
 
-    #[test]
-    fn negative_elapsed_time_matches_zero_without_reversing_motion() {
-        let mut negative = Spring::new(56.0);
-        let mut zero = Spring::new(56.0);
-        for spring in [&mut negative, &mut zero] {
-            spring.target = 188.0;
-            spring.step(0.05, 24.0);
-        }
-        negative.step(-0.1, 24.0);
-        zero.step(0.0, 24.0);
-        assert_eq!(negative.value, zero.value);
-        assert_eq!(negative.velocity, zero.velocity);
-        negative.step(0.05, 24.0);
-        zero.step(0.05, 24.0);
-        assert_eq!(negative.value, zero.value);
-        assert_eq!(negative.velocity, zero.velocity);
-    }
+    use super::Spring;
+
+    const OMEGA: f32 = 24.0;
 
     #[test]
     fn interrupted_motion_is_continuous_and_refresh_rate_independent() {
-        let mut a = Spring::new(56.0);
-        let mut b = Spring::new(56.0);
-        a.target = 188.0;
-        b.target = 188.0;
+        let mut fast = Spring::new(56.0);
+        let mut slow = Spring::new(56.0);
+        fast.target = 188.0;
+        slow.target = 188.0;
         for _ in 0..12 {
-            a.step(1.0 / 120.0, 24.0);
+            fast.step(Duration::from_secs(1) / 120, OMEGA);
         }
         for _ in 0..6 {
-            b.step(1.0 / 60.0, 24.0);
+            slow.step(Duration::from_secs(1) / 60, OMEGA);
         }
-        assert!((a.value - b.value).abs() < 0.001);
-        let value = a.value;
-        a.target = 72.0;
-        assert_eq!(a.value, value);
-        a.step(4.0, 24.0);
-        assert_eq!(a.value, 72.0);
+        assert!((fast.value() - slow.value()).abs() < 0.001);
+        let interrupted_at = fast.value();
+        fast.target = 72.0;
+        assert_eq!(fast.value(), interrupted_at);
+        fast.step(Duration::from_secs(4), OMEGA);
+        assert_eq!(fast.value(), 72.0);
     }
 }

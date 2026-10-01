@@ -1,47 +1,77 @@
-use super::{
-    APPLICATION_ID, DesktopOptions, Duration, Input, InputSender, InsertPermit, Inserted,
-    Insertion, MODIFIER_WAIT, deliver, ei, respond, token, x11,
+//! Wayland desktop access through xdg-desktop-portal: global shortcuts, keyboard input over libei,
+//! and the portal clipboard. Every request and session the service opens is closed on retirement.
+
+use std::{
+    collections::HashMap,
+    convert::Infallible,
+    fs::File,
+    io::Write,
+    mem,
+    ops::ControlFlow,
+    os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd},
+    sync::Arc,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use anyhow::{Context, ensure};
+
+use anyhow::{Context, bail, ensure};
+use async_channel::{Receiver, Sender};
 use futures_util::{FutureExt, StreamExt, future::LocalBoxFuture, stream::FuturesUnordered};
-use std::{collections::HashMap, future::Future, os::fd::OwnedFd, sync::Arc, time::Instant};
+use tokio::{io::unix::AsyncFd, task::JoinSet};
 use zbus::{
-    Connection, MatchRule, MessageStream, Proxy,
+    Connection, MatchRule, Message, MessageStream, Proxy,
     zvariant::{OwnedObjectPath, OwnedValue, Value},
 };
+
+use super::{
+    APPLICATION_ID, Delivery, DesktopOptions, Input, InputSender, InsertPermit, Inserted,
+    Insertion, Reply, ShortcutLabels, ei, owner_changes, stopping, token::TokenStore, x11,
+};
+use crate::insertion::MODIFIER_WAIT;
+
 const DESTINATION: &str = "org.freedesktop.portal.Desktop";
 const DESKTOP: &str = "/org/freedesktop/portal/desktop";
 const SHORTCUTS: &str = "org.freedesktop.portal.GlobalShortcuts";
 const REMOTE: &str = "org.freedesktop.portal.RemoteDesktop";
 const CLIPBOARD: &str = "org.freedesktop.portal.Clipboard";
-const TRANSFER_TIMEOUT: Duration = Duration::from_secs(1);
+const REQUEST: &str = "org.freedesktop.portal.Request";
+const SESSION: &str = "org.freedesktop.portal.Session";
+const PLAIN_TEXT: [&str; 2] = ["text/plain;charset=utf-8", "text/plain"];
+/// Shortcut IDs Speakeasy binds; the portal reports activations by these IDs.
+const DICTATE_ID: &str = "dictate";
+const CANCEL_ID: &str = "cancel";
+const KEYBOARD_DEVICE: u32 = 1;
+const PERSIST_UNTIL_REVOKED: u32 = 2;
+const PERSISTENT_REMOTE_VERSION: u32 = 2;
+/// Depth of the shortcut and clipboard-ownership signal queues and of the notices derived from
+/// them; it also bounds the ownership changes one clipboard handoff may see before it overruns.
+const SIGNAL_BACKLOG: usize = 64;
+/// Any portal restart or session closure ends desktop access, so a short queue suffices.
+const REVOCATION_BACKLOG: usize = 4;
 const MAX_TRANSFERS: usize = 4;
-type Transfers = FuturesUnordered<LocalBoxFuture<'static, anyhow::Result<()>>>;
+const CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
+const SELECTION_TIMEOUT: Duration = Duration::from_secs(2);
+const OWNERSHIP_SETTLE: Duration = Duration::from_millis(500);
+const TRANSFER_TIMEOUT: Duration = Duration::from_secs(1);
+
 type Results = HashMap<String, OwnedValue>;
 type Options = HashMap<&'static str, Value<'static>>;
 type DesktopChanges = futures_util::stream::Select<MessageStream, MessageStream>;
-fn portal_owner_rule() -> zbus::Result<MatchRule<'static>> {
-    Ok(MatchRule::builder()
-        .msg_type(zbus::message::Type::Signal)
-        .sender("org.freedesktop.DBus")?
-        .interface("org.freedesktop.DBus")?
-        .member("NameOwnerChanged")?
-        .add_arg(DESTINATION)?
-        .build())
-}
+type Transfers<'a> = FuturesUnordered<LocalBoxFuture<'a, anyhow::Result<()>>>;
+
 struct Portal {
     connection: Connection,
-    requests: Vec<OwnedObjectPath>,
+    unanswered: Vec<OwnedObjectPath>,
     sessions: Vec<OwnedObjectPath>,
     nonce: String,
     sequence: u64,
 }
+
 impl Portal {
     async fn connect() -> anyhow::Result<Self> {
         let connection = Connection::session().await?;
-        // The first portal call must identify this host connection. Requesting
-        // properties first can cache an empty app ID on recent desktops.
-        match connection
+        // Registration must be the first portal call: an earlier property read can cache an
+        // empty app ID on recent desktops.
+        let registered = connection
             .call_method(
                 Some(DESTINATION),
                 DESKTOP,
@@ -49,43 +79,53 @@ impl Portal {
                 "Register",
                 &(APPLICATION_ID, Options::new()),
             )
-            .await
-        {
+            .await;
+        match registered {
             Ok(_) => {},
+            // Portals without the host registry identify the app from its launcher instead.
             Err(zbus::Error::MethodError(name, _, _))
                 if matches!(
                     name.as_str(),
                     "org.freedesktop.DBus.Error.UnknownMethod"
                         | "org.freedesktop.DBus.Error.UnknownInterface"
                 ) => {},
-            Err(error) => return Err(error).context(
-                "Install the supplied Speakeasy desktop launcher before enabling portal shortcuts",
-            ),
+            Err(error) => {
+                return Err(error).context(
+                    "Install the supplied Speakeasy desktop launcher before enabling portal shortcuts",
+                );
+            },
         }
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         Ok(Self {
             connection,
-            requests: Vec::new(),
+            unanswered: Vec::new(),
             sessions: Vec::new(),
-            nonce: format!(
-                "s{}_{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)?
-                    .as_nanos()
-            ),
+            nonce: format!("s{}_{now}", std::process::id()),
             sequence: 0,
         })
     }
-    fn token(&mut self) -> anyhow::Result<String> {
+
+    fn next_token(&mut self) -> anyhow::Result<String> {
         self.sequence = self
             .sequence
             .checked_add(1)
             .context("Portal request identifiers exhausted. Pause and resume dictation.")?;
         Ok(format!("{}_{}", self.nonce, self.sequence))
     }
+
+    /// The unique bus name as it appears in portal object paths.
+    fn sender_segment(&self) -> anyhow::Result<String> {
+        let name = self
+            .connection
+            .unique_name()
+            .context("D-Bus connection has no name")?;
+        Ok(name.as_str().trim_start_matches(':').replace('.', "_"))
+    }
+
     async fn proxy(&self, interface: &'static str) -> anyhow::Result<Proxy<'static>> {
         Ok(Proxy::new(&self.connection, DESTINATION, DESKTOP, interface).await?)
     }
+
     async fn request<B: serde::Serialize + zbus::zvariant::DynamicType + Sync>(
         &mut self,
         interface: &'static str,
@@ -93,27 +133,19 @@ impl Portal {
         token: String,
         body: &B,
     ) -> anyhow::Result<Results> {
-        let sender = self
-            .connection
-            .unique_name()
-            .context("D-Bus connection has no name")?
-            .as_str()
-            .trim_start_matches(':')
-            .replace('.', "_");
-        let path: OwnedObjectPath = format!("{DESKTOP}/request/{sender}/{token}").try_into()?;
-        let request = Proxy::new(
+        let path: OwnedObjectPath =
+            format!("{DESKTOP}/request/{}/{token}", self.sender_segment()?).try_into()?;
+        let request = Proxy::new(&self.connection, DESTINATION, path.clone(), REQUEST).await?;
+        let mut responses = request.receive_signal("Response").await?;
+        let mut restarts = MessageStream::for_match_rule(
+            owner_changes(DESTINATION)?,
             &self.connection,
-            DESTINATION,
-            path.clone(),
-            "org.freedesktop.portal.Request",
+            Some(REVOCATION_BACKLOG),
         )
         .await?;
-        let mut responses = request.receive_signal("Response").await?;
-        let mut owners =
-            MessageStream::for_match_rule(portal_owner_rule()?, &self.connection, Some(4)).await?;
-        // Publish ownership before issuing the call, so cancelling consent can
-        // close the request even while its response future has not completed.
-        self.requests.push(path.clone());
+        // Track the request before calling, so retirement can close a consent dialog that has
+        // not answered yet.
+        self.unanswered.push(path.clone());
         let returned: OwnedObjectPath = self.proxy(interface).await?.call(method, body).await?;
         ensure!(
             returned == path,
@@ -121,27 +153,21 @@ impl Portal {
         );
         let response = tokio::select! {
             response = responses.next() => response.context("Portal request disconnected")?,
-            _ = owners.next() => anyhow::bail!("The desktop portal restarted during permission setup"),
+            _ = restarts.next() => bail!("The desktop portal restarted during permission setup"),
         };
         let (status, values): (u32, Results) = response.body().deserialize()?;
-        self.requests.retain(|pending| pending != &path);
+        self.unanswered.retain(|pending| pending != &path);
         ensure!(status == 0, "Desktop permission was declined or cancelled");
         Ok(values)
     }
-    async fn session(&mut self, interface: &'static str) -> anyhow::Result<OwnedObjectPath> {
-        let handle = self.token()?;
-        let session = self.token()?;
-        let sender = self
-            .connection
-            .unique_name()
-            .context("D-Bus connection has no name")?
-            .as_str()
-            .trim_start_matches(':')
-            .replace('.', "_");
+
+    async fn create_session(&mut self, interface: &'static str) -> anyhow::Result<OwnedObjectPath> {
+        let handle = self.next_token()?;
+        let session = self.next_token()?;
         let predicted: OwnedObjectPath =
-            format!("{DESKTOP}/session/{sender}/{session}").try_into()?;
+            format!("{DESKTOP}/session/{}/{session}", self.sender_segment()?).try_into()?;
         self.sessions.push(predicted.clone());
-        let options = options([
+        let options = Options::from([
             ("handle_token", Value::from(handle.clone())),
             ("session_handle_token", Value::from(session)),
         ]);
@@ -159,53 +185,299 @@ impl Portal {
         );
         Ok(predicted)
     }
+
     async fn close(&self) {
-        for (paths, interface) in [
-            (&self.requests, "org.freedesktop.portal.Request"),
-            (&self.sessions, "org.freedesktop.portal.Session"),
-        ] {
+        for (paths, interface) in [(&self.unanswered, REQUEST), (&self.sessions, SESSION)] {
             for path in paths {
                 #[expect(
                     clippy::let_underscore_must_use,
-                    reason = "Closing retired portal requests is bounded best effort when the desktop service has disconnected"
+                    reason = "Closing retired portal objects is bounded best effort when the desktop service has disconnected"
                 )]
-                let _ = tokio::time::timeout(Duration::from_millis(500), async {
-                    let proxy =
-                        Proxy::new(&self.connection, DESTINATION, path.clone(), interface).await?;
-                    proxy.call::<_, _, ()>("Close", &()).await
+                let _ = tokio::time::timeout(CLOSE_TIMEOUT, async {
+                    Proxy::new(&self.connection, DESTINATION, path.clone(), interface)
+                        .await?
+                        .call::<_, _, ()>("Close", &())
+                        .await
                 })
                 .await;
             }
         }
     }
 }
-fn options<const N: usize>(values: [(&'static str, Value<'static>); N]) -> Options {
-    HashMap::from(values)
-}
+
+/// What the portal granted: a shortcut session and a remote desktop for keyboard input.
 struct Bound {
-    shortcut: Option<OwnedObjectPath>,
-    remote: Option<OwnedObjectPath>,
-    clipboard: bool,
-    sender: Option<ei::Sender>,
-    description: String,
-    cancel_description: String,
+    shortcut_session: Option<OwnedObjectPath>,
+    remote: Option<Remote>,
+    labels: ShortcutLabels,
 }
+
+impl Bound {
+    fn sender(&self) -> Option<&ei::Sender> {
+        self.remote.as_ref().map(|remote| &remote.sender)
+    }
+
+    fn sender_mut(&mut self) -> Option<&mut ei::Sender> {
+        self.remote.as_mut().map(|remote| &mut remote.sender)
+    }
+
+    fn clipboard_session(&self) -> Option<&OwnedObjectPath> {
+        self.remote
+            .as_ref()
+            .filter(|remote| remote.shares_clipboard)
+            .map(|remote| &remote.session)
+    }
+
+    fn dispatch(&mut self) -> anyhow::Result<()> {
+        if let Some(sender) = self.sender_mut() {
+            sender.dispatch()?;
+        }
+        Ok(())
+    }
+}
+
+struct Remote {
+    session: OwnedObjectPath,
+    sender: ei::Sender,
+    shares_clipboard: bool,
+}
+
+/// The insertion pipeline: requests wait for released modifiers, then copy, confirm clipboard
+/// ownership, and check focus before submitting native input.
+struct Insertions<'a> {
+    transfers: Transfers<'a>,
+    preparing: Option<Preparing<'a>>,
+    pending: Option<(Insertion, Instant)>,
+    selection: Option<Selection>,
+    bound: &'a mut Bound,
+    notices: &'a Receiver<Notice>,
+    selecting: &'a Sender<SelectionHandoff>,
+    worker: &'a x11::ClipboardWorker,
+    clipboard: &'a Proxy<'static>,
+    options: &'a DesktopOptions,
+}
+
+impl<'a> Insertions<'a> {
+    fn is_idle(&self) -> bool {
+        self.pending.is_none() && self.preparing.is_none()
+    }
+
+    fn accepts_transfers(&self) -> bool {
+        self.bound.clipboard_session().is_some()
+            && self.transfers.len() < MAX_TRANSFERS
+            && !self
+                .preparing
+                .as_ref()
+                .is_some_and(|work| work.setting_selection)
+    }
+
+    fn apply_queued_notices(&mut self) {
+        while let Ok(notice) = self.notices.try_recv() {
+            self.apply(notice);
+        }
+    }
+
+    fn apply(&mut self, notice: Notice) {
+        apply_notice(notice, self.bound.sender_mut(), &mut self.selection);
+    }
+
+    fn queue(&mut self, request: Insertion) {
+        self.pending = Some((request, Instant::now()));
+    }
+
+    /// Catches up on notices and libei events, then starts the pending request once its wait for
+    /// released modifiers is over.
+    fn advance_pending(&mut self) -> anyhow::Result<()> {
+        self.apply_queued_notices();
+        self.bound.dispatch()?;
+        let Some((request, _)) = self.pending.take_if(|(request, started)| {
+            !request.permit.active()
+                || self.options.manual_paste
+                || request.delivery == Delivery::Direct
+                || self.bound.sender().is_some_and(ei::Sender::can_paste)
+                || started.elapsed() >= MODIFIER_WAIT
+        }) else {
+            return Ok(());
+        };
+        if !request.permit.active() {
+            request.reply.send(Ok(Inserted::Cancelled));
+            return Ok(());
+        }
+        let (task, setting_selection) = match request.delivery {
+            Delivery::Direct => (
+                query_focus(self.worker, request.permit.clone(), Route::Direct),
+                false,
+            ),
+            Delivery::Paste => (
+                self.copy(&request),
+                self.bound.clipboard_session().is_some(),
+            ),
+        };
+        self.preparing = Some(Preparing {
+            request,
+            setting_selection,
+            task,
+        });
+        Ok(())
+    }
+
+    fn copy(&self, request: &Insertion) -> LocalBoxFuture<'a, anyhow::Result<Prepared>> {
+        let permit = request.permit.clone();
+        match self.bound.clipboard_session() {
+            Some(session) => set_selection(self.clipboard, session.clone(), permit),
+            None => copy_with_x11(self.worker, request.text.clone(), permit),
+        }
+    }
+
+    fn advance_preparation(&mut self, prepared: anyhow::Result<Prepared>) -> anyhow::Result<()> {
+        let request = self
+            .preparing
+            .take()
+            .context("Missing clipboard preparation")?
+            .request;
+        let permit = request.permit.clone();
+        let task = match prepared {
+            Ok(Prepared::SelectionSet) => {
+                self.selection = Some(Selection::new(&request.text, permit.clone()));
+                confirm_selection(self.selecting, permit)
+            },
+            Ok(Prepared::Copied { owner: Some(owner) }) => {
+                confirm_owner(self.worker, owner, permit)
+            },
+            Ok(Prepared::Ownership { owned }) => {
+                query_focus(self.worker, permit, Route::Paste { owned })
+            },
+            Ok(Prepared::Copied { owner: None }) => {
+                let outcome = if permit.active() {
+                    Inserted::Unavailable("Clipboard changed before paste. Dictate again.")
+                } else {
+                    Inserted::Cancelled
+                };
+                request.reply.send(Ok(outcome));
+                return Ok(());
+            },
+            Ok(Prepared::Target { external, route }) => {
+                self.finish(request, external, route);
+                return Ok(());
+            },
+            Err(error) => {
+                request.reply.send(Err(error));
+                return Ok(());
+            },
+        };
+        self.preparing = Some(Preparing {
+            request,
+            setting_selection: false,
+            task,
+        });
+        Ok(())
+    }
+
+    fn finish(&mut self, request: Insertion, external: bool, route: Route) {
+        // Notices queued while preparation awaited other processes must apply first: a missed
+        // press could paste while the shortcut is held.
+        self.apply_queued_notices();
+        let outcome = match route {
+            Route::Direct => insert_direct(self.bound, &request, external),
+            Route::Paste { owned } => {
+                if !owned && self.bound.clipboard_session().is_some() {
+                    self.selection = None;
+                }
+                finish_paste(self.bound, &request, self.options, owned, external)
+            },
+        };
+        request.reply.send(outcome);
+    }
+
+    fn serve_transfer(&self, event: &Message) -> anyhow::Result<()> {
+        let (path, mime, serial): (OwnedObjectPath, String, u32) = event.body().deserialize()?;
+        if self.bound.clipboard_session() != Some(&path) {
+            return Ok(());
+        }
+        let payload = self
+            .selection
+            .as_ref()
+            .filter(|_| PLAIN_TEXT.contains(&mime.as_str()))
+            .map(Selection::transfer);
+        let clipboard = self.clipboard;
+        let session = path.clone();
+        let write = async move {
+            let fd: zbus::zvariant::OwnedFd =
+                clipboard.call("SelectionWrite", &(session, serial)).await?;
+            Ok(OwnedFd::from(fd))
+        };
+        let done = move |success: bool| async move {
+            clipboard
+                .call::<_, _, ()>("SelectionWriteDone", &(path, serial, success))
+                .await?;
+            Ok(())
+        };
+        self.transfers
+            .push(transfer(write, done, payload).boxed_local());
+        Ok(())
+    }
+
+    fn cancel_all(self) {
+        if let Some((request, _)) = self.pending {
+            request.reply.send(Ok(Inserted::Cancelled));
+        }
+        if let Some(work) = self.preparing {
+            work.request.reply.send(Ok(Inserted::Cancelled));
+        }
+    }
+}
+
+struct Preparing<'a> {
+    request: Insertion,
+    /// Whether `task` is `SetSelection`. Transfers wait until it returns, because only then does
+    /// `selection` hold the new text.
+    setting_selection: bool,
+    task: LocalBoxFuture<'a, anyhow::Result<Prepared>>,
+}
+
+/// The outcome of one preparation stage.
+enum Prepared {
+    /// The portal clipboard offers the text; this session's ownership awaits confirmation.
+    SelectionSet,
+    /// The X11 clipboard holds the text under the `owner` window, or `None` when the clipboard
+    /// changed or the permit lapsed first.
+    Copied { owner: Option<u32> },
+    /// Whether this session still owns the clipboard selection it set.
+    Ownership { owned: bool },
+    /// Whether another app has focus, and how the insertion submits.
+    Target { external: bool, route: Route },
+}
+
+/// How a prepared insertion submits once focus is known.
+enum Route {
+    Direct,
+    Paste { owned: bool },
+}
+
+enum Notice {
+    ModifiersChanged,
+    SelectionLost(InsertPermit),
+}
+
+/// The text a portal clipboard selection serves until a newer selection replaces it.
 struct Selection {
     text: Arc<str>,
     permit: InsertPermit,
-    transfers: async_channel::Sender<()>,
-    invalidated: async_channel::Receiver<()>,
+    invalidate: Sender<Infallible>,
+    invalidated: Receiver<Infallible>,
 }
+
 impl Selection {
     fn new(text: &str, permit: InsertPermit) -> Self {
-        let (transfers, invalidated) = async_channel::bounded(1);
+        let (invalidate, invalidated) = async_channel::bounded(1);
         Self {
             text: text.into(),
             permit,
-            transfers,
+            invalidate,
             invalidated,
         }
     }
+
     fn transfer(&self) -> TransferPayload {
         TransferPayload {
             text: self.text.clone(),
@@ -213,201 +485,406 @@ impl Selection {
         }
     }
 }
+
 impl Drop for Selection {
     fn drop(&mut self) {
-        self.transfers.close();
+        self.invalidate.close();
     }
 }
+
 struct TransferPayload {
     text: Arc<str>,
-    invalidated: async_channel::Receiver<()>,
+    invalidated: Receiver<Infallible>,
 }
-struct Preparing<'a> {
-    request: Insertion,
-    setting_selection: bool,
-    task: LocalBoxFuture<'a, anyhow::Result<Prepared>>,
+
+/// Watches shortcuts, session revocation, and clipboard ownership while insertion awaits other
+/// processes, revoking a permit as soon as its selection is lost.
+struct Pump {
+    input: InputSender,
+    shortcut_session: Option<OwnedObjectPath>,
+    sessions: Vec<OwnedObjectPath>,
+    shortcuts: MessageStream,
+    changes: DesktopChanges,
+    owners: MessageStream,
+    selections: Receiver<SelectionHandoff>,
+    notify: Sender<Notice>,
+    ownership: SelectionOwnership,
+    held: bool,
+    handoff: Option<PendingHandoff>,
 }
-enum Prepared {
-    Target {
-        external: bool,
-        owned: bool,
-        direct: bool,
-    },
-    SelectionSet,
-    Copied(Option<u32>),
-    Owned(bool),
+
+/// A selection handoff waiting for its ownership signals to settle.
+struct PendingHandoff {
+    handoff: SelectionHandoff,
+    started: Instant,
+    events: usize,
 }
+
+impl Pump {
+    async fn watch(self) {
+        let input = self.input.clone();
+        if let Err(error) = self.run().await {
+            input.fail(format!(
+                "Desktop access stopped: {error}. Resume dictation to reconnect."
+            ));
+        }
+    }
+
+    async fn run(mut self) -> anyhow::Result<()> {
+        loop {
+            self.complete_settled_handoff()?;
+            let settle = or_pending(
+                self.handoff
+                    .as_ref()
+                    .map(|pending| deadline(pending.started, OWNERSHIP_SETTLE)),
+            );
+            tokio::select! {
+                biased;
+                () = self.input.closed() => return Ok(()),
+                handoff = self.selections.recv(), if self.handoff.is_none() => {
+                    self.begin_handoff(handoff.context("Clipboard preparation stopped")?)?;
+                },
+                event = self.owners.next(), if self.ownership.session.is_some() => {
+                    self.observe_owner(&event.context("Clipboard portal disconnected")??)?;
+                },
+                event = self.changes.next() => {
+                    self.check_session(&event.context("Portal session monitoring stopped")??)?;
+                },
+                event = self.shortcuts.next(), if self.shortcut_session.is_some() => {
+                    let event = event.context("Shortcut portal disconnected")??;
+                    if self.on_shortcut(&event)?.is_break() {
+                        return Ok(());
+                    }
+                },
+                () = settle => {},
+            }
+        }
+    }
+
+    fn complete_settled_handoff(&mut self) -> anyhow::Result<()> {
+        let owned = self.ownership.owned;
+        let Some(PendingHandoff { handoff, .. }) = self
+            .handoff
+            .take_if(|pending| owned || pending.started.elapsed() >= OWNERSHIP_SETTLE)
+        else {
+            return Ok(());
+        };
+        self.ownership.adopt(handoff.permit, &self.notify)?;
+        handoff.ready.send(owned);
+        Ok(())
+    }
+
+    fn begin_handoff(&mut self, handoff: SelectionHandoff) -> anyhow::Result<()> {
+        // SetSelection has completed: its queued ownership signals still belong to the
+        // preceding permit, so settle them before the new selection takes over.
+        let mut drained = 0;
+        while drained < SIGNAL_BACKLOG
+            && let Some(event) = self.owners.next().now_or_never()
+        {
+            self.ownership.observe(
+                &event.context("Clipboard portal disconnected")??,
+                &self.notify,
+            )?;
+            drained = drained.saturating_add(1);
+        }
+        ensure!(
+            drained < SIGNAL_BACKLOG || self.owners.next().now_or_never().is_none(),
+            "Clipboard ownership queue overran"
+        );
+        self.handoff = Some(PendingHandoff {
+            handoff,
+            started: Instant::now(),
+            events: 0,
+        });
+        Ok(())
+    }
+
+    fn observe_owner(&mut self, event: &Message) -> anyhow::Result<()> {
+        self.ownership.observe(event, &self.notify)?;
+        if let Some(pending) = &mut self.handoff {
+            pending.events = pending.events.saturating_add(1);
+            ensure!(
+                pending.events <= SIGNAL_BACKLOG,
+                "Clipboard ownership queue overran"
+            );
+        }
+        Ok(())
+    }
+
+    fn check_session(&self, event: &Message) -> anyhow::Result<()> {
+        let header = event.header();
+        if header
+            .member()
+            .is_some_and(|member| member.as_str() == "NameOwnerChanged")
+        {
+            bail!("The desktop portal restarted");
+        }
+        if let Some(closed) = header.path()
+            && self
+                .sessions
+                .iter()
+                .any(|session| session.as_str() == closed.as_str())
+        {
+            bail!("Desktop permissions were revoked");
+        }
+        Ok(())
+    }
+
+    fn on_shortcut(&mut self, event: &Message) -> anyhow::Result<ControlFlow<()>> {
+        let header = event.header();
+        let Some(member) = header
+            .member()
+            .filter(|member| matches!(member.as_str(), "Activated" | "Deactivated"))
+        else {
+            return Ok(ControlFlow::Continue(()));
+        };
+        let (path, action, _, _): (OwnedObjectPath, String, u64, Results) =
+            event.body().deserialize()?;
+        if Some(&path) != self.shortcut_session.as_ref() {
+            return Ok(ControlFlow::Continue(()));
+        }
+        let activated = member.as_str() == "Activated";
+        let Some(input) = shortcut_event(&mut self.held, &action, activated) else {
+            return Ok(ControlFlow::Continue(()));
+        };
+        // An insertion that misses this press could paste while the shortcut is still held.
+        if matches!(input, Input::Press) && self.notify.try_send(Notice::ModifiersChanged).is_err()
+        {
+            self.input.close();
+            return Ok(ControlFlow::Break(()));
+        }
+        self.input.deliver(input);
+        Ok(ControlFlow::Continue(()))
+    }
+}
+
+/// A new portal selection awaiting confirmation that this session owns it.
 struct SelectionHandoff {
     permit: InsertPermit,
-    ready: async_channel::Sender<bool>,
+    ready: Reply<bool>,
 }
-#[expect(
-    clippy::future_not_send,
-    reason = "libei resources remain on the owned desktop thread and its LocalSet; native pointers must never move between threads"
-)]
-async fn prepare(portal: &mut Portal, settings: &DesktopOptions) -> anyhow::Result<Bound> {
-    let mut bound = Bound {
-        shortcut: None,
-        remote: None,
-        clipboard: false,
-        sender: None,
-        description: settings.shortcut.replace("LOGO", "Super"),
-        cancel_description: settings.cancel.replace("LOGO", "Super"),
-    };
-    if !settings.external_shortcut {
-        let session = portal.session(SHORTCUTS).await?;
-        let handle = portal.token()?;
-        let shortcuts = vec![
-            (
-                "dictate",
-                options([
-                    ("description", Value::from("Hold to dictate")),
-                    ("preferred_trigger", Value::from(settings.shortcut.clone())),
-                ]),
-            ),
-            (
-                "cancel",
-                options([
-                    ("description", Value::from("Cancel dictation")),
-                    ("preferred_trigger", Value::from(settings.cancel.clone())),
-                ]),
-            ),
-        ];
-        let opts = options([("handle_token", Value::from(handle.clone()))]);
-        let mut result = portal
-            .request(
-                SHORTCUTS,
-                "BindShortcuts",
-                handle,
-                &(session.clone(), shortcuts, "", opts),
-            )
-            .await?;
-        let bindings: Vec<(String, Results)> = result
-            .remove("shortcuts")
-            .context("No shortcut bindings were granted")?
-            .try_into()?;
-        ensure!(
-            bindings.iter().any(|(id, _)| id == "dictate")
-                && bindings.iter().any(|(id, _)| id == "cancel"),
-            "Both dictate and cancel shortcuts must be enabled"
-        );
-        for (id, mut values) in bindings {
-            if let Some(value) = values.remove("trigger_description") {
-                match id.as_str() {
-                    "dictate" => bound.description = value.try_into()?,
-                    "cancel" => bound.cancel_description = value.try_into()?,
-                    _ => {},
-                }
-            }
+
+/// Which recording's portal selection this session currently owns.
+struct SelectionOwnership {
+    session: Option<OwnedObjectPath>,
+    monitored: Option<InsertPermit>,
+    owned: bool,
+}
+
+impl SelectionOwnership {
+    fn observe(&mut self, event: &Message, notify: &Sender<Notice>) -> anyhow::Result<()> {
+        let (path, values): (OwnedObjectPath, Results) = event.body().deserialize()?;
+        if Some(&path) != self.session.as_ref() {
+            return Ok(());
         }
-        bound.shortcut = Some(session);
-    }
-    if !settings.manual_paste {
-        let tokens = token::TokenStore::open();
-        let session = portal.session(REMOTE).await?;
-        let handle = portal.token()?;
-        let mut opts = options([
-            ("handle_token", Value::from(handle.clone())),
-            ("types", Value::from(1_u32)),
-        ]);
-        if tokens.is_some()
-            && portal
-                .proxy(REMOTE)
-                .await?
-                .get_property::<u32>("version")
-                .await?
-                >= 2
-        {
-            opts.insert("persist_mode", Value::from(2_u32));
-            if let Some(previous) = tokens
-                .as_ref()
-                .and_then(|store| store.take().ok())
-                .flatten()
-            {
-                opts.insert("restore_token", Value::from(previous));
-            }
-        }
-        portal
-            .request(REMOTE, "SelectDevices", handle, &(session.clone(), opts))
-            .await?;
-        if let Ok(clipboard) = portal.proxy(CLIPBOARD).await
-            && clipboard.get_property::<u32>("version").await.is_ok()
-        {
-            clipboard
-                .call::<_, _, ()>("RequestClipboard", &(session.clone(), Options::new()))
-                .await?;
-            bound.clipboard = true;
-        }
-        let handle = portal.token()?;
-        let opts = options([("handle_token", Value::from(handle.clone()))]);
-        let mut result = portal
-            .request(REMOTE, "Start", handle, &(session.clone(), "", opts))
-            .await?;
-        let devices: u32 = result
-            .remove("devices")
-            .context("Keyboard permission was not granted")?
-            .try_into()?;
-        ensure!(devices & 1 != 0, "Keyboard permission was not granted");
-        if let Some(store) = tokens
-            && let Some(token) = result
-                .remove("restore_token")
-                .and_then(|value| String::try_from(value).ok())
-        {
-            // Persistence is optional; a read-only state directory must not
-            // discard keyboard access the user has just granted.
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "Optional restore-token persistence must not discard keyboard permission the user just granted"
-            )]
-            let _ = store.save(&token);
-        }
-        bound.clipboard &= result
-            .remove("clipboard_enabled")
+        self.owned = values
+            .get("session_is_owner")
             .and_then(|value| bool::try_from(value).ok())
             .unwrap_or(false);
-        let descriptor: zbus::zvariant::OwnedFd = portal
-            .proxy(REMOTE)
-            .await?
-            .call("ConnectToEIS", &(session.clone(), Options::new()))
-            .await?;
-        bound.sender = Some(ei::Sender::connect(OwnedFd::from(descriptor))?);
-        bound.remote = Some(session);
+        if !self.owned
+            && let Some(permit) = self.monitored.take()
+        {
+            lose_selection(permit, notify)?;
+        }
+        Ok(())
     }
-    Ok(bound)
+
+    fn adopt(&mut self, permit: InsertPermit, notify: &Sender<Notice>) -> anyhow::Result<()> {
+        if self.owned {
+            self.monitored = Some(permit);
+            Ok(())
+        } else {
+            lose_selection(permit, notify)
+        }
+    }
 }
+
 #[expect(
     clippy::future_not_send,
     reason = "libei resources remain on the owned desktop thread and its LocalSet; native pointers must never move between threads"
 )]
 pub(super) async fn run(
     input: &InputSender,
-    settings: &DesktopOptions,
-    requests: async_channel::Receiver<Insertion>,
-    stop: &async_channel::Receiver<()>,
+    options: &DesktopOptions,
+    requests: Receiver<Insertion>,
+    stop: &Receiver<Infallible>,
 ) -> anyhow::Result<()> {
-    if settings.manual_paste && settings.external_shortcut {
-        return x11::run(input, settings, requests, stop).await;
+    // Desktop bindings and manual paste need neither portal shortcuts nor keyboard input;
+    // Xwayland serves the copy.
+    if options.manual_paste && options.external_shortcut {
+        return x11::run(input, options, requests, stop).await;
     }
     let mut portal = tokio::select! {
         biased;
-        _ = stop.recv() => return Ok(()),
-        () = input.sender.closed() => return Ok(()),
+        () = stopping(stop, input) => return Ok(()),
         portal = Portal::connect() => portal?,
     };
     let bound = tokio::select! {
         biased;
-        _ = stop.recv() => None,
-        () = input.sender.closed() => None,
-        ready = prepare(&mut portal, settings) => Some(ready),
+        () = stopping(stop, input) => None,
+        bound = bind(&mut portal, options) => Some(bound),
     };
     let outcome = match bound {
-        Some(Ok(bound)) => serve(&portal, bound, input, settings, requests, stop).await,
+        Some(Ok(bound)) => serve(&portal, bound, input, options, requests, stop).await,
         Some(Err(error)) => Err(error),
         None => Ok(()),
     };
     portal.close().await;
     outcome
 }
+
+async fn bind(portal: &mut Portal, options: &DesktopOptions) -> anyhow::Result<Bound> {
+    let mut labels = ShortcutLabels::new(options);
+    let shortcut_session = if options.external_shortcut {
+        None
+    } else {
+        Some(bind_shortcuts(portal, options, &mut labels).await?)
+    };
+    let remote = if options.manual_paste {
+        None
+    } else {
+        Some(start_remote_desktop(portal).await?)
+    };
+    Ok(Bound {
+        shortcut_session,
+        remote,
+        labels,
+    })
+}
+
+async fn bind_shortcuts(
+    portal: &mut Portal,
+    options: &DesktopOptions,
+    labels: &mut ShortcutLabels,
+) -> anyhow::Result<OwnedObjectPath> {
+    let session = portal.create_session(SHORTCUTS).await?;
+    let handle = portal.next_token()?;
+    let shortcuts = vec![
+        (
+            DICTATE_ID,
+            Options::from([
+                ("description", Value::from("Hold to dictate")),
+                ("preferred_trigger", Value::from(options.shortcut.clone())),
+            ]),
+        ),
+        (
+            CANCEL_ID,
+            Options::from([
+                ("description", Value::from("Cancel dictation")),
+                ("preferred_trigger", Value::from(options.cancel.clone())),
+            ]),
+        ),
+    ];
+    let request = Options::from([("handle_token", Value::from(handle.clone()))]);
+    let mut result = portal
+        .request(
+            SHORTCUTS,
+            "BindShortcuts",
+            handle,
+            &(session.clone(), shortcuts, "", request),
+        )
+        .await?;
+    let bindings: Vec<(String, Results)> = result
+        .remove("shortcuts")
+        .context("No shortcut bindings were granted")?
+        .try_into()?;
+    ensure!(
+        bindings.iter().any(|(id, _)| id == DICTATE_ID)
+            && bindings.iter().any(|(id, _)| id == CANCEL_ID),
+        "Both dictate and cancel shortcuts must be enabled"
+    );
+    for (id, mut values) in bindings {
+        if let Some(trigger) = values.remove("trigger_description") {
+            match id.as_str() {
+                DICTATE_ID => labels.shortcut = trigger.try_into()?,
+                CANCEL_ID => labels.cancel = trigger.try_into()?,
+                _ => {},
+            }
+        }
+    }
+    Ok(session)
+}
+
+async fn start_remote_desktop(portal: &mut Portal) -> anyhow::Result<Remote> {
+    let tokens = TokenStore::open();
+    let session = portal.create_session(REMOTE).await?;
+    let handle = portal.next_token()?;
+    let mut devices = Options::from([
+        ("handle_token", Value::from(handle.clone())),
+        ("types", Value::from(KEYBOARD_DEVICE)),
+    ]);
+    if let Some(store) = &tokens
+        && portal
+            .proxy(REMOTE)
+            .await?
+            .get_property::<u32>("version")
+            .await?
+            >= PERSISTENT_REMOTE_VERSION
+    {
+        devices.insert("persist_mode", Value::from(PERSIST_UNTIL_REVOKED));
+        if let Ok(Some(previous)) = store.consume() {
+            devices.insert("restore_token", Value::from(previous));
+        }
+    }
+    portal
+        .request(REMOTE, "SelectDevices", handle, &(session.clone(), devices))
+        .await?;
+    let clipboard_requested = request_clipboard(portal, &session).await?;
+    let handle = portal.next_token()?;
+    let start = Options::from([("handle_token", Value::from(handle.clone()))]);
+    let mut result = portal
+        .request(REMOTE, "Start", handle, &(session.clone(), "", start))
+        .await?;
+    let granted: u32 = result
+        .remove("devices")
+        .context("Keyboard permission was not granted")?
+        .try_into()?;
+    ensure!(
+        granted & KEYBOARD_DEVICE != 0,
+        "Keyboard permission was not granted"
+    );
+    if let Some(store) = tokens
+        && let Some(token) = result
+            .remove("restore_token")
+            .and_then(|value| String::try_from(value).ok())
+    {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "Optional restore-token persistence must not discard keyboard permission the user just granted"
+        )]
+        let _ = store.save(&token);
+    }
+    let shares_clipboard = clipboard_requested
+        && result
+            .remove("clipboard_enabled")
+            .and_then(|value| bool::try_from(value).ok())
+            .unwrap_or(false);
+    let descriptor: zbus::zvariant::OwnedFd = portal
+        .proxy(REMOTE)
+        .await?
+        .call("ConnectToEIS", &(session.clone(), Options::new()))
+        .await?;
+    Ok(Remote {
+        sender: ei::Sender::connect(OwnedFd::from(descriptor))?,
+        session,
+        shares_clipboard,
+    })
+}
+
+async fn request_clipboard(portal: &Portal, session: &OwnedObjectPath) -> anyhow::Result<bool> {
+    let Ok(clipboard) = portal.proxy(CLIPBOARD).await else {
+        return Ok(false);
+    };
+    // Creating a proxy does not contact the portal; reading `version` proves the interface exists.
+    if clipboard.get_property::<u32>("version").await.is_err() {
+        return Ok(false);
+    }
+    clipboard
+        .call::<_, _, ()>("RequestClipboard", &(session.clone(), Options::new()))
+        .await?;
+    Ok(true)
+}
+
 #[expect(
     clippy::future_not_send,
     reason = "libei resources remain on the owned desktop thread and its LocalSet; native pointers must never move between threads"
@@ -416,267 +893,318 @@ async fn serve(
     portal: &Portal,
     mut bound: Bound,
     input: &InputSender,
-    settings: &DesktopOptions,
-    requests: async_channel::Receiver<Insertion>,
-    stop: &async_channel::Receiver<()>,
+    options: &DesktopOptions,
+    requests: Receiver<Insertion>,
+    stop: &Receiver<Infallible>,
 ) -> anyhow::Result<()> {
-    // Keep activation and release on one stream: draining separate queues can
-    // reorder a double-tap into two activations followed by two releases.
-    let shortcut_rule = MatchRule::builder()
+    let shortcuts = shortcut_signals(&portal.connection).await?;
+    let clipboard = portal.proxy(CLIPBOARD).await?;
+    let mut transfer_requests = clipboard.receive_signal("SelectionTransfer").await?;
+    let owners = selection_owner_changes(&portal.connection).await?;
+    let changes = desktop_changes(&portal.connection).await?;
+    let (notify, notices) = async_channel::bounded(SIGNAL_BACKLOG);
+    let (selecting, selections) = async_channel::bounded(1);
+    // Dropping the set aborts the pump once serving ends.
+    let mut pump = JoinSet::new();
+    pump.spawn_local(
+        Pump {
+            input: input.clone(),
+            shortcut_session: bound.shortcut_session.clone(),
+            sessions: portal.sessions.clone(),
+            shortcuts,
+            changes,
+            owners,
+            selections,
+            notify,
+            ownership: SelectionOwnership {
+                session: bound.clipboard_session().cloned(),
+                monitored: None,
+                owned: false,
+            },
+            held: false,
+            handoff: None,
+        }
+        .watch(),
+    );
+    // Focus checks need the X worker, which opens the X clipboard only for X11 copies; portal
+    // clipboard and direct text never touch clipboard contents.
+    let worker = x11::ClipboardWorker::spawn(input.clone())?;
+    tokio::select! {
+        biased;
+        () = stopping(stop, input) => return Ok(()),
+        ready = worker.ready() => ready?,
+    }
+    input.deliver(bound.labels.clone().into_desktop_ready());
+    let mut insertions = Insertions {
+        transfers: Transfers::new(),
+        preparing: None,
+        pending: None,
+        selection: None,
+        bound: &mut bound,
+        notices: &notices,
+        selecting: &selecting,
+        worker: &worker,
+        clipboard: &clipboard,
+        options,
+    };
+    loop {
+        insertions.advance_pending()?;
+        let accepts_transfers = insertions.accepts_transfers();
+        let idle = insertions.is_idle();
+        let prepared = or_pending(insertions.preparing.as_mut().map(|work| work.task.as_mut()));
+        let readable = or_pending(
+            insertions
+                .bound
+                .sender()
+                .map(|sender| sender.readiness().readable()),
+        );
+        let modifier_wait = or_pending(
+            insertions
+                .pending
+                .as_ref()
+                .map(|(_, started)| deadline(*started, MODIFIER_WAIT)),
+        );
+        tokio::select! {
+            biased;
+            () = stopping(stop, input) => break,
+            notice = notices.recv() => {
+                insertions.apply(notice.context("Desktop monitoring stopped")?);
+            },
+            prepared = prepared => insertions.advance_preparation(prepared)?,
+            written = insertions.transfers.next(), if !insertions.transfers.is_empty() => {
+                written.context("Clipboard transfer stopped")??;
+            },
+            event = transfer_requests.next(), if accepts_transfers => {
+                insertions.serve_transfer(&event.context("Clipboard portal disconnected")?)?;
+            },
+            request = requests.recv(), if idle => match request {
+                Ok(request) => insertions.queue(request),
+                Err(_) => break,
+            },
+            readable = readable => readable?.clear_ready(),
+            () = modifier_wait => {},
+        }
+    }
+    insertions.cancel_all();
+    Ok(())
+}
+
+/// Activation and release share one stream: separate queues can reorder a double-tap into two
+/// activations followed by two releases.
+async fn shortcut_signals(connection: &Connection) -> anyhow::Result<MessageStream> {
+    let rule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .sender(DESTINATION)?
         .interface(SHORTCUTS)?
         .path(DESKTOP)?
         .build();
-    let shortcuts =
-        MessageStream::for_match_rule(shortcut_rule, &portal.connection, Some(64)).await?;
-    let clipboard = portal.proxy(CLIPBOARD).await?;
-    let mut transfers = clipboard.receive_signal("SelectionTransfer").await?;
-    let owners = clipboard.receive_signal("SelectionOwnerChanged").await?;
+    Ok(MessageStream::for_match_rule(rule, connection, Some(SIGNAL_BACKLOG)).await?)
+}
+
+/// Clipboard ownership changes, queued to the depth a handoff drains.
+async fn selection_owner_changes(connection: &Connection) -> anyhow::Result<MessageStream> {
     let rule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .sender(DESTINATION)?
-        .interface("org.freedesktop.portal.Session")?
+        .interface(CLIPBOARD)?
+        .member("SelectionOwnerChanged")?
+        .path(DESKTOP)?
+        .build();
+    Ok(MessageStream::for_match_rule(rule, connection, Some(SIGNAL_BACKLOG)).await?)
+}
+
+/// Session closures and portal restarts, either of which revokes desktop access.
+async fn desktop_changes(connection: &Connection) -> anyhow::Result<DesktopChanges> {
+    let closed = MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .sender(DESTINATION)?
+        .interface(SESSION)?
         .member("Closed")?
         .build();
-    let closed = futures_util::stream::select(
-        MessageStream::for_match_rule(rule, &portal.connection, Some(4)).await?,
-        MessageStream::for_match_rule(portal_owner_rule()?, &portal.connection, Some(4)).await?,
-    );
-    let (invalidate, invalidated) = async_channel::bounded(64);
-    let (selecting, selections) = async_channel::bounded(1);
-    let remote_session = bound.remote.clone().filter(|_| bound.clipboard);
-    let pump_input = input.clone();
-    let shortcut_session = bound.shortcut.clone();
-    let sessions = portal.sessions.clone();
-    let _pump = Pump(tokio::task::spawn_local(async move {
-        let result = pump(
-            &pump_input,
-            shortcut_session,
-            sessions,
-            shortcuts,
-            closed,
-            invalidate,
-            owners,
-            remote_session,
-            selections,
+    Ok(futures_util::stream::select(
+        MessageStream::for_match_rule(closed, connection, Some(REVOCATION_BACKLOG)).await?,
+        MessageStream::for_match_rule(
+            owner_changes(DESTINATION)?,
+            connection,
+            Some(REVOCATION_BACKLOG),
         )
-        .await;
-        if let Err(error) = result {
-            deliver(
-                &pump_input,
-                Input::Unavailable(format!(
-                    "Desktop access stopped: {error}. Resume dictation to reconnect."
-                )),
-            );
-            pump_input.close();
-        }
-    }));
-    // Focus checks share the owned X worker. It opens the native clipboard
-    // lazily, so portal clipboard/direct text never touch clipboard contents.
-    let x11_clipboard = x11::ClipboardWorker::new(input.clone())?;
-    tokio::select! {
-        biased;
-        _ = stop.recv() => return Ok(()),
-        () = input.sender.closed() => return Ok(()),
-        ready = x11_clipboard.ready() => ready?,
+        .await?,
+    ))
+}
+
+/// Pends unless a future is present; resolves once it completes.
+async fn or_pending<F: Future>(future: Option<F>) -> F::Output {
+    match future {
+        Some(future) => future.await,
+        None => std::future::pending().await,
     }
-    let mut selection: Option<Selection> = None;
-    let mut pending: Option<(Insertion, Instant)> = None;
-    let mut preparing: Option<Preparing<'_>> = None;
-    let mut writing = Transfers::new();
-    deliver(
-        input,
-        Input::DesktopReady {
-            shortcut: if settings.external_shortcut {
-                "your desktop shortcut".into()
+}
+
+fn deadline(started: Instant, wait: Duration) -> tokio::time::Sleep {
+    tokio::time::sleep_until(started.checked_add(wait).unwrap_or(started).into())
+}
+
+fn set_selection<'a>(
+    clipboard: &'a Proxy<'static>,
+    session: OwnedObjectPath,
+    permit: InsertPermit,
+) -> LocalBoxFuture<'a, anyhow::Result<Prepared>> {
+    async move {
+        if !permit.active() {
+            return Ok(Prepared::Copied { owner: None });
+        }
+        let mime_types = Options::from([("mime_types", Value::from(PLAIN_TEXT.to_vec()))]);
+        tokio::time::timeout(
+            SELECTION_TIMEOUT,
+            clipboard.call::<_, _, ()>("SetSelection", &(session, mime_types)),
+        )
+        .await??;
+        Ok(Prepared::SelectionSet)
+    }
+    .boxed_local()
+}
+
+fn copy_with_x11(
+    worker: &x11::ClipboardWorker,
+    text: String,
+    permit: InsertPermit,
+) -> LocalBoxFuture<'_, anyhow::Result<Prepared>> {
+    async move {
+        Ok(Prepared::Copied {
+            owner: worker.set_text(text, permit).await?,
+        })
+    }
+    .boxed_local()
+}
+
+fn confirm_selection(
+    selecting: &Sender<SelectionHandoff>,
+    permit: InsertPermit,
+) -> LocalBoxFuture<'_, anyhow::Result<Prepared>> {
+    async move {
+        let (ready, confirmed) = Reply::channel();
+        selecting.send(SelectionHandoff { permit, ready }).await?;
+        let owned = confirmed
+            .recv()
+            .await
+            .context("Clipboard ownership monitoring stopped")?;
+        Ok(Prepared::Ownership { owned })
+    }
+    .boxed_local()
+}
+
+fn confirm_owner(
+    worker: &x11::ClipboardWorker,
+    owner: u32,
+    permit: InsertPermit,
+) -> LocalBoxFuture<'_, anyhow::Result<Prepared>> {
+    async move {
+        Ok(Prepared::Ownership {
+            owned: worker.owns(owner, permit).await?,
+        })
+    }
+    .boxed_local()
+}
+
+fn query_focus(
+    worker: &x11::ClipboardWorker,
+    permit: InsertPermit,
+    route: Route,
+) -> LocalBoxFuture<'_, anyhow::Result<Prepared>> {
+    async move {
+        // A failed focus query fails closed, as if Speakeasy had focus.
+        let external = worker.external_target(permit).await.unwrap_or(false);
+        Ok(Prepared::Target { external, route })
+    }
+    .boxed_local()
+}
+
+fn insert_direct(
+    bound: &mut Bound,
+    request: &Insertion,
+    external: bool,
+) -> anyhow::Result<Inserted> {
+    if !request.permit.active() {
+        return Ok(Inserted::Cancelled);
+    }
+    if let Some(outcome) = Delivery::Direct.check_focus(external) {
+        return Ok(outcome);
+    }
+    if request.text.contains('\0') {
+        return Ok(Inserted::Unavailable(
+            "Direct input cannot contain a null character. Turn off Keep clipboard to use paste.",
+        ));
+    }
+    bound.dispatch()?;
+    let Some(sender) = bound.sender_mut().filter(|sender| sender.can_type_text()) else {
+        return Ok(Inserted::Unavailable(
+            "This desktop does not support direct text input. Turn off Keep clipboard to use paste.",
+        ));
+    };
+    if !request.permit.commit() {
+        return Ok(Inserted::Cancelled);
+    }
+    if sender.type_text(&request.text).is_err() {
+        return Ok(Inserted::Unavailable(
+            "Direct text input could not complete. Check your editor before dictating again; submission was not repeated.",
+        ));
+    }
+    Ok(Inserted::Sent)
+}
+
+fn finish_paste(
+    bound: &mut Bound,
+    request: &Insertion,
+    options: &DesktopOptions,
+    owned: bool,
+    external: bool,
+) -> anyhow::Result<Inserted> {
+    bound.dispatch()?;
+    if !request.permit.active() {
+        return Ok(Inserted::Cancelled);
+    }
+    if !owned {
+        return Ok(Inserted::Unavailable(
+            if bound.clipboard_session().is_some() {
+                "Clipboard ownership could not be confirmed. Dictate again or choose Copy for manual paste."
             } else {
-                bound.description.clone()
+                "Clipboard changed before paste. Dictate again."
             },
-            cancel: if settings.external_shortcut {
-                "your cancel shortcut".into()
-            } else {
-                bound.cancel_description.clone()
-            },
-        },
-    );
-    loop {
-        while let Ok(notice) = invalidated.try_recv() {
-            apply_notice(notice, &mut bound, &mut selection);
-        }
-        if let Some(sender) = &mut bound.sender {
-            sender.dispatch()?;
-        }
-        if let Some((request, started)) = pending.as_ref() {
-            let can_insert = bound.sender.as_ref().is_some_and(|sender| {
-                sender.modifiers() == ei::Modifiers::Released && sender.keyboard_available()
-            });
-            if !request.permit.active()
-                || settings.manual_paste
-                || request.preserve
-                || can_insert
-                || started.elapsed() >= MODIFIER_WAIT
-            {
-                let (request, _) = pending.take().context("Missing insertion request")?;
-                if !request.permit.active() {
-                    respond(request, Ok(Inserted::Cancelled)).await;
-                } else if request.preserve {
-                    let task = prepare_target(&x11_clipboard, &request, true, true);
-                    preparing = Some(Preparing {
-                        request,
-                        setting_selection: false,
-                        task,
-                    });
-                } else {
-                    let task = prepare_clipboard(&clipboard, &bound, &x11_clipboard, &request);
-                    preparing = Some(Preparing {
-                        request,
-                        setting_selection: bound.clipboard,
-                        task,
-                    });
-                }
-            }
-        }
-        let native_ready = async {
-            match &bound.sender {
-                Some(sender) => {
-                    sender.ready.readable().await?.clear_ready();
-                    Ok::<_, anyhow::Error>(())
-                },
-                None => std::future::pending().await,
-            }
-        };
-        let deadline = async {
-            match pending.as_ref() {
-                Some((_, started)) => {
-                    tokio::time::sleep_until(
-                        started
-                            .checked_add(MODIFIER_WAIT)
-                            .unwrap_or(*started)
-                            .into(),
-                    )
-                    .await;
-                },
-                None => std::future::pending().await,
-            }
-        };
-        let receive_transfer = bound.clipboard
-            && writing.len() < MAX_TRANSFERS
-            && !preparing
-                .as_ref()
-                .is_some_and(|work| work.setting_selection);
-        let receive_request = pending.is_none() && preparing.is_none();
-        let prepared = async {
-            match preparing.as_mut() {
-                Some(work) => work.task.as_mut().await,
-                None => std::future::pending().await,
-            }
-        };
-        tokio::select! {
-            biased;
-            _ = stop.recv() => break,
-            () = input.sender.closed() => break,
-            notice = invalidated.recv() => {
-                apply_notice(notice.context("Desktop monitoring stopped")?, &mut bound, &mut selection);
-            }
-            prepared = prepared => {
-                let work = preparing.take().context("Missing clipboard preparation")?;
-                let request = work.request;
-                match prepared {
-                    Ok(Prepared::SelectionSet) => {
-                        selection = Some(Selection::new(&request.text, request.permit.clone()));
-                        let permit = request.permit.clone();
-                        let selecting = selecting.clone();
-                        let task = async move {
-                            let (ready, finished) = async_channel::bounded(1);
-                            selecting.send(SelectionHandoff { permit, ready }).await?;
-                            Ok(Prepared::Owned(finished.recv().await.context("Clipboard ownership monitoring stopped")?))
-                        }.boxed_local();
-                        preparing = Some(Preparing { request, setting_selection: false, task });
-                    }
-                    Ok(Prepared::Copied(Some(owner))) => {
-                        let permit = request.permit.clone();
-                        let worker = &x11_clipboard;
-                        let task = async move { Ok(Prepared::Owned(worker.owns(owner, permit).await?)) }.boxed_local();
-                        preparing = Some(Preparing { request, setting_selection: false, task });
-                    }
-                    Ok(Prepared::Copied(None)) => {
-                        let result = if request.permit.active() {
-                            Inserted::Unavailable("Clipboard changed before paste. Dictate again.")
-                        } else { Inserted::Cancelled };
-                        respond(request, Ok(result)).await;
-                    }
-                    Ok(Prepared::Owned(owned)) => {
-                        let task = prepare_target(&x11_clipboard, &request, owned, false);
-                        preparing = Some(Preparing { request, setting_selection: false, task });
-                    }
-                    Ok(Prepared::Target { external, owned, direct }) => {
-                        // Preparation yields while focus/clipboard OS calls block.
-                        // Keep native cancellation and selection loss responsive.
-                        while let Ok(notice) = invalidated.try_recv() { apply_notice(notice, &mut bound, &mut selection); }
-                        if !owned && bound.clipboard { selection = None; }
-                        let result = if direct { insert_direct(&mut bound, &request, external) }
-                            else { finish_paste(&mut bound, &request, settings, owned, external) };
-                        respond(request, result).await;
-                    }
-                    Err(error) => respond(request, Err(error)).await,
-                }
-            }
-            completed = writing.next(), if !writing.is_empty() => {
-                completed.context("Clipboard transfer stopped")??;
-            }
-            event = transfers.next(), if receive_transfer => {
-                let event = event.context("Clipboard portal disconnected")?;
-                let (path, mime, serial): (OwnedObjectPath, String, u32) = event.body().deserialize()?;
-                if Some(&path) == bound.remote.as_ref() {
-                    let payload = selection.as_ref().filter(|_| mime == "text/plain;charset=utf-8" || mime == "text/plain").map(Selection::transfer);
-                    let write_proxy = clipboard.clone();
-                    let write_path = path.clone();
-                    let done_proxy = clipboard.clone();
-                    writing.push(transfer(
-                        async move {
-                            let fd: zbus::zvariant::OwnedFd = write_proxy.call("SelectionWrite", &(write_path, serial)).await?;
-                            Ok(OwnedFd::from(fd))
-                        },
-                        move |success| async move {
-                            done_proxy.call::<_, _, ()>("SelectionWriteDone", &(path, serial, success)).await?;
-                            Ok(())
-                        },
-                        payload,
-                    ).boxed_local());
-                }
-            }
-            request = requests.recv(), if receive_request => {
-                let Ok(request) = request else { break; };
-                pending = Some((request, Instant::now()));
-            }
-            ready = native_ready => ready?,
-            () = deadline => {}
-        }
+        ));
     }
-    if let Some((request, _)) = pending {
-        respond(request, Ok(Inserted::Cancelled)).await;
+    if let Some(outcome) = Delivery::Paste.check_focus(external) {
+        return Ok(outcome);
     }
-    if let Some(work) = preparing {
-        respond(work.request, Ok(Inserted::Cancelled)).await;
+    if options.manual_paste {
+        return Ok(Inserted::Copied(
+            "Text copied. Release your shortcut keys and paste into your editor.",
+        ));
     }
-    Ok(())
+    let Some(sender) = bound.sender_mut().filter(|sender| sender.can_paste()) else {
+        return Ok(Inserted::Copied(
+            "Text copied. This desktop could not confirm released shortcut keys; paste manually.",
+        ));
+    };
+    if !request.permit.commit() {
+        return Ok(Inserted::Cancelled);
+    }
+    if sender.paste(options.terminal_paste).is_err() {
+        return Ok(Inserted::Copied(
+            "Text copied, but input submission failed. Paste manually; automatic paste was not repeated.",
+        ));
+    }
+    Ok(Inserted::Sent)
 }
-struct Pump(tokio::task::JoinHandle<()>);
-impl Drop for Pump {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-enum Notice {
-    Modifiers,
-    SelectionLost(InsertPermit),
-}
-fn apply_notice(notice: Notice, bound: &mut Bound, selection: &mut Option<Selection>) {
+
+fn apply_notice(
+    notice: Notice,
+    sender: Option<&mut ei::Sender>,
+    selection: &mut Option<Selection>,
+) {
     match notice {
-        Notice::Modifiers => {
-            if let Some(sender) = &mut bound.sender {
-                sender.invalidate();
+        Notice::ModifiersChanged => {
+            if let Some(sender) = sender {
+                sender.forget_modifiers();
             }
         },
         Notice::SelectionLost(permit) => {
@@ -689,351 +1217,84 @@ fn apply_notice(notice: Notice, bound: &mut Bound, selection: &mut Option<Select
         },
     }
 }
-#[expect(
-    clippy::too_many_arguments,
-    reason = "The input pump owns the native streams and insertion cancellation while clipboard calls await another process"
-)]
-async fn pump(
-    input: &InputSender,
-    shortcut: Option<OwnedObjectPath>,
-    sessions: Vec<OwnedObjectPath>,
-    mut shortcuts: MessageStream,
-    mut closed: DesktopChanges,
-    invalidate: async_channel::Sender<Notice>,
-    mut owners: zbus::proxy::SignalStream<'static>,
-    remote: Option<OwnedObjectPath>,
-    selections: async_channel::Receiver<SelectionHandoff>,
-) -> anyhow::Result<()> {
-    let mut selection: Option<InsertPermit> = None;
-    let mut owned = false;
-    let mut held = false;
-    let mut pending: Option<(SelectionHandoff, Instant)> = None;
-    let mut pending_events = 0_u32;
-    loop {
-        if pending
-            .as_ref()
-            .is_some_and(|(_, started)| owned || started.elapsed() >= Duration::from_millis(500))
-        {
-            let (handoff, _) = pending.take().context("Missing clipboard handoff")?;
-            finish_selection(handoff.permit, owned, &mut selection, &invalidate)?;
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "Cancellation drops the waiting insertion lane; recording authority is revoked independently"
-            )]
-            let _ = handoff.ready.try_send(owned);
-            pending_events = 0;
-        }
-        let deadline = async {
-            match pending.as_ref() {
-                Some((_, started)) => {
-                    tokio::time::sleep_until(
-                        started
-                            .checked_add(Duration::from_millis(500))
-                            .unwrap_or(*started)
-                            .into(),
-                    )
-                    .await;
-                },
-                None => std::future::pending().await,
-            }
-        };
-        tokio::select! {
-            biased;
-            () = input.sender.closed() => return Ok(()),
-            handoff = selections.recv(), if pending.is_none() => {
-                let handoff = handoff.context("Clipboard preparation stopped")?;
-                // SetSelection has completed. Process its queued ownership
-                // signals against the preceding permit before changing owners.
-                let mut drained = 0_u32;
-                for _ in 0..64 {
-                    let Some(event) = owners.next().now_or_never() else { break; };
-                    let event = event.context("Clipboard portal disconnected")?;
-                    observe_owner(&event, remote.as_ref(), &mut selection, &mut owned, &invalidate)?;
-                    drained = drained.saturating_add(1_u32);
-                }
-                ensure!(drained < 64 || owners.next().now_or_never().is_none(), "Clipboard ownership queue overran");
-                pending = Some((handoff, Instant::now()));
-            }
-            event = owners.next(), if remote.is_some() => {
-                let event = event.context("Clipboard portal disconnected")?;
-                observe_owner(&event, remote.as_ref(), &mut selection, &mut owned, &invalidate)?;
-                if pending.is_some() {
-                    pending_events = pending_events.saturating_add(1_u32);
-                    ensure!(pending_events <= 64, "Clipboard ownership queue overran");
-                }
-            }
-            event = closed.next() => {
-                let event = event.context("Portal session monitoring stopped")??;
-                if event.header().member().is_some_and(|member| member.as_str() == "NameOwnerChanged") {
-                    anyhow::bail!("The desktop portal restarted");
-                }
-                if sessions.iter().any(|path| event.header().path().is_some_and(|closed| closed.as_str() == path.as_str())) {
-                    anyhow::bail!("Desktop permissions were revoked");
-                }
-            }
-            event = shortcuts.next(), if shortcut.is_some() => {
-                let event = event.context("Shortcut portal disconnected")??;
-                let header = event.header();
-                let Some(member) = header.member().filter(|member| matches!(member.as_str(), "Activated" | "Deactivated")) else { continue; };
-                let (path, action, _, _): (OwnedObjectPath, String, u64, Results) = event.body().deserialize()?;
-                if Some(&path) == shortcut.as_ref() && let Some(event) = shortcut_event(&mut held, &action, member.as_str() == "Activated") {
-                    if matches!(event, Input::Press) && invalidate.try_send(Notice::Modifiers).is_err() { input.close(); return Ok(()); }
-                    deliver(input, event);
-                }
-            }
-            () = deadline => {}
-        }
-    }
-}
-fn observe_owner(
-    event: &zbus::Message,
-    remote: Option<&OwnedObjectPath>,
-    selection: &mut Option<InsertPermit>,
-    owned: &mut bool,
-    invalidate: &async_channel::Sender<Notice>,
-) -> anyhow::Result<()> {
-    let (path, values): (OwnedObjectPath, Results) = event.body().deserialize()?;
-    if Some(&path) == remote {
-        *owned = values
-            .get("session_is_owner")
-            .and_then(|value| bool::try_from(value).ok())
-            .unwrap_or(false);
-        if !*owned && let Some(permit) = selection.take() {
-            permit.revoke();
-            invalidate.try_send(Notice::SelectionLost(permit))?;
-        }
-    }
-    Ok(())
-}
-fn finish_selection(
-    permit: InsertPermit,
-    owned: bool,
-    selection: &mut Option<InsertPermit>,
-    invalidate: &async_channel::Sender<Notice>,
-) -> anyhow::Result<()> {
-    if owned {
-        *selection = Some(permit);
-    } else {
-        permit.revoke();
-        invalidate.try_send(Notice::SelectionLost(permit))?;
-    }
-    Ok(())
-}
-fn shortcut_event(held: &mut bool, action: &str, activated: bool) -> Option<Input> {
-    match (action, activated) {
-        ("dictate", true) if !*held => {
-            *held = true;
-            Some(Input::Press)
-        },
-        ("dictate", false) if std::mem::take(held) => Some(Input::Release),
-        ("cancel", true) => Some(Input::Cancel),
-        _ => None,
-    }
-}
-fn prepare_clipboard<'a>(
-    proxy: &Proxy<'static>,
-    bound: &Bound,
-    clipboard: &'a x11::ClipboardWorker,
-    request: &Insertion,
-) -> LocalBoxFuture<'a, anyhow::Result<Prepared>> {
-    let permit = request.permit.clone();
-    if bound.clipboard {
-        let session = bound.remote.clone();
-        let proxy = proxy.clone();
-        async move {
-            let session = session.context("Clipboard has no desktop session")?;
-            let opts = options([(
-                "mime_types",
-                Value::from(vec!["text/plain;charset=utf-8", "text/plain"]),
-            )]);
-            if !permit.active() {
-                return Ok(Prepared::Copied(None));
-            }
-            tokio::time::timeout(
-                Duration::from_secs(2),
-                proxy.call::<_, _, ()>("SetSelection", &(session, opts)),
-            )
-            .await??;
-            Ok(Prepared::SelectionSet)
-        }
-        .boxed_local()
-    } else {
-        let text = request.text.clone();
-        async move { Ok(Prepared::Copied(clipboard.set_text(text, permit).await?)) }.boxed_local()
-    }
-}
-fn prepare_target<'a>(
-    worker: &'a x11::ClipboardWorker,
-    request: &Insertion,
-    owned: bool,
-    direct: bool,
-) -> LocalBoxFuture<'a, anyhow::Result<Prepared>> {
-    let permit = request.permit.clone();
-    async move {
-        let external = worker.external_target(permit).await.unwrap_or(false);
-        Ok(Prepared::Target {
-            external,
-            owned,
-            direct,
-        })
-    }
-    .boxed_local()
-}
-fn insert_direct(
-    bound: &mut Bound,
-    request: &Insertion,
-    external: bool,
-) -> anyhow::Result<Inserted> {
-    if !request.permit.active() {
-        return Ok(Inserted::Cancelled);
-    }
-    if let Some(outcome) =
-        crate::insertion::preflight(external, true, crate::insertion::Mode::Direct)
-    {
-        return Ok(outcome);
-    }
-    if request.text.contains('\0') {
-        return Ok(Inserted::Unavailable(
-            "Direct input cannot contain a null character. Turn off Keep clipboard to use paste.",
-        ));
-    }
-    if let Some(sender) = &mut bound.sender {
-        sender.dispatch()?;
-    }
-    let Some(sender) = bound
-        .sender
-        .as_mut()
-        .filter(|sender| sender.text_available())
-    else {
-        return Ok(Inserted::Unavailable(
-            "This desktop does not support direct text input. Turn off Keep clipboard to use paste.",
-        ));
-    };
-    if !request.permit.commit() {
-        return Ok(Inserted::Cancelled);
-    }
-    if sender.text(&request.text).is_err() {
-        return Ok(Inserted::Unavailable(
-            "Direct text input could not complete. Check your editor before dictating again; submission was not repeated.",
-        ));
-    }
-    Ok(Inserted::Sent)
-}
-fn finish_paste(
-    bound: &mut Bound,
-    request: &Insertion,
-    settings: &DesktopOptions,
-    owned: bool,
-    external: bool,
-) -> anyhow::Result<Inserted> {
-    if let Some(sender) = &mut bound.sender {
-        sender.dispatch()?;
-    }
-    if !request.permit.active() {
-        return Ok(Inserted::Cancelled);
-    }
-    if !owned {
-        return Ok(Inserted::Unavailable(if bound.clipboard {
-            "Clipboard ownership could not be confirmed. Dictate again or choose Copy for manual paste."
-        } else {
-            "Clipboard changed before paste. Dictate again."
-        }));
-    }
-    if let Some(outcome) =
-        crate::insertion::preflight(external, true, crate::insertion::Mode::Paste)
-    {
-        return Ok(outcome);
-    }
-    let Some(sender) = bound.sender.as_mut().filter(|sender| {
-        sender.keyboard_available()
-            && sender.modifiers() == ei::Modifiers::Released
-            && !settings.manual_paste
-    }) else {
-        return Ok(Inserted::Copied(
-            "Text copied. This desktop could not confirm released shortcut keys; paste manually.",
-        ));
-    };
-    if !request.permit.commit() {
-        return Ok(Inserted::Cancelled);
-    }
-    if sender.paste(settings.terminal_paste).is_err() {
-        return Ok(Inserted::Copied(
-            "Text copied, but input submission failed. Paste manually; automatic paste was not repeated.",
-        ));
-    }
-    Ok(Inserted::Sent)
-}
+
 async fn transfer<D: Future<Output = anyhow::Result<()>>>(
     write: impl Future<Output = anyhow::Result<OwnedFd>>,
     done: impl FnOnce(bool) -> D,
     payload: Option<TransferPayload>,
 ) -> anyhow::Result<()> {
-    let success = if let Some(payload) = payload {
-        // Selection lifetime is separate from the paste commit gate: editors
-        // may request this payload after insertion has already committed.
-        tokio::select! {
+    // Editors may request the payload after paste commits, so only selection loss ends serving.
+    let success = match payload {
+        Some(payload) => tokio::select! {
             biased;
             _ = payload.invalidated.recv() => false,
-            result = async {
-                let fd = tokio::time::timeout(TRANSFER_TIMEOUT, write).await??;
-                write_transfer(fd, payload.text.as_bytes()).await
-            } => result.is_ok(),
-        }
-    } else {
-        false
+            written = write_payload(write, &payload.text) => written.is_ok(),
+        },
+        None => false,
     };
     tokio::time::timeout(TRANSFER_TIMEOUT, done(success)).await??;
     Ok(())
 }
-async fn write_transfer(fd: OwnedFd, bytes: &[u8]) -> anyhow::Result<()> {
-    use std::os::fd::AsRawFd;
-    // SAFETY: fd is owned and remains alive; fcntl only changes its I/O flags.
-    unsafe {
-        let flags = libc::fcntl(fd.as_raw_fd(), libc::F_GETFL);
-        ensure!(
-            flags >= 0 && libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) >= 0,
-            "Cannot prepare clipboard transfer"
-        );
-    }
-    let ready = tokio::io::unix::AsyncFd::new(fd)?;
-    tokio::time::timeout(TRANSFER_TIMEOUT, async {
-        let mut remaining = bytes;
-        while !remaining.is_empty() {
-            let mut writable = ready.writable().await?;
-            let result = writable.try_io(|fd| {
-                // SAFETY: buffer is live, fd is owned, and the kernel reads at
-                // most this slice length during the nonblocking write.
-                let written = unsafe {
-                    libc::write(
-                        fd.get_ref().as_raw_fd(),
-                        remaining.as_ptr().cast(),
-                        remaining.len(),
-                    )
-                };
-                if written < 0 {
-                    Err(std::io::Error::last_os_error())
-                } else {
-                    usize::try_from(written).map_err(std::io::Error::other)
-                }
-            });
-            if let Ok(written) = result {
-                let written = written?;
-                ensure!(written > 0, "Clipboard transfer stopped");
-                remaining = remaining
-                    .get(written..)
-                    .context("Clipboard write exceeded its pending transfer")?;
-            }
+
+async fn write_payload(
+    write: impl Future<Output = anyhow::Result<OwnedFd>>,
+    text: &str,
+) -> anyhow::Result<()> {
+    let fd = tokio::time::timeout(TRANSFER_TIMEOUT, write).await??;
+    set_nonblocking(fd.as_fd())?;
+    let pipe = AsyncFd::new(File::from(fd))?;
+    tokio::time::timeout(TRANSFER_TIMEOUT, write_to_pipe(&pipe, text.as_bytes())).await?
+}
+
+async fn write_to_pipe(pipe: &AsyncFd<File>, mut bytes: &[u8]) -> anyhow::Result<()> {
+    while !bytes.is_empty() {
+        let mut writable = pipe.writable().await?;
+        if let Ok(written) = writable.try_io(|pipe| pipe.get_ref().write(bytes)) {
+            let written = written?;
+            ensure!(written > 0, "Clipboard transfer stopped");
+            bytes = bytes
+                .get(written..)
+                .context("Clipboard write exceeded its pending transfer")?;
         }
-        Ok::<_, anyhow::Error>(())
-    })
-    .await??;
+    }
     Ok(())
+}
+
+fn set_nonblocking(fd: BorrowedFd<'_>) -> anyhow::Result<()> {
+    let fd = fd.as_raw_fd();
+    // SAFETY: the borrowed descriptor stays open; F_GETFL and F_SETFL only read and change its
+    // status flags.
+    let updated = unsafe {
+        let flags = libc::fcntl(fd, libc::F_GETFL);
+        flags >= 0 && libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) >= 0
+    };
+    ensure!(updated, "Cannot prepare clipboard transfer");
+    Ok(())
+}
+
+fn lose_selection(permit: InsertPermit, notify: &Sender<Notice>) -> anyhow::Result<()> {
+    permit.revoke();
+    notify.try_send(Notice::SelectionLost(permit))?;
+    Ok(())
+}
+
+fn shortcut_event(held: &mut bool, action: &str, activated: bool) -> Option<Input> {
+    match (action, activated) {
+        (DICTATE_ID, true) if !*held => {
+            *held = true;
+            Some(Input::Press)
+        },
+        (DICTATE_ID, false) if mem::take(held) => Some(Input::Release),
+        (CANCEL_ID, true) => Some(Input::Cancel),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{io::Read as _, os::unix::net::UnixStream};
+
     use super::*;
-    use std::io::Read as _;
 
     #[test]
     fn cancelled_direct_input_precedes_focus_and_capability_errors() -> anyhow::Result<()> {
@@ -1042,20 +1303,17 @@ mod tests {
         let permit = input.begin().context("Recording")?;
         permit.revoke();
         let mut bound = Bound {
-            shortcut: None,
+            shortcut_session: None,
             remote: None,
-            clipboard: false,
-            sender: None,
-            description: String::new(),
-            cancel_description: String::new(),
+            labels: ShortcutLabels::new(&DesktopOptions::default()),
         };
         for external in [false, true] {
             for text in ["fixture", "\0"] {
-                let (reply, _result) = async_channel::bounded(1);
+                let (reply, _answer) = Reply::channel();
                 let request = Insertion {
                     text: text.into(),
                     permit: permit.clone(),
-                    preserve: true,
+                    delivery: Delivery::Direct,
                     reply,
                 };
                 assert!(matches!(
@@ -1074,9 +1332,9 @@ mod tests {
         let input = InputSender::new(events);
         let permit = input.begin().context("Recording")?;
         let selection = Selection::new(&"fixture".repeat(128 * 1024), permit);
-        let (writer, mut reader) = std::os::unix::net::UnixStream::pair()?;
+        let (writer, mut reader) = UnixStream::pair()?;
         reader.set_read_timeout(Some(Duration::from_millis(100)))?;
-        let (entered, writing) = async_channel::bounded(1);
+        let (entered, opened) = async_channel::bounded(1);
         let mut transfers = Transfers::new();
         transfers.push(
             transfer(
@@ -1090,14 +1348,12 @@ mod tests {
             .boxed_local(),
         );
         assert!(transfers.next().now_or_never().is_none());
-        writing.recv().await?;
-        // Production transfers stay pending while the desktop service can
-        // receive stop/EI/insertion messages rather than await the stalled pipe.
-        let (next, incoming) = async_channel::bounded(1);
-        next.send(()).await?;
+        opened.recv().await?;
+        let (other_work, incoming) = async_channel::bounded(1);
+        other_work.send(()).await?;
         tokio::select! {
             result = incoming.recv() => result?,
-            _ = transfers.next() => anyhow::bail!("Stalled transfer unexpectedly completed"),
+            _ = transfers.next() => bail!("Stalled transfer unexpectedly completed"),
         }
         drop(transfers);
         let mut buffer = [0_u8; 16 * 1024];
@@ -1120,7 +1376,7 @@ mod tests {
         let previous = input.begin().context("Previous recording")?;
         let selected = Selection::new("fixture", previous.clone());
         assert!(previous.commit());
-        let (writer, mut reader) = std::os::unix::net::UnixStream::pair()?;
+        let (writer, mut reader) = UnixStream::pair()?;
         let (sent, reported) = async_channel::bounded(1);
         transfer(
             async { Ok(OwnedFd::from(writer)) },
@@ -1144,7 +1400,7 @@ mod tests {
         let previous_payload = selected.transfer();
         drop(selected);
         let (sent, reported) = async_channel::bounded(1);
-        let (writer, mut reader) = std::os::unix::net::UnixStream::pair()?;
+        let (writer, mut reader) = UnixStream::pair()?;
         reader.set_read_timeout(Some(Duration::from_millis(100)))?;
         transfer(
             async { Ok(OwnedFd::from(writer)) },
@@ -1207,43 +1463,26 @@ mod tests {
         let input = InputSender::new(events);
         let previous = input.begin().context("Preceding recording")?;
         let next = input.begin().context("Current recording")?;
-        let (invalidate, notices) = async_channel::bounded(4);
-        let remote: OwnedObjectPath =
+        let (notify, notices) = async_channel::bounded(4);
+        let session: OwnedObjectPath =
             "/org/freedesktop/portal/desktop/session/fixture".try_into()?;
-        let mut monitored = Some(previous);
-        let mut owned = true;
+        let mut ownership = SelectionOwnership {
+            session: Some(session.clone()),
+            monitored: Some(previous),
+            owned: true,
+        };
         let owner_event = |owned: bool| {
             let values = Results::from([("session_is_owner".into(), OwnedValue::from(owned))]);
             Ok::<_, anyhow::Error>(
-                zbus::Message::signal(DESKTOP, CLIPBOARD, "SelectionOwnerChanged")?
-                    .build(&(remote.clone(), values))?,
+                Message::signal(DESKTOP, CLIPBOARD, "SelectionOwnerChanged")?
+                    .build(&(session.clone(), values))?,
             )
         };
-        observe_owner(
-            &owner_event(false)?,
-            Some(&remote),
-            &mut monitored,
-            &mut owned,
-            &invalidate,
-        )?;
-        observe_owner(
-            &owner_event(true)?,
-            Some(&remote),
-            &mut monitored,
-            &mut owned,
-            &invalidate,
-        )?;
-        finish_selection(next.clone(), owned, &mut monitored, &invalidate)?;
-        let mut bound = Bound {
-            shortcut: None,
-            remote: Some(remote.clone()),
-            clipboard: true,
-            sender: None,
-            description: String::new(),
-            cancel_description: String::new(),
-        };
+        ownership.observe(&owner_event(false)?, &notify)?;
+        ownership.observe(&owner_event(true)?, &notify)?;
+        ownership.adopt(next.clone(), &notify)?;
         let mut payload = Some(Selection::new("fixture", next.clone()));
-        apply_notice(notices.try_recv()?, &mut bound, &mut payload);
+        apply_notice(notices.try_recv()?, None, &mut payload);
         assert!(
             next.active(),
             "Preceding ownership loss revoked the current recording"
@@ -1252,18 +1491,12 @@ mod tests {
             payload.is_some(),
             "Preceding ownership loss discarded the current payload"
         );
-        observe_owner(
-            &owner_event(false)?,
-            Some(&remote),
-            &mut monitored,
-            &mut owned,
-            &invalidate,
-        )?;
-        apply_notice(notices.try_recv()?, &mut bound, &mut payload);
+        ownership.observe(&owner_event(false)?, &notify)?;
+        apply_notice(notices.try_recv()?, None, &mut payload);
         assert!(!next.commit(), "Current ownership loss authorized paste");
         assert!(payload.is_none());
         let unowned = input.begin().context("Unowned recording")?;
-        finish_selection(unowned.clone(), false, &mut monitored, &invalidate)?;
+        ownership.adopt(unowned.clone(), &notify)?;
         assert!(
             !unowned.commit(),
             "Unconfirmed clipboard ownership authorized paste"
@@ -1275,28 +1508,28 @@ mod tests {
     fn shortcut_edges_preserve_double_taps_and_ignore_repeats() {
         let mut held = false;
         assert!(matches!(
-            shortcut_event(&mut held, "dictate", true),
+            shortcut_event(&mut held, DICTATE_ID, true),
             Some(Input::Press)
         ));
-        assert!(shortcut_event(&mut held, "dictate", true).is_none());
+        assert!(shortcut_event(&mut held, DICTATE_ID, true).is_none());
         assert!(matches!(
-            shortcut_event(&mut held, "dictate", false),
+            shortcut_event(&mut held, DICTATE_ID, false),
             Some(Input::Release)
         ));
         assert!(matches!(
-            shortcut_event(&mut held, "dictate", true),
+            shortcut_event(&mut held, DICTATE_ID, true),
             Some(Input::Press)
         ));
         assert!(matches!(
-            shortcut_event(&mut held, "cancel", true),
+            shortcut_event(&mut held, CANCEL_ID, true),
             Some(Input::Cancel)
         ));
         assert!(matches!(
-            shortcut_event(&mut held, "dictate", false),
+            shortcut_event(&mut held, DICTATE_ID, false),
             Some(Input::Release)
         ));
-        assert!(shortcut_event(&mut held, "dictate", false).is_none());
-        assert!(shortcut_event(&mut held, "cancel", false).is_none());
+        assert!(shortcut_event(&mut held, DICTATE_ID, false).is_none());
+        assert!(shortcut_event(&mut held, CANCEL_ID, false).is_none());
         assert!(shortcut_event(&mut held, "unknown", true).is_none());
     }
 }

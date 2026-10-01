@@ -1,87 +1,97 @@
-//! The three side effects used by the session owner. Tests replace devices and
-//! speech at this boundary; gesture, cancellation, and insertion ordering stay real.
+//! The three side effects used by the session owner. Tests replace devices and speech at this
+//! boundary; gesture, cancellation, and insertion ordering stay real.
+
+use async_channel::Sender;
+use speakeasy_platform::{Delivery, InsertPermit, Inserted, Inserter};
+use tokio::sync::watch;
+
 use crate::{
     audio::Capture,
     config::Config,
     local_speech::LocalSpeech,
-    runtime::{Event, SessionId},
+    runtime::{CaptureEvent, SessionId},
 };
-use speakeasy_platform::{InsertPermit, Inserted, Inserter};
-use std::future::Future;
-use tokio::sync::watch;
+
+/// The error a speech startup reports once cancelled.
+pub(crate) const STARTUP_CANCELLED: &str = "Local model startup cancelled";
 
 pub(crate) trait Recording: Send + 'static {
+    /// Requests the end of capture; the recording then reports `CaptureEvent::Finished`.
     fn finish(&self);
+
+    /// Cancels capture; resolves only once the device has been released.
     fn retire(self) -> impl Future<Output = ()> + Send + 'static;
 }
-impl Recording for Capture {
-    fn finish(&self) {
-        Capture::finish(self);
-    }
-    fn retire(self) -> impl Future<Output = ()> + Send + 'static {
-        Capture::retire(self)
-    }
-}
+
 pub(crate) trait Speech: Send + Sync + 'static {
+    /// Returns insertion-ready text: engine segment breaks become single spaces, never Enter.
     fn transcribe(
         &self,
         wav: Vec<u8>,
         language: &str,
     ) -> impl Future<Output = anyhow::Result<String>> + Send;
-    fn idle(&self) -> impl Future<Output = anyhow::Result<()>> + Send;
+
+    /// Transcribes silence and discards the text. Engines serialize requests, so completion proves
+    /// that an abandoned inference has drained and the model still responds, which a health check
+    /// cannot.
+    fn probe_with_silence(&self) -> impl Future<Output = anyhow::Result<()>> + Send;
+
+    /// Terminates the engine; resolves only once its process has been reaped.
     fn stop(&mut self) -> impl Future<Output = ()> + Send;
 }
-impl Speech for LocalSpeech {
-    async fn transcribe(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<String> {
-        LocalSpeech::transcribe(self, wav, language).await
-    }
-    async fn idle(&self) -> anyhow::Result<()> {
-        LocalSpeech::idle(self).await
-    }
-    async fn stop(&mut self) {
-        LocalSpeech::stop(self).await;
-    }
-}
+
 pub(crate) trait Ports: Send + 'static {
-    /// Whether input must await `DesktopReady` before it can start capture.
-    fn prepares_desktop(&self) -> bool;
     type Recording: Recording;
     type Speech: Speech;
+
+    /// Whether input must await `DesktopReady` before it can start capture.
+    fn prepares_desktop(&self) -> bool;
+
+    /// Opens `microphone`, or the system default when it is `None`, reporting to `events` as `id`.
     fn record(
         &self,
         id: SessionId,
-        microphone: Option<String>,
-        events: async_channel::Sender<Event>,
+        microphone: Option<&str>,
+        events: Sender<CaptureEvent>,
     ) -> anyhow::Result<Self::Recording>;
+
+    /// Starts a speech worker; `cancelled` becoming true abandons startup.
     fn load(
         &self,
         config: Config,
         cancelled: watch::Receiver<bool>,
     ) -> impl Future<Output = anyhow::Result<Self::Speech>> + Send + 'static;
+
+    /// Submits `text` as `delivery` asks; no native input happens unless `permit` commits first.
     fn insert(
         &self,
         text: String,
         permit: InsertPermit,
-        preserve: bool,
+        delivery: Delivery,
     ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static;
 }
+
 pub(crate) struct Desktop {
     pub inserter: Inserter,
 }
+
 impl Ports for Desktop {
+    type Recording = Capture;
+    type Speech = LocalSpeech;
+
     fn prepares_desktop(&self) -> bool {
         true
     }
-    type Recording = Capture;
-    type Speech = LocalSpeech;
+
     fn record(
         &self,
         id: SessionId,
-        microphone: Option<String>,
-        events: async_channel::Sender<Event>,
+        microphone: Option<&str>,
+        events: Sender<CaptureEvent>,
     ) -> anyhow::Result<Capture> {
         Capture::start(id, microphone, events)
     }
+
     fn load(
         &self,
         config: Config,
@@ -89,13 +99,14 @@ impl Ports for Desktop {
     ) -> impl Future<Output = anyhow::Result<LocalSpeech>> + Send + 'static {
         LocalSpeech::start(config, cancelled)
     }
+
     fn insert(
         &self,
         text: String,
         permit: InsertPermit,
-        preserve: bool,
+        delivery: Delivery,
     ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static {
         let inserter = self.inserter.clone();
-        async move { inserter.insert(text, permit, preserve).await }
+        async move { inserter.insert(text, permit, delivery).await }
     }
 }

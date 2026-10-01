@@ -1,15 +1,24 @@
-use std::time::{Duration, Instant};
+//! Shortcut transitions with explicit timestamps and bounded recording deadlines.
+//!
+//! Every capture ends by [`RECORDING_LIMIT`], and no transition consults an ambient clock.
+
+use std::{
+    mem,
+    time::{Duration, Instant},
+};
 
 /// Maximum duration of one recording, including microphone startup.
 pub const RECORDING_LIMIT: Duration = Duration::from_secs(300);
+/// A hold released within this long of its press is a tap.
 const TAP: Duration = Duration::from_millis(220);
+/// How long after a tap's release a second press switches to hands-free.
 const DOUBLE_TAP: Duration = Duration::from_millis(300);
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 /// Logical dictation mode, independent of the physical shortcut state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum State {
-    #[default]
     /// No recording or recognition is active.
+    #[default]
     Idle,
     /// Recording while the shortcut is held.
     Held,
@@ -21,120 +30,119 @@ pub enum State {
     Processing,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Work requested by a gesture transition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
-    /// Open a new recording.
+    /// Opens a new recording.
     Start,
-    /// Stop capture and recognize its audio.
+    /// Stops capture and recognizes its audio.
     Finish,
-    /// Discard the recording and revoke its insertion authority.
+    /// Discards the recording and revokes its insertion authority.
     Cancel,
-    /// Refresh the displayed capture mode without replacing the recording.
+    /// Refreshes the displayed capture mode without replacing the recording.
     ModeChanged,
 }
 
-/// Physical key state survives completion and cancellation, preventing autorepeat
-/// from starting a new session before the user releases the shortcut.
+/// Hold-to-talk, double-tap hands-free, and Space locking for one shortcut.
+///
+/// Physical key state survives completion and cancellation, preventing autorepeat from starting a
+/// new session before the user releases the shortcut.
 #[derive(Default)]
 pub struct Gesture {
-    state: State,
-    started: Option<Instant>,
+    phase: Phase,
     down: bool,
-    pressed: Option<Instant>,
-    released: Option<Instant>,
 }
 
 impl Gesture {
-    /// Current mode; only gesture transitions may change it.
+    /// Returns the current mode; only gesture transitions change it.
     #[must_use]
     pub fn state(&self) -> State {
-        self.state
+        match self.phase {
+            Phase::Idle => State::Idle,
+            Phase::Held { .. } => State::Held,
+            Phase::PendingTap { .. } => State::PendingTap,
+            Phase::HandsFree { .. } => State::HandsFree,
+            Phase::Processing => State::Processing,
+        }
     }
 
-    /// Observe a physical press; autorepeat cannot open another recording.
+    /// Observes a physical press; autorepeat cannot open another recording.
     pub fn press(&mut self, now: Instant) -> Option<Action> {
         let expired = self.tick(now);
-        if self.down {
+        let already_down = mem::replace(&mut self.down, true);
+        if already_down || expired.is_some() {
             return expired;
         }
-        self.down = true;
-        self.pressed = Some(now);
-        if expired.is_some() {
-            return expired;
-        }
-        match self.state {
-            State::Idle => {
-                self.started = Some(now);
-                self.state = State::Held;
+        match self.phase {
+            Phase::Idle => {
+                self.phase = Phase::Held { started: now };
                 Some(Action::Start)
             },
-            State::PendingTap => {
-                self.state = State::HandsFree;
+            Phase::PendingTap { started, .. } => {
+                self.phase = Phase::HandsFree { started };
                 Some(Action::ModeChanged)
             },
-            State::HandsFree => self.finish(),
-            _ => None,
+            Phase::HandsFree { .. } => self.finish(),
+            Phase::Held { .. } | Phase::Processing => None,
         }
     }
 
-    /// Observe a release, finishing a hold or waiting for a second tap.
+    /// Observes a release, finishing a hold or waiting for a second tap.
     pub fn release(&mut self, now: Instant) -> Option<Action> {
         let expired = self.tick(now);
-        let was_down = std::mem::replace(&mut self.down, false);
-        if expired.is_some() || !was_down || self.state != State::Held {
+        self.down = false;
+        let Phase::Held { started } = self.phase else {
             return expired;
-        }
-        if self.pressed.is_some_and(|at| now.duration_since(at) <= TAP) {
-            self.released = Some(now);
-            self.state = State::PendingTap;
+        };
+        if now.duration_since(started) <= TAP {
+            self.phase = Phase::PendingTap {
+                started,
+                released: now,
+            };
             Some(Action::ModeChanged)
         } else {
             self.finish()
         }
     }
 
-    /// Space during a hold keeps the capture and switches it to hands-free.
+    /// Switches a hold to hands-free on Space, keeping its capture.
     pub fn lock(&mut self) -> Option<Action> {
-        if self.state != State::Held {
+        let Phase::Held { started } = self.phase else {
             return None;
-        }
-        self.state = State::HandsFree;
+        };
+        self.phase = Phase::HandsFree { started };
         Some(Action::ModeChanged)
     }
 
-    /// Start hands-free recording or finish the active recording.
+    /// Starts hands-free recording or finishes the active recording.
     pub fn toggle(&mut self, now: Instant) -> Option<Action> {
-        match self.state {
-            State::Idle => {
-                self.state = State::HandsFree;
-                self.started = Some(now);
+        match self.phase {
+            Phase::Idle => {
+                self.phase = Phase::HandsFree { started: now };
                 Some(Action::Start)
             },
-            State::Processing => None,
-            _ => self.finish(),
+            Phase::Held { .. } | Phase::PendingTap { .. } | Phase::HandsFree { .. } => {
+                self.finish()
+            },
+            Phase::Processing => None,
         }
     }
 
-    /// Earliest tap or recording deadline; callers wake and tick at this instant.
+    /// Returns the earliest tap or recording deadline; callers wake and tick at this instant.
     #[must_use]
     pub fn deadline(&self) -> Option<Instant> {
-        if matches!(self.state, State::Idle | State::Processing) {
-            return None;
+        match self.phase {
+            Phase::Idle | Phase::Processing => None,
+            Phase::Held { started } | Phase::HandsFree { started } => {
+                Some(expiry(started, RECORDING_LIMIT))
+            },
+            Phase::PendingTap { started, released } => {
+                Some(expiry(started, RECORDING_LIMIT).min(expiry(released, DOUBLE_TAP)))
+            },
         }
-        let started = self.started?;
-        // An unrepresentable deadline expires immediately rather than removing the cap.
-        let limit = started.checked_add(RECORDING_LIMIT).unwrap_or(started);
-        Some(if self.state == State::PendingTap {
-            self.released.map_or(limit, |at| {
-                limit.min(at.checked_add(DOUBLE_TAP).unwrap_or(at))
-            })
-        } else {
-            limit
-        })
     }
 
-    /// Finish an expired recording or tap without consulting an ambient clock.
+    /// Finishes an expired recording or tap without consulting an ambient clock.
     pub fn tick(&mut self, now: Instant) -> Option<Action> {
         if self.deadline().is_some_and(|deadline| now >= deadline) {
             self.finish()
@@ -143,37 +151,110 @@ impl Gesture {
         }
     }
 
-    /// Move active capture into processing without changing physical key state.
+    /// Moves active capture into processing without changing physical key state.
     pub fn finish(&mut self) -> Option<Action> {
-        if matches!(self.state, State::Idle | State::Processing) {
-            return None;
+        match self.phase {
+            Phase::Idle | Phase::Processing => None,
+            Phase::Held { .. } | Phase::PendingTap { .. } | Phase::HandsFree { .. } => {
+                self.phase = Phase::Processing;
+                Some(Action::Finish)
+            },
         }
-        self.state = State::Processing;
-        Some(Action::Finish)
     }
 
-    /// Abandon capture or processing; a held shortcut still requires release.
+    /// Abandons capture or processing; a held shortcut still requires release.
     pub fn cancel(&mut self) -> Option<Action> {
-        if self.state == State::Idle {
+        if self.phase == Phase::Idle {
             return None;
         }
-        self.state = State::Idle;
-        self.started = None;
+        self.phase = Phase::Idle;
         Some(Action::Cancel)
     }
 
-    /// Acknowledge processing completion; an active recording is unaffected.
+    /// Acknowledges processing completion; an active recording is unaffected.
     pub fn complete(&mut self) {
-        if self.state == State::Processing {
-            self.state = State::Idle;
-            self.started = None;
+        if self.phase == Phase::Processing {
+            self.phase = Phase::Idle;
         }
     }
 }
 
+/// A [`State`] with the instants its deadlines count from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Phase {
+    #[default]
+    Idle,
+    Held {
+        started: Instant,
+    },
+    PendingTap {
+        started: Instant,
+        released: Instant,
+    },
+    HandsFree {
+        started: Instant,
+    },
+    Processing,
+}
+
+/// `start + after`, or `start` itself when that instant is unrepresentable, so an overflowing
+/// deadline expires immediately rather than removing the cap.
+fn expiry(start: Instant, after: Duration) -> Instant {
+    start.checked_add(after).unwrap_or(start)
+}
+
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
+
+    #[derive(Clone, Copy, Debug)]
+    enum Event {
+        Press,
+        Release,
+        Lock,
+        Toggle,
+        Cancel,
+        Complete,
+        Finish,
+    }
+
+    impl Event {
+        const ALL: &[Self] = &[
+            Self::Press,
+            Self::Release,
+            Self::Lock,
+            Self::Toggle,
+            Self::Cancel,
+            Self::Complete,
+            Self::Finish,
+        ];
+
+        fn apply(self, gesture: &mut Gesture, now: Instant) -> Option<Action> {
+            match self {
+                Self::Press => gesture.press(now),
+                Self::Release => gesture.release(now),
+                Self::Lock => gesture.lock(),
+                Self::Toggle => gesture.toggle(now),
+                Self::Cancel => gesture.cancel(),
+                Self::Complete => {
+                    gesture.complete();
+                    None
+                },
+                Self::Finish => gesture.finish(),
+            }
+        }
+    }
+
+    fn capture_start(gesture: &Gesture) -> Option<Instant> {
+        match gesture.phase {
+            Phase::Held { started }
+            | Phase::PendingTap { started, .. }
+            | Phase::HandsFree { started } => Some(started),
+            Phase::Idle | Phase::Processing => None,
+        }
+    }
 
     #[test]
     fn unrepresentable_recording_deadline_expires_immediately() {
@@ -191,37 +272,29 @@ mod tests {
         assert_eq!(gesture.tick(latest), Some(Action::Finish));
     }
 
-    proptest::proptest! {
+    proptest! {
         #[test]
         fn arbitrary_event_sequences_keep_capture_bounded(
-            events in proptest::collection::vec((0_u8..7, 0_u32..600_000), 0..128)
+            events in prop::collection::vec(
+                (prop::sample::select(Event::ALL), 0_u32..600_000),
+                0..128,
+            )
         ) {
             let mut gesture = Gesture::default();
             let mut now = Instant::now();
             for (event, elapsed) in events {
-                now = now.checked_add(Duration::from_millis(u64::from(elapsed)))
+                now = now
+                    .checked_add(Duration::from_millis(u64::from(elapsed)))
                     .expect("The generated sequence spans less than one day");
-                match event {
-                    0 => { gesture.press(now); }
-                    1 => { gesture.release(now); }
-                    2 => { gesture.lock(); }
-                    3 => { gesture.toggle(now); }
-                    4 => { gesture.cancel(); }
-                    5 => { gesture.complete(); }
-                    _ => { gesture.finish(); }
-                }
+                event.apply(&mut gesture, now);
                 // The owner ticks after every observation, including unrelated wakeups.
                 gesture.tick(now);
-                if matches!(gesture.state(), State::Held | State::PendingTap | State::HandsFree) {
-                    let started = gesture.started.expect("Active capture retains its start");
+                if let Some(started) = capture_start(&gesture) {
                     let limit = started.checked_add(RECORDING_LIMIT).expect("Bounded test clock");
                     let deadline = gesture.deadline().expect("Active capture retains its deadline");
-                    proptest::prop_assert!(started <= now && now < deadline && deadline <= limit);
+                    prop_assert!(started <= now && now < deadline && deadline <= limit);
                 } else {
-                    proptest::prop_assert!(gesture.deadline().is_none());
-                    if gesture.state() == State::Idle {
-                        proptest::prop_assert!(gesture.started.is_none());
-                    }
+                    prop_assert!(gesture.deadline().is_none());
                 }
             }
         }
@@ -229,66 +302,68 @@ mod tests {
 
     #[test]
     fn single_tap_finishes_but_double_tap_keeps_the_original_capture() {
-        let t = Instant::now();
-        let mut g = Gesture::default();
-        assert_eq!(g.press(t), Some(Action::Start));
-        g.release(t + TAP);
-        assert_eq!(g.tick(t + TAP + DOUBLE_TAP), Some(Action::Finish));
-        g.complete();
-        let t = t + Duration::from_secs(1);
-        g.press(t);
-        g.release(t + TAP);
-        assert_eq!(
-            g.press(
-                (t + TAP + DOUBLE_TAP)
-                    .checked_sub(Duration::from_millis(1))
-                    .unwrap()
-            ),
-            Some(Action::ModeChanged)
-        );
-        assert_eq!(g.state, State::HandsFree);
-        assert_eq!(g.started, Some(t));
+        let start = Instant::now();
+        let mut gesture = Gesture::default();
+        assert_eq!(gesture.press(start), Some(Action::Start));
+        gesture.release(start + TAP);
+        assert_eq!(gesture.tick(start + TAP + DOUBLE_TAP), Some(Action::Finish));
+        gesture.complete();
+        let start = start + Duration::from_secs(1);
+        gesture.press(start);
+        gesture.release(start + TAP);
+        let just_before_expiry = (start + TAP + DOUBLE_TAP)
+            .checked_sub(Duration::from_millis(1))
+            .unwrap();
+        assert_eq!(gesture.press(just_before_expiry), Some(Action::ModeChanged));
+        assert_eq!(gesture.phase, Phase::HandsFree { started: start });
     }
 
     #[test]
     fn locking_a_hold_keeps_its_capture_until_the_next_press() {
-        let t = Instant::now();
-        let mut g = Gesture::default();
-        assert_eq!(g.press(t), Some(Action::Start));
-        assert_eq!(g.lock(), Some(Action::ModeChanged));
-        assert_eq!(g.release(t + Duration::from_secs(1)), None);
-        assert_eq!(g.state, State::HandsFree);
-        assert_eq!(g.started, Some(t));
-        assert_eq!(g.lock(), None);
-        assert_eq!(g.press(t + Duration::from_secs(2)), Some(Action::Finish));
+        let start = Instant::now();
+        let mut gesture = Gesture::default();
+        assert_eq!(gesture.press(start), Some(Action::Start));
+        assert_eq!(gesture.lock(), Some(Action::ModeChanged));
+        assert_eq!(gesture.release(start + Duration::from_secs(1)), None);
+        assert_eq!(gesture.phase, Phase::HandsFree { started: start });
+        assert_eq!(gesture.lock(), None);
+        assert_eq!(
+            gesture.press(start + Duration::from_secs(2)),
+            Some(Action::Finish)
+        );
     }
 
     #[test]
     fn expiration_wins_over_second_press_and_capture_is_capped() {
-        let t = Instant::now();
-        let mut g = Gesture::default();
-        g.press(t);
-        g.release(t + TAP);
-        assert_eq!(g.press(t + TAP + DOUBLE_TAP), Some(Action::Finish));
-        assert_eq!(g.state, State::Processing);
-        g.complete();
-        assert_eq!(g.press(t + Duration::from_secs(1)), None);
-        g.release(t + Duration::from_secs(1));
-        g.press(t + Duration::from_secs(2));
-        assert_eq!(g.tick(t + Duration::from_secs(302)), Some(Action::Finish));
-        assert_eq!(g.release(t + Duration::from_secs(303)), None);
+        let start = Instant::now();
+        let mut gesture = Gesture::default();
+        gesture.press(start);
+        gesture.release(start + TAP);
+        assert_eq!(
+            gesture.press(start + TAP + DOUBLE_TAP),
+            Some(Action::Finish)
+        );
+        assert_eq!(gesture.state(), State::Processing);
+        gesture.complete();
+        assert_eq!(gesture.press(start + Duration::from_secs(1)), None);
+        gesture.release(start + Duration::from_secs(1));
+        let second_press = start + Duration::from_secs(2);
+        gesture.press(second_press);
+        let limit = second_press + RECORDING_LIMIT;
+        assert_eq!(gesture.tick(limit), Some(Action::Finish));
+        assert_eq!(gesture.release(limit + Duration::from_secs(1)), None);
     }
 
     #[test]
     fn cancel_requires_release_and_late_completion_cannot_end_new_capture() {
-        let t = Instant::now();
-        let mut g = Gesture::default();
-        g.press(t);
-        assert_eq!(g.cancel(), Some(Action::Cancel));
-        assert_eq!(g.press(t), None);
-        g.release(t);
-        assert_eq!(g.press(t), Some(Action::Start));
-        g.complete();
-        assert_eq!(g.state, State::Held);
+        let start = Instant::now();
+        let mut gesture = Gesture::default();
+        gesture.press(start);
+        assert_eq!(gesture.cancel(), Some(Action::Cancel));
+        assert_eq!(gesture.press(start), None);
+        gesture.release(start);
+        assert_eq!(gesture.press(start), Some(Action::Start));
+        gesture.complete();
+        assert_eq!(gesture.state(), State::Held);
     }
 }

@@ -22,10 +22,10 @@ Open Font License, and the line is “Say the word.” App icons are rendered fr
 
 ## Pill
 
-The GPUI view in `crates/app/src/pill.rs` draws a door slot inside a capsule with a fine edge, a
-hairline lamp inlay, and a tight shadow. A lid with a keystone handle covers the slot until capture
-starts, slides open while the microphone is live, closes to 62% while processing, and shuts for
-completion. Inside, a symmetric grille shows the measured envelope with the newest level at its
+The GPUI view in `crates/app/src/pill.rs` and `pill/` draws a door slot inside a capsule with a fine
+edge, a hairline lamp inlay, and a tight shadow. A lid with a keystone handle covers the slot until
+capture starts, slides open while the microphone is live, closes to 62% while processing, and shuts
+for completion. Inside, a symmetric grille shows the measured envelope with the newest level at its
 center, in the theme's live color. Errors use the attention color and text. The pill is
 non-activating and click-through.
 
@@ -57,12 +57,13 @@ its timers belong to the view: they cannot change a recording or dismiss a later
 
 The audio envelope keeps 24 recent levels and paints the grille in one canvas, mirrored outward from
 the newest level; bars near the slot's rounded ends stay inside its curve. Capture supplies RMS
-summaries; the UI animates between them. Pill animation follows native display frames with a 200 FPS
-budget. Meter updates share the pending frame; session changes redraw immediately. Delayed frames
-skip expired deadlines, and springs advance by the actual elapsed time. Silence settles to short
-bars. Demo mode alone supplies simulated levels. Reduced motion snaps transitions, the lid, and
-level changes, uses one level bar, and keeps the processing highlight still. Settled hidden views
-request no animation frames; capture uses a timer for its clock and recording-limit cue.
+summaries; the UI animates between them. Pill animation follows native display frames within the
+[frame budget](performance.md#implementation-constraints). Meter updates share the pending frame;
+session changes redraw immediately. Delayed frames skip expired deadlines, and springs advance by
+the actual elapsed time. Silence settles to short bars. Demo mode alone supplies simulated levels.
+Reduced motion, from Settings or the OS, snaps transitions, the lid, and level changes, uses one
+level bar, and keeps the processing highlight still. Settled hidden views request no animation
+frames; capture uses a timer for its clock and recording-limit cue.
 
 ## Tray and Settings
 

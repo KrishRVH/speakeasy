@@ -32,7 +32,7 @@ docker run --rm --volume "$PWD:$PWD:ro" --workdir "$PWD" ubuntu:24.04 \
         apt-get update -qq
         apt-get install -y -qq --no-install-recommends \
             libasound2t64 libfontconfig1 libfreetype6 libx11-6 libxcb1 \
-            libxkbcommon0 libxkbcommon-x11-0 libvulkan1 libssl3t64 \
+            libxkbcommon0 libxkbcommon-x11-0 libvulkan1 \
             mesa-vulkan-drivers xvfb xauth x11-utils python3
         dpkg-query -W mesa-vulkan-drivers libvulkan1
         icd=(/usr/share/vulkan/icd.d/lvp_icd*.json)

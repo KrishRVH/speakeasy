@@ -88,8 +88,9 @@ block and humans merge.
 ## Current repository
 
 Keep current contracts in code, tests, and docs; Git holds history. Replace rather than accumulate:
-remove obsolete code, settings, tests, and docs with the change. Comments explain invariants,
-non-obvious algorithms, and trust seams, not history. Update the owning page when a contract changes
+remove obsolete code, settings, tests, and docs with the change. Comments earn their place like
+tests: they explain invariants, non-obvious platform behavior, and trust seams that names, types,
+and tests cannot carry, never narration or history. Update the owning page when a contract changes
 and state each policy once.
 
 Keep task notes in ignored `.scratch/` and run output in `artifacts/`. Do not commit plans,

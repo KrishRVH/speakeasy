@@ -1,26 +1,30 @@
 # Release notes
 
-Speakeasy 0.3.1 tightens Rust ownership and failure handling, adds a reproducible tooling gate, and
-makes the current implementation easier to navigate and verify.
+Speakeasy 0.3.2 brings the codebase to an idiomatic Rust standard, gives every thread, process, and
+native event loop one explicit owner, and fixes small Settings, pill, Linux, and error-reporting
+issues.
 
-- Enforce documented public interfaces, checked integer arithmetic, explicit fallible-result
-  handling, and locally justified synchronization. Keep unsafe FFI in the native adapters and
-  preserve the bounded, allocation-free capture callback.
-- Validate WAV lengths and sample rates, reject invalid process-group identities, and check setup
-  staging failures with actionable errors. Regression tests cover these boundaries and bounded
-  relaunch commands; generated gesture sequences exercise timer invariants.
-- Keep Windows minimize handling owned by Settings, preserve file-dialog errors, and evaluate setup
-  directory defaults only when needed.
-- Run locked Rust, Python, shell, and documentation checks through mise. Verify native Rust on
-  Windows and macOS, and build packages with owned-window rendering checks on all three platforms.
-- Consolidate living documentation around ownership, current behavior, and relevant checks. Remove
-  duplicate tray notification handling and update the dependency-patch instructions.
+- Keep keyboard focus on a Settings button when its label changes, such as a toggle switching
+  between On and Off. A restarted setup shows its own progress rather than the paused attempt's, and
+  Settings shows its status from the first frame.
+- Show the newest audio level at the center of the pill's grille for every bar count, including
+  while the capsule resizes.
+- Report a failed capture thread as "Microphone stopped unexpectedly. Try recording again." instead
+  of leaving the session finishing. Zero unencoded recording audio whenever its buffer is released.
+- On Linux, let specific desktop-access errors, such as a keyboard mapping change, reach Settings
+  instead of a generic stop message. Wayland manual paste asks you to release the shortcut and
+  paste, and `--help` lists `--toggle` and `--cancel`. Error dialogs include their cause.
+- Own background threads, native input monitors, and engine processes through shared helpers that
+  join, wake, or kill and reap them before replacement. Split Settings, the pill, and the tray into
+  focused modules; share pill geometry, shortcuts, and service state from the platform crate; and
+  use typed AppKit calls on macOS. Windows and macOS insertion share one pre-commit check.
 
 Windows x64 and Apple silicon macOS zip packages, plus Linux x86_64 AppImage and bundled tar
 packages, are attached with SHA-256 checksums. Existing settings, engines, models, dictation
 gestures, recognition policy, and the five-minute recording limit are preserved.
 
-Linux remains experimental. Live microphone, keyboard-hook, clipboard/editor, and compositor
-acceptance are separate from fake and owned-window checks. Forced native termination retains
-synchronous cleanup; a stuck native driver can delay completion. Current contracts and measurement
-limits are in [architecture](architecture.md) and [performance](performance.md).
+Linux remains experimental. This release changes native adapters on all three platforms; CI builds,
+lints, and tests them natively and runs owned-window rendering checks, while live microphone,
+keyboard-hook, clipboard/editor, and compositor acceptance remain separate. Forced native
+termination retains synchronous cleanup. Current contracts and measurement limits are in
+[architecture](architecture.md) and [performance](performance.md).

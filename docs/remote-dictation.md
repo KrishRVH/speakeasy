@@ -10,7 +10,7 @@ permissions need acceptance with the chosen remote client.
 
 ## Route the microphone
 
-If your remote setup already exposes a host recording device, select it in Speakeasy **Settings →
+If your remote setup already exposes a host recording device, select it in Speakeasy **Settings ›
 Microphone**. Use **Refresh** after adding a device. Keep desktop playback out of this input so the
 app receives only the intended voice.
 

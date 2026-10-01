@@ -1,5 +1,5 @@
-//! Regression tests for the vendored GPUI Windows timing arithmetic.
+//! Compiles the vendored GPUI Windows timing module so its unit tests run on every host, without
+//! native APIs.
 
-// Exercise the production Windows timing arithmetic without invoking native APIs.
 #[path = "../../../vendor/gpui/src/platform/windows/vsync/interval.rs"]
 mod interval;

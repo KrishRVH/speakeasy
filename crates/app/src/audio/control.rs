@@ -1,11 +1,14 @@
 //! Capture-local synchronization for callbacks that cannot wait on the owner.
+
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
+/// Modes only advance in declaration order, so a late finish cannot undo a cancel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 pub(super) enum Mode {
-    Recording,
-    Finishing,
-    Cancelled,
+    Recording = 0,
+    Finishing = 1,
+    Cancelled = 2,
 }
 
 #[derive(Default)]
@@ -19,50 +22,46 @@ pub(super) struct Control {
         clippy::disallowed_types,
         reason = "The callback reports overflow to the owned PCM consumer without allocating or waiting"
     )]
-    overran: AtomicBool,
+    overflowed: AtomicBool,
     #[expect(
         clippy::disallowed_types,
         reason = "Native data and error callbacks distinguish a startup discontinuity from lost recorded speech"
     )]
-    started: AtomicBool,
+    first_sample_queued: AtomicBool,
 }
 
 impl Control {
     pub(super) fn mode(&self) -> Mode {
+        const RECORDING: u8 = Mode::Recording as u8;
+        const FINISHING: u8 = Mode::Finishing as u8;
         match self.mode.load(Ordering::Acquire) {
-            0 => Mode::Recording,
-            1 => Mode::Finishing,
+            RECORDING => Mode::Recording,
+            FINISHING => Mode::Finishing,
             _ => Mode::Cancelled,
         }
     }
 
     pub(super) fn finish(&self) {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "Finish must not replace an existing cancel; a failed exchange means finish or cancel already won"
-        )]
-        let _ = self
-            .mode
-            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire);
+        self.mode.fetch_max(Mode::Finishing as u8, Ordering::AcqRel);
     }
 
     pub(super) fn cancel(&self) {
-        self.mode.store(2, Ordering::Release);
+        self.mode.fetch_max(Mode::Cancelled as u8, Ordering::AcqRel);
     }
 
-    pub(super) fn overrun(&self) {
-        self.overran.store(true, Ordering::Release);
+    pub(super) fn mark_overflowed(&self) {
+        self.overflowed.store(true, Ordering::Release);
     }
 
-    pub(super) fn overran(&self) -> bool {
-        self.overran.load(Ordering::Acquire)
+    pub(super) fn overflowed(&self) -> bool {
+        self.overflowed.load(Ordering::Acquire)
     }
 
-    pub(super) fn start(&self) {
-        self.started.store(true, Ordering::Release);
+    pub(super) fn mark_first_sample_queued(&self) {
+        self.first_sample_queued.store(true, Ordering::Release);
     }
 
-    pub(super) fn started(&self) -> bool {
-        self.started.load(Ordering::Acquire)
+    pub(super) fn first_sample_queued(&self) -> bool {
+        self.first_sample_queued.load(Ordering::Acquire)
     }
 }

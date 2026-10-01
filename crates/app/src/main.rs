@@ -2,8 +2,11 @@
 
 #![forbid(unsafe_code)]
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 mod audio;
+mod child;
 mod config;
+mod gpui_ext;
 mod icons;
 mod instance;
 mod local_speech;
@@ -14,14 +17,84 @@ mod setup;
 mod shell;
 mod status;
 mod theme;
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 mod tray;
-use anyhow::{Context as _, bail};
-use gpui::{Application, BorrowAppContext};
-use runtime::Snapshot;
+
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
+
+use anyhow::{Context as _, bail, ensure};
+use gpui::{App, Application, BorrowAppContext};
+use speakeasy_platform::{CANCEL_SHORTCUT, SHORTCUT};
+use tokio::sync::watch;
+
+use crate::{
+    config::Config,
+    instance::{Instance, Request},
+    runtime::{Phase, Snapshot},
+    shell::{LaunchMode, Services},
+};
 
 // Josefin Sans SemiBold, SIL Open Font License 1.1 (assets/JosefinSans-OFL.txt).
 const WORDMARK_FONT: &str = "Josefin Sans";
+const WORDMARK_FONT_FILE: &[u8] = include_bytes!("../assets/JosefinSans-SemiBold.ttf");
+
+struct Cli {
+    mode: LaunchMode,
+    command: Option<Request>,
+    path: PathBuf,
+}
+
+impl Cli {
+    /// Returns `None` when help was requested.
+    fn parse(mut args: impl Iterator<Item = String>) -> anyhow::Result<Option<Self>> {
+        let mut cli = Self {
+            mode: LaunchMode::Live,
+            command: None,
+            path: config::default_path(),
+        };
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--demo" => {
+                    if cli.mode == LaunchMode::Live {
+                        cli.mode = LaunchMode::Demo;
+                    }
+                },
+                "--demo-tray" => cli.mode = LaunchMode::DemoTray,
+                "--config" => cli.path = args.next().context("--config needs a path")?.into(),
+                "--toggle" => cli.command = Some(Request::Toggle),
+                "--cancel" => cli.command = Some(Request::Cancel),
+                "--help" | "-h" => return Ok(None),
+                _ => bail!("Unknown option: {arg}"),
+            }
+        }
+        Ok(Some(cli))
+    }
+}
+
+enum ConfigState {
+    Unconfigured,
+    Configured,
+    Invalid(String),
+}
+
+impl ConfigState {
+    fn into_snapshot(self) -> Snapshot {
+        match self {
+            Self::Invalid(message) => Snapshot {
+                message,
+                phase: Phase::Error,
+                ..Snapshot::default()
+            },
+            // Applying a configured app's settings replaces this placeholder before it shows.
+            Self::Unconfigured | Self::Configured => Snapshot {
+                message: "Speakeasy is not set up yet.".into(),
+                ..Snapshot::default()
+            },
+        }
+    }
+}
 
 fn main() {
     if let Err(error) = run() {
@@ -30,167 +103,180 @@ fn main() {
 }
 
 fn run() -> anyhow::Result<()> {
-    let mut demo = false;
-    let mut demo_tray = false;
-    let mut command = None;
-    let mut path = config::default_path();
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--demo" => demo = true,
-            "--demo-tray" => {
-                demo = true;
-                demo_tray = true;
-            },
-            "--config" => path = args.next().context("--config needs a path")?.into(),
-            "--toggle" => command = Some(instance::Request::Toggle),
-            "--cancel" => command = Some(instance::Request::Cancel),
-            "--help" | "-h" => {
-                let gestures = if cfg!(target_os = "linux") {
-                    "Ctrl+Super+Space: hold to dictate or double-tap for hands-free. Ctrl+Super+Escape cancels. Desktop-approved bindings may differ.\n--toggle / --cancel control a running app when Desktop bindings is enabled."
-                } else {
-                    "Hold the dictation shortcut; add Space or double-tap for hands-free. Escape cancels."
-                };
-                println!(
-                    "speakeasy [--config PATH] [--demo | --demo-tray]\nShortcut: {}\n{gestures}\n--demo uses simulated audio without microphone, hook, or clipboard access.\n--demo-tray also previews native tray, minimize, close and relaunch behavior.",
-                    speakeasy_platform::SHORTCUT
-                );
-                return Ok(());
-            },
-            _ => bail!("Unknown option: {arg}"),
-        }
-    }
-    if demo_tray
-        && !cfg!(any(
-            target_os = "windows",
-            target_os = "macos",
-            target_os = "linux"
-        ))
-    {
-        bail!("Tray preview requires Windows, macOS or Linux. Use --demo for the motion preview.");
-    }
-    if path.is_relative() {
-        path = std::env::current_dir()?.join(path);
-    }
+    let Some(Cli {
+        mode,
+        command,
+        path,
+    }) = Cli::parse(std::env::args().skip(1))?
+    else {
+        print_help();
+        return Ok(());
+    };
+    let path = std::path::absolute(path)?;
     if let Some(command) = command {
-        anyhow::ensure!(!demo, "Desktop commands cannot be combined with a demo");
-        anyhow::ensure!(
+        ensure!(
+            !mode.is_demo(),
+            "Desktop commands cannot be combined with a demo"
+        );
+        ensure!(
             cfg!(target_os = "linux"),
             "Desktop commands are available on Linux"
         );
-        return instance::Instance::command(&path, command);
+        return Instance::send(&path, command);
     }
-    let (instance, reopen) = if demo && !demo_tray {
-        (None, None)
-    } else {
-        let Some((instance, reopen)) = instance::Instance::acquire(&path)? else {
+    let acquired = if mode.is_resident() {
+        let Some(acquired) = Instance::acquire(&path)? else {
             return Ok(());
         };
-        (Some(instance), Some(reopen))
-    };
-    let loaded = if demo || !path.exists() {
-        Ok(config::Config::default())
+        Some(acquired)
     } else {
-        config::Config::read(&path)
+        None
     };
-    let (mut config, mut message, mut invalid) = match loaded {
-        Ok(config) => (config, "Speakeasy is not set up yet.".to_owned(), false),
-        Err(error) => (config::Config::default(), error.to_string(), true),
-    };
-    let configured = if config.engine_executable.as_os_str().is_empty() {
-        false
-    } else {
-        match config.validate(&path) {
-            Ok(()) => true,
-            Err(error) => {
-                message = error.to_string();
-                invalid = true;
-                false
-            },
-        }
-    };
-    let (output, updates) = tokio::sync::watch::channel(Snapshot {
-        message,
-        phase: if invalid {
-            runtime::Phase::Error
-        } else {
-            runtime::Phase::Idle
-        },
-        ..Snapshot::default()
-    });
+    launch(path, mode, acquired);
+    Ok(())
+}
+
+fn launch(
+    path: PathBuf,
+    mode: LaunchMode,
+    acquired: Option<(Instance, async_channel::Receiver<Request>)>,
+) {
+    let (instance, requests) = acquired.unzip();
+    let (config, state) = load_config(&path, mode);
+    let configured = matches!(state, ConfigState::Configured);
+    let (output, updates) = watch::channel(state.into_snapshot());
     let application = Application::new().with_assets(icons::Icons);
     application.on_reopen(shell::reveal);
     application.run(move |cx| {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "An unavailable embedded brand face falls back to the system font"
-        )]
-        let _ = cx
-            .text_system()
-            .add_fonts(vec![std::borrow::Cow::Borrowed(include_bytes!(
-                "../assets/JosefinSans-SemiBold.ttf"
-            ))]);
-        let reduced = config.reduced_motion || speakeasy_platform::reduced_motion();
-        let pill = match pill::open(updates, reduced, config.theme, cx) {
+        load_wordmark_font(cx);
+        let pill = match pill::open(updates, config.prefers_reduced_motion(), config.theme, cx) {
             Ok(pill) => pill,
             Err(error) => {
-                speakeasy_platform::show_error(&format!("Cannot open pill: {error}"));
+                speakeasy_platform::show_error(&format!("Cannot open pill: {error:#}"));
                 cx.quit();
                 return;
             },
         };
-        let mut services = shell::Services::new(path, config.clone(), output, pill, instance);
-        services.demo = demo;
-        services.demo_tray = demo_tray;
-        cx.set_global(services);
-        if let Some(reopen) = reopen {
-            cx.update_global::<shell::Services, _>(|services, cx| {
-                services.listen_for_reopen(reopen, cx);
+        cx.set_global(Services::new(
+            path,
+            config.clone(),
+            output,
+            pill,
+            instance,
+            mode,
+        ));
+        if let Some(requests) = requests {
+            cx.update_global::<Services, _>(|services, cx| {
+                services.listen_for_requests(requests, cx);
             });
         }
-        cx.on_app_quit(|cx| {
-            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-            if cx.has_global::<tray::Tray>() {
-                drop(cx.remove_global::<tray::Tray>());
-            }
-            let mut services = cx.remove_global::<shell::Services>();
-            let instance = services.instance.take();
-            drop(services);
-            // GPUI clears windows (and final Settings writers) before polling
-            // this future, so a relaunch cannot race the final durable save.
-            async move {
-                drop(instance);
-            }
-        })
-        .detach();
-        if !demo
-            && configured
+        cx.on_app_quit(release_services).detach();
+        if configured
             && let Err(error) =
-                cx.update_global::<shell::Services, _>(|services, cx| services.apply(config, cx))
+                cx.update_global::<Services, _>(|services, cx| services.apply(config, cx))
         {
-            cx.global::<shell::Services>().output.send_modify(|s| {
-                s.phase = runtime::Phase::Error;
-                s.message = error.to_string();
-            });
+            cx.global::<Services>().publish_error(&error);
         }
-        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-        if (!demo || demo_tray)
+        if mode.is_resident()
             && let Err(error) = tray::install(cx)
         {
-            speakeasy_platform::show_error(&error.to_string());
+            speakeasy_platform::show_error(&format!("{error:#}"));
             shell::request_quit(cx);
             return;
         }
-        if demo
-            || !configured
-            || !cx.global::<shell::Services>().running()
-            || cfg!(target_os = "linux")
-        {
+        // Linux always opens Settings so portal permissions and tray availability stay reachable.
+        if !configured || !cx.global::<Services>().running() || cfg!(target_os = "linux") {
             shell::reveal(cx);
         }
-        if demo && !demo_tray {
+        if !mode.is_resident() {
             cx.on_window_closed(shell::request_quit).detach();
         }
     });
-    Ok(())
+}
+
+fn print_help() {
+    let commands = if cfg!(target_os = "linux") {
+        " | --toggle | --cancel"
+    } else {
+        ""
+    };
+    println!("speakeasy [--config PATH] [--demo | --demo-tray{commands}]\nShortcut: {SHORTCUT}");
+    if cfg!(target_os = "linux") {
+        println!(
+            "Hold to dictate or double-tap for hands-free. {CANCEL_SHORTCUT} cancels. Desktop-approved bindings may differ.\n--toggle / --cancel control a running app when Desktop bindings is enabled."
+        );
+    } else {
+        println!(
+            "Hold to dictate; add Space or double-tap for hands-free. {CANCEL_SHORTCUT} cancels."
+        );
+    }
+    println!(
+        "--demo uses simulated audio without microphone, hook, or clipboard access.\n--demo-tray also previews native tray, minimize, close and relaunch behavior."
+    );
+}
+
+/// Demos and first launches start unconfigured from defaults; saved settings must parse and
+/// validate.
+fn load_config(path: &Path, mode: LaunchMode) -> (Config, ConfigState) {
+    if mode.is_demo() || !path.exists() {
+        return (Config::default(), ConfigState::Unconfigured);
+    }
+    let mut config = match Config::read(path) {
+        Ok(config) => config,
+        Err(error) => return (Config::default(), ConfigState::Invalid(error.to_string())),
+    };
+    if config.engine_executable.as_os_str().is_empty() {
+        return (config, ConfigState::Unconfigured);
+    }
+    let state = match config.validate(path) {
+        Ok(()) => ConfigState::Configured,
+        Err(error) => ConfigState::Invalid(error.to_string()),
+    };
+    (config, state)
+}
+
+fn load_wordmark_font(cx: &App) {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "An unavailable embedded brand face falls back to the system font"
+    )]
+    let _ = cx
+        .text_system()
+        .add_fonts(vec![Cow::Borrowed(WORDMARK_FONT_FILE)]);
+}
+
+fn release_services(cx: &mut App) -> impl Future<Output = ()> + use<> {
+    if cx.has_global::<tray::Tray>() {
+        drop(cx.remove_global::<tray::Tray>());
+    }
+    let instance = cx.remove_global::<Services>().into_instance();
+    // GPUI closes every window, flushing Settings' final save, before polling this future, so a
+    // relaunch cannot race that save for the instance lock.
+    async move { drop(instance) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> anyhow::Result<Option<Cli>> {
+        Cli::parse(args.iter().map(|arg| (*arg).to_owned()))
+    }
+
+    #[test]
+    fn demo_never_downgrades_a_tray_preview() -> anyhow::Result<()> {
+        let cli = parse(&["--demo-tray", "--demo"])?.context("Help was not requested")?;
+        assert_eq!(cli.mode, LaunchMode::DemoTray);
+        let cli = parse(&["--demo"])?.context("Help was not requested")?;
+        assert_eq!(cli.mode, LaunchMode::Demo);
+        Ok(())
+    }
+
+    #[test]
+    fn help_stops_parsing_and_unknown_options_fail() -> anyhow::Result<()> {
+        assert!(parse(&["--help", "--unknown"])?.is_none());
+        assert!(parse(&["--unknown", "--help"]).is_err());
+        assert!(parse(&["--config"]).is_err());
+        Ok(())
+    }
 }

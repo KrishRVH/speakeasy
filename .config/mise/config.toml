@@ -31,6 +31,7 @@ run = "cargo fmt --all"
 [tasks."rust:fmt:check"]
 run = "cargo fmt --all --check"
 
+# Forbidding the allow lints on the command line keeps source from `#[expect]`-ing them away.
 [tasks."rust:lint"]
 run = "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -F clippy::allow_attributes -F clippy::allow_attributes_without_reason"
 
@@ -51,6 +52,7 @@ depends = ["rust:metadata"]
 env = { CARGO_NET_OFFLINE = "true" }
 run = "cargo machete --with-metadata --skip-target-dir crates"
 
+# Python discards cargo's metadata JSON portably, including on Windows CI.
 [tasks."rust:metadata"]
 description = "Validate locked metadata and fetch platform sources before offline analysis"
 run = '''python -c "import subprocess; subprocess.run(['cargo', 'metadata', '--all-features', '--locked', '--format-version=1'], check=True, stdout=subprocess.DEVNULL)"'''
@@ -110,6 +112,7 @@ run = ["shellcheck --severity=style scripts/*.sh packaging/linux/AppRun", "for s
 [tasks."shell:standards"]
 depends = ["shell:fmt"]
 
+# The launcher tests exercise the shell scripts, so shell checks run them too.
 [tasks."shell:standards:check"]
 depends = ["shell:fmt:check", "shell:lint", "py:test"]
 

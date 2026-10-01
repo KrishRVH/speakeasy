@@ -8,7 +8,7 @@ gpui = { path = "vendor/gpui" }
 gpui_media = { path = "vendor/gpui_media" }
 
 [workspace.package]
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 rust-version = "1.98.1"
 publish = false
@@ -62,14 +62,15 @@ all = { level = "deny", priority = -1 }
 # Named lints override these groups. Nursery warns locally and fails the
 # warnings-denied gate; known false positives are disabled below.
 all = { level = "deny", priority = -1 }
-correctness = { level = "deny", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
-suspicious = { level = "deny", priority = -1 }
 
-# Reasoned `#[expect]` exceptions fail when their lint stops firing.
+# Exceptions use a reasoned `#[expect]`, never `#[allow]`.
 allow_attributes = "deny"
 allow_attributes_without_reason = "deny"
+
+# Every unsafe block states why it is sound.
+undocumented_unsafe_blocks = "deny"
 
 # Production code handles failure explicitly. Tests may assert established
 # invariants through the four clippy.toml `allow-*-in-tests` settings.
@@ -93,7 +94,6 @@ unused_result_ok = "deny"
 
 # Dependency hygiene.
 wildcard_dependencies = "deny"
-undocumented_unsafe_blocks = "deny"
 
 # Deep nesting is context-hostile; the threshold lives in clippy.toml.
 excessive_nesting = "deny"
