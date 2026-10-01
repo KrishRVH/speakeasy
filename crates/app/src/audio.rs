@@ -1,350 +1,547 @@
+//! Microphone capture on an owned thread. The real-time callback queues mono samples without
+//! allocating; the capture thread encodes them in place behind a reserved WAV header.
+
 mod control;
-use crate::runtime::{Event, SessionId};
-use anyhow::{Context, bail};
-use control::{Control, Mode};
+
+use std::{
+    convert::Infallible,
+    mem,
+    num::NonZeroUsize,
+    ops::Range,
+    panic::{self, AssertUnwindSafe},
+    sync::Arc,
+    thread::{self, JoinHandle, Thread},
+    time::{Duration, Instant},
+};
+
+use anyhow::{Context, anyhow, bail, ensure};
+use async_channel::{Receiver, Sender};
 use cpal::{
     SampleFormat, SizedSample,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use rtrb::{Consumer, Producer, RingBuffer};
 use speakeasy_core::gesture::RECORDING_LIMIT;
-use std::{
-    num::NonZeroUsize,
-    sync::Arc,
-    thread,
-    time::{Duration, Instant},
+
+use self::control::{Control, Mode};
+use crate::{
+    ports::Recording,
+    runtime::{CaptureEvent, SessionId},
 };
 
-/// The session owner must retire capture explicitly to await native teardown.
+const WAV_HEADER_BYTES: usize = 44;
+const SAMPLE_RATE_OFFSET: usize = 24;
+const SAMPLE_BYTES: usize = 2;
+const MAX_SAMPLE_RATE: u32 = 192_000;
+const MAX_CHANNELS: usize = 32;
+const INITIAL_RESERVATION: Duration = Duration::from_secs(10);
+const MINIMUM_RECORDING: Duration = Duration::from_millis(200);
+const ENERGY_WINDOW: Duration = Duration::from_millis(20);
+const MINIMUM_AUDIBLE: Duration = Duration::from_millis(100);
+const QUIET_EDGE: Duration = Duration::from_secs(1);
+const EDGE_PADDING: Duration = Duration::from_millis(500);
+const AUDIBLE_RMS: f64 = 0.003;
+const METER_INTERVAL: Duration = Duration::from_millis(32);
+const DRAIN_INTERVAL: Duration = Duration::from_millis(5);
+const METER_FLOOR_DBFS: f32 = -60.0;
+const METER_TOP_DBFS: f32 = -6.0;
+const RECLAIM_SLACK_BYTES: usize = 8 * 1024 * 1024;
+
+/// One microphone capture on its own thread. Dropping it cancels without joining, so it cannot be
+/// an `OwnedThread`; the session owner retires it to await native teardown.
 pub(crate) struct Capture {
-    control: Arc<Control>,
-    finished: async_channel::Receiver<()>,
-    thread: Option<thread::JoinHandle<()>>,
+    signal: Signal,
+    /// Never sends; it closes once the thread has torn down its stream and reported `Finished`.
+    exit: Sender<Infallible>,
+    thread: JoinHandle<()>,
 }
 
 impl Capture {
     pub(crate) fn start(
         id: SessionId,
-        microphone: Option<String>,
-        tx: async_channel::Sender<Event>,
+        microphone: Option<&str>,
+        events: Sender<CaptureEvent>,
     ) -> anyhow::Result<Self> {
-        Self::spawn(id, tx, move |tx, control| {
-            record(id, microphone.as_deref(), tx, control)
+        let microphone = microphone.map(str::to_owned);
+        Self::spawn(id, events, move |events, control| {
+            record(id, microphone.as_deref(), events, control)
         })
     }
 
     fn spawn(
         id: SessionId,
-        tx: async_channel::Sender<Event>,
-        work: impl FnOnce(
-            &async_channel::Sender<Event>,
-            &Arc<Control>,
-        ) -> anyhow::Result<Option<Vec<u8>>>
+        events: Sender<CaptureEvent>,
+        work: impl FnOnce(&Sender<CaptureEvent>, &Arc<Control>) -> anyhow::Result<Option<Vec<u8>>>
         + Send
         + 'static,
     ) -> anyhow::Result<Self> {
         let control = Arc::new(Control::default());
-        let worker_control = control.clone();
-        let (completed, finished) = async_channel::bounded(1);
-        let thread = thread::Builder::new()
-            .name("microphone".into())
-            .spawn(move || {
-                let result = work(&tx, &worker_control);
-                if tx.send_blocking(Event::AudioDone(id, result)).is_err() {
-                    return; // A gone owner observes this completion lane close.
-                }
-                // Publish completion after native teardown and the event send.
-                // A panic closes this lane, waking retirement as well.
+        let (exit, alive) = async_channel::bounded::<Infallible>(1);
+        let thread = thread::Builder::new().name("audio-capture".into()).spawn({
+            let control = control.clone();
+            move || {
+                // A panicked capture's state is discarded; only its event lane is used afterwards.
+                let result = panic::catch_unwind(AssertUnwindSafe(|| work(&events, &control)))
+                    .unwrap_or_else(|_| {
+                        Err(anyhow!("Microphone stopped unexpectedly. Try recording again."))
+                    });
                 #[expect(
                     clippy::let_underscore_must_use,
-                    reason = "The one-shot completion may only be closed by an owner that no longer needs retirement"
+                    reason = "A closed event lane belongs to a departed owner; retirement still observes this thread's exit"
                 )]
-                let _ = completed.try_send(());
-            })?;
-        Ok(Self {
+                let _ = events.send_blocking(CaptureEvent::Finished(id, result));
+                // Naming `alive` moves it into this closure; dropping it last closes `exit`.
+                drop(alive);
+            }
+        })?;
+        let signal = Signal {
             control,
-            finished,
-            thread: Some(thread),
+            thread: thread.thread().clone(),
+        };
+        Ok(Self {
+            signal,
+            exit,
+            thread,
         })
     }
-    pub(crate) fn finish(&self) {
-        self.control.finish();
-        if let Some(thread) = &self.thread {
-            thread.thread().unpark();
-        }
-    }
-    pub(crate) fn cancel(&self) {
-        self.control.cancel();
-        if let Some(thread) = &self.thread {
-            thread.thread().unpark();
-        }
+}
+
+impl Recording for Capture {
+    fn finish(&self) {
+        self.signal.finish();
     }
 
-    pub(crate) fn retire(mut self) -> impl std::future::Future<Output = ()> + Send + 'static {
-        self.cancel();
+    fn retire(self) -> impl Future<Output = ()> + Send + 'static {
+        let Self {
+            signal,
+            exit,
+            thread,
+        } = self;
+        // Dropping the signal cancels capture and wakes the thread.
+        drop(signal);
         async move {
+            exit.closed().await;
             #[expect(
                 clippy::let_underscore_must_use,
-                reason = "Either completion or sender closure after a worker panic permits reaping the native thread"
+                reason = "The capture already reported its outcome; a join error leaves no session to fail"
             )]
-            let _ = self.finished.recv().await;
-            if let Some(thread) = self.thread.take() {
-                #[expect(
-                    clippy::let_underscore_must_use,
-                    reason = "Joining guarantees teardown even when the worker panicked; retirement has no remaining session to fail"
-                )]
-                let _ = thread.join();
-            }
+            let _ = thread.join();
         }
     }
 }
-impl Drop for Capture {
-    fn drop(&mut self) {
-        // Emergency cancellation only; explicit retirement owns the join so
-        // dropping an owner never waits for a native driver on the input path.
-        self.cancel();
+
+/// Finish and cancel requests for the capture thread. Dropping it cancels without joining, so
+/// discarding a capture never waits for an audio driver on the owner's input path.
+struct Signal {
+    control: Arc<Control>,
+    thread: Thread,
+}
+
+impl Signal {
+    fn finish(&self) {
+        self.control.finish();
+        self.thread.unpark();
     }
 }
 
-fn startup_stopped(control: &Control, tx: &async_channel::Sender<Event>) -> bool {
-    control.mode() != Mode::Recording || tx.is_closed()
+impl Drop for Signal {
+    fn drop(&mut self) {
+        self.control.cancel();
+        self.thread.unpark();
+    }
+}
+
+/// Why a capture ended before its stream played.
+enum Startup {
+    Stopped,
+    Failed(anyhow::Error),
+}
+
+impl<E: Into<anyhow::Error>> From<E> for Startup {
+    fn from(error: E) -> Self {
+        Self::Failed(error.into())
+    }
+}
+
+/// A playing stream and the audio it has delivered so far. Fields drop in declaration order: the
+/// audio is erased first, then the stream stops before the device and host that opened it.
+struct Recorder {
+    pcm: Pcm16,
+    stream: Option<cpal::Stream>,
+    ring: Consumer<f32>,
+    errors: Receiver<cpal::Error>,
+    started: Instant,
+    rate: u32,
+    limit: usize,
+    _device: cpal::Device,
+    _host: cpal::Host,
+}
+
+impl Recorder {
+    fn open(
+        microphone: Option<&str>,
+        events: &Sender<CaptureEvent>,
+        control: &Arc<Control>,
+    ) -> Result<Self, Startup> {
+        // Driver calls can block; recheck between them so a cancelled startup never plays a stream.
+        let checkpoint = || {
+            if control.mode() == Mode::Recording && !events.is_closed() {
+                Ok(())
+            } else {
+                Err(Startup::Stopped)
+            }
+        };
+        checkpoint()?;
+        let host = cpal::default_host();
+        checkpoint()?;
+        let device = select_device(&host, microphone, checkpoint)?;
+        checkpoint()?;
+        let format = device.default_input_config().map_err(microphone_error)?;
+        checkpoint()?;
+        let (rate, channels) = rate_and_channels(&format)?;
+        let sample_rate = usize::try_from(rate)?;
+        let (producer, ring) = RingBuffer::new(sample_rate);
+        let (errors, stream_errors) = async_channel::bounded(1);
+        let started = Instant::now();
+        let limit = sample_rate
+            .checked_mul(usize::try_from(RECORDING_LIMIT.as_secs())?)
+            .context("Microphone recording limit is unsupported")?;
+        let callbacks = CallbackState {
+            channels,
+            producer,
+            control: control.clone(),
+            errors,
+            started,
+            limit,
+        };
+        let stream = build_stream(&device, &format, callbacks)?;
+        checkpoint()?;
+        // PCM stays at the device's native rate; the engine resamples.
+        let pcm = Pcm16::with_reservation(samples_in(INITIAL_RESERVATION, rate));
+        checkpoint()?;
+        stream.play().map_err(microphone_error)?;
+        Ok(Self {
+            pcm,
+            stream: Some(stream),
+            ring,
+            errors: stream_errors,
+            started,
+            rate,
+            limit,
+            _device: device,
+            _host: host,
+        })
+    }
+
+    fn record(
+        mut self,
+        id: SessionId,
+        events: &Sender<CaptureEvent>,
+        control: &Control,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        let mut meter = LevelMeter::new();
+        let mut ready = false;
+        loop {
+            if control.mode() == Mode::Cancelled || events.is_closed() {
+                return Ok(None);
+            }
+            capture_failure(control, &self.errors)?;
+            if control.mode() == Mode::Finishing
+                || self.started.elapsed() >= RECORDING_LIMIT
+                || self.pcm.samples() >= self.limit
+            {
+                control.finish();
+                self.stream = None;
+            }
+            if !ready && !self.ring.is_empty() {
+                ready = true;
+                events.send_blocking(CaptureEvent::Ready(id))?;
+            }
+            consume_pcm(&mut self.ring, &mut self.pcm, &mut meter, self.limit);
+            if let Some(level) = meter.take_level() {
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "Meter updates are expendable presentation; a full or closed event lane must not interrupt audio capture"
+                )]
+                let _ = events.try_send(CaptureEvent::Level(id, level));
+            }
+            if self.stream.is_none() {
+                break;
+            }
+            // Finish and cancel unpark this thread at once, and an unpark that lands before the
+            // wait is not lost; the timeout only paces draining of the ring.
+            thread::park_timeout(DRAIN_INTERVAL);
+        }
+        self.finalize(control)
+    }
+
+    fn finalize(mut self, control: &Control) -> anyhow::Result<Option<Vec<u8>>> {
+        if control.mode() == Mode::Cancelled {
+            return Ok(None);
+        }
+        // A callback may have failed between the last poll and stream teardown.
+        capture_failure(control, &self.errors)?;
+        if self.pcm.samples() < samples_in(MINIMUM_RECORDING, self.rate)
+            || !self.pcm.trim_quiet_edges(self.rate)
+        {
+            return Ok(None);
+        }
+        self.pcm.into_wav(self.rate).map(Some)
+    }
+}
+
+/// Mono PCM16 behind a reserved WAV header, so encoding never copies the audio. Audio that is not
+/// encoded is zeroed on drop, best effort: copies in the ring, allocator, HTTP client, or engine
+/// remain.
+struct Pcm16 {
+    bytes: Vec<u8>,
+}
+
+impl Pcm16 {
+    fn with_reservation(samples: usize) -> Self {
+        let mut bytes = Vec::with_capacity(WAV_HEADER_BYTES.saturating_add(bytes_in(samples)));
+        bytes.resize(WAV_HEADER_BYTES, 0);
+        Self { bytes }
+    }
+
+    fn silence(samples: usize) -> Self {
+        Self {
+            bytes: vec![0; WAV_HEADER_BYTES.saturating_add(bytes_in(samples))],
+        }
+    }
+
+    fn audio(&self) -> &[u8] {
+        self.bytes.get(WAV_HEADER_BYTES..).unwrap_or_default()
+    }
+
+    fn samples(&self) -> usize {
+        self.audio().len() / SAMPLE_BYTES
+    }
+
+    /// Appends a sample, doubling capacity when full but never past `limit` samples, so a recording
+    /// at the limit cannot hold twice its size. Growth happens here, never in the audio callback.
+    fn push(&mut self, sample: i16, limit: usize) {
+        if self.bytes.len().saturating_add(SAMPLE_BYTES) > self.bytes.capacity() {
+            let full = WAV_HEADER_BYTES.saturating_add(bytes_in(limit));
+            let capacity = self.bytes.capacity().saturating_mul(2).min(full);
+            self.bytes
+                .reserve_exact(capacity.saturating_sub(self.bytes.len()));
+        }
+        self.bytes.extend_from_slice(&sample.to_le_bytes());
+    }
+
+    /// Trims quiet edges conservatively, keeping every interior pause, and reports whether enough
+    /// audible audio remains to transcribe.
+    fn trim_quiet_edges(&mut self, rate: u32) -> bool {
+        if !(1..=MAX_SAMPLE_RATE).contains(&rate) {
+            return false;
+        }
+        let window_bytes = bytes_in(samples_in(ENERGY_WINDOW, rate).max(1));
+        let quiet_edge = bytes_in(samples_in(QUIET_EDGE, rate));
+        let padding = bytes_in(samples_in(EDGE_PADDING, rate));
+        let audio = self.audio();
+        let mut first = None;
+        let mut end = 0;
+        let mut audible = 0_usize;
+        for (index, window) in audio.chunks(window_bytes).enumerate() {
+            if is_audible(window) {
+                let offset = index.saturating_mul(window_bytes);
+                first.get_or_insert(offset);
+                end = offset.saturating_add(window.len());
+                audible = audible.saturating_add(window.len() / SAMPLE_BYTES);
+            }
+        }
+        let minimum_audible = samples_in(MINIMUM_AUDIBLE, rate).max(1);
+        let Some(first) = first.filter(|_| audible >= minimum_audible) else {
+            return false;
+        };
+        let start = if first >= quiet_edge {
+            first.saturating_sub(padding)
+        } else {
+            0
+        };
+        let end = if audio.len().saturating_sub(end) >= quiet_edge {
+            end.saturating_add(padding).min(audio.len())
+        } else {
+            audio.len()
+        };
+        self.retain_audio(start..end);
+        self.release_excess_capacity();
+        true
+    }
+
+    fn retain_audio(&mut self, audio: Range<usize>) {
+        let length = audio.len();
+        if audio.start != 0 {
+            let source = WAV_HEADER_BYTES.saturating_add(audio.start)
+                ..WAV_HEADER_BYTES.saturating_add(audio.end);
+            self.bytes.copy_within(source, WAV_HEADER_BYTES);
+        }
+        self.bytes.truncate(WAV_HEADER_BYTES.saturating_add(length));
+    }
+
+    /// Ordinary utterances stay allocation-free; only a large reservation that the remaining audio
+    /// fills to at most a quarter is reallocated.
+    fn release_excess_capacity(&mut self) {
+        let capacity = self.bytes.capacity();
+        if capacity.saturating_sub(self.bytes.len()) >= RECLAIM_SLACK_BYTES
+            && capacity / 4 >= self.bytes.len()
+        {
+            self.bytes.shrink_to_fit();
+        }
+    }
+
+    fn into_wav(mut self, rate: u32) -> anyhow::Result<Vec<u8>> {
+        let Some((header, audio)) = self.bytes.split_first_chunk_mut::<WAV_HEADER_BYTES>() else {
+            bail!("Recording header is incomplete. Try recording again.");
+        };
+        let Some(encoded) = wav_header(audio.len(), rate) else {
+            bail!(
+                "Recording format is unsupported. Choose another microphone in Settings and try again."
+            );
+        };
+        *header = encoded;
+        Ok(mem::take(&mut self.bytes))
+    }
+}
+
+impl Drop for Pcm16 {
+    fn drop(&mut self) {
+        self.bytes.fill(0);
+    }
+}
+
+/// Everything the stream callbacks own for one capture.
+struct CallbackState {
+    channels: NonZeroUsize,
+    producer: Producer<f32>,
+    control: Arc<Control>,
+    errors: Sender<cpal::Error>,
+    started: Instant,
+    limit: usize,
+}
+
+/// Accumulates sample energy and reports a speech level once per meter interval.
+struct LevelMeter {
+    energy: f64,
+    samples: u32,
+    since: Instant,
+}
+
+impl LevelMeter {
+    fn new() -> Self {
+        Self {
+            energy: 0.0,
+            samples: 0,
+            since: Instant::now(),
+        }
+    }
+
+    fn add(&mut self, sample: f32) {
+        self.energy += f64::from(sample * sample);
+        self.samples = self.samples.saturating_add(1);
+    }
+
+    fn take_level(&mut self) -> Option<f32> {
+        if self.since.elapsed() < METER_INTERVAL {
+            return None;
+        }
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "The display meter intentionally converts bounded normalized RMS to f32; PCM remains independently encoded"
+        )]
+        let rms = (self.energy / f64::from(self.samples.max(1))).sqrt() as f32;
+        *self = Self::new();
+        Some(speech_meter_level(rms))
+    }
+}
+
+pub(crate) struct InputDevice {
+    /// The stable device identifier saved in settings.
+    pub id: String,
+    /// For display only; device names need not be unique.
+    pub name: String,
 }
 
 fn record(
     id: SessionId,
     microphone: Option<&str>,
-    tx: &async_channel::Sender<Event>,
+    events: &Sender<CaptureEvent>,
     control: &Arc<Control>,
 ) -> anyhow::Result<Option<Vec<u8>>> {
-    if startup_stopped(control, tx) {
-        return Ok(None);
+    match Recorder::open(microphone, events, control) {
+        Ok(recorder) => recorder.record(id, events, control),
+        Err(Startup::Stopped) => Ok(None),
+        Err(Startup::Failed(error)) => Err(error),
     }
-    let host = cpal::default_host();
-    if startup_stopped(control, tx) {
-        return Ok(None);
-    }
-    let device = if let Some(id) = microphone {
-        let mut selected = None;
-        for device in host.input_devices()? {
-            if startup_stopped(control, tx) {
-                return Ok(None);
-            }
-            if device.id().is_ok_and(|actual| actual.to_string() == id) {
-                selected = Some(device);
-                break;
-            }
-        }
-        if startup_stopped(control, tx) {
-            return Ok(None);
-        }
-        selected.context(
-            "Selected microphone is disconnected. Reconnect it or choose another in Settings.",
-        )?
-    } else {
-        host.default_input_device()
-            .context("No microphone found. Connect a microphone and try again.")?
+}
+
+fn select_device(
+    host: &cpal::Host,
+    microphone: Option<&str>,
+    checkpoint: impl Fn() -> Result<(), Startup>,
+) -> Result<cpal::Device, Startup> {
+    let Some(id) = microphone else {
+        return Ok(host
+            .default_input_device()
+            .context("No microphone found. Connect a microphone and try again.")?);
     };
-    if startup_stopped(control, tx) {
-        return Ok(None);
+    for device in host.input_devices()? {
+        checkpoint()?;
+        if device.id().is_ok_and(|actual| actual.to_string() == id) {
+            return Ok(device);
+        }
     }
-    let format = device.default_input_config().map_err(microphone_error)?;
-    if startup_stopped(control, tx) {
-        return Ok(None);
-    }
+    checkpoint()?;
+    Err(
+        anyhow!("Selected microphone is disconnected. Reconnect it or choose another in Settings.")
+            .into(),
+    )
+}
+
+fn rate_and_channels(format: &cpal::SupportedStreamConfig) -> anyhow::Result<(u32, NonZeroUsize)> {
     let rate = format.sample_rate();
     let channels = NonZeroUsize::new(usize::from(format.channels()))
         .context("Unsupported microphone format: no input channels")?;
-    if rate == 0 || rate > 192_000 || channels.get() > 32 {
-        bail!("Unsupported microphone format");
-    }
-    let sample_rate = usize::try_from(rate)?;
-    let (producer, mut consumer) = RingBuffer::new(sample_rate);
-    let (errors, stream_errors) = async_channel::bounded(1);
-    let started = Instant::now();
-    let limit = sample_rate
-        .checked_mul(usize::try_from(RECORDING_LIMIT.as_secs())?)
-        .context("Microphone recording limit is unsupported")?;
-    let stream = match format.sample_format() {
-        SampleFormat::F32 => stream::<f32>(
-            &device,
-            format.config(),
-            channels,
-            producer,
-            control.clone(),
-            errors,
-            started,
-            limit,
-        ),
-        SampleFormat::I16 => stream::<i16>(
-            &device,
-            format.config(),
-            channels,
-            producer,
-            control.clone(),
-            errors,
-            started,
-            limit,
-        ),
-        SampleFormat::U16 => stream::<u16>(
-            &device,
-            format.config(),
-            channels,
-            producer,
-            control.clone(),
-            errors,
-            started,
-            limit,
-        ),
+    ensure!(
+        (1..=MAX_SAMPLE_RATE).contains(&rate) && channels.get() <= MAX_CHANNELS,
+        "Unsupported microphone format"
+    );
+    Ok((rate, channels))
+}
+
+fn build_stream(
+    device: &cpal::Device,
+    format: &cpal::SupportedStreamConfig,
+    callbacks: CallbackState,
+) -> anyhow::Result<cpal::Stream> {
+    match format.sample_format() {
+        SampleFormat::F32 => stream::<f32>(device, format.config(), callbacks),
+        SampleFormat::I16 => stream::<i16>(device, format.config(), callbacks),
+        SampleFormat::U16 => stream::<u16>(device, format.config(), callbacks),
         _ => bail!("Microphone sample format is unsupported. Choose a standard PCM microphone."),
-    }?;
-    if startup_stopped(control, tx) {
-        return Ok(None);
     }
-    // Keep mono PCM at the device's native rate; the local engine resamples it.
-    // Reserve for an ordinary utterance; long recordings grow on this consumer
-    // thread, never in the real-time callback.
-    let mut pcm = Vec::with_capacity(sample_rate.saturating_mul(20).saturating_add(44));
-    pcm.resize(44, 0_u8);
-    if startup_stopped(control, tx) {
-        return Ok(None);
-    }
-    stream.play().map_err(microphone_error)?;
-    let mut stream = Some(stream);
-    let mut ready = false;
-    let mut energy = 0.0_f64;
-    let mut count = 0_u32;
-    let mut last_level = Instant::now();
-    loop {
-        if control.mode() == Mode::Cancelled || tx.is_closed() {
-            pcm.fill(0_u8);
-            return Ok(None);
-        }
-        if let Err(error) = capture_failure(control, &stream_errors) {
-            pcm.fill(0_u8);
-            return Err(error);
-        }
-        if control.mode() == Mode::Finishing
-            || started.elapsed() >= RECORDING_LIMIT
-            || pcm.len().saturating_sub(44) / 2 >= limit
-        {
-            control.finish();
-            drop(stream.take());
-        }
-        if !ready && !consumer.is_empty() {
-            ready = true;
-            tx.send_blocking(Event::Ready(id))?;
-        }
-        let (added_energy, added_count) = consume_pcm(&mut consumer, &mut pcm, limit);
-        energy += added_energy;
-        count = count.saturating_add(added_count);
-        if last_level.elapsed() >= Duration::from_millis(32) {
-            #[expect(
-                clippy::cast_possible_truncation,
-                reason = "The display meter intentionally converts bounded normalized RMS to f32; PCM remains independently encoded"
-            )]
-            let rms = (energy / f64::from(count.max(1))).sqrt() as f32;
-            // Speech meter spans -60 to -6 dBFS; the top is a speech reference,
-            // rather than a clipping indicator at 0 dBFS.
-            let level = (20.0f32.mul_add(rms.max(0.000_001).log10(), 60.0) / 54.0).clamp(0.0, 1.0);
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "Meter updates are expendable presentation; a full or closed event lane must not interrupt audio capture"
-            )]
-            let _ = tx.try_send(Event::Level(id, level));
-            energy = 0.0;
-            count = 0;
-            last_level = Instant::now();
-        }
-        if stream.is_none() {
-            break;
-        }
-        // Finish/cancel can wake this owned consumer immediately. An unpark
-        // arriving before the wait remains pending; audio polling stays bounded.
-        thread::park_timeout(Duration::from_millis(5));
-    }
-    if control.mode() == Mode::Cancelled {
-        pcm.fill(0);
-        return Ok(None);
-    }
-    // A callback may have failed between the last poll and stream teardown.
-    if let Err(error) = capture_failure(control, &stream_errors) {
-        pcm.fill(0);
-        return Err(error);
-    }
-    if pcm.len().saturating_sub(44) / 2 < sample_rate / 5 || !trim_quiet_edges(&mut pcm, rate) {
-        pcm.fill(0); // Best effort for this owned buffer, as on cancellation.
-        return Ok(None);
-    }
-    wave(pcm, rate).map(Some)
 }
 
-fn consume_pcm(consumer: &mut Consumer<f32>, pcm: &mut Vec<u8>, limit: usize) -> (f64, u32) {
-    let mut energy = 0.0;
-    let mut count = 0_u32;
-    let Ok(chunk) = consumer.read_chunk(consumer.slots()) else {
-        return (energy, count);
-    };
-    let (first, second) = chunk.as_slices();
-    for &sample in first.iter().chain(second) {
-        if pcm.len().saturating_sub(44) / 2 < limit {
-            let sample = if sample.is_finite() {
-                sample.clamp(-1.0, 1.0)
-            } else {
-                0.0
-            };
-            energy += f64::from(sample * sample);
-            count = count.saturating_add(1_u32);
-            if pcm.len().saturating_add(2) > pcm.capacity() {
-                let capacity = (pcm.capacity().saturating_mul(2))
-                    .min(limit.saturating_mul(2).saturating_add(44));
-                pcm.reserve_exact(capacity.saturating_sub(pcm.len()));
-            }
-            #[expect(
-                clippy::cast_possible_truncation,
-                reason = "A finite sample clamped to [-1, 1] intentionally quantizes to signed PCM16 without overflow"
-            )]
-            let encoded = (sample * 32_767.0) as i16;
-            pcm.extend_from_slice(&encoded.to_le_bytes());
-        }
-    }
-    chunk.commit_all();
-    (energy, count)
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "The callback captures explicit device and session ownership once at stream construction"
-)]
 fn stream<T>(
     device: &cpal::Device,
     config: cpal::StreamConfig,
-    channels: NonZeroUsize,
-    producer: Producer<f32>,
-    control: Arc<Control>,
-    errors: async_channel::Sender<cpal::Error>,
-    started: Instant,
-    limit: usize,
+    callbacks: CallbackState,
 ) -> anyhow::Result<cpal::Stream>
 where
     T: SizedSample,
     f32: cpal::FromSample<T>,
 {
-    let (mut data, error) =
-        capture_callbacks::<T>(channels, producer, control, errors, started, limit);
+    let (mut data, error) = capture_callbacks::<T>(callbacks);
     device
         .build_input_stream(config, move |samples, _| data(samples), error, None)
         .map_err(microphone_error)
 }
 
-// The callback pair owns one capture. Keeping it independent of device creation
-// lets tests replay native callback ordering without opening a microphone.
+/// The callback pair for one capture, independent of any device so tests can replay native callback
+/// ordering without opening a microphone.
 fn capture_callbacks<T>(
-    channels: NonZeroUsize,
-    mut producer: Producer<f32>,
-    control: Arc<Control>,
-    errors: async_channel::Sender<cpal::Error>,
-    started: Instant,
-    limit: usize,
+    state: CallbackState,
 ) -> (
     impl FnMut(&[T]) + Send + 'static,
     impl FnMut(cpal::Error) + Send + 'static,
@@ -353,23 +550,28 @@ where
     T: SizedSample,
     f32: cpal::FromSample<T>,
 {
-    let mut samples = 0_usize;
-    // This capture-local flag controls whether a discontinuity may discard
-    // speech already queued by the data callback. It never publishes UI state.
-    let active = control.clone();
+    let CallbackState {
+        channels,
+        mut producer,
+        control,
+        errors,
+        started,
+        limit,
+    } = state;
+    let error_control = control.clone();
+    let mut queued_total = 0_usize;
     (
         move |data: &[T]| {
             if control.mode() != Mode::Recording || started.elapsed() >= RECORDING_LIMIT {
                 return;
             }
-            let frames = (data.len() / channels).min(limit.saturating_sub(samples));
+            let frames = (data.len() / channels).min(limit.saturating_sub(queued_total));
             let queued = frames.min(producer.slots());
             let Ok(chunk) = producer.write_chunk_uninit(queued) else {
-                control.overrun();
+                control.mark_overflowed();
                 return;
             };
-            // This safe rtrb operation initializes and publishes a whole
-            // callback packet once, without scratch buffers or allocation.
+            // One uninitialized chunk publishes the whole packet without scratch or allocation.
             chunk.fill_from_iter(data.chunks_exact(channels.get()).take(queued).map(|frame| {
                 frame
                     .iter()
@@ -377,35 +579,22 @@ where
                     .sum::<f32>()
                     / channels.get() as f32
             }));
-            if queued > 0 && samples == 0 {
-                control.start();
+            if queued > 0 && queued_total == 0 {
+                control.mark_first_sample_queued();
             }
-            samples = samples.saturating_add(queued);
+            queued_total = queued_total.saturating_add(queued);
             if queued < frames {
-                control.overrun();
+                control.mark_overflowed();
             }
         },
-        move |error| handle_stream_error(error, &errors, active.started()),
+        move |error| handle_stream_error(error, &errors, &error_control),
     )
 }
 
-fn handle_stream_error(
-    error: cpal::Error,
-    errors: &async_channel::Sender<cpal::Error>,
-    audio_started: bool,
-) {
-    // WASAPI can report a discontinuity before its first packet. No previously
-    // queued speech can be lost then. Once samples have arrived, stop on Xrun
-    // rather than silently transcribing an utterance with potentially lost words.
-    if (error.kind() == cpal::ErrorKind::Xrun && !audio_started)
-        || matches!(
-            error.kind(),
-            cpal::ErrorKind::RealtimeDenied | cpal::ErrorKind::DeviceChanged
-        )
-    {
+fn handle_stream_error(error: cpal::Error, errors: &Sender<cpal::Error>, control: &Control) {
+    if is_recoverable(error.kind(), control.first_sample_queued()) {
         return;
     }
-    // Keep the first fatal error without blocking or formatting on the callback.
     #[expect(
         clippy::let_underscore_must_use,
         reason = "A full single-slot lane already retains the first fatal error; a closed lane has no recording owner"
@@ -413,11 +602,19 @@ fn handle_stream_error(
     let _ = errors.try_send(error);
 }
 
-fn capture_failure(
-    control: &Control,
-    errors: &async_channel::Receiver<cpal::Error>,
-) -> anyhow::Result<()> {
-    if control.overran() {
+fn is_recoverable(kind: cpal::ErrorKind, first_sample_queued: bool) -> bool {
+    match kind {
+        // WASAPI can report a discontinuity before its first packet, when no queued speech can be
+        // lost. Later, an Xrun may have dropped words, so it fails the recording.
+        cpal::ErrorKind::Xrun => !first_sample_queued,
+        // Refused real-time priority and automatic rerouting leave the stream delivering.
+        cpal::ErrorKind::RealtimeDenied | cpal::ErrorKind::DeviceChanged => true,
+        _ => false,
+    }
+}
+
+fn capture_failure(control: &Control, errors: &Receiver<cpal::Error>) -> anyhow::Result<()> {
+    if control.overflowed() {
         bail!(
             "Recording buffer filled because capture could not keep up. Reduce system load and try again."
         );
@@ -442,180 +639,241 @@ fn microphone_error(error: cpal::Error) -> anyhow::Error {
         },
         _ => "Try recording again or choose another microphone in Settings.",
     };
-    anyhow::anyhow!("Microphone failed ({:?}): {error} {guidance}", error.kind())
+    anyhow!("Microphone failed ({:?}): {error} {guidance}", error.kind())
 }
 
-// Use 20 ms energy windows, at least 100 ms audible audio, and 500 ms
-// padding when a quiet edge exceeds a second.
-// This is conservative edge trimming, not VAD; all interior pauses remain.
-fn trim_quiet_edges(pcm: &mut Vec<u8>, rate: u32) -> bool {
-    let Ok(rate) = usize::try_from(rate) else {
-        return false;
+/// Drains the ring, appending samples to `pcm` until it holds `limit` and metering each one kept.
+fn consume_pcm(ring: &mut Consumer<f32>, pcm: &mut Pcm16, meter: &mut LevelMeter, limit: usize) {
+    let Ok(chunk) = ring.read_chunk(ring.slots()) else {
+        return;
     };
-    if rate == 0 || rate > 192_000 {
-        return false;
+    let (first, second) = chunk.as_slices();
+    let room = limit.saturating_sub(pcm.samples());
+    for &sample in first.iter().chain(second).take(room) {
+        let sample = if sample.is_finite() {
+            sample.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+        meter.add(sample);
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "A finite sample clamped to [-1, 1] intentionally quantizes to signed PCM16 without overflow"
+        )]
+        let encoded = (sample * 32_767.0) as i16;
+        pcm.push(encoded, limit);
     }
-    let bytes_per_second = rate.saturating_mul(2);
-    let padding = (rate / 2).saturating_mul(2); // Keep a whole PCM sample.
-    let window_bytes = (rate / 50).max(1).saturating_mul(2);
-    let Some(audio) = pcm.get(44..) else {
-        return false;
-    };
-    let mut first = None;
-    let mut end = 0;
-    let mut audible = 0_usize;
-    let mut offset = 0_usize;
-    for window in audio.chunks(window_bytes) {
-        let energy = window
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|pair| {
-                let sample = i16::from_le_bytes(*pair);
-                u64::from(sample.unsigned_abs()).pow(2)
-            })
-            // A 20 ms window at the 192 kHz cap contains at most 3840 samples:
-            // its squared sum is below 2^42. Wrapping cannot occur; this form
-            // lets the compiler vectorize the exact integer reduction.
-            .fold(0_u64, u64::wrapping_add);
-        if energy as f64 / (32768.0 * 32768.0) >= 0.003_f64.powi(2) * (window.len() / 2) as f64 {
-            first.get_or_insert(offset);
-            end = offset.saturating_add(window.len());
-            audible = audible.saturating_add(window.len() / 2);
-        }
-        offset = offset.saturating_add(window.len());
-    }
-    let Some(first) = first.filter(|_| audible >= (rate / 10).max(1)) else {
-        return false;
-    };
-    let start = if first >= bytes_per_second {
-        first.saturating_sub(padding)
-    } else {
-        0
-    };
-    if audio.len().saturating_sub(end) >= bytes_per_second {
-        end = end.saturating_add(padding);
-    } else {
-        end = audio.len();
-    }
-    if start != 0 {
-        pcm.copy_within(
-            44_usize.saturating_add(start)..44_usize.saturating_add(end),
-            44,
-        );
-    }
-    pcm.truncate(44_usize.saturating_add(end.saturating_sub(start)));
-    compact_trimmed_pcm(pcm);
-    true
+    chunk.commit_all();
 }
 
-fn compact_trimmed_pcm(pcm: &mut Vec<u8>) {
-    // Keep ordinary utterances allocation-free after trimming. Reclaim only
-    // large reservations whose remaining audio occupies at most a quarter.
-    if pcm.capacity().saturating_sub(pcm.len()) >= 8 * 1024 * 1024
-        && pcm.capacity() / 4 >= pcm.len()
-    {
-        pcm.shrink_to_fit();
+/// Maps RMS onto the meter's dBFS span, whose top is a speech reference rather than clipping.
+fn speech_meter_level(rms: f32) -> f32 {
+    let above_floor = 20.0_f32.mul_add(rms.max(0.000_001).log10(), -METER_FLOOR_DBFS);
+    (above_floor / (METER_TOP_DBFS - METER_FLOOR_DBFS)).clamp(0.0, 1.0)
+}
+
+fn is_audible(window: &[u8]) -> bool {
+    let energy = window
+        .as_chunks::<SAMPLE_BYTES>()
+        .0
+        .iter()
+        .map(|pair| u64::from(i16::from_le_bytes(*pair).unsigned_abs()).pow(2))
+        // A 20 ms window at 192 kHz holds at most 3840 samples, whose squares sum below 2^42, so
+        // wrapping addition is exact and lets the compiler vectorize it.
+        .fold(0_u64, u64::wrapping_add);
+    let samples = window.len() / SAMPLE_BYTES;
+    energy as f64 / (32768.0 * 32768.0) >= AUDIBLE_RMS.powi(2) * samples as f64
+}
+
+/// The canonical header for `data_bytes` of mono PCM16, if they can be described.
+fn wav_header(data_bytes: usize, rate: u32) -> Option<[u8; WAV_HEADER_BYTES]> {
+    // A RIFF chunk's size excludes its own four-byte ID and four-byte size.
+    const CHUNK_HEADER_BYTES: usize = 8;
+    const FORMAT_CHUNK_BYTES: u32 = 16;
+    const PCM: u16 = 1;
+    const MONO: u16 = 1;
+    const BITS_PER_SAMPLE: u16 = 16;
+    if rate == 0 || !data_bytes.is_multiple_of(SAMPLE_BYTES) {
+        return None;
     }
+    let riff_bytes = data_bytes.checked_add(WAV_HEADER_BYTES - CHUNK_HEADER_BYTES)?;
+    let block_align = u16::try_from(SAMPLE_BYTES).ok()?;
+    let byte_rate = rate.checked_mul(u32::from(block_align))?;
+    let fields: [&[u8]; 13] = [
+        b"RIFF",
+        &u32::try_from(riff_bytes).ok()?.to_le_bytes(),
+        b"WAVE",
+        b"fmt ",
+        &FORMAT_CHUNK_BYTES.to_le_bytes(),
+        &PCM.to_le_bytes(),
+        &MONO.to_le_bytes(),
+        &rate.to_le_bytes(),
+        &byte_rate.to_le_bytes(),
+        &block_align.to_le_bytes(),
+        &BITS_PER_SAMPLE.to_le_bytes(),
+        b"data",
+        &u32::try_from(data_bytes).ok()?.to_le_bytes(),
+    ];
+    let mut header = [0; WAV_HEADER_BYTES];
+    for (byte, field) in header.iter_mut().zip(fields.into_iter().flatten()) {
+        *byte = *field;
+    }
+    Some(header)
 }
 
-pub(crate) fn wave(mut pcm: Vec<u8>, rate: u32) -> anyhow::Result<Vec<u8>> {
-    let Some((header, audio)) = pcm.split_at_mut_checked(44) else {
-        pcm.fill(0);
-        bail!("Recording header is incomplete. Try recording again.");
-    };
-    let metadata = (|| {
-        let bytes = u32::try_from(audio.len()).ok()?;
-        if rate == 0 || !bytes.is_multiple_of(2) {
-            return None;
-        }
-        Some((bytes, bytes.checked_add(36)?, rate.checked_mul(2)?))
-    })();
-    let Some((bytes, chunk_bytes, byte_rate)) = metadata else {
-        header.fill(0);
-        audio.fill(0);
-        bail!(
-            "Recording format is unsupported. Choose another microphone in Settings and try again."
-        );
-    };
-    let mut wav = Vec::with_capacity(44);
-    wav.extend(b"RIFF");
-    wav.extend(chunk_bytes.to_le_bytes());
-    wav.extend(b"WAVEfmt ");
-    wav.extend(16_u32.to_le_bytes());
-    wav.extend(1_u16.to_le_bytes());
-    wav.extend(1_u16.to_le_bytes());
-    wav.extend(rate.to_le_bytes());
-    wav.extend(byte_rate.to_le_bytes());
-    wav.extend(2_u16.to_le_bytes());
-    wav.extend(16_u16.to_le_bytes());
-    wav.extend(b"data");
-    wav.extend(bytes.to_le_bytes());
-    header.copy_from_slice(&wav);
-    Ok(pcm)
+/// The sample rate field of a header written by this module.
+pub(crate) fn wav_sample_rate(wav: &[u8]) -> Option<u32> {
+    let field = wav.get(SAMPLE_RATE_OFFSET..)?.first_chunk()?;
+    Some(u32::from_le_bytes(*field))
 }
 
-/// Lists input devices without opening a stream. Drivers may block, and CPAL
-/// leaves its calling thread in a single-threaded COM apartment, which a shared
-/// executor thread must not keep. Enumeration runs on its own short-lived thread.
-pub(crate) async fn microphones() -> anyhow::Result<Vec<(String, String)>> {
-    let (tx, rx) = async_channel::bounded(1);
+pub(crate) fn silent_wav(rate: u32, duration: Duration) -> anyhow::Result<Vec<u8>> {
+    Pcm16::silence(samples_in(duration, rate)).into_wav(rate)
+}
+
+fn samples_in(duration: Duration, rate: u32) -> usize {
+    let samples = u128::from(rate).saturating_mul(duration.as_millis()) / 1000;
+    usize::try_from(samples).unwrap_or(usize::MAX)
+}
+
+fn bytes_in(samples: usize) -> usize {
+    samples.saturating_mul(SAMPLE_BYTES)
+}
+
+/// Lists input devices without opening a stream. Drivers may block, and CPAL leaves its calling
+/// thread in a single-threaded COM apartment, so enumeration runs on its own detached thread.
+pub(crate) async fn microphones() -> anyhow::Result<Vec<InputDevice>> {
+    let (reply, devices) = async_channel::bounded(1);
     thread::Builder::new()
-        .name("microphones".into())
+        .name("microphone-scan".into())
         .spawn(move || {
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "Closing the one-shot receiver means the settings owner no longer needs the device list"
             )]
-            let _ = tx.send_blocking(enumerate_microphones());
+            let _ = reply.send_blocking(enumerate_microphones());
         })?;
-    rx.recv().await?
+    devices.recv().await?
 }
 
-fn enumerate_microphones() -> anyhow::Result<Vec<(String, String)>> {
+fn enumerate_microphones() -> anyhow::Result<Vec<InputDevice>> {
     cpal::default_host()
         .input_devices()?
         .map(|device| {
-            Ok((
-                device.id()?.to_string(),
-                device.description()?.name().to_owned(),
-            ))
+            Ok(InputDevice {
+                id: device.id()?.to_string(),
+                name: device.description()?.name().to_owned(),
+            })
         })
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::PoisonError;
+
+    use tokio::time::timeout;
+
     use super::*;
 
-    #[test]
-    fn wave_encodes_pcm16_in_place_with_exact_riff_lengths() -> anyhow::Result<()> {
-        let mut pcm = vec![0xff; 44];
-        let samples = [i16::MIN, 0, i16::MAX];
-        for sample in samples {
-            pcm.extend_from_slice(&sample.to_le_bytes());
+    const PATIENCE: Duration = Duration::from_secs(2);
+
+    /// A callback state over a fresh ring, with the ends a capture thread would keep.
+    fn callback_fixture(
+        channels: usize,
+        capacity: usize,
+        limit: usize,
+    ) -> (
+        CallbackState,
+        Consumer<f32>,
+        Receiver<cpal::Error>,
+        Arc<Control>,
+    ) {
+        let (producer, ring) = RingBuffer::new(capacity);
+        let (errors, received) = async_channel::bounded(1);
+        let control = Arc::new(Control::default());
+        let state = CallbackState {
+            channels: NonZeroUsize::new(channels).unwrap(),
+            producer,
+            control: control.clone(),
+            errors,
+            started: Instant::now(),
+            limit,
+        };
+        (state, ring, received, control)
+    }
+
+    fn pcm_from(segments: &[(usize, i16)]) -> Pcm16 {
+        let mut pcm = Pcm16::with_reservation(0);
+        for &(samples, amplitude) in segments {
+            for _ in 0..samples {
+                pcm.push(amplitude, usize::MAX);
+            }
         }
-        let allocation = pcm.as_ptr();
-        let encoded = wave(pcm, 16_000)?;
+        pcm
+    }
+
+    #[test]
+    fn wav_encoding_rewrites_the_header_in_place_with_exact_riff_lengths() -> anyhow::Result<()> {
+        let mut pcm = Pcm16 {
+            bytes: vec![0xFF; WAV_HEADER_BYTES],
+        };
+        for sample in [i16::MIN, 0, i16::MAX] {
+            pcm.push(sample, usize::MAX);
+        }
+        let allocation = pcm.bytes.as_ptr();
+        let encoded = pcm.into_wav(16_000)?;
         assert_eq!(encoded.as_ptr(), allocation);
         assert_eq!(
-            &encoded[..44],
+            &encoded[..WAV_HEADER_BYTES],
             &[
                 b'R', b'I', b'F', b'F', 42, 0, 0, 0, b'W', b'A', b'V', b'E', b'f', b'm', b't',
-                b' ', 16, 0, 0, 0, 1, 0, 1, 0, 0x80, 0x3e, 0, 0, 0, 0x7d, 0, 0, 2, 0, 16, 0, b'd',
+                b' ', 16, 0, 0, 0, 1, 0, 1, 0, 0x80, 0x3E, 0, 0, 0, 0x7D, 0, 0, 2, 0, 16, 0, b'd',
                 b'a', b't', b'a', 6, 0, 0, 0,
             ]
         );
-        assert_eq!(&encoded[44..], &[0, 0x80, 0, 0, 0xff, 0x7f]);
+        assert_eq!(&encoded[WAV_HEADER_BYTES..], &[0, 0x80, 0, 0, 0xFF, 0x7F]);
         Ok(())
     }
 
     #[test]
-    fn wave_rejects_incomplete_headers_partial_samples_and_invalid_rates() {
-        for (length, rate) in [(43, 16_000), (45, 16_000), (46, 0), (46, u32::MAX)] {
-            let error = wave(vec![0x5a; length], rate).unwrap_err().to_string();
-            assert!(error.contains("Try recording again") || error.contains("try again"));
+    fn wav_encoding_rejects_incomplete_headers_partial_samples_and_invalid_rates() {
+        let incomplete = "Recording header is incomplete";
+        let unsupported = "Recording format is unsupported";
+        for (length, rate, expected) in [
+            (WAV_HEADER_BYTES - 1, 16_000, incomplete),
+            (WAV_HEADER_BYTES + 1, 16_000, unsupported),
+            (WAV_HEADER_BYTES + 2, 0, unsupported),
+            (WAV_HEADER_BYTES + 2, u32::MAX, unsupported),
+        ] {
+            let pcm = Pcm16 {
+                bytes: vec![0x5A; length],
+            };
+            let error = pcm.into_wav(rate).unwrap_err().to_string();
+            assert!(
+                error.starts_with(expected),
+                "{length} bytes at {rate} Hz: {error}"
+            );
         }
+    }
+
+    #[test]
+    fn silence_round_trips_its_sample_rate() -> anyhow::Result<()> {
+        let silence = silent_wav(16_000, Duration::from_secs(1))?;
+        assert_eq!(wav_sample_rate(&silence), Some(16_000));
+        assert_eq!(silence.len(), WAV_HEADER_BYTES + 32_000);
+        assert_eq!(wav_sample_rate(&silence[..27]), None);
+        Ok(())
+    }
+
+    #[test]
+    fn speech_meter_spans_sixty_to_six_dbfs() {
+        let at_dbfs = |dbfs: f32| speech_meter_level(10.0_f32.powf(dbfs / 20.0));
+        assert!(at_dbfs(-60.0).abs() < 1e-5);
+        assert!((at_dbfs(-33.0) - 0.5).abs() < 1e-5);
+        assert!((at_dbfs(-6.0) - 1.0).abs() < 1e-5);
+        assert_eq!(speech_meter_level(0.0).to_bits(), 0.0_f32.to_bits());
+        assert_eq!(speech_meter_level(1.0).to_bits(), 1.0_f32.to_bits());
     }
 
     #[test]
@@ -632,15 +890,8 @@ mod tests {
         }
         let (events, _audio) = async_channel::bounded(1);
         events.close();
-        assert!(
-            record(
-                SessionId::FIRST,
-                None,
-                &events,
-                &Arc::new(Control::default())
-            )?
-            .is_none()
-        );
+        let control = Arc::new(Control::default());
+        assert!(record(SessionId::FIRST, None, &events, &control)?.is_none());
         Ok(())
     }
 
@@ -659,12 +910,12 @@ mod tests {
         assert_eq!(control.mode(), Mode::Cancelled);
         tokio::pin!(retirement);
         assert!(
-            tokio::time::timeout(Duration::from_millis(30), retirement.as_mut())
+            timeout(Duration::from_millis(30), retirement.as_mut())
                 .await
                 .is_err()
         );
         release.send(()).await?;
-        tokio::time::timeout(Duration::from_secs(2), retirement).await?;
+        timeout(PATIENCE, retirement).await?;
         Ok(())
     }
 
@@ -686,6 +937,10 @@ mod tests {
         Ok(())
     }
 
+    fn poisoned<T>(error: PoisonError<T>) -> anyhow::Error {
+        anyhow!("Capture fixture gate was poisoned: {error}")
+    }
+
     #[expect(
         clippy::disallowed_types,
         reason = "A test-only condition variable forces native-thread park ordering without microphone access"
@@ -698,20 +953,16 @@ mod tests {
         let gate = Arc::new((Mutex::new(!wake_before_park), Condvar::new()));
         let waiting = gate.clone();
         let capture = Capture::spawn(SessionId::FIRST, events, move |_, control| {
-            // Arm after reading the control, so a missing notification
-            // cannot pass by finishing before the worker enters its wait.
-            anyhow::ensure!(control.mode() == Mode::Recording);
+            // Arm after reading the control, so a lost notification cannot pass by finishing before
+            // the thread enters its wait.
+            ensure!(control.mode() == Mode::Recording);
             armed.send_blocking(thread::current())?;
             let (lock, ready) = &*waiting;
-            let guard = lock
-                .lock()
-                .map_err(|error| anyhow::anyhow!("Capture fixture gate was poisoned: {error}"))?;
+            let released = lock.lock().map_err(poisoned)?;
             drop(
                 ready
-                    .wait_while(guard, |released| !*released)
-                    .map_err(|error| {
-                        anyhow::anyhow!("Capture fixture gate was poisoned: {error}")
-                    })?,
+                    .wait_while(released, |released| !*released)
+                    .map_err(poisoned)?,
             );
             thread::park_timeout(Duration::from_secs(5));
             while control.mode() == Mode::Recording {
@@ -719,13 +970,10 @@ mod tests {
             }
             Ok(None)
         })?;
-        let worker = tokio::time::timeout(Duration::from_secs(2), arming.recv()).await??;
+        let consumer = timeout(PATIENCE, arming.recv()).await??;
         let release = || -> anyhow::Result<()> {
             let (lock, ready) = &*gate;
-            *lock
-                .lock()
-                .map_err(|error| anyhow::anyhow!("Capture fixture gate was poisoned: {error}"))? =
-                true;
+            *lock.lock().map_err(poisoned)? = true;
             ready.notify_one();
             Ok(())
         };
@@ -733,26 +981,23 @@ mod tests {
             let retirement = capture.retire();
             tokio::pin!(retirement);
             release()?;
-            let completed =
-                tokio::time::timeout(Duration::from_millis(400), retirement.as_mut()).await;
-            // Reap even when exercising a broken notification path.
-            worker.unpark();
+            let completed = timeout(Duration::from_millis(400), retirement.as_mut()).await;
+            // A fallback wake reaps the thread even when the notification under test is lost.
+            consumer.unpark();
             if completed.is_err() {
-                tokio::time::timeout(Duration::from_secs(2), retirement).await?;
-            }
-            if completed.is_err() {
+                timeout(PATIENCE, retirement).await?;
                 return Ok(false);
             }
         } else {
             capture.finish();
-            assert_eq!(capture.control.mode(), Mode::Finishing);
+            assert_eq!(capture.signal.control.mode(), Mode::Finishing);
             release()?;
-            let completed = tokio::time::timeout(Duration::from_millis(400), audio.recv()).await;
-            worker.unpark();
-            tokio::time::timeout(Duration::from_secs(2), capture.retire()).await?;
+            let completed = timeout(Duration::from_millis(400), audio.recv()).await;
+            consumer.unpark();
+            timeout(PATIENCE, capture.retire()).await?;
             if !matches!(
                 completed,
-                Ok(Ok(Event::AudioDone(SessionId::FIRST, Ok(None))))
+                Ok(Ok(CaptureEvent::Finished(SessionId::FIRST, Ok(None))))
             ) {
                 return Ok(false);
             }
@@ -763,47 +1008,53 @@ mod tests {
     #[tokio::test]
     async fn closing_audio_events_unblocks_owned_capture_retirement() -> anyhow::Result<()> {
         let (events, audio) = async_channel::bounded(1);
-        events.try_send(Event::Ready(SessionId::FIRST))?;
+        events.try_send(CaptureEvent::Ready(SessionId::FIRST))?;
         let capture = Capture::spawn(SessionId::FIRST, events, |_, _| Ok(None))?;
         let retirement = capture.retire();
         tokio::pin!(retirement);
         assert!(
-            tokio::time::timeout(Duration::from_millis(30), retirement.as_mut())
+            timeout(Duration::from_millis(30), retirement.as_mut())
                 .await
                 .is_err()
         );
         audio.close();
-        tokio::time::timeout(Duration::from_secs(2), retirement).await?;
+        timeout(PATIENCE, retirement).await?;
         Ok(())
     }
 
     #[tokio::test]
-    async fn retirement_wakes_when_a_worker_panics_before_reporting_completion()
-    -> anyhow::Result<()> {
-        let (events, _) = async_channel::bounded(1);
+    async fn a_panicked_capture_reports_failure_and_still_retires() -> anyhow::Result<()> {
+        let (events, audio) = async_channel::bounded(1);
         let capture = Capture::spawn(SessionId::FIRST, events, |_, _| {
-            std::panic::resume_unwind(Box::new(()));
+            panic::resume_unwind(Box::new(()));
         })?;
-        tokio::time::timeout(Duration::from_secs(2), capture.retire()).await?;
+        let report = timeout(PATIENCE, audio.recv()).await??;
+        assert!(
+            matches!(&report, CaptureEvent::Finished(SessionId::FIRST, Err(error))
+                if error.to_string().contains("stopped unexpectedly")),
+            "A panicked capture left its session waiting"
+        );
+        timeout(PATIENCE, capture.retire()).await?;
         Ok(())
     }
 
     #[test]
     fn pcm_chunks_wrap_clamp_invalid_samples_and_enforce_the_limit() -> anyhow::Result<()> {
-        let (mut producer, mut consumer) = RingBuffer::new(4);
+        let (mut producer, mut ring) = RingBuffer::new(4);
         producer.push_entire_slice(&[0.0, 0.0, 0.0])?;
-        consumer.read_chunk(3)?.commit_all();
+        ring.read_chunk(3)?.commit_all();
         producer.push_entire_slice(&[0.5, f32::NAN, 2.0, -2.0])?;
-        let mut pcm = vec![0; 44];
-        let (energy, count) = consume_pcm(&mut consumer, &mut pcm, 3);
-        assert_eq!(count, 3);
-        assert_eq!(energy, 1.25);
+        let mut pcm = Pcm16::with_reservation(0);
+        let mut meter = LevelMeter::new();
+        consume_pcm(&mut ring, &mut pcm, &mut meter, 3);
+        assert_eq!(meter.samples, 3);
+        assert_eq!(meter.energy, 1.25);
         let expected = [16383_i16, 0, 32767]
             .into_iter()
             .flat_map(i16::to_le_bytes)
             .collect::<Vec<_>>();
-        assert_eq!(&pcm[44..], expected);
-        assert!(consumer.is_empty());
+        assert_eq!(pcm.audio(), expected);
+        assert!(ring.is_empty());
         assert_eq!(producer.slots(), 4);
         Ok(())
     }
@@ -815,29 +1066,22 @@ mod tests {
         for channels in [1, 2, 8] {
             let mut timings = Vec::new();
             for _ in 0..21 {
-                let (producer, mut consumer) = RingBuffer::new(48_000);
-                let (errors, receiver) = async_channel::bounded(1);
-                let control = Arc::new(Control::default());
-                let (mut data, _) = capture_callbacks::<f32>(
-                    NonZeroUsize::new(channels).context("Nonzero fixture channels")?,
-                    producer,
-                    control.clone(),
-                    errors,
-                    Instant::now(),
-                    480 * 3000,
-                );
-                let samples = vec![0.125; 480 * channels];
-                let mut pcm = vec![0; 44];
-                pcm.reserve(960);
+                let (state, mut ring, errors, control) =
+                    callback_fixture(channels, 48_000, 480 * 3000);
+                let (mut data, _) = capture_callbacks::<f32>(state);
+                let input = vec![0.125; 480 * channels];
+                let mut pcm = Pcm16::with_reservation(480);
+                let mut meter = LevelMeter::new();
                 let started = Instant::now();
                 for _ in 0..3000 {
-                    data(black_box(&samples));
-                    black_box(consume_pcm(&mut consumer, &mut pcm, 480));
-                    black_box(&pcm);
-                    pcm.truncate(44);
+                    data(black_box(&input));
+                    consume_pcm(&mut ring, &mut pcm, &mut meter, 480);
+                    black_box(&meter);
+                    black_box(&pcm.bytes);
+                    pcm.bytes.truncate(WAV_HEADER_BYTES);
                 }
                 timings.push(started.elapsed().as_secs_f64() * 1e6 / 3000.0);
-                capture_failure(&control, &receiver)?;
+                capture_failure(&control, &errors)?;
             }
             timings.sort_by(f64::total_cmp);
             eprintln!(
@@ -845,20 +1089,17 @@ mod tests {
                 timings[10], timings[19]
             );
         }
-        let mut fixture = vec![0; 44 + 48_000 * 300 * 2];
-        for pair in fixture[44 + 96_000..44 + 96_000 * 299]
-            .as_chunks_mut::<2>()
-            .0
-        {
-            pair.copy_from_slice(&3000_i16.to_le_bytes());
-        }
+        let rate = 48_000;
+        let fixture = pcm_from(&[(rate, 0), (rate * 297, 3000), (rate * 2, 0)]);
         let mut timings = Vec::new();
         for _ in 0..21 {
-            let mut pcm = fixture.clone();
+            let mut pcm = Pcm16 {
+                bytes: fixture.bytes.clone(),
+            };
             let started = Instant::now();
-            assert!(trim_quiet_edges(black_box(&mut pcm), 48_000));
+            assert!(black_box(&mut pcm).trim_quiet_edges(48_000));
             timings.push(started.elapsed().as_secs_f64() * 1000.0);
-            black_box(pcm);
+            black_box(&pcm.bytes);
         }
         timings.sort_by(f64::total_cmp);
         eprintln!(
@@ -870,23 +1111,14 @@ mod tests {
 
     #[test]
     fn startup_xrun_is_allowed_but_an_interruption_after_samples_is_fatal() -> anyhow::Result<()> {
-        let (producer, mut consumer) = RingBuffer::new(4);
-        let (errors, receiver) = async_channel::bounded(1);
-        let control = Arc::new(Control::default());
-        let (mut data, mut error) = capture_callbacks::<f32>(
-            NonZeroUsize::new(2).context("Stereo fixture")?,
-            producer,
-            control.clone(),
-            errors,
-            Instant::now(),
-            4,
-        );
+        let (state, mut ring, errors, control) = callback_fixture(2, 4, 4);
+        let (mut data, mut error) = capture_callbacks::<f32>(state);
         error(cpal::ErrorKind::Xrun.into());
-        assert!(capture_failure(&control, &receiver).is_ok());
+        assert!(capture_failure(&control, &errors).is_ok());
         data(&[0.25, 0.75]);
-        assert_eq!(consumer.pop()?, 0.5);
+        assert_eq!(ring.pop()?, 0.5);
         error(cpal::ErrorKind::Xrun.into());
-        let failure = capture_failure(&control, &receiver)
+        let failure = capture_failure(&control, &errors)
             .err()
             .context("An interruption after samples must not silently discard speech")?;
         assert!(failure.to_string().contains("Xrun"));
@@ -897,56 +1129,53 @@ mod tests {
     fn callback_overflow_is_fatal_but_recording_limit_and_cancellation_do_not_overflow()
     -> anyhow::Result<()> {
         for limit in [2, 3] {
-            let (producer, mut consumer) = RingBuffer::new(2);
-            let (errors, receiver) = async_channel::bounded(1);
-            let control = Arc::new(Control::default());
-            let (mut data, _) = capture_callbacks::<f32>(
-                NonZeroUsize::MIN,
-                producer,
-                control.clone(),
-                errors,
-                Instant::now(),
-                limit,
-            );
+            let (state, mut ring, errors, control) = callback_fixture(1, 2, limit);
+            let (mut data, _) = capture_callbacks::<f32>(state);
             data(&[0.25, 0.5, 0.75]);
-            assert_eq!(capture_failure(&control, &receiver).is_err(), limit == 3);
-            assert_eq!(consumer.pop()?, 0.25);
-            assert_eq!(consumer.pop()?, 0.5);
+            assert_eq!(capture_failure(&control, &errors).is_err(), limit == 3);
+            assert_eq!(ring.pop()?, 0.25);
+            assert_eq!(ring.pop()?, 0.5);
             control.cancel();
             data(&[1.0]);
-            assert!(consumer.pop().is_err());
+            assert!(ring.pop().is_err());
         }
         Ok(())
     }
 
     #[test]
     fn recoverable_stream_notifications_do_not_abort_recording() {
-        let (errors, receiver) = async_channel::bounded(1);
+        let (errors, received) = async_channel::bounded(1);
         for kind in [
             cpal::ErrorKind::RealtimeDenied,
             cpal::ErrorKind::DeviceChanged,
         ] {
-            for active in [false, true] {
-                handle_stream_error(kind.into(), &errors, active);
-                assert!(receiver.try_recv().is_err(), "{kind} aborted capture");
-                assert!(capture_failure(&Control::default(), &receiver).is_ok());
+            for first_sample_queued in [false, true] {
+                let control = Control::default();
+                if first_sample_queued {
+                    control.mark_first_sample_queued();
+                }
+                handle_stream_error(kind.into(), &errors, &control);
+                assert!(received.try_recv().is_err(), "{kind} aborted capture");
+                assert!(capture_failure(&Control::default(), &received).is_ok());
             }
         }
     }
 
     #[test]
     fn fatal_stream_errors_keep_the_first_cause_without_blocking() -> anyhow::Result<()> {
-        let (errors, receiver) = async_channel::bounded(1);
+        let (errors, received) = async_channel::bounded(1);
+        let before_samples = Control::default();
         handle_stream_error(
             cpal::Error::with_message(cpal::ErrorKind::DeviceBusy, "fixture device is busy"),
             &errors,
-            false,
+            &before_samples,
         );
         for _ in 0..10 {
-            handle_stream_error(cpal::ErrorKind::Xrun.into(), &errors, false);
-            handle_stream_error(cpal::ErrorKind::DeviceNotAvailable.into(), &errors, false);
+            handle_stream_error(cpal::ErrorKind::Xrun.into(), &errors, &before_samples);
+            let lost = cpal::ErrorKind::DeviceNotAvailable.into();
+            handle_stream_error(lost, &errors, &before_samples);
         }
-        let error = capture_failure(&Control::default(), &receiver)
+        let error = capture_failure(&Control::default(), &received)
             .err()
             .context("fatal driver error must abort recording")?
             .to_string();
@@ -965,13 +1194,13 @@ mod tests {
             cpal::ErrorKind::PermissionDenied,
             cpal::ErrorKind::BackendError,
         ] {
-            let (errors, receiver) = async_channel::bounded(1);
+            let (errors, received) = async_channel::bounded(1);
             handle_stream_error(
                 cpal::Error::with_message(kind, "fixture driver failure"),
                 &errors,
-                false,
+                &Control::default(),
             );
-            let error = capture_failure(&Control::default(), &receiver)
+            let error = capture_failure(&Control::default(), &received)
                 .err()
                 .context("fatal driver error must abort recording")?
                 .to_string();
@@ -983,10 +1212,10 @@ mod tests {
 
     #[test]
     fn recording_buffer_overflow_has_its_own_actionable_error() -> anyhow::Result<()> {
-        let (_errors, receiver) = async_channel::bounded(1);
+        let (_errors, received) = async_channel::bounded(1);
         let control = Control::default();
-        control.overrun();
-        let error = capture_failure(&control, &receiver)
+        control.mark_overflowed();
+        let error = capture_failure(&control, &received)
             .err()
             .context("application ring overflow must abort recording")?
             .to_string();
@@ -998,54 +1227,53 @@ mod tests {
     #[test]
     fn quiet_edges_keep_word_padding_and_interior_pauses_but_clicks_are_rejected() {
         let rate = 16_000;
-        let mut pcm = vec![0; 44];
-        for (seconds, amplitude) in [(2, 0_i16), (1, 3000), (3, 0), (1, 3000), (2, 0)] {
-            for _ in 0..rate * seconds {
-                pcm.extend_from_slice(&amplitude.to_le_bytes());
-            }
-        }
-        let expected = pcm[44 + rate * 3..44 + rate * 15].to_vec();
-        assert!(trim_quiet_edges(&mut pcm, u32::try_from(rate).unwrap()));
-        assert_eq!(&pcm[44..], expected);
+        let mut pcm = pcm_from(&[
+            (rate * 2, 0),
+            (rate, 3000),
+            (rate * 3, 0),
+            (rate, 3000),
+            (rate * 2, 0),
+        ]);
+        let expected = pcm.audio()[rate * 3..rate * 15].to_vec();
+        assert!(pcm.trim_quiet_edges(u32::try_from(rate).unwrap()));
+        assert_eq!(pcm.audio(), expected);
 
-        let mut click = vec![0; 44 + rate * 2];
-        for pair in click[44..44 + rate / 10].as_chunks_mut::<2>().0 {
-            pair.copy_from_slice(&3000_i16.to_le_bytes());
-        }
-        assert!(!trim_quiet_edges(&mut click, u32::try_from(rate).unwrap()));
+        let mut click = pcm_from(&[(rate / 20, 3000), (rate * 2 - rate / 20, 0)]);
+        assert!(!click.trim_quiet_edges(u32::try_from(rate).unwrap()));
     }
 
     #[test]
     fn sparse_long_recording_releases_capacity_without_changing_padded_audio() {
         let rate = 48_000;
-        let mut pcm = vec![0; 44 + rate * 300 * 2];
-        for pair in pcm[44 + rate * 40 * 2..44 + rate * 50 * 2]
-            .as_chunks_mut::<2>()
-            .0
-        {
+        let mut pcm = Pcm16 {
+            bytes: vec![0; WAV_HEADER_BYTES + rate * 300 * 2],
+        };
+        let speech = WAV_HEADER_BYTES + rate * 40 * 2..WAV_HEADER_BYTES + rate * 50 * 2;
+        for pair in pcm.bytes[speech].as_chunks_mut::<2>().0 {
             pair.copy_from_slice(&3000_i16.to_le_bytes());
         }
-        let expected = pcm[44 + rate * 79..44 + rate * 101].to_vec();
-        assert!(trim_quiet_edges(&mut pcm, u32::try_from(rate).unwrap()));
-        assert_eq!(&pcm[44..], expected);
-        assert_eq!(pcm.capacity(), pcm.len());
+        let expected = pcm.audio()[rate * 79..rate * 101].to_vec();
+        assert!(pcm.trim_quiet_edges(u32::try_from(rate).unwrap()));
+        assert_eq!(pcm.audio(), expected);
+        assert_eq!(pcm.bytes.capacity(), pcm.bytes.len());
     }
 
     #[test]
     fn trimmed_capacity_is_kept_unless_both_slack_thresholds_are_met() {
         for (capacity, length) in [
-            (1024 * 1024, 44),
+            (1024 * 1024, WAV_HEADER_BYTES),
             (8 * 1024 * 1024, 1024 * 1024),
             (12 * 1024 * 1024, 4 * 1024 * 1024),
         ] {
-            let mut pcm = Vec::with_capacity(capacity);
-            pcm.resize(length, 0x5a);
-            let allocation = pcm.as_ptr();
-            compact_trimmed_pcm(&mut pcm);
-            assert_eq!(pcm.capacity(), capacity);
-            assert_eq!(pcm.as_ptr(), allocation);
-            assert_eq!(pcm.len(), length);
-            assert!(pcm.iter().all(|&byte| byte == 0x5a));
+            let mut bytes = Vec::with_capacity(capacity);
+            bytes.resize(length, 0x5A);
+            let allocation = bytes.as_ptr();
+            let mut pcm = Pcm16 { bytes };
+            pcm.release_excess_capacity();
+            assert_eq!(pcm.bytes.capacity(), capacity);
+            assert_eq!(pcm.bytes.as_ptr(), allocation);
+            assert_eq!(pcm.bytes.len(), length);
+            assert!(pcm.bytes.iter().all(|&byte| byte == 0x5A));
         }
     }
 }

@@ -87,10 +87,10 @@ The StatusNotifier/DBusMenu adapter reuses shared tray states and menu policy, w
 limited to relevant host changes. Without a tray host, Settings remains discoverable and closing it
 quits. Linux Settings opens at startup so permission and tray state remain accessible.
 
-Animation follows native frames with the shared 200-FPS ceiling. Meter updates coalesce into the
-pending frame, session changes redraw immediately, and settled hidden views request no animation
-frames. [Performance profiling](performance.md#native-process-sampling) separates app and worker
-costs, with responsiveness and speech quality as constraints.
+Animation follows native frames within the shared
+[frame budget](performance.md#implementation-constraints).
+[Performance profiling](performance.md#native-process-sampling) separates app and worker costs, with
+responsiveness and speech quality as constraints.
 
 ## Setup and distribution
 
@@ -203,6 +203,4 @@ editors, terminals, and memory/resource return after Pause and Quit. Measure sta
 inference, and displayed frame pacing under competing load. Windows/macOS insertion also requires
 native acceptance.
 
-Default tests use fakes or public fixtures. Live microphone, shortcuts, clipboard, and
-focused-editor acceptance require explicit opt-in. WSL checks do not establish desktop routing or
-native audio quality.
+WSL checks do not establish desktop routing or native audio quality.

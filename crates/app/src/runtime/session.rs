@@ -1,11 +1,14 @@
-//! Resources and authority for one recording. Retired native work belongs to
-//! the owner, so abandoning a session never waits or opens its replacement.
-use super::Phase;
+//! Authority and presentation stage for one recording. Retired native work belongs to the owner, so
+//! abandoning a session never waits or opens its replacement.
+
+use speakeasy_core::gesture::State;
 use speakeasy_platform::{InsertPermit, Inserted};
-use std::time::Instant;
 use tokio::task::JoinHandle;
 
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+use super::Phase;
+
+/// Identifies one recording; capture events carry it, so late audio cannot reach a newer session.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SessionId(u64);
 
 impl SessionId {
@@ -15,9 +18,11 @@ impl SessionId {
     pub(super) fn next(self) -> Option<Self> {
         self.0.checked_add(1).map(Self)
     }
+}
 
-    pub(super) fn get(self) -> u64 {
-        self.0
+impl From<SessionId> for u64 {
+    fn from(id: SessionId) -> Self {
+        id.0
     }
 }
 
@@ -25,27 +30,26 @@ pub(super) type InsertTask = JoinHandle<anyhow::Result<Inserted>>;
 
 pub(super) struct Session {
     pub id: SessionId,
-    pub started: Instant,
     pub permit: InsertPermit,
     pub level: f32,
     pub meter_tick: u64,
     pub stage: Stage,
 }
 
-pub(super) enum Stage {
-    Queued { microphone: Option<String> },
-    Opening,
-    Recording,
-    Stopping,
-    AwaitingWorker(Vec<u8>),
-    Transcribing,
-    Inserting(InsertTask),
-}
-
 impl Session {
-    pub(super) fn phase(&self) -> Phase {
+    pub(super) const fn new(id: SessionId, permit: InsertPermit) -> Self {
+        Self {
+            id,
+            permit,
+            level: 0.0,
+            meter_tick: 0,
+            stage: Stage::Queued,
+        }
+    }
+
+    pub(super) const fn phase(&self) -> Phase {
         match self.stage {
-            Stage::Queued { .. } | Stage::Opening => Phase::Starting,
+            Stage::Queued | Stage::Opening => Phase::Starting,
             Stage::Recording => Phase::Recording,
             Stage::Stopping => Phase::Stopping,
             Stage::AwaitingWorker(_) | Stage::Transcribing | Stage::Inserting(_) => {
@@ -54,27 +58,53 @@ impl Session {
         }
     }
 
-    pub(super) fn capturing(&self) -> bool {
+    pub(super) const fn is_capturing(&self) -> bool {
         matches!(
             self.stage,
             Stage::Opening | Stage::Recording | Stage::Stopping
         )
     }
 
-    pub(super) fn ready(mut self, finishing: bool) -> Self {
-        self.stage = match self.stage {
-            Stage::Opening if finishing => Stage::Stopping,
-            Stage::Opening => Stage::Recording,
-            stage => stage,
-        };
-        self
+    pub(super) fn insertion(&mut self) -> Option<&mut InsertTask> {
+        if let Stage::Inserting(task) = &mut self.stage {
+            Some(task)
+        } else {
+            None
+        }
     }
 
-    pub(super) fn finish(mut self) -> Self {
-        self.stage = match self.stage {
-            Stage::Recording => Stage::Stopping,
-            stage => stage,
-        };
-        self
+    /// Starts recording once samples arrive, or stops at once when the gesture already finished.
+    pub(super) fn audio_ready(&mut self, gesture: State) {
+        if matches!(self.stage, Stage::Opening) {
+            self.stage = if gesture == State::Processing {
+                Stage::Stopping
+            } else {
+                Stage::Recording
+            };
+        }
     }
+
+    pub(super) fn show_level(&mut self, level: f32) {
+        self.level = level;
+        self.meter_tick = self.meter_tick.wrapping_add(1);
+    }
+
+    pub(super) fn finish(&mut self) {
+        if matches!(self.stage, Stage::Recording) {
+            self.stage = Stage::Stopping;
+        }
+    }
+}
+
+pub(super) enum Stage {
+    /// Waits until any previous capture has released the microphone.
+    Queued,
+    Opening,
+    Recording,
+    /// The gesture has finished; waits for the capture's audio.
+    Stopping,
+    /// Captured WAV awaiting a ready worker; zeroed, best effort, if the session is abandoned.
+    AwaitingWorker(Vec<u8>),
+    Transcribing,
+    Inserting(InsertTask),
 }

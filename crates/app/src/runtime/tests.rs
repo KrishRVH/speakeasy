@@ -1,144 +1,193 @@
-use super::*;
-use async_channel::{Receiver, Sender};
-use speakeasy_platform::Inserted;
-use tokio::sync::oneshot;
+//! Drives the production owner through fake ports, either on its own thread or on the test's paused
+//! clock, where deadlines are exact.
 
-type InsertControls = (Sender<speakeasy_platform::InsertPermit>, Receiver<()>);
+use std::time::Duration;
+
+use anyhow::{anyhow, bail, ensure};
+use speakeasy_platform::{Delivery, InsertPermit, Inserted};
+use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
+
+use super::*;
+use crate::{
+    config::Engine,
+    ports::{Recording, Speech},
+};
+
+const PATIENCE: Duration = Duration::from_secs(2);
+
+type Reply = oneshot::Sender<anyhow::Result<String>>;
+type TranscriptionJob = (String, Reply);
+type OpenedCapture = (SessionId, Sender<CaptureEvent>);
+
+/// Where a fake pauses for the test: it reports entry, then waits for release.
+#[derive(Clone)]
+struct Gate<T> {
+    entered: Sender<T>,
+    release: Receiver<()>,
+}
+
+impl<T: Send + Sync + 'static> Gate<T> {
+    async fn pass(&self, value: T) -> anyhow::Result<()> {
+        self.entered.send(value).await?;
+        self.release.recv().await?;
+        Ok(())
+    }
+
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "Harness disposal closes cleanup gates after a failed assertion; owned teardown must still finish"
+    )]
+    async fn pass_during_cleanup(&self, value: T) {
+        let _ = self.entered.send(value).await;
+        let _ = self.release.recv().await;
+    }
+}
+
+/// The test's side of a [`Gate`].
+struct GateControl<T> {
+    entered: Receiver<T>,
+    release: Sender<()>,
+}
+
+impl<T> GateControl<T> {
+    async fn reached(&self) -> anyhow::Result<T> {
+        receive(&self.entered).await
+    }
+
+    async fn release(&self) -> anyhow::Result<()> {
+        Ok(self.release.send(()).await?)
+    }
+}
+
+/// Fake devices, speech, and insertion. Each optional gate or result lane pauses or steers one side
+/// effect.
 struct FakePorts {
     desktop_pending: bool,
-    load_results: Option<Receiver<anyhow::Result<()>>>,
-    delayed_finish: bool,
     record_error: Option<&'static str>,
-    insertion: Option<InsertControls>,
-    captures: Sender<(SessionId, Sender<Event>)>,
-    retirement: Option<(Sender<()>, Receiver<()>)>,
-    jobs: Sender<(String, oneshot::Sender<anyhow::Result<String>>)>,
+    delayed_finish: bool,
+    load_results: Option<Receiver<anyhow::Result<()>>>,
+    recovery: Option<Receiver<anyhow::Result<()>>>,
+    retirement: Option<Gate<()>>,
+    stop: Option<Gate<()>>,
+    insertion: Option<Gate<InsertPermit>>,
+    captures: Sender<OpenedCapture>,
+    jobs: Sender<TranscriptionJob>,
     pasted: Sender<String>,
     loads: Sender<()>,
-    stop: Option<(Sender<()>, Receiver<()>)>,
-    recovery: Option<Receiver<anyhow::Result<()>>>,
 }
-struct FakeRecording {
-    delayed_finish: bool,
-    retirement: Option<(Sender<()>, Receiver<()>)>,
-    id: SessionId,
-    events: Sender<Event>,
+
+/// What the fakes report back to the test.
+struct Reports {
+    captures: Receiver<OpenedCapture>,
+    jobs: Receiver<TranscriptionJob>,
+    pasted: Receiver<String>,
+    loads: Receiver<()>,
 }
-impl Recording for FakeRecording {
-    #[expect(
-        clippy::let_underscore_must_use,
-        reason = "Harness disposal closes fake cleanup gates after an assertion fails; teardown must still finish"
-    )]
-    async fn retire(self) {
-        if let Some((entered, release)) = self.retirement {
-            let _ = entered.send(()).await;
-            // Harness disposal closes this gate on assertion failure.
-            let _ = release.recv().await;
-        }
+
+impl FakePorts {
+    fn new() -> (Self, Reports) {
+        let (captures, opened) = async_channel::bounded(8);
+        let (jobs, requested) = async_channel::bounded(8);
+        let (pasted, submitted) = async_channel::bounded(8);
+        let (loads, loaded) = async_channel::bounded(8);
+        let ports = Self {
+            desktop_pending: false,
+            record_error: None,
+            delayed_finish: false,
+            load_results: None,
+            recovery: None,
+            retirement: None,
+            stop: None,
+            insertion: None,
+            captures,
+            jobs,
+            pasted,
+            loads,
+        };
+        let reports = Reports {
+            captures: opened,
+            jobs: requested,
+            pasted: submitted,
+            loads: loaded,
+        };
+        (ports, reports)
     }
-    fn finish(&self) {
-        if self.delayed_finish {
-            return;
-        }
-        assert!(
-            self.events
-                .try_send(Event::AudioDone(self.id, Ok(Some(vec![1, 2]))))
-                .is_ok()
-        );
-    }
-}
-struct FakeSpeech {
-    jobs: Sender<(String, oneshot::Sender<anyhow::Result<String>>)>,
-    stop: Option<(Sender<()>, Receiver<()>)>,
-    recovery: Option<Receiver<anyhow::Result<()>>>,
-}
-impl Speech for FakeSpeech {
-    async fn transcribe(&self, _: Vec<u8>, language: &str) -> anyhow::Result<String> {
-        let (reply, result) = oneshot::channel();
-        self.jobs.send((language.to_owned(), reply)).await?;
-        result.await?
-    }
-    async fn idle(&self) -> anyhow::Result<()> {
-        match &self.recovery {
-            Some(result) => result.recv().await?,
-            None => Ok(()),
-        }
-    }
-    #[expect(
-        clippy::let_underscore_must_use,
-        reason = "Harness disposal closes fake worker gates after assertion failure so owned shutdown can finish"
-    )]
-    async fn stop(&mut self) {
-        if let Some((entered, release)) = &self.stop {
-            let _ = entered.send(()).await;
-            let _ = release.recv().await;
-        }
+
+    fn cleanup_gates(&self) -> CleanupGates {
+        let releases = [&self.retirement, &self.stop]
+            .into_iter()
+            .flatten()
+            .map(|gate| gate.release.clone());
+        let insertion = self.insertion.iter().map(|gate| gate.release.clone());
+        CleanupGates(releases.chain(insertion).collect())
     }
 }
+
 impl Ports for FakePorts {
+    type Recording = FakeRecording;
+    type Speech = FakeSpeech;
+
     fn prepares_desktop(&self) -> bool {
         self.desktop_pending
     }
-    type Recording = FakeRecording;
-    type Speech = FakeSpeech;
+
     fn record(
         &self,
         id: SessionId,
-        _: Option<String>,
-        events: Sender<Event>,
+        _: Option<&str>,
+        events: Sender<CaptureEvent>,
     ) -> anyhow::Result<FakeRecording> {
         if let Some(error) = self.record_error {
-            anyhow::bail!(error);
+            bail!(error);
         }
         self.captures.try_send((id, events.clone()))?;
-        events.try_send(Event::Ready(id))?;
+        events.try_send(CaptureEvent::Ready(id))?;
         Ok(FakeRecording {
-            delayed_finish: self.delayed_finish,
             id,
             events,
+            delayed_finish: self.delayed_finish,
             retirement: self.retirement.clone(),
         })
     }
+
     fn load(
         &self,
         _: Config,
         mut cancelled: watch::Receiver<bool>,
-    ) -> impl std::future::Future<Output = anyhow::Result<FakeSpeech>> + Send + 'static {
+    ) -> impl Future<Output = anyhow::Result<FakeSpeech>> + Send + 'static {
         let load_results = self.load_results.clone();
-        let jobs = self.jobs.clone();
+        let speech = FakeSpeech {
+            jobs: self.jobs.clone(),
+            stop: self.stop.clone(),
+            recovery: self.recovery.clone(),
+        };
         let loads = self.loads.clone();
-        let stop = self.stop.clone();
-        let recovery = self.recovery.clone();
         async move {
             loads.send(()).await?;
             if let Some(results) = load_results {
                 tokio::select! {
                     biased;
-                    _ = cancelled.changed() => anyhow::bail!("Fake model load cancelled"),
+                    _ = cancelled.changed() => bail!("Fake model load cancelled"),
                     result = results.recv() => result??,
                 }
             }
-            Ok(FakeSpeech {
-                jobs,
-                stop,
-                recovery,
-            })
+            Ok(speech)
         }
     }
+
     fn insert(
         &self,
         text: String,
-        gate: speakeasy_platform::InsertPermit,
-        _: bool,
-    ) -> impl std::future::Future<Output = anyhow::Result<Inserted>> + Send + 'static {
+        permit: InsertPermit,
+        _: Delivery,
+    ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static {
         let pasted = self.pasted.clone();
         let insertion = self.insertion.clone();
         async move {
-            if let Some((entered, release)) = insertion {
-                entered.send(gate.clone()).await?;
-                release.recv().await?;
+            if let Some(gate) = insertion {
+                gate.pass(permit.clone()).await?;
             }
-            if !gate.commit() {
+            if !permit.commit() {
                 return Ok(Inserted::Cancelled);
             }
             pasted.try_send(text)?;
@@ -146,228 +195,212 @@ impl Ports for FakePorts {
         }
     }
 }
-struct Harness {
-    cleanup: Vec<Receiver<()>>,
-    runtime: Runtime,
-    output: watch::Sender<Snapshot>,
-    updates: watch::Receiver<Snapshot>,
-    captures: Receiver<(SessionId, Sender<Event>)>,
-    jobs: Receiver<(String, oneshot::Sender<anyhow::Result<String>>)>,
-    pasted: Receiver<String>,
-    loads: Receiver<()>,
+
+struct FakeRecording {
+    id: SessionId,
+    events: Sender<CaptureEvent>,
+    delayed_finish: bool,
+    retirement: Option<Gate<()>>,
 }
-impl Drop for Harness {
+
+impl Recording for FakeRecording {
+    fn finish(&self) {
+        if self.delayed_finish {
+            return;
+        }
+        let finished = CaptureEvent::Finished(self.id, Ok(Some(vec![1, 2])));
+        self.events
+            .try_send(finished)
+            .expect("capture lane has room for fake audio");
+    }
+
+    async fn retire(self) {
+        if let Some(gate) = self.retirement {
+            gate.pass_during_cleanup(()).await;
+        }
+    }
+}
+
+struct FakeSpeech {
+    jobs: Sender<TranscriptionJob>,
+    stop: Option<Gate<()>>,
+    recovery: Option<Receiver<anyhow::Result<()>>>,
+}
+
+impl Speech for FakeSpeech {
+    async fn transcribe(&self, _: Vec<u8>, language: &str) -> anyhow::Result<String> {
+        let (reply, result) = oneshot::channel();
+        self.jobs.send((language.to_owned(), reply)).await?;
+        result.await?
+    }
+
+    async fn probe_with_silence(&self) -> anyhow::Result<()> {
+        match &self.recovery {
+            Some(result) => result.recv().await?,
+            None => Ok(()),
+        }
+    }
+
+    async fn stop(&mut self) {
+        if let Some(gate) = &self.stop {
+            gate.pass_during_cleanup(()).await;
+        }
+    }
+}
+
+/// Fake cleanup gates closed when a harness is dropped, so a failed assertion cannot leave owned
+/// teardown waiting for a release that never comes.
+struct CleanupGates(Vec<Receiver<()>>);
+
+impl Drop for CleanupGates {
     fn drop(&mut self) {
-        self.runtime.request_stop();
-        // Unblock only fakes on failed assertions, independently of paused time.
-        for gate in &self.cleanup {
+        for gate in &self.0 {
             gate.close();
         }
     }
 }
+
+/// The production controls and owner, plus the test's view of the fakes. Gates close before the
+/// owner is stopped and released.
+struct Harness<Owner = OwnedThread> {
+    _cleanup: CleanupGates,
+    runtime: Runtime<Owner>,
+    output: watch::Sender<Snapshot>,
+    updates: watch::Receiver<Snapshot>,
+    captures: Receiver<OpenedCapture>,
+    jobs: Receiver<TranscriptionJob>,
+    pasted: Receiver<String>,
+    loads: Receiver<()>,
+}
+
 impl Harness {
     fn new() -> anyhow::Result<Self> {
-        Self::with_controls(None, None)
+        Self::with_ports(Config::default(), |_| {})
     }
-    fn with_controls(
-        stop: Option<(Sender<()>, Receiver<()>)>,
-        recovery: Option<Receiver<anyhow::Result<()>>>,
-    ) -> anyhow::Result<Self> {
-        Self::with_insertion(stop, recovery, None)
+
+    fn with_ports(config: Config, customize: impl FnOnce(&mut FakePorts)) -> anyhow::Result<Self> {
+        Self::host(config, customize, Runtime::start_with)
     }
-    fn with_insertion(
-        stop: Option<(Sender<()>, Receiver<()>)>,
-        recovery: Option<Receiver<anyhow::Result<()>>>,
-        insertion: Option<InsertControls>,
-    ) -> anyhow::Result<Self> {
-        Self::with_options(Config::default(), stop, recovery, insertion, None)
+}
+
+impl Harness<JoinHandle<()>> {
+    /// Runs the owner on this test's executor, so `tokio::time::advance` drives its deadlines.
+    fn paused(customize: impl FnOnce(&mut FakePorts)) -> anyhow::Result<Self> {
+        Self::host(Config::default(), customize, |config, output, ports| {
+            let (input, inputs) = input_lane();
+            Runtime::host(config, output, ports, input, inputs, |wiring| {
+                Ok(tokio::spawn(owner::run(wiring)))
+            })
+        })
     }
-    fn with_options(
+
+    async fn close(mut self) -> anyhow::Result<()> {
+        self.runtime.request_stop();
+        (&mut self.runtime.owner).await?;
+        Ok(())
+    }
+}
+
+// Sync keeps the futures of the `&self` helpers Send (clippy::future_not_send).
+impl<Owner: Sync> Harness<Owner> {
+    fn host(
         config: Config,
-        stop: Option<(Sender<()>, Receiver<()>)>,
-        recovery: Option<Receiver<anyhow::Result<()>>>,
-        insertion: Option<InsertControls>,
-        retirement: Option<(Sender<()>, Receiver<()>)>,
+        customize: impl FnOnce(&mut FakePorts),
+        start: impl FnOnce(Config, watch::Sender<Snapshot>, FakePorts) -> anyhow::Result<Runtime<Owner>>,
     ) -> anyhow::Result<Self> {
-        let (capture_tx, captures) = async_channel::bounded(8);
-        let (job_tx, jobs) = async_channel::bounded(8);
-        let (paste_tx, pasted) = async_channel::bounded(8);
-        let (load_tx, loads) = async_channel::bounded(8);
+        let (mut ports, reports) = FakePorts::new();
+        customize(&mut ports);
+        let cleanup = ports.cleanup_gates();
         let (output, updates) = watch::channel(Snapshot::default());
-        let cleanup = [&stop, &retirement]
-            .into_iter()
-            .flatten()
-            .map(|(_, release)| release.clone())
-            .chain(insertion.iter().map(|(_, release)| release.clone()))
-            .collect();
-        let runtime = Runtime::start_with(
-            config,
-            output.clone(),
-            FakePorts {
-                desktop_pending: false,
-                load_results: None,
-                delayed_finish: false,
-                record_error: None,
-                retirement,
-                insertion,
-                captures: capture_tx,
-                jobs: job_tx,
-                pasted: paste_tx,
-                loads: load_tx,
-                stop,
-                recovery,
-            },
-        )?;
+        let runtime = start(config, output.clone(), ports)?;
         Ok(Self {
-            cleanup,
+            _cleanup: cleanup,
             runtime,
             output,
             updates,
-            captures,
-            jobs,
-            pasted,
-            loads,
+            captures: reports.captures,
+            jobs: reports.jobs,
+            pasted: reports.pasted,
+            loads: reports.loads,
         })
     }
+
     fn input(&self, input: Input) {
-        speakeasy_platform::deliver(&self.runtime.input, input);
+        self.runtime.input.deliver(input);
     }
-    async fn phase(&mut self, wanted: Phase) -> anyhow::Result<()> {
-        tokio::time::timeout(Duration::from_secs(2), async {
-            loop {
-                if self.updates.borrow_and_update().phase == wanted {
-                    return Ok::<_, anyhow::Error>(());
-                }
-                self.updates.changed().await?;
-            }
-        })
-        .await??;
+
+    async fn observe(&mut self, predicate: impl FnMut(&Snapshot) -> bool) -> anyhow::Result<()> {
+        timeout(PATIENCE, self.updates.wait_for(predicate)).await??;
         Ok(())
     }
-    async fn start(&mut self) -> anyhow::Result<(SessionId, Sender<Event>)> {
+
+    async fn phase(&mut self, wanted: Phase) -> anyhow::Result<()> {
+        self.observe(|snapshot| snapshot.phase == wanted).await
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        self.updates.borrow().clone()
+    }
+
+    async fn start(&mut self) -> anyhow::Result<OpenedCapture> {
         self.input(Input::Toggle);
         self.phase(Phase::Recording).await?;
         receive(&self.captures).await
     }
-    async fn finish(&self) -> anyhow::Result<oneshot::Sender<anyhow::Result<String>>> {
+
+    /// Finishes the capture and returns the transcription request, which carries the configured
+    /// language.
+    async fn finish(&self) -> anyhow::Result<Reply> {
         self.input(Input::Toggle);
         let (language, reply) = receive(&self.jobs).await?;
         assert_eq!(language, self.runtime.configuration.borrow().language);
         Ok(reply)
     }
+
+    async fn finish_as(&self, text: &str) -> anyhow::Result<()> {
+        answer(self.finish().await?, text)
+    }
+
+    async fn transcribe_next_as(&self, text: &str) -> anyhow::Result<()> {
+        let (_, reply) = receive(&self.jobs).await?;
+        answer(reply, text)
+    }
 }
+
+fn gate<T>(capacity: usize) -> (Gate<T>, GateControl<T>) {
+    let (entered, entries) = async_channel::bounded(capacity);
+    let (releases, release) = async_channel::bounded(capacity);
+    let gate = Gate { entered, release };
+    let control = GateControl {
+        entered: entries,
+        release: releases,
+    };
+    (gate, control)
+}
+
 async fn receive<T>(receiver: &Receiver<T>) -> anyhow::Result<T> {
-    Ok(tokio::time::timeout(Duration::from_secs(2), receiver.recv()).await??)
+    Ok(timeout(PATIENCE, receiver.recv()).await??)
 }
 
-// Exercise the production owner inside this test's clock. Production keeps its
-// dedicated thread; a separate runtime would not observe time::advance here.
-struct PausedHarness {
-    harness: Harness,
-    owner: tokio::task::JoinHandle<()>,
-}
-
-impl PausedHarness {
-    fn new(desktop_pending: bool, record_error: Option<&'static str>) -> Self {
-        Self::with_ports(desktop_pending, record_error, |_| {})
-    }
-    fn with_ports(
-        desktop_pending: bool,
-        record_error: Option<&'static str>,
-        customize: impl FnOnce(&mut FakePorts),
-    ) -> Self {
-        let (capture_tx, captures) = async_channel::bounded(8);
-        let (job_tx, jobs) = async_channel::bounded(8);
-        let (paste_tx, pasted) = async_channel::bounded(8);
-        let (load_tx, loads) = async_channel::bounded(8);
-        let (output, updates) = watch::channel(Snapshot::default());
-        let (sender, input) = async_channel::bounded(64);
-        let gate = speakeasy_platform::InputSender::new(sender);
-        let (configuration, changes) = watch::channel(Config::default());
-        let (stop, stopping) = async_channel::bounded(1);
-        let (complete, finished) = async_channel::bounded(1);
-        let owner_gate = gate.clone();
-        let mut ports = FakePorts {
-            desktop_pending,
-            record_error,
-            load_results: None,
-            delayed_finish: false,
-            insertion: None,
-            captures: capture_tx,
-            retirement: None,
-            jobs: job_tx,
-            pasted: paste_tx,
-            loads: load_tx,
-            stop: None,
-            recovery: None,
-        };
-        customize(&mut ports);
-        let epoch = output.borrow().epoch;
-        let publisher = output.clone();
-        let owner = tokio::spawn(async move {
-            run(changes, input, output, owner_gate, stopping, ports, epoch).await;
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "A closed fake completion lane means the harness no longer waits for owner retirement"
-            )]
-            let _ = complete.try_send(());
-        });
-        Self {
-            owner,
-            harness: Harness {
-                cleanup: Vec::new(),
-                output: publisher,
-                runtime: Runtime {
-                    input: gate,
-                    thread: None,
-                    configuration,
-                    stop,
-                    finished,
-                },
-                updates,
-                captures,
-                jobs,
-                pasted,
-                loads,
-            },
-        }
-    }
-
-    async fn close(self) -> anyhow::Result<()> {
-        self.harness.runtime.request_stop();
-        self.harness.runtime.stopped().await;
-        Ok(())
-    }
-}
-
-impl Drop for PausedHarness {
-    fn drop(&mut self) {
-        // Assertion failures cannot leave fake jobs alive after their owner.
-        self.harness.runtime.request_stop();
-        self.owner.abort();
-    }
-}
-
-async fn observed(
-    updates: &mut watch::Receiver<Snapshot>,
-    predicate: impl Fn(&Snapshot) -> bool,
-) -> anyhow::Result<()> {
-    tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            if predicate(&updates.borrow_and_update()) {
-                return Ok::<_, anyhow::Error>(());
-            }
-            updates.changed().await?;
-        }
-    })
-    .await??;
+fn answer(reply: Reply, text: &str) -> anyhow::Result<()> {
+    ensure!(
+        reply.send(Ok(text.to_owned())).is_ok(),
+        "The transcription request was abandoned"
+    );
     Ok(())
+}
+
+async fn still_pending(future: impl Future) -> bool {
+    timeout(Duration::from_millis(30), future).await.is_err()
+}
+
+fn level_is(level: f32) -> impl FnMut(&Snapshot) -> bool {
+    move |snapshot| snapshot.level.to_bits() == level.to_bits()
 }
 
 #[tokio::test(start_paused = true)]
 async fn desktop_readiness_blocks_capture_until_native_startup_completes() -> anyhow::Result<()> {
-    let mut paused = PausedHarness::new(true, None);
-    let h = &mut paused.harness;
+    let mut h = Harness::paused(|ports| ports.desktop_pending = true)?;
     receive(&h.loads).await?;
     h.input(Input::Press);
     h.input(Input::Toggle);
@@ -375,65 +408,61 @@ async fn desktop_readiness_blocks_capture_until_native_startup_completes() -> an
         shortcut: "fixture shortcut".into(),
         cancel: "fixture cancel".into(),
     });
-    observed(&mut h.updates, |s| s.desktop_ready).await?;
+    h.observe(|snapshot| snapshot.desktop_ready).await?;
     assert!(h.captures.try_recv().is_err());
-    assert_eq!(&*h.updates.borrow().shortcut, "fixture shortcut");
-    assert_eq!(&*h.updates.borrow().cancel_shortcut, "fixture cancel");
+    assert_eq!(&*h.snapshot().shortcut, "fixture shortcut");
+    assert_eq!(&*h.snapshot().cancel_shortcut, "fixture cancel");
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     receive(&h.captures).await?;
-    paused.close().await
+    h.close().await
 }
 
 #[tokio::test(start_paused = true)]
 async fn held_shortcut_release_finishes_through_the_owner() -> anyhow::Result<()> {
-    let mut paused = PausedHarness::new(false, None);
-    let h = &mut paused.harness;
+    let mut h = Harness::paused(|_| {})?;
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     tokio::time::advance(Duration::from_millis(250)).await;
     h.input(Input::Release);
-    let (_, reply) = receive(&h.jobs).await?;
-    assert!(reply.send(Ok(String::new())).is_ok());
+    h.transcribe_next_as("").await?;
     h.phase(Phase::Empty).await?;
     assert!(h.pasted.try_recv().is_err());
-    paused.close().await
+    h.close().await
 }
 
 #[tokio::test(start_paused = true)]
 async fn locking_a_hold_keeps_the_same_capture_until_the_next_press() -> anyhow::Result<()> {
-    let mut paused = PausedHarness::new(false, None);
-    let h = &mut paused.harness;
+    let mut h = Harness::paused(|_| {})?;
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     let (id, events) = receive(&h.captures).await?;
     h.input(Input::Lock);
-    observed(&mut h.updates, |s| s.hands_free).await?;
+    h.observe(|snapshot| snapshot.hands_free).await?;
     h.input(Input::Release);
-    events.send(Event::Level(id, 0.25)).await?;
-    observed(&mut h.updates, |s| s.level.to_bits() == 0.25_f32.to_bits()).await?;
+    events.send(CaptureEvent::Level(id, 0.25)).await?;
+    h.observe(level_is(0.25)).await?;
     tokio::time::advance(Duration::from_secs(1)).await;
     assert!(h.jobs.try_recv().is_err());
     assert!(h.captures.try_recv().is_err());
     h.input(Input::Press);
     receive(&h.jobs).await?;
-    paused.close().await
+    h.close().await
 }
 
 #[tokio::test(start_paused = true)]
 async fn double_tap_uses_one_capture_and_single_tap_obeys_its_deadline() -> anyhow::Result<()> {
-    let mut paused = PausedHarness::new(false, None);
-    let h = &mut paused.harness;
+    let mut h = Harness::paused(|_| {})?;
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     let (id, events) = receive(&h.captures).await?;
     tokio::time::advance(Duration::from_millis(50)).await;
     h.input(Input::Release);
-    events.send(Event::Level(id, 0.25)).await?;
-    observed(&mut h.updates, |s| s.level.to_bits() == 0.25_f32.to_bits()).await?;
+    events.send(CaptureEvent::Level(id, 0.25)).await?;
+    h.observe(level_is(0.25)).await?;
     tokio::time::advance(Duration::from_millis(100)).await;
     h.input(Input::Press);
-    observed(&mut h.updates, |s| s.hands_free).await?;
+    h.observe(|snapshot| snapshot.hands_free).await?;
     assert!(h.captures.try_recv().is_err());
     assert!(h.jobs.try_recv().is_err());
     h.input(Input::Release);
@@ -446,110 +475,84 @@ async fn double_tap_uses_one_capture_and_single_tap_obeys_its_deadline() -> anyh
     tokio::time::advance(Duration::from_millis(50)).await;
     h.input(Input::Release);
     let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
-    events.send(Event::Level(id, 0.5)).await?;
-    observed(&mut h.updates, |s| s.level.to_bits() == 0.5_f32.to_bits()).await?;
+    events.send(CaptureEvent::Level(id, 0.5)).await?;
+    h.observe(level_is(0.5)).await?;
     tokio::time::advance(Duration::from_millis(299)).await;
     assert!(h.jobs.try_recv().is_err());
     tokio::time::advance(Duration::from_millis(1)).await;
     receive(&h.jobs).await?;
     assert_eq!(tokio::time::Instant::now(), deadline);
-    paused.close().await
+    h.close().await
 }
 
 #[tokio::test(start_paused = true)]
 async fn owner_finishes_capture_at_the_five_minute_deadline() -> anyhow::Result<()> {
-    let mut paused = PausedHarness::new(false, None);
-    let h = &mut paused.harness;
+    let mut h = Harness::paused(|_| {})?;
     h.start().await?;
     let limit = Duration::from_secs(300);
     let deadline = tokio::time::Instant::now() + limit;
-    tokio::time::advance(limit.checked_sub(Duration::from_millis(1)).unwrap()).await;
+    tokio::time::advance(limit.saturating_sub(Duration::from_millis(1))).await;
     assert!(h.jobs.try_recv().is_err());
     tokio::time::advance(Duration::from_millis(1)).await;
     receive(&h.jobs).await?;
     assert_eq!(tokio::time::Instant::now(), deadline);
     assert!(h.captures.try_recv().is_err());
-    paused.close().await
+    h.close().await
 }
 
 #[tokio::test(start_paused = true)]
 async fn failed_capture_start_preserves_its_reason_and_allows_shutdown() -> anyhow::Result<()> {
-    let mut paused = PausedHarness::new(false, Some("thread resources exhausted"));
-    let h = &mut paused.harness;
+    let mut h = Harness::paused(|ports| ports.record_error = Some("thread resources exhausted"))?;
     h.input(Input::Press);
     h.phase(Phase::Error).await?;
-    assert!(
-        h.updates
-            .borrow()
-            .message
-            .contains("thread resources exhausted")
-    );
+    assert!(h.snapshot().message.contains("thread resources exhausted"));
     assert!(h.captures.try_recv().is_err());
-    paused.close().await
+    h.close().await
 }
 
 #[tokio::test]
 async fn cancelled_capture_retires_before_retry_and_pause_waits_for_it() -> anyhow::Result<()> {
-    let (entered, retiring) = async_channel::bounded(2);
-    let (release, waiting) = async_channel::bounded(2);
-    let mut h = Harness::with_options(
-        Config::default(),
-        None,
-        None,
-        None,
-        Some((entered, waiting)),
-    )?;
+    let (retirement, retiring) = gate(2);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.retirement = Some(retirement);
+    })?;
     h.start().await?;
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
-    receive(&retiring).await?;
+    retiring.reached().await?;
     h.input(Input::Toggle);
     h.phase(Phase::Starting).await?;
     assert!(
         h.captures.try_recv().is_err(),
         "Retry overlapped a retiring microphone"
     );
-    release.send(()).await?;
+    retiring.release().await?;
     h.phase(Phase::Recording).await?;
     receive(&h.captures).await?;
     h.runtime.request_stop();
-    receive(&retiring).await?;
-    let stopped = h.runtime.stopped();
-    assert!(
-        tokio::time::timeout(Duration::from_millis(30), stopped)
-            .await
-            .is_err()
-    );
-    release.send(()).await?;
-    tokio::time::timeout(Duration::from_secs(2), h.runtime.stopped()).await?;
+    retiring.reached().await?;
+    assert!(still_pending(h.runtime.stopped()).await);
+    retiring.release().await?;
+    timeout(PATIENCE, h.runtime.stopped()).await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn pause_during_a_queued_capture_never_opens_the_new_device() -> anyhow::Result<()> {
-    let (entered, retiring) = async_channel::bounded(1);
-    let (release, waiting) = async_channel::bounded(1);
-    let mut h = Harness::with_options(
-        Config::default(),
-        None,
-        None,
-        None,
-        Some((entered, waiting)),
-    )?;
+    let (retirement, retiring) = gate(1);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.retirement = Some(retirement);
+    })?;
     h.start().await?;
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
-    receive(&retiring).await?;
+    retiring.reached().await?;
     h.input(Input::Toggle);
     h.phase(Phase::Starting).await?;
     h.runtime.request_stop();
-    assert!(
-        tokio::time::timeout(Duration::from_millis(30), h.runtime.stopped())
-            .await
-            .is_err()
-    );
-    release.send(()).await?;
-    tokio::time::timeout(Duration::from_secs(2), h.runtime.stopped()).await?;
+    assert!(still_pending(h.runtime.stopped()).await);
+    retiring.release().await?;
+    timeout(PATIENCE, h.runtime.stopped()).await?;
     assert!(h.captures.try_recv().is_err());
     assert!(h.pasted.try_recv().is_err());
     Ok(())
@@ -557,84 +560,64 @@ async fn pause_during_a_queued_capture_never_opens_the_new_device() -> anyhow::R
 
 #[tokio::test]
 async fn completed_audio_does_not_allow_retry_before_device_teardown() -> anyhow::Result<()> {
-    let (entered, retiring) = async_channel::bounded(2);
-    let (release, waiting) = async_channel::bounded(2);
-    let mut h = Harness::with_options(
-        Config::default(),
-        None,
-        None,
-        None,
-        Some((entered, waiting)),
-    )?;
+    let (retirement, retiring) = gate(2);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.retirement = Some(retirement);
+    })?;
     h.start().await?;
-    assert!(h.finish().await?.send(Ok("fixture".into())).is_ok());
-    receive(&retiring).await?;
+    h.finish_as("fixture").await?;
+    retiring.reached().await?;
     receive(&h.pasted).await?;
     h.phase(Phase::Done).await?;
     h.input(Input::Toggle);
     h.phase(Phase::Starting).await?;
     assert!(h.captures.try_recv().is_err());
-    release.send(()).await?;
+    retiring.release().await?;
     h.phase(Phase::Recording).await?;
     receive(&h.captures).await?;
     h.runtime.request_stop();
-    receive(&retiring).await?;
-    release.send(()).await?;
-    tokio::time::timeout(Duration::from_secs(2), h.runtime.stopped()).await?;
+    retiring.reached().await?;
+    retiring.release().await?;
+    timeout(PATIENCE, h.runtime.stopped()).await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn pause_starts_capture_and_model_cleanup_together() -> anyhow::Result<()> {
-    let (capture_entered, captures) = async_channel::bounded(1);
-    let (capture_release, capture_waiting) = async_channel::bounded(1);
-    let (speech_entered, speech) = async_channel::bounded(1);
-    let (speech_release, speech_waiting) = async_channel::bounded(1);
-    let mut h = Harness::with_options(
-        Config::default(),
-        Some((speech_entered, speech_waiting)),
-        None,
-        None,
-        Some((capture_entered, capture_waiting)),
-    )?;
+    let (retirement, retiring) = gate(1);
+    let (stop, stopping) = gate(1);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.retirement = Some(retirement);
+        ports.stop = Some(stop);
+    })?;
     receive(&h.loads).await?;
     h.start().await?;
     h.runtime.request_stop();
-    receive(&captures).await?;
-    receive(&speech).await?;
-    assert!(
-        tokio::time::timeout(Duration::from_millis(30), h.runtime.stopped())
-            .await
-            .is_err()
-    );
-    capture_release.send(()).await?;
-    speech_release.send(()).await?;
-    tokio::time::timeout(Duration::from_secs(2), h.runtime.stopped()).await?;
+    retiring.reached().await?;
+    stopping.reached().await?;
+    assert!(still_pending(h.runtime.stopped()).await);
+    retiring.release().await?;
+    stopping.release().await?;
+    timeout(PATIENCE, h.runtime.stopped()).await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn cpu_cancellation_reaps_before_replacement_without_blocking_input() -> anyhow::Result<()> {
-    let (entered, stopping) = async_channel::bounded(2);
-    let (release, waiting) = async_channel::bounded(2);
-    let mut h = Harness::with_options(
-        Config {
-            use_gpu: false,
-            ..Config::default()
-        },
-        Some((entered, waiting)),
-        None,
-        None,
-        None,
-    )?;
+    let (stop, stopping) = gate(2);
+    let config = Config {
+        use_gpu: false,
+        ..Config::default()
+    };
+    let mut h = Harness::with_ports(config, |ports| ports.stop = Some(stop))?;
     receive(&h.loads).await?;
     h.start().await?;
     let mut old_reply = h.finish().await?;
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
-    receive(&stopping).await?;
-    tokio::time::timeout(Duration::from_secs(2), old_reply.closed()).await?;
-    assert!(old_reply.send(Ok("stale fixture".into())).is_err());
+    stopping.reached().await?;
+    timeout(PATIENCE, old_reply.closed()).await?;
+    assert!(answer(old_reply, "stale fixture").is_err());
     assert!(
         h.loads.try_recv().is_err(),
         "Replacement started before old worker exit"
@@ -643,34 +626,35 @@ async fn cpu_cancellation_reaps_before_replacement_without_blocking_input() -> a
     h.input(Input::Toggle);
     h.phase(Phase::Processing).await?;
     assert!(h.jobs.try_recv().is_err());
-    release.send(()).await?;
+    stopping.release().await?;
     receive(&h.loads).await?;
-    let (_, reply) = receive(&h.jobs).await?;
-    assert!(reply.send(Ok("current fixture".into())).is_ok());
+    h.transcribe_next_as("current fixture").await?;
     assert_eq!(receive(&h.pasted).await?, "current fixture");
     h.phase(Phase::Done).await?;
-    release.send(()).await?;
+    // Pre-release the stop gate, so the shutdown stop passes without harness cleanup.
+    stopping.release().await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn preparing_insertion_cancels_without_blocking_a_new_recording() -> anyhow::Result<()> {
-    let (entered, preparing) = async_channel::bounded(2);
-    let (release, waiting) = async_channel::bounded(2);
-    let mut h = Harness::with_insertion(None, None, Some((entered, waiting)))?;
+    let (insertion, preparing) = gate(2);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.insertion = Some(insertion);
+    })?;
     h.start().await?;
-    assert!(h.finish().await?.send(Ok("old fixture".into())).is_ok());
-    let old = receive(&preparing).await?;
+    h.finish_as("old fixture").await?;
+    let old = preparing.reached().await?;
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
     h.start().await?;
     assert!(!old.active(), "A newer capture authorized stale insertion");
-    release.send(()).await?;
-    assert!(h.finish().await?.send(Ok("new fixture".into())).is_ok());
-    let next = receive(&preparing).await?;
+    preparing.release().await?;
+    h.finish_as("new fixture").await?;
+    let next = preparing.reached().await?;
     assert!(next.active());
     assert!(!old.commit());
-    release.send(()).await?;
+    preparing.release().await?;
     assert_eq!(receive(&h.pasted).await?, "new fixture");
     h.phase(Phase::Done).await?;
     assert!(h.pasted.try_recv().is_err());
@@ -679,21 +663,18 @@ async fn preparing_insertion_cancels_without_blocking_a_new_recording() -> anyho
 
 #[tokio::test]
 async fn shutdown_revokes_and_owns_pending_insertion_cleanup() -> anyhow::Result<()> {
-    let (entered, preparing) = async_channel::bounded(1);
-    let (release, waiting) = async_channel::bounded(1);
-    let mut h = Harness::with_insertion(None, None, Some((entered, waiting)))?;
+    let (insertion, preparing) = gate(1);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.insertion = Some(insertion);
+    })?;
     h.start().await?;
-    assert!(h.finish().await?.send(Ok("fixture".into())).is_ok());
-    let permit = receive(&preparing).await?;
+    h.finish_as("fixture").await?;
+    let permit = preparing.reached().await?;
     h.runtime.request_stop();
     assert!(!permit.active());
-    assert!(
-        tokio::time::timeout(Duration::from_millis(30), h.runtime.stopped())
-            .await
-            .is_err()
-    );
-    release.send(()).await?;
-    tokio::time::timeout(Duration::from_secs(2), h.runtime.stopped()).await?;
+    assert!(still_pending(h.runtime.stopped()).await);
+    preparing.release().await?;
+    timeout(PATIENCE, h.runtime.stopped()).await?;
     assert!(h.pasted.try_recv().is_err());
     Ok(())
 }
@@ -702,12 +683,12 @@ async fn shutdown_revokes_and_owns_pending_insertion_cleanup() -> anyhow::Result
 async fn silence_and_empty_recognition_never_report_submission() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     let (id, events) = h.start().await?;
-    events.send(Event::AudioDone(id, Ok(None))).await?;
+    events.send(CaptureEvent::Finished(id, Ok(None))).await?;
     h.phase(Phase::Empty).await?;
     assert!(h.jobs.try_recv().is_err());
     assert!(h.pasted.try_recv().is_err());
     h.start().await?;
-    assert!(h.finish().await?.send(Ok(String::new())).is_ok());
+    h.finish_as("").await?;
     h.phase(Phase::Empty).await?;
     assert!(h.pasted.try_recv().is_err());
     Ok(())
@@ -719,7 +700,7 @@ async fn dictation_inserts_once_and_request_preferences_keep_the_warm_worker() -
     let mut h = Harness::new()?;
     receive(&h.loads).await?;
     h.start().await?;
-    assert!(h.finish().await?.send(Ok("fixture one".into())).is_ok());
+    h.finish_as("fixture one").await?;
     assert_eq!(receive(&h.pasted).await?, "fixture one");
     h.phase(Phase::Done).await?;
     h.input(Input::Cancel);
@@ -732,7 +713,7 @@ async fn dictation_inserts_once_and_request_preferences_keep_the_warm_worker() -
     h.runtime.configure(config);
     h.phase(Phase::Idle).await?;
     h.start().await?;
-    assert!(h.finish().await?.send(Ok("fixture two".into())).is_ok());
+    h.finish_as("fixture two").await?;
     assert_eq!(receive(&h.pasted).await?, "fixture two");
     h.phase(Phase::Done).await?;
     assert!(
@@ -741,11 +722,11 @@ async fn dictation_inserts_once_and_request_preferences_keep_the_warm_worker() -
     );
     assert!(h.pasted.try_recv().is_err(), "A result was submitted twice");
     let mut config = h.runtime.configuration.borrow().clone();
-    config.engine = crate::config::Engine::Parakeet;
+    config.engine = Engine::Parakeet;
     h.runtime.configure(config);
     receive(&h.loads).await?;
     h.start().await?;
-    assert!(h.finish().await?.send(Ok("new engine".into())).is_ok());
+    h.finish_as("new engine").await?;
     assert_eq!(receive(&h.pasted).await?, "new engine");
     Ok(())
 }
@@ -758,20 +739,16 @@ async fn cancelled_inference_and_late_audio_cannot_affect_the_next_session() -> 
     let mut old_reply = h.finish().await?;
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
-    tokio::time::timeout(Duration::from_secs(2), old_reply.closed()).await?;
+    timeout(PATIENCE, old_reply.closed()).await?;
     assert!(
-        old_reply.send(Ok("discard this".into())).is_err(),
+        answer(old_reply, "discard this").is_err(),
         "Cancelled inference stayed alive"
     );
     let (new_id, _) = h.start().await?;
     assert_ne!(new_id, old_id);
-    old_events
-        .send(Event::AudioDone(
-            old_id,
-            Err(anyhow::anyhow!("old device failed")),
-        ))
-        .await?;
-    assert!(h.finish().await?.send(Ok("new session".into())).is_ok());
+    let late_failure = CaptureEvent::Finished(old_id, Err(anyhow!("old device failed")));
+    old_events.send(late_failure).await?;
+    h.finish_as("new session").await?;
     assert_eq!(receive(&h.pasted).await?, "new session");
     h.phase(Phase::Done).await?;
     assert!(
@@ -787,34 +764,16 @@ async fn failures_recover_the_worker_and_hook_loss_stops_without_inserting() -> 
     let mut h = Harness::new()?;
     receive(&h.loads).await?;
     let (id, events) = h.start().await?;
-    events
-        .send(Event::AudioDone(
-            id,
-            Err(anyhow::anyhow!("Microphone disconnected")),
-        ))
-        .await?;
+    let disconnected = CaptureEvent::Finished(id, Err(anyhow!("Microphone disconnected")));
+    events.send(disconnected).await?;
     h.phase(Phase::Error).await?;
-    assert!(
-        h.updates
-            .borrow()
-            .message
-            .contains("Microphone disconnected")
-    );
+    assert!(h.snapshot().message.contains("Microphone disconnected"));
     h.start().await?;
-    assert!(
-        h.finish()
-            .await?
-            .send(Err(anyhow::anyhow!("Fixture request failed")))
-            .is_ok()
-    );
+    let reply = h.finish().await?;
+    assert!(reply.send(Err(anyhow!("Fixture request failed"))).is_ok());
     h.phase(Phase::Error).await?;
     receive(&h.loads).await?;
-    assert!(
-        h.updates
-            .borrow()
-            .message
-            .contains("Fixture request failed")
-    );
+    assert!(h.snapshot().message.contains("Fixture request failed"));
     h.start().await?;
     h.runtime.input.close();
     h.phase(Phase::Error).await?;
@@ -822,23 +781,24 @@ async fn failures_recover_the_worker_and_hook_loss_stops_without_inserting() -> 
     assert!(h.pasted.try_recv().is_err());
     Ok(())
 }
+
 #[tokio::test]
 async fn failed_recovery_stops_worker_before_loading_replacement() -> anyhow::Result<()> {
-    let (entered, stopping) = async_channel::bounded(2);
-    let (release, waiting) = async_channel::bounded(2);
+    let (stop, stopping) = gate(2);
     let (recover, recovery) = async_channel::bounded(1);
-    let mut h = Harness::with_controls(Some((entered, waiting)), Some(recovery))?;
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.stop = Some(stop);
+        ports.recovery = Some(recovery);
+    })?;
     receive(&h.loads).await?;
     h.start().await?;
     let mut old_reply = h.finish().await?;
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
-    tokio::time::timeout(Duration::from_secs(2), old_reply.closed()).await?;
-    assert!(old_reply.send(Ok("discard this".into())).is_err());
-    recover
-        .send(Err(anyhow::anyhow!("Recovery failed")))
-        .await?;
-    receive(&stopping).await?;
+    timeout(PATIENCE, old_reply.closed()).await?;
+    assert!(answer(old_reply, "discard this").is_err());
+    recover.send(Err(anyhow!("Recovery failed"))).await?;
+    stopping.reached().await?;
     assert!(
         h.loads.try_recv().is_err(),
         "Replacement overlapped worker cleanup"
@@ -850,43 +810,37 @@ async fn failed_recovery_stops_worker_before_loading_replacement() -> anyhow::Re
         h.jobs.try_recv().is_err(),
         "Inference began before recovery finished"
     );
-    release.send(()).await?;
+    stopping.release().await?;
     receive(&h.loads).await?;
-    let (_, reply) = receive(&h.jobs).await?;
-    assert!(reply.send(Ok("after recovery".into())).is_ok());
+    h.transcribe_next_as("after recovery").await?;
     assert_eq!(receive(&h.pasted).await?, "after recovery");
     h.phase(Phase::Done).await?;
     assert!(h.pasted.try_recv().is_err());
-    release.send(()).await?; // Permit final native cleanup when the harness drops.
+    // Pre-release the stop gate, so the shutdown stop passes without harness cleanup.
+    stopping.release().await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn stop_cancels_input_without_waiting_for_native_cleanup() -> anyhow::Result<()> {
-    let (entered, stopping) = async_channel::bounded(1);
-    let (release, waiting) = async_channel::bounded(1);
-    let mut h = Harness::with_controls(Some((entered, waiting)), None)?;
+    let (stop, stopping) = gate(1);
+    let mut h = Harness::with_ports(Config::default(), |ports| ports.stop = Some(stop))?;
     h.start().await?;
-    assert!(h.finish().await?.send(Ok("fixture".into())).is_ok());
+    h.finish_as("fixture").await?;
     receive(&h.pasted).await?;
     h.phase(Phase::Done).await?;
 
     h.start().await?;
     h.runtime.request_stop();
-    receive(&stopping).await?;
+    stopping.reached().await?;
     assert!(h.runtime.input.is_closed());
     assert!(!h.runtime.input.active());
-    let mut stopped = std::pin::pin!(h.runtime.stopped());
     assert!(
-        std::future::Future::poll(
-            stopped.as_mut(),
-            &mut std::task::Context::from_waker(std::task::Waker::noop()),
-        )
-        .is_pending(),
+        still_pending(h.runtime.stopped()).await,
         "Completion was reported before native cleanup finished"
     );
-    release.send(()).await?;
-    tokio::time::timeout(Duration::from_secs(2), stopped).await?;
+    stopping.release().await?;
+    timeout(PATIENCE, h.runtime.stopped()).await?;
     assert!(h.pasted.try_recv().is_err());
     Ok(())
 }
@@ -895,88 +849,115 @@ async fn stop_cancels_input_without_waiting_for_native_cleanup() -> anyhow::Resu
 async fn warmup_failure_while_stopping_retains_capture_and_retries_on_demand() -> anyhow::Result<()>
 {
     let (results, loading) = async_channel::bounded(2);
-    let mut h = PausedHarness::with_ports(false, None, |ports| {
+    let mut h = Harness::paused(|ports| {
         ports.load_results = Some(loading);
         ports.delayed_finish = true;
-    });
-    receive(&h.harness.loads).await?;
-    let (id, events) = h.harness.start().await?;
-    h.harness.input(Input::Toggle);
-    h.harness.phase(Phase::Stopping).await?;
-    results
-        .send(Err(anyhow::anyhow!("Model warmup failed")))
+    })?;
+    receive(&h.loads).await?;
+    let (id, events) = h.start().await?;
+    h.input(Input::Toggle);
+    h.phase(Phase::Stopping).await?;
+    results.send(Err(anyhow!("Model warmup failed"))).await?;
+    h.observe(|snapshot| snapshot.message == "Model warmup failed")
         .await?;
-    observed(&mut h.harness.updates, |s| {
-        s.message == "Model warmup failed"
-    })
-    .await?;
-    assert!(matches!(h.harness.updates.borrow().phase, Phase::Stopping));
-    h.harness.input(Input::Press);
-    events.send(Event::Level(id, 0.4)).await?;
-    observed(&mut h.harness.updates, |s| {
-        s.level.to_bits() == 0.4_f32.to_bits()
-    })
-    .await?;
-    assert!(h.harness.captures.try_recv().is_err());
-    assert!(
-        h.harness.loads.try_recv().is_err(),
-        "Failed warmup must not loop"
-    );
+    assert_eq!(h.snapshot().phase, Phase::Stopping);
+    h.input(Input::Press);
+    events.send(CaptureEvent::Level(id, 0.4)).await?;
+    h.observe(level_is(0.4)).await?;
+    assert!(h.captures.try_recv().is_err());
+    assert!(h.loads.try_recv().is_err(), "Failed warmup must not loop");
     events
-        .send(Event::AudioDone(id, Ok(Some(vec![1, 2]))))
+        .send(CaptureEvent::Finished(id, Ok(Some(vec![1, 2]))))
         .await?;
-    receive(&h.harness.loads).await?;
+    receive(&h.loads).await?;
     results.send(Ok(())).await?;
-    let (_, reply) = receive(&h.harness.jobs).await?;
-    assert!(reply.send(Ok("fixture".into())).is_ok());
-    assert_eq!(receive(&h.harness.pasted).await?, "fixture");
-    h.harness.phase(Phase::Done).await?;
-    assert_eq!(h.harness.updates.borrow().message, "");
-    h.close().await?;
-    Ok(())
+    h.transcribe_next_as("fixture").await?;
+    assert_eq!(receive(&h.pasted).await?, "fixture");
+    h.phase(Phase::Done).await?;
+    assert_eq!(h.snapshot().message, "");
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn loading_notice_clears_once_ready_and_applied_settings_are_confirmed() -> anyhow::Result<()>
+{
+    let (results, loading) = async_channel::bounded(1);
+    let mut h = Harness::paused(|ports| ports.load_results = Some(loading))?;
+    receive(&h.loads).await?;
+    h.observe(|snapshot| snapshot.message == LOADING).await?;
+    results.send(Ok(())).await?;
+    h.observe(|snapshot| snapshot.model == ModelState::Ready)
+        .await?;
+    assert_eq!(h.snapshot().message, "");
+    h.runtime.configure(Config::default());
+    h.observe(|snapshot| snapshot.message == "Settings applied")
+        .await?;
+    assert_eq!(h.snapshot().phase, Phase::Idle);
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn audio_awaiting_an_unavailable_worker_shows_loading_until_it_is_ready() -> anyhow::Result<()>
+{
+    let (results, loading) = async_channel::bounded(2);
+    let mut h = Harness::paused(|ports| ports.load_results = Some(loading))?;
+    receive(&h.loads).await?;
+    results.send(Err(anyhow!("Initial load failed"))).await?;
+    h.phase(Phase::Error).await?;
+    assert_eq!(h.snapshot().message, "Initial load failed");
+    h.start().await?;
+    assert_eq!(h.snapshot().message, "");
+    h.input(Input::Toggle);
+    receive(&h.loads).await?;
+    h.observe(|snapshot| snapshot.message == LOADING).await?;
+    assert_eq!(h.snapshot().phase, Phase::Processing);
+    results.send(Ok(())).await?;
+    h.transcribe_next_as("fixture").await?;
+    receive(&h.pasted).await?;
+    h.phase(Phase::Done).await?;
+    assert_eq!(h.snapshot().message, "");
+    h.close().await
 }
 
 #[tokio::test(start_paused = true)]
 async fn configuration_revokes_insertion_authority_before_owner_observation() -> anyhow::Result<()>
 {
-    let mut paused = PausedHarness::new(false, None);
-    let h = &mut paused.harness;
+    let mut h = Harness::paused(|_| {})?;
     h.start().await?;
     assert!(h.runtime.input.active());
     h.runtime.configure(Config::default());
     assert!(!h.runtime.input.active());
     h.phase(Phase::Idle).await?;
-    paused.close().await
+    h.close().await
 }
 
 #[tokio::test(start_paused = true)]
 async fn retired_publisher_cannot_overwrite_shell_lifecycle_notice() -> anyhow::Result<()> {
-    let mut h = PausedHarness::new(false, None);
-    h.harness.start().await?;
-    h.harness.output.send_modify(|snapshot| {
+    let mut h = Harness::paused(|_| {})?;
+    h.start().await?;
+    h.output.send_modify(|snapshot| {
         snapshot.epoch += 1;
         snapshot.phase = Phase::Idle;
         snapshot.message = "Pausing dictation…".into();
     });
-    h.harness.input(Input::Toggle);
-    let (_, reply) = receive(&h.harness.jobs).await?;
-    assert!(reply.send(Ok("fixture".into())).is_ok());
-    receive(&h.harness.pasted).await?;
-    let updates = h.harness.updates.clone();
+    h.input(Input::Toggle);
+    h.transcribe_next_as("fixture").await?;
+    receive(&h.pasted).await?;
+    let updates = h.updates.clone();
     h.close().await?;
     assert_eq!(updates.borrow().message, "Pausing dictation…");
-    assert!(matches!(updates.borrow().phase, Phase::Idle));
+    assert_eq!(updates.borrow().phase, Phase::Idle);
     Ok(())
 }
 
 #[tokio::test(start_paused = true)]
 async fn delayed_owner_start_cannot_claim_a_newer_shell_publisher() -> anyhow::Result<()> {
-    let h = PausedHarness::new(false, None);
-    h.harness.output.send_modify(|s| {
-        s.epoch += 1;
-        s.message = "Dictation paused".into();
+    let h = Harness::paused(|_| {})?;
+    h.output.send_modify(|snapshot| {
+        snapshot.epoch += 1;
+        snapshot.message = "Dictation paused".into();
     });
-    let updates = h.harness.updates.clone();
+    let updates = h.updates.clone();
     h.close().await?;
     assert_eq!(updates.borrow().message, "Dictation paused");
     Ok(())
@@ -986,54 +967,45 @@ async fn delayed_owner_start_cannot_claim_a_newer_shell_publisher() -> anyhow::R
 async fn recovery_failure_keeps_a_queued_dictation_until_microphone_retirement()
 -> anyhow::Result<()> {
     let (results, loading) = async_channel::bounded(4);
-    let (entered, retiring) = async_channel::bounded(4);
-    let (release, released) = async_channel::bounded(4);
-    let mut h = PausedHarness::with_ports(false, None, |ports| {
+    let (retirement, retiring) = gate(4);
+    let mut h = Harness::paused(|ports| {
         ports.load_results = Some(loading);
-        ports.retirement = Some((entered, released));
-    });
-    receive(&h.harness.loads).await?;
-    h.harness.start().await?;
-    results
-        .send(Err(anyhow::anyhow!("Initial warmup failed")))
+        ports.retirement = Some(retirement);
+    })?;
+    receive(&h.loads).await?;
+    h.start().await?;
+    results.send(Err(anyhow!("Initial warmup failed"))).await?;
+    h.observe(|snapshot| snapshot.message == "Initial warmup failed")
         .await?;
-    observed(&mut h.harness.updates, |s| {
-        s.message == "Initial warmup failed"
-    })
-    .await?;
-    h.harness.input(Input::Cancel);
-    h.harness.phase(Phase::Cancelled).await?;
-    receive(&retiring).await?;
-    receive(&h.harness.loads).await?;
-    h.harness.input(Input::Press);
-    h.harness.phase(Phase::Starting).await?;
-    results
-        .send(Err(anyhow::anyhow!("Recovery failed")))
+    h.input(Input::Cancel);
+    h.phase(Phase::Cancelled).await?;
+    retiring.reached().await?;
+    receive(&h.loads).await?;
+    h.input(Input::Press);
+    h.phase(Phase::Starting).await?;
+    results.send(Err(anyhow!("Recovery failed"))).await?;
+    h.observe(|snapshot| snapshot.message == "Recovery failed")
         .await?;
-    observed(&mut h.harness.updates, |s| s.message == "Recovery failed").await?;
-    assert!(matches!(h.harness.updates.borrow().phase, Phase::Starting));
-    assert!(h.harness.captures.try_recv().is_err());
-    release.send(()).await?;
-    receive(&h.harness.captures).await?;
-    h.harness.phase(Phase::Recording).await?;
-    h.harness.input(Input::Toggle);
-    receive(&h.harness.loads).await?;
+    assert_eq!(h.snapshot().phase, Phase::Starting);
+    assert!(h.captures.try_recv().is_err());
+    retiring.release().await?;
+    receive(&h.captures).await?;
+    h.phase(Phase::Recording).await?;
+    h.input(Input::Toggle);
+    receive(&h.loads).await?;
     results.send(Ok(())).await?;
-    let (_, reply) = receive(&h.harness.jobs).await?;
-    assert!(reply.send(Ok("fixture".into())).is_ok());
-    receive(&h.harness.pasted).await?;
-    h.harness.phase(Phase::Done).await?;
-    assert_eq!(h.harness.updates.borrow().message, "");
-    receive(&retiring).await?;
-    release.send(()).await?;
-    h.close().await?;
-    Ok(())
+    h.transcribe_next_as("fixture").await?;
+    receive(&h.pasted).await?;
+    h.phase(Phase::Done).await?;
+    assert_eq!(h.snapshot().message, "");
+    retiring.reached().await?;
+    retiring.release().await?;
+    h.close().await
 }
 
-// A focused diagnostic using the real owner and fake side effects. No timing
-// assertion: scheduler noise must not turn performance profiling into a gate.
+// Scheduler noise must not turn performance profiling into a gate, so this only reports.
 #[tokio::test]
-#[ignore = "Reports controller reply-to-insertion latency with fake devices"]
+#[ignore = "Reports owner reply-to-insertion latency with fake devices"]
 async fn profile_ready_text_latency() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     receive(&h.loads).await?;
@@ -1042,7 +1014,7 @@ async fn profile_ready_text_latency() -> anyhow::Result<()> {
         h.start().await?;
         let reply = h.finish().await?;
         let started = Instant::now();
-        assert!(reply.send(Ok("fixture".into())).is_ok());
+        answer(reply, "fixture")?;
         receive(&h.pasted).await?;
         samples.push(started.elapsed().as_micros());
         h.phase(Phase::Done).await?;

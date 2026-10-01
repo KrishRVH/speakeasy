@@ -1,7 +1,13 @@
-//! At most one device, open or retiring. Opening is permitted only from Free;
-//! retirement acknowledges native teardown before another capture can start.
-use super::Recording;
+//! At most one device, open or retiring. The owner opens only from `Free`, and retirement
+//! acknowledges native teardown before another capture can start.
+
+use std::{future::pending, mem};
+
 use tokio::task::JoinHandle;
+
+use super::reap;
+use crate::ports::Recording;
+
 #[derive(Default)]
 pub(super) enum Microphone<R> {
     #[default]
@@ -9,42 +15,40 @@ pub(super) enum Microphone<R> {
     Open(R),
     Retiring(JoinHandle<()>),
 }
+
 impl<R: Recording> Microphone<R> {
-    pub(super) fn free(&self) -> bool {
+    pub(super) const fn is_free(&self) -> bool {
         matches!(self, Self::Free)
     }
-    pub(super) fn recording(&self) -> Option<&R> {
-        match self {
-            Self::Open(recording) => Some(recording),
-            _ => None,
+
+    pub(super) fn finish(&self) {
+        if let Self::Open(recording) = self {
+            recording.finish();
         }
     }
+
     pub(super) fn retire(&mut self) {
-        *self = match std::mem::replace(self, Self::Free) {
+        *self = match mem::take(self) {
             Self::Open(recording) => Self::Retiring(tokio::spawn(recording.retire())),
-            state => state,
+            state @ (Self::Free | Self::Retiring(_)) => state,
         };
     }
+
+    /// Pends unless retiring; resolves once the device is released, leaving the microphone free.
+    /// Cancel-safe: dropped early, it leaves the microphone retiring.
     pub(super) async fn retired(&mut self) {
-        match self {
-            Self::Retiring(task) => {
-                #[expect(
-                    clippy::let_underscore_must_use,
-                    reason = "A completed or panicked retirement task has released its capture; neither may keep the device occupied"
-                )]
-                let _ = task.await;
-            },
-            _ => std::future::pending().await,
-        }
+        let Self::Retiring(task) = self else {
+            return pending().await;
+        };
+        reap(task).await;
+        *self = Self::Free;
     }
+
+    /// Resolves once any open or retiring device has been released.
     pub(super) async fn stop(mut self) {
         self.retire();
         if let Self::Retiring(task) = self {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "Shutdown reaps the retirement task even after a panic; there is no remaining session to update"
-            )]
-            let _ = task.await;
+            reap(task).await;
         }
     }
 }

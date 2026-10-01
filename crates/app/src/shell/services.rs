@@ -1,9 +1,49 @@
-//! UI-thread ownership of native services. Cleanup waits on acknowledgements,
-//! retaining thread-affine adapters here until their native work has stopped.
-use super::{lifecycle::Lifecycle, *};
+//! UI-thread ownership of native services. Cleanup waits on acknowledgements, retaining
+//! thread-affine adapters here until their native work has stopped.
 
+use std::path::PathBuf;
+
+use gpui::{App, BorrowAppContext, Global, Task, WindowHandle};
+use speakeasy_platform::{Input, InputMonitor, ServiceState};
+use tokio::sync::watch;
+
+use super::{
+    lifecycle::{ConfigEpoch, Lifecycle},
+    settings::Settings,
+    window::reveal,
+};
+use crate::{
+    config::Config,
+    gpui_ext::AppUpdate,
+    instance::{Instance, Request},
+    pill::Pill,
+    runtime::{self, Phase, Runtime, Snapshot},
+    status::Status,
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LaunchMode {
+    Live,
+    Demo,
+    DemoTray,
+}
+
+impl LaunchMode {
+    pub(crate) const fn is_demo(self) -> bool {
+        matches!(self, Self::Demo | Self::DemoTray)
+    }
+
+    /// A resident app owns the single instance and a tray icon, and closing Settings hides it.
+    pub(crate) const fn is_resident(self) -> bool {
+        matches!(self, Self::Live | Self::DemoTray)
+    }
+}
+
+/// What starts the service again once retiring owners acknowledge.
 enum Restart {
+    /// Settings a save made durable.
     Apply(Config),
+    /// A resume, which validates the saved settings first.
     Validate,
 }
 
@@ -11,11 +51,13 @@ struct Owners {
     runtime: Runtime,
     monitor: InputMonitor,
 }
+
 impl Owners {
     fn request_stop(&self) {
         self.runtime.request_stop();
         self.monitor.request_stop();
     }
+
     fn stopped(&self) -> impl Future<Output = ()> + use<> {
         let runtime = self.runtime.stopped();
         let monitor = self.monitor.stopped();
@@ -24,6 +66,7 @@ impl Owners {
         }
     }
 }
+
 impl Drop for Owners {
     fn drop(&mut self) {
         self.request_stop();
@@ -35,27 +78,29 @@ pub(crate) struct Services {
     retirement: Option<Task<()>>,
     validation: Option<Task<()>>,
     pub(super) quit: Option<Task<()>>,
-    pub path: PathBuf,
+    pub(super) path: PathBuf,
     pub config: Config,
-    pub configuration_epoch: u64,
+    pub(super) config_epoch: ConfigEpoch,
     pub output: watch::Sender<Snapshot>,
-    pub pill: WindowHandle<Pill>,
-    pub window: Option<WindowHandle<Settings>>,
-    pub demo: bool,
-    pub demo_tray: bool,
-    pub visibility: Option<Task<()>>,
-    pub tray_hint_seen: bool,
-    reopen: Option<Task<()>>,
-    pub instance: Option<crate::instance::Instance>,
+    pub(super) pill: WindowHandle<Pill>,
+    pub(super) settings: Option<WindowHandle<Settings>>,
+    pub mode: LaunchMode,
+    pub(super) visibility: Option<Task<()>>,
+    pub(super) tray_hint_seen: bool,
+    requests: Option<Task<()>>,
+    instance: Option<Instance>,
 }
+
 impl Global for Services {}
+
 impl Services {
     pub(crate) fn new(
         path: PathBuf,
         config: Config,
         output: watch::Sender<Snapshot>,
         pill: WindowHandle<Pill>,
-        instance: Option<crate::instance::Instance>,
+        instance: Option<Instance>,
+        mode: LaunchMode,
     ) -> Self {
         Self {
             lifecycle: Lifecycle::Disabled,
@@ -64,71 +109,73 @@ impl Services {
             quit: None,
             path,
             config,
+            config_epoch: ConfigEpoch::default(),
             output,
             pill,
-            window: None,
-            demo: false,
-            demo_tray: false,
-            configuration_epoch: 0,
+            settings: None,
+            mode,
             visibility: None,
             tray_hint_seen: false,
-            reopen: None,
+            requests: None,
             instance,
         }
     }
-    pub(crate) fn running(&self) -> bool {
-        self.runtime().is_some_and(Runtime::is_running)
-            || self.lifecycle.validating(self.configuration_epoch)
-    }
-    pub(crate) fn runtime(&self) -> Option<&Runtime> {
-        self.lifecycle.active().map(|owners| &owners.runtime)
-    }
-    pub(crate) fn pausing(&self) -> bool {
-        self.lifecycle.pausing()
-    }
-    pub(crate) fn quitting(&self) -> bool {
-        self.lifecycle.quitting()
-    }
-    pub(crate) fn has_pending(&self) -> bool {
-        self.lifecycle.has_pending()
+
+    /// Releases every service, handing back the instance lock for the caller to drop last.
+    pub(crate) fn into_instance(self) -> Option<Instance> {
+        self.instance
     }
 
-    pub(crate) fn listen_for_reopen(
+    pub(crate) fn running(&self) -> bool {
+        self.runtime().is_some_and(Runtime::is_running)
+            || self.lifecycle.validating(self.config_epoch)
+    }
+
+    pub(super) fn quitting(&self) -> bool {
+        self.lifecycle.quitting()
+    }
+
+    pub(crate) fn service_state(&self) -> ServiceState {
+        if self.lifecycle.pausing() {
+            ServiceState::Pausing
+        } else if self.running() || self.mode.is_demo() {
+            ServiceState::Running
+        } else {
+            ServiceState::Paused
+        }
+    }
+
+    pub(crate) fn status(&self, snapshot: &Snapshot) -> Status {
+        Status::new(snapshot, self.service_state(), self.config.engine)
+    }
+
+    fn runtime(&self) -> Option<&Runtime> {
+        self.lifecycle.active().map(|owners| &owners.runtime)
+    }
+
+    /// Serves reveal, toggle, and cancel requests from later launches.
+    pub(crate) fn listen_for_requests(
         &mut self,
-        requests: async_channel::Receiver<crate::instance::Request>,
+        requests: async_channel::Receiver<Request>,
         cx: &App,
     ) {
-        self.reopen = Some(cx.spawn(async move |cx| {
+        self.requests = Some(cx.spawn(async move |cx| {
             while let Ok(request) = requests.recv().await {
-                if cx.update(|cx| Self::instance_request(request, cx)).is_err() {
+                if cx.update(|cx| handle_request(request, cx)).is_err() {
                     break;
                 }
             }
         }));
     }
 
-    fn instance_request(request: crate::instance::Request, cx: &mut App) {
-        use crate::instance::Request;
-
-        match request {
-            Request::Reveal => reveal(cx),
-            Request::Toggle | Request::Cancel => {
-                #[cfg(target_os = "linux")]
-                if cx.global::<Services>().config.linux.external_shortcut {
-                    send(
-                        if request == Request::Toggle {
-                            Input::Toggle
-                        } else {
-                            Input::Cancel
-                        },
-                        cx,
-                    );
-                }
-            },
-        }
+    pub(crate) fn publish_error(&self, error: &anyhow::Error) {
+        self.output.send_modify(|snapshot| {
+            snapshot.phase = Phase::Error;
+            snapshot.message = error.to_string();
+        });
     }
 
-    fn notice(&self, message: &str) {
+    fn announce(&self, message: &str) {
         self.output.send_modify(|snapshot| {
             *snapshot = Snapshot {
                 epoch: snapshot.epoch.wrapping_add(1),
@@ -137,11 +184,16 @@ impl Services {
             };
         });
     }
+
+    /// Applies `config`: reconfigures live owners, queues behind retiring ones, or starts new ones.
+    /// Does nothing once Quit has begun.
     pub(crate) fn apply(&mut self, config: Config, cx: &App) -> anyhow::Result<()> {
         if self.quitting() {
             return Ok(());
         }
-        self.configuration_epoch = self.configuration_epoch.wrapping_add(1);
+        self.config_epoch = self.config_epoch.next();
+        // A dead runtime or changed Linux desktop options need fresh owners: stopping makes the
+        // queue below restart with `config` once the old owners retire.
         if self.runtime().is_some_and(|runtime| !runtime.is_running()) {
             self.stop(cx);
         }
@@ -156,15 +208,33 @@ impl Services {
         if let Some(runtime) = self.runtime() {
             runtime.configure(config.clone());
         } else {
-            self.notice(crate::runtime::LOADING);
+            self.announce(runtime::LOADING);
             let (runtime, monitor) = Runtime::start(config.clone(), self.output.clone())?;
             self.lifecycle = Lifecycle::Running(Owners { runtime, monitor });
         }
         self.config = config;
         Ok(())
     }
-    pub(super) fn resume(&mut self, cx: &App) {
-        if self.pausing() {
+
+    /// Adopts settings that a save made durable, enabling dictation only as `save_may_enable`
+    /// allows; otherwise the settings persist and show while dictation stays off.
+    pub(super) fn adopt_saved(
+        &mut self,
+        config: Config,
+        saved_at: ConfigEpoch,
+        cx: &App,
+    ) -> anyhow::Result<()> {
+        let enabled = self.running() || self.lifecycle.has_pending();
+        if save_may_enable(saved_at, self.config_epoch, enabled) {
+            self.apply(config, cx)
+        } else {
+            self.config = config;
+            Ok(())
+        }
+    }
+
+    fn resume(&mut self, cx: &App) {
+        if self.lifecycle.pausing() {
             return;
         }
         if self.runtime().is_some() {
@@ -172,8 +242,8 @@ impl Services {
             self.lifecycle.queue(Restart::Validate);
             return;
         }
-        self.configuration_epoch = self.configuration_epoch.wrapping_add(1);
-        let epoch = self.configuration_epoch;
+        self.config_epoch = self.config_epoch.next();
+        let epoch = self.config_epoch;
         if !self.lifecycle.validate(epoch) {
             return;
         }
@@ -183,46 +253,39 @@ impl Services {
             config.validate(&path)?;
             Ok::<_, anyhow::Error>(config)
         });
-        self.notice("Checking local speech settings…");
+        self.announce("Checking local speech settings…");
         self.validation = Some(cx.spawn(async move |cx| {
             let result = validation.await;
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "Disposed UI services no longer need a validation result; they cannot restart dictation"
-            )]
-            let _ = cx.update(|cx| Self::validation_complete(epoch, result, cx));
+            cx.update_if_running(|cx| Self::validation_complete(epoch, result, cx));
         }));
     }
 
-    fn validation_complete(epoch: u64, result: anyhow::Result<Config>, cx: &mut App) {
-        if !cx.has_global::<Services>() {
+    fn validation_complete(epoch: ConfigEpoch, result: anyhow::Result<Config>, cx: &mut App) {
+        if !cx.has_global::<Self>() {
             return;
         }
-        let result = cx.update_global::<Services, _>(|services, cx| {
+        let result = cx.update_global::<Self, _>(|services, cx| {
             if !services.lifecycle.validating(epoch) {
                 return Ok(());
             }
             services.lifecycle = Lifecycle::Disabled;
-            services.validation.take();
+            services.validation = None;
             result.and_then(|config| services.apply(config, cx))
         });
         if let Err(error) = result {
-            cx.global::<Services>().output.send_modify(|snapshot| {
-                snapshot.phase = Phase::Error;
-                snapshot.message = error.to_string();
-            });
+            cx.global::<Self>().publish_error(&error);
             reveal(cx);
         }
     }
 
-    pub(crate) fn stop(&mut self, cx: &App) {
+    pub(super) fn stop(&mut self, cx: &App) {
         if self.quitting() {
             return;
         }
-        self.configuration_epoch = self.configuration_epoch.wrapping_add(1);
-        self.validation.take();
+        self.config_epoch = self.config_epoch.next();
+        self.validation = None;
         let started = self.lifecycle.pause();
-        self.notice(if self.pausing() {
+        self.announce(if self.lifecycle.pausing() {
             "Pausing dictation…"
         } else {
             "Dictation paused"
@@ -237,44 +300,38 @@ impl Services {
         let stopped = owners.stopped();
         self.retirement = Some(cx.spawn(async move |cx| {
             stopped.await;
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "A disposed app needs no presentation update; native owners have acknowledged retirement"
-            )]
-            let _ = cx.update(|cx| {
-                cx.update_global::<Services, _>(|services, cx| services.retired(cx));
+            cx.update_if_running(|cx| {
+                cx.update_global::<Self, _>(|services, cx| services.retired(cx));
             });
         }));
     }
 
     fn retired(&mut self, cx: &App) {
         let pending = self.lifecycle.retired();
-        self.retirement.take();
+        self.retirement = None;
         if self.quitting() {
             return;
         }
         match pending {
             Some(Restart::Apply(config)) => {
                 if let Err(error) = self.apply(config, cx) {
-                    self.output.send_modify(|snapshot| {
-                        snapshot.phase = Phase::Error;
-                        snapshot.message = error.to_string();
-                    });
+                    self.publish_error(&error);
                 }
             },
             Some(Restart::Validate) => self.resume(cx),
-            None => self.notice("Dictation paused"),
+            None => self.announce("Dictation paused"),
         }
     }
+
     pub(super) fn begin_quit(&mut self) -> Option<impl Future<Output = ()> + use<>> {
         if !self.lifecycle.quit() {
             return None;
         }
-        self.configuration_epoch = self.configuration_epoch.wrapping_add(1);
-        self.validation.take();
-        self.reopen.take();
-        self.visibility.take();
-        self.notice("Quitting Speakeasy…");
+        self.config_epoch = self.config_epoch.next();
+        self.validation = None;
+        self.requests = None;
+        self.visibility = None;
+        self.announce("Quitting Speakeasy…");
         let stopped = self.lifecycle.retiring().map(|owners| {
             owners.request_stop();
             owners.stopped()
@@ -285,8 +342,70 @@ impl Services {
             }
         })
     }
+
     pub(super) fn finish_quit(&mut self) {
         self.lifecycle.retired();
-        self.retirement.take();
+        self.retirement = None;
+    }
+}
+
+pub(crate) fn toggle_enabled(cx: &mut App) {
+    if cx.global::<Services>().mode.is_demo() {
+        return;
+    }
+    cx.update_global::<Services, _>(|services, cx| {
+        if services.lifecycle.pausing() {
+            return;
+        }
+        if services.running() {
+            services.stop(cx);
+        } else {
+            services.resume(cx);
+        }
+    });
+}
+
+pub(crate) fn send(input: Input, cx: &App) {
+    if let Some(runtime) = cx.global::<Services>().runtime() {
+        runtime.input.deliver(input);
+    }
+}
+
+/// A Pause after a Save wins: the save may enable dictation only if the service state is unchanged
+/// since its request, or dictation is enabled anyway.
+fn save_may_enable(saved_at: ConfigEpoch, current: ConfigEpoch, enabled: bool) -> bool {
+    saved_at == current || enabled
+}
+
+fn handle_request(request: Request, cx: &mut App) {
+    let input = match request {
+        Request::Reveal => {
+            reveal(cx);
+            return;
+        },
+        Request::Toggle => Input::Toggle,
+        Request::Cancel => Input::Cancel,
+    };
+    // Only Linux desktop bindings drive dictation through a relaunch; otherwise the native shortcut
+    // owns the gesture.
+    if cfg!(target_os = "linux") && cx.global::<Services>().config.linux.external_shortcut {
+        send(input, cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pause_after_save_keeps_dictation_off_unless_resumed() {
+        let saved_at = ConfigEpoch::default();
+        let paused_at = saved_at.next();
+        assert!(save_may_enable(saved_at, saved_at, false));
+        assert!(!save_may_enable(saved_at, paused_at, false));
+        assert!(
+            save_may_enable(saved_at, paused_at, true),
+            "A deliberate Resume after Pause still receives the durable settings"
+        );
     }
 }

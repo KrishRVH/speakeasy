@@ -35,7 +35,7 @@ about a newly changed revision.
 Record hardware, model and runtime, sample rate, request boundaries, warmup, and competing load.
 Compare paired runs and check word accuracy and formatting as well as latency. Keep transcripts out
 of logs. The opt-in tests `profile_fixture_dictation` and `profile_ready_text_latency` exercise the
-real controller with public audio or fake devices; the README lists the fixture variables. Use
+real session owner with public audio or fake devices; the README lists the fixture variables. Use
 ordinary native profilers rather than a permanent benchmark suite.
 
 ## Native process sampling
@@ -83,9 +83,8 @@ refresh, competing load and settings:
 
 Process sampling cannot measure GPU energy, displayed frames, microphone onset or editor acceptance.
 Use the native platform's frame/CPU/GPU profiler for those checks, and report live
-microphone/input/clipboard acceptance separately. Keep the 200-FPS ceiling, native display pacing,
-speech quality and interaction policy as constraints. No cache, worker pool or background microphone
-is introduced.
+microphone/input/clipboard acceptance separately. Keep the frame ceiling, native display pacing,
+speech quality and interaction policy as constraints.
 
 ## Native acceptance
 

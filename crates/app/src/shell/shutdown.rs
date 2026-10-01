@@ -1,9 +1,16 @@
-//! All application-owned Quit routes drain native work and requested saves while
-//! the foreground executor continues rendering. Cleanup has no timeout: audio
-//! driver teardown, process reaping, insertion, setup, and saves must acknowledge.
-//! A stuck native owner keeps Quitting visible and the UI responsive; forced
-//! native termination retains synchronous Drop as the emergency fallback.
-use super::{App, BorrowAppContext, Duration, Services, Settings, Timer};
+//! All application-owned Quit routes drain native work and requested saves while the foreground
+//! executor continues rendering. Cleanup has no timeout: audio driver teardown, process reaping,
+//! insertion, setup, and saves must acknowledge. A stuck native owner keeps Quitting visible and
+//! the UI responsive; forced native termination retains synchronous Drop as the emergency fallback.
+
+use std::time::Duration;
+
+use gpui::{App, BorrowAppContext, Timer};
+
+use super::Services;
+use crate::gpui_ext::{AppUpdate, WindowUpdate};
+
+const DRAIN_POLL: Duration = Duration::from_millis(10);
 
 pub(crate) fn request_quit(cx: &mut App) {
     if !cx.has_global::<Services>() {
@@ -13,67 +20,30 @@ pub(crate) fn request_quit(cx: &mut App) {
     let Some(stopped) = cx.update_global::<Services, _>(|services, _| services.begin_quit()) else {
         return;
     };
-    let window = cx.global::<Services>().window;
+    let settings = cx.global::<Services>().settings;
     let task = cx.spawn(async move |cx| {
-        // Defer view access until the action that requested Quit releases it.
-        if let Some(window) = window {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "A disposed Settings view already owns its synchronous cleanup fallback"
-            )]
-            let _ = window.update(cx, |view, _, _| {
-                view.dialog.take();
-                view.devices.take();
-                view.preview.take();
-                if let Some((setup, _)) = &view.setup {
-                    setup.request_stop();
-                }
-                for (setup, _) in &view.retiring_setups {
-                    setup.request_stop();
-                }
-            });
+        // The action that requested Quit may still hold the view; touch it only from here.
+        if let Some(settings) = settings {
+            settings.update_if_open(cx, |view, _, _| view.cancel_background_work());
         }
         stopped.await;
-        // Existing save tasks drain their coalesced queue; setup cannot enqueue
-        // another save once Services enters Quitting. Retain views and the lock.
+        // Save tasks drain their queue, and Quitting stops setup from queuing another. Views and
+        // the instance lock stay alive until then.
         loop {
-            let ready = window.is_none_or(|window| {
-                window
-                    .update(cx, |view, _, _| view.shutdown_ready())
+            let drained = settings.is_none_or(|settings| {
+                settings
+                    .update(cx, |view, _, _| view.drain_finished())
                     .unwrap_or(true)
             });
-            if ready {
+            if drained {
                 break;
             }
-            Timer::after(Duration::from_millis(10)).await;
+            Timer::after(DRAIN_POLL).await;
         }
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "A disposed app has already completed the native quit route"
-        )]
-        let _ = cx.update(|cx| {
+        cx.update_if_running(|cx| {
             cx.update_global::<Services, _>(|services, _| services.finish_quit());
             cx.quit();
         });
     });
     cx.global_mut::<Services>().quit = Some(task);
-}
-
-impl Settings {
-    fn shutdown_ready(&mut self) -> bool {
-        if self
-            .setup
-            .as_ref()
-            .is_some_and(|(setup, _)| setup.is_finished())
-        {
-            self.setup.take();
-        }
-        self.retiring_setups
-            .retain(|(setup, _)| !setup.is_finished());
-        self.setup.is_none()
-            && self.retiring_setups.is_empty()
-            && self.saving.is_none()
-            && self.save_work.is_none()
-            && self.saves.pending.is_none()
-    }
 }

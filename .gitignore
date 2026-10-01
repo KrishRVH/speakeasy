@@ -1,5 +1,4 @@
-# Intent: ignore generated/local artifacts only. Keep lockfiles, fixtures,
-# corpora, examples, Makefiles, and shared editor config visible by default.
+# Ignore generated and local files only; lockfiles, fixtures, and shared editor config stay visible.
 
 # OS files
 .DS_Store
@@ -12,38 +11,52 @@ Desktop.ini
 *~
 .#*
 
-# Local environment/secrets
+# Local environment and secrets
 .env
 .env.*
 !.env.example
 !.env.sample
 !.env.template
 
-# Logs and temporary files
+# Logs, task notes, and run output
 *.log
 *.tmp
 *.temp
 /.tmp/
 /tmp/
 /.scratch/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
+/artifacts/
 
-# Dependency directories
+# Tool output
 node_modules/
-/vendor/
-
-# Generic generated output
+/.cache/
 /.gstack/
 /.lycheecache
-/.cache/
-/build/
-/coverage/
-/dist/
-/out/
-/sbom/
+.basedpyright/
+.coverage
+.coverage.*
+.hypothesis/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+__pycache__/
+*.py[codz]
+*.egg-info/
+/target/
+**/target/
+**/*.rs.bk
+
+# Native build output outside target/
+*.dll
+*.dylib
+*.exe
+*.lib
+*.o
+*.obj
+*.pdb
+*.so
+*.dSYM/
 
 # mise
 mise.local.toml
@@ -55,176 +68,7 @@ mise.*.local.lock
 .mise.local.lock
 .mise.*.local.lock
 
-# Dagger module local output
-/dagger/.turbo/
-/dagger/dist/
-
-# Ada / SPARK
-/alire/build_hash_inputs
-/alire/flags/
-/alire/settings.toml
-/config/*_config.ads
-/config/*_config.gpr
-/config/*_config.h
-
-# C / CMake
-/CMakeCache.txt
-/CMakeFiles/
-/CMakeUserPresets.json
-/CTestTestfile.cmake
-/DartConfiguration.tcl
-/Testing/
-/cmake_install.cmake
-/compile_commands.json
-/.ninja_deps
-/.ninja_log
-*.a
-*.dll
-*.dylib
-*.exe
-*.gch
-*.gcda
-*.gcno
-*.gcov
-*.ifc
-*.lib
-*.o
-*.obj
-*.pch
-*.pcm
-*.profdata
-*.profraw
-*.so
-*.dSYM/
-
-# C# / .NET
-/.vs/
-/artifacts/
-**/TestResults/
-**/StrykerOutput/
-**/[Bb]in/[Dd]ebug/
-**/[Bb]in/[Rr]elease/
-**/[Oo]bj/
-*.nupkg
-*.pdb
-*.snupkg
-*.rsuser
-*.sln.docstates
-*.suo
-*.user
-*.userosscache
-
-# Elixir / Erlang
-/_build/
-/deps/
-/.elixir_ls/
-/cover/
-/doc/
-erl_crash.dump
-rebar3.crashdump
-*.beam
-*.ez
-*.plt
-*.plt.hash
-
-# Fortran
-*.mod
-# Go's module file shares Fortran's extension; re-include it after *.mod.
-!go.mod
-*.smod
-
-# Go
-*.test
-
-# Godot
-/.godot/
-*.translation
-
-# Haskell
-/dist-newstyle/
-/.stack-work/
-cabal.project.local
-cabal.project.local~
-.ghc.environment.*
-.hpc/
-*.hi
-*.dyn_hi
-*.dyn_o
-*.hie
-*.hp
-*.prof
-*.tix
-*.eventlog
-
-# JavaScript / TypeScript
-*.tsbuildinfo
-.eslintcache
-**/.stryker-tmp/
-**/reports/.stryker-mutation.lock/
-**/reports/mutation/
-**/reports/stryker-incremental.json
-/.angular/
-/.astro/
-/.next/
-/.nuxt/
-/.nyc_output/
-/.parcel-cache/
-/.svelte-kit/
-/.turbo/
-/.vite/
-
-# JVM / Kotlin / Gradle
-/.gradle/
-/.kotlin/
-*.class
-hs_err_pid*
-replay_pid*
-
-# Lua
-.lua-language-server/
-.lua_modules/
-*.luac
-luac.out
-
-# PHP
-/.phpstan.cache/
-/.phpunit.cache/
-/.phpunit.result.cache
-/composer.phar
-/var/cache/
-/var/log/
-
-# Python
-.basedpyright/
-.coverage
-.coverage.*
-.hypothesis/
-/.mutmut-run.lock/
-.mutmut-cache
-.mypy_cache/
-.pytest_cache/
-.ruff_cache/
-.venv/
-__pycache__/
-/mutants/
-*.py[codz]
-*.egg-info/
-/htmlcov/
-
-# Rust
-/target/
-**/target/
-**/mutants.out/
-**/mutants.out.old/
-**/*.rs.bk
-
-# Zig
-/.zig-cache/
-/zig-cache/
-/zig-out/
-/zig-pkg/
-
-# Speakeasy local files and native assets.
+# Speakeasy local files and native assets
 /settings.json
 /instance.lock
 /instance.port

@@ -1,22 +1,59 @@
-use crate::config::{Config, Engine};
-use anyhow::{Context, bail};
-use reqwest::{Client, multipart};
-use std::{net::TcpListener, process::Stdio, time::Duration};
+//! One local speech engine process behind a loopback HTTP API. The process is contained and reaped
+//! on every exit path, and its output never reaches diagnostics.
+
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
+use std::{
+    net::TcpListener,
+    path::Path,
+    process::{ExitStatus, Stdio},
+    time::Duration,
+};
+
+use anyhow::{Context, anyhow, bail, ensure};
+use reqwest::{Client, Response, multipart};
+use serde::Deserialize;
+use speakeasy_platform::ProcessGroup;
 use tokio::{
     process::{Child, Command},
     sync::watch,
     time::{sleep, timeout},
 };
 
+use crate::{
+    audio,
+    child::{hidden_command, kill_and_reap},
+    config::{Config, Engine},
+    ports::{STARTUP_CANCELLED, Speech},
+};
+
+const LOOPBACK: &str = "127.0.0.1";
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+const HEALTH_TIMEOUT: Duration = Duration::from_millis(200);
+const HEALTH_POLL: Duration = Duration::from_millis(25);
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
+// CPU inference of a five-minute recording can take minutes; Escape and bounded recovery end real
+// waits long before this.
+const INFERENCE_TIMEOUT: Duration = Duration::from_mins(30);
+const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+const SIGILL: i32 = 4;
+const USAGE_ERROR: u32 = 2;
+const STATUS_ILLEGAL_INSTRUCTION: u32 = 0xC000_001D;
+const STATUS_DLL_NOT_FOUND: u32 = 0xC000_0135;
+const STATUS_ENTRYPOINT_NOT_FOUND: u32 = 0xC000_0139;
+const STATUS_INVALID_IMAGE_FORMAT: u32 = 0xC000_007B;
+
 pub(crate) struct LocalSpeech {
     engine: Engine,
-    group: speakeasy_platform::ProcessGroup,
+    /// Declared before `child`, so dropping terminates the group before its leader can be reaped.
+    group: ProcessGroup,
     child: Child,
     endpoint: String,
+    /// The private Whisper route and the `NeMo` API key.
+    secret: String,
     client: Client,
-    // Whisper serves an empty directory. Its random basename also supplies the
-    // private Whisper route or the loopback NeMo API key for this owned process.
-    directory: tempfile::TempDir,
+    /// Whisper serves this empty directory; its random name is `secret`.
+    _directory: tempfile::TempDir,
 }
 
 impl LocalSpeech {
@@ -24,308 +61,322 @@ impl LocalSpeech {
         config: Config,
         mut cancelled: watch::Receiver<bool>,
     ) -> anyhow::Result<Self> {
-        anyhow::ensure!(!*cancelled.borrow(), "Local model startup cancelled");
-        let engine = config.engine;
-        let nemo = engine == Engine::Parakeet;
-        let listener = TcpListener::bind("127.0.0.1:0")?;
+        ensure!(!*cancelled.borrow(), STARTUP_CANCELLED);
+        let listener = TcpListener::bind((LOOPBACK, 0))?;
         let port = listener.local_addr()?.port();
         let directory = tempfile::Builder::new().prefix("speakeasy-").tempdir()?;
-        let route = directory
+        let secret = directory
             .path()
             .file_name()
             .context("Missing temporary directory name")?
             .to_string_lossy()
             .into_owned();
-        let mut command = Command::new(&config.engine_executable);
-        if nemo {
+        let mut command = server_command(&config, port, &secret, directory.path());
+        // Release the reserved port just before the engine binds it.
+        drop(listener);
+        let client = Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(CONNECT_TIMEOUT)
+            .build()?;
+        let mut child = command.spawn().context(
+            "Cannot start local speech. Check the selected engine executable and its native dependencies.",
+        )?;
+        let group = contain(&mut child).await?;
+        let endpoint = match config.engine {
+            Engine::Parakeet => format!("http://{LOOPBACK}:{port}"),
+            Engine::Whisper => format!("http://{LOOPBACK}:{port}/{secret}"),
+        };
+        let mut speech = Self {
+            engine: config.engine,
+            group,
+            child,
+            endpoint,
+            secret,
+            client,
+            _directory: directory,
+        };
+        if let Err(error) = speech.become_ready(&config, &mut cancelled).await {
+            speech.stop().await;
+            return Err(error);
+        }
+        Ok(speech)
+    }
+
+    async fn become_ready(
+        &mut self,
+        config: &Config,
+        cancelled: &mut watch::Receiver<bool>,
+    ) -> anyhow::Result<()> {
+        unless_cancelled(cancelled, async {
+            timeout(STARTUP_TIMEOUT, self.wait_until_serving())
+                .await
+                .context("Local model startup timed out")?
+        })
+        .await?;
+        if let Some(warmup) = Warmup::required(config) {
+            unless_cancelled(cancelled, async {
+                timeout(STARTUP_TIMEOUT, self.probe_with_silence())
+                    .await
+                    .context(warmup.timed_out)?
+                    .context(warmup.failed)
+            })
+            .await?;
+        }
+        ensure!(!*cancelled.borrow(), STARTUP_CANCELLED);
+        Ok(())
+    }
+
+    async fn wait_until_serving(&mut self) -> anyhow::Result<()> {
+        let health = self.url(match self.engine {
+            Engine::Parakeet => "ready",
+            Engine::Whisper => "health",
+        });
+        loop {
+            if let Some(status) = self.child.try_wait()? {
+                // The reaped leader's process ID may be reused, so its group is never signaled.
+                #[cfg(unix)]
+                self.group.disarm();
+                bail!(startup_exit(status));
+            }
+            if let Ok(response) = self
+                .client
+                .get(&health)
+                .timeout(HEALTH_TIMEOUT)
+                .send()
+                .await
+                && response.status().is_success()
+            {
+                return Ok(());
+            }
+            sleep(HEALTH_POLL).await;
+        }
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("{}/{path}", self.endpoint)
+    }
+}
+
+impl Speech for LocalSpeech {
+    async fn transcribe(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<String> {
+        let request = match self.engine {
+            Engine::Parakeet => {
+                let rate = audio::wav_sample_rate(&wav).context("Missing recording sample rate")?;
+                ensure!(
+                    (8_000..=96_000).contains(&rate),
+                    "Parakeet needs 8–96 kHz audio. Set your microphone to 48 kHz in OS settings or choose Whisper."
+                );
+                self.client
+                    .post(self.url("v1/audio/transcriptions"))
+                    .bearer_auth(&self.secret)
+                    .multipart(recording_form(wav)?)
+            },
+            Engine::Whisper => {
+                let form = recording_form(wav)?
+                    .text("language", language.to_owned())
+                    .text("temperature", "0.0");
+                self.client.post(self.url("inference")).multipart(form)
+            },
+        };
+        let response = request
+            .timeout(INFERENCE_TIMEOUT)
+            .send()
+            .await
+            // The request URL carries the private route, so the transport error never reaches users.
+            .map_err(|error| {
+                if error.is_timeout() {
+                    anyhow!("Transcription timed out. Try a smaller model or GPU acceleration.")
+                } else {
+                    anyhow!("Local transcription stopped. Check the model/backend and try again.")
+                }
+            })?;
+        ensure!(
+            response.status().is_success(),
+            "Local speech returned HTTP {}",
+            response.status().as_u16()
+        );
+        let body = read_bounded(response).await?;
+        let reply: Transcription =
+            serde_json::from_slice(&body).context("Local speech returned invalid JSON")?;
+        reply
+            .text
+            .as_deref()
+            .map(join_segments)
+            .context("Local speech returned no transcript")
+    }
+
+    async fn probe_with_silence(&self) -> anyhow::Result<()> {
+        let silence = audio::silent_wav(16_000, Duration::from_secs(1))?;
+        self.transcribe(silence, "en").await?;
+        Ok(())
+    }
+
+    async fn stop(&mut self) {
+        self.group.terminate();
+        kill_and_reap(&mut self.child).await;
+    }
+}
+
+/// Loading weights neither initializes every GPU kernel nor proves that a Linux build can run its
+/// CPU kernels, so these configurations transcribe silence before reporting ready.
+struct Warmup {
+    timed_out: &'static str,
+    failed: &'static str,
+}
+
+impl Warmup {
+    fn required(config: &Config) -> Option<Self> {
+        if config.use_gpu {
+            Some(Self {
+                timed_out: "Local GPU warmup timed out. Check the selected engine and GPU dependencies.",
+                failed: "Local GPU warmup failed. Check the selected engine and GPU dependencies.",
+            })
+        } else if cfg!(target_os = "linux") {
+            Some(Self {
+                timed_out: "Local CPU inference timed out. Choose a smaller model or a compatible engine executable in Settings.",
+                failed: "Local CPU inference failed. Check the model and CPU compatibility; choose a compatible engine executable in Settings.",
+            })
+        } else {
+            None
+        }
+    }
+}
+
+/// The part of either engine's JSON reply that Speakeasy reads.
+#[derive(Deserialize)]
+struct Transcription {
+    text: Option<String>,
+}
+
+fn server_command(config: &Config, port: u16, secret: &str, served: &Path) -> Command {
+    let port = port.to_string();
+    let mut command = hidden_command(&config.engine_executable);
+    match config.engine {
+        Engine::Parakeet => {
+            let device = if config.use_gpu { "auto" } else { "cpu" };
             command
                 .args(["serve", "--asr-model"])
                 .arg(&config.model)
                 .args([
                     "--device",
-                    if config.use_gpu { "auto" } else { "cpu" },
+                    device,
                     "--host",
-                    "127.0.0.1",
+                    LOOPBACK,
                     "--port",
-                    &port.to_string(),
+                    &port,
                     "--no-ui",
                     "--threads",
                     "1",
                     "--asr.batching.enabled=false",
                 ])
-                .env("NEMO_SPEECH_HTTP_API_KEY", &route);
-        } else {
-            // Keep default timestamp decoding: disabling it can skip speech
-            // when a window ends early. The JSON response contains plain text.
+                .env("NEMO_SPEECH_HTTP_API_KEY", secret);
+        },
+        Engine::Whisper => {
+            // Keep default timestamp decoding: disabling it can skip speech when a window ends
+            // early, and the JSON text stays plain either way.
             command
-                .args(["--model"])
+                .arg("--model")
                 .arg(&config.model)
                 .args([
                     "--host",
-                    "127.0.0.1",
+                    LOOPBACK,
                     "--port",
-                    &port.to_string(),
+                    &port,
                     "--request-path",
-                    &format!("/{route}"),
+                    &format!("/{secret}"),
                     "--public",
                 ])
-                .arg(directory.path())
+                .arg(served)
                 .args([
                     "--threads",
                     &config.threads.to_string(),
                     "--language",
                     &config.language,
                 ]);
-        }
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-        if !config.use_gpu && !nemo {
-            command.arg("--no-gpu");
-        }
-        #[cfg(target_os = "windows")]
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.as_std_mut().process_group(0);
-        }
-        drop(listener);
-        let client = Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(Duration::from_secs(2))
-            .build()?;
-        let mut child = command.spawn().context(
-            "Cannot start local speech. Check the selected engine executable and its native dependencies.",
-        )?;
-        let group = match speakeasy_platform::ProcessGroup::attach(
-            child.id().context("Worker exited before containment")?,
-        ) {
-            Ok(group) => group,
-            Err(error) => {
-                #[expect(
-                    clippy::let_underscore_must_use,
-                    reason = "Containment failure remains the actionable error; kill-on-drop still owns a child that exits during cleanup"
-                )]
-                let _ = child.start_kill();
-                #[expect(
-                    clippy::let_underscore_must_use,
-                    reason = "Reap the failed child before returning its containment error, including an already-reaped child"
-                )]
-                let _ = child.wait().await;
-                return Err(error);
-            },
-        };
-        let mut server = Self {
-            engine,
-            group,
-            child,
-            endpoint: if nemo {
-                format!("http://127.0.0.1:{port}")
-            } else {
-                format!("http://127.0.0.1:{port}/{route}")
-            },
-            client,
-            directory,
-        };
-        let readiness = tokio::select! {
-            biased;
-            _ = cancelled.changed() => Err(anyhow::anyhow!("Local model startup cancelled")),
-            result = timeout(Duration::from_secs(120), async {
-            loop {
-                if let Some(status) = server.child.try_wait()? {
-                    #[cfg(unix)]
-                    server.group.disarm();
-                    bail!("{}", startup_exit(status));
-                }
-                if let Ok(response) = server
-                    .client
-                    .get(format!("{}/{}", server.endpoint, if nemo { "ready" } else { "health" }))
-                    .timeout(Duration::from_millis(200))
-                    .send()
-                    .await
-                    && response.status().is_success()
-                {
-                    return Ok::<_, anyhow::Error>(());
-                }
-                sleep(Duration::from_millis(25)).await;
+            if !config.use_gpu {
+                command.arg("--no-gpu");
             }
-        })
-        => result.context("Local model startup timed out")
-        .and_then(|result| result),
-        };
-        if let Err(error) = readiness {
-            server.stop().await;
-            return Err(error);
-        }
-        if config.use_gpu || cfg!(target_os = "linux") {
-            // Loading weights does not initialize every GPU kernel or prove a
-            // Linux binary can execute its CPU kernels. Exercise inference with
-            // one second of synthetic silence before publishing readiness.
-            let (timed_out, failed) = if config.use_gpu {
-                (
-                    "Local GPU warmup timed out. Check the selected engine and GPU dependencies.",
-                    "Local GPU warmup failed. Check the selected engine and GPU dependencies.",
-                )
-            } else {
-                (
-                    "Local CPU inference timed out. Choose a smaller model or a compatible engine executable in Settings.",
-                    "Local CPU inference failed. Check the model and CPU compatibility; choose a compatible engine executable in Settings.",
-                )
-            };
-            let warmup = tokio::select! {
-                biased;
-                _ = cancelled.changed() => Err(anyhow::anyhow!("Local model startup cancelled")),
-                result = timeout(Duration::from_secs(120), server.idle()) =>
-                    result.context(timed_out).and_then(|result| result.context(failed)),
-            };
-            if let Err(error) = warmup {
-                server.stop().await;
-                return Err(error);
-            }
-        }
-        if *cancelled.borrow() {
-            server.stop().await;
-            bail!("Local model startup cancelled");
-        }
-        Ok(server)
+        },
     }
+    // Engines may print dictated text; diagnostics report only the exit status.
+    command.stdout(Stdio::null());
+    #[cfg(unix)]
+    command.process_group(0);
+    command
+}
 
-    pub(crate) async fn idle(&self) -> anyhow::Result<()> {
-        // Whisper serializes inference with its model lock; NeMo uses one HTTP
-        // worker with batching disabled. A completed silent request waits behind
-        // disconnected inference and confirms the model remains usable. Health
-        // endpoints cannot provide that barrier. Discard the response.
-        let silence = crate::audio::wave(vec![0; 44 + 16_000 * 2], 16_000)?;
-        self.transcribe(silence, "en").await?;
-        Ok(())
-    }
-
-    pub(crate) async fn transcribe(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<String> {
-        if self.engine == Engine::Parakeet {
-            // Capture writes the fixed PCM header in audio::wave; no external
-            // container parsing or resampling is needed at this boundary.
-            let rate = wav
-                .get(24..28)
-                .and_then(|bytes| bytes.try_into().ok())
-                .map(u32::from_le_bytes)
-                .context("Missing recording sample rate")?;
-            if !(8_000..=96_000).contains(&rate) {
-                bail!(
-                    "Parakeet needs 8–96 kHz audio. Set your microphone to 48 kHz in OS settings or choose Whisper."
-                );
-            }
-        }
-        let mut form = multipart::Form::new()
-            .part(
-                "file",
-                multipart::Part::bytes(wav)
-                    .file_name("dictation.wav")
-                    .mime_str("audio/wav")?,
-            )
-            .text("response_format", "json");
-        if self.engine == Engine::Whisper {
-            form = form
-                .text("language", language.to_owned())
-                .text("temperature", "0.0");
-        }
-        let path = if self.engine == Engine::Parakeet {
-            "v1/audio/transcriptions"
-        } else {
-            "inference"
-        };
-        let mut request = self.client.post(format!("{}/{path}", self.endpoint));
-        if self.engine == Engine::Parakeet {
-            request = request.bearer_auth(
-                self.directory
-                    .path()
-                    .file_name()
-                    .context("Missing key")?
-                    .to_string_lossy(),
-            );
-        }
-        let mut response = request
-            .multipart(form)
-            // A five-minute recording on a CPU can exceed two minutes of work.
-            // Escape drops the request; bounded recovery kills an unresponsive worker.
-            .timeout(Duration::from_mins(30))
-            .send()
-            .await
-            .map_err(|error| {
-                if error.is_timeout() {
-                    anyhow::anyhow!(
-                        "Transcription timed out. Try a smaller model or GPU acceleration."
-                    )
-                } else {
-                    anyhow::anyhow!(
-                        "Local transcription stopped. Check the model/backend and try again."
-                    )
-                }
-            })?;
-        if !response.status().is_success() {
-            bail!("Local speech returned HTTP {}", response.status().as_u16());
-        }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
-            if chunk.len() > (1024 * 1024_usize).saturating_sub(bytes.len()) {
-                bail!("Local speech response exceeded the size limit");
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        let result: serde_json::Value =
-            serde_json::from_slice(&bytes).context("Local speech returned invalid JSON")?;
-        result
-            .get("text")
-            .and_then(|text| text.as_str())
-            // Server segments contain layout newlines, not dictated Enter keys.
-            .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
-            .context("Local speech returned no transcript")
-    }
-
-    pub(crate) async fn stop(&mut self) {
-        self.group.terminate();
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "Termination is idempotent and the process group already owns remaining children; still reap an exited leader"
-        )]
-        let _ = self.child.start_kill();
-        // Replacement and Pause wait for actual process exit. A timeout here
-        // would hand the OS an unreaped child while a new model starts.
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "Waiting releases the child even when it was already reaped; worker retirement cannot update an abandoned session"
-        )]
-        let _ = self.child.wait().await;
+async fn contain(child: &mut Child) -> anyhow::Result<ProcessGroup> {
+    let pid = child.id().context("Worker exited before containment")?;
+    match ProcessGroup::attach(pid) {
+        Ok(group) => Ok(group),
+        Err(error) => {
+            kill_and_reap(child).await;
+            Err(error)
+        },
     }
 }
 
-// Exit status carries no engine output, credentials, audio, or transcript. Keep
-// stderr discarded: a private engine may print dictated text there after ready.
-fn startup_exit(status: std::process::ExitStatus) -> String {
+async fn unless_cancelled<T>(
+    cancelled: &mut watch::Receiver<bool>,
+    work: impl Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+    tokio::select! {
+        biased;
+        _ = cancelled.changed() => bail!(STARTUP_CANCELLED),
+        result = work => result,
+    }
+}
+
+fn recording_form(wav: Vec<u8>) -> reqwest::Result<multipart::Form> {
+    let file = multipart::Part::bytes(wav)
+        .file_name("dictation.wav")
+        .mime_str("audio/wav")?;
+    Ok(multipart::Form::new()
+        .part("file", file)
+        .text("response_format", "json"))
+}
+
+async fn read_bounded(mut response: Response) -> anyhow::Result<Vec<u8>> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        ensure!(
+            chunk.len() <= MAX_RESPONSE_BYTES.saturating_sub(body.len()),
+            "Local speech response exceeded the size limit"
+        );
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+/// Engine segments end in layout newlines, not dictated Enter presses.
+fn join_segments(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn startup_exit(status: ExitStatus) -> String {
     #[cfg(unix)]
-    let illegal_instruction = {
-        use std::os::unix::process::ExitStatusExt;
-        status.signal() == Some(4)
-    }; // SIGILL on supported Unix platforms
+    let signal = status.signal();
     #[cfg(not(unix))]
-    let illegal_instruction = false;
+    let signal = None;
     format!(
         "Local speech exited before becoming ready ({status}). {}",
-        exit_remedy(status.code(), illegal_instruction)
+        exit_remedy(status.code(), signal)
     )
 }
-fn exit_remedy(code: Option<i32>, illegal_instruction: bool) -> &'static str {
-    match code.map(i32::cast_unsigned) {
-        code if illegal_instruction || code == Some(0xc000_001d) => {
+
+fn exit_remedy(code: Option<i32>, signal: Option<i32>) -> &'static str {
+    match (code.map(i32::cast_unsigned), signal) {
+        (Some(STATUS_ILLEGAL_INSTRUCTION), _) | (_, Some(SIGILL)) => {
             "This engine uses CPU instructions unavailable on this machine. Choose a compatible engine executable in Settings."
         },
-        Some(0xc000_0135 | 0xc000_0139 | 0xc000_007b) => {
+        (
+            Some(STATUS_DLL_NOT_FOUND | STATUS_ENTRYPOINT_NOT_FOUND | STATUS_INVALID_IMAGE_FORMAT),
+            _,
+        ) => {
             "This engine needs missing or incompatible native libraries. Run automatic setup or install the matching engine dependencies."
         },
-        Some(2) => {
+        (Some(USAGE_ERROR), _) => {
             "Check that the selected engine supports Speakeasy's server arguments. Run automatic setup to install the supported engine, or choose its executable in Settings."
         },
         _ => {
@@ -340,37 +391,112 @@ mod tests {
 
     #[test]
     fn exit_diagnostics_identify_actions_without_engine_output() {
-        assert!(exit_remedy(Some(2), false).contains("server arguments"));
-        assert!(exit_remedy(None, true).contains("CPU instructions"));
+        assert!(exit_remedy(Some(2), None).contains("server arguments"));
+        assert!(exit_remedy(None, Some(SIGILL)).contains("CPU instructions"));
         assert!(
-            exit_remedy(Some(0xc000_001d_u32.cast_signed()), false).contains("CPU instructions")
+            exit_remedy(Some(STATUS_ILLEGAL_INSTRUCTION.cast_signed()), None)
+                .contains("CPU instructions")
         );
-        for code in [0xc000_0135_u32, 0xc000_0139, 0xc000_007b] {
-            assert!(exit_remedy(Some(code.cast_signed()), false).contains("native libraries"));
+        for code in [
+            STATUS_DLL_NOT_FOUND,
+            STATUS_ENTRYPOINT_NOT_FOUND,
+            STATUS_INVALID_IMAGE_FORMAT,
+        ] {
+            assert!(exit_remedy(Some(code.cast_signed()), None).contains("native libraries"));
         }
-        assert!(exit_remedy(Some(1), false).contains("selected model"));
+        assert!(exit_remedy(Some(1), None).contains("selected model"));
     }
+
+    #[test]
+    fn server_arguments_match_each_engine() {
+        let arguments = |config: &Config| {
+            server_command(config, 8080, "secret", Path::new("served"))
+                .as_std()
+                .get_args()
+                .filter_map(|argument| argument.to_str().map(str::to_owned))
+                .collect::<Vec<_>>()
+        };
+        let whisper = Config {
+            model: "model.bin".into(),
+            use_gpu: false,
+            ..Config::default()
+        };
+        assert_eq!(
+            arguments(&whisper),
+            [
+                "--model",
+                "model.bin",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8080",
+                "--request-path",
+                "/secret",
+                "--public",
+                "served",
+                "--threads",
+                "4",
+                "--language",
+                "en",
+                "--no-gpu",
+            ],
+            "Whisper keeps default timestamp decoding and ends with its CPU switch"
+        );
+        let whisper_on_gpu = Config {
+            use_gpu: true,
+            ..whisper
+        };
+        assert_eq!(
+            arguments(&whisper_on_gpu).last().map(String::as_str),
+            Some("en")
+        );
+        let parakeet = Config {
+            engine: Engine::Parakeet,
+            model: "model.nemo".into(),
+            ..Config::default()
+        };
+        assert_eq!(
+            arguments(&parakeet),
+            [
+                "serve",
+                "--asr-model",
+                "model.nemo",
+                "--device",
+                "auto",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8080",
+                "--no-ui",
+                "--threads",
+                "1",
+                "--asr.batching.enabled=false",
+            ]
+        );
+    }
+
     #[cfg(target_os = "linux")]
-    #[tokio::test]
-    async fn argument_failure_reports_exit_status_and_keeps_stderr_private() -> anyhow::Result<()> {
+    fn fake_engine(script: &str) -> anyhow::Result<(tempfile::TempDir, Config)> {
         use std::os::unix::fs::PermissionsExt;
         let directory = tempfile::tempdir()?;
         let executable = directory.path().join("worker");
-        std::fs::write(
-            &executable,
-            "#!/bin/sh\nprintf 'private transcript or credential' >&2\nexit 2\n",
-        )?;
+        std::fs::write(&executable, script)?;
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))?;
+        let config = Config {
+            engine_executable: executable,
+            use_gpu: false,
+            ..Config::default()
+        };
+        Ok((directory, config))
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn argument_failure_reports_exit_status_and_keeps_stderr_private() -> anyhow::Result<()> {
+        let (_directory, config) =
+            fake_engine("#!/bin/sh\nprintf 'private transcript or credential' >&2\nexit 2\n")?;
         let (cancel, cancelled) = watch::channel(false);
-        let result = LocalSpeech::start(
-            Config {
-                engine_executable: executable,
-                use_gpu: false,
-                ..Config::default()
-            },
-            cancelled,
-        )
-        .await;
+        let result = LocalSpeech::start(config, cancelled).await;
         drop(cancel);
         let error = result
             .err()
@@ -385,19 +511,9 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn startup_cancellation_reaps_the_owned_process() -> anyhow::Result<()> {
-        use std::os::unix::fs::PermissionsExt;
-        let directory = tempfile::tempdir()?;
-        let executable = directory.path().join("worker");
-        std::fs::write(
-            &executable,
+        let (directory, config) = fake_engine(
             "#!/bin/sh\nprintf '%s' \"$$\" > \"$(dirname \"$0\")/worker.pid\"\nexec sleep 60\n",
         )?;
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))?;
-        let config = Config {
-            engine_executable: executable,
-            use_gpu: false,
-            ..Config::default()
-        };
         let (cancel, cancelled) = watch::channel(false);
         let task = tokio::spawn(LocalSpeech::start(config, cancelled));
         let pid = timeout(Duration::from_secs(5), fixture_pid(directory.path())).await?;
@@ -408,14 +524,14 @@ mod tests {
                 .is_ok_and(|result| result.is_err())
         );
         assert!(
-            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            !Path::new(&format!("/proc/{pid}")).exists(),
             "Cancelled startup left a live or unreaped worker"
         );
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
-    async fn fixture_pid(directory: &std::path::Path) -> u32 {
+    async fn fixture_pid(directory: &Path) -> u32 {
         loop {
             if let Ok(pid) = tokio::fs::read_to_string(directory.join("worker.pid")).await
                 && let Ok(pid) = pid.parse()
@@ -426,14 +542,10 @@ mod tests {
         }
     }
 
-    // A real provider check, separate from the fast portable tests. The caller
-    // supplies public fixture audio; this never opens a microphone or clipboard.
     #[tokio::test]
     #[ignore = "Requires SPEAKEASY_FIXTURE_CONFIG and SPEAKEASY_FIXTURE_WAV (whisper.cpp samples/jfk.wav)"]
     async fn local_worker_recognizes_fixture_and_stops() -> anyhow::Result<()> {
-        let config = Config::load(std::path::Path::new(&std::env::var(
-            "SPEAKEASY_FIXTURE_CONFIG",
-        )?))?;
+        let config = Config::load(Path::new(&std::env::var("SPEAKEASY_FIXTURE_CONFIG")?))?;
         let wav = std::fs::read(std::env::var("SPEAKEASY_FIXTURE_WAV")?)?;
         let language = config.language.clone();
         let started = std::time::Instant::now();
@@ -446,7 +558,7 @@ mod tests {
             "Provider startup: {startup:?}; inference: {:?}",
             started.elapsed()
         );
-        // Never include the recognized text in failure output.
+        // Failure output must never include the recognized text.
         assert!(
             result.to_lowercase().contains("ask not what your country"),
             "Fixture recognition did not contain the expected phrase"

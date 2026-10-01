@@ -106,7 +106,7 @@ finishes requested saves.
 
 Download the x86_64 AppImage or tar archive from the release. The application targets glibc 2.35 or
 later and needs X11 or Xwayland, Vulkan, and desktop audio support. It shares audio, engines, the
-session controller, Settings and the pill with Windows and Mac. Native GNOME/KDE/X11 acceptance is
+session owner, Settings and the pill with Windows and Mac. Native GNOME/KDE/X11 acceptance is
 pending; see [implementation and acceptance](docs/linux-implementation.md) for support limits.
 
 The defaults are **Ctrl+Super+Space** to hold or double-tap for hands-free and **Ctrl+Super+Escape**
@@ -152,7 +152,7 @@ compatibility remain separate from the app's glibc baseline.
 `bash scripts/package-linux.sh` prepares an x86_64 AppImage and bundled tar on an older builder,
 checking glibc 2.35. `--native-tar` makes an unbundled archive for the current machine; extract it
 and run `Speakeasy.AppDir/AppRun`. The release workflow builds Linux on Ubuntu 22.04; Linux
-pull-request checks also upload test artifacts. Native graphics checks run those binaries in an
+pull-request checks also upload the built packages. Native graphics checks run those binaries in an
 Ubuntu 24.04 container with stock Mesa, preserving the build ABI while exercising a corrected
 software driver. CPU, memory, latency, and frame pacing checks are described in
 [performance](docs/performance.md).
@@ -179,7 +179,7 @@ engine and model paths resolve beside the settings file.
 
 ## Everyday use
 
-Settings live in `%APPDATA%/speakeasy/settings.json` on Windows and
+Settings live in `%APPDATA%\speakeasy\settings.json` on Windows and
 `~/Library/Application Support/speakeasy/settings.json` on Mac. Start from `settings.example.json`
 and pass `--config <path>` to use another file. Configured launches go straight to the tray or menu
 bar. Closing Settings hides it and keeps unsaved edits; Windows minimize also hides it. Reopening
@@ -229,14 +229,14 @@ global hook, or touch the clipboard. PR CI runs these checks on Linux, Windows, 
   cargo test -p speakeasy profile_fixture_dictation -- --ignored --nocapture
   ```
 
-  The first checks recognition and worker shutdown. The second times the real controller and engine
-  with fake capture and insertion; it excludes microphone teardown and OS paste latency. With only
-  `SPEAKEASY_FIXTURE_WAV`, `cargo test -p speakeasy install_chooses -- --ignored` runs setup into a
-  temporary directory, downloading about 0.8 GB, and recognizes the fixture with the build this
-  machine would get.
+  The first checks recognition and worker shutdown. The second times the real session owner and
+  engine with fake capture and insertion; it excludes microphone teardown and OS paste latency. With
+  only `SPEAKEASY_FIXTURE_WAV`, `cargo test -p speakeasy install_chooses -- --ignored` runs setup
+  into a temporary directory, downloading about 0.8 GB, and recognizes the fixture with the build
+  this machine would get.
 
 - `scripts/check-demo-windows.ps1 -Executable <speakeasy.exe>` checks that the demo pill stays
-  nonactivating and passes clicks through.
+  non-activating and passes clicks through.
   `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks minimize, close, relaunch, and
   configuration preservation with owned `--demo-tray` windows. On Windows,
   `cargo test -p speakeasy-platform hidden_pill_consumes_paint -- --ignored` checks hidden and
@@ -246,13 +246,13 @@ global hook, or touch the clipboard. PR CI runs these checks on Linux, Windows, 
   private Xvfb display, checks rendered Settings and the pill's input shape, and waits for the
   simulated preview to hide. It needs Xvfb, x11-utils, and a Vulkan driver. Headless Xvfb checks
   need Mesa's X11 software presentation fix, included in Mesa 24.1.
-  `bash scripts/check-rendering-linux.sh` builds the native fixtures and runs them plus the release
-  binary in an Ubuntu 24.04 Docker container with stock Mesa; `--packages` checks the AppImage and
-  tar launchers. The release workflow uses this packaged check. The separate
-  `idle_native_pill_starts_unmapped_and_can_show_and_hide` opt-in test verifies the pill starts
-  hidden and supports native show/hide on that private display.
+  `bash scripts/check-rendering-linux.sh` builds the native fixtures and runs them, plus the release
+  binary that `package-linux.sh` builds, in an Ubuntu 24.04 Docker container with stock Mesa;
+  `--packages` checks the AppImage and tar launchers. The release workflow uses this packaged check.
+  The separate `idle_native_pill_starts_unmapped_and_can_show_and_hide` opt-in test verifies the
+  pill starts hidden and supports native show/hide on that private display.
 - `cargo run --locked -p speakeasy --example check_native_rendering -- --native-gui` opens an owned
-  nonactivating window, renders an embedded SVG and paths, resizes, and repeats show/hide. It runs
+  non-activating window, renders an embedded SVG and paths, resizes, and repeats show/hide. It runs
   on the process main thread for AppKit. Linux needs a private display, such as `xvfb-run -a`;
   Windows and Mac use their native desktop. It accesses no microphone, global hook, or clipboard.
 - `.github/workflows/release.yml` verifies and builds Windows, macOS, and Linux packages and runs
