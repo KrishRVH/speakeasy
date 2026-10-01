@@ -27,7 +27,7 @@ def check_workspace_inheritance() -> None:
         json.loads(
             subprocess.check_output(
                 ["cargo", "metadata", "--no-deps", "--locked", "--format-version=1"],
-                text=True,
+                encoding="utf-8",
                 timeout=30,
             )
         ),
@@ -102,7 +102,7 @@ def main() -> None:
                 ],
                 check=False,
                 capture_output=True,
-                text=True,
+                encoding="utf-8",
                 timeout=30,
             )
             if expected is None:
