@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eu
 app_path=$(readlink -f -- "$0")
-app_dir=$(CDPATH= cd -- "$(dirname -- "$app_path")" && pwd)
+app_dir=$(CDPATH='' cd -- "$(dirname -- "$app_path")" && pwd)
 export LD_LIBRARY_PATH="$app_dir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 exec "$app_dir/usr/bin/speakeasy" "$@"

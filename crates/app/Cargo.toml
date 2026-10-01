@@ -11,9 +11,9 @@ speakeasy-platform = { path = "../platform" }
 anyhow.workspace = true
 async-channel.workspace = true
 cpal.workspace = true
-gpui = { workspace = true, default-features = false, features = ["font-kit"] }
+gpui = { workspace = true, features = ["font-kit"] }
 raw-window-handle.workspace = true
-reqwest = { workspace = true, default-features = false, features = ["json", "multipart"] }
+reqwest = { workspace = true, features = ["json", "multipart"] }
 rtrb.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -28,16 +28,16 @@ tokio = { workspace = true, features = ["test-util"] }
 embed-resource.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-gpui = { workspace = true, default-features = false, features = ["x11"] }
-reqwest = { workspace = true, default-features = false, features = ["rustls"] }
+gpui = { workspace = true, features = ["x11"] }
+reqwest = { workspace = true, features = ["rustls"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 x11rb = { workspace = true, features = ["shape"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 # Setup downloads over the operating system's TLS stack and trust store.
-reqwest = { workspace = true, default-features = false, features = ["native-tls"] }
-tray-icon = { workspace = true, default-features = false }
+reqwest = { workspace = true, features = ["native-tls"] }
+tray-icon.workspace = true
 
 [lints]
 workspace = true

@@ -433,12 +433,14 @@ async fn double_tap_uses_one_capture_and_single_tap_obeys_its_deadline() -> anyh
     let (id, events) = receive(&h.captures).await?;
     tokio::time::advance(Duration::from_millis(50)).await;
     h.input(Input::Release);
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
     events.send(Event::Level(id, 0.5)).await?;
     observed(&mut h.updates, |s| s.level == 0.5).await?;
     tokio::time::advance(Duration::from_millis(299)).await;
     assert!(h.jobs.try_recv().is_err());
     tokio::time::advance(Duration::from_millis(1)).await;
     receive(&h.jobs).await?;
+    assert_eq!(tokio::time::Instant::now(), deadline);
     paused.close().await
 }
 
@@ -447,10 +449,13 @@ async fn owner_finishes_capture_at_the_five_minute_deadline() -> anyhow::Result<
     let mut paused = PausedHarness::new(false, None);
     let h = &mut paused.harness;
     h.start().await?;
-    tokio::time::advance(speakeasy_core::gesture::RECORDING_LIMIT - Duration::from_millis(1)).await;
+    let limit = Duration::from_secs(300);
+    let deadline = tokio::time::Instant::now() + limit;
+    tokio::time::advance(limit - Duration::from_millis(1)).await;
     assert!(h.jobs.try_recv().is_err());
     tokio::time::advance(Duration::from_millis(1)).await;
     receive(&h.jobs).await?;
+    assert_eq!(tokio::time::Instant::now(), deadline);
     assert!(h.captures.try_recv().is_err());
     paused.close().await
 }
@@ -916,16 +921,17 @@ async fn warmup_failure_while_stopping_retains_capture_and_retries_on_demand() -
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn configuration_revokes_insertion_authority_before_owner_observation() -> anyhow::Result<()>
 {
-    let mut h = Harness::new()?;
+    let mut paused = PausedHarness::new(false, None);
+    let h = &mut paused.harness;
     h.start().await?;
     assert!(h.runtime.input.active());
     h.runtime.configure(Config::default());
     assert!(!h.runtime.input.active());
     h.phase(Phase::Idle).await?;
-    Ok(())
+    paused.close().await
 }
 
 #[tokio::test(start_paused = true)]

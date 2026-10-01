@@ -2,6 +2,7 @@
 """Sample explicit app/worker PIDs without reading command lines or user content."""
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -70,8 +71,10 @@ def main():
     parser.add_argument("--interval", type=float, default=1)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    if platform.system() != "Linux" or args.seconds <= 0 or args.interval < 0.1 or any(pid <= 0 for pid in args.pid):
-        parser.error("requires Linux, positive PIDs/duration and interval >= 0.1 seconds")
+    if (platform.system() != "Linux" or not math.isfinite(args.seconds)
+            or args.seconds <= 0 or not math.isfinite(args.interval)
+            or args.interval < 0.1 or any(pid <= 0 for pid in args.pid)):
+        parser.error("requires Linux, positive PIDs, finite positive duration and finite interval >= 0.1 seconds")
     processes = {pid: {"samples": [], "end": None} for pid in dict.fromkeys(args.pid)}
     previous = {}
     started = time.monotonic()

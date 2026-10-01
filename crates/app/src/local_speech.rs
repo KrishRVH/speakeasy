@@ -303,10 +303,7 @@ fn startup_exit(status: std::process::ExitStatus) -> String {
 }
 fn exit_remedy(code: Option<i32>, illegal_instruction: bool) -> &'static str {
     match code.map(|code| code as u32) {
-        _ if illegal_instruction => {
-            "This engine uses CPU instructions unavailable on this machine. Choose a compatible engine executable in Settings."
-        }
-        Some(0xc000001d) => {
+        code if illegal_instruction || code == Some(0xc000001d) => {
             "This engine uses CPU instructions unavailable on this machine. Choose a compatible engine executable in Settings."
         }
         Some(0xc0000135 | 0xc0000139 | 0xc000007b) => {
@@ -323,14 +320,17 @@ fn exit_remedy(code: Option<i32>, illegal_instruction: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn exit_diagnostics_identify_actions_without_engine_output() {
-        assert!(super::exit_remedy(Some(2), false).contains("server arguments"));
-        assert!(super::exit_remedy(None, true).contains("CPU instructions"));
-        assert!(
-            super::exit_remedy(Some(0xc0000135_u32 as i32), false).contains("native libraries")
-        );
-        assert!(super::exit_remedy(Some(1), false).contains("selected model"));
+        assert!(exit_remedy(Some(2), false).contains("server arguments"));
+        assert!(exit_remedy(None, true).contains("CPU instructions"));
+        assert!(exit_remedy(Some(0xc000001d_u32 as i32), false).contains("CPU instructions"));
+        for code in [0xc0000135_u32, 0xc0000139, 0xc000007b] {
+            assert!(exit_remedy(Some(code as i32), false).contains("native libraries"));
+        }
+        assert!(exit_remedy(Some(1), false).contains("selected model"));
     }
     #[cfg(target_os = "linux")]
     #[tokio::test]
@@ -363,8 +363,6 @@ mod tests {
         assert!(!error.contains("private transcript"));
         Ok(())
     }
-
-    use super::*;
 
     #[cfg(target_os = "linux")]
     #[tokio::test]

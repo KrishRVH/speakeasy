@@ -45,8 +45,8 @@ pub struct Services {
     pub demo_tray: bool,
     pub visibility: Option<Task<()>>,
     pub tray_hint_seen: bool,
-    pub _reopen: Option<Task<()>>,
-    pub _instance: Option<crate::instance::Instance>,
+    pub reopen: Option<Task<()>>,
+    pub instance: Option<crate::instance::Instance>,
 }
 impl Global for Services {}
 impl Services {
@@ -72,8 +72,8 @@ impl Services {
             configuration_epoch: 0,
             visibility: None,
             tray_hint_seen: false,
-            _reopen: None,
-            _instance: instance,
+            reopen: None,
+            instance,
         }
     }
     pub fn running(&self) -> bool {
@@ -224,7 +224,7 @@ impl Services {
         }
         self.configuration_epoch = self.configuration_epoch.wrapping_add(1);
         self.validation.take();
-        self._reopen.take();
+        self.reopen.take();
         self.visibility.take();
         self.notice("Quitting Speakeasy…");
         let stopped = self.lifecycle.retiring().map(|owners| {
@@ -240,16 +240,5 @@ impl Services {
     pub(super) fn finish_quit(&mut self) {
         self.lifecycle.retired();
         self.retirement.take();
-    }
-}
-impl Drop for Services {
-    fn drop(&mut self) {
-        if let Some(owners) = self
-            .lifecycle
-            .active()
-            .or_else(|| self.lifecycle.retiring())
-        {
-            owners.request_stop();
-        }
     }
 }

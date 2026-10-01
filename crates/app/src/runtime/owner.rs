@@ -355,7 +355,7 @@ impl<P: Ports> Owner<P> {
         &mut self,
         result: Result<anyhow::Result<Inserted>, tokio::task::JoinError>,
     ) {
-        // The task was joined by wait(); its handle no longer owns pending work.
+        // wait() joins the insertion before this handler runs.
         if let Some(session) = self.session.take() {
             session.permit.revoke();
         }

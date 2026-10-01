@@ -1,7 +1,8 @@
 # Ownership refactor validation
 
-Validated on Linux on 2026-10-01 UTC against baseline `2ffed9a`, with the pre-existing Apple silicon
-draft preserved separately at `high-perf-macos` commit `65a477d`.
+Validated on Linux on 2026-10-01 UTC against baseline `2ffed9a`, with the
+pre-existing Apple silicon draft preserved separately at `high-perf-macos`
+commit `65a477d`.
 
 ## Assessment and design
 
@@ -48,9 +49,9 @@ for the current stable `proc-macro-error2 2.0.1`; strict workspace Clippy passes
 | Check | Result |
 | --- | --- |
 | Workspace formatting and strict Clippy | Passed. |
-| Workspace tests | 120 passed, 8 ignored; baseline was 96 passed, 8 ignored. |
+| Workspace tests | 122 passed, 8 ignored; baseline was 96 passed, 8 ignored. |
 | Windows and Apple silicon platform adapter Clippy | Passed for all targets with warnings denied. |
-| Linux release build | Passed; binary is 27,978,376 bytes. |
+| Linux release build | Passed; binary is 27,976,608 bytes. |
 | Release simulated GUI | Startup, rendered pixels, click-through pill, and preview show/hide passed. |
 | Release shutdown | Hidden display disconnect and repeated application-owned Quit requests exited cleanly. |
 
@@ -72,13 +73,40 @@ Mesa's software renderer. The existing CI rendering script remains unchanged.
 
 ## Remaining acceptance
 
-PR verification now includes Linux, Windows, and macOS. The new Windows/macOS
-jobs have not run remotely; Linux cross-target adapter checks do not build the
-SDK-dependent GPUI applications or validate native callbacks. Live microphone,
-hook, clipboard, editor, and compositor acceptance was not run.
+PR verification includes Linux, Windows, and macOS. Native application builds and
+owned-window rendering are gated by the release workflow. Linux cross-target
+adapter checks do not build the SDK-dependent GPUI applications or validate
+native callbacks. Live microphone, hook, clipboard, editor, and compositor
+acceptance was not run.
 
 Application-owned Quit awaits native owners, setup, insertion, and requested
 saves without a timeout while the UI continues rendering. A stuck driver leaves
 Quitting visible. Forced native termination retains synchronous disposal; changing
 that GPUI contract is deferred pending native acceptance. Engine diagnostics use
 exit status and local remedies while discarding potentially private stderr.
+
+## Repository-wide polish for 0.3.0
+
+The finishing pass inspected all 88 maintained text/source paths end to end,
+including current-state documentation, scripts, manifests, and SVG artwork.
+Vendored sources, licensed binaries, generated output, and historical measurement
+and release context were preserved. The comparison base remained `2ffed9a`;
+published v0.2.2 and the main release pipeline establish the released stage.
+
+The pass removed duplicate service disposal, inherited disabled dependency
+defaults from the workspace, and aligned late Windows focus diagnostics with the
+shared policy. Portal direct insertion gives cancellation precedence over focus
+and capability errors. Linux profiling rejects non-finite sampling durations.
+The obsolete `dpiAware` manifest fallback was removed for the Windows 11 floor;
+`PerMonitorV2` remains authoritative. [Microsoft's manifest contract](https://learn.microsoft.com/en-us/windows/win32/hidpi/setting-the-default-dpi-awareness-for-a-process)
+states that the older setting is ignored when `dpiAwareness` is present on
+Windows 10 version 1607 and later.
+
+Affected tests retain their maintained claims and failure roles. Isolated faults
+demonstrated failures in deadline, immediate revocation, worker, lifecycle,
+keyboard, insertion, and independent checksum-oracle checks. A 1 ms delayed
+deadline fails; checksum fixtures no longer reuse production encoding. Base and
+polished finite-input profiling and launcher fixtures pass, while the base accepts
+NaN without a usable sampling deadline. Claim-preserving variations pass.
+No permanent mutation or benchmark targets were added. ShellCheck, Python syntax,
+native metadata/version consistency, and local documentation links pass.

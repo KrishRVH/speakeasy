@@ -141,7 +141,6 @@ mod tests {
     #[test]
     fn windows_sides_repeats_space_and_passive_escape() {
         let mut policy = Windows::default();
-        policy.interrupt();
         assert_eq!(policy.observe(0xa2, true, [false; 4]).action, Action::None);
         assert!(
             policy
@@ -170,6 +169,30 @@ mod tests {
         assert_eq!(
             policy.observe(0x1b, true, [false; 4]).action,
             Action::Cancel
+        );
+    }
+    #[test]
+    fn windows_lifecycle_interruption_waits_for_chord_release() {
+        let mut policy = Windows::default();
+        policy.observe(0xa2, true, [false; 4]);
+        assert!(
+            policy
+                .observe(0x5b, true, [true, false, false, false])
+                .starts()
+        );
+        policy.interrupt();
+        assert_eq!(
+            policy
+                .observe(0x5c, true, [true, false, true, false])
+                .action,
+            Action::None
+        );
+        assert_eq!(policy.observe(0x5c, false, [false; 4]).action, Action::None);
+        policy.observe(0xa3, true, [false; 4]);
+        assert!(
+            policy
+                .observe(0x5c, true, [false, true, false, false])
+                .starts()
         );
     }
     #[test]

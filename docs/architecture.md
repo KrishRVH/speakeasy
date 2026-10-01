@@ -208,8 +208,9 @@ timestamp decoding; returned segment whitespace is normalized before insertion.
 
 GPU cancellation drops the request and checks recovery with a bounded silent
 inference. A failed two-second recovery terminates and waits for the worker before
-replacement. CPU cancellation terminates the worker and reloads it. Windows Job
-Objects terminate owned children when the app exits. Unix process groups are
+replacement. Cancellation of active CPU inference terminates the worker and
+reloads it. Windows Job Objects terminate owned children when the app exits.
+Unix process groups are
 cleaned up during orderly shutdown; a force-quit can leave a worker running.
 Pause retires the runtime asynchronously; Quit waits for owned cleanup. A failed
 warmup does not retry-loop. Startup errors report the exit status and a local

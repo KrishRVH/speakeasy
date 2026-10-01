@@ -50,8 +50,8 @@ an app-side resampler.
   it; fake-device timings add tens of microseconds before native work.
 - Cancelling GPU inference keeps the worker when a bounded silent request proves
   it healthy within two seconds. This cut the median cancel-to-next-result from
-  637 to 87 ms. A failed check terminates and replaces the worker; CPU
-  cancellation always does.
+  637 to 87 ms. A failed check terminates and replaces the worker; cancelling
+  active CPU inference also replaces it.
 - Pause retires the runtime off the UI thread, since worker shutdown takes about
   84 ms. Quit waits for owned cleanup.
 - The pill paints its grille in one canvas and requests frames only while it

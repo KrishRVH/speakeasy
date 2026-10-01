@@ -842,6 +842,9 @@ fn insert_direct(
     request: &Insertion,
     external: bool,
 ) -> anyhow::Result<Inserted> {
+    if !request.permit.active() {
+        return Ok(Inserted::Cancelled);
+    }
     if let Some(outcome) =
         crate::insertion::preflight(external, true, crate::insertion::Mode::Direct)
     {
@@ -986,6 +989,38 @@ async fn write_transfer(fd: OwnedFd, bytes: &[u8]) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancelled_direct_input_precedes_focus_and_capability_errors() -> anyhow::Result<()> {
+        let (events, _receiver) = async_channel::bounded(1);
+        let input = InputSender::new(events);
+        let permit = input.begin().context("Recording")?;
+        permit.revoke();
+        let mut bound = Bound {
+            shortcut: None,
+            remote: None,
+            clipboard: false,
+            sender: None,
+            description: String::new(),
+            cancel_description: String::new(),
+        };
+        for external in [false, true] {
+            for text in ["fixture", "\0"] {
+                let (reply, _result) = async_channel::bounded(1);
+                let request = Insertion {
+                    text: text.into(),
+                    permit: permit.clone(),
+                    preserve: true,
+                    reply,
+                };
+                assert!(matches!(
+                    insert_direct(&mut bound, &request, external)?,
+                    Inserted::Cancelled
+                ));
+            }
+        }
+        Ok(())
+    }
 
     #[tokio::test]
     async fn stalled_transfers_allow_new_work_and_retire_without_detached_writes()

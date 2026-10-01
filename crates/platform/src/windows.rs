@@ -647,10 +647,10 @@ pub fn insert(
     // SAFETY: INPUT records contain initialized keyboard payloads. The OS
     // copies them synchronously; our marker excludes them from shortcut handling.
     unsafe {
-        if !has_external_target() {
-            return Ok(Inserted::Copied(
-                "Copied. Focus an editor and press Ctrl+V.",
-            ));
+        if let Some(outcome) =
+            insertion::preflight(has_external_target(), true, insertion::Mode::Paste)
+        {
+            return Ok(outcome);
         }
         let key = |vk, flags| INPUT {
             r#type: INPUT_KEYBOARD,
@@ -735,10 +735,10 @@ fn insert_direct(text: &str, gate: &InsertPermit) -> anyhow::Result<Inserted> {
             });
         }
     }
-    if !has_external_target() {
-        return Ok(Inserted::Unavailable(
-            "Focus an editor and try again. Clipboard preserved.",
-        ));
+    if let Some(outcome) =
+        insertion::preflight(has_external_target(), true, insertion::Mode::Direct)
+    {
+        return Ok(outcome);
     }
     if !gate.commit() {
         return Ok(Inserted::Cancelled);

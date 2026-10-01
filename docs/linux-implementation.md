@@ -53,10 +53,11 @@ capture. Restore credentials are single-use, private 0600 files under the XDG
 state directory. They are absent from settings and diagnostics. Frontend restart,
 session closure, device pause, and disconnect invalidate usable state.
 
-Every insertion owns a generation-bound commit permit and carries its session
-ID. Cancellation or a later recording cannot authorize an old paste or accept
-its result. The session owner continues receiving input while native preparation
-waits. Windows/macOS serialize native insertion calls on a blocking executor;
+Every insertion owns a generation-bound commit permit. Its task belongs to the
+session until completion or retirement. Cancellation or a later recording cannot
+authorize an obsolete paste or accept its result. The session owner continues
+receiving input while native preparation waits. Windows/macOS serialize native
+insertion calls on a blocking executor;
 their gesture hooks retain passive Escape.
 
 Automatic paste requires released modifiers. X11 queries physical key state;
@@ -145,8 +146,7 @@ and engines remain separate downloads.
 Also verify mixed-DPI placement, display removal, cancellation cleanup, native
 Wayland and X11 editors, terminals, and memory/resource return after Pause and
 Quit. Measure startup, idle, capture, inference, and displayed frame pacing under
-competing load. Windows/macOS insertion needs native acceptance after the shared
-asynchronous ownership change.
+competing load. Windows/macOS insertion also requires native acceptance.
 
 Default tests use fakes or public fixtures. Live microphone, shortcuts, clipboard,
 and focused-editor acceptance require explicit opt-in. WSL checks do not establish

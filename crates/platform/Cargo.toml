@@ -12,8 +12,8 @@ raw-window-handle.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "macros", "net", "sync"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-arboard = { workspace = true, default-features = false }
-zbus = { workspace = true, default-features = false, features = ["tokio"] }
+arboard.workspace = true
+zbus = { workspace = true, features = ["tokio"] }
 futures-util.workspace = true
 libloading.workspace = true
 x11rb = { workspace = true, features = ["shape", "xinput", "xkb", "xtest"] }
@@ -23,10 +23,10 @@ tempfile.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 clipboard-win = { workspace = true, features = ["std"] }
-windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_Security", "Win32_System_Com", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Power", "Win32_System_RemoteDesktop", "Win32_System_Threading", "Win32_UI_Controls_Dialogs", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_Security", "Win32_System_Com", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_RemoteDesktop", "Win32_System_Threading", "Win32_UI_Controls_Dialogs", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-arboard = { workspace = true, default-features = false }
+arboard.workspace = true
 block2.workspace = true
 core-foundation.workspace = true
 core-graphics.workspace = true

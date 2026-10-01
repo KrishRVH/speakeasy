@@ -669,12 +669,7 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert!(
-            retiring[0]
-                .thread
-                .as_ref()
-                .is_some_and(|thread| !thread.is_finished())
-        );
+        assert!(!retiring[0].is_finished());
         release.send(())?;
         timeout(Duration::from_secs(2), stopped).await?;
         retiring.clear();
@@ -961,7 +956,10 @@ mod tests {
     }
 
     fn sha256(bytes: &[u8]) -> String {
-        hex_digest(&Sha256::digest(bytes))
+        Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
     }
 
     #[tokio::test]

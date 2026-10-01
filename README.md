@@ -188,9 +188,9 @@ defaults to four.
 The worker stays warm on loopback. With a GPU, one silent request initializes
 its kernels before the first dictation; Linux CPU workers also validate inference
 before readiness. Cancelling GPU work keeps a healthy
-worker and replaces it if a two-second recovery check fails; CPU cancellation
-always replaces the worker. **Pause dictation** releases the shortcut and the
-model. Relative engine and model paths resolve beside the settings file.
+worker and replaces it if a two-second recovery check fails. Cancelling active
+CPU inference replaces the worker. **Pause dictation** releases the shortcut and
+the model. Relative engine and model paths resolve beside the settings file.
 
 ## Everyday use
 

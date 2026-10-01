@@ -169,7 +169,7 @@ fn run() -> anyhow::Result<()> {
                     }
                 }
             });
-            cx.global_mut::<shell::Services>()._reopen = Some(task);
+            cx.global_mut::<shell::Services>().reopen = Some(task);
         }
         cx.on_app_quit(|cx| {
             #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
@@ -177,7 +177,7 @@ fn run() -> anyhow::Result<()> {
                 drop(cx.remove_global::<tray::Tray>());
             }
             let mut services = cx.remove_global::<shell::Services>();
-            let instance = services._instance.take();
+            let instance = services.instance.take();
             drop(services);
             // GPUI clears windows (and final Settings writers) before polling
             // this future, so a relaunch cannot race the final durable save.
