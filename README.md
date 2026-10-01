@@ -273,4 +273,8 @@ Live microphone-to-editor dictation and interactive macOS use still need hands-o
 - [Interaction design](docs/interaction-design.md): the brand, the pill, the tray, and interaction
   contracts.
 - [Performance](docs/performance.md): constraints, profiling methods, and native measurement limits.
+- [Apple silicon fork experiment (draft)](docs/apple-silicon-prd.md): feature parity, performance
+  measurements, perceptibility testing, and native acceptance, with
+  [platform research](docs/apple-silicon-research.md) and a
+  [comparison baseline](docs/apple-silicon-baseline.md).
 - [Remote dictation](docs/remote-dictation.md): routing a remote microphone to Speakeasy.
