@@ -5,10 +5,9 @@ usable offline with local speech engines. Read `README.md` for setup and behavio
 session, shutdown, keyboard, insertion, or module interfaces, read the
 [architecture change and test map](docs/architecture.md#change-and-test-map).
 
-For Apple silicon fork work, follow the [draft PRD](docs/apple-silicon-prd.md). It owns
-feature parity, the pinned comparison baseline, per-turn measurements, the perceptibility
-experiment, and native acceptance. Stack choices require measured validation; no perceptible
-gain is a valid result.
+For Apple silicon fork work, follow the [draft PRD](docs/apple-silicon-prd.md). It owns feature
+parity, the pinned comparison baseline, per-turn measurements, the perceptibility experiment, and
+native acceptance. Stack choices require measured validation; no perceptible gain is a valid result.
 
 ## Workflows
 
