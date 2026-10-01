@@ -165,7 +165,7 @@ fn subscribe(
                 // Entries are never removed, so an entry observed above cannot
                 // have disappeared while subscriptions stay on the main thread.
                 anyhow::bail!("display link registry entry vanished for display {display_id}");
-            }
+            },
         };
         entry.subscribers.push((subscriber_id, frame_requests));
         let link_to_start = if entry.running {

@@ -23,7 +23,7 @@ use tokio::{
 };
 
 #[derive(Clone, Default)]
-pub struct Progress {
+pub(crate) struct Progress {
     pub step: &'static str,
     pub done: u64,
     pub total: u64,
@@ -96,7 +96,7 @@ const GPU_MEMORY: u64 = 6_000_000_000;
 
 /// A running setup. Cancellation preserves partial downloads for the next run.
 /// The owner waits for stopped before ordinary disposal; Quit joins cleanup.
-pub struct Setup {
+pub(crate) struct Setup {
     pub progress: watch::Receiver<Progress>,
     pub result: async_channel::Receiver<anyhow::Result<Config>>,
     cancel: async_channel::Sender<()>,
@@ -105,7 +105,7 @@ pub struct Setup {
 }
 
 impl Setup {
-    pub fn start() -> anyhow::Result<Self> {
+    pub(crate) fn start() -> anyhow::Result<Self> {
         Self::spawn(|report, cancelled| {
             let root = root();
             match tokio::runtime::Builder::new_current_thread()
@@ -138,8 +138,16 @@ impl Setup {
         let (completed, finished) = async_channel::bounded(1);
         let thread = thread::Builder::new().name("setup".into()).spawn(move || {
             if let Some(result) = work(report, cancelled) {
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "The single setup result has no caller after its receiver closes; cleanup must still acknowledge"
+                )]
                 let _ = finish.try_send(result);
             }
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A dropped setup owner needs no acknowledgement; the thread has completed native cleanup"
+            )]
             let _ = completed.try_send(());
         })?;
         Ok(Self {
@@ -151,19 +159,23 @@ impl Setup {
         })
     }
 
-    pub fn is_finished(&self) -> bool {
+    pub(crate) fn is_finished(&self) -> bool {
         self.thread
             .as_ref()
             .is_none_or(thread::JoinHandle::is_finished)
     }
 
-    pub fn request_stop(&self) {
+    pub(crate) fn request_stop(&self) {
         self.cancel.close();
     }
 
-    pub fn stopped(&self) -> impl std::future::Future<Output = ()> + use<> {
+    pub(crate) fn stopped(&self) -> impl std::future::Future<Output = ()> + use<> {
         let finished = self.finished.clone();
         async move {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Acknowledgement or sender disposal both mean the owned setup thread has stopped"
+            )]
             let _ = finished.recv().await;
         }
     }
@@ -173,6 +185,10 @@ impl Drop for Setup {
     fn drop(&mut self) {
         self.request_stop();
         if let Some(thread) = self.thread.take() {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Drop cannot report a worker panic; joining still retains the owner until cleanup ends"
+            )]
             let _ = thread.join();
         }
     }
@@ -225,14 +241,14 @@ impl Installation {
                 Ok(()) => {
                     progress.send_replace(Progress::default());
                     return Ok(lock);
-                }
+                },
                 Err(std::fs::TryLockError::WouldBlock) => {
                     progress.send_replace(Progress {
                         step: "Waiting for another setup to finish",
                         ..Progress::default()
                     });
                     tokio::time::sleep(Duration::from_millis(100)).await;
-                }
+                },
                 Err(error) => return Err(error.into()),
             }
         }
@@ -259,7 +275,15 @@ impl Installation {
 
     async fn stop(&mut self) {
         if let Some(child) = &mut self.child {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "An already exited process may reject termination; cleanup still waits and drops its kill-on-drop owner"
+            )]
             let _ = child.start_kill();
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Cancellation has no result caller; disposal retains Tokio's kill-on-drop fallback after waiting"
+            )]
             let _ = child.wait().await;
         }
         self.child = None;
@@ -309,7 +333,7 @@ async fn install(
 }
 
 /// Try CUDA with an NVIDIA driver, then Vulkan, then CPU. Doctor checks runtime
-/// dependencies and accelerator availability; LocalSpeech verifies inference
+/// dependencies and accelerator availability; `LocalSpeech` verifies inference
 /// before model readiness is reported.
 #[cfg(any(
     target_os = "windows",
@@ -391,13 +415,18 @@ fn nvidia_driver() -> bool {
 
 #[cfg(target_os = "windows")]
 fn system32() -> PathBuf {
-    PathBuf::from(std::env::var_os("SystemRoot").unwrap_or("C:\\Windows".into())).join("System32")
+    PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
+        .join("System32")
 }
 
 /// Removes other engine builds and returns the chosen executable.
 fn keep(root: &Path, directory: PathBuf, gpu: bool) -> anyhow::Result<(PathBuf, bool)> {
     for entry in fs::read_dir(root.join("engines"))?.flatten() {
         if entry.path() != directory {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Failure to prune an unused engine cache must not prevent the verified selected engine from running"
+            )]
             let _ = fs::remove_dir_all(entry.path());
         }
     }
@@ -413,7 +442,7 @@ async fn doctor(directory: &Path, installation: &mut Installation) -> Option<ser
         .stderr(Stdio::null())
         .kill_on_drop(true);
     #[cfg(target_os = "windows")]
-    command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     let output = timeout(Duration::from_secs(60), installation.output(&mut command)).await;
     installation.stop().await;
     let output = output.ok()?.ok()?;
@@ -469,7 +498,7 @@ async fn unpack(
         ..Progress::default()
     });
     let staging = engines.join(format!("{stem}.part"));
-    let _ = fs::remove_dir_all(&staging);
+    remove_engine_directory(&staging)?;
     fs::create_dir_all(&staging)?;
     // The system bsdtar reads both archive formats; a tar earlier in PATH may not.
     #[cfg(target_os = "windows")]
@@ -487,16 +516,33 @@ async fn unpack(
         .stderr(Stdio::null())
         .kill_on_drop(true);
     #[cfg(target_os = "windows")]
-    command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     if !installation.output(&mut command).await?.status.success() {
         bail!("Cannot unpack the speech engine. Check free disk space, then try again.");
     }
     #[cfg(target_os = "linux")]
     normalize_linux_archive(&staging)?;
-    let _ = fs::remove_dir_all(&directory);
+    remove_engine_directory(&directory)?;
     fs::rename(&staging, &directory)?;
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "The archive is only a cache after the verified engine is installed; pruning it is optional"
+    )]
     let _ = fs::remove_file(&file);
     Ok(directory)
+}
+
+fn remove_engine_directory(path: &Path) -> anyhow::Result<()> {
+    match fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "Cannot replace {}. Close programs using the speech engine and check directory permissions, then try again.",
+                path.display()
+            )
+        }),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -509,14 +555,18 @@ fn normalize_linux_archive(staging: &Path) -> anyhow::Result<()> {
         .into_iter()
         .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
         .collect();
-    if directories.len() != 1 || !directories[0].path().join(EXECUTABLE).is_file() {
+    let [directory] = directories.as_slice() else {
+        bail!("The engine archive has an unexpected layout.");
+    };
+    let directory = directory.path();
+    if !directory.join(EXECUTABLE).is_file() {
         bail!("The engine archive has an unexpected layout.");
     }
-    for entry in fs::read_dir(directories[0].path())? {
+    for entry in fs::read_dir(&directory)? {
         let entry = entry?;
         fs::rename(entry.path(), staging.join(entry.file_name()))?;
     }
-    fs::remove_dir(directories[0].path())?;
+    fs::remove_dir(directory)?;
     Ok(())
 }
 
@@ -576,7 +626,9 @@ async fn fetch(
         .await
         .context("The download stopped. Check your internet connection, then try again.")?
     {
-        done += chunk.len() as u64;
+        done = done
+            .checked_add(chunk.len() as u64)
+            .context("The download exceeded its published size. Try again.")?;
         if done > download.size {
             break;
         }
@@ -588,7 +640,9 @@ async fn fetch(
     drop(file);
     let digest = hex_digest(&hasher.finalize());
     if done != download.size || digest != download.sha256 {
-        let _ = fs::remove_file(&partial);
+        fs::remove_file(&partial).context(
+            "Cannot remove an invalid download. Check directory permissions, then try again.",
+        )?;
         bail!("A download did not match its published checksum. Try again.");
     }
     fs::rename(&partial, &path)?;
@@ -596,11 +650,14 @@ async fn fetch(
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut text = String::with_capacity(bytes.len() * 2);
-    for &byte in bytes {
-        text.push(char::from(HEX[usize::from(byte >> 4)]));
-        text.push(char::from(HEX[usize::from(byte & 15)]));
+    let mut text = String::with_capacity(bytes.len().saturating_mul(2));
+    for digit in bytes.iter().flat_map(|byte| [byte >> 4, byte & 15]) {
+        let ascii = if digit < 10 {
+            b'0'.saturating_add(digit)
+        } else {
+            b'a'.saturating_add(digit.saturating_sub(10))
+        };
+        text.push(char::from(ascii));
     }
     text
 }
@@ -625,8 +682,13 @@ async fn hash_partial(
         if count == 0 {
             break;
         }
-        hasher.update(&buffer[..count]);
-        progress.send_modify(|progress| progress.done += count as u64);
+        let chunk = buffer
+            .get(..count)
+            .context("Cannot verify the downloaded file: the read size is invalid")?;
+        hasher.update(chunk);
+        progress.send_modify(|progress| {
+            progress.done = progress.done.saturating_add(count as u64);
+        });
         // Cached reads can complete immediately. Let setup cancellation run
         // between bounded hash chunks as well as while waiting for disk I/O.
         tokio::task::yield_now().await;
@@ -653,10 +715,10 @@ mod tests {
         let (entered, cleaning) = std::sync::mpsc::channel();
         let (release, released) = std::sync::mpsc::channel();
         let setup = Setup::spawn(move |_, cancelled| {
-            let _ = cancelled.recv_blocking();
-            let _ = entered.send(());
+            assert!(cancelled.recv_blocking().is_err());
+            entered.send(()).unwrap();
             // Assertion failure must not strand the owned cleanup thread.
-            let _ = released.recv_timeout(Duration::from_secs(2));
+            released.recv_timeout(Duration::from_secs(2)).unwrap();
             None
         })?;
         setup.request_stop();
@@ -681,22 +743,21 @@ mod tests {
         let (entered, cleaning) = std::sync::mpsc::channel();
         let (release, released) = std::sync::mpsc::channel();
         let setup = Setup::spawn(move |_, cancelled| {
-            let _ = cancelled.recv_blocking();
-            let _ = entered.send(());
-            let _ = released.recv_timeout(Duration::from_secs(2));
+            assert!(cancelled.recv_blocking().is_err());
+            entered.send(()).unwrap();
+            released.recv_timeout(Duration::from_secs(2)).unwrap();
             None
         })?;
         let (finished, joined) = std::sync::mpsc::channel();
         let quit = thread::spawn(move || {
             drop(setup);
-            let _ = finished.send(());
+            finished.send(()).unwrap();
         });
         cleaning.recv_timeout(Duration::from_secs(2))?;
         assert!(joined.recv_timeout(Duration::from_millis(30)).is_err());
         release.send(())?;
         joined.recv_timeout(Duration::from_secs(2))?;
-        quit.join()
-            .map_err(|_| anyhow::anyhow!("Setup cleanup failed"))?;
+        quit.join().unwrap();
         Ok(())
     }
 
@@ -796,6 +857,38 @@ mod tests {
             .context("An ambiguous engine archive was accepted")?;
         assert!(failure.to_string().contains("unexpected layout"));
         assert!(!directory.path().join(EXECUTABLE).exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unpack_reports_an_unreplaceable_staging_directory() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path();
+        fs::create_dir_all(root.join("downloads"))?;
+        fs::create_dir_all(root.join("engines"))?;
+        fs::write(root.join("downloads/fixture.tar.gz"), b"unused archive")?;
+        fs::write(root.join("engines/fixture.part"), b"not a directory")?;
+        let (progress, _) = watch::channel(Progress::default());
+        let mut installation = Installation {
+            _lock: Installation::lock(root, &progress).await?,
+            child: None,
+        };
+        let archive = Download {
+            url: "http://127.0.0.1:0/fixture.tar.gz",
+            size: 0,
+            sha256: "unused: replacement must fail before extraction",
+        };
+        let failure = unpack(&Client::new(), &archive, root, &progress, &mut installation)
+            .await
+            .unwrap_err();
+        let message = failure.to_string();
+        assert!(message.contains("Cannot replace"));
+        assert!(message.contains("check directory permissions"));
+        assert_eq!(
+            fs::read(root.join("engines/fixture.part"))?,
+            b"not a directory"
+        );
+        assert!(installation.child.is_none());
         Ok(())
     }
 
@@ -936,11 +1029,15 @@ mod tests {
             .lines()
             .find_map(|line| line.strip_prefix("range: bytes="))
             .and_then(|range| range.trim_end_matches('-').parse::<usize>().ok());
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "The fixture still serves its response when a test deliberately discards the optional request observer"
+        )]
         let _ = requests.send(start.map(|start| start as u64)).await;
         let head = match start {
             Some(start) => format!(
                 "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{}/{}\r\n",
-                BODY.len() - 1,
+                BODY.len().saturating_sub(1),
                 BODY.len()
             ),
             None => "HTTP/1.1 200 OK\r\n".into(),
@@ -956,10 +1053,14 @@ mod tests {
     }
 
     fn sha256(bytes: &[u8]) -> String {
+        use std::fmt::Write as _;
+
         Sha256::digest(bytes)
             .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
+            .fold(String::new(), |mut text, byte| {
+                write!(text, "{byte:02x}").unwrap();
+                text
+            })
     }
 
     #[tokio::test]

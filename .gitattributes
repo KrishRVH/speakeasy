@@ -1,17 +1,185 @@
-# Normalize repository text; Windows scripts retain native line endings.
+# Normalize text files to LF by default. Override only where a platform format is
+# required for execution.
 * text=auto eol=lf
-*.md text diff=markdown
-*.ps1 text eol=crlf
-*.cmd text eol=crlf
 
-# Native assets, local speech models, and release binaries are never text.
-*.bin binary
+# Shell and platform scripts
+*.sh text eol=lf
+*.bash text eol=lf
+*.zsh text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Source
+*.c text
+*.h text
+*.cc text
+*.cpp text
+*.cxx text
+*.hh text
+*.hpp text
+*.hxx text
+*.ipp text
+*.tpp text
+*.inl text
+*.ixx text
+*.cppm text
+*.cxxm text
+*.cs text diff=csharp
+*.cshtml text
+*.csx text diff=csharp
+*.ex text
+*.exs text
+*.eex text
+*.heex text
+*.leex text
+*.erl text
+*.hrl text
+*.fs text
+*.fsi text
+*.fsx text
+*.f90 text
+*.F90 text
+*.gd text
+*.gdshader text
+*.gdshaderinc text
+*.go text diff=go
+*.hs text
+*.lhs text
+*.hs-boot text
+*.hsc text
+*.kt text
+*.kts text
+*.razor text
+*.vb text
+*.xaml text
+*.js text
+*.jsx text
+*.cjs text
+*.mjs text
+*.ts text
+*.tsx text
+*.cts text
+*.mts text
+*.lua text
+*.odin text
+*.php text diff=php
+*.roc text
+*.rs text
+*.zig text
+*.zon text
+
+# Build/config
+*.cmake text
+CMakeLists.txt text
+Makefile text
+*.mk text
+*.app.src text
+*.cabal text linguist-language=Haskell
+*.csproj text
+*.cfg text
+*.conf text
+*.dist text
+*.editorconfig text
+*.env.example text
+*.env.sample text
+*.env.template text
+*.gitignore text
+*.gitattributes text
+*.gdextension text
+*.godot text
+*.gradle text
+*.gradle.kts text
+*.ini text
+*.json text
+*.json5 text
+*.jsonc text
+*.lock text
+*.neon text
+*.nuspec text
+*.proj text
+*.projitems text
+*.properties text
+*.props text
+*.resx text
+*.ruleset text
+*.shproj text
+*.sln text
+*.slnf text
+*.slnx text
+*.targets text
+*.toml text
+pylock.*.toml text linguist-generated=true
+*.tres text
+*.tscn text
+*.uid text
+*.vbproj text
+*.vcxproj text
+*.vcxproj.filters text
+*.vsct text
+*.vsixmanifest text
+*.xml text
+*.yaml text
+*.yml text
+go.mod text
+go.sum text
+go.work text
+go.work.sum text
+cabal.project text
+cabal.project.freeze text linguist-generated=true
+
+# Docs/data
+*.csv text
+*.md text diff=markdown
+*.mdx text diff=markdown
+*.sql text
+*.txt text
+
+# Binary assets/artifacts
+*.7z binary
+*.a binary
+*.avif binary
+*.beam binary
+*.class binary
+*.db binary
 *.dll binary
+*.dylib binary
 *.exe binary
-*.gguf binary
+*.ez binary
+*.gif binary
+*.gz binary
 *.icns binary
 *.ico binary
+*.jar binary
+*.jpeg binary
+*.jpg binary
+*.lib binary
+*.mp3 binary
+*.mp4 binary
+*.nupkg binary
+*.otf binary
+*.pdb binary
+*.pdf binary
 *.png binary
+*.snupkg binary
+*.so binary
+*.sqlite binary
+*.sqlite3 binary
+*.tar binary
+*.tgz binary
 *.ttf binary
-*.wav binary
+*.wasm binary
+*.war binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.xz binary
 *.zip binary
+
+# `bun.lockb` is binary. `bun.lock` is text and covered by `*.lock`.
+bun.lockb binary
+
+# Speakeasy local files and native assets.
+*.bin binary
+*.gguf binary
+*.wav binary

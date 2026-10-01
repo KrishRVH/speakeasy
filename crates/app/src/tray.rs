@@ -11,7 +11,7 @@ use crate::{
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use gpui::{App, Global, Task};
 #[cfg(target_os = "linux")]
-pub use linux::{Tray, install};
+pub(crate) use linux::{Tray, install};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use speakeasy_platform::Input;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -21,7 +21,7 @@ use tray_icon::{
 };
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-pub struct Tray {
+pub(crate) struct Tray {
     _icon: TrayIcon,
     _events: Task<()>,
     _updates: Task<()>,
@@ -30,6 +30,10 @@ pub struct Tray {
 impl Global for Tray {}
 
 #[derive(PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "The native menu consumes independent service, capture, activity, and desktop-readiness facts"
+)]
 struct TrayState {
     indicator: Indicator,
     theme: Theme,
@@ -42,7 +46,7 @@ struct TrayState {
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-pub fn install(cx: &mut App) -> anyhow::Result<()> {
+pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
     let menu = Menu::new();
     let status = MenuItem::new("Loading…", false, None);
     let pause = MenuItem::new("Pause dictation", true, None);
@@ -73,6 +77,10 @@ pub fn install(cx: &mut App) -> anyhow::Result<()> {
     let (events, incoming) = async_channel::bounded(16);
     let sender = events.clone();
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "Native callbacks cannot wait for the UI; disposal or a full command queue rejects this click"
+        )]
         let _ = sender.try_send(Some(event.id));
     }));
     TrayIconEvent::set_event_handler(Some(move |event| {
@@ -83,6 +91,10 @@ pub fn install(cx: &mut App) -> anyhow::Result<()> {
                 ..
             }
         ) {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Native callbacks cannot wait for the UI; disposal or a full command queue rejects this click"
+            )]
             let _ = events.try_send(None);
         }
     }));
@@ -140,11 +152,23 @@ pub fn install(cx: &mut App) -> anyhow::Result<()> {
                     && let Ok(icon) = draw_icon(indicator, theme)
                 {
                     #[cfg(target_os = "macos")]
+                    #[expect(
+                        clippy::let_underscore_must_use,
+                        reason = "A failed cosmetic update keeps the existing tray icon and working menu"
+                    )]
                     let _ = updating_icon.set_icon_templated(Some(icon));
                     #[cfg(target_os = "windows")]
+                    #[expect(
+                        clippy::let_underscore_must_use,
+                        reason = "A failed cosmetic update keeps the existing tray icon and working menu"
+                    )]
                     let _ = updating_icon.set_icon(Some(icon));
                 }
                 status.set_text(&presentation.description);
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "A failed optional tooltip update preserves the status text in the menu"
+                )]
                 let _ = updating_icon.set_tooltip(Some(format!(
                     "Speakeasy · {}\nHold {} to dictate",
                     presentation.description,
@@ -226,7 +250,7 @@ fn raster(state: Indicator, theme: Theme, template: bool) -> Vec<u8> {
     let badge_color = match state {
         Indicator::Recording => palette.live,
         Indicator::Attention => palette.warn,
-        _ => 0xe0e0e6,
+        _ => 0xe0_e0_e6,
     };
     let badged = match state {
         Indicator::Ready => false,
@@ -251,7 +275,7 @@ fn raster(state: Indicator, theme: Theme, template: bool) -> Vec<u8> {
         let layers = [
             // A faint keyline keeps the lamp color legible on light taskbars.
             (
-                0x000000,
+                0x00_00_00,
                 if template {
                     0.0
                 } else {
@@ -268,20 +292,44 @@ fn raster(state: Indicator, theme: Theme, template: bool) -> Vec<u8> {
             layers
                 .into_iter()
                 .fold(([0.0_f32; 3], 0.0_f32), |(below, alpha), (color, top)| {
-                    let combined = top + alpha * (1.0 - top);
+                    let combined = f32::mul_add(alpha, 1.0 - top, top);
                     if combined <= 0.0 {
                         return (below, 0.0);
                     }
-                    let channel = |i: usize, shift: u32| {
+                    let channel = |below: f32, shift: u32| {
                         let value = ((color >> shift) & 0xff) as f32;
-                        (value * top + below[i] * alpha * (1.0 - top)) / combined
+                        f32::mul_add(below * alpha, 1.0 - top, value * top) / combined
                     };
-                    ([channel(0, 16), channel(1, 8), channel(2, 0)], combined)
+                    let [red, green, blue] = below;
+                    (
+                        [channel(red, 16), channel(green, 8), channel(blue, 0)],
+                        combined,
+                    )
                 });
         if opacity > 0.0 {
             let rgb = if template { [0.0; 3] } else { color };
-            pixel[..3].copy_from_slice(&rgb.map(|value| value.round() as u8));
-            pixel[3] = (opacity * 255.0).round() as u8;
+            pixel[..3].copy_from_slice(&rgb.map(|value| {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "Composited color channels deliberately round and saturate to eight-bit pixels"
+                )]
+                #[expect(
+                    clippy::cast_sign_loss,
+                    reason = "Eight-bit source colors and nonnegative layer coverage keep channels nonnegative"
+                )]
+                let channel = value.round() as u8;
+                channel
+            }));
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "Composited opacity deliberately rounds to an eight-bit alpha channel"
+            )]
+            #[expect(
+                clippy::cast_sign_loss,
+                reason = "Layer coverage keeps composited opacity in 0..=1"
+            )]
+            let alpha = (opacity * 255.0).round() as u8;
+            pixel[3] = alpha;
         }
     }
     rgba
@@ -298,7 +346,7 @@ fn badge(state: Indicator, x: f32, y: f32) -> f32 {
             } else {
                 (dx.hypot(dy) - 4.2).abs() - 0.95
             }
-        }
+        },
         Indicator::Paused => rounded(x, y, [21.9, 20.8, 24.2, 29.2], 0.6).min(rounded(
             x,
             y,
@@ -307,15 +355,15 @@ fn badge(state: Indicator, x: f32, y: f32) -> f32 {
         )),
         Indicator::Attention => {
             rounded(x, y, [23.85, 19.6, 26.15, 26.0], 1.15).min((x - 25.0).hypot(y - 28.7) - 1.3)
-        }
+        },
         Indicator::Ready => f32::MAX,
     }
 }
 
 // Signed distances in icon units; negative inside.
 fn rounded(x: f32, y: f32, [left, top, right, bottom]: [f32; 4], radius: f32) -> f32 {
-    let qx = (x - (left + right) / 2.0).abs() - ((right - left) / 2.0 - radius);
-    let qy = (y - (top + bottom) / 2.0).abs() - ((bottom - top) / 2.0 - radius);
+    let qx = (x - f32::midpoint(left, right)).abs() - ((right - left) / 2.0 - radius);
+    let qy = (y - f32::midpoint(top, bottom)).abs() - ((bottom - top) / 2.0 - radius);
     qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius
 }
 

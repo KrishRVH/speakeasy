@@ -7,7 +7,13 @@ use crate::{
     status,
     theme::{Palette, alpha, mix},
 };
-use gpui::{prelude::*, *};
+#[cfg(not(target_os = "windows"))]
+use gpui::PathPromptOptions;
+use gpui::{
+    App, AppContext, Bounds, Div, FontWeight, Global, KeyDownEvent, SharedString, Task, Timer,
+    TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, div, prelude::*, px,
+    relative, rgb, size, svg,
+};
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use raw_window_handle::HasWindowHandle;
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
@@ -22,10 +28,10 @@ use tokio::sync::watch;
 mod lifecycle;
 mod services;
 mod shutdown;
-pub use services::Services;
-pub use shutdown::request_quit;
+pub(crate) use services::Services;
+pub(crate) use shutdown::request_quit;
 
-pub fn reveal(cx: &mut App) {
+pub(crate) fn reveal(cx: &mut App) {
     if !cx.has_global::<Services>() {
         return;
     }
@@ -35,7 +41,7 @@ pub fn reveal(cx: &mut App) {
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-pub fn toggle_enabled(cx: &mut App) {
+pub(crate) fn toggle_enabled(cx: &mut App) {
     if cx.global::<Services>().demo {
         return;
     }
@@ -62,32 +68,69 @@ fn settings_visible(handle: WindowHandle<Settings>, visible: bool, cx: &mut App)
         if let Ok(Ok(raw)) = raw {
             speakeasy_platform::set_settings_visible(raw, visible);
             if visible {
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "A disposed app no longer needs activation after the native show request"
+                )]
                 let _ = cx.update(|cx| cx.activate(true));
             } else {
-                let _ = cx.update(|cx| {
-                    let (pill, show_hint, path) = {
-                        let services = cx.global::<Services>();
-                        let path = services.path.with_file_name("tray-hint-seen");
-                        let show = !services.tray_hint_seen && !path.exists();
-                        (services.pill, show, path)
-                    };
-                    if show_hint {
-                        let shown = pill
-                            .update(cx, |pill, _, cx| pill.tray_hint(cx))
-                            .unwrap_or(false);
-                        if shown {
-                            cx.global_mut::<Services>().tray_hint_seen = true;
-                            let _ = std::fs::write(path, b"");
-                        }
-                    }
-                });
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "A disposed app no longer needs its first-hide tray hint"
+                )]
+                let _ = cx.update(show_tray_hint);
             }
         }
     });
     cx.global_mut::<Services>().visibility = Some(task);
 }
 
-pub fn open(cx: &mut App) -> anyhow::Result<()> {
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+fn show_tray_hint(cx: &mut App) {
+    let services = cx.global::<Services>();
+    let path = services.path.with_file_name("tray-hint-seen");
+    if services.tray_hint_seen || path.exists() {
+        return;
+    }
+    let pill = services.pill;
+    if pill
+        .update(cx, |pill, _, cx| pill.tray_hint(cx))
+        .unwrap_or(false)
+    {
+        cx.global_mut::<Services>().tray_hint_seen = true;
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "The hint remains dismissed in this app; persistence failure may only show it again after relaunch"
+        )]
+        let _ = std::fs::write(path, b"");
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn minimize_to_tray(window: &Window, cx: &App) -> anyhow::Result<Task<()>> {
+    let (hide, hidden) = async_channel::bounded(1);
+    let handle = HasWindowHandle::window_handle(window)
+        .map_err(|error| anyhow::anyhow!("Cannot access Settings window: {error}"))?;
+    speakeasy_platform::minimize_to_tray(handle.as_raw(), hide)?;
+    Ok(cx.spawn(async move |cx| {
+        while hidden.recv().await.is_ok() {
+            if cx
+                .update(|cx| {
+                    if cx.has_global::<Services>()
+                        && let Some(handle) = cx.global::<Services>().window
+                    {
+                        settings_visible(handle, false, cx);
+                    }
+                })
+                .is_err()
+            {
+                break;
+            }
+        }
+    }))
+}
+
+pub(crate) fn open(cx: &mut App) -> anyhow::Result<()> {
     if let Some(window) = cx.global::<Services>().window
         && window.update(cx, |_, _, _| ()).is_ok()
     {
@@ -108,7 +151,7 @@ pub fn open(cx: &mut App) -> anyhow::Result<()> {
         ))
         && !cx.global::<Services>().path.exists();
     let tray_lifecycle = !demo || cx.global::<Services>().demo_tray;
-    let mut updates = cx.global::<Services>().output.subscribe();
+    let updates = cx.global::<Services>().output.subscribe();
     #[cfg(target_os = "windows")]
     let mut native_result = Ok(());
     let window = cx.open_window(
@@ -150,106 +193,44 @@ pub fn open(cx: &mut App) -> anyhow::Result<()> {
             }
             #[cfg(target_os = "windows")]
             let minimize = if tray_lifecycle {
-                let (hide, hidden) = async_channel::bounded(1);
-                native_result = HasWindowHandle::window_handle(window)
-                    .map_err(|error| anyhow::anyhow!("Cannot access Settings window: {error}"))
-                    .and_then(|handle| speakeasy_platform::minimize_to_tray(handle.as_raw(), hide));
-                Some(cx.spawn(async move |cx| {
-                    while hidden.recv().await.is_ok() {
-                        if cx
-                            .update(|cx| {
-                                if cx.has_global::<Services>()
-                                    && let Some(handle) = cx.global::<Services>().window
-                                {
-                                    settings_visible(handle, false, cx);
-                                }
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                }))
+                match minimize_to_tray(window, cx) {
+                    Ok(task) => Some(task),
+                    Err(error) => {
+                        native_result = Err(error);
+                        None
+                    },
+                }
             } else {
                 None
             };
             cx.new(|cx: &mut Context<Settings>| {
-                let task = cx.spawn(async move |this, cx| {
-                    let mut previous = None;
-                    loop {
-                        let snapshot = updates.borrow_and_update().clone();
-                        if this
-                            .update(cx, |view, cx| {
-                                let services = cx.global::<Services>();
-                                let running = services.running() || services.demo;
-                                let pausing = services.pausing();
-                                let presentation = (
-                                    status::indicator(&snapshot, running, pausing),
-                                    snapshot.shortcut.clone(),
-                                    snapshot.cancel_shortcut.clone(),
-                                );
-                                let status = if !snapshot.message.is_empty() {
-                                    snapshot.message.clone()
-                                } else {
-                                    status::description(
-                                        &snapshot,
-                                        running,
-                                        pausing,
-                                        services.config.engine,
-                                    )
-                                };
-                                if view.status != status || previous.as_ref() != Some(&presentation)
-                                {
-                                    view.status = status;
-                                    previous = Some(presentation);
-                                    cx.notify();
-                                }
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
-                        if updates.changed().await.is_err() {
-                            break;
-                        }
-                    }
-                });
-                let mut view = Settings {
+                Settings::new(
                     config,
-                    status: String::new(),
-                    notice: None,
-                    microphones: Vec::new(),
-                    dialog: None,
-                    devices: None,
-                    preview: None,
-                    setup: None,
-                    retiring_setups: Vec::new(),
-                    saving: None,
-                    save_work: None,
-                    saves: SaveQueue::default(),
-                    progress: Progress::default(),
-                    _updates: task,
                     demo,
+                    first_run,
+                    updates,
                     #[cfg(target_os = "windows")]
-                    _minimize: minimize,
-                };
-                if !demo {
-                    view.refresh_devices(cx);
-                }
-                if first_run {
-                    view.set_up(cx);
-                }
-                view
+                    minimize,
+                    cx,
+                )
             })
         },
     )?;
     #[cfg(target_os = "windows")]
     if let Err(error) = native_result {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "Cleanup may find an already-closed window; preserve the native initialization error"
+        )]
         let _ = window.update(cx, |_, window, _| window.remove_window());
         return Err(error);
     }
     cx.global_mut::<Services>().window = Some(window);
     if demo {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "A closed Settings window cannot display the simulated preview"
+        )]
         let _ = window.update(cx, |view, _, cx| view.play(cx));
     }
     Ok(())
@@ -306,7 +287,7 @@ impl SaveQueue {
                     validated,
                 });
                 None
-            }
+            },
             Err(error) => Some(error.to_string()),
         };
         if let Some(next) = self.pending.take() {
@@ -344,6 +325,10 @@ impl SaveWork {
         let thread = std::thread::Builder::new()
             .name("settings-save".into())
             .spawn(move || {
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "A closed result receiver needs no completion; the requested durable write still runs"
+                )]
                 let _ = complete.try_send(write());
             })?;
         Ok(Self {
@@ -356,14 +341,26 @@ impl SaveWork {
 impl Drop for SaveWork {
     fn drop(&mut self) {
         if let Some(thread) = self.thread.take() {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Drop cannot report a worker panic; joining still keeps requested writes owned until completion"
+            )]
             let _ = thread.join();
         }
     }
 }
 
-pub struct Settings {
+#[derive(PartialEq, Eq)]
+struct SettingsPresentation {
+    indicator: status::Indicator,
+    shortcut: std::sync::Arc<str>,
+    cancel_shortcut: std::sync::Arc<str>,
+    message: String,
+}
+
+pub(crate) struct Settings {
     config: Config,
-    status: String,
+    presentation: Option<SettingsPresentation>,
     notice: Option<String>,
     microphones: Vec<(String, String)>,
     dialog: Option<Task<()>>,
@@ -424,17 +421,91 @@ enum Action {
 }
 
 impl Settings {
-    fn refresh_devices(&mut self, cx: &mut Context<Self>) {
+    fn new(
+        config: Config,
+        demo: bool,
+        first_run: bool,
+        mut updates: watch::Receiver<Snapshot>,
+        #[cfg(target_os = "windows")] minimize: Option<Task<()>>,
+        cx: &Context<Self>,
+    ) -> Self {
+        let task = cx.spawn(async move |this, cx| {
+            loop {
+                let snapshot = updates.borrow_and_update().clone();
+                if this
+                    .update(cx, |view, cx| view.apply_snapshot(&snapshot, cx))
+                    .is_err()
+                {
+                    break;
+                }
+                if updates.changed().await.is_err() {
+                    break;
+                }
+            }
+        });
+        let mut view = Self {
+            config,
+            presentation: None,
+            notice: None,
+            microphones: Vec::new(),
+            dialog: None,
+            devices: None,
+            preview: None,
+            setup: None,
+            retiring_setups: Vec::new(),
+            saving: None,
+            save_work: None,
+            saves: SaveQueue::default(),
+            progress: Progress::default(),
+            _updates: task,
+            demo,
+            #[cfg(target_os = "windows")]
+            _minimize: minimize,
+        };
+        if !demo {
+            view.refresh_devices(cx);
+        }
+        if first_run {
+            view.set_up(cx);
+        }
+        view
+    }
+
+    fn apply_snapshot(&mut self, snapshot: &Snapshot, cx: &mut Context<Self>) {
+        let services = cx.global::<Services>();
+        let running = services.running() || services.demo;
+        let pausing = services.pausing();
+        let presentation = SettingsPresentation {
+            indicator: status::indicator(snapshot, running, pausing),
+            shortcut: snapshot.shortcut.clone(),
+            cancel_shortcut: snapshot.cancel_shortcut.clone(),
+            message: if snapshot.message.is_empty() {
+                status::description(snapshot, running, pausing, services.config.engine)
+            } else {
+                snapshot.message.clone()
+            },
+        };
+        if self.presentation.as_ref() != Some(&presentation) {
+            self.presentation = Some(presentation);
+            cx.notify();
+        }
+    }
+
+    fn refresh_devices(&mut self, cx: &Context<Self>) {
         let enumeration = audio::microphones();
         self.devices = Some(cx.spawn(async move |this, cx| {
             let result = enumeration.await;
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A disposed Settings view no longer needs microphone enumeration results"
+            )]
             let _ = this.update(cx, |view, cx| {
                 match result {
                     Ok(devices) => view.microphones = devices,
                     Err(_) => {
                         view.notice =
-                            Some("Cannot list microphones. Check OS audio settings.".into())
-                    }
+                            Some("Cannot list microphones. Check OS audio settings.".into());
+                    },
                 }
                 view.devices = None;
                 cx.notify();
@@ -442,7 +513,7 @@ impl Settings {
         }));
     }
     /// Starts automatic setup, or cancels it while running.
-    fn set_up(&mut self, cx: &mut Context<Self>) {
+    fn set_up(&mut self, cx: &Context<Self>) {
         if cx.global::<Services>().quitting() {
             return;
         }
@@ -453,6 +524,10 @@ impl Settings {
             let identity = setup.result.clone();
             let retirement = cx.spawn(async move |this, cx| {
                 stopped.await;
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "A disposed Settings view already owns setup disposal; cleanup has acknowledged"
+                )]
                 let _ = this.update(cx, |view, _| {
                     view.retiring_setups
                         .retain(|(setup, _)| !setup.result.same_channel(&identity));
@@ -467,7 +542,7 @@ impl Settings {
             Err(error) => {
                 self.notice = Some(error.to_string());
                 return;
-            }
+            },
         };
         let mut progress = setup.progress.clone();
         let result = setup.result.clone();
@@ -489,6 +564,10 @@ impl Settings {
             }
             let result = result.recv().await;
             stopped.await;
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A disposed Settings view cannot apply completed setup or enqueue a new save"
+            )]
             let _ = this.update(cx, |view, cx| {
                 view.setup = None;
                 view.progress = Progress::default();
@@ -499,7 +578,7 @@ impl Settings {
                         view.config.model = installed.model;
                         view.config.use_gpu = installed.use_gpu;
                         view.save(cx);
-                    }
+                    },
                     Ok(Err(error)) => view.notice = Some(error.to_string()),
                     Err(_) => view.notice = Some("Setup stopped unexpectedly. Try again.".into()),
                 }
@@ -553,7 +632,7 @@ impl Settings {
                     Ok(Some((next, incoming))) => {
                         request = next;
                         result = incoming;
-                    }
+                    },
                     Ok(None) | Err(_) => break,
                 }
             }
@@ -574,10 +653,10 @@ impl Settings {
                             let result = work.result.clone();
                             self.save_work = Some(work);
                             return Some((next, result));
-                        }
+                        },
                         Err(error) => progress = self.saves.finish(next, Err(error)),
                     }
-                }
+                },
                 SaveProgress::Finished {
                     saved,
                     error,
@@ -586,7 +665,7 @@ impl Settings {
                     self.finish_save(saved, error, epoch, cx);
                     self.saving = None;
                     return None;
-                }
+                },
             }
         }
     }
@@ -623,13 +702,17 @@ impl Settings {
         let pill = cx.global::<Services>().pill;
         let reduced =
             cx.global::<Services>().config.reduced_motion || speakeasy_platform::reduced_motion();
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "The saved preference remains authoritative after the presentation window is disposed"
+        )]
         let _ = pill.update(cx, |view, _, cx| {
             view.set_reduced(reduced);
             cx.notify();
         });
         show_theme(cx.global::<Services>().config.theme, cx);
     }
-    fn choose(&mut self, model: bool, window: &Window, cx: &mut Context<Self>) {
+    fn choose(&mut self, model: bool, window: &Window, cx: &Context<Self>) {
         if self.dialog.is_some() {
             return;
         }
@@ -647,26 +730,36 @@ impl Settings {
         let picker = choose_file(window, title, filter, cx);
         self.dialog = Some(cx.spawn(async move |this, cx| {
             let result = picker.await;
-            let _ = this.update(cx, |view, cx| {
-                match result {
-                    Ok(Some(path)) => {
-                        if model {
-                            view.config.model = path;
-                        } else {
-                            view.config.engine_executable = path;
-                        }
-                        view.notice = Some("Unsaved changes".into());
-                    }
-                    Ok(None) => {}
-                    Err(_) => {
-                        view.notice = Some("Could not open the file picker. Try again.".into())
-                    }
-                }
-                view.dialog = None;
-                cx.notify();
-            });
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A disposed Settings view cannot receive file picker results"
+            )]
+            let _ = this.update(cx, |view, cx| view.chosen(result, model, cx));
         }));
     }
+
+    fn chosen(
+        &mut self,
+        result: anyhow::Result<Option<PathBuf>>,
+        model: bool,
+        cx: &mut Context<Self>,
+    ) {
+        match result {
+            Ok(Some(path)) => {
+                if model {
+                    self.config.model = path;
+                } else {
+                    self.config.engine_executable = path;
+                }
+                self.notice = Some("Unsaved changes".into());
+            },
+            Ok(None) => {},
+            Err(_) => self.notice = Some("Could not open the file picker. Try again.".into()),
+        }
+        self.dialog = None;
+        cx.notify();
+    }
+
     fn act(&mut self, action: Action, window: &Window, cx: &mut Context<Self>) {
         if cx.global::<Services>().quitting() {
             return;
@@ -680,14 +773,14 @@ impl Settings {
                 };
                 self.notice =
                     Some("Choose the executable and model for this engine, then save.".into());
-            }
+            },
             Action::Executable => self.choose(false, window, cx),
             Action::Model => self.choose(true, window, cx),
             Action::Refresh => {
                 if !self.demo {
                     self.refresh_devices(cx);
                 }
-            }
+            },
             Action::Microphone => {
                 self.config.microphone = match &self.config.microphone {
                     None => self.microphones.first().map(|(id, _)| id.clone()),
@@ -695,11 +788,11 @@ impl Settings {
                         .microphones
                         .iter()
                         .position(|(id, _)| id == current)
-                        .and_then(|index| self.microphones.get(index + 1))
+                        .and_then(|index| self.microphones.get(index.saturating_add(1)))
                         .map(|(id, _)| id.clone()),
                 };
                 self.notice = Some("Unsaved changes".into());
-            }
+            },
             Action::Language => {
                 if self.config.engine == Engine::Parakeet {
                     return;
@@ -711,27 +804,27 @@ impl Settings {
                 }
                 .into();
                 self.notice = Some("Unsaved changes".into());
-            }
+            },
             Action::Gpu => {
                 self.config.use_gpu = !self.config.use_gpu;
                 self.notice = Some("Unsaved changes".into());
-            }
+            },
             Action::Clipboard => {
                 self.config.preserve_clipboard = !self.config.preserve_clipboard;
                 self.notice = Some("Unsaved changes".into());
-            }
+            },
             Action::LinuxManual => {
                 self.config.linux.manual_paste = !self.config.linux.manual_paste;
                 self.notice = Some("Unsaved changes".into());
-            }
+            },
             Action::LinuxTerminal => {
                 self.config.linux.terminal_paste = !self.config.linux.terminal_paste;
                 self.notice = Some("Unsaved changes".into());
-            }
+            },
             Action::LinuxExternal => {
                 self.config.linux.external_shortcut = !self.config.linux.external_shortcut;
                 self.notice = Some("Unsaved changes".into());
-            }
+            },
             Action::Motion => {
                 self.config.reduced_motion = !self.config.reduced_motion;
                 self.notice = Some("Unsaved changes".into());
@@ -739,13 +832,17 @@ impl Settings {
                     let pill = cx.global::<Services>().pill;
                     let reduced =
                         self.config.reduced_motion || speakeasy_platform::reduced_motion();
+                    #[expect(
+                        clippy::let_underscore_must_use,
+                        reason = "A disposed pill cannot show preview preferences; the Settings draft stays intact"
+                    )]
                     let _ = pill.update(cx, |view, _, cx| {
                         view.set_reduced(reduced);
                         cx.notify();
                     });
                     self.notice = None;
                 }
-            }
+            },
             Action::Theme => {
                 self.config.theme = self.config.theme.next();
                 self.notice = Some("Unsaved changes".into());
@@ -755,7 +852,7 @@ impl Settings {
                     show_theme(theme, cx);
                     self.notice = None;
                 }
-            }
+            },
             Action::Save => {
                 if self.demo {
                     self.notice =
@@ -763,11 +860,11 @@ impl Settings {
                 } else {
                     self.save(cx);
                 }
-            }
+            },
             Action::Pause => {
                 cx.update_global::<Services, _>(|services, cx| services.stop(cx));
                 self.notice = None;
-            }
+            },
             Action::Preview => self.play(cx),
             Action::Quit => request_quit(cx),
         }
@@ -833,7 +930,7 @@ impl Settings {
                 cx,
             )))
     }
-    fn play(&mut self, cx: &mut Context<Self>) {
+    fn play(&mut self, cx: &Context<Self>) {
         let tx = cx.global::<Services>().output.clone();
         let id = tx.borrow().id.wrapping_add(1);
         self.preview = Some(cx.spawn(async move |_, _| {
@@ -850,14 +947,17 @@ impl Settings {
             while start.elapsed() < Duration::from_secs(5) {
                 let t = start.elapsed().as_secs_f32();
                 snapshot.hands_free = t > 2.0;
-                snapshot.meter_tick += 1;
-                snapshot.level = ((t * 7.0).sin() * 0.45 + 0.35).max(0.0) * ((t * 2.1).sin().abs());
+                snapshot.meter_tick = snapshot.meter_tick.wrapping_add(1);
+                snapshot.level =
+                    (t * 7.0).sin().mul_add(0.45, 0.35).max(0.0) * ((t * 2.1).sin().abs());
                 tx.send_replace(snapshot.clone());
                 Timer::after(Duration::from_millis(32)).await;
             }
-            snapshot.started = Instant::now() - Duration::from_secs(272);
+            snapshot.started = Instant::now()
+                .checked_sub(Duration::from_secs(272))
+                .unwrap_or_else(Instant::now);
             snapshot.level = 0.0;
-            snapshot.meter_tick += 1;
+            snapshot.meter_tick = snapshot.meter_tick.wrapping_add(1);
             tx.send_replace(snapshot.clone());
             Timer::after(Duration::from_secs(2)).await;
             snapshot.phase = Phase::Stopping;
@@ -903,6 +1003,10 @@ impl Settings {
 // The pill and tray follow the saved theme; Settings previews unsaved edits.
 fn show_theme(theme: crate::theme::Theme, cx: &mut App) {
     let pill = cx.global::<Services>().pill;
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "Theme ownership stays in Services after the pill presentation window is disposed"
+    )]
     let _ = pill.update(cx, |view, _, cx| {
         view.set_theme(theme);
         cx.notify();
@@ -951,11 +1055,12 @@ fn choose_file(
     title: &'static str,
     filter: [&'static str; 2],
     _: &App,
-) -> impl Future<Output = anyhow::Result<Option<PathBuf>>> + use<> {
+) -> impl Future<Output = anyhow::Result<Option<PathBuf>>> + Send + use<> {
     let owner = HasWindowHandle::window_handle(window)
         .map(|handle| handle.as_raw())
         .map_err(|error| anyhow::anyhow!("Cannot access Settings window: {error}"));
-    async move { speakeasy_platform::choose_file(owner?, title, filter).await }
+    let picker = owner.map(|owner| speakeasy_platform::choose_file(owner, title, filter));
+    async move { picker?.await }
 }
 #[cfg(not(target_os = "windows"))]
 fn choose_file(
@@ -1355,7 +1460,7 @@ impl Render for Settings {
                     } else {
                         palette.muted
                     }))
-                    .child(self.status.clone())
+                    .child(self.presentation.as_ref().map_or_else(String::new, |view| view.message.clone()))
                     .when_some(self.notice.clone(), |status, notice| {
                         status.child(div().child(notice))
                     }),
@@ -1374,7 +1479,7 @@ impl Render for Settings {
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-pub fn send(action: Input, cx: &App) {
+pub(crate) fn send(action: Input, cx: &App) {
     if let Some(runtime) = cx.global::<Services>().runtime() {
         speakeasy_platform::deliver(&runtime.input, action);
     }
@@ -1494,17 +1599,15 @@ mod tests {
         let (joining, joined) = std::sync::mpsc::channel();
         let (finished, completion) = std::sync::mpsc::channel();
         let cleanup = std::thread::spawn(move || {
-            let _ = joining.send(());
+            joining.send(()).unwrap();
             drop(work);
-            let _ = finished.send(());
+            finished.send(()).unwrap();
         });
         joined.recv_timeout(Duration::from_secs(2))?;
         assert!(completion.recv_timeout(Duration::from_millis(10)).is_err());
         release.send(())?;
         completion.recv_timeout(Duration::from_secs(2))?;
-        cleanup
-            .join()
-            .map_err(|_| anyhow::anyhow!("Save cleanup failed"))?;
+        cleanup.join().unwrap();
         Ok(())
     }
 
@@ -1541,7 +1644,7 @@ mod tests {
         started.recv_timeout(Duration::from_secs(2))?;
         let view = Settings {
             config: latest.clone(),
-            status: String::new(),
+            presentation: None,
             notice: None,
             microphones: Vec::new(),
             dialog: None,
@@ -1567,9 +1670,7 @@ mod tests {
         };
         let cleanup = std::thread::spawn(move || drop(view));
         release.send(())?;
-        cleanup
-            .join()
-            .map_err(|_| anyhow::anyhow!("Settings cleanup failed"))?;
+        cleanup.join().unwrap();
         assert_eq!(Config::read(&path)?.threads, 8);
         Ok(())
     }

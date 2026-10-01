@@ -1,30 +1,31 @@
-//! Opt-in own-window rendering and frame-source check. No audio, input or clipboard.
+//! Opt-in own-window rendering and frame-source acceptance, without audio,
+//! global input or clipboard access.
 
 use anyhow::{Context as _, ensure};
-use gpui::{prelude::*, *};
-use raw_window_handle::HasWindowHandle;
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-    time::{Duration, Instant},
+use gpui::{
+    AppContext, Application, AsyncApp, Bounds, PathBuilder, Pixels, Timer, Window, WindowBounds,
+    WindowHandle, WindowKind, WindowOptions, canvas, div, point, prelude::*, px, rgb, size, svg,
 };
+use raw_window_handle::HasWindowHandle;
+use std::time::{Duration, Instant};
 
 #[path = "../src/icons.rs"]
 mod icons;
 
+#[derive(Default)]
 struct Colors {
-    paths: Rc<Cell<bool>>,
-    renders: Rc<Cell<usize>>,
+    paths: bool,
+    renders: usize,
 }
 
 impl Render for Colors {
     fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
-        self.renders.set(self.renders.get() + 1);
-        let paths = self.paths.get();
+        self.renders = self.renders.saturating_add(1);
+        let paths = self.paths;
         div()
             .size_full()
-            .bg(rgb(0x113355))
-            .child(div().w(px(32.0)).h_full().bg(rgb(0x557799)))
+            .bg(rgb(0x11_33_55))
+            .child(div().w(px(32.0)).h_full().bg(rgb(0x55_77_99)))
             .child(
                 svg()
                     .path(icons::KEYSTONE)
@@ -32,30 +33,14 @@ impl Render for Colors {
                     .top(px(8.0))
                     .left(px(8.0))
                     .size(px(10.0))
-                    .text_color(rgb(0xcc9955)),
+                    .text_color(rgb(0xcc_99_55)),
             )
             .child(
                 canvas(
                     |_, _, _| (),
-                    move |bounds, _, window, _| {
+                    move |bounds, (), window, _| {
                         if paths {
-                            let mut path = PathBuilder::fill();
-                            for (index, (x, y)) in
-                                [(24.0, 18.0), (30.0, 24.0), (24.0, 30.0), (18.0, 24.0)]
-                                    .into_iter()
-                                    .enumerate()
-                            {
-                                let point = bounds.origin + point(px(x), px(y));
-                                if index == 0 {
-                                    path.move_to(point);
-                                } else {
-                                    path.line_to(point);
-                                }
-                            }
-                            path.close();
-                            if let Ok(path) = path.build() {
-                                window.paint_path(path, rgb(0xff7733));
-                            }
+                            paint_diamond(bounds, window);
                         }
                     },
                 )
@@ -67,9 +52,39 @@ impl Render for Colors {
     }
 }
 
-async fn wait_for_render(renders: &Cell<usize>, preceding: usize) -> anyhow::Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(3);
-    while renders.get() == preceding {
+fn paint_diamond(bounds: Bounds<Pixels>, window: &mut Window) {
+    let mut path = PathBuilder::fill();
+    for (index, (x, y)) in [(24.0, 18.0), (30.0, 24.0), (24.0, 30.0), (18.0, 24.0)]
+        .into_iter()
+        .enumerate()
+    {
+        let vertex = point(bounds.origin.x + px(x), bounds.origin.y + px(y));
+        if index == 0 {
+            path.move_to(vertex);
+        } else {
+            path.line_to(vertex);
+        }
+    }
+    path.close();
+    if let Ok(path) = path.build() {
+        window.paint_path(path, rgb(0xff_77_33));
+    }
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "Native acceptance reads the view through GPUI's thread-affine UI context between frame waits"
+)]
+async fn wait_for_render(
+    window: WindowHandle<Colors>,
+    preceding: usize,
+    cx: &AsyncApp,
+) -> anyhow::Result<()> {
+    let started = Instant::now();
+    let deadline = started
+        .checked_add(Duration::from_secs(3))
+        .unwrap_or(started);
+    while window.read_with(cx, |colors, _| colors.renders)? == preceding {
         Timer::after(Duration::from_millis(20)).await;
         ensure!(
             Instant::now() < deadline,
@@ -82,41 +97,46 @@ async fn wait_for_render(renders: &Cell<usize>, preceding: usize) -> anyhow::Res
 }
 
 #[cfg(target_os = "linux")]
-fn verify_pixels(
-    window: raw_window_handle::RawWindowHandle,
-    scale: f32,
-    paths: bool,
-) -> anyhow::Result<()> {
+fn verify_pixels(window: u32, scale: f32, paths: bool) -> anyhow::Result<()> {
     use x11rb::protocol::xproto::{ConnectionExt as _, ImageFormat};
-    let raw_window_handle::RawWindowHandle::Xcb(window) = window else {
-        anyhow::bail!("Expected an XCB window on the private display");
-    };
     let (connection, _) = x11rb::connect(None)?;
-    let width = (64.0 * scale).ceil() as u16;
+    let geometry = connection.get_geometry(window)?.reply()?;
     let image = connection
         .get_image(
             ImageFormat::Z_PIXMAP,
-            window.window.get(),
+            window,
             0,
             0,
-            width,
-            width,
+            geometry.width,
+            geometry.height,
             u32::MAX,
         )?
         .reply()?;
     let pixels = image.data.as_chunks::<4>().0;
-    let color = |x: f32, y: f32| {
-        u32::from_ne_bytes(pixels[(y * scale) as usize * width as usize + (x * scale) as usize])
-            & 0x00ff_ffff
+    let color = |x: u16, y: u16| -> anyhow::Result<u32> {
+        let column = pixel_coordinate(x, scale)?;
+        let row = pixel_coordinate(y, scale)?;
+        ensure!(
+            column < usize::from(geometry.width) && row < usize::from(geometry.height),
+            "Sample coordinate is outside the owned window"
+        );
+        let index = row
+            .checked_mul(usize::from(geometry.width))
+            .and_then(|offset| offset.checked_add(column))
+            .context("Native image geometry is unsupported")?;
+        let pixel = pixels
+            .get(index)
+            .context("Native image is shorter than its geometry")?;
+        Ok(u32::from_ne_bytes(*pixel) & 0x00ff_ffff)
     };
-    ensure!(color(13.0, 13.0) == 0xcc9955, "Embedded SVG did not render");
+    ensure!(color(13, 13)? == 0xcc_99_55, "Embedded SVG did not render");
     ensure!(
-        color(50.0, 50.0) == 0x113355,
+        color(50, 50)? == 0x11_33_55,
         "Window background did not render"
     );
     if paths {
         ensure!(
-            color(24.0, 24.0) == 0xff7733,
+            color(24, 24)? == 0xff_77_33,
             "Path did not render after allocation or resize"
         );
     }
@@ -124,12 +144,11 @@ fn verify_pixels(
 }
 
 #[cfg(target_os = "linux")]
-async fn wait_for_pixels(
-    window: raw_window_handle::RawWindowHandle,
-    scale: f32,
-    paths: bool,
-) -> anyhow::Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(3);
+async fn wait_for_pixels(window: u32, scale: f32, paths: bool) -> anyhow::Result<()> {
+    let started = Instant::now();
+    let deadline = started
+        .checked_add(Duration::from_secs(3))
+        .unwrap_or(started);
     loop {
         match verify_pixels(window, scale, paths) {
             Ok(()) => return Ok(()),
@@ -138,9 +157,88 @@ async fn wait_for_pixels(
                     return Err(error);
                 }
                 Timer::after(Duration::from_millis(20)).await;
-            }
+            },
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn pixel_coordinate(logical: u16, scale: f32) -> anyhow::Result<usize> {
+    let physical = f32::from(logical) * scale;
+    ensure!(
+        scale.is_finite() && scale > 0.0 && (0.0..=f32::from(u16::MAX)).contains(&physical),
+        "Native display scale is unsupported"
+    );
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "Sampling intentionally rounds a validated native coordinate down to its containing pixel"
+    )]
+    #[expect(
+        clippy::cast_sign_loss,
+        reason = "The physical coordinate is validated as finite and nonnegative before conversion"
+    )]
+    Ok(physical as usize)
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "Owned-window acceptance resolves and mutates native GPUI windows only on their UI thread"
+)]
+async fn exercise(cx: &AsyncApp) -> anyhow::Result<()> {
+    let window = cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                point(px(0.0), px(0.0)),
+                size(px(64.0), px(64.0)),
+            ))),
+            titlebar: None,
+            kind: WindowKind::PopUp,
+            focus: false,
+            show: false,
+            ..Default::default()
+        },
+        |_, cx| cx.new(|_| Colors::default()),
+    )?;
+    let (raw, scale) = cx.update(|cx| {
+        window.update(cx, |_, window, _| {
+            HasWindowHandle::window_handle(window)
+                .map(|handle| (handle.as_raw(), window.scale_factor()))
+                .map_err(|error| anyhow::anyhow!("Native window handle: {error}"))
+        })?
+    })??;
+    #[cfg(not(target_os = "linux"))]
+    let _ = scale;
+    speakeasy_platform::configure_pill(raw)?;
+    #[cfg(target_os = "linux")]
+    let xcb = match raw {
+        raw_window_handle::RawWindowHandle::Xcb(handle) => handle.window.get(),
+        _ => anyhow::bail!("Expected an XCB window on the private display"),
+    };
+    for iteration in 0..25 {
+        let paths = iteration != 0;
+        cx.update(|cx| window.update(cx, |colors, _, _| colors.paths = paths))??;
+        speakeasy_platform::set_pill_visible(raw, true);
+        let preceding = window.read_with(cx, |colors, _| colors.renders)?;
+        cx.update(|cx| {
+            window.update(cx, |_, window, _| {
+                let width = if iteration % 2 == 0 { 64.0 } else { 96.0 };
+                window.resize(size(px(width), px(64.0)));
+                window.refresh();
+            })
+        })??;
+        wait_for_render(window, preceding, cx).await?;
+        #[cfg(target_os = "linux")]
+        wait_for_pixels(xcb, scale, paths).await?;
+        speakeasy_platform::set_pill_visible(raw, false);
+        Timer::after(Duration::from_millis(20)).await;
+    }
+    #[cfg(target_os = "linux")]
+    println!("PASS: SVG and path pixels verified across resize and 25 native show/hide cycles.");
+    #[cfg(not(target_os = "linux"))]
+    println!(
+        "PASS: native render callbacks completed across SVG/path scenes, resize, and 25 show/hide cycles."
+    );
+    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
@@ -148,74 +246,23 @@ fn main() -> anyhow::Result<()> {
         std::env::args().nth(1).as_deref() == Some("--native-gui"),
         "Pass --native-gui to opt into opening owned test windows"
     );
-    let outcome = Rc::new(RefCell::new(None));
-    let completed = outcome.clone();
+    let (completed, outcome) = std::sync::mpsc::channel();
     Application::new().with_assets(icons::Icons).run(move |cx| {
         cx.spawn(async move |cx| {
-            let result = async {
-                let renders = Rc::new(Cell::new(0));
-                let paths = Rc::new(Cell::new(false));
-                let window = cx.update(|cx| {
-                    cx.open_window(
-                        WindowOptions {
-                            window_bounds: Some(WindowBounds::Windowed(Bounds::new(
-                                point(px(0.0), px(0.0)),
-                                size(px(64.0), px(64.0)),
-                            ))),
-                            titlebar: None,
-                            kind: WindowKind::PopUp,
-                            focus: false,
-                            show: false,
-                            ..Default::default()
-                        },
-                        |_, cx| {
-                            cx.new(|_| Colors {
-                                paths: paths.clone(),
-                                renders: renders.clone(),
-                            })
-                        },
-                    )
-                })??;
-                let (raw, _scale) = cx.update(|cx| {
-                    window.update(cx, |_, window, _| {
-                        HasWindowHandle::window_handle(window)
-                            .map(|handle| (handle.as_raw(), window.scale_factor()))
-                            .map_err(|error| anyhow::anyhow!("Native window handle: {error}"))
-                    })?
-                })??;
-                speakeasy_platform::configure_pill(raw)?;
-                for iteration in 0..25 {
-                    paths.set(iteration != 0);
-                    speakeasy_platform::set_pill_visible(raw, true);
-                    let preceding = renders.get();
-                    cx.update(|cx| {
-                        window.update(cx, |_, window, _| {
-                            window.resize(size(px(64.0 + (iteration % 2) as f32 * 32.0), px(64.0)));
-                            window.refresh();
-                        })
-                    })??;
-                    wait_for_render(&renders, preceding).await?;
-                    #[cfg(target_os = "linux")]
-                    wait_for_pixels(raw, _scale, paths.get()).await?;
-                    speakeasy_platform::set_pill_visible(raw, false);
-                    Timer::after(Duration::from_millis(20)).await;
-                }
-                #[cfg(target_os = "linux")]
-                println!(
-                    "PASS: SVG and path pixels verified across resize and 25 native show/hide cycles."
-                );
-                #[cfg(not(target_os = "linux"))]
-                println!(
-                    "PASS: native render callbacks completed across SVG/path scenes, resize, and 25 show/hide cycles."
-                );
-                Ok(())
-            }
-            .await;
-            *completed.borrow_mut() = Some(result);
+            let result = exercise(cx).await;
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A closed acceptance result lane has no caller; quitting still disposes all owned windows"
+            )]
+            let _ = completed.send(result);
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A disposed app has already ended the native acceptance loop"
+            )]
             let _ = cx.update(|cx| cx.quit());
-        })
-        .detach();
+        }).detach();
     });
-    let result = outcome.borrow_mut().take();
-    result.context("Native rendering check did not complete")?
+    outcome
+        .try_recv()
+        .context("Native rendering check did not complete")?
 }

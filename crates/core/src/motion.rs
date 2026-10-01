@@ -1,12 +1,16 @@
 /// Analytic critically damped spring. Retargeting preserves velocity; evaluation
 /// is independent of refresh rate and remains stable after a delayed frame.
 pub struct Spring {
+    /// Current position, read by the renderer after stepping.
     pub value: f32,
     velocity: f32,
+    /// Destination; changing it preserves the current position and velocity.
     pub target: f32,
 }
 
 impl Spring {
+    /// Start at rest at `value`.
+    #[must_use]
     pub fn new(value: f32) -> Self {
         Self {
             value,
@@ -19,20 +23,23 @@ impl Spring {
     pub fn step(&mut self, seconds: f32, omega: f32) {
         let seconds = seconds.max(0.0);
         let displacement = self.value - self.target;
-        let c = self.velocity + omega * displacement;
+        let c = omega.mul_add(displacement, self.velocity);
         let decay = (-omega * seconds).exp();
-        self.value = self.target + (displacement + c * seconds) * decay;
-        self.velocity = (self.velocity - omega * c * seconds) * decay;
+        self.value = c.mul_add(seconds, displacement).mul_add(decay, self.target);
+        self.velocity = (omega * c).mul_add(-seconds, self.velocity) * decay;
         if self.settled() {
             self.value = self.target;
             self.velocity = 0.0;
         }
     }
 
+    /// Whether position and velocity are within the rendering tolerance.
+    #[must_use]
     pub fn settled(&self) -> bool {
         (self.value - self.target).abs() < 0.05 && self.velocity.abs() < 0.1
     }
 
+    /// Settle immediately at the target for reduced-motion rendering.
     pub fn snap(&mut self) {
         self.value = self.target;
         self.velocity = 0.0;

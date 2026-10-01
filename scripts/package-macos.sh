@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+if [[ $# -ne 0 ]]; then
+  echo "Usage: bash scripts/package-macos.sh" >&2
+  exit 1
+fi
 if [[ "$(uname -s)" != Darwin ]]; then
-    echo "Run this on macOS with the Xcode command line tools installed." >&2
-    exit 1
+  echo "Run this on macOS with the Xcode command line tools installed." >&2
+  exit 1
 fi
 MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release --locked -p speakeasy
 bundle="artifacts/Speakeasy.app"

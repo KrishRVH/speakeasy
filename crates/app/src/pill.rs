@@ -1,6 +1,11 @@
 use crate::runtime::{Phase, Snapshot};
 use crate::theme::{Palette, Theme, alpha, mix};
-use gpui::{prelude::*, *};
+use gpui::{
+    AnyWindowHandle, App, AppContext, Bounds, BoxShadow, ContentMask, Corners, PathBuilder, Pixels,
+    Rgba, Task, Timer, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind,
+    WindowOptions, canvas, div, fill, linear_color_stop, linear_gradient, point, prelude::*, px,
+    rgb, rgba, size,
+};
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use raw_window_handle::HasWindowHandle;
 use speakeasy_core::{gesture::RECORDING_LIMIT, motion::Spring};
@@ -24,24 +29,27 @@ fn feedback_remaining(phase: Phase, elapsed: Duration) -> Option<Duration> {
 }
 
 fn next_frame_deadline(previous: Instant, now: Instant) -> Instant {
-    let next = previous + FRAME_INTERVAL;
-    if next > now {
-        next
-    } else {
-        now + FRAME_INTERVAL
-    }
+    previous
+        .checked_add(FRAME_INTERVAL)
+        .filter(|next| *next > now)
+        .or_else(|| now.checked_add(FRAME_INTERVAL))
+        .unwrap_or(now)
 }
 
 fn recording_clock(seconds: u64) -> (bool, String) {
     let limit = RECORDING_LIMIT.as_secs();
-    if seconds >= limit - 30 {
+    if seconds >= limit.saturating_sub(30) {
         (true, format!("0:{:02} left", limit.saturating_sub(seconds)))
     } else {
         (false, format!("{}:{:02}", seconds / 60, seconds % 60))
     }
 }
 
-pub struct Pill {
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Reduced motion, native visibility, animation and frame registration are independent presentation capabilities; none owns session state"
+)]
+pub(crate) struct Pill {
     snapshot: Snapshot,
     width: Spring,
     height: Spring,
@@ -69,13 +77,17 @@ pub struct Pill {
 impl Pill {
     // Check the deadline on native frames, preserving display synchronization
     // without redrawing between deadlines or creating a repeating timer.
-    fn request_frame(&mut self, window: &Window, cx: &mut Context<Self>) {
+    fn request_frame(&mut self, window: &Window, cx: &Context<Self>) {
         if self.frame_pending {
             return;
         }
         self.frame_pending = true;
         let this = cx.entity().downgrade();
         window.on_next_frame(move |window, cx| {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "The window may have been disposed before its queued native frame; losing presentation never changes the session"
+            )]
             let _ = this.update(cx, |pill, cx| {
                 pill.frame_pending = false;
                 if !pill.animating {
@@ -90,20 +102,20 @@ impl Pill {
         });
     }
 
-    pub fn set_reduced(&mut self, reduced: bool) {
+    pub(crate) fn set_reduced(&mut self, reduced: bool) {
         self.reduced = reduced;
     }
 
-    pub fn set_theme(&mut self, theme: Theme) {
+    pub(crate) fn set_theme(&mut self, theme: Theme) {
         self.theme = theme;
     }
 
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-    pub fn tray_hint(&mut self, cx: &mut Context<Self>) -> bool {
+    pub(crate) fn tray_hint(&mut self, cx: &mut Context<Self>) -> bool {
         if self.visible {
             return false;
         }
-        self.hint_until = Some(Instant::now() + Duration::from_secs(3));
+        self.hint_until = Instant::now().checked_add(Duration::from_secs(3));
         self.wake = None;
         // Hidden native windows need showing before GPUI can render the hint.
         let handle = cx.global::<crate::shell::Services>().pill;
@@ -113,81 +125,72 @@ impl Pill {
         true
     }
 
-    pub fn new(
+    fn apply_snapshot(&mut self, snapshot: Snapshot, window: &Window, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        let old_history = self.history;
+        let state_changed = snapshot.phase != self.snapshot.phase
+            || snapshot.id != self.snapshot.id
+            || snapshot.hands_free != self.snapshot.hands_free
+            || snapshot.message != self.snapshot.message;
+        if snapshot.phase != self.snapshot.phase
+            || snapshot.id != self.snapshot.id
+            || (snapshot.phase == Phase::Error && snapshot.message != self.snapshot.message)
+        {
+            self.phase_at = now;
+            self.wake = None;
+            self.hint_until = None;
+        }
+        if snapshot.id != self.snapshot.id {
+            self.history.fill(0.0);
+        }
+        if snapshot.phase == Phase::Recording && snapshot.meter_tick != self.snapshot.meter_tick {
+            self.history.rotate_left(1);
+            if let Some(last) = self.history.last_mut() {
+                *last = snapshot.level;
+            }
+        }
+        if state_changed
+            && (matches!(
+                snapshot.phase,
+                Phase::Starting | Phase::Recording | Phase::Stopping | Phase::Processing
+            ) || feedback_remaining(snapshot.phase, now.duration_since(self.phase_at))
+                .is_some())
+            && !self.visible
+        {
+            self.visible = true;
+            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+            {
+                self.visibility = Some(set_visible(Window::window_handle(window), cx));
+            }
+            #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+            let _ = window;
+        }
+        self.snapshot = snapshot;
+        // Moving meters paint the latest history on their pending
+        // frame. Session changes and settled meters redraw immediately.
+        #[expect(
+            clippy::float_cmp,
+            reason = "History stores copied meter samples; exact equality detects changes without inventing a threshold that loses quiet speech"
+        )]
+        let history_changed = old_history != self.history;
+        if state_changed || (history_changed && !self.animating) {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn new(
         mut updates: tokio::sync::watch::Receiver<Snapshot>,
         reduced: bool,
         theme: Theme,
         window: &Window,
-        cx: &mut Context<Self>,
+        cx: &Context<Self>,
     ) -> Self {
         let task = cx.spawn_in(window, async move |this, cx| {
             loop {
                 let snapshot = updates.borrow_and_update().clone();
                 if this
                     .update_in(cx, |pill, window, cx| {
-                        let now = Instant::now();
-                        let old_history = pill.history;
-                        let state_changed = snapshot.phase != pill.snapshot.phase
-                            || snapshot.id != pill.snapshot.id
-                            || snapshot.hands_free != pill.snapshot.hands_free
-                            || snapshot.message != pill.snapshot.message;
-                        if snapshot.phase != pill.snapshot.phase
-                            || snapshot.id != pill.snapshot.id
-                            || (snapshot.phase == Phase::Error
-                                && snapshot.message != pill.snapshot.message)
-                        {
-                            pill.phase_at = now;
-                            pill.wake = None;
-                            pill.hint_until = None;
-                        }
-                        if snapshot.id != pill.snapshot.id {
-                            pill.history.fill(0.0);
-                        }
-                        if snapshot.phase == Phase::Recording
-                            && snapshot.meter_tick != pill.snapshot.meter_tick
-                        {
-                            pill.history.rotate_left(1);
-                            if let Some(last) = pill.history.last_mut() {
-                                *last = snapshot.level;
-                            }
-                        }
-                        if state_changed
-                            && (matches!(
-                                snapshot.phase,
-                                Phase::Starting
-                                    | Phase::Recording
-                                    | Phase::Stopping
-                                    | Phase::Processing
-                            ) || feedback_remaining(
-                                snapshot.phase,
-                                now.duration_since(pill.phase_at),
-                            )
-                            .is_some())
-                            && !pill.visible
-                        {
-                            pill.visible = true;
-                            #[cfg(any(
-                                target_os = "windows",
-                                target_os = "macos",
-                                target_os = "linux"
-                            ))]
-                            {
-                                pill.visibility =
-                                    Some(set_visible(Window::window_handle(window), cx));
-                            }
-                            #[cfg(not(any(
-                                target_os = "windows",
-                                target_os = "macos",
-                                target_os = "linux"
-                            )))]
-                            let _ = window;
-                        }
-                        pill.snapshot = snapshot;
-                        // Moving meters paint the latest history on their pending
-                        // frame. Session changes and settled meters redraw immediately.
-                        if state_changed || (old_history != pill.history && !pill.animating) {
-                            cx.notify();
-                        }
+                        pill.apply_snapshot(snapshot, window, cx);
                     })
                     .is_err()
                 {
@@ -300,12 +303,12 @@ impl Render for Pill {
             }
             moving |= !spring.settled();
         }
-        for (index, spring) in self.meter.iter_mut().enumerate() {
+        for (spring, level) in self.meter.iter_mut().zip(self.history) {
             spring.target = if phase == Phase::Recording {
                 if self.reduced {
                     self.snapshot.level
                 } else {
-                    self.history[index]
+                    level
                 }
             } else {
                 0.0
@@ -360,7 +363,7 @@ impl Render for Pill {
             if capturing {
                 Some(Duration::from_secs(1))
             } else if phase == Phase::Processing && elapsed < Duration::from_millis(250) {
-                Some(Duration::from_millis(250) - elapsed)
+                Some(Duration::from_millis(250).saturating_sub(elapsed))
             } else {
                 None
             }
@@ -370,6 +373,10 @@ impl Render for Pill {
         {
             self.wake = Some(cx.spawn(async move |this, cx| {
                 Timer::after(delay).await;
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "A disposed pill no longer needs its presentation deadline; the runtime still owns recording deadlines"
+                )]
                 let _ = this.update(cx, |pill, cx| {
                     pill.wake = None;
                     cx.notify();
@@ -461,8 +468,10 @@ impl Render for Pill {
                         if self.reduced {
                             0.5
                         } else {
-                            ((elapsed.as_secs_f32() * std::f32::consts::TAU / 1.2).sin() + 1.0)
-                                / 2.0
+                            f32::midpoint(
+                                (elapsed.as_secs_f32() * std::f32::consts::TAU / 1.2).sin(),
+                                1.0,
+                            )
                         }
                     },
                 ),
@@ -481,7 +490,7 @@ impl Render for Pill {
                         .w(px((width - 16.0 - extra).max(6.0)))
                         .h(px(slot_height))
                         .rounded(px(slot_height / 2.0))
-                        .bg(alpha(0x000000, 0.5))
+                        .bg(alpha(0x00_00_00, 0.5))
                         .border_1()
                         .border_color(if grille.wave > 0.01 {
                             alpha(palette.live, 0.45 * grille.wave)
@@ -491,7 +500,7 @@ impl Render for Pill {
                         .child(
                             canvas(
                                 |_, _, _| (),
-                                move |bounds, _, window, _| grille.paint(bounds, window),
+                                move |bounds, (), window, _| grille.paint(bounds, window),
                             )
                             .size_full(),
                         )
@@ -557,7 +566,7 @@ impl Render for Pill {
                     .border_color(alpha(palette.ink, 0.13))
                     .text_color(rgb(palette.ink))
                     .shadow(vec![BoxShadow {
-                        color: rgba(0x00000052).into(),
+                        color: rgba(0x0000_0052).into(),
                         offset: point(px(0.0), px(4.0)),
                         blur_radius: px(16.0),
                         spread_radius: px(0.0),
@@ -594,11 +603,11 @@ enum Symbol {
 fn symbol(symbol: Symbol, color: u32) -> impl IntoElement {
     canvas(
         |_, _, _| (),
-        move |bounds, _, window, _| {
+        move |bounds, (), window, _| {
             let mut path = PathBuilder::stroke(px(1.5));
             let mut line = |points: &[(f32, f32)]| {
                 for (index, &(x, y)) in points.iter().enumerate() {
-                    let point = bounds.origin + point(px(x), px(y));
+                    let point = point(bounds.origin.x + px(x), bounds.origin.y + px(y));
                     if index == 0 {
                         path.move_to(point);
                     } else {
@@ -611,7 +620,7 @@ fn symbol(symbol: Symbol, color: u32) -> impl IntoElement {
                 Symbol::Attention => {
                     line(&[(8.0, 2.0), (8.0, 10.0)]);
                     line(&[(8.0, 12.0), (8.0, 14.0)]);
-                }
+                },
                 Symbol::Lock => {
                     line(&[(5.0, 7.0), (5.0, 3.0), (11.0, 3.0), (11.0, 7.0)]);
                     line(&[
@@ -621,12 +630,12 @@ fn symbol(symbol: Symbol, color: u32) -> impl IntoElement {
                         (3.0, 14.0),
                         (3.0, 7.0),
                     ]);
-                }
+                },
                 Symbol::Microphone => {
                     line(&[(6.0, 2.0), (10.0, 2.0), (10.0, 8.0), (6.0, 8.0), (6.0, 2.0)]);
                     line(&[(3.0, 6.0), (3.0, 11.0), (13.0, 11.0), (13.0, 6.0)]);
                     line(&[(8.0, 11.0), (8.0, 14.0)]);
-                }
+                },
             }
             if let Ok(path) = path.build() {
                 window.paint_path(path, rgb(color));
@@ -665,7 +674,7 @@ impl Grille {
             window.paint_quad(
                 fill(
                     bounds,
-                    alpha(palette.live, (0.1 + self.levels[23] * 0.22) * self.wave),
+                    alpha(palette.live, self.levels[23].mul_add(0.22, 0.1) * self.wave),
                 )
                 .corner_radii(px(radius)),
             );
@@ -676,25 +685,38 @@ impl Grille {
             };
             window.with_content_mask(Some(mask), |window| {
                 if self.reduced {
-                    let bar = 2.0 + self.levels[23] * max;
+                    let bar = self.levels[23].mul_add(max, 2.0);
                     window.paint_quad(
                         fill(rect(x + 9.0, y + (h - bar) / 2.0, w - 18.0, bar), color)
                             .corner_radii(px(bar.min(6.0) / 2.0)),
                     );
                     return;
                 }
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "The bounded pill width intentionally rounds down to a count of four-pixel grille slots"
+                )]
+                #[expect(
+                    clippy::cast_sign_loss,
+                    reason = "The slot count is clamped to at least one before converting from layout coordinates"
+                )]
                 let count = ((w - 12.0) / 4.0).floor().max(1.0) as usize;
-                let start = x + (w - (count as f32 * 4.0 - 2.0)) / 2.0;
-                let middle = (count as f32 - 1.0) / 2.0;
+                let start = x + (w - (count as f32).mul_add(4.0, -2.0)) / 2.0;
                 for index in 0..count {
                     // Newest level at the center, older levels mirrored outward.
-                    let distance = ((index as f32 - middle).abs().round() as usize).min(23);
-                    let left = start + index as f32 * 4.0;
+                    let distance = index
+                        .abs_diff(count.saturating_sub(1).saturating_sub(index))
+                        .div_ceil(2)
+                        .min(23);
+                    let left = (index as f32).mul_add(4.0, start);
                     let inset = (x + radius - left - 1.0)
                         .max(left + 1.0 - (x + w - radius))
                         .max(0.0);
-                    let chord = 2.0 * (radius * radius - inset * inset).max(0.0).sqrt() - 3.0;
-                    let bar = (2.0 + self.levels[23 - distance] * max).min(chord.max(2.0));
+                    let chord = 2.0f32
+                        .mul_add(inset.mul_add(-inset, radius * radius).max(0.0).sqrt(), -3.0);
+                    let bar = self.levels.iter().rev().nth(distance).copied().unwrap_or(0.0)
+                        .mul_add(max, 2.0)
+                        .min(chord.max(2.0));
                     window.paint_quad(
                         fill(rect(left, y + (h - bar) / 2.0, 2.0, bar), color)
                             .corner_radii(px(1.0)),
@@ -705,7 +727,12 @@ impl Grille {
         if let Some(position) = self.sweep
             && open > 16.0
         {
-            let glow = rect(x + 4.0 + position * (open - 18.0), y + 3.0, 10.0, h - 6.0);
+            let glow = rect(
+                f32::mul_add(position, open - 18.0, x + 4.0),
+                y + 3.0,
+                10.0,
+                h - 6.0,
+            );
             let corners = Corners::all(px(((h - 6.0) / 2.0).min(5.0)));
             window.paint_shadows(
                 glow,
@@ -724,7 +751,10 @@ impl Grille {
             let left = x + open;
             // A nearly open lid follows the curve of the slot's end.
             let height = if cover < radius {
-                2.0 * (radius * radius - (radius - cover).powi(2)).max(0.0).sqrt()
+                2.0 * (radius - cover)
+                    .mul_add(-(radius - cover), radius * radius)
+                    .max(0.0)
+                    .sqrt()
             } else {
                 h
             };
@@ -778,7 +808,7 @@ fn keystone(window: &mut Window, x: f32, y: f32, radius: f32, color: Rgba) {
 // Native show/resize can synchronously request a GPUI frame. Run it after
 // releasing the app/window borrow, and resolve the handle just before use.
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-fn set_visible(handle: AnyWindowHandle, cx: &mut App) -> Task<()> {
+fn set_visible(handle: AnyWindowHandle, cx: &App) -> Task<()> {
     cx.spawn(async move |cx| {
         let raw = cx.update_window(handle, |root, window, cx| {
             let visible = root
@@ -796,7 +826,7 @@ fn set_visible(handle: AnyWindowHandle, cx: &mut App) -> Task<()> {
     })
 }
 
-pub fn open(
+pub(crate) fn open(
     updates: tokio::sync::watch::Receiver<Snapshot>,
     reduced: bool,
     theme: Theme,
@@ -862,206 +892,229 @@ mod tests {
     #[test]
     #[ignore = "Native GUI check; requires explicit opt-in on a private Xvfb display, never microphone/input/clipboard"]
     fn idle_native_pill_starts_unmapped_and_can_show_and_hide() -> anyhow::Result<()> {
+        use anyhow::Context as _;
+
+        let (completed, outcome) = std::sync::mpsc::channel();
+        gpui::Application::new().run(move |cx| {
+            cx.spawn(async move |cx| {
+                let result = cx.update(check_idle_pill).and_then(|result| result);
+                completed.send(result).unwrap();
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "A disposed app has already ended the native acceptance loop"
+                )]
+                let _ = cx.update(|cx| cx.quit());
+            })
+            .detach();
+        });
+        outcome
+            .try_recv()
+            .context("Native pill check did not complete")?
+    }
+
+    #[cfg(target_os = "linux")]
+    fn check_idle_pill(cx: &mut gpui::App) -> anyhow::Result<()> {
         use anyhow::{Context as _, ensure};
         use raw_window_handle::{
             HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
         };
-        use std::{cell::RefCell, rc::Rc};
         use x11rb::protocol::{
             shape::{self, ConnectionExt as _},
             xproto::{AtomEnum, ConnectionExt as _, MapState},
         };
 
-        let outcome = Rc::new(RefCell::new(None));
-        let completed = outcome.clone();
-        gpui::Application::new().run(move |cx| {
-            cx.spawn(async move |cx| {
-                let _ = cx.update(move |cx| {
-                    let result = (|| {
-                        // This real GPUI window receives only an idle synthetic snapshot.
-                        // No Services, session runtime, monitor, or audio device is created.
-                        let (_owner, updates) =
-                            tokio::sync::watch::channel(crate::runtime::Snapshot::default());
-                        let pill = super::open(updates, true, crate::theme::Theme::default(), cx)?;
-                        let (raw, display) = pill.update(cx, |_, window, _| {
-                            Ok::<_, anyhow::Error>((
-                                HasWindowHandle::window_handle(window)
-                                    .map_err(|error| anyhow::anyhow!("Window handle: {error}"))?
-                                    .as_raw(),
-                                HasDisplayHandle::display_handle(window)
-                                    .map_err(|error| anyhow::anyhow!("Display handle: {error}"))?
-                                    .as_raw(),
-                            ))
-                        })??;
-                        let id = match (raw, display) {
-                            (RawWindowHandle::Xcb(window), RawDisplayHandle::Xcb(display)) => {
-                                ensure!(
-                                    display.connection.is_some(),
-                                    "Missing live XCB display handle"
-                                );
-                                window.window.get()
-                            }
-                            (RawWindowHandle::Xlib(window), RawDisplayHandle::Xlib(display)) => {
-                                ensure!(
-                                    display.display.is_some(),
-                                    "Missing live Xlib display handle"
-                                );
-                                u32::try_from(window.window)?
-                            }
-                            _ => anyhow::bail!("Expected matching X11 window and display handles"),
-                        };
-                        let (connection, _) = x11rb::connect(None)?;
-                        // open_window has completed its mandatory initial draw here.
-                        let attributes = connection.get_window_attributes(id)?.reply()?;
-                        ensure!(
-                            attributes.map_state == MapState::UNMAPPED,
-                            "Idle pill is natively mapped after open and its initial draw"
-                        );
-                        ensure!(
-                            attributes.override_redirect,
-                            "Pill is managed as an ordinary window"
-                        );
-                        let hints = connection
-                            .get_property(false, id, AtomEnum::WM_HINTS, AtomEnum::WM_HINTS, 0, 9)?
-                            .reply()?;
-                        let hints: Vec<_> = hints
-                            .value32()
-                            .context("Invalid WM_HINTS format")?
-                            .collect();
-                        ensure!(
-                            hints.len() == 9 && hints[0] & 1 != 0 && hints[1] == 0,
-                            "Pill accepts input focus"
-                        );
-                        ensure!(
-                            connection
-                                .shape_get_rectangles(id, shape::SK::INPUT)?
-                                .reply()?
-                                .rectangles
-                                .is_empty(),
-                            "Pill input region intercepts the pointer"
-                        );
+        // This real GPUI window receives only an idle synthetic snapshot.
+        // No Services, session runtime, monitor, or audio device is created.
+        let (_owner, updates) = tokio::sync::watch::channel(crate::runtime::Snapshot::default());
+        let pill = super::open(updates, true, crate::theme::Theme::default(), cx)?;
+        let (raw, display) = pill.update(cx, |_, window, _| {
+            Ok::<_, anyhow::Error>((
+                HasWindowHandle::window_handle(window)
+                    .map_err(|error| anyhow::anyhow!("Window handle: {error}"))?
+                    .as_raw(),
+                HasDisplayHandle::display_handle(window)
+                    .map_err(|error| anyhow::anyhow!("Display handle: {error}"))?
+                    .as_raw(),
+            ))
+        })??;
+        let id = match (raw, display) {
+            (RawWindowHandle::Xcb(window), RawDisplayHandle::Xcb(display)) => {
+                ensure!(
+                    display.connection.is_some(),
+                    "Missing live XCB display handle"
+                );
+                window.window.get()
+            },
+            (RawWindowHandle::Xlib(window), RawDisplayHandle::Xlib(display)) => {
+                ensure!(
+                    display.display.is_some(),
+                    "Missing live Xlib display handle"
+                );
+                u32::try_from(window.window)?
+            },
+            _ => anyhow::bail!("Expected matching X11 window and display handles"),
+        };
+        let (connection, _) = x11rb::connect(None)?;
+        // open_window has completed its mandatory initial draw here.
+        let attributes = connection.get_window_attributes(id)?.reply()?;
+        ensure!(
+            attributes.map_state == MapState::UNMAPPED,
+            "Idle pill is natively mapped after open and its initial draw"
+        );
+        ensure!(
+            attributes.override_redirect,
+            "Pill is managed as an ordinary window"
+        );
+        let hints = connection
+            .get_property(false, id, AtomEnum::WM_HINTS, AtomEnum::WM_HINTS, 0, 9)?
+            .reply()?;
+        let hints: Vec<_> = hints
+            .value32()
+            .context("Invalid WM_HINTS format")?
+            .collect();
+        ensure!(
+            hints.len() == 9 && hints[0] & 1 != 0 && hints[1] == 0,
+            "Pill accepts input focus"
+        );
+        ensure!(
+            connection
+                .shape_get_rectangles(id, shape::SK::INPUT)?
+                .reply()?
+                .rectangles
+                .is_empty(),
+            "Pill input region intercepts the pointer"
+        );
 
-                        speakeasy_platform::set_pill_visible(raw, true);
-                        ensure!(
-                            connection.get_window_attributes(id)?.reply()?.map_state
-                                == MapState::VIEWABLE,
-                            "Pill did not become viewable"
-                        );
-                        speakeasy_platform::set_pill_visible(raw, false);
-                        ensure!(
-                            connection.get_window_attributes(id)?.reply()?.map_state
-                                == MapState::UNMAPPED,
-                            "Pill did not become unmapped"
-                        );
-                        Ok(())
-                    })();
-                    *completed.borrow_mut() = Some(result);
-                    // Quit on either outcome so an assertion failure cannot strand the
-                    // native loop. Window disposal owns renderer and observer cleanup.
-                    cx.quit();
-                });
-            })
-            .detach();
-        });
-        let result = outcome.borrow_mut().take();
-        result.context("Native pill check did not complete")?
+        speakeasy_platform::set_pill_visible(raw, true);
+        ensure!(
+            connection.get_window_attributes(id)?.reply()?.map_state == MapState::VIEWABLE,
+            "Pill did not become viewable"
+        );
+        speakeasy_platform::set_pill_visible(raw, false);
+        ensure!(
+            connection.get_window_attributes(id)?.reply()?.map_state == MapState::UNMAPPED,
+            "Pill did not become unmapped"
+        );
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
     #[test]
     #[ignore = "opt-in native windows; run on a private Xvfb display, without microphone, hook, or clipboard"]
     fn idle_native_pill_can_render_a_window_opened_after_launch() -> anyhow::Result<()> {
-        use anyhow::{Context as _, ensure};
-        use gpui::{prelude::*, *};
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        use std::{cell::RefCell, collections::HashSet, rc::Rc};
-        use x11rb::protocol::xproto::{ConnectionExt as _, ImageFormat};
+        use anyhow::Context as _;
 
-        struct Colors;
-        impl Render for Colors {
-            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
-                div()
-                    .size_full()
-                    .bg(rgb(0x113355))
-                    .child(div().w(px(32.0)).h_full().bg(rgb(0x557799)))
-            }
-        }
-
-        let outcome = Rc::new(RefCell::new(None));
-        let completed = outcome.clone();
-        Application::new().run(move |cx| {
+        let (completed, outcome) = std::sync::mpsc::channel();
+        gpui::Application::new().run(move |cx| {
             cx.spawn(async move |cx| {
-                // Window creation happens after the native event loop has
-                // started, so draining only startup events cannot satisfy this.
-                Timer::after(Duration::from_millis(100)).await;
-                let result = async {
-                    let id = cx.update(|cx| {
-                        let (_owner, updates) =
-                            tokio::sync::watch::channel(crate::runtime::Snapshot::default());
-                        let _pill = super::open(updates, true, crate::theme::Theme::default(), cx)?;
-                        let colors = cx.open_window(
-                            WindowOptions {
-                                window_bounds: Some(WindowBounds::Windowed(Bounds::new(
-                                    point(px(0.0), px(0.0)),
-                                    size(px(64.0), px(64.0)),
-                                ))),
-                                titlebar: None,
-                                ..Default::default()
-                            },
-                            |_, cx| cx.new(|_| Colors),
-                        )?;
-                        colors.update(cx, |_, window, _| {
-                            match HasWindowHandle::window_handle(window)
-                                .map_err(|error| anyhow::anyhow!("Window handle: {error}"))?
-                                .as_raw()
-                            {
-                                RawWindowHandle::Xcb(handle) => Ok(handle.window.get()),
-                                _ => anyhow::bail!("Expected XCB window"),
-                            }
-                        })?
-                    })??;
-                    let (connection, _) = x11rb::connect(None)?;
-                    let geometry = connection.get_geometry(id)?.reply()?;
-                    let deadline = Instant::now() + Duration::from_secs(3);
-                    loop {
-                        Timer::after(Duration::from_millis(50)).await;
-                        let image = connection
-                            .get_image(
-                                ImageFormat::Z_PIXMAP,
-                                id,
-                                0,
-                                0,
-                                geometry.width,
-                                geometry.height,
-                                u32::MAX,
-                            )?
-                            .reply()?;
-                        let colors: HashSet<_> = image
-                            .data
-                            .as_chunks::<4>()
-                            .0
-                            .iter()
-                            .map(|pixel| u32::from_ne_bytes(*pixel) & 0x00ff_ffff)
-                            .collect();
-                        if colors.contains(&0x113355) && colors.contains(&0x557799) {
-                            return Ok(());
-                        }
-                        ensure!(
-                            Instant::now() < deadline,
-                            "Window opened after launch never presented its two colors ({}×{} pixels)",
-                            geometry.width,
-                            geometry.height
-                        );
-                    }
-                }
-                .await;
-                *completed.borrow_mut() = Some(result);
+                let result = check_late_window(cx).await;
+                completed.send(result).unwrap();
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "A disposed app has already ended the native acceptance loop"
+                )]
                 let _ = cx.update(|cx| cx.quit());
             })
             .detach();
         });
-        let result = outcome.borrow_mut().take();
-        result.context("Delayed native window check did not complete")?
+        outcome
+            .try_recv()
+            .context("Delayed native window check did not complete")?
+    }
+
+    #[cfg(target_os = "linux")]
+    struct LateColors;
+
+    #[cfg(target_os = "linux")]
+    impl gpui::Render for LateColors {
+        fn render(
+            &mut self,
+            _: &mut gpui::Window,
+            _: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            use gpui::{div, prelude::*, px, rgb};
+            div()
+                .size_full()
+                .bg(rgb(0x11_33_55))
+                .child(div().w(px(32.0)).h_full().bg(rgb(0x55_77_99)))
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[expect(
+        clippy::future_not_send,
+        reason = "Native acceptance creates and observes GPUI windows on their owning UI thread"
+    )]
+    async fn check_late_window(cx: &gpui::AsyncApp) -> anyhow::Result<()> {
+        use anyhow::ensure;
+        use gpui::{Bounds, Timer, WindowBounds, WindowOptions, point, prelude::*, px, size};
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        use std::collections::HashSet;
+        use x11rb::protocol::xproto::{ConnectionExt as _, ImageFormat};
+
+        // Create only after native launch, so startup event draining cannot pass.
+        Timer::after(Duration::from_millis(100)).await;
+        let id = cx.update(|cx| {
+            let (_owner, updates) =
+                tokio::sync::watch::channel(crate::runtime::Snapshot::default());
+            let _pill = super::open(updates, true, crate::theme::Theme::default(), cx)?;
+            let colors = cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        point(px(0.0), px(0.0)),
+                        size(px(64.0), px(64.0)),
+                    ))),
+                    titlebar: None,
+                    ..Default::default()
+                },
+                |_, cx| cx.new(|_| LateColors),
+            )?;
+            colors.update(cx, |_, window, _| {
+                match HasWindowHandle::window_handle(window)
+                    .map_err(|error| anyhow::anyhow!("Window handle: {error}"))?
+                    .as_raw()
+                {
+                    RawWindowHandle::Xcb(handle) => Ok(handle.window.get()),
+                    _ => anyhow::bail!("Expected XCB window"),
+                }
+            })?
+        })??;
+        let (connection, _) = x11rb::connect(None)?;
+        let geometry = connection.get_geometry(id)?.reply()?;
+        let started = Instant::now();
+        let deadline = started
+            .checked_add(Duration::from_secs(3))
+            .unwrap_or(started);
+        loop {
+            Timer::after(Duration::from_millis(50)).await;
+            let image = connection
+                .get_image(
+                    ImageFormat::Z_PIXMAP,
+                    id,
+                    0,
+                    0,
+                    geometry.width,
+                    geometry.height,
+                    u32::MAX,
+                )?
+                .reply()?;
+            let colors: HashSet<_> = image
+                .data
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|pixel| u32::from_ne_bytes(*pixel) & 0x00ff_ffff)
+                .collect();
+            if colors.contains(&0x11_33_55) && colors.contains(&0x55_77_99) {
+                return Ok(());
+            }
+            ensure!(
+                Instant::now() < deadline,
+                "Window opened after launch never presented its two colors ({}×{} pixels)",
+                geometry.width,
+                geometry.height
+            );
+        }
     }
 
     #[test]

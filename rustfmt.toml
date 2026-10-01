@@ -1,0 +1,17 @@
+edition = "2024"
+hard_tabs = false
+max_width = 100
+newline_style = "Unix"
+style_edition = "2024"
+tab_spaces = 4
+use_small_heuristics = "Default"
+
+force_explicit_abi = true
+match_block_trailing_comma = true
+merge_derives = true
+remove_nested_parens = true
+reorder_imports = true
+reorder_modules = true
+single_line_let_else_max_width = 0
+use_field_init_shorthand = true
+use_try_shorthand = true

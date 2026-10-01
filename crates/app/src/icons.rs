@@ -1,9 +1,9 @@
 use gpui::{AssetSource, SharedString};
 use std::borrow::Cow;
 
-pub const KEYSTONE: &str = "icons/keystone.svg";
+pub(crate) const KEYSTONE: &str = "icons/keystone.svg";
 
-pub struct Icons;
+pub(crate) struct Icons;
 
 impl AssetSource for Icons {
     fn load(&self, path: &str) -> anyhow::Result<Option<Cow<'static, [u8]>>> {

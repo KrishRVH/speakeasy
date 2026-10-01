@@ -8,7 +8,7 @@ gpui = { path = "vendor/gpui" }
 gpui_media = { path = "vendor/gpui_media" }
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 rust-version = "1.98.1"
 publish = false
@@ -30,6 +30,7 @@ libloading = "0.9.0"
 objc2 = "0.6.4"
 objc2-app-kit = "0.3.2"
 objc2-foundation = "0.3.2"
+proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 raw-window-handle = "0.6.2"
 reqwest = { version = "0.13.5", default-features = false }
 rtrb = "0.4.0"
@@ -45,19 +46,79 @@ xkbcommon = "0.9.0"
 zbus = { version = "5.19.0", default-features = false }
 
 [workspace.lints.rust]
-unsafe_op_in_unsafe_fn = "deny"
+future_incompatible = { level = "deny", priority = -1 }
+# Public interfaces must be documented and reachable.
+missing_docs = "deny"
 unexpected_cfgs = "deny"
+unreachable_pub = "deny"
+# Native FFI lives in platform; core and the application forbid unsafe locally.
+unsafe_op_in_unsafe_fn = "deny"
 unfulfilled_lint_expectations = "deny"
 
+[workspace.lints.rustdoc]
+all = { level = "deny", priority = -1 }
+
 [workspace.lints.clippy]
-undocumented_unsafe_blocks = "deny"
+# Named lints override these groups. Nursery warns locally and fails the
+# warnings-denied gate; known false positives are disabled below.
+all = { level = "deny", priority = -1 }
+correctness = { level = "deny", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+
+# Reasoned `#[expect]` exceptions fail when their lint stops firing.
 allow_attributes = "deny"
-unwrap_used = "deny"
+allow_attributes_without_reason = "deny"
+
+# Production code handles failure explicitly. Tests may assert established
+# invariants through the four clippy.toml `allow-*-in-tests` settings.
+arithmetic_side_effects = "deny"
+dbg_macro = "deny"
+exit = "deny"
 expect_used = "deny"
+indexing_slicing = "deny"
+mem_forget = "deny"
 panic = "deny"
+string_slice = "deny"
 todo = "deny"
 unimplemented = "deny"
-dbg_macro = "deny"
+unreachable = "deny"
+unwrap_used = "deny"
+
+# Discarding a fallible result requires a local reason.
+let_underscore_must_use = "deny"
+map_err_ignore = "deny"
+unused_result_ok = "deny"
+
+# Dependency hygiene.
+wildcard_dependencies = "deny"
+undocumented_unsafe_blocks = "deny"
+
+# Deep nesting is context-hostile; the threshold lives in clippy.toml.
+excessive_nesting = "deny"
+
+# Lossy casts (truncation, wrap, sign loss) are denied by pedantic above:
+# conversions go through From/TryFrom or checked methods. These two remain
+# allowed: int-to-float precision loss is usually intended, and widening `as`
+# casts are harmless in systems code.
+cast_lossless = "allow"
+cast_precision_loss = "allow"
+
+# `pub(crate)` satisfies unreachable_pub but triggers this nursery lint.
+redundant_pub_crate = "allow"
+
+# Deliberately relaxed style lints: size and repetition counts are poor
+# proxies for wrongness and generate churn instead of findings.
+cognitive_complexity = "allow"
+enum_variant_names = "allow"
+missing_const_for_fn = "allow"
+module_name_repetitions = "allow"
+needless_pass_by_value = "allow"
+only_used_in_recursion = "allow"
+option_if_let_else = "allow"
+too_many_lines = "allow"
+use_self = "allow"
 
 [profile.release]
 lto = "thin"

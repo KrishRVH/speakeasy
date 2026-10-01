@@ -17,3 +17,9 @@ and tests the complete app, including GPUI and these media bindings. Linux can
 cross-check the app's platform adapters, but cannot run the Xcode-dependent media
 build. Remove this override and directory when a compatible GPUI/media release
 accepts the current Core Foundation version and passes native app checks.
+
+Upstream constraints also retain incompatible transitive versions of packages
+such as libloading, sha2, x11rb, and xkbcommon alongside current direct versions.
+Upgrade those through the owning dependency rather than forcing an incompatible
+resolution. Workspace direct requirements and Cargo-generated lockfiles own
+the application's dependency choices.

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    APPLICATION_ID, DesktopOptions, Duration, Input, InputSender, InsertPermit, Inserted,
+    Insertion, MODIFIER_WAIT, deliver, ei, respond, token, x11,
+};
 use anyhow::{Context, ensure};
 use futures_util::{FutureExt, StreamExt, future::LocalBoxFuture, stream::FuturesUnordered};
 use std::{collections::HashMap, future::Future, os::fd::OwnedFd, sync::Arc, time::Instant};
@@ -48,13 +51,13 @@ impl Portal {
             )
             .await
         {
-            Ok(_) => {}
+            Ok(_) => {},
             Err(zbus::Error::MethodError(name, _, _))
                 if matches!(
                     name.as_str(),
                     "org.freedesktop.DBus.Error.UnknownMethod"
                         | "org.freedesktop.DBus.Error.UnknownInterface"
-                ) => {}
+                ) => {},
             Err(error) => return Err(error).context(
                 "Install the supplied Speakeasy desktop launcher before enabling portal shortcuts",
             ),
@@ -73,14 +76,17 @@ impl Portal {
             sequence: 0,
         })
     }
-    fn token(&mut self) -> String {
-        self.sequence += 1;
-        format!("{}_{}", self.nonce, self.sequence)
+    fn token(&mut self) -> anyhow::Result<String> {
+        self.sequence = self
+            .sequence
+            .checked_add(1)
+            .context("Portal request identifiers exhausted. Pause and resume dictation.")?;
+        Ok(format!("{}_{}", self.nonce, self.sequence))
     }
     async fn proxy(&self, interface: &'static str) -> anyhow::Result<Proxy<'static>> {
         Ok(Proxy::new(&self.connection, DESTINATION, DESKTOP, interface).await?)
     }
-    async fn request<B: serde::Serialize + zbus::zvariant::DynamicType>(
+    async fn request<B: serde::Serialize + zbus::zvariant::DynamicType + Sync>(
         &mut self,
         interface: &'static str,
         method: &'static str,
@@ -123,8 +129,8 @@ impl Portal {
         Ok(values)
     }
     async fn session(&mut self, interface: &'static str) -> anyhow::Result<OwnedObjectPath> {
-        let handle = self.token();
-        let session = self.token();
+        let handle = self.token()?;
+        let session = self.token()?;
         let sender = self
             .connection
             .unique_name()
@@ -159,6 +165,10 @@ impl Portal {
             (&self.sessions, "org.freedesktop.portal.Session"),
         ] {
             for path in paths {
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "Closing retired portal requests is bounded best effort when the desktop service has disconnected"
+                )]
                 let _ = tokio::time::timeout(Duration::from_millis(500), async {
                     let proxy =
                         Proxy::new(&self.connection, DESTINATION, path.clone(), interface).await?;
@@ -231,6 +241,10 @@ struct SelectionHandoff {
     permit: InsertPermit,
     ready: async_channel::Sender<bool>,
 }
+#[expect(
+    clippy::future_not_send,
+    reason = "libei resources remain on the owned desktop thread and its LocalSet; native pointers must never move between threads"
+)]
 async fn prepare(portal: &mut Portal, settings: &DesktopOptions) -> anyhow::Result<Bound> {
     let mut bound = Bound {
         shortcut: None,
@@ -242,7 +256,7 @@ async fn prepare(portal: &mut Portal, settings: &DesktopOptions) -> anyhow::Resu
     };
     if !settings.external_shortcut {
         let session = portal.session(SHORTCUTS).await?;
-        let handle = portal.token();
+        let handle = portal.token()?;
         let shortcuts = vec![
             (
                 "dictate",
@@ -282,7 +296,7 @@ async fn prepare(portal: &mut Portal, settings: &DesktopOptions) -> anyhow::Resu
                 match id.as_str() {
                     "dictate" => bound.description = value.try_into()?,
                     "cancel" => bound.cancel_description = value.try_into()?,
-                    _ => {}
+                    _ => {},
                 }
             }
         }
@@ -291,7 +305,7 @@ async fn prepare(portal: &mut Portal, settings: &DesktopOptions) -> anyhow::Resu
     if !settings.manual_paste {
         let tokens = token::TokenStore::open();
         let session = portal.session(REMOTE).await?;
-        let handle = portal.token();
+        let handle = portal.token()?;
         let mut opts = options([
             ("handle_token", Value::from(handle.clone())),
             ("types", Value::from(1_u32)),
@@ -324,7 +338,7 @@ async fn prepare(portal: &mut Portal, settings: &DesktopOptions) -> anyhow::Resu
                 .await?;
             bound.clipboard = true;
         }
-        let handle = portal.token();
+        let handle = portal.token()?;
         let opts = options([("handle_token", Value::from(handle.clone()))]);
         let mut result = portal
             .request(REMOTE, "Start", handle, &(session.clone(), "", opts))
@@ -341,6 +355,10 @@ async fn prepare(portal: &mut Portal, settings: &DesktopOptions) -> anyhow::Resu
         {
             // Persistence is optional; a read-only state directory must not
             // discard keyboard access the user has just granted.
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Optional restore-token persistence must not discard keyboard permission the user just granted"
+            )]
             let _ = store.save(&token);
         }
         bound.clipboard &= result
@@ -357,6 +375,10 @@ async fn prepare(portal: &mut Portal, settings: &DesktopOptions) -> anyhow::Resu
     }
     Ok(bound)
 }
+#[expect(
+    clippy::future_not_send,
+    reason = "libei resources remain on the owned desktop thread and its LocalSet; native pointers must never move between threads"
+)]
 pub(super) async fn run(
     input: &InputSender,
     settings: &DesktopOptions,
@@ -369,13 +391,13 @@ pub(super) async fn run(
     let mut portal = tokio::select! {
         biased;
         _ = stop.recv() => return Ok(()),
-        _ = input.sender.closed() => return Ok(()),
+        () = input.sender.closed() => return Ok(()),
         portal = Portal::connect() => portal?,
     };
     let bound = tokio::select! {
         biased;
         _ = stop.recv() => None,
-        _ = input.sender.closed() => None,
+        () = input.sender.closed() => None,
         ready = prepare(&mut portal, settings) => Some(ready),
     };
     let outcome = match bound {
@@ -386,6 +408,10 @@ pub(super) async fn run(
     portal.close().await;
     outcome
 }
+#[expect(
+    clippy::future_not_send,
+    reason = "libei resources remain on the owned desktop thread and its LocalSet; native pointers must never move between threads"
+)]
 async fn serve(
     portal: &Portal,
     mut bound: Bound,
@@ -452,7 +478,7 @@ async fn serve(
     tokio::select! {
         biased;
         _ = stop.recv() => return Ok(()),
-        _ = input.sender.closed() => return Ok(()),
+        () = input.sender.closed() => return Ok(()),
         ready = x11_clipboard.ready() => ready?,
     }
     let mut selection: Option<Selection> = None;
@@ -516,15 +542,21 @@ async fn serve(
                 Some(sender) => {
                     sender.ready.readable().await?.clear_ready();
                     Ok::<_, anyhow::Error>(())
-                }
+                },
                 None => std::future::pending().await,
             }
         };
         let deadline = async {
             match pending.as_ref() {
                 Some((_, started)) => {
-                    tokio::time::sleep_until((*started + MODIFIER_WAIT).into()).await
-                }
+                    tokio::time::sleep_until(
+                        started
+                            .checked_add(MODIFIER_WAIT)
+                            .unwrap_or(*started)
+                            .into(),
+                    )
+                    .await;
+                },
                 None => std::future::pending().await,
             }
         };
@@ -543,7 +575,7 @@ async fn serve(
         tokio::select! {
             biased;
             _ = stop.recv() => break,
-            _ = input.sender.closed() => break,
+            () = input.sender.closed() => break,
             notice = invalidated.recv() => {
                 apply_notice(notice.context("Desktop monitoring stopped")?, &mut bound, &mut selection);
             }
@@ -619,7 +651,7 @@ async fn serve(
                 pending = Some((request, Instant::now()));
             }
             ready = native_ready => ready?,
-            _ = deadline => {}
+            () = deadline => {}
         }
     }
     if let Some((request, _)) = pending {
@@ -646,7 +678,7 @@ fn apply_notice(notice: Notice, bound: &mut Bound, selection: &mut Option<Select
             if let Some(sender) = &mut bound.sender {
                 sender.invalidate();
             }
-        }
+        },
         Notice::SelectionLost(permit) => {
             if selection
                 .as_ref()
@@ -654,7 +686,7 @@ fn apply_notice(notice: Notice, bound: &mut Bound, selection: &mut Option<Select
             {
                 *selection = None;
             }
-        }
+        },
     }
 }
 #[expect(
@@ -676,7 +708,7 @@ async fn pump(
     let mut owned = false;
     let mut held = false;
     let mut pending: Option<(SelectionHandoff, Instant)> = None;
-    let mut pending_events = 0;
+    let mut pending_events = 0_u32;
     loop {
         if pending
             .as_ref()
@@ -684,30 +716,40 @@ async fn pump(
         {
             let (handoff, _) = pending.take().context("Missing clipboard handoff")?;
             finish_selection(handoff.permit, owned, &mut selection, &invalidate)?;
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Cancellation drops the waiting insertion lane; recording authority is revoked independently"
+            )]
             let _ = handoff.ready.try_send(owned);
             pending_events = 0;
         }
         let deadline = async {
             match pending.as_ref() {
                 Some((_, started)) => {
-                    tokio::time::sleep_until((*started + Duration::from_millis(500)).into()).await
-                }
+                    tokio::time::sleep_until(
+                        started
+                            .checked_add(Duration::from_millis(500))
+                            .unwrap_or(*started)
+                            .into(),
+                    )
+                    .await;
+                },
                 None => std::future::pending().await,
             }
         };
         tokio::select! {
             biased;
-            _ = input.sender.closed() => return Ok(()),
+            () = input.sender.closed() => return Ok(()),
             handoff = selections.recv(), if pending.is_none() => {
                 let handoff = handoff.context("Clipboard preparation stopped")?;
                 // SetSelection has completed. Process its queued ownership
                 // signals against the preceding permit before changing owners.
-                let mut drained = 0;
+                let mut drained = 0_u32;
                 for _ in 0..64 {
                     let Some(event) = owners.next().now_or_never() else { break; };
                     let event = event.context("Clipboard portal disconnected")?;
                     observe_owner(&event, remote.as_ref(), &mut selection, &mut owned, &invalidate)?;
-                    drained += 1;
+                    drained = drained.saturating_add(1_u32);
                 }
                 ensure!(drained < 64 || owners.next().now_or_never().is_none(), "Clipboard ownership queue overran");
                 pending = Some((handoff, Instant::now()));
@@ -716,7 +758,7 @@ async fn pump(
                 let event = event.context("Clipboard portal disconnected")?;
                 observe_owner(&event, remote.as_ref(), &mut selection, &mut owned, &invalidate)?;
                 if pending.is_some() {
-                    pending_events += 1;
+                    pending_events = pending_events.saturating_add(1_u32);
                     ensure!(pending_events <= 64, "Clipboard ownership queue overran");
                 }
             }
@@ -739,7 +781,7 @@ async fn pump(
                     deliver(input, event);
                 }
             }
-            _ = deadline => {}
+            () = deadline => {}
         }
     }
 }
@@ -782,7 +824,7 @@ fn shortcut_event(held: &mut bool, action: &str, activated: bool) -> Option<Inpu
         ("dictate", true) if !*held => {
             *held = true;
             Some(Input::Press)
-        }
+        },
         ("dictate", false) if std::mem::take(held) => Some(Input::Release),
         ("cancel", true) => Some(Input::Cancel),
         _ => None,
@@ -971,13 +1013,15 @@ async fn write_transfer(fd: OwnedFd, bytes: &[u8]) -> anyhow::Result<()> {
                 if written < 0 {
                     Err(std::io::Error::last_os_error())
                 } else {
-                    Ok(written as usize)
+                    usize::try_from(written).map_err(std::io::Error::other)
                 }
             });
             if let Ok(written) = result {
                 let written = written?;
                 ensure!(written > 0, "Clipboard transfer stopped");
-                remaining = &remaining[written..];
+                remaining = remaining
+                    .get(written..)
+                    .context("Clipboard write exceeded its pending transfer")?;
             }
         }
         Ok::<_, anyhow::Error>(())
@@ -989,6 +1033,7 @@ async fn write_transfer(fd: OwnedFd, bytes: &[u8]) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read as _;
 
     #[test]
     fn cancelled_direct_input_precedes_focus_and_capability_errors() -> anyhow::Result<()> {
@@ -1036,7 +1081,7 @@ mod tests {
         transfers.push(
             transfer(
                 async move {
-                    let _ = entered.try_send(());
+                    entered.try_send(())?;
                     Ok(OwnedFd::from(writer))
                 },
                 |_| async { Ok(()) },
@@ -1055,12 +1100,11 @@ mod tests {
             _ = transfers.next() => anyhow::bail!("Stalled transfer unexpectedly completed"),
         }
         drop(transfers);
-        use std::io::Read;
         let mut buffer = [0_u8; 16 * 1024];
         let drained = loop {
             match reader.read(&mut buffer) {
                 Ok(0) => break true,
-                Ok(_) => {}
+                Ok(_) => {},
                 Err(_) => break false,
             }
         };
@@ -1091,7 +1135,6 @@ mod tests {
             reported.recv().await?,
             "Paste commitment invalidated clipboard serving"
         );
-        use std::io::Read;
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes)?;
         assert_eq!(bytes, b"fixture");

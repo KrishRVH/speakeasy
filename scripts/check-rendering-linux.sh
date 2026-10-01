@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+if [[ $# -gt 1 ]]; then
+  echo "Usage: bash scripts/check-rendering-linux.sh [--packages]" >&2
+  exit 1
+fi
 case "${1:-}" in
-    --packages|'') ;;
-    *) echo "Usage: bash scripts/check-rendering-linux.sh [--packages]" >&2; exit 1 ;;
+  --packages | '') ;;
+  *)
+    echo "Usage: bash scripts/check-rendering-linux.sh [--packages]" >&2
+    exit 1
+    ;;
 esac
 
 test_binary=$(cargo test --locked -p speakeasy --bin speakeasy --no-run --message-format=json | python3 -c '
@@ -21,7 +28,7 @@ cargo build --locked -p speakeasy --example check_native_rendering
 # Keep the builder ABI while using a stock driver with Mesa's X11 PutImage fix.
 # The read-only mount runs the builder's exact binaries, with no host display.
 docker run --rm --volume "$PWD:$PWD:ro" --workdir "$PWD" ubuntu:24.04 \
-    bash -euo pipefail -c '
+  bash -euo pipefail -c '
         apt-get update -qq
         apt-get install -y -qq --no-install-recommends \
             libasound2t64 libfontconfig1 libfreetype6 libx11-6 libxcb1 \
@@ -42,13 +49,13 @@ docker run --rm --volume "$PWD:$PWD:ro" --workdir "$PWD" ubuntu:24.04 \
         if [[ "$2" == --packages ]]; then
             export APPIMAGE_EXTRACT_AND_RUN=1
             artifacts/speakeasy-linux-x86_64.AppImage --help
-            python3 scripts/check-demo-linux.py artifacts/speakeasy-linux-x86_64.AppImage
+            python3 scripts/check_demo_linux.py artifacts/speakeasy-linux-x86_64.AppImage
             directory=$(mktemp -d)
             trap '\''rm -rf -- "$directory"'\'' EXIT
             tar -xzf artifacts/speakeasy-linux-x86_64.tar.gz -C "$directory"
             "$directory/Speakeasy.AppDir/AppRun" --help
-            python3 scripts/check-demo-linux.py "$directory/Speakeasy.AppDir/AppRun" --startup-only
+            python3 scripts/check_demo_linux.py "$directory/Speakeasy.AppDir/AppRun" --startup-only
         else
-            python3 scripts/check-demo-linux.py target/release/speakeasy
+            python3 scripts/check_demo_linux.py target/release/speakeasy
         fi
     ' bash "$test_binary" "${1:-}"

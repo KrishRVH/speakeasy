@@ -3,14 +3,14 @@ use crate::shell::{self, Services};
 use gpui::{App, Global, Task};
 use speakeasy_platform::{Input, NativeTray, TrayAction, TrayPresentation};
 
-pub struct Tray {
+pub(crate) struct Tray {
     pub available: bool,
     _events: Task<()>,
     _updates: Task<()>,
     _native: NativeTray,
 }
 impl Global for Tray {}
-pub fn install(cx: &mut App) -> anyhow::Result<()> {
+pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
     let (native, events) = NativeTray::start()?;
     let updater = native.updater();
     let event_task = cx.spawn(async move |cx| {
@@ -24,7 +24,7 @@ pub fn install(cx: &mut App) -> anyhow::Result<()> {
                         if !available {
                             shell::reveal(cx);
                         }
-                    }
+                    },
                     TrayAction::Settings => shell::reveal(cx),
                     TrayAction::Pause => shell::toggle_enabled(cx),
                     TrayAction::Toggle => shell::send(Input::Toggle, cx),
@@ -37,11 +37,11 @@ pub fn install(cx: &mut App) -> anyhow::Result<()> {
             }
         }
     });
-    let mut updates = cx.global::<Services>().output.subscribe();
+    let mut snapshots = cx.global::<Services>().output.subscribe();
     let update_task = cx.spawn(async move |cx| {
         let mut previous: Option<TrayState> = None;
         loop {
-            let snapshot = updates.borrow_and_update().clone();
+            let snapshot = snapshots.borrow_and_update().clone();
             let presentation = cx.update(|cx| {
                 let services = cx.global::<Services>();
                 let next = state(services, &snapshot);
@@ -66,11 +66,11 @@ pub fn install(cx: &mut App) -> anyhow::Result<()> {
                     if updater.send(presentation).await.is_err() {
                         break;
                     }
-                }
-                Ok(None) => {}
+                },
+                Ok(None) => {},
                 Err(_) => break,
             }
-            if updates.changed().await.is_err() {
+            if snapshots.changed().await.is_err() {
                 break;
             }
         }

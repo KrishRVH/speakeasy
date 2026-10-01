@@ -1,0 +1,11 @@
+[default]
+check-file = true
+check-filename = true
+locale = "en-us"
+
+[default.extend-words]
+# Emulated Input Server is the native portal/libei interface name.
+EIS = "EIS"
+
+[files]
+extend-exclude = ["vendor", "target", "artifacts", ".scratch", ".venv", "node_modules", "Cargo.lock", "bun.lock", "uv.lock", ".config/mise/mise.lock"]

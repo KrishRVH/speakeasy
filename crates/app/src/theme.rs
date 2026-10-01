@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// `lamp` is the brand accent and never signals recording.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum Theme {
+pub(crate) enum Theme {
     #[default]
     Jet,
     Emerald,
@@ -12,7 +12,7 @@ pub enum Theme {
     Chrome,
 }
 
-pub struct Palette {
+pub(crate) struct Palette {
     pub room: u32,
     pub door: u32,
     pub panel: u32,
@@ -25,7 +25,7 @@ pub struct Palette {
 }
 
 impl Theme {
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Jet => "Jet & Champagne",
             Self::Emerald => "Emerald Lounge",
@@ -34,7 +34,7 @@ impl Theme {
         }
     }
 
-    pub fn next(self) -> Self {
+    pub(crate) fn next(self) -> Self {
         match self {
             Self::Jet => Self::Emerald,
             Self::Emerald => Self::Iris,
@@ -43,67 +43,76 @@ impl Theme {
         }
     }
 
-    pub fn palette(self) -> &'static Palette {
+    pub(crate) fn palette(self) -> &'static Palette {
         match self {
             Self::Jet => &Palette {
-                room: 0x0a0a0b,
-                door: 0x131211,
-                panel: 0x151413,
-                raise: 0x221f1b,
-                ink: 0xf4efe6,
-                muted: 0xada597,
-                lamp: 0xe6cd96,
-                live: 0xff4d3d,
-                warn: 0xffcb4a,
+                room: 0x0a_0a_0b,
+                door: 0x13_12_11,
+                panel: 0x15_14_13,
+                raise: 0x22_1f_1b,
+                ink: 0xf4_ef_e6,
+                muted: 0xad_a5_97,
+                lamp: 0xe6_cd_96,
+                live: 0xff_4d_3d,
+                warn: 0xff_cb_4a,
             },
             Self::Emerald => &Palette {
-                room: 0x07120f,
-                door: 0x0c1a16,
-                panel: 0x0f1f1a,
-                raise: 0x183028,
-                ink: 0xe8efe9,
-                muted: 0x97aea1,
-                lamp: 0xd9b46e,
-                live: 0xff5b3a,
-                warn: 0xffd045,
+                room: 0x07_12_0f,
+                door: 0x000c_1a16,
+                panel: 0x0f_1f_1a,
+                raise: 0x18_30_28,
+                ink: 0xe8_ef_e9,
+                muted: 0x97_ae_a1,
+                lamp: 0xd9_b4_6e,
+                live: 0xff_5b_3a,
+                warn: 0xff_d0_45,
             },
             Self::Iris => &Palette {
-                room: 0x110d14,
-                door: 0x19131e,
-                panel: 0x1a1420,
-                raise: 0x281f30,
-                ink: 0xf2eaf0,
-                muted: 0xb4a5b6,
-                lamp: 0xc4a7e4,
-                live: 0xff4d63,
-                warn: 0xffc24e,
+                room: 0x11_0d_14,
+                door: 0x19_13_1e,
+                panel: 0x1a_14_20,
+                raise: 0x28_1f_30,
+                ink: 0xf2_ea_f0,
+                muted: 0xb4_a5_b6,
+                lamp: 0xc4_a7_e4,
+                live: 0xff_4d_63,
+                warn: 0xff_c2_4e,
             },
             Self::Chrome => &Palette {
-                room: 0x090d17,
-                door: 0x0f1524,
-                panel: 0x111829,
-                raise: 0x1b2438,
-                ink: 0xeaf0f7,
-                muted: 0x9eabbd,
-                lamp: 0xc5d0de,
-                live: 0xff4a4a,
-                warn: 0xf7b84a,
+                room: 0x09_0d_17,
+                door: 0x0f_15_24,
+                panel: 0x11_18_29,
+                raise: 0x1b_24_38,
+                ink: 0xea_f0_f7,
+                muted: 0x9e_ab_bd,
+                lamp: 0xc5_d0_de,
+                live: 0xff_4a_4a,
+                warn: 0xf7_b8_4a,
             },
         }
     }
 }
 
-/// Linear blend of two `0xRRGGBB` colors, `t` of the way from `a` to `b`.
-pub fn mix(a: u32, b: u32, t: f32) -> u32 {
+/// Linear blend of two `0xRRGGBB` colors with a weight in `0.0..=1.0`.
+pub(crate) fn mix(a: u32, b: u32, t: f32) -> u32 {
     [16, 8, 0].into_iter().fold(0, |color, shift| {
         let from = ((a >> shift) & 0xff) as f32;
         let to = ((b >> shift) & 0xff) as f32;
-        color | (((from + (to - from) * t).round() as u32) << shift)
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "Interpolated eight-bit channels deliberately round to whole color components"
+        )]
+        #[expect(
+            clippy::cast_sign_loss,
+            reason = "Eight-bit source channels and a weight in 0..=1 keep the blend nonnegative"
+        )]
+        let channel = (to - from).mul_add(t, from).round() as u32;
+        color | (channel << shift)
     })
 }
 
 /// A `0xRRGGBB` color with an opacity, for GPUI fills and borders.
-pub fn alpha(color: u32, opacity: f32) -> gpui::Rgba {
+pub(crate) fn alpha(color: u32, opacity: f32) -> gpui::Rgba {
     gpui::Rgba {
         a: opacity,
         ..gpui::rgb(color)

@@ -3,7 +3,6 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['crates/**', 'vendor/**', 'Cargo.*', 'rust-toolchain.toml', 'settings.example.json', 'packaging/**', 'scripts/package-*', 'scripts/check-demo-linux.py', 'scripts/check-rendering-linux.sh', 'docs/releases/**', '.github/workflows/release.yml']
 
 permissions:
   contents: read
@@ -22,6 +21,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
+        with:
+          version: 2026.9.18
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -30,9 +32,11 @@ jobs:
       - name: Verify
         shell: bash
         run: |
-          cargo fmt --all --check
-          cargo clippy --workspace --all-targets --locked -- -D warnings
-          cargo test --workspace --locked
+          if [[ "${{ runner.os }}" == Linux ]]; then
+            mise run standards:check
+          else
+            mise run rust:standards:check
+          fi
       - name: Check native rendering and frame-source lifetime
         if: runner.os != 'Linux'
         timeout-minutes: 3
@@ -47,14 +51,7 @@ jobs:
         run: ./scripts/package-windows.ps1
       - name: Check Windows script syntax
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          foreach ($script in Get-ChildItem scripts/*.ps1) {
-            $parseErrors = $null
-            $tokens = $null
-            $null = [System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$parseErrors)
-            if ($parseErrors) { throw ($parseErrors | Out-String) }
-          }
+        run: mise run ps:syntax
       - name: Package macOS
         if: runner.os == 'macOS'
         run: bash scripts/package-macos.sh
@@ -92,13 +89,13 @@ jobs:
         run: |
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml)
           tag="v$version"
-          notes="docs/releases/$version.md"
+          notes="docs/release-notes.md"
           test -f "$notes"
           assets=(speakeasy-windows-x64.zip speakeasy-macos.zip speakeasy-linux-x86_64.AppImage speakeasy-linux-x86_64.tar.gz)
           cd artifacts
           sha256sum "${assets[@]}" > SHA256SUMS
           cd ..
-          for index in "${!assets[@]}"; do assets[$index]="artifacts/${assets[$index]}"; done
+          for index in "${!assets[@]}"; do assets[index]="artifacts/${assets[index]}"; done
           assets+=(artifacts/SHA256SUMS)
           if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
             git fetch origin "refs/tags/$tag:refs/tags/$tag"

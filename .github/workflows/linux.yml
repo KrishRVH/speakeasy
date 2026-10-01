@@ -2,23 +2,25 @@ name: Cross-platform checks
 on:
   workflow_dispatch:
   pull_request:
-    paths: ['crates/**', 'vendor/**', 'Cargo.*', 'rust-toolchain.toml', 'packaging/**', 'scripts/**', '.github/workflows/linux.yml']
+  merge_group:
+  push:
+    branches: [main]
 permissions:
   contents: read
 jobs:
-  linux:
+  quality:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
+        with:
+          version: 2026.9.18
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libfontconfig1-dev libfreetype6-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev libssl-dev pkg-config ripgrep
       - name: Verify
-        run: |
-          cargo fmt --all --check
-          cargo clippy --workspace --all-targets --locked -- -D warnings
-          cargo test --workspace --locked
+        run: mise run standards:check
       - name: Package against glibc 2.35
         run: bash scripts/package-linux.sh
       - name: Check the rendered Linux GUI with stock Mesa
@@ -40,9 +42,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
+        with:
+          version: 2026.9.18
       - name: Verify
         shell: bash
-        run: |
-          cargo fmt --all --check
-          cargo clippy --workspace --all-targets --locked -- -D warnings
-          cargo test --workspace --locked
+        run: mise run rust:standards:check
+      - name: Check Windows script syntax
+        if: runner.os == 'Windows'
+        run: mise run ps:syntax

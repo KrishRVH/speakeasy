@@ -53,12 +53,12 @@ The source patches cover native windows, frame scheduling, and path resources:
 - `src/taffy.rs` gives grid fractions explicit `f32` literals for the pinned
   nightly's stricter float fallback diagnostics. `platform/linux/platform.rs`
   compiles its Wayland-only descriptor reader and imports only with Wayland.
-  The X11 build no longer carries dead code or its unused imports.
+  The X11 build excludes that Wayland-only code.
 - `Cargo.toml` updates the macOS Core Foundation requirement to `0.10.1`.
   The matching media requirement is documented in the
   [media compatibility patch](../gpui_media/README.speakeasy.md).
 
-The Linux native pill tests and `scripts/check-demo-linux.py` exercise real
+The Linux native pill tests and `scripts/check_demo_linux.py` exercise real
 windows in a private X server without microphone, shortcut, or clipboard access.
 They verify initial visibility, delayed rendering, and hidden display disconnect.
 The opt-in `check_native_rendering` example runs on the process main thread and

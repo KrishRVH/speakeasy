@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, Input, InputSender, InsertPermit, Inserted, MonitorControl, RawWindowHandle, SHORTCUT,
+    deliver, insertion, keyboard,
+};
 use anyhow::{anyhow, bail};
 use core_foundation::{
     base::{TCFType, kCFAllocatorDefault},
@@ -17,7 +20,8 @@ use core_graphics::{
 use objc2::{msg_send, runtime::AnyObject};
 use std::{cell::RefCell, ffi::c_void, thread};
 
-const OWN_INPUT: i64 = 0x53504541;
+const OWN_INPUT: i64 = 0x5350_4541;
+/// Owns the desktop observation thread until explicit stop and acknowledged cleanup.
 pub struct InputMonitor {
     control: Arc<MonitorControl<CFRunLoop>>,
     finished: async_channel::Receiver<()>,
@@ -26,7 +30,7 @@ pub struct InputMonitor {
 }
 
 impl InputMonitor {
-    pub fn start(tx: InputSender) -> anyhow::Result<Self> {
+    pub(super) fn start(tx: InputSender) -> anyhow::Result<Self> {
         let observers = lifecycle_observers(&tx);
         let control = Arc::new(MonitorControl::default());
         let native_control = control.clone();
@@ -42,6 +46,10 @@ impl InputMonitor {
                 }
                 native_control.clear();
                 tx.close();
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "The one-shot receiver can close only when the owner no longer waits for monitor retirement"
+                )]
                 let _ = complete.try_send(());
             })?;
         Ok(Self {
@@ -52,13 +60,19 @@ impl InputMonitor {
         })
     }
 
+    /// Request native observation shutdown without joining its thread.
     pub fn request_stop(&self) {
         self.control.request_stop(CFRunLoop::stop);
     }
 
+    /// Wait for native resources to retire before replacing or dropping the monitor.
     pub fn stopped(&self) -> impl std::future::Future<Output = ()> + use<> {
         let finished = self.finished.clone();
         async move {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Completion and sender closure both acknowledge that the native monitor thread has exited"
+            )]
             let _ = finished.recv().await;
         }
     }
@@ -100,6 +114,10 @@ fn run_monitor(tx: &InputSender, control: &MonitorControl<CFRunLoop>) -> anyhow:
     if control.stopping() {
         return Ok(());
     }
+    #[expect(
+        clippy::disallowed_types,
+        reason = "CGEventTap requires an Fn callback; this chord belongs exclusively to that callback on its native run-loop thread"
+    )]
     let chord = RefCell::new(keyboard::Mac::default());
     let callback_input = tx.clone();
     let tap = CGEventTap::new(
@@ -123,19 +141,19 @@ fn run_monitor(tx: &InputSender, control: &MonitorControl<CFRunLoop>) -> anyhow:
             })
         },
     )
-    .map_err(|_| {
+    .map_err(|()| {
         anyhow!(
             "Allow Speakeasy in System Settings → Privacy & Security → Accessibility, then pause and resume dictation."
         )
     })?;
-    let source = tap.mach_port().create_runloop_source(0).map_err(|_| {
+    let source = tap.mach_port().create_runloop_source(0).map_err(|()| {
         anyhow!("Cannot create shortcut run loop. Pause and resume dictation to try again.")
     })?;
     let run_loop = CFRunLoop::get_current();
     let mut ready = RunLoopReady { control, input: tx };
     let mut context = CFRunLoopObserverContext {
         version: 0,
-        info: (&mut ready as *mut RunLoopReady<'_>).cast(),
+        info: (&raw mut ready).cast(),
         retain: None,
         release: None,
         copyDescription: None,
@@ -149,7 +167,7 @@ fn run_monitor(tx: &InputSender, control: &MonitorControl<CFRunLoop>) -> anyhow:
             0,
             0,
             run_loop_ready,
-            &mut context,
+            &raw mut context,
         );
         if raw.is_null() {
             bail!("Cannot prepare shortcut monitoring. Pause and resume dictation to try again.");
@@ -211,11 +229,19 @@ impl Drop for InputMonitor {
     fn drop(&mut self) {
         self.request_stop();
         if let Some(thread) = self.thread.take() {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Joining reaps the monitor even after a callback panic; the input lane already reports unavailability"
+            )]
             let _ = thread.join();
         }
     }
 }
 
+/// Configure an owned UI-thread window for nonactivating, click-through presentation.
+///
+/// # Errors
+/// Returns an error for the wrong window kind or failed native configuration.
 pub fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
     let RawWindowHandle::AppKit(raw) = handle else {
         bail!("Expected an AppKit window");
@@ -241,6 +267,7 @@ pub fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Show or hide the owned Settings window; call on its UI thread.
 pub fn set_settings_visible(handle: RawWindowHandle, visible: bool) {
     if let RawWindowHandle::AppKit(raw) = handle {
         // SAFETY: GPUI owns this live NSView and NSWindow on the main thread.
@@ -258,6 +285,7 @@ pub fn set_settings_visible(handle: RawWindowHandle, visible: bool) {
     }
 }
 
+/// Show or hide the owned pill without activating it; call on its UI thread.
 pub fn set_pill_visible(handle: RawWindowHandle, visible: bool) {
     if let RawWindowHandle::AppKit(raw) = handle {
         // SAFETY: same main-thread NSView lifetime as configure_pill.
@@ -291,10 +319,10 @@ pub fn set_pill_visible(handle: RawWindowHandle, visible: bool) {
     }
 }
 
-pub fn modifiers_down() -> bool {
+pub(super) fn modifiers_down() -> bool {
     CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
         .and_then(CGEvent::new)
-        .map(|event| {
+        .map_or(true, |event| {
             event.get_flags().intersects(
                 CGEventFlags::CGEventFlagControl
                     | CGEventFlags::CGEventFlagAlternate
@@ -303,10 +331,9 @@ pub fn modifiers_down() -> bool {
                     | CGEventFlags::CGEventFlagSecondaryFn,
             )
         })
-        .unwrap_or(true)
 }
 
-pub fn insert(
+pub(super) fn insert(
     text: &str,
     gate: &InsertPermit,
     preserve_clipboard: bool,
@@ -336,11 +363,11 @@ pub fn insert(
         return Ok(outcome);
     }
     let source = CGEventSource::new(CGEventSourceStateID::Private)
-        .map_err(|_| anyhow!("Cannot create keyboard event source"))?;
+        .map_err(|()| anyhow!("Cannot create keyboard event source"))?;
     let mut events = Vec::with_capacity(2);
     for down in [true, false] {
         let event = CGEvent::new_keyboard_event(source.clone(), 9, down)
-            .map_err(|_| anyhow!("Cannot create paste event"))?;
+            .map_err(|()| anyhow!("Cannot create paste event"))?;
         event.set_flags(CGEventFlags::CGEventFlagCommand);
         event.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, OWN_INPUT);
         events.push(event);
@@ -359,6 +386,7 @@ pub fn insert(
     Ok(Inserted::Sent)
 }
 
+/// Query the native reduced-motion preference; Linux uses the app setting.
 pub fn reduced_motion() -> bool {
     // SAFETY: NSWorkspace is a process-owned singleton, queried on the main thread.
     unsafe {
@@ -385,14 +413,14 @@ fn insert_direct(text: &str, gate: &InsertPermit) -> anyhow::Result<Inserted> {
         return Ok(outcome);
     }
     let source = CGEventSource::new(CGEventSourceStateID::Private)
-        .map_err(|_| anyhow!("Cannot create keyboard event source"))?;
+        .map_err(|()| anyhow!("Cannot create keyboard event source"))?;
     let mut events = Vec::new();
     let mut push = |chunk: &str| -> anyhow::Result<()> {
         let press = CGEvent::new_keyboard_event(source.clone(), 0, true)
-            .map_err(|_| anyhow!("Cannot create text event"))?;
+            .map_err(|()| anyhow!("Cannot create text event"))?;
         press.set_string(chunk);
         let release = CGEvent::new_keyboard_event(source.clone(), 0, false)
-            .map_err(|_| anyhow!("Cannot create text release"))?;
+            .map_err(|()| anyhow!("Cannot create text release"))?;
         for event in [press, release] {
             event.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, OWN_INPUT);
             events.push(event);
@@ -481,6 +509,7 @@ fn lifecycle_observers(input: &InputSender) -> Vec<Observer> {
         .collect()
 }
 
+/// Present a local startup error; callers never include audio, transcripts, or credentials.
 pub fn show_error(message: &str) {
     if let Some(main) = objc2::MainThreadMarker::new() {
         let alert = objc2_app_kit::NSAlert::new(main);
@@ -495,5 +524,5 @@ pub fn show_error(message: &str) {
 fn has_external_target() -> bool {
     objc2_app_kit::NSWorkspace::sharedWorkspace()
         .frontmostApplication()
-        .is_some_and(|app| app.processIdentifier() != std::process::id() as i32)
+        .is_some_and(|app| i64::from(app.processIdentifier()) != i64::from(std::process::id()))
 }

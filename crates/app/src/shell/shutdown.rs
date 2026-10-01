@@ -3,9 +3,9 @@
 //! driver teardown, process reaping, insertion, setup, and saves must acknowledge.
 //! A stuck native owner keeps Quitting visible and the UI responsive; forced
 //! native termination retains synchronous Drop as the emergency fallback.
-use super::*;
+use super::{App, BorrowAppContext, Duration, Services, Settings, Timer};
 
-pub fn request_quit(cx: &mut App) {
+pub(crate) fn request_quit(cx: &mut App) {
     if !cx.has_global::<Services>() {
         cx.quit();
         return;
@@ -17,6 +17,10 @@ pub fn request_quit(cx: &mut App) {
     let task = cx.spawn(async move |cx| {
         // Defer view access until the action that requested Quit releases it.
         if let Some(window) = window {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A disposed Settings view already owns its synchronous cleanup fallback"
+            )]
             let _ = window.update(cx, |view, _, _| {
                 view.dialog.take();
                 view.devices.take();
@@ -43,6 +47,10 @@ pub fn request_quit(cx: &mut App) {
             }
             Timer::after(Duration::from_millis(10)).await;
         }
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "A disposed app has already completed the native quit route"
+        )]
         let _ = cx.update(|cx| {
             cx.update_global::<Services, _>(|services, _| services.finish_quit());
             cx.quit();

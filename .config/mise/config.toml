@@ -1,0 +1,174 @@
+min_version = "2026.9.18"
+
+[settings]
+lockfile = true
+idiomatic_version_file_enable_tools = ["rust"]
+
+[env]
+UV_PYTHON_PREFERENCE = "only-system"
+UV_PYTHON_DOWNLOADS = "never"
+
+[tools]
+"github:bnjbvr/cargo-machete" = "0.9.2"
+"github:nextest-rs/nextest" = { version = "0.9.146", version_prefix = "cargo-nextest-" }
+python = "3.14.7"
+uv = "0.12.19"
+bun = "1.4.2"
+shellcheck = "0.11.0"
+shfmt = "3.14.0"
+# Static Linux build keeps the tooling gate usable on the glibc 2.35 release builder.
+lychee = { version = "0.24.2", libc = "musl" }
+typos = "1.48.0"
+actionlint = "1.7.12"
+
+[tasks."rust:lock"]
+description = "Refresh workspace dependency requirements through Cargo"
+run = "cargo update --workspace"
+
+[tasks."rust:fmt"]
+run = "cargo fmt --all"
+
+[tasks."rust:fmt:check"]
+run = "cargo fmt --all --check"
+
+[tasks."rust:lint"]
+run = "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -F clippy::allow_attributes -F clippy::allow_attributes_without_reason"
+
+[tasks."rust:doc"]
+wait_for = ["rust:lint"]
+env = { RUSTDOCFLAGS = "-D warnings" }
+run = "cargo doc --workspace --all-features --no-deps --locked"
+
+[tasks."rust:test"]
+wait_for = ["rust:doc"]
+run = [
+  "cargo nextest run --workspace --all-targets --all-features --locked",
+  "cargo test --workspace --doc --all-features --locked",
+]
+
+[tasks."rust:machete"]
+depends = ["rust:metadata"]
+env = { CARGO_NET_OFFLINE = "true" }
+run = "cargo machete --with-metadata --skip-target-dir crates"
+
+[tasks."rust:metadata"]
+description = "Validate locked metadata and fetch platform sources before offline analysis"
+run = '''python -c "import subprocess; subprocess.run(['cargo', 'metadata', '--all-features', '--locked', '--format-version=1'], check=True, stdout=subprocess.DEVNULL)"'''
+
+[tasks."rust:standards"]
+depends = ["rust:fmt"]
+
+[tasks."rust:standards:check"]
+depends = ["rust:fmt:check", "rust:lint", "rust:doc", "rust:test", "rust:machete", "rust:policy"]
+
+[tasks."rust:policy"]
+description = "Probe the compiler's ownership and lint-exception enforcement"
+run = "python scripts/check_rust_policy.py"
+
+[tasks."py:lock"]
+run = "uv lock"
+
+[tasks."py:install"]
+run = "uv sync --locked"
+
+[tasks."py:fmt"]
+depends = ["py:install"]
+run = "uv run --no-sync ruff format scripts tests"
+
+[tasks."py:fmt:check"]
+depends = ["py:install"]
+run = "uv run --no-sync ruff format --check scripts tests"
+
+[tasks."py:lint"]
+depends = ["py:install"]
+run = "uv run --no-sync ruff check scripts tests"
+
+[tasks."py:type"]
+depends = ["py:install"]
+run = "uv run --no-sync basedpyright --warnings"
+
+[tasks."py:test"]
+depends = ["py:install"]
+run = "uv run --no-sync pytest"
+
+[tasks."py:standards"]
+depends = ["py:install"]
+run = ["uv run --no-sync ruff check --fix scripts tests", "uv run --no-sync ruff format scripts tests"]
+
+[tasks."py:standards:check"]
+depends = ["py:fmt:check", "py:lint", "py:type", "py:test"]
+
+[tasks."shell:fmt"]
+run = "shfmt -w -i 2 -ci -sr scripts/*.sh packaging/linux/AppRun"
+
+[tasks."shell:fmt:check"]
+run = "shfmt -d -i 2 -ci -sr scripts/*.sh packaging/linux/AppRun"
+
+[tasks."shell:lint"]
+run = ["shellcheck --severity=style scripts/*.sh packaging/linux/AppRun", "for script in scripts/*.sh; do bash -n \"$script\"; done", "sh -n packaging/linux/AppRun"]
+
+[tasks."shell:standards"]
+depends = ["shell:fmt"]
+
+[tasks."shell:standards:check"]
+depends = ["shell:fmt:check", "shell:lint", "py:test"]
+
+[tasks."md:lock"]
+run = "bun install"
+
+[tasks."md:install"]
+run = "bun install --frozen-lockfile"
+
+[tasks."md:fmt"]
+depends = ["md:install"]
+run = "bun run format"
+
+[tasks."md:fmt:check"]
+depends = ["md:install"]
+run = "bun run format:check"
+
+[tasks."md:lint"]
+depends = ["md:install"]
+run = "bun run lint"
+
+[tasks."md:links"]
+run = "lychee --config lychee.toml --root-dir \"$PWD\" --offline --extensions md ."
+
+[tasks."md:links:deep"]
+run = "lychee --config lychee.toml --root-dir \"$PWD\" --extensions md ."
+
+[tasks."md:typos"]
+run = "typos --config typos.toml ."
+
+[tasks."md:standards"]
+depends = ["md:install"]
+run = ["bun run format", "bun run lint:fix"]
+
+[tasks."md:standards:check"]
+depends = ["md:fmt:check", "md:lint", "md:links", "md:typos"]
+
+[tasks.standards]
+depends = ["rust:standards", "py:standards", "shell:standards", "md:standards"]
+
+[tasks."standards:check"]
+depends = ["rust:standards:check", "py:standards:check", "shell:standards:check", "md:standards:check", "ci:lint", "hygiene"]
+
+[tasks."ci:lint"]
+run = "actionlint"
+
+[tasks."ps:syntax"]
+description = "Parse Windows scripts on a native PowerShell host"
+shell = "pwsh -NoProfile -Command"
+run = """
+foreach ($script in Get-ChildItem scripts/*.ps1) {
+  $parseErrors = $null
+  $tokens = $null
+  $null = [System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$parseErrors)
+  if ($parseErrors) { throw ($parseErrors | Out-String) }
+}
+"""
+
+[tasks.hygiene]
+description = "Check current repository paths, task references, and size"
+depends = ["py:install"]
+run = "uv run --no-sync python scripts/check_repository.py"

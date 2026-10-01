@@ -30,7 +30,7 @@ impl Drop for Owners {
     }
 }
 
-pub struct Services {
+pub(crate) struct Services {
     lifecycle: Lifecycle<Owners, Restart>,
     retirement: Option<Task<()>>,
     validation: Option<Task<()>>,
@@ -45,12 +45,12 @@ pub struct Services {
     pub demo_tray: bool,
     pub visibility: Option<Task<()>>,
     pub tray_hint_seen: bool,
-    pub reopen: Option<Task<()>>,
+    reopen: Option<Task<()>>,
     pub instance: Option<crate::instance::Instance>,
 }
 impl Global for Services {}
 impl Services {
-    pub fn new(
+    pub(crate) fn new(
         path: PathBuf,
         config: Config,
         output: watch::Sender<Snapshot>,
@@ -76,21 +76,56 @@ impl Services {
             instance,
         }
     }
-    pub fn running(&self) -> bool {
+    pub(crate) fn running(&self) -> bool {
         self.runtime().is_some_and(Runtime::is_running)
             || self.lifecycle.validating(self.configuration_epoch)
     }
-    pub fn runtime(&self) -> Option<&Runtime> {
+    pub(crate) fn runtime(&self) -> Option<&Runtime> {
         self.lifecycle.active().map(|owners| &owners.runtime)
     }
-    pub fn pausing(&self) -> bool {
+    pub(crate) fn pausing(&self) -> bool {
         self.lifecycle.pausing()
     }
-    pub fn quitting(&self) -> bool {
+    pub(crate) fn quitting(&self) -> bool {
         self.lifecycle.quitting()
     }
-    pub fn has_pending(&self) -> bool {
+    pub(crate) fn has_pending(&self) -> bool {
         self.lifecycle.has_pending()
+    }
+
+    pub(crate) fn listen_for_reopen(
+        &mut self,
+        requests: async_channel::Receiver<crate::instance::Request>,
+        cx: &App,
+    ) {
+        self.reopen = Some(cx.spawn(async move |cx| {
+            while let Ok(request) = requests.recv().await {
+                if cx.update(|cx| Self::instance_request(request, cx)).is_err() {
+                    break;
+                }
+            }
+        }));
+    }
+
+    fn instance_request(request: crate::instance::Request, cx: &mut App) {
+        use crate::instance::Request;
+
+        match request {
+            Request::Reveal => reveal(cx),
+            Request::Toggle | Request::Cancel => {
+                #[cfg(target_os = "linux")]
+                if cx.global::<Services>().config.linux.external_shortcut {
+                    send(
+                        if request == Request::Toggle {
+                            Input::Toggle
+                        } else {
+                            Input::Cancel
+                        },
+                        cx,
+                    );
+                }
+            },
+        }
     }
 
     fn notice(&self, message: &str) {
@@ -102,7 +137,7 @@ impl Services {
             };
         });
     }
-    pub fn apply(&mut self, config: Config, cx: &mut App) -> anyhow::Result<()> {
+    pub(crate) fn apply(&mut self, config: Config, cx: &App) -> anyhow::Result<()> {
         if self.quitting() {
             return Ok(());
         }
@@ -128,7 +163,7 @@ impl Services {
         self.config = config;
         Ok(())
     }
-    pub(super) fn resume(&mut self, cx: &mut App) {
+    pub(super) fn resume(&mut self, cx: &App) {
         if self.pausing() {
             return;
         }
@@ -151,29 +186,36 @@ impl Services {
         self.notice("Checking local speech settings…");
         self.validation = Some(cx.spawn(async move |cx| {
             let result = validation.await;
-            let _ = cx.update(|cx| {
-                if !cx.has_global::<Services>() {
-                    return;
-                }
-                let result = cx.update_global::<Services, _>(|services, cx| {
-                    if !services.lifecycle.validating(epoch) {
-                        return Ok(());
-                    }
-                    services.lifecycle = Lifecycle::Disabled;
-                    services.validation.take();
-                    result.and_then(|config| services.apply(config, cx))
-                });
-                if let Err(error) = result {
-                    cx.global::<Services>().output.send_modify(|s| {
-                        s.phase = Phase::Error;
-                        s.message = error.to_string();
-                    });
-                    reveal(cx);
-                }
-            });
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Disposed UI services no longer need a validation result; they cannot restart dictation"
+            )]
+            let _ = cx.update(|cx| Self::validation_complete(epoch, result, cx));
         }));
     }
-    pub fn stop(&mut self, cx: &mut App) {
+
+    fn validation_complete(epoch: u64, result: anyhow::Result<Config>, cx: &mut App) {
+        if !cx.has_global::<Services>() {
+            return;
+        }
+        let result = cx.update_global::<Services, _>(|services, cx| {
+            if !services.lifecycle.validating(epoch) {
+                return Ok(());
+            }
+            services.lifecycle = Lifecycle::Disabled;
+            services.validation.take();
+            result.and_then(|config| services.apply(config, cx))
+        });
+        if let Err(error) = result {
+            cx.global::<Services>().output.send_modify(|snapshot| {
+                snapshot.phase = Phase::Error;
+                snapshot.message = error.to_string();
+            });
+            reveal(cx);
+        }
+    }
+
+    pub(crate) fn stop(&mut self, cx: &App) {
         if self.quitting() {
             return;
         }
@@ -195,28 +237,34 @@ impl Services {
         let stopped = owners.stopped();
         self.retirement = Some(cx.spawn(async move |cx| {
             stopped.await;
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A disposed app needs no presentation update; native owners have acknowledged retirement"
+            )]
             let _ = cx.update(|cx| {
-                cx.update_global::<Services, _>(|services, cx| {
-                    let pending = services.lifecycle.retired();
-                    services.retirement.take();
-                    if services.quitting() {
-                        return;
-                    }
-                    match pending {
-                        Some(Restart::Apply(config)) => {
-                            if let Err(error) = services.apply(config, cx) {
-                                services.output.send_modify(|s| {
-                                    s.phase = Phase::Error;
-                                    s.message = error.to_string();
-                                });
-                            }
-                        }
-                        Some(Restart::Validate) => services.resume(cx),
-                        None => services.notice("Dictation paused"),
-                    }
-                });
+                cx.update_global::<Services, _>(|services, cx| services.retired(cx));
             });
         }));
+    }
+
+    fn retired(&mut self, cx: &App) {
+        let pending = self.lifecycle.retired();
+        self.retirement.take();
+        if self.quitting() {
+            return;
+        }
+        match pending {
+            Some(Restart::Apply(config)) => {
+                if let Err(error) = self.apply(config, cx) {
+                    self.output.send_modify(|snapshot| {
+                        snapshot.phase = Phase::Error;
+                        snapshot.message = error.to_string();
+                    });
+                }
+            },
+            Some(Restart::Validate) => self.resume(cx),
+            None => self.notice("Dictation paused"),
+        }
     }
     pub(super) fn begin_quit(&mut self) -> Option<impl Future<Output = ()> + use<>> {
         if !self.lifecycle.quit() {
