@@ -60,15 +60,15 @@ pub fn install(cx: &mut App) -> anyhow::Result<()> {
         &settings,
         &quit,
     ])?;
-    let icon = TrayIconBuilder::new()
+    let image = draw_icon(Indicator::Paused, cx.global::<Services>().config.theme)?;
+    let builder = TrayIconBuilder::new()
         .with_tooltip("Speakeasy")
-        .with_icon_as_template(true)
-        .with_icon(draw_icon(
-            Indicator::Paused,
-            cx.global::<Services>().config.theme,
-        )?)
-        .with_menu(Box::new(menu))
-        .build()?;
+        .with_menu(Box::new(menu));
+    #[cfg(target_os = "macos")]
+    let builder = builder.with_icon_templated(image);
+    #[cfg(target_os = "windows")]
+    let builder = builder.with_icon(image);
+    let icon = builder.build()?;
 
     let (events, incoming) = async_channel::bounded(16);
     let sender = events.clone();
@@ -140,7 +140,7 @@ pub fn install(cx: &mut App) -> anyhow::Result<()> {
                     && let Ok(icon) = draw_icon(indicator, theme)
                 {
                     #[cfg(target_os = "macos")]
-                    let _ = updating_icon.set_icon_with_as_template(Some(icon), true);
+                    let _ = updating_icon.set_icon_templated(Some(icon));
                     #[cfg(target_os = "windows")]
                     let _ = updating_icon.set_icon(Some(icon));
                 }
