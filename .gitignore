@@ -231,6 +231,3 @@ __pycache__/
 /tray-hint-seen
 /models/
 /tools/
-/.venv/
-/.ruff_cache/
-/node_modules/

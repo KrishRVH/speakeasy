@@ -751,6 +751,7 @@ pub(super) fn insert(
     ) {
         return Ok(outcome);
     }
+    // Focus may change during the physical-modifier queries above.
     if let Some(outcome) = insertion::preflight(has_external_target(), true, insertion::Mode::Paste)
     {
         return Ok(outcome);

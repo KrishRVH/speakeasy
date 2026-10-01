@@ -443,11 +443,7 @@ async fn serve(
         MessageStream::for_match_rule(ownership_rule, &connection, Some(16)).await?,
     );
     let mut available = register(&connection).await;
-    #[expect(
-        clippy::let_underscore_must_use,
-        reason = "Tray availability is an optional bounded UI notification; closure means the UI owner is gone"
-    )]
-    let _ = events.try_send(TrayAction::Available(available));
+    publish_availability(events, available);
     loop {
         tokio::select! {
             biased;

@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """Check the tree as it would be committed: tracked and new, non-ignored files.
 
-The repository holds current contracts; git holds history. Paths are relative to
-the directory the task runs in, the project root. Adapt the constants below, and
-add language-aware project rules, such as versioned identifiers or scripts that
-no task runs, at the end of `main`.
+Paths are relative to the project root. Vendored files are excluded; maintained
+paths are checked for leftover names and references to nonexistent mise tasks.
 """
 
 import json

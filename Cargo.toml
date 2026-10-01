@@ -8,7 +8,7 @@ gpui = { path = "vendor/gpui" }
 gpui_media = { path = "vendor/gpui_media" }
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 rust-version = "1.98.1"
 publish = false
@@ -47,8 +47,7 @@ zbus = { version = "5.19.0", default-features = false }
 
 [workspace.lints.rust]
 future_incompatible = { level = "deny", priority = -1 }
-# Public API is a context budget: anything `pub` is documented and reachable,
-# or it is not `pub`.
+# Public interfaces must be documented and reachable.
 missing_docs = "deny"
 unexpected_cfgs = "deny"
 unreachable_pub = "deny"
@@ -60,25 +59,20 @@ unfulfilled_lint_expectations = "deny"
 all = { level = "deny", priority = -1 }
 
 [workspace.lints.clippy]
-# Lint groups at lower priority so the named lints below override them. The
-# rust:lint gate runs with warnings denied, so `warn` here changes nothing at
-# the gate; nursery is marked `warn` anyway to document lower trust, and its
-# known false-positive offenders are allowed out explicitly below.
+# Named lints override these groups. Nursery warns locally and fails the
+# warnings-denied gate; known false positives are disabled below.
 all = { level = "deny", priority = -1 }
 correctness = { level = "deny", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 suspicious = { level = "deny", priority = -1 }
 
-# Exceptions are visible and self-expiring or they do not exist: no bare
-# `#[allow]`, ever. `#[expect]` fails the build once the lint stops firing,
-# so stale exceptions cannot accumulate.
+# Reasoned `#[expect]` exceptions fail when their lint stops firing.
 allow_attributes = "deny"
 allow_attributes_without_reason = "deny"
 
-# Panic-free production code: a reachable panic is an invariant the types
-# failed to carry. Tests are exempt from unwrap/expect/panic/indexing only,
-# via the four clippy.toml `allow-*-in-tests` knobs; the rest apply everywhere.
+# Production code handles failure explicitly. Tests may assert established
+# invariants through the four clippy.toml `allow-*-in-tests` settings.
 arithmetic_side_effects = "deny"
 dbg_macro = "deny"
 exit = "deny"
@@ -92,7 +86,7 @@ unimplemented = "deny"
 unreachable = "deny"
 unwrap_used = "deny"
 
-# Results are handled or visibly, reasons-attached discarded.
+# Discarding a fallible result requires a local reason.
 let_underscore_must_use = "deny"
 map_err_ignore = "deny"
 unused_result_ok = "deny"
@@ -111,9 +105,7 @@ excessive_nesting = "deny"
 cast_lossless = "allow"
 cast_precision_loss = "allow"
 
-# Known ping-pong with `unreachable_pub` (narrowing to `pub(crate)` trips
-# this nursery lint); an exception forced by a lint interaction is not a real
-# invariant, so the lint loses.
+# `pub(crate)` satisfies unreachable_pub but triggers this nursery lint.
 redundant_pub_crate = "allow"
 
 # Deliberately relaxed style lints: size and repetition counts are poor
@@ -127,7 +119,6 @@ only_used_in_recursion = "allow"
 option_if_let_else = "allow"
 too_many_lines = "allow"
 use_self = "allow"
-
 
 [profile.release]
 lto = "thin"

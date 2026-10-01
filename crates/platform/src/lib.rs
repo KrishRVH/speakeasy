@@ -314,7 +314,7 @@ pub enum Inserted {
     Copied(&'static str),
     /// Insertion authority was revoked before submission.
     Cancelled,
-    /// No text was submitted; the message explains how to retry.
+    /// Insertion is unavailable or incomplete; the message explains how to recover.
     Unavailable(&'static str),
 }
 
