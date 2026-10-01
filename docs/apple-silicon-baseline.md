@@ -1,11 +1,47 @@
-# Apple silicon edition: current baseline
+# Apple silicon fork: comparison baseline
 
-Recorded 2026-09-30 against `2ffed9af5f209ab9a0c527cffdcc58a271d74ff2`
-(Speakeasy 0.2.2). This audit supports the [draft PRD](apple-silicon-prd.md).
-It describes the current implementation, safe local measurements, and hypotheses
-to test on a Mac. It does not establish the performance of a native macOS rewrite.
+Updated 2026-10-01 UTC for the [draft PRD](apple-silicon-prd.md). The frozen
+feature and performance comparison is released Speakeasy **0.3.0**, tag
+`v0.3.0`, commit `2dbaaf835fdc0f79d735eb554932b7cf995a2bbe`. The
+`high-perf-macos` branch carries these notes on that release's code. Future fork
+changes belong to the candidate; keep the control checkout at the frozen commit.
 
-## Environment and verification
+## Released 0.3.0 evidence and remaining baseline work
+
+The [release verification](https://github.com/KrishRVH/speakeasy/actions/runs/36815332358)
+passed formatting, strict workspace Clippy, and tests on Linux, Windows, and
+macOS, native rendering on Windows/macOS, and Linux packaged-launcher/pixel
+checks. Linux passed 122 default tests with 8 ignored; macOS and Windows each
+passed 98, with 6 and 7 ignored respectively. Windows additionally ran its owned
+hidden-window paint test. These checks establish build/owned-window behavior;
+they do not measure native Mac dictation or user perceptibility.
+
+The release pins `nightly-2026-10-01` and Cargo-resolved dependencies. Use its
+`rust-toolchain.toml`, manifests, lockfile, packaging settings, and model/runtime
+artifact hashes for the control. Record candidate compiler/SDK differences as
+separate variables; framework comparisons need matched inference/capture paths.
+
+[Refactor validation](refactor-validation.md) records the ownership changes,
+Linux release build, safe GUI/shutdown checks, and synthetic owner measurements.
+Its refactor-stage ready-text-to-fake-insertion median/p95 was 52/67 µs over
+100 requests, against 51/60 µs before the refactor. This is a Linux observation
+with toolchain and scheduler differences, not a frozen-release Mac benchmark or
+an established speed regression. Rerun relevant components on the reference Macs.
+
+No native Mac microphone-onset, stop-to-visible-text, energy, memory, inference,
+or perceptibility baseline has been collected here. Stage 1 must produce those
+distributions on M1-class and newer hardware, using matched settings, public
+fixtures, and native-test opt-in. Report absolute user latency and resource costs
+separately; carry out the PRD's blinded tasks before claiming a perceived gain.
+
+## Historical 0.2.2 audit
+
+The following audit was recorded 2026-09-30 at
+`2ffed9af5f209ab9a0c527cffdcc58a271d74ff2` (0.2.2). Its values and artifacts
+remain historical evidence, not the 0.3.0 comparison baseline. They cannot
+establish Mac performance or the effect of a native rewrite.
+
+### Environment and verification
 
 The available host is WSL2 Linux x86_64, kernel
 `6.18.33.2-microsoft-standard-WSL2`, on an AMD Ryzen 9 9950X3D with 32 logical
@@ -28,7 +64,7 @@ workspace Clippy check passed. No live microphone, global hook, real clipboard,
 focused editor, or private recording was used. No real-model inference was run
 for this audit. Native macOS tools and Apple silicon hardware were unavailable.
 
-## Fresh component measurements
+### Component measurements at 0.2.2
 
 These commands exercise production component logic with synthetic audio or fake
 capture, speech, and insertion:
@@ -80,7 +116,7 @@ The app had 107 threads in both phases, including the software graphics stack's
 threads. Thread count alone does not diagnose app scheduling overhead. Mesa's
 CPU renderer and retained Settings/resources explain why these measurements
 cannot predict a Mac GPU's footprint or energy. The hidden interval suggests the
-current app already stops substantial demo drawing; it does not establish Mac
+0.2.2 already stops substantial demo drawing; it does not establish Mac
 idle power or model-worker behavior.
 
 ## Existing evidence to retain
@@ -104,18 +140,19 @@ source-level audits, and accepted/rejected experiments. Useful constraints are:
 - Finish and Cancel already `unpark` the capture consumer immediately. Its 5 ms
   data polling interval is not a mandatory 5 ms stop delay.
 
-## Source audit and experiments
+## Source audit and experiments at 0.3.0
 
 | Area and source | Present behavior | Candidate and proof required |
 | --- | --- | --- |
-| Session: `crates/app/src/runtime.rs`, `ports.rs` | Single owner, session identities, asynchronous cleanup, generation-bound insertion permit, fakeable effect boundaries. | Extract GPUI-free ownership for a native shell. A language rewrite is justified only if native profiling finds a material cost. Preserve cancellation races before measuring speed. |
-| Capture: `crates/app/src/audio.rs` | CPAL callback downmixes into a bounded float ring. Consumer polls every 5 ms while recording, converts to PCM16, collects levels, gates speech, trims, and prepares in-memory WAV. | Compare wake strategies, float staging, and capture adapters independently. Count wakeups, callback work, stop latency, and audio loss. CPAL already uses Core Audio's HAL Output AudioUnit on macOS; direct HAL is not automatically a different or faster path. |
-| Inference: `crates/app/src/local_speech.rs` | One warm owned process, WAV multipart over loopback HTTP, bounded response, silent accelerator warmup, cancellation recovery. | Compare existing HTTP with the pinned engine's native float-PCM ABI inside an owned helper. Isolate codec/transport, resampling, model time, and warmup. Do not attribute all inference time to HTTP. |
+| Session: `crates/app/src/runtime/{mod,owner,session,microphone,worker}.rs`, `ports.rs` | One authority with typed stages, separate microphone/worker retirement, publisher epochs, and generation-bound insertion. `runtime/tests.rs` drives the production owner with paused Tokio time and explicit cleanup gates. | Reuse this implementation and tests in a GPUI-free library; it currently resides in the app crate. Preserve stale-completion and cancellation/retirement contracts before measuring bridge cost. |
+| Capture: `crates/app/src/audio.rs` | CPAL callback downmixes into a bounded float ring. Consumer polls every 5 ms while recording, converts to PCM16, gates speech, trims, and prepares in-memory WAV. Meter range is −60 to −6 dBFS; canceled/error/silent owned PCM is best-effort cleared. | Compare wake strategies, float staging, and capture adapters independently. Count wakeups, callback work, stop latency, and audio loss. CPAL already uses Core Audio's HAL Output AudioUnit on macOS; direct HAL is not automatically faster. |
+| Inference: `crates/app/src/local_speech.rs`, `runtime/worker.rs` | One warm owned process, WAV multipart over loopback HTTP, bounded response, accelerator warmup, and cancellation recovery. Exit diagnostics retain actionable causes while discarding potentially private stderr. | Compare HTTP with the pinned engine's float-PCM ABI inside an owned helper. Isolate transport, resampling, model time, and warmup. Preserve explicit engine selection and local errors. |
 | Buffering: `audio.rs`, `local_speech.rs` | PCM16 payload, selective capacity compaction after heavy trimming; requests retain audio while needed. | Float32 avoids one quantization/decode route but uses twice PCM16 storage. At 48 kHz for 300 seconds, raw mono payloads are 28.8 MB PCM16 versus 57.6 MB float32. These are byte counts, not measured footprint. Count copies and allocations before adding shared memory. |
 | Process lifecycle: `crates/platform/src/process.rs`, `local_speech.rs` | Orderly Unix shutdown cleans process groups; abrupt app death can leave a worker. Cancellation may require terminating and replacing the worker. | Add a parent-liveness contract for the new owned helper; test parent crash, kill, inference hang, and replacement. A launchd XPC service changes lifecycle semantics and must be assessed separately from transport speed. |
-| UI: `pill.rs`, `shell.rs`, `tray.rs`, `vendor/gpui` | GPUI Settings and pill, analytic continuous springs, coalesced levels, native nonactivation, patched frame/resource lifetime. | Compare AppKit/Core Animation with current GPUI on the same Mac and display. Measure presented frames, app/render-server work, hidden wakeups, and retained Settings resources. Framework branding is not performance evidence. |
-| Native input/insertion: `crates/platform/src/macos.rs` | Owned event tap; Fn/Space gesture; passive Escape; target and modifier checks; guarded clipboard paste or Unicode events. | Preserve delivery/commit ordering. Measure event-to-owner and owner-to-submission separately. Avoid moving blocking preparation to the tap or AppKit thread. |
-| Setup/settings: `setup.rs`, `config.rs`, `shell.rs` | Pinned verified resumable artifacts; owned cancellable setup; off-UI validation and coalesced durable saves. | Package a signed helper without weakening cancellation, artifact integrity, or manual engine choice. Existing configuration and unsaved drafts are parity requirements. |
+| UI: `crates/app/src/{pill,shell,tray}.rs`, `vendor/gpui` | GPUI Settings and pill, continuous springs, coalesced levels, nonactivation, patched frame/resource lifetime, and current template-icon APIs. | Compare AppKit/Core Animation with frozen GPUI on the same Mac/display. Measure displayed frames, WindowServer work, hidden wakeups, and retained Settings resources; preserve identical appearance in blinded trials. |
+| Lifecycle: `crates/app/src/shell/{lifecycle,services,shutdown}.rs` | Explicit disabled/validating/running/stopping/quitting states; latest pending configuration; retained native owners. App-owned Quit asynchronously awaits cleanup and requested saves. Forced native termination retains synchronous disposal. | Port coordination, acknowledgement ordering, validation epochs, saves, and instance-lock lifetime to AppKit. Test delayed teardown and repeated Quit; parent death remains a separate helper contract. |
+| Native input/insertion: `crates/platform/src/{macos,keyboard,insertion,lib}.rs` | Owned event tap; portable Fn/Space/Escape policy; cancellation authority; shared focus-before-modifier eligibility; clipboard ownership and Unicode input. | Reuse tested policy and generation-bound commit. Measure event-to-owner and owner-to-submission separately; keep blocking preparation off the tap and AppKit thread. |
+| Setup/settings: `crates/app/src/{setup,config,shell}.rs`, Settings save queue | Verified resumable artifacts; owned setup; off-UI validation/coalesced durable saves; Quit waits for writes. | Preserve artifact integrity, cancellation, explicit engine choice, unsaved drafts, later edits, and Pause intent. |
 
 The highest-value initial experiments are native baseline collection, direct PCM
 inference versus HTTP, helper death/cancellation, and native UI scheduling/resource
@@ -136,6 +173,7 @@ No measurement here answers these questions:
   native clipboard ownership, Unicode insertion, or force-quit containment.
 - Performance and signing behavior of the proposed native bundle.
 
-The [PRD](apple-silicon-prd.md) makes these release gates. The
+The [PRD](apple-silicon-prd.md) defines native and perceptibility experiment gates,
+with distribution acceptance separately optional. The
 [platform research](apple-silicon-research.md) records first-party API constraints
 and the experiments needed to choose between competing implementations.

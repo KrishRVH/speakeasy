@@ -1,18 +1,22 @@
 # Apple-silicon performance research
 
-Research date: 2026-09-30. This note supports the proposed Apple silicon
-[Speakeasy PRD](apple-silicon-prd.md). It separates documented API capabilities,
-current source facts, and optimization hypotheses. It does not establish that a rewritten Mac app is
+API research date: 2026-09-30; source mapping updated 2026-10-01 UTC for released
+Speakeasy 0.3.0 at `2dbaaf835fdc0f79d735eb554932b7cf995a2bbe`.
+This note supports the [fork experiment PRD](apple-silicon-prd.md). It separates
+documented API capabilities, frozen source facts, and optimization hypotheses.
+The pinned engine/CPAL API findings are retained; this update adds no native
+performance evidence. It does not establish that a rewritten Mac app is
 faster than GPUI: this workspace is Linux/WSL2, with no native Mac, Swift toolchain,
 Xcode, Instruments, or Apple GPU available for this investigation. No microphone,
 global event tap, clipboard, or focused application was accessed.
 
 ## Recommendation and evidence boundary
 
-Prototype a Swift/AppKit shell around the existing Rust session owner, retain
-the current Parakeet/Metal implementation as the quality and speed baseline,
-and benchmark a native PCM helper alongside the existing HTTP worker. Keep
-capture and transport behind narrow existing side-effect boundaries. A direct
+Collect the frozen 0.3.0 native baseline, then select prototypes from measured
+costs: a Swift/AppKit shell around the existing Rust owner and a native PCM helper
+alongside the HTTP worker. Retain the same Parakeet/Metal model/runtime as the
+quality and speed control. Keep capture and transport behind narrow existing
+side-effect boundaries. A direct
 HAL implementation, Core ML conversion, custom Metal kernels, and alternative
 buffer layouts are candidates to earn their place with measurements.
 
@@ -21,7 +25,15 @@ latency, cancellation, displayed feedback, idle energy, and memory pressure
 together. A warm model, speculative inference, very small audio periods, and
 fully committed maximum-length buffers can improve one metric while worsening
 others. Neither a language choice nor a framework name proves a win. These are
-engineering decisions, not results from a cross-stack benchmark.
+engineering decisions, not results from a cross-stack benchmark. The PRD owns
+the blinded perceptibility protocol and valid no-gain outcomes; resource or
+microbenchmark gains alone cannot answer whether the app feels different.
+
+The [0.3.0 source map](apple-silicon-baseline.md#source-audit-and-experiments-at-030)
+and [architecture](architecture.md#change-and-test-map) identify reusable owner,
+lifecycle, keyboard, insertion, and regression-test modules. The session code
+has no direct GPUI imports but still needs library extraction from the app crate;
+preserve its typed stages, publisher epochs, paused clock, and retirement ordering.
 
 ## Scope, versions, and deployment floor
 
@@ -115,6 +127,7 @@ Therefore changing the entire tap to `.listenOnly` would violate parity even
 though passive Escape itself must remain passive. Keep exact hold, double-tap,
 hands-free, interruption, and own-injected-event behavior.
 [Current Mac adapter](../crates/platform/src/macos.rs),
+[portable keyboard policy](../crates/platform/src/keyboard.rs),
 [Fn flag semantics](https://developer.apple.com/documentation/coregraphics/cgeventflags/masksecondaryfn),
 [passive tap option](https://developer.apple.com/documentation/coregraphics/cgeventtapoptions/listenonly).
 
@@ -147,6 +160,11 @@ event post is submission, not proof an arbitrary editor accepted text. Do not
 replace this with an Accessibility text setter by default: application support
 and edit semantics are separate compatibility questions.
 [Existing insertion contract](../crates/platform/src/macos.rs).
+
+The [shared preflight](../crates/platform/src/insertion.rs) gives external-target
+focus precedence over held modifiers. Keep cancellation checks and the single
+generation-bound commit in the native adapter; a partial post-commit failure is
+never automatically repeated.
 
 ## Capture: AUHAL is already beneath CPAL
 
@@ -261,6 +279,11 @@ independent control thread and exit on EOF; prove this during real GPU inference
 and loss of the parent. External custom Whisper/NeMo executable support needs its
 own containment policy rather than assuming the controlled helper protocol.
 [Current process containment](../crates/platform/src/process.rs).
+
+The 0.3.0 [worker state](../crates/app/src/runtime/worker.rs) separates loading,
+transcribing, recovery, and replacement. Its [Quit coordinator](../crates/app/src/shell/shutdown.rs)
+awaits owned work and requested saves while the UI remains responsive. These
+normal-cleanup guarantees do not establish containment after abrupt parent death.
 
 ## Metal and inference optimization
 
@@ -380,7 +403,9 @@ OS, toolchain, engine/model hashes, power source/mode, thermal state, microphone
 format/route, refresh rate and warm/cold state. Compare paired randomized baseline
 and candidate runs; report median/tail latency and full distributions. Synthetic
 capture isolates app overhead, while opt-in native acceptance measures actual
-microphone and insertion. Keep those claims distinct. Test a low-memory M1-class
+microphone and insertion. Keep those claims distinct, and use the PRD's blinded
+native tasks to assess perceptibility independently of engineering gains.
+Test a low-memory M1-class
 machine, a recent Air-class laptop, and a Pro/Max-class system; Apple-silicon-only
 still contains large compute, bandwidth and thermal differences.
 
