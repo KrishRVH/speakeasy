@@ -37,7 +37,7 @@ def check_workspace_inheritance() -> None:
         if package["id"] not in members:
             continue
         path = Path(package["manifest_path"])
-        manifest = cast(dict[str, object], tomllib.loads(path.read_text()))
+        manifest = cast(dict[str, object], tomllib.loads(path.read_text(encoding="utf-8")))
         lints = manifest.get("lints")
         if (
             not isinstance(lints, dict)

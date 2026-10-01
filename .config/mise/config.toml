@@ -16,7 +16,8 @@ uv = "0.12.19"
 bun = "1.4.2"
 shellcheck = "0.11.0"
 shfmt = "3.14.0"
-lychee = "0.24.2"
+# Static Linux build keeps the tooling gate usable on the glibc 2.35 release builder.
+lychee = { version = "0.24.2", libc = "musl" }
 typos = "1.48.0"
 actionlint = "1.7.12"
 
