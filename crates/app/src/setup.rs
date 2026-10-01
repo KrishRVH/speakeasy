@@ -415,7 +415,8 @@ fn nvidia_driver() -> bool {
 
 #[cfg(target_os = "windows")]
 fn system32() -> PathBuf {
-    PathBuf::from(std::env::var_os("SystemRoot").unwrap_or("C:\\Windows".into())).join("System32")
+    PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
+        .join("System32")
 }
 
 /// Removes other engine builds and returns the chosen executable.

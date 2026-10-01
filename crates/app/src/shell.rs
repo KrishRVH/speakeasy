@@ -106,6 +106,30 @@ fn show_tray_hint(cx: &mut App) {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn minimize_to_tray(window: &Window, cx: &App) -> anyhow::Result<Task<()>> {
+    let (hide, hidden) = async_channel::bounded(1);
+    let handle = HasWindowHandle::window_handle(window)
+        .map_err(|error| anyhow::anyhow!("Cannot access Settings window: {error}"))?;
+    speakeasy_platform::minimize_to_tray(handle.as_raw(), hide)?;
+    Ok(cx.spawn(async move |cx| {
+        while hidden.recv().await.is_ok() {
+            if cx
+                .update(|cx| {
+                    if cx.has_global::<Services>()
+                        && let Some(handle) = cx.global::<Services>().window
+                    {
+                        settings_visible(handle, false, cx);
+                    }
+                })
+                .is_err()
+            {
+                break;
+            }
+        }
+    }))
+}
+
 pub(crate) fn open(cx: &mut App) -> anyhow::Result<()> {
     if let Some(window) = cx.global::<Services>().window
         && window.update(cx, |_, _, _| ()).is_ok()
@@ -169,26 +193,13 @@ pub(crate) fn open(cx: &mut App) -> anyhow::Result<()> {
             }
             #[cfg(target_os = "windows")]
             let minimize = if tray_lifecycle {
-                let (hide, hidden) = async_channel::bounded(1);
-                native_result = HasWindowHandle::window_handle(window)
-                    .map_err(|error| anyhow::anyhow!("Cannot access Settings window: {error}"))
-                    .and_then(|handle| speakeasy_platform::minimize_to_tray(handle.as_raw(), hide));
-                Some(cx.spawn(async move |cx| {
-                    while hidden.recv().await.is_ok() {
-                        if cx
-                            .update(|cx| {
-                                if cx.has_global::<Services>()
-                                    && let Some(handle) = cx.global::<Services>().window
-                                {
-                                    settings_visible(handle, false, cx);
-                                }
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                }))
+                match minimize_to_tray(window, cx) {
+                    Ok(task) => Some(task),
+                    Err(error) => {
+                        native_result = Err(error);
+                        None
+                    },
+                }
             } else {
                 None
             };
