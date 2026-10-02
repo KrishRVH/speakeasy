@@ -62,7 +62,7 @@ LOCKFILE = re.compile(
     r"(^|/)(Cargo\.lock|go\.sum|package-lock\.json|bun\.lockb?|yarn\.lock|pnpm-lock\.yaml|"
     + r"uv\.lock|poetry\.lock|composer\.lock|mix\.lock|mise\.lock|pylock[\w.-]*\.toml)$|\.(uid|import)$"
 )
-CODE = {".rs", ".py", ".sh", ".ps1"}
+CODE = {".rs", ".py", ".sh"}
 DOCS = {".md"}
 TOOLING_DIRECTORIES = (".config/", ".github/", "scripts/", "tools/", "ci/")
 TEST_DIRECTORIES = {"test", "tests", "spec", "specs", "__tests__", "e2e", "testdata", "fixtures"}

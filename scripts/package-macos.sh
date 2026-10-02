@@ -5,8 +5,8 @@ if [[ $# -ne 0 ]]; then
   echo "Usage: bash scripts/package-macos.sh" >&2
   exit 1
 fi
-if [[ "$(uname -s)" != Darwin ]]; then
-  echo "Run this on macOS with the Xcode command line tools installed." >&2
+if [[ "$(uname -s)" != Darwin || "$(uname -m)" != arm64 ]]; then
+  echo "Package on an Apple silicon Mac with Xcode and its Metal toolchain." >&2
   exit 1
 fi
 MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release --locked -p speakeasy

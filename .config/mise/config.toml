@@ -52,10 +52,9 @@ depends = ["rust:metadata"]
 env = { CARGO_NET_OFFLINE = "true" }
 run = "cargo machete --with-metadata --skip-target-dir crates"
 
-# Python discards cargo's metadata JSON without a shell redirect.
 [tasks."rust:metadata"]
 description = "Validate locked metadata and fetch platform sources before offline analysis"
-run = '''python -c "import subprocess; subprocess.run(['cargo', 'metadata', '--all-features', '--locked', '--format-version=1'], check=True, stdout=subprocess.DEVNULL)"'''
+run = "cargo metadata --all-features --locked --format-version=1 > /dev/null"
 
 [tasks."rust:standards"]
 depends = ["rust:fmt"]

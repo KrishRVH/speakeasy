@@ -48,13 +48,8 @@ __pycache__/
 **/*.rs.bk
 
 # Native build output outside target/
-*.dll
 *.dylib
-*.exe
-*.lib
 *.o
-*.obj
-*.pdb
 *.so
 *.dSYM/
 

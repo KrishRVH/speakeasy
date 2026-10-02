@@ -1,6 +1,6 @@
 {
   "engine": "whisper",
-  "engine_executable": "tools/whisper/whisper-server.exe",
+  "engine_executable": "tools/whisper/whisper-server",
   "model": "models/ggml-small.en.bin",
   "language": "en",
   "remove_fillers": true,
