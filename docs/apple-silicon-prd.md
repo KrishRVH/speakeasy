@@ -62,16 +62,31 @@ on every fixture:
   source, and Speakeasy's build in 0.7 s; warm restarts take 0.14–0.16 s with either.
 - Feed-forward matrix products are now about half of the encoder; the TDT decoder's CPU steps are
   bandwidth-bound at about 0.13 ms each.
+- After 30–200 s of idle the GPU clocks down, and the 10-second fixture takes 93–111 ms instead of
+  about 60 ms. A press-time primer 1.5 s before the request did not help (93–102 ms); a primer every
+  50 ms while speaking recovered half the penalty at roughly 40% GPU duty, so neither is adopted.
+  Idle gaps of 30 s and 200 s cost about the same although ggml keeps residency sets for 180 s,
+  which points at clock-down rather than residency; the keep-alive itself was not varied.
+- Segmented recognition at pauses with at least 20 s per segment kept every word of the 30 s and 52
+  s fixtures and lowered 290 s WER from 3.28% to 1.88% under lowercase, punctuation-free scoring,
+  with ten comma or capitalization differences at segment boundaries reviewed by hand. The 290 s
+  fixture's final 20.9 s segment recognizes in 120 ms, against 2.6 s for the whole recording, and
+  total work falls from 2.6 to 1.7 s.
+- NVIDIA's Parakeet v3 in Core ML (FluidAudio, int8 encoder) on the Neural Engine took 33, 44, 53,
+  130, 151, and 638 ms for 1.3, 5, 10, 30, 52, and 290 s, after a 12 s first load: slower than this
+  build below about 8 s and faster beyond, mostly through 15 s windows. It remains a candidate for
+  energy and long input, not adopted.
 
-| Candidate                                                          | Hypothesis                                                                                       | Regression guard                                                                                |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
-| Parakeet helper over pipes, via the engine's C ABI, replacing HTTP | Removes multipart upload, server WAV parsing, and JSON; grows with recording length              | Identical text hashes for helper and HTTP routes; helper exits when the app dies; HTTP fallback |
-| Hands-free GPU pause speculation with byte-identical audio reuse   | Removes recognition from the stop path whenever the stop press comes 500 ms or more after speech | Paused-clock owner tests; a speculation can delay a request that resumes speech after a pause   |
-| Trailing quiet beyond 500 ms trimmed (was kept below one second)   | Lets a stop 0.5–1 s after speech match its pause; slightly less audio to recognize               | Corpus check with 0.5 s and up to 1 s of trailing quiet                                         |
-| Sealed audio reported before the device stops                      | Moves Audio Unit stop and dispose off release-to-sealed                                          | Quiescence test; native `release→sealed` and `device` timings                                   |
-| Ring drained every 16 ms once audio flows (was 5 ms)               | About a third of the consumer wakeups while recording                                            | Meter cadence unchanged at 32 ms; finish and cancel still wake at once                          |
-| Modifier release rechecked every 2 ms (was 10 ms)                  | Speculated text is often ready while the stopping press is still down                            | Insertion eligibility tests                                                                     |
-| Speakeasy's engine build bundled in the app                        | Engine graph changes and a compiled Metal library cut recognition and cold model loading         | Identical fixture hashes per change; original graphs behind `NEMO_SPEECH_LEGACY_*`; bundle test |
+| Candidate                                                          | Hypothesis                                                                                       | Regression guard                                                                                  |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| Parakeet helper over pipes, via the engine's C ABI, replacing HTTP | Removes multipart upload, server WAV parsing, and JSON; grows with recording length              | Identical text hashes for helper and HTTP routes; helper exits when the app dies; HTTP fallback   |
+| Hands-free GPU pause speculation with byte-identical audio reuse   | Removes recognition from the stop path whenever the stop press comes 500 ms or more after speech | Paused-clock owner tests; a speculation can delay a request that resumes speech after a pause     |
+| Trailing quiet beyond 500 ms trimmed (was kept below one second)   | Lets a stop 0.5–1 s after speech match its pause; slightly less audio to recognize               | Corpus check with 0.5 s and up to 1 s of trailing quiet                                           |
+| Sealed audio reported before the device stops                      | Moves Audio Unit stop and dispose off release-to-sealed                                          | Quiescence test; native `release→sealed` and `device` timings                                     |
+| Ring drained every 16 ms once audio flows (was 5 ms)               | About a third of the consumer wakeups while recording                                            | Meter cadence unchanged at 32 ms; finish and cancel still wake at once                            |
+| Modifier release rechecked every 2 ms (was 10 ms)                  | Speculated text is often ready while the stopping press is still down                            | Insertion eligibility tests                                                                       |
+| Speakeasy's engine build bundled in the app                        | Engine graph changes and a compiled Metal library cut recognition and cold model loading         | Identical fixture hashes per change; original graphs behind `NEMO_SPEECH_LEGACY_*`; bundle test   |
+| Long recordings recognized in 20 s segments at pauses              | Stop waits for one tail instead of the whole recording; total work becomes linear                | Segment and tail coverage tests; owner ordering, cancel, failure tests; corpus WER and boundaries |
 
 `SPEAKEASY_TIMING=1` reports each session's stage timings, `engine_profile` compares the helper and
 HTTP routes and varies warmup length, idle gaps, and a shortcut-press primer, and `capture_onset`
@@ -88,9 +103,8 @@ Run the next gates on the reference Macs in order, keeping raw output under `art
    identical output; the difference measures transport cost by length.
 3. Repeat with `NEMO_SPEECH_TIMING=1` to split features, encoder, and decoding; if per-step decoding
    dominates, profile the engine's Metal decoder before anything else.
-4. Measure first-request cost with `--warmup 1` versus `--warmup 10`, idle cost with `--idle 240`
-   with and without `GGML_METAL_RESIDENCY_KEEP_ALIVE_S`, and `--prime 300` after idle. Adopt a
-   longer warmup, a residency policy, or a press-time primer only for a measured win.
+4. On M1, measure first-request cost with `--warmup 1` versus `--warmup 10` and repeat the idle and
+   primer measurements above; adopt a policy only for a measured win.
 5. Run `capture_onset` with Microphone permission. If the prepared stream's start is materially
    faster than a cold open, prototype a prepared stream and verify that the microphone indicator
    stays off while it is idle.
