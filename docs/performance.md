@@ -66,6 +66,21 @@ cargo run --release -p speakeasy-platform --example engine_profile -- \
 Setting `NEMO_SPEECH_TIMING=1` in the engine's environment adds its own feature, encoder, and decode
 stage timings on standard error; those lines carry numbers only.
 
+`--warmup SECONDS` varies the silent warmup's length, to show whether the app's one-second warmup
+leaves Metal pipelines for longer audio to compile during the first dictation. `--idle SECONDS`
+waits before each request, to expose GPU residency and power-state costs: ggml releases its Metal
+residency sets after `GGML_METAL_RESIDENCY_KEEP_ALIVE_S`, three minutes by default, and the helper
+inherits the app's environment. `--prime MILLISECONDS` sends a tenth of a second of silence and
+waits before each timed request, to evaluate priming the worker when the shortcut is pressed.
+
+`capture_onset` opens the real microphone, so it is opt-in native acceptance that macOS gates behind
+the terminal's Microphone permission. It keeps no audio and prints each stage of a cold open, host
+through first callback and teardown, beside starting a stream built in advance:
+
+```sh
+cargo run --release -p speakeasy-dictation --example capture_onset -- --runs 20
+```
+
 ## Process sampling
 
 `profile_macos.py` samples explicit app and engine PIDs through `ps`: cumulative CPU time, resident
