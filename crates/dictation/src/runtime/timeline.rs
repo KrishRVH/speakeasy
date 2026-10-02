@@ -15,6 +15,8 @@ pub(super) struct Timeline {
     recorded: Option<Duration>,
     transcribing: Option<Instant>,
     transcribed: Option<Instant>,
+    /// Whether the text came from recognizing a pause with identical audio.
+    speculated: bool,
 }
 
 impl Timeline {
@@ -28,6 +30,7 @@ impl Timeline {
             recorded: None,
             transcribing: None,
             transcribed: None,
+            speculated: false,
         }
     }
 
@@ -54,6 +57,13 @@ impl Timeline {
         self.transcribed.get_or_insert(at);
     }
 
+    /// The text came from a pause's recognition, available at `at` without a request of its own.
+    pub(super) fn speculated(&mut self, at: Instant) {
+        self.speculated = true;
+        self.transcribing.get_or_insert(at);
+        self.transcribed.get_or_insert(at);
+    }
+
     /// One line of the spans this session reached, ending at `ended` with `outcome`.
     pub(super) fn report(&self, ended: Instant, outcome: &str) -> String {
         let spans = [
@@ -71,9 +81,11 @@ impl Timeline {
         let audio = self
             .recorded
             .map(|recorded| format!("audio {:.2} s", recorded.as_secs_f64()));
+        let speculated = self.speculated.then(|| "speculated".to_owned());
         let parts: Vec<String> = spans
             .chain(device)
             .chain(audio)
+            .chain(speculated)
             .chain([outcome.to_owned()])
             .collect();
         format!("speakeasy timing: {}", parts.join(" · "))

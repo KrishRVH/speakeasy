@@ -9,7 +9,7 @@ use speakeasy_platform::{Input, InputSender, Inserted};
 use tokio::{sync::watch, task::JoinError};
 
 use super::{
-    CaptureEvent, LOADING, Phase, Snapshot, Wiring,
+    CaptureEvent, Captured, LOADING, Phase, Snapshot, Wiring,
     microphone::Microphone,
     now, reap,
     session::{InsertTask, Session, SessionId, Stage},
@@ -262,12 +262,16 @@ impl<P: Ports> Owner<P> {
                 session.audio_ready(gesture);
             },
             CaptureEvent::Level(_, level) => session.show_level(level),
-            CaptureEvent::Finished(_, Ok(Some(wav))) => {
+            CaptureEvent::Paused(_, sequence, wav) => session.paused(sequence, wav),
+            CaptureEvent::Finished(_, Ok(Some(Captured { wav, speculated }))) => {
                 session
                     .timeline
                     .sealed(now(), audio::wav_duration(&wav).unwrap_or_default());
-                session.stage = Stage::AwaitingWorker(wav);
+                let recognized = session.seal(wav, speculated);
                 self.conclude_capture();
+                if let Some(text) = recognized {
+                    self.deliver_speculation(text);
+                }
             },
             CaptureEvent::Finished(_, Ok(None)) => {
                 self.conclude_capture();
@@ -308,16 +312,60 @@ impl<P: Ports> Owner<P> {
                 self.notice = Some(Notice::WarmupFailed(error.to_string()));
             },
             Completion::Loaded(Err(error)) => self.fail(error.to_string()),
-            Completion::Transcribed(Ok((worker, transcript))) => {
-                self.worker = Worker::Ready(worker);
-                if let Transcript::Text(text) = transcript {
-                    self.insert_transcript(text);
+            Completion::Transcribed(result) => {
+                let speculation = self
+                    .session
+                    .as_mut()
+                    .and_then(|session| session.speculating.take());
+                match (speculation, result) {
+                    (Some(sequence), Ok((worker, Transcript::Text(text)))) => {
+                        self.worker = Worker::Ready(worker);
+                        self.speculation_recognized(sequence, text);
+                    },
+                    (Some(_), Ok((worker, Transcript::Cancelled))) => {
+                        self.worker = Worker::Ready(worker);
+                        self.speculation_lost();
+                    },
+                    // A failed speculation leaves the recording's own request to a fresh worker.
+                    (Some(_), Err(_)) => {
+                        self.speculation_lost();
+                        self.worker.revive(&self.ports, &self.config);
+                    },
+                    (None, Ok((worker, transcript))) => {
+                        self.worker = Worker::Ready(worker);
+                        if let Transcript::Text(text) = transcript {
+                            self.insert_transcript(text);
+                        }
+                    },
+                    (None, Err(error)) => {
+                        self.fail(error.to_string());
+                        self.worker.revive(&self.ports, &self.config);
+                    },
                 }
             },
-            Completion::Transcribed(Err(error)) => {
-                self.fail(error.to_string());
-                self.worker.revive(&self.ports, &self.config);
-            },
+        }
+    }
+
+    /// Keeps a pause's text for the end of the recording, or delivers it when the sealed recording
+    /// waits on this pause because its audio is identical. Otherwise the text is obsolete.
+    fn speculation_recognized(&mut self, sequence: u32, text: String) {
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        if session.is_capturing() {
+            session.speculated = Some((sequence, text));
+        } else if let Stage::AwaitingSpeculation(wav) = &mut session.stage {
+            wav.fill(0);
+            self.deliver_speculation(text);
+        }
+    }
+
+    /// A recording that waited on a failed or cancelled speculation makes its own request.
+    fn speculation_lost(&mut self) {
+        if let Some(session) = &mut self.session
+            && let Stage::AwaitingSpeculation(wav) = &mut session.stage
+        {
+            session.stage = Stage::AwaitingWorker(mem::take(wav));
         }
     }
 
@@ -340,6 +388,22 @@ impl<P: Ports> Owner<P> {
             return;
         };
         session.timeline.transcribed(now());
+        self.deliver(text);
+    }
+
+    /// Delivers text recognized from a pause whose audio matches the sealed recording exactly.
+    fn deliver_speculation(&mut self, text: String) {
+        if let Some(session) = &mut self.session {
+            session.timeline.speculated(now());
+        }
+        self.deliver(text);
+    }
+
+    /// Inserts the current session's text, or ends it as empty.
+    fn deliver(&mut self, text: String) {
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
         if text.is_empty() {
             self.abandon();
             self.gesture.complete();
@@ -384,9 +448,18 @@ impl<P: Ports> Owner<P> {
                 self.worker.revive(&self.ports, &self.config);
                 self.outcome = Outcome::Cancelled;
             },
-            Some(Action::ModeChanged) | None => {},
+            Some(Action::ModeChanged) => self.speculate_when_hands_free(),
+            None => {},
         }
         ControlFlow::Continue(())
+    }
+
+    /// Hands-free capture ends with a separate press, usually well after the last word, so pauses
+    /// are worth recognizing early. A held shortcut is released too soon after speech to benefit.
+    fn speculate_when_hands_free(&self) {
+        if self.gesture.state() == State::HandsFree {
+            self.microphone.speculate();
+        }
     }
 
     fn start_session(&mut self) -> ControlFlow<()> {
@@ -427,14 +500,17 @@ impl<P: Ports> Owner<P> {
 
     /// Revokes the session and hands its native work to cleanup without awaiting any OS call.
     fn abandon(&mut self) {
-        let Some(session) = self.take_session() else {
+        let Some(mut session) = self.take_session() else {
             return;
         };
         session.permit.revoke();
+        if let Some((_, mut pending)) = session.pending.take() {
+            pending.fill(0);
+        }
         match session.stage {
             Stage::Opening | Stage::Recording | Stage::Stopping => self.microphone.retire(),
             Stage::Inserting(task) => self.retiring_insertions.push(task),
-            Stage::AwaitingWorker(mut wav) => wav.fill(0),
+            Stage::AwaitingWorker(mut wav) | Stage::AwaitingSpeculation(mut wav) => wav.fill(0),
             Stage::Transcribing if self.worker.is_transcribing() => {
                 self.worker.recover(&self.ports, &self.config);
             },
@@ -476,6 +552,7 @@ impl<P: Ports> Owner<P> {
                 }
                 self.microphone = Microphone::Open(recording);
                 session.stage = Stage::Opening;
+                self.speculate_when_hands_free();
             },
             Err(error) => self.fail(format!("Could not start microphone worker: {error}")),
         }
@@ -485,6 +562,18 @@ impl<P: Ports> Owner<P> {
         let Some(session) = self.session.as_mut() else {
             return;
         };
+        if session.is_capturing() {
+            // Speculation only uses an idle warm worker; it never loads one.
+            if self.worker.is_ready()
+                && let Some((sequence, wav)) = session.pending.take()
+            {
+                match self.worker.transcribe(wav, &self.config) {
+                    Ok(()) => session.speculating = Some(sequence),
+                    Err(unclaimed) => session.pending = Some((sequence, unclaimed)),
+                }
+            }
+            return;
+        }
         let Stage::AwaitingWorker(wav) = &mut session.stage else {
             return;
         };

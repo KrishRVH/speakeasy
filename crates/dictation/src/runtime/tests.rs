@@ -75,6 +75,7 @@ struct FakePorts {
     pasted: Sender<String>,
     loads: Sender<()>,
     timings: Sender<String>,
+    speculations: Sender<SessionId>,
 }
 
 /// What the fakes report back to the test.
@@ -84,6 +85,7 @@ struct Reports {
     pasted: Receiver<String>,
     loads: Receiver<()>,
     timings: Receiver<String>,
+    speculations: Receiver<SessionId>,
 }
 
 impl FakePorts {
@@ -93,6 +95,7 @@ impl FakePorts {
         let (pasted, submitted) = async_channel::bounded(8);
         let (loads, loaded) = async_channel::bounded(8);
         let (timings, reported) = async_channel::bounded(8);
+        let (speculations, speculating) = async_channel::bounded(8);
         let ports = Self {
             desktop_pending: false,
             record_error: None,
@@ -107,6 +110,7 @@ impl FakePorts {
             pasted,
             loads,
             timings,
+            speculations,
         };
         let reports = Reports {
             captures: opened,
@@ -114,6 +118,7 @@ impl FakePorts {
             pasted: submitted,
             loads: loaded,
             timings: reported,
+            speculations: speculating,
         };
         (ports, reports)
     }
@@ -152,6 +157,7 @@ impl Ports for FakePorts {
             events,
             delayed_finish: self.delayed_finish,
             retirement: self.retirement.clone(),
+            speculating: self.speculations.clone(),
         })
     }
 
@@ -212,6 +218,7 @@ struct FakeRecording {
     events: Sender<CaptureEvent>,
     delayed_finish: bool,
     retirement: Option<Gate<()>>,
+    speculating: Sender<SessionId>,
 }
 
 impl Recording for FakeRecording {
@@ -219,10 +226,16 @@ impl Recording for FakeRecording {
         if self.delayed_finish {
             return;
         }
-        let finished = CaptureEvent::Finished(self.id, Ok(Some(vec![1, 2])));
+        let finished = CaptureEvent::Finished(self.id, Ok(Some(captured(None))));
         self.events
             .try_send(finished)
             .expect("capture lane has room for fake audio");
+    }
+
+    fn speculate(&self) {
+        self.speculating
+            .try_send(self.id)
+            .expect("speculation lane has room for each request");
     }
 
     async fn retire(self) {
@@ -283,6 +296,7 @@ struct Harness<Owner = OwnedThread> {
     pasted: Receiver<String>,
     loads: Receiver<()>,
     timings: Receiver<String>,
+    speculations: Receiver<SessionId>,
 }
 
 impl Harness {
@@ -335,6 +349,7 @@ impl<Owner: Sync> Harness<Owner> {
             pasted: reports.pasted,
             loads: reports.loads,
             timings: reports.timings,
+            speculations: reports.speculations,
         })
     }
 
@@ -395,6 +410,14 @@ async fn receive<T>(receiver: &Receiver<T>) -> anyhow::Result<T> {
     Ok(timeout(PATIENCE, receiver.recv()).await??)
 }
 
+/// Fake trimmed audio, identical to the numbered pause's when `speculated` names one.
+fn captured(speculated: Option<u32>) -> Captured {
+    Captured {
+        wav: vec![1, 2],
+        speculated,
+    }
+}
+
 fn answer(reply: Reply, text: &str) -> anyhow::Result<()> {
     ensure!(
         reply.send(Ok(text.to_owned())).is_ok(),
@@ -428,6 +451,96 @@ async fn each_ended_session_reports_its_stage_timings_once() -> anyhow::Result<(
     h.start().await?;
     h.input(Input::Cancel);
     assert!(receive(&h.timings).await?.ends_with(" · cancelled"));
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_hands_free_pause_is_recognized_early_and_reused_by_an_identical_recording()
+-> anyhow::Result<()> {
+    let mut h = Harness::paused(|ports| ports.delayed_finish = true)?;
+    receive(&h.loads).await?;
+    let (id, events) = h.start().await?;
+    assert_eq!(receive(&h.speculations).await?, id);
+    events.send(CaptureEvent::Paused(id, 0, vec![3])).await?;
+    h.transcribe_next_as("early text").await?;
+    h.input(Input::Toggle);
+    events
+        .send(CaptureEvent::Finished(id, Ok(Some(captured(Some(0))))))
+        .await?;
+    assert_eq!(receive(&h.pasted).await?, "early text");
+    h.phase(Phase::Done).await?;
+    assert!(
+        h.jobs.try_recv().is_err(),
+        "Identical audio was recognized twice"
+    );
+    assert!(receive(&h.timings).await?.contains(" · speculated · done"));
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn speech_after_a_pause_discards_its_text_for_the_recordings_own_request()
+-> anyhow::Result<()> {
+    let mut h = Harness::paused(|ports| ports.delayed_finish = true)?;
+    receive(&h.loads).await?;
+    let (id, events) = h.start().await?;
+    events.send(CaptureEvent::Paused(id, 0, vec![3])).await?;
+    h.transcribe_next_as("partial").await?;
+    h.input(Input::Toggle);
+    events
+        .send(CaptureEvent::Finished(id, Ok(Some(captured(None)))))
+        .await?;
+    h.transcribe_next_as("partial and more").await?;
+    assert_eq!(receive(&h.pasted).await?, "partial and more");
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_identical_recording_waits_for_its_running_speculation_or_falls_back_when_it_fails()
+-> anyhow::Result<()> {
+    let mut h = Harness::paused(|ports| ports.delayed_finish = true)?;
+    receive(&h.loads).await?;
+    let (id, events) = h.start().await?;
+    events.send(CaptureEvent::Paused(id, 0, vec![3])).await?;
+    let (_, speculation) = receive(&h.jobs).await?;
+    h.input(Input::Toggle);
+    events
+        .send(CaptureEvent::Finished(id, Ok(Some(captured(Some(0))))))
+        .await?;
+    h.phase(Phase::Processing).await?;
+    assert!(
+        still_pending(receive(&h.jobs)).await,
+        "Identical audio queued a request"
+    );
+    answer(speculation, "awaited")?;
+    assert_eq!(receive(&h.pasted).await?, "awaited");
+    h.phase(Phase::Done).await?;
+
+    let (id, events) = h.start().await?;
+    events.send(CaptureEvent::Paused(id, 0, vec![3])).await?;
+    let (_, speculation) = receive(&h.jobs).await?;
+    h.input(Input::Toggle);
+    events
+        .send(CaptureEvent::Finished(id, Ok(Some(captured(Some(0))))))
+        .await?;
+    h.phase(Phase::Processing).await?;
+    ensure!(speculation.send(Err(anyhow!("engine stopped"))).is_ok());
+    receive(&h.loads).await?;
+    h.transcribe_next_as("own request").await?;
+    assert_eq!(receive(&h.pasted).await?, "own request");
+    h.phase(Phase::Done).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_held_recording_never_speculates() -> anyhow::Result<()> {
+    let mut h = Harness::paused(|_| {})?;
+    receive(&h.loads).await?;
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    receive(&h.captures).await?;
+    assert!(h.speculations.try_recv().is_err());
+    h.input(Input::Lock);
+    receive(&h.speculations).await?;
     h.close().await
 }
 
@@ -981,7 +1094,7 @@ async fn warmup_failure_while_stopping_retains_capture_and_retries_on_demand() -
     assert!(h.captures.try_recv().is_err());
     assert!(h.loads.try_recv().is_err(), "Failed warmup must not loop");
     events
-        .send(CaptureEvent::Finished(id, Ok(Some(vec![1, 2]))))
+        .send(CaptureEvent::Finished(id, Ok(Some(captured(None)))))
         .await?;
     receive(&h.loads).await?;
     results.send(Ok(())).await?;

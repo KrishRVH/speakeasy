@@ -89,11 +89,17 @@ struct FixtureRecording {
 
 impl Recording for FixtureRecording {
     fn finish(&self) {
-        let finished = CaptureEvent::Finished(self.id, Ok(Some(self.wav.clone())));
+        let captured = Captured {
+            wav: self.wav.clone(),
+            speculated: None,
+        };
+        let finished = CaptureEvent::Finished(self.id, Ok(Some(captured)));
         self.events
             .try_send(finished)
             .expect("capture lane has room for fixture audio");
     }
+
+    fn speculate(&self) {}
 
     async fn retire(self) {}
 }

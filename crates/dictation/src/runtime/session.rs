@@ -37,6 +37,12 @@ pub(super) struct Session {
     pub meter_tick: u64,
     pub stage: Stage,
     pub timeline: Timeline,
+    /// The latest pause's audio, waiting for the worker to be free.
+    pub pending: Option<(u32, Vec<u8>)>,
+    /// The pause the worker is recognizing for this session.
+    pub speculating: Option<u32>,
+    /// The latest pause the worker has recognized, and its text.
+    pub speculated: Option<(u32, String)>,
 }
 
 impl Session {
@@ -48,6 +54,9 @@ impl Session {
             meter_tick: 0,
             stage: Stage::Queued,
             timeline: Timeline::new(pressed),
+            pending: None,
+            speculating: None,
+            speculated: None,
         }
     }
 
@@ -56,9 +65,10 @@ impl Session {
             Stage::Queued | Stage::Opening => Phase::Starting,
             Stage::Recording => Phase::Recording,
             Stage::Stopping => Phase::Stopping,
-            Stage::AwaitingWorker(_) | Stage::Transcribing | Stage::Inserting(_) => {
-                Phase::Processing
-            },
+            Stage::AwaitingWorker(_)
+            | Stage::AwaitingSpeculation(_)
+            | Stage::Transcribing
+            | Stage::Inserting(_) => Phase::Processing,
         }
     }
 
@@ -98,6 +108,36 @@ impl Session {
             self.stage = Stage::Stopping;
         }
     }
+
+    /// Holds a pause's audio for the worker, erasing the older pause it replaces.
+    pub(super) fn paused(&mut self, sequence: u32, wav: Vec<u8>) {
+        if let Some((_, mut older)) = self.pending.replace((sequence, wav)) {
+            older.fill(0);
+        }
+    }
+
+    /// Moves the sealed recording on and returns its text if a pause with identical audio was
+    /// already recognized. Otherwise it awaits that pause's recognition, or the worker.
+    pub(super) fn seal(&mut self, mut wav: Vec<u8>, speculated: Option<u32>) -> Option<String> {
+        if let Some((_, mut pending)) = self.pending.take() {
+            pending.fill(0);
+        }
+        let recognized = self.speculated.take();
+        match (speculated, recognized) {
+            (Some(sequence), Some((done, text))) if sequence == done => {
+                wav.fill(0);
+                Some(text)
+            },
+            (Some(sequence), _) if self.speculating == Some(sequence) => {
+                self.stage = Stage::AwaitingSpeculation(wav);
+                None
+            },
+            _ => {
+                self.stage = Stage::AwaitingWorker(wav);
+                None
+            },
+        }
+    }
 }
 
 pub(super) enum Stage {
@@ -109,6 +149,9 @@ pub(super) enum Stage {
     Stopping,
     /// Captured WAV awaiting a ready worker; zeroed, best effort, if the session is abandoned.
     AwaitingWorker(Vec<u8>),
+    /// The worker is recognizing a pause with identical audio; the WAV is the fallback if that
+    /// recognition fails.
+    AwaitingSpeculation(Vec<u8>),
     Transcribing,
     Inserting(InsertTask),
 }

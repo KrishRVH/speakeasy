@@ -128,15 +128,26 @@ pub(crate) enum CaptureEvent {
     /// Samples arrived; the capture thread took the duration to open and start the device.
     Ready(SessionId, Duration),
     Level(SessionId, f32),
-    Finished(SessionId, anyhow::Result<Option<Vec<u8>>>),
+    /// Speech paused; the WAV is what the recording would hold if it stopped now, numbered so the
+    /// finished recording can name an identical pause.
+    Paused(SessionId, u32, Vec<u8>),
+    Finished(SessionId, anyhow::Result<Option<Captured>>),
+}
+
+/// A finished recording's trimmed audio.
+pub(crate) struct Captured {
+    pub wav: Vec<u8>,
+    /// The pause whose audio is byte-for-byte this recording's, if any.
+    pub speculated: Option<u32>,
 }
 
 impl CaptureEvent {
     const fn session(&self) -> SessionId {
         match self {
-            Self::Ready(session, _) | Self::Level(session, _) | Self::Finished(session, _) => {
-                *session
-            },
+            Self::Ready(session, _)
+            | Self::Level(session, _)
+            | Self::Paused(session, ..)
+            | Self::Finished(session, _) => *session,
         }
     }
 }

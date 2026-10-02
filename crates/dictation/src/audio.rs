@@ -2,6 +2,7 @@
 //! allocating; the capture thread encodes them in place behind a reserved WAV header.
 
 mod control;
+mod speech;
 
 use std::{
     convert::Infallible,
@@ -23,10 +24,13 @@ use cpal::{
 use rtrb::{Consumer, Producer, RingBuffer};
 use speakeasy_core::gesture::RECORDING_LIMIT;
 
-use self::control::{Control, Mode};
+use self::{
+    control::{Control, Mode},
+    speech::Speech,
+};
 use crate::{
     ports::Recording,
-    runtime::{CaptureEvent, SessionId},
+    runtime::{CaptureEvent, Captured, SessionId},
 };
 
 const WAV_HEADER_BYTES: usize = 44;
@@ -36,13 +40,12 @@ const MAX_SAMPLE_RATE: u32 = 192_000;
 const MAX_CHANNELS: usize = 32;
 const INITIAL_RESERVATION: Duration = Duration::from_secs(10);
 const MINIMUM_RECORDING: Duration = Duration::from_millis(200);
-const ENERGY_WINDOW: Duration = Duration::from_millis(20);
-const MINIMUM_AUDIBLE: Duration = Duration::from_millis(100);
-const QUIET_EDGE: Duration = Duration::from_secs(1);
-const EDGE_PADDING: Duration = Duration::from_millis(500);
-const AUDIBLE_RMS: f64 = 0.003;
 const METER_INTERVAL: Duration = Duration::from_millis(32);
-const DRAIN_INTERVAL: Duration = Duration::from_millis(5);
+/// How often the consumer drains the ring until the first samples arrive, so startup feedback is
+/// prompt.
+const STARTUP_DRAIN: Duration = Duration::from_millis(5);
+/// How often it drains once audio flows: twice per meter interval, well inside the ring's second.
+const DRAIN_INTERVAL: Duration = Duration::from_millis(16);
 const METER_FLOOR_DBFS: f32 = -60.0;
 const METER_TOP_DBFS: f32 = -6.0;
 const RECLAIM_SLACK_BYTES: usize = 8 * 1024 * 1024;
@@ -71,7 +74,7 @@ impl Capture {
     fn spawn(
         id: SessionId,
         events: Sender<CaptureEvent>,
-        work: impl FnOnce(&Sender<CaptureEvent>, &Arc<Control>) -> anyhow::Result<Option<Vec<u8>>>
+        work: impl FnOnce(&Sender<CaptureEvent>, &Arc<Control>) -> anyhow::Result<Option<Captured>>
         + Send
         + 'static,
     ) -> anyhow::Result<Self> {
@@ -109,6 +112,10 @@ impl Capture {
 impl Recording for Capture {
     fn finish(&self) {
         self.signal.finish();
+    }
+
+    fn speculate(&self) {
+        self.signal.control.speculate();
     }
 
     fn retire(self) -> impl Future<Output = ()> + Send + 'static {
@@ -167,6 +174,9 @@ impl<E: Into<anyhow::Error>> From<E> for Startup {
 /// audio is erased first, then the stream stops before the device and host that opened it.
 struct Recorder {
     pcm: Pcm16,
+    speech: Speech,
+    /// The latest pause handed to the owner for speculative recognition.
+    pause: Option<Pause>,
     stream: Option<cpal::Stream>,
     ring: Consumer<f32>,
     errors: Receiver<cpal::Error>,
@@ -218,10 +228,13 @@ impl Recorder {
         checkpoint()?;
         // PCM stays at the device's native rate; the engine resamples.
         let pcm = Pcm16::with_reservation(samples_in(INITIAL_RESERVATION, rate));
+        let speech = Speech::new(rate).context("Unsupported microphone format")?;
         checkpoint()?;
         stream.play().map_err(microphone_error)?;
         Ok(Self {
             pcm,
+            speech,
+            pause: None,
             stream: Some(stream),
             ring,
             errors: stream_errors,
@@ -240,7 +253,7 @@ impl Recorder {
         opened: Duration,
         events: &Sender<CaptureEvent>,
         control: &Control,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
+    ) -> anyhow::Result<Option<Captured>> {
         let mut meter = LevelMeter::new();
         let mut ready = false;
         loop {
@@ -260,6 +273,10 @@ impl Recorder {
                 events.send_blocking(CaptureEvent::Ready(id, opened))?;
             }
             consume_pcm(&mut self.ring, &mut self.pcm, &mut meter, self.limit);
+            self.speech.extend(self.pcm.audio());
+            if control.speculating() {
+                self.offer_pause(id, events)?;
+            }
             if let Some(level) = meter.take_level() {
                 #[expect(
                     clippy::let_underscore_must_use,
@@ -272,24 +289,66 @@ impl Recorder {
             }
             // Finish and cancel unpark this thread at once, and an unpark that lands before the
             // wait is not lost; the timeout only paces draining of the ring.
-            thread::park_timeout(DRAIN_INTERVAL);
+            thread::park_timeout(if ready { DRAIN_INTERVAL } else { STARTUP_DRAIN });
         }
         self.finalize(control)
     }
 
-    fn finalize(mut self, control: &Control) -> anyhow::Result<Option<Vec<u8>>> {
+    /// Hands a copy of the audio up to a pause to the owner, which may recognize it before the
+    /// recording ends. A full event lane forgoes this pause rather than blocking capture.
+    fn offer_pause(&mut self, id: SessionId, events: &Sender<CaptureEvent>) -> anyhow::Result<()> {
+        let Some(range) = self.speech.pause() else {
+            return Ok(());
+        };
+        let Some(sequence) = self
+            .pause
+            .as_ref()
+            .map_or(Some(0), |pause| pause.sequence.checked_add(1))
+        else {
+            return Ok(());
+        };
+        let wav = self.pcm.excerpt(range.clone(), self.rate)?;
+        if events
+            .try_send(CaptureEvent::Paused(id, sequence, wav))
+            .is_ok()
+        {
+            self.pause = Some(Pause { sequence, range });
+        }
+        Ok(())
+    }
+
+    fn finalize(mut self, control: &Control) -> anyhow::Result<Option<Captured>> {
         if control.mode() == Mode::Cancelled {
             return Ok(None);
         }
         // A callback may have failed between the last poll and stream teardown.
         capture_failure(control, &self.errors)?;
-        if self.pcm.samples() < samples_in(MINIMUM_RECORDING, self.rate)
-            || !self.pcm.trim_quiet_edges(self.rate)
-        {
+        self.speech.complete(self.pcm.audio());
+        let retained = self.speech.retained(self.pcm.audio().len());
+        let Some(range) =
+            retained.filter(|_| self.pcm.samples() >= samples_in(MINIMUM_RECORDING, self.rate))
+        else {
             return Ok(None);
-        }
-        self.pcm.into_wav(self.rate).map(Some)
+        };
+        // Speech that resumed after the latest pause moves the range, so the pause's audio and
+        // this recording's are identical exactly when their ranges are.
+        let speculated = self
+            .pause
+            .take()
+            .filter(|pause| pause.range == range)
+            .map(|pause| pause.sequence);
+        self.pcm.keep(range);
+        Ok(Some(Captured {
+            wav: self.pcm.into_wav(self.rate)?,
+            speculated,
+        }))
     }
+}
+
+/// A pause whose audio the owner received.
+struct Pause {
+    sequence: u32,
+    range: Range<usize>,
 }
 
 /// Mono PCM16 behind a reserved WAV header, so encoding never copies the audio. Audio that is not
@@ -332,44 +391,38 @@ impl Pcm16 {
         self.bytes.extend_from_slice(&sample.to_le_bytes());
     }
 
-    /// Trims quiet edges conservatively, keeping every interior pause, and reports whether enough
-    /// audible audio remains to transcribe.
-    fn trim_quiet_edges(&mut self, rate: u32) -> bool {
-        if !(1..=MAX_SAMPLE_RATE).contains(&rate) {
-            return false;
-        }
-        let window_bytes = bytes_in(samples_in(ENERGY_WINDOW, rate).max(1));
-        let quiet_edge = bytes_in(samples_in(QUIET_EDGE, rate));
-        let padding = bytes_in(samples_in(EDGE_PADDING, rate));
-        let audio = self.audio();
-        let mut first = None;
-        let mut end = 0;
-        let mut audible = 0_usize;
-        for (index, window) in audio.chunks(window_bytes).enumerate() {
-            if is_audible(window) {
-                let offset = index.saturating_mul(window_bytes);
-                first.get_or_insert(offset);
-                end = offset.saturating_add(window.len());
-                audible = audible.saturating_add(window.len() / SAMPLE_BYTES);
-            }
-        }
-        let minimum_audible = samples_in(MINIMUM_AUDIBLE, rate).max(1);
-        let Some(first) = first.filter(|_| audible >= minimum_audible) else {
-            return false;
-        };
-        let start = if first >= quiet_edge {
-            first.saturating_sub(padding)
-        } else {
-            0
-        };
-        let end = if audio.len().saturating_sub(end) >= quiet_edge {
-            end.saturating_add(padding).min(audio.len())
-        } else {
-            audio.len()
-        };
-        self.retain_audio(start..end);
+    /// Keeps only `audio`, releasing a reservation the remainder no longer needs.
+    fn keep(&mut self, audio: Range<usize>) {
+        self.retain_audio(audio);
         self.release_excess_capacity();
+    }
+
+    /// Trims quiet edges as a recording stopped now would, and reports whether enough audible audio
+    /// remains to transcribe.
+    #[cfg(test)]
+    fn trim_quiet_edges(&mut self, rate: u32) -> bool {
+        let Some(mut speech) = Speech::new(rate) else {
+            return false;
+        };
+        speech.complete(self.audio());
+        let Some(range) = speech.retained(self.audio().len()) else {
+            return false;
+        };
+        self.keep(range);
         true
+    }
+
+    /// A WAV holding a copy of `audio`.
+    fn excerpt(&self, audio: Range<usize>, rate: u32) -> anyhow::Result<Vec<u8>> {
+        let audio = self
+            .audio()
+            .get(audio)
+            .context("Pause lies outside the recording")?;
+        let header = wav_header(audio.len(), rate).context("Recording format is unsupported")?;
+        let mut wav = Vec::with_capacity(WAV_HEADER_BYTES.saturating_add(audio.len()));
+        wav.extend_from_slice(&header);
+        wav.extend_from_slice(audio);
+        Ok(wav)
     }
 
     fn retain_audio(&mut self, audio: Range<usize>) {
@@ -471,7 +524,7 @@ fn record(
     microphone: Option<&str>,
     events: &Sender<CaptureEvent>,
     control: &Arc<Control>,
-) -> anyhow::Result<Option<Vec<u8>>> {
+) -> anyhow::Result<Option<Captured>> {
     let begun = Instant::now();
     match Recorder::open(microphone, events, control) {
         Ok(recorder) => recorder.record(id, begun.elapsed(), events, control),
@@ -674,19 +727,6 @@ fn consume_pcm(ring: &mut Consumer<f32>, pcm: &mut Pcm16, meter: &mut LevelMeter
 fn speech_meter_level(rms: f32) -> f32 {
     let above_floor = 20.0_f32.mul_add(rms.max(0.000_001).log10(), -METER_FLOOR_DBFS);
     (above_floor / (METER_TOP_DBFS - METER_FLOOR_DBFS)).clamp(0.0, 1.0)
-}
-
-fn is_audible(window: &[u8]) -> bool {
-    let energy = window
-        .as_chunks::<SAMPLE_BYTES>()
-        .0
-        .iter()
-        .map(|pair| u64::from(i16::from_le_bytes(*pair).unsigned_abs()).pow(2))
-        // A 20 ms window at 192 kHz holds at most 3840 samples, whose squares sum below 2^42, so
-        // wrapping addition is exact and lets the compiler vectorize it.
-        .fold(0_u64, u64::wrapping_add);
-    let samples = window.len() / SAMPLE_BYTES;
-    energy as f64 / (32768.0 * 32768.0) >= AUDIBLE_RMS.powi(2) * samples as f64
 }
 
 /// The canonical header for `data_bytes` of mono PCM16, if they can be described.

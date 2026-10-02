@@ -27,6 +27,12 @@ impl<R: Recording> Microphone<R> {
         }
     }
 
+    pub(super) fn speculate(&self) {
+        if let Self::Open(recording) = self {
+            recording.speculate();
+        }
+    }
+
     pub(super) fn retire(&mut self) {
         *self = match mem::take(self) {
             Self::Open(recording) => Self::Retiring(tokio::spawn(recording.retire())),

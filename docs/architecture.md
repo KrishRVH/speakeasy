@@ -139,11 +139,24 @@ native discontinuity before the first sample is queued does not abort startup. A
 discontinuity fails the recording rather than silently transcribing potentially incomplete speech.
 Refused real-time priority and automatic route changes keep the stream active. Fatal stream errors
 return through a bounded, nonblocking channel with their driver details, while a full application
-ring has a separate error. After stopping, it requires 100 ms of audible 20 ms windows, trims quiet
-edges of at least one second while retaining 500 ms padding, and preserves interior pauses. WAV
-preparation stays off the UI. The native acceptance procedure is in
+ring has a separate error. The consumer drains the ring every 5 ms until the first samples arrive,
+then every 16 ms; Finish and Cancel wake it at once. It classifies each 20 ms window as audible or
+quiet once, as audio arrives. After stopping, it requires 100 ms of audible windows, trims leading
+quiet of at least one second and trailing quiet beyond 500 ms of padding, and preserves interior
+pauses. WAV preparation stays off the UI. The native acceptance procedure is in
 [performance](performance.md#native-acceptance). Heavily trimmed recordings release excess PCM
 capacity when at least 8 MiB is unused and capacity is at least four times the remaining length.
+
+Hands-free recordings speculate. Once new speech has been followed by 500 ms of quiet, the consumer
+copies the audio a recording stopped at that moment would keep and reports it as a numbered pause;
+the owner recognizes the latest pause whenever the warm worker is idle, never loading one for it.
+Because the same window classification trims both, the finished recording's audio is byte-for-byte
+the latest pause's exactly when their kept ranges match, and the capture names that pause. The owner
+then inserts the pause's text, or waits for its running recognition, instead of requesting another.
+Speech after a pause moves the range, so that pause's text is discarded and the recording makes its
+own request, waiting behind any running speculation. A failed or cancelled speculation sends an
+identical recording to its own request. Held recordings never speculate: the shortcut's release
+follows the last word too closely to benefit, and a speculation could delay the final request.
 
 ## Setup
 

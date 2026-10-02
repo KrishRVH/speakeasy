@@ -28,6 +28,11 @@ pub(super) struct Control {
         reason = "Native data and error callbacks distinguish a startup discontinuity from lost recorded speech"
     )]
     first_sample_queued: AtomicBool,
+    #[expect(
+        clippy::disallowed_types,
+        reason = "The owner enables pause excerpts for the running consumer, which it reaches only through this shared control"
+    )]
+    speculating: AtomicBool,
 }
 
 impl Control {
@@ -63,5 +68,14 @@ impl Control {
 
     pub(super) fn first_sample_queued(&self) -> bool {
         self.first_sample_queued.load(Ordering::Acquire)
+    }
+
+    /// Asks the consumer to offer the audio up to each pause for speculative recognition.
+    pub(super) fn speculate(&self) {
+        self.speculating.store(true, Ordering::Release);
+    }
+
+    pub(super) fn speculating(&self) -> bool {
+        self.speculating.load(Ordering::Acquire)
     }
 }

@@ -21,6 +21,9 @@ pub(crate) trait Recording: Send + 'static {
     /// Requests the end of capture; the recording then reports `CaptureEvent::Finished`.
     fn finish(&self);
 
+    /// Asks the recording to report `CaptureEvent::Paused` with its audio at each pause in speech.
+    fn speculate(&self);
+
     /// Cancels capture; resolves only once the device has been released.
     fn retire(self) -> impl Future<Output = ()> + Send + 'static;
 }
