@@ -139,12 +139,9 @@ mod tests {
         assert_eq!(open.recv().unwrap(), Mode::Recording);
         control.finish();
         let (quiesced, done) = mpsc::channel();
-        let consumer = thread::spawn({
-            let control = control.clone();
-            move || {
-                control.quiesce();
-                quiesced.send(()).unwrap();
-            }
+        let consumer = thread::spawn(move || {
+            control.quiesce();
+            quiesced.send(()).unwrap();
         });
         assert!(
             done.recv_timeout(Duration::from_millis(50)).is_err(),
