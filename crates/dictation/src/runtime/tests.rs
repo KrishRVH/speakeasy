@@ -1258,7 +1258,11 @@ async fn an_abandoned_gpu_transcription_finishes_unobserved_on_its_warm_worker()
     let (_, abandoned) = receive(&h.jobs).await?;
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
-    assert_eq!(h.snapshot().model, ModelState::Ready, "The warm model looked unloaded");
+    assert_eq!(
+        h.snapshot().model,
+        ModelState::Ready,
+        "The warm model looked unloaded"
+    );
     answer(abandoned, "discarded")?;
     let (id, events) = h.start().await?;
     events.send(CaptureEvent::Paused(id, 0, vec![4])).await?;

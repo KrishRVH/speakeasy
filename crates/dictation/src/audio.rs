@@ -586,11 +586,7 @@ impl Recorder {
             if due.is_some_and(|due| held >= due) {
                 continue;
             }
-            thread::park_timeout(if ready {
-                DRAIN_INTERVAL
-            } else {
-                STARTUP_DRAIN
-            });
+            thread::park_timeout(if ready { DRAIN_INTERVAL } else { STARTUP_DRAIN });
         }
     }
 

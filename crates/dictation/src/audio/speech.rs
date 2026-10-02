@@ -286,7 +286,10 @@ mod tests {
         speech.extend(&pcm[..due - 2]);
         assert_eq!(speech.pause(), None);
         speech.extend(&pcm[..due]);
-        assert!(speech.pause().is_some(), "The mark was not reported where it fell due");
+        assert!(
+            speech.pause().is_some(),
+            "The mark was not reported where it fell due"
+        );
     }
 
     #[test]

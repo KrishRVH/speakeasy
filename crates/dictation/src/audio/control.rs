@@ -152,7 +152,10 @@ mod tests {
         control.wake_at(Some(480));
         assert!(!control.reached_wake(479));
         assert!(control.reached_wake(512));
-        assert!(!control.reached_wake(1024), "One request woke the consumer twice");
+        assert!(
+            !control.reached_wake(1024),
+            "One request woke the consumer twice"
+        );
         control.wake_at(None);
         assert!(!control.reached_wake(usize::MAX - 1));
     }
