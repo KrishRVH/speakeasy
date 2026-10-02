@@ -87,10 +87,14 @@ unified memory until **Pause** releases it. The model is by NVIDIA, under
 speech**, choose its executable and model, and save; switching is always explicit. Turn off **Prefer
 GPU** for a CPU-only build. The `threads` setting applies to Whisper and defaults to four.
 
+Parakeet runs in Speakeasy's own helper process, which loads the engine installation's library and
+receives audio over a pipe; an installation without that library runs the engine's server instead.
 The worker stays warm. With the GPU, one silent request initializes its kernels before the first
-dictation. Cancelling GPU work keeps a healthy worker and replaces it if a two-second recovery check
-fails. Cancelling active CPU inference replaces the worker. **Pause dictation** releases the
-shortcut and the model. Relative engine and model paths resolve beside the settings file.
+dictation. In hands-free dictation on the GPU, Speakeasy recognizes the audio so far whenever you
+pause, so when you stop without saying more, the text is often ready at once. Cancelling GPU work
+keeps a healthy worker and replaces it if a two-second recovery check fails. Cancelling active CPU
+inference replaces the worker. **Pause dictation** releases the shortcut and the model. Relative
+engine and model paths resolve beside the settings file.
 
 ## Everyday use
 
