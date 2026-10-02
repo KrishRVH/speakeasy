@@ -17,6 +17,7 @@ mod setup;
 mod shell;
 mod status;
 mod theme;
+mod transcript;
 mod tray;
 
 use std::{

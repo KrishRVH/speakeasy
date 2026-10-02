@@ -35,7 +35,10 @@ slot on screen while you speak, and keeps every word on your machine.
 The shortcuts match Wispr Flow's defaults, and double-tapping the shortcut also starts hands-free.
 On Mac, set **System Settings › Keyboard › Press 🌐 key to** to **Do Nothing** so Fn only dictates.
 Recordings stop at five minutes, with a countdown for the last 30 seconds. A check means the text
-was submitted to your app; **No speech detected** means nothing was sent.
+was submitted to your app; **No speech detected** means nothing was sent. **Remove um / uh** is on
+by default and removes standalone English hesitation words locally before insertion. Speech
+containing only these fillers sends nothing. Turn it off for non-English Parakeet dictation or
+literal transcription; Whisper removes fillers only when its language is set to English.
 
 ## What's said here stays here
 
@@ -43,7 +46,7 @@ was submitted to your app; **No speech detected** means nothing was sent.
   downloads the engine and model once; nothing is uploaded.
 - The microphone opens only while you dictate. Audio, transcripts, and engine output are never
   logged.
-- There are no accounts, cloud providers, telemetry, automatic editing, or transcript history.
+- There are no accounts, cloud providers, telemetry, or transcript history.
 
 ## Get started
 
@@ -96,11 +99,11 @@ GPUI's X11 build needs ALSA, fontconfig, X11/XCB, xkbcommon, and Vulkan developm
 
 </details>
 
-Settings also choose the microphone, GPU use, clipboard behavior, reduced motion, and theme: **Jet &
-Champagne**, **Emerald Lounge**, **Iris**, or **Midnight Chrome**. Changes apply when you save.
-Appearance, microphone, and language changes keep the model loaded. Saving stays responsive and
-preserves edits made while the save is running. Pausing during a save keeps dictation paused; Quit
-finishes requested saves.
+Settings also choose the microphone, GPU use, filler removal, clipboard behavior, reduced motion,
+and theme: **Jet & Champagne**, **Emerald Lounge**, **Iris**, or **Midnight Chrome**. Changes apply
+when you save. Appearance, microphone, language, and filler removal changes keep the model loaded.
+Saving stays responsive and preserves edits made while the save is running. Pausing during a save
+keeps dictation paused; Quit finishes requested saves.
 
 ## Linux (experimental)
 

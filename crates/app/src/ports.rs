@@ -24,7 +24,7 @@ pub(crate) trait Recording: Send + 'static {
 }
 
 pub(crate) trait Speech: Send + Sync + 'static {
-    /// Returns insertion-ready text: engine segment breaks become single spaces, never Enter.
+    /// Returns raw engine text. The worker applies transcript cleanup before insertion.
     fn transcribe(
         &self,
         wav: Vec<u8>,

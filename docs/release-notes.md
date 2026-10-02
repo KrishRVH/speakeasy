@@ -1,30 +1,20 @@
 # Release notes
 
-Speakeasy 0.3.2 brings the codebase to an idiomatic Rust standard, gives every thread, process, and
-native event loop one explicit owner, and fixes small Settings, pill, Linux, and error-reporting
-issues.
+Speakeasy 0.3.3 removes standalone English “um” and “uh” locally before inserting dictation.
 
-- Keep keyboard focus on a Settings button when its label changes, such as a toggle switching
-  between On and Off. A restarted setup shows its own progress rather than the paused attempt's, and
-  Settings shows its status from the first frame.
-- Show the newest audio level at the center of the pill's grille for every bar count, including
-  while the capsule resizes.
-- Report a failed capture thread as "Microphone stopped unexpectedly. Try recording again." instead
-  of leaving the session finishing. Zero unencoded recording audio whenever its buffer is released.
-- On Linux, let specific desktop-access errors, such as a keyboard mapping change, reach Settings
-  instead of a generic stop message. Wayland manual paste asks you to release the shortcut and
-  paste, and `--help` lists `--toggle` and `--cancel`. Error dialogs include their cause.
-- Own background threads, native input monitors, and engine processes through shared helpers that
-  join, wake, or kill and reap them before replacement. Split Settings, the pill, and the tray into
-  focused modules; share pill geometry, shortcuts, and service state from the platform crate; and
-  use typed AppKit calls on macOS. Windows and macOS insertion share one pre-commit check.
+- **Remove um / uh** is enabled by default. Turn it off in Settings for literal transcription or
+  non-English Parakeet dictation. Saving this preference keeps the model loaded.
+- Both speech engines share a linear cleanup pass with at most one output allocation. Cleanup
+  handles case and pause punctuation, preserves compounds and individually quoted tokens, and sends
+  nothing for filler-only recognition.
+- Whisper removes fillers only with its language set to English. Automatic and other language
+  requests preserve literal words. Parakeet detects languages automatically; its cleanup switch
+  expresses your English dictation preference.
 
-Windows x64 and Apple silicon macOS zip packages, plus Linux x86_64 AppImage and bundled tar
-packages, are attached with SHA-256 checksums. Existing settings, engines, models, dictation
-gestures, recognition policy, and the five-minute recording limit are preserved.
+Existing settings, engines, models, and dictation gestures are preserved. Recordings retain the
+five-minute limit. Audio and recognition stay local, with no transcript history or uploads.
 
-Linux remains experimental. This release changes native adapters on all three platforms; CI builds,
-lints, and tests them natively and runs owned-window rendering checks, while live microphone,
-keyboard-hook, clipboard/editor, and compositor acceptance remain separate. Forced native
-termination retains synchronous cleanup. Current contracts and measurement limits are in
-[architecture](architecture.md) and [performance](performance.md).
+Windows x64 and Apple silicon macOS zip packages, plus experimental Linux x86_64 AppImage and
+bundled tar packages, are attached with SHA-256 checksums. CI verifies all three platforms and runs
+owned-window rendering checks. Live microphone, keyboard-hook, clipboard/editor, and compositor
+acceptance remain separate; see [architecture](architecture.md) and [performance](performance.md).

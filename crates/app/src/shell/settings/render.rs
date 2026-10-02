@@ -238,12 +238,32 @@ impl Settings {
                     .child(self.switch("Keep clipboard", Setting::KeepClipboard, palette, cx))
                     .child(self.switch("Reduce motion", Setting::ReduceMotion, palette, cx)),
             )
-            .child(div().flex().child(button(
-                format!("Theme: {}", self.config.theme.name()),
-                Action::Theme,
-                palette,
-                cx,
-            )))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(8.0))
+                    .child(self.switch("Remove um / uh", Setting::RemoveFillers, palette, cx))
+                    .child(button(
+                        format!("Theme: {}", self.config.theme.name()),
+                        Action::Theme,
+                        palette,
+                        cx,
+                    )),
+            )
+            .child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(palette.muted))
+                    .child(
+                        if self.config.engine == Engine::Whisper
+                            && !self.config.language.eq_ignore_ascii_case("en")
+                        {
+                            "Select English to remove um / uh."
+                        } else {
+                            "English fillers. Turn off when dictating other languages."
+                        },
+                    ),
+            )
     }
 
     /// A button that toggles `setting`, labeled with its draft state.

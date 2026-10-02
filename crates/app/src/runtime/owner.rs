@@ -452,10 +452,7 @@ impl<P: Ports> Owner<P> {
         if self.worker.revive(&self.ports, &self.config) {
             self.notice = Some(Notice::LoadingModel);
         }
-        match self
-            .worker
-            .transcribe(mem::take(wav), &self.config.language)
-        {
+        match self.worker.transcribe(mem::take(wav), &self.config) {
             Ok(()) => session.stage = Stage::Transcribing,
             Err(unclaimed) => *wav = unclaimed,
         }

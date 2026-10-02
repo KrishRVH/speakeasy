@@ -13,8 +13,9 @@ use tokio::{
 
 use super::ModelState;
 use crate::{
-    config::Config,
+    config::{Config, Engine},
     ports::{Ports, STARTUP_CANCELLED, Speech},
+    transcript::{self, Fillers},
 };
 
 /// How long a recovering worker may take to answer a silent request.
@@ -106,7 +107,7 @@ impl<W: Speech> Worker<W> {
     }
 
     /// Starts transcribing on a ready worker, or hands the audio back.
-    pub(super) fn transcribe(&mut self, wav: Vec<u8>, language: &str) -> Result<(), Vec<u8>> {
+    pub(super) fn transcribe(&mut self, wav: Vec<u8>, config: &Config) -> Result<(), Vec<u8>> {
         let mut worker = match mem::take(self) {
             Self::Ready(worker) => worker,
             other => {
@@ -114,12 +115,23 @@ impl<W: Speech> Worker<W> {
                 return Err(wav);
             },
         };
-        let language = language.to_owned();
+        let language = config.language.clone();
+        // Parakeet auto-detects without returning its language, so its user-selected English
+        // cleanup preference is authoritative. Whisper's explicit non-English/auto choice wins.
+        let fillers = if config.remove_fillers
+            && (config.engine == Engine::Parakeet || language.eq_ignore_ascii_case("en"))
+        {
+            Fillers::Remove
+        } else {
+            Fillers::Preserve
+        };
         *self = Self::Transcribing(Job::spawn(|mut cancelled| async move {
             let transcript = tokio::select! {
                 biased;
                 _ = cancelled.changed() => Ok(Transcript::Cancelled),
-                result = worker.transcribe(wav, &language) => result.map(Transcript::Text),
+                result = worker.transcribe(wav, &language) => {
+                    result.map(|text| Transcript::Text(transcript::for_insertion(&text, fillers)))
+                },
             };
             match transcript {
                 Ok(transcript) => Ok((worker, transcript)),

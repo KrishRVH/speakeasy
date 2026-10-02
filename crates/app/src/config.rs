@@ -32,6 +32,10 @@ impl Engine {
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Each flag persists an independent user preference that can be toggled separately"
+)]
 pub(crate) struct Config {
     #[serde(default, skip_serializing_if = "LinuxSettings::is_default")]
     pub linux: LinuxSettings,
@@ -43,9 +47,11 @@ pub(crate) struct Config {
     pub model: PathBuf,
     #[serde(default = "default_language")]
     pub language: String,
+    #[serde(default = "default_enabled")]
+    pub remove_fillers: bool,
     #[serde(default = "default_threads")]
     pub threads: u16,
-    #[serde(default = "default_use_gpu")]
+    #[serde(default = "default_enabled")]
     pub use_gpu: bool,
     #[serde(default)]
     pub reduced_motion: bool,
@@ -170,8 +176,9 @@ impl Default for Config {
             engine_executable: PathBuf::new(),
             model: PathBuf::new(),
             language: default_language(),
+            remove_fillers: default_enabled(),
             threads: default_threads(),
-            use_gpu: default_use_gpu(),
+            use_gpu: default_enabled(),
             reduced_motion: false,
             preserve_clipboard: false,
             theme: Theme::default(),
@@ -231,7 +238,7 @@ fn default_threads() -> u16 {
     4
 }
 
-fn default_use_gpu() -> bool {
+fn default_enabled() -> bool {
     true
 }
 

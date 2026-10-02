@@ -8,7 +8,7 @@ gpui = { path = "vendor/gpui" }
 gpui_media = { path = "vendor/gpui_media" }
 
 [workspace.package]
-version = "0.3.2"
+version = "0.3.3"
 edition = "2024"
 rust-version = "1.98.1"
 publish = false

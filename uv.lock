@@ -118,7 +118,7 @@ wheels = [
 
 [[package]]
 name = "speakeasy-tooling"
-version = "0.3.2"
+version = "0.3.3"
 source = { virtual = "." }
 
 [package.dev-dependencies]

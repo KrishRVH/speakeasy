@@ -687,10 +687,91 @@ async fn silence_and_empty_recognition_never_report_submission() -> anyhow::Resu
     h.phase(Phase::Empty).await?;
     assert!(h.jobs.try_recv().is_err());
     assert!(h.pasted.try_recv().is_err());
-    h.start().await?;
-    h.finish_as("").await?;
-    h.phase(Phase::Empty).await?;
-    assert!(h.pasted.try_recv().is_err());
+    for text in ["", "\t\r\n", "Um, uh. UM!"] {
+        h.start().await?;
+        h.finish_as(text).await?;
+        h.phase(Phase::Empty).await?;
+        assert!(h.pasted.try_recv().is_err());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn both_engines_clean_fillers_before_native_insertion() -> anyhow::Result<()> {
+    for (engine, language) in [
+        (Engine::Whisper, "en"),
+        (Engine::Parakeet, "en"),
+        (Engine::Parakeet, "auto"),
+        (Engine::Parakeet, "de"),
+    ] {
+        // Omitted cleanup preferences in persisted settings default to enabled.
+        let config = serde_json::from_value(serde_json::json!({
+            "engine": engine,
+            "engine_executable": "",
+            "model": "",
+            "language": language,
+        }))?;
+        let mut h = Harness::with_ports(config, |_| {})?;
+        h.start().await?;
+        h.finish_as("\nUm, bring, uh, the umbrella.\n").await?;
+        assert_eq!(receive(&h.pasted).await?, "bring the umbrella.");
+        h.phase(Phase::Done).await?;
+        assert!(h.pasted.try_recv().is_err());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn saved_cleanup_opt_out_keeps_words_and_worker() -> anyhow::Result<()> {
+    for engine in [Engine::Whisper, Engine::Parakeet] {
+        let mut config = Config {
+            engine,
+            ..Config::default()
+        };
+        let mut h = Harness::with_ports(config.clone(), |_| {})?;
+        receive(&h.loads).await?;
+        h.start().await?;
+        h.finish_as("Um, speak uh clearly.").await?;
+        assert_eq!(receive(&h.pasted).await?, "speak clearly.");
+        h.phase(Phase::Done).await?;
+        config.remove_fillers = false;
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("settings.json");
+        config.save(&path)?;
+        h.runtime.configure(Config::read(&path)?);
+        h.input(Input::Cancel);
+        h.phase(Phase::Idle).await?;
+        h.start().await?;
+        h.finish_as("\nUm, speak uh literally.\n").await?;
+        assert_eq!(receive(&h.pasted).await?, "Um, speak uh literally.");
+        h.phase(Phase::Done).await?;
+        assert!(
+            h.loads.try_recv().is_err(),
+            "Changing cleanup reloaded the model"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn whisper_non_english_and_auto_requests_preserve_literal_words() -> anyhow::Result<()> {
+    for (language, text) in [
+        ("de", "Es geht um den Bericht."),
+        ("pt", "Preciso de um relatório."),
+        ("auto", "Um, keep uh every word."),
+    ] {
+        let mut h = Harness::with_ports(
+            Config {
+                language: language.into(),
+                ..Config::default()
+            },
+            |_| {},
+        )?;
+        h.start().await?;
+        h.finish_as(text).await?;
+        assert_eq!(receive(&h.pasted).await?, text);
+        h.phase(Phase::Done).await?;
+    }
     Ok(())
 }
 
