@@ -86,6 +86,11 @@ impl ConfigState {
 }
 
 fn main() {
+    let mut arguments = std::env::args_os().skip(1);
+    // The speech helper is this executable re-run by the session owner; it never starts AppKit.
+    if arguments.next().as_deref() == Some(std::ffi::OsStr::new(speakeasy_dictation::HELPER_FLAG)) {
+        speakeasy_dictation::run_helper(arguments);
+    }
     if let Err(error) = run() {
         speakeasy_platform::show_error(&format!("{error:#}"));
     }

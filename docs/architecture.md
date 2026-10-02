@@ -30,7 +30,7 @@ flowchart LR
 | `runtime/session.rs`, `microphone.rs`, `worker.rs`              | Session authority and presentation stages; one open or retiring microphone; one ready worker or owned load/inference/recovery job.                                |
 | `crates/platform/src/keyboard.rs`, `monitor.rs`, `insertion.rs` | Portable Fn decisions, stop coordination for the tap's run loop, and insertion eligibility; the native adapter collects facts and submits effects.                |
 | `dictation/src/audio.rs`, `audio/control.rs`                    | CPAL capture, typed callback control, bounded ring, audio levels, speech gate, quiet-edge trimming, and five-minute recording limit.                              |
-| `dictation/src/local_speech.rs`                                 | Warm Whisper or Parakeet process, loopback HTTP, bounded responses, and cancellation recovery.                                                                    |
+| `dictation/src/local_speech.rs` and `local_speech/`             | The warm engine process: the Parakeet helper over pipes, or an engine's HTTP server; bounded replies and cancellation recovery.                                   |
 | `dictation/src/transcript.rs`                                  | Linear transcript whitespace and filler cleanup before insertion. |
 | `dictation/src/ports.rs`                                        | Capture, speech, and insertion interfaces used by the session owner and unattended fixtures.                                                                      |
 | `dictation/src/setup.rs`                                        | Automatic setup: the Metal engine build checked by its own doctor, pinned resumable downloads, and extraction.                                                    |
@@ -165,9 +165,19 @@ are removed. The result is saved like a manual choice and enables dictation.
 ## Local recognition
 
 The configured `engine_executable` and model select one explicitly chosen engine: Parakeet, on the
-GPU or CPU, or Whisper. These are external native inference processes; the desktop application is
-Rust. Audio is posted from memory to the owned worker on loopback, through a client without proxies
-or redirects. Worker output and transcripts are not retained in diagnostic logs.
+GPU or CPU, or Whisper. Worker output and transcripts are not retained in diagnostic logs.
+
+Parakeet runs in a helper: this executable re-run with `--speech-helper`, which loads the configured
+installation's `lib/libnemo_speech_asr_c.1.dylib` and the model through the engine's stable C ABI,
+never starting AppKit. One parent task owns the helper's pipes. It writes each recording's PCM16
+samples behind an eight-byte rate and length header and reads back a status byte and UTF-8 text, so
+the reply to an abandoned request is read and discarded rather than mistaken for the next one. The
+helper scales samples by 1/32768 exactly as the engine's WAV reader does, so it sees the same input
+as the HTTP route. It answers on a private copy of standard output, with descriptor 1 redirected to
+standard error, so a library that prints cannot corrupt a reply. Closing its standard input, as the
+parent's death does, ends the helper at once even during inference. Whisper, and a Parakeet
+installation without the C library, run the engine's own HTTP server; audio is posted from memory on
+loopback, through a client without proxies or redirects.
 
 Model loading starts in the background. GPU preference adds a silent warmup request before
 readiness. Whisper language travels with each request, so a
@@ -236,16 +246,16 @@ performance gaps are in [performance](performance.md).
 
 ### Change and test map
 
-| Change                                          | Read first                                                     | Relevant default checks                                                                                                   |
-| ----------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Gestures, deadlines, startup, cancellation      | `runtime/owner.rs`, `session.rs`, `microphone.rs`, `worker.rs` | `runtime/tests.rs` drives the production owner; paused Tokio time tests the same deadlines used in production.            |
-| Device errors, callback limits, PCM preparation | `audio.rs`, `audio/control.rs`, `ports.rs`                     | Synthetic samples check callback budgets, cancellation, checked WAV encoding, and controlled thread teardown.             |
-| Pause, reconfigure, quit, delayed saves         | `shell/services.rs`, `lifecycle.rs`, `shutdown.rs`, `save.rs`  | Lifecycle and save tests check terminal quit, latest pending configuration, ordered writes, and later edits/Pause.        |
-| Keyboard policy                                 | `platform/keyboard.rs`, `platform/macos.rs`                    | Pure key decisions run on every host; the native event tap requires opt-in.                                               |
-| Insertion                                       | `platform/insertion.rs`, `InsertPermit`, `platform/macos.rs`   | Eligibility, cancellation/commit, and partial key submission.                                                             |
-| Engine startup/recovery                         | `local_speech.rs`, `runtime/worker.rs`, `platform/speech.rs`   | Controlled process exit/cancellation, fake worker retirement, and the C ABI's struct layouts; public fixtures are opt-in. |
-| Dependency patches                              | Each vendor `README.speakeasy.md`                              | Portable GPUI fixtures plus the macOS rendering check.                                                                    |
-| Profiling and packaging                         | `scripts/profile_macos.py`, `scripts/package-macos.sh`         | Public `ps`/`vmmap` fixtures under an explicit clock.                                                                     |
+| Change                                          | Read first                                                     | Relevant default checks                                                                                            |
+| ----------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Gestures, deadlines, startup, cancellation      | `runtime/owner.rs`, `session.rs`, `microphone.rs`, `worker.rs` | `runtime/tests.rs` drives the production owner; paused Tokio time tests the same deadlines used in production.     |
+| Device errors, callback limits, PCM preparation | `audio.rs`, `audio/control.rs`, `ports.rs`                     | Synthetic samples check callback budgets, cancellation, checked WAV encoding, and controlled thread teardown.      |
+| Pause, reconfigure, quit, delayed saves         | `shell/services.rs`, `lifecycle.rs`, `shutdown.rs`, `save.rs`  | Lifecycle and save tests check terminal quit, latest pending configuration, ordered writes, and later edits/Pause. |
+| Keyboard policy                                 | `platform/keyboard.rs`, `platform/macos.rs`                    | Pure key decisions run on every host; the native event tap requires opt-in.                                        |
+| Insertion                                       | `platform/insertion.rs`, `InsertPermit`, `platform/macos.rs`   | Eligibility, cancellation/commit, and partial key submission.                                                      |
+| Engine startup/recovery                         | `local_speech/`, `runtime/worker.rs`, `platform/speech.rs`     | Helper framing, ordering, and failures over in-memory pipes; server exit/cancellation; the C ABI's struct layouts. |
+| Dependency patches                              | Each vendor `README.speakeasy.md`                              | Portable GPUI fixtures plus the macOS rendering check.                                                             |
+| Profiling and packaging                         | `scripts/profile_macos.py`, `scripts/package-macos.sh`         | Public `ps`/`vmmap` fixtures under an explicit clock.                                                              |
 
 Live microphone, the event tap, clipboard/editor acceptance, and mixed-display frame pacing require
 explicit native acceptance.

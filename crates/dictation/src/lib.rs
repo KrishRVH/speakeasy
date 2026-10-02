@@ -19,3 +19,5 @@ pub mod setup;
 pub mod status;
 pub mod theme;
 mod transcript;
+
+pub use self::local_speech::{HELPER_FLAG, run_helper};

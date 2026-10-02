@@ -6,14 +6,84 @@
 
 use std::{
     ffi::{CStr, CString, c_char, c_void},
+    fmt,
     marker::{PhantomData, PhantomPinned},
     os::unix::ffi::OsStrExt,
     path::Path,
     ptr::{self, NonNull},
 };
 
-use anyhow::{Context, anyhow, ensure};
 use libloading::Library;
+
+/// Why the engine could not load a model or recognize audio.
+///
+/// Each failure maps to one byte so a helper process can report it without forwarding engine text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Failure {
+    /// The engine library or one of its entry points is missing.
+    Library = 1,
+    /// The engine rejected the model, accelerator, or audio format.
+    Unsupported = 2,
+    /// The engine ran out of memory.
+    OutOfMemory = 3,
+    /// The engine failed for another reason.
+    Engine = 4,
+    /// The audio was empty or outside 8–96 kHz.
+    Audio = 5,
+}
+
+impl Failure {
+    /// The failure a status byte names, if any.
+    #[must_use]
+    pub const fn from_byte(byte: u8) -> Option<Self> {
+        Some(match byte {
+            1 => Self::Library,
+            2 => Self::Unsupported,
+            3 => Self::OutOfMemory,
+            4 => Self::Engine,
+            5 => Self::Audio,
+            _ => return None,
+        })
+    }
+
+    /// The engine's status code as a failure; `NEMO_SPEECH_ASR_OK` is not one.
+    const fn from_status(status: i32) -> Result<(), Self> {
+        const OK: i32 = 0;
+        const INVALID_ARGUMENT: i32 = 1;
+        const OUT_OF_MEMORY: i32 = 2;
+        match status {
+            OK => Ok(()),
+            INVALID_ARGUMENT => Err(Self::Unsupported),
+            OUT_OF_MEMORY => Err(Self::OutOfMemory),
+            _ => Err(Self::Engine),
+        }
+    }
+}
+
+impl fmt::Display for Failure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Library => {
+                "Cannot open the speech engine library. Run automatic setup again or choose an engine in Settings."
+            },
+            Self::Unsupported => {
+                "The speech engine does not support this model or accelerator. Check the model in Settings."
+            },
+            Self::OutOfMemory => {
+                "The speech engine ran out of memory. Close other apps and try again."
+            },
+            Self::Engine => {
+                "Local transcription failed. Check the model and engine, or run automatic setup again."
+            },
+            Self::Audio => {
+                "Parakeet needs 8–96 kHz audio. Set your microphone to 48 kHz in Audio MIDI Setup."
+            },
+        })
+    }
+}
+
+impl std::error::Error for Failure {}
 
 /// Where the engine executes the model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,15 +112,20 @@ impl Recognizer {
     /// Loads `model` through the engine library at `library`, which may take seconds.
     ///
     /// # Errors
-    /// Returns an error if the library or one of its symbols is missing, or the engine rejects the
-    /// model or accelerator.
-    pub fn load(library: &Path, model: &Path, accelerator: Accelerator) -> anyhow::Result<Self> {
+    /// Returns [`Failure::Library`] if the library or one of its symbols is missing, or the engine's
+    /// reason for rejecting the model or accelerator.
+    pub fn load(library: &Path, model: &Path, accelerator: Accelerator) -> Result<Self, Failure> {
+        // Loader errors name private paths, so only the failure's kind survives.
         // SAFETY: the engine library's initializers only register its backends.
-        let library = unsafe { Library::new(library) }
-            .context("Cannot open the speech engine library. Run automatic setup again.")?;
-        let api = Api::resolve(&library)?;
-        let model = CString::new(model.as_os_str().as_bytes())
-            .context("The model path contains a NUL byte")?;
+        let Ok(library) = (unsafe { Library::new(library) }) else {
+            return Err(Failure::Library);
+        };
+        let Ok(api) = Api::resolve(&library) else {
+            return Err(Failure::Library);
+        };
+        let Ok(model) = CString::new(model.as_os_str().as_bytes()) else {
+            return Err(Failure::Unsupported);
+        };
         let backend = BackendConfig {
             size: size_of::<BackendConfig>(),
             gpu: match accelerator {
@@ -72,8 +147,8 @@ impl Recognizer {
         let mut handle = ptr::null_mut();
         // SAFETY: every pointer in `config` refers to a live local; the engine copies them.
         let status = unsafe { (api.create)(&raw const config, &raw mut handle) };
-        check(status, "The speech engine could not load the model")?;
-        let handle = NonNull::new(handle).context("The speech engine returned no recognizer")?;
+        Failure::from_status(status)?;
+        let handle = NonNull::new(handle).ok_or(Failure::Engine)?;
         Ok(Self {
             api,
             handle,
@@ -84,14 +159,13 @@ impl Recognizer {
     /// Recognizes mono `samples` at `rate` Hz; the engine resamples 8–96 kHz to the model's rate.
     ///
     /// # Errors
-    /// Returns an error for empty or unsupported audio and for failed inference.
-    pub fn recognize(&mut self, samples: &[f32], rate: u32) -> anyhow::Result<String> {
-        ensure!(!samples.is_empty(), "No audio to recognize");
-        ensure!(
-            (8_000..=96_000).contains(&rate),
-            "Parakeet needs 8–96 kHz audio. Set your microphone to 48 kHz in Audio MIDI Setup."
-        );
-        let rate = i32::try_from(rate)?;
+    /// Returns [`Failure::Audio`] for empty audio or an unsupported rate, or the engine's reason
+    /// for a failed inference.
+    pub fn recognize(&mut self, samples: &[f32], rate: u32) -> Result<String, Failure> {
+        let rate = match i32::try_from(rate) {
+            Ok(rate @ 8_000..=96_000) if !samples.is_empty() => rate,
+            _ => return Err(Failure::Audio),
+        };
         let options = RecognitionOptions {
             // The engine's HTTP route punctuates by default; the C ABI's zeroed default does not.
             enable_automatic_punctuation: true,
@@ -110,8 +184,8 @@ impl Recognizer {
                 &raw mut result,
             )
         };
-        check(status, "Local transcription failed")?;
-        let result = NonNull::new(result).context("The speech engine returned no result")?;
+        Failure::from_status(status)?;
+        let result = NonNull::new(result).ok_or(Failure::Engine)?;
         let result = OwnedResult {
             api: &self.api,
             result,
@@ -154,22 +228,6 @@ impl Drop for OwnedResult<'_> {
     }
 }
 
-fn check(status: i32, failure: &str) -> anyhow::Result<()> {
-    const OK: i32 = 0;
-    const INVALID_ARGUMENT: i32 = 1;
-    const OUT_OF_MEMORY: i32 = 2;
-    match status {
-        OK => Ok(()),
-        INVALID_ARGUMENT => Err(anyhow!("{failure}: the model or audio is not supported.")),
-        OUT_OF_MEMORY => Err(anyhow!(
-            "{failure}: not enough memory. Close other apps and try again."
-        )),
-        _ => Err(anyhow!(
-            "{failure}. Check the model and engine, or run automatic setup again."
-        )),
-    }
-}
-
 /// The engine's opaque `nemo_speech_asr_recognizer`: unsized in spirit, neither `Send` nor `Unpin`.
 #[repr(C)]
 struct RawRecognizer {
@@ -201,7 +259,7 @@ struct Api {
 }
 
 impl Api {
-    fn resolve(library: &Library) -> anyhow::Result<Self> {
+    fn resolve(library: &Library) -> Result<Self, libloading::Error> {
         // SAFETY: each symbol is declared in the engine's v1 `asr.h` with exactly this signature.
         unsafe {
             Ok(Self {

@@ -728,6 +728,11 @@ pub(crate) fn wav_sample_rate(wav: &[u8]) -> Option<u32> {
     Some(u32::from_le_bytes(*field))
 }
 
+/// The PCM16 samples behind a header written by this module.
+pub(crate) fn wav_pcm(wav: &[u8]) -> Option<&[u8]> {
+    wav.get(WAV_HEADER_BYTES..)
+}
+
 pub(crate) fn silent_wav(rate: u32, duration: Duration) -> anyhow::Result<Vec<u8>> {
     Pcm16::silence(samples_in(duration, rate)).into_wav(rate)
 }

@@ -27,7 +27,11 @@ pub use self::macos::{
     InputMonitor, configure_pill, reduced_motion, set_pill_visible, set_settings_visible,
     show_error,
 };
-pub use self::{insertion::Delivery, owned_thread::OwnedThread, process::ProcessGroup};
+pub use self::{
+    insertion::Delivery,
+    owned_thread::OwnedThread,
+    process::{ProcessGroup, exit_now, private_stdout},
+};
 
 /// The pill window's width in device-independent pixels.
 pub const PILL_WIDTH: u16 = 400;

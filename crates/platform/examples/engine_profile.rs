@@ -168,7 +168,9 @@ impl Path {
 
     fn transcribe(&mut self, fixture: &Fixture) -> anyhow::Result<String> {
         match self {
-            Self::InProcess(recognizer) => recognizer.recognize(&fixture.samples, fixture.rate),
+            Self::InProcess(recognizer) => {
+                Ok(recognizer.recognize(&fixture.samples, fixture.rate)?)
+            },
             Self::Http(client) => client.transcribe(&fixture.wav),
         }
     }
