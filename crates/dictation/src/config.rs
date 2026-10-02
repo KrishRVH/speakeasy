@@ -22,7 +22,7 @@ pub enum Engine {
     /// A whisper.cpp server.
     #[default]
     Whisper,
-    /// A NeMo-Speech.cpp server running Parakeet.
+    /// NeMo-Speech.cpp running Parakeet, through its C library or its server.
     Parakeet,
 }
 
@@ -51,7 +51,7 @@ pub struct Config {
     /// The saved microphone identifier; `None` follows the system default.
     #[serde(default)]
     pub microphone: Option<String>,
-    /// The local speech server executable.
+    /// The local speech engine executable; a Parakeet installation's C library is found beside it.
     pub engine_executable: PathBuf,
     /// The model the engine loads.
     pub model: PathBuf,
@@ -174,7 +174,6 @@ impl Config {
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(directory)?;
-        // Never replace a file the user still has to repair.
         if path.exists() {
             Self::read(path)?;
         }

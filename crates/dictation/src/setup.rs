@@ -278,7 +278,7 @@ impl Installation {
     }
 }
 
-/// Engines and models share the settings directory's parent but stay out of the settings file.
+/// Engines and models live in the default settings directory, outside the settings file.
 fn data_root() -> PathBuf {
     std::env::var_os("HOME")
         .map_or_else(
@@ -470,10 +470,7 @@ async fn unpack(
     installation: &mut Installation,
 ) -> anyhow::Result<PathBuf> {
     let name = file_name(archive.url);
-    let stem = name
-        .strip_suffix(".zip")
-        .or_else(|| name.strip_suffix(".tar.gz"))
-        .unwrap_or(name);
+    let stem = name.strip_suffix(".tar.gz").unwrap_or(name);
     let engines = root.join("engines");
     let directory = engines.join(stem);
     if directory.join(EXECUTABLE).is_file() {

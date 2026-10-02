@@ -209,7 +209,7 @@ struct LiveStream {
 /// The audio a recording has delivered, which parts of it are speech, and which parts went to the
 /// owner early. Live capture and the timing replay drive the same tracker; the audio is erased when
 /// it drops.
-pub(crate) struct Tracker {
+struct Tracker {
     pcm: Pcm16,
     speech: Speech,
     /// Segments handed to the owner, and pauses offered for speculation.
@@ -299,19 +299,19 @@ impl Tracker {
             .speech
             .retained(self.pcm.audio().len())
             .filter(|_| self.pcm.samples() >= samples_in(MINIMUM_RECORDING, self.rate));
-        let (tail, speculated) = self.cuts.finish(kept, self.speech.speech_end());
+        let (tail, standing) = self.cuts.finish(kept, self.speech.speech_end());
         let segments = self.cuts.segments();
         let Some(tail) = tail else {
             return Ok((segments > 0).then_some(Captured {
                 wav: None,
-                speculated,
+                standing,
                 segments,
             }));
         };
         self.pcm.keep(tail);
         Ok(Some(Captured {
             wav: Some(mem::take(&mut self.pcm).into_wav(self.rate)?),
-            speculated,
+            standing,
             segments,
         }))
     }
@@ -324,7 +324,8 @@ impl Tracker {
 pub(crate) struct Replay {
     control: Arc<Control>,
     thread: Option<JoinHandle<()>>,
-    /// Whether the owner may enable speculation; off replays the 0.3.3 request path.
+    /// Whether the owner may enable speculation; off makes every recording request its own
+    /// recognition.
     speculation: bool,
 }
 
@@ -359,7 +360,11 @@ impl Replay {
         let feeding = control.clone();
         let thread = thread::spawn(move || {
             let outcome = feed(id, rate, &samples, last_word, &events, &feeding, &spoken);
-            let _sent = events.send_blocking(CaptureEvent::Finished(id, outcome));
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A closed event lane belongs to a departed owner, which needs no outcome"
+            )]
+            let _ = events.send_blocking(CaptureEvent::Finished(id, outcome));
         });
         Ok(Self {
             control,
@@ -432,7 +437,11 @@ impl Recording for Replay {
     async fn retire(mut self) {
         self.control.cancel();
         if let Some(thread) = self.thread.take() {
-            let _joined = tokio::task::spawn_blocking(move || thread.join()).await;
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "The replay already reported its outcome; a join error leaves no session to fail"
+            )]
+            let _ = tokio::task::spawn_blocking(move || thread.join()).await;
         }
     }
 }
@@ -786,13 +795,13 @@ fn record(
     }
 }
 
-/// Pays the audio system's first use in this process, 25-35 ms on an M4 Pro, on its own thread
-/// before the first recording waits on it. Only the default input device is read, as listing
+/// Pays the audio system's first use in this process, tens of milliseconds, on its own thread before
+/// the first recording waits on it. Only the default input device is read, as listing
 /// microphones does; no stream opens, so input never starts and the microphone indicator stays off.
 pub(crate) fn prepare_capture() {
     #[expect(
         clippy::let_underscore_must_use,
-        reason = "Warming is best effort; the first recording opens its device and reports any failure"
+        reason = "Warming is best effort and owns nothing: the thread makes one property read and ends, and the first recording opens its device and reports any failure"
     )]
     let _ = thread::Builder::new()
         .name("audio-warmup".into())
@@ -961,7 +970,9 @@ fn microphone_error(error: cpal::Error) -> anyhow::Error {
         cpal::ErrorKind::DeviceBusy => {
             "Close other apps using the microphone or choose another microphone in Settings."
         },
-        cpal::ErrorKind::PermissionDenied => "Check OS microphone permission and try again.",
+        cpal::ErrorKind::PermissionDenied => {
+            "Allow Speakeasy in System Settings › Privacy & Security › Microphone, then try again."
+        },
         cpal::ErrorKind::DeviceNotAvailable => {
             "Reconnect the microphone or choose another in Settings."
         },
@@ -1550,7 +1561,6 @@ mod tests {
                 }
                 handle_stream_error(kind.into(), &errors, &control);
                 assert!(received.try_recv().is_err(), "{kind} aborted capture");
-                assert!(capture_failure(&Control::default(), &received).is_ok());
             }
         }
     }

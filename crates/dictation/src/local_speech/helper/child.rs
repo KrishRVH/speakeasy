@@ -27,7 +27,7 @@ pub(super) const PROTOCOL: &str = "1";
 /// The helper's exit status when the parent speaks another protocol version.
 pub(super) const PROTOCOL_MISMATCH: i32 = 65;
 
-/// Malformed arguments or a thread that cannot start: `EX_USAGE`.
+/// Malformed arguments, or a reply pipe or engine thread that cannot be set up: `EX_USAGE`.
 const USAGE: i32 = 64;
 /// The model failed to load; its reason was reported on the protocol first.
 const LOAD_FAILED: i32 = 1;

@@ -39,7 +39,9 @@ impl LocalSpeech {
         config: Config,
         cancelled: watch::Receiver<bool>,
     ) -> anyhow::Result<Self> {
-        let Some(library) = helper::library(&config).filter(|_| config.engine == Engine::Parakeet)
+        let Some(library) = (config.engine == Engine::Parakeet)
+            .then(|| helper::library(&config))
+            .flatten()
         else {
             return Server::start(config, cancelled).await.map(Self::Server);
         };
@@ -131,7 +133,7 @@ mod tests {
         let started = std::time::Instant::now();
         let result = worker.transcribe(wav, &language).await?;
         eprintln!(
-            "Provider startup: {startup:?}; inference: {:?}",
+            "Engine startup: {startup:?}; inference: {:?}",
             started.elapsed()
         );
         // Failure output must never include the recognized text.

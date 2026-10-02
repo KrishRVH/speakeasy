@@ -34,7 +34,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const HEALTH_TIMEOUT: Duration = Duration::from_millis(200);
 const HEALTH_POLL: Duration = Duration::from_millis(25);
 const SIGILL: i32 = 4;
-const USAGE_ERROR: u32 = 2;
+const USAGE_ERROR: i32 = 2;
 
 pub(crate) struct Server {
     engine: Engine,
@@ -151,7 +151,7 @@ impl Speech for Server {
                 let rate = audio::wav_sample_rate(&wav).context("Missing recording sample rate")?;
                 ensure!(
                     (8_000..=96_000).contains(&rate),
-                    "Parakeet needs 8–96 kHz audio. Set your microphone to 48 kHz in OS settings or choose Whisper."
+                    "Parakeet needs 8–96 kHz audio. Set your microphone to 48 kHz in Audio MIDI Setup or choose Whisper."
                 );
                 self.client
                     .post(self.url("v1/audio/transcriptions"))
@@ -285,7 +285,7 @@ fn startup_exit(status: ExitStatus) -> String {
 }
 
 fn exit_remedy(code: Option<i32>, signal: Option<i32>) -> &'static str {
-    match (code.map(i32::cast_unsigned), signal) {
+    match (code, signal) {
         (_, Some(SIGILL)) => {
             "This engine uses CPU instructions unavailable on this machine. Choose a compatible engine executable in Settings."
         },

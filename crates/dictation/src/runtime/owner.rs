@@ -270,7 +270,7 @@ impl<P: Ports> Owner<P> {
                 _,
                 Ok(Some(Captured {
                     wav,
-                    speculated,
+                    standing,
                     segments,
                 })),
             ) => {
@@ -288,7 +288,7 @@ impl<P: Ports> Owner<P> {
                     .and_then(audio::wav_duration)
                     .unwrap_or_default();
                 session.timeline.sealed(now(), tail);
-                let recognized = session.seal(wav, &speculated);
+                let recognized = session.seal(wav, &standing);
                 self.conclude_capture();
                 if let Some(text) = recognized {
                     self.deliver_speculation(text);

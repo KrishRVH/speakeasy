@@ -30,7 +30,7 @@ pub const LOADING: &str = "Loading local model…";
 /// Where the latest session is, from microphone startup to its outcome.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Phase {
-    /// No session has run since dictation started.
+    /// No session is in progress, and none has ended since dictation started or settings changed.
     #[default]
     Idle,
     /// The microphone is opening.
@@ -65,7 +65,7 @@ impl Phase {
 /// Whether the local speech model can serve a recording.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ModelState {
-    /// The model is starting or recovering.
+    /// The model is starting or being replaced.
     Loading,
     /// The model is warm.
     Ready,
@@ -138,7 +138,7 @@ pub(crate) struct Captured {
     pub wav: Option<Vec<u8>>,
     /// Pauses that nothing audible followed, oldest first: a stop at any of them would have kept
     /// this tail's speech with less of its quiet, so its recognized text stands in for the tail's.
-    pub speculated: Vec<u32>,
+    pub standing: Vec<u32>,
     /// How many segments came before the tail.
     pub segments: u32,
 }

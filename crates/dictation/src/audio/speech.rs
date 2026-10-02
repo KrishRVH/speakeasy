@@ -118,11 +118,7 @@ impl Speech {
             .chain([&self.padding])
             .take_while(|&&mark| quiet >= mark)
             .count();
-        let reported = if self.end <= self.paused_at {
-            self.paused_marks
-        } else {
-            0
-        };
+        let reported = self.reported_marks();
         if marks <= reported {
             return None;
         }
@@ -144,6 +140,15 @@ impl Speech {
         })
     }
 
+    /// How many marks the current pause has reported; new speech starts a pause with none.
+    const fn reported_marks(&self) -> usize {
+        if self.end <= self.paused_at {
+            self.paused_marks
+        } else {
+            0
+        }
+    }
+
     /// The end of the last audible window.
     pub(super) const fn speech_end(&self) -> usize {
         self.end
@@ -155,16 +160,11 @@ impl Speech {
     pub(super) fn next_mark(&self) -> Option<usize> {
         self.first
             .filter(|_| self.audible_samples >= self.minimum_audible)?;
-        let reported = if self.end <= self.paused_at {
-            self.paused_marks
-        } else {
-            0
-        };
         let next = self
             .early_pauses
             .iter()
             .chain([&self.padding])
-            .nth(reported)?;
+            .nth(self.reported_marks())?;
         Some(
             self.end
                 .saturating_add(next.div_ceil(self.window).saturating_mul(self.window)),

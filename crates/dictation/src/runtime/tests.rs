@@ -416,10 +416,10 @@ async fn receive<T>(receiver: &Receiver<T>) -> anyhow::Result<T> {
 }
 
 /// Fake trimmed audio, identical to the numbered pause's when `speculated` names one.
-fn captured(speculated: Option<u32>) -> Captured {
+fn captured(standing: Option<u32>) -> Captured {
     Captured {
         wav: Some(vec![1, 2]),
-        speculated: speculated.into_iter().collect(),
+        standing: standing.into_iter().collect(),
         segments: 0,
     }
 }
@@ -582,7 +582,7 @@ fn tail(wav: Option<Vec<u8>>, segments: u32) -> CaptureEvent {
         SessionId::FIRST,
         Ok(Some(Captured {
             wav,
-            speculated: Vec::new(),
+            standing: Vec::new(),
             segments,
         })),
     )
@@ -678,7 +678,7 @@ async fn a_cancelled_recording_drops_its_segments_and_their_late_text() -> anyho
             id,
             Ok(Some(Captured {
                 wav: Some(vec![12]),
-                speculated: Vec::new(),
+                standing: Vec::new(),
                 segments: 0,
             })),
         ))
@@ -766,7 +766,7 @@ async fn a_held_release_takes_a_recognized_standing_pause_without_a_request() ->
     h.input(Input::Release);
     let captured = Captured {
         wav: Some(vec![1, 2]),
-        speculated: vec![0, 1],
+        standing: vec![0, 1],
         segments: 0,
     };
     events
@@ -1540,7 +1540,7 @@ async fn delayed_owner_start_cannot_claim_a_newer_shell_publisher() -> anyhow::R
 }
 
 #[tokio::test(start_paused = true)]
-async fn recovery_failure_keeps_a_queued_dictation_until_microphone_retirement()
+async fn a_failed_reload_after_cancel_keeps_a_queued_dictation_until_microphone_retirement()
 -> anyhow::Result<()> {
     let (results, loading) = async_channel::bounded(4);
     let (retirement, retiring) = gate(4);
@@ -1559,8 +1559,8 @@ async fn recovery_failure_keeps_a_queued_dictation_until_microphone_retirement()
     receive(&h.loads).await?;
     h.input(Input::Press);
     h.phase(Phase::Starting).await?;
-    results.send(Err(anyhow!("Recovery failed"))).await?;
-    h.observe(|snapshot| snapshot.message == "Recovery failed")
+    results.send(Err(anyhow!("Reload failed"))).await?;
+    h.observe(|snapshot| snapshot.message == "Reload failed")
         .await?;
     assert_eq!(h.snapshot().phase, Phase::Starting);
     assert!(h.captures.try_recv().is_err());

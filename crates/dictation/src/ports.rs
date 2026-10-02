@@ -1,4 +1,4 @@
-//! The three side effects used by the session owner. Tests replace devices and speech at this
+//! The side effects the session owner uses. Tests replace devices and speech at this
 //! boundary; gesture, cancellation, and insertion ordering stay real.
 
 use async_channel::Sender;
@@ -70,7 +70,7 @@ pub(crate) trait Ports: Send + 'static {
     ) -> impl Future<Output = anyhow::Result<Self::Speech>> + Send + 'static;
 
     /// Hands an ended session's stage timings, numbers only, to whoever asked for them.
-    fn report_timing(&self, _line: String) {}
+    fn report_timing(&self, line: String);
 
     /// Submits `text` as `delivery` asks; no native input happens unless `permit` commits first.
     fn insert(

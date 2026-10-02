@@ -160,33 +160,28 @@ impl SaveWork {
     }
 }
 
-/// Settings that pass validation: a fake engine and model written into `directory`.
-#[cfg(test)]
-pub(crate) fn valid_config(directory: &std::path::Path) -> anyhow::Result<Config> {
-    let engine_executable = directory.join("engine");
-    let model = directory.join("model.gguf");
-    std::fs::write(&engine_executable, b"fake engine")?;
-    std::fs::write(&model, b"fake model")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&engine_executable, std::fs::Permissions::from_mode(0o700))?;
-    }
-    Ok(Config {
-        engine_executable,
-        model,
-        ..Config::default()
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use std::{sync::mpsc, time::Duration};
+    use std::{os::unix::fs::PermissionsExt, sync::mpsc, time::Duration};
 
     use anyhow::{Context as _, bail};
     use tokio::time::timeout;
 
     use super::*;
+
+    /// Settings that pass validation: a fake engine and model written into `directory`.
+    fn valid_config(directory: &std::path::Path) -> anyhow::Result<Config> {
+        let engine_executable = directory.join("engine");
+        let model = directory.join("model.gguf");
+        std::fs::write(&engine_executable, b"fake engine")?;
+        std::fs::write(&model, b"fake model")?;
+        std::fs::set_permissions(&engine_executable, std::fs::Permissions::from_mode(0o700))?;
+        Ok(Config {
+            engine_executable,
+            model,
+            ..Config::default()
+        })
+    }
 
     fn durable(config: Config) -> SavedConfig {
         SavedConfig {

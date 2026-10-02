@@ -1,8 +1,9 @@
 //! The configuration-directory lock, and a loopback listener for later launches' requests.
 //!
 //! Later launches send fixed reveal, toggle, and cancel requests. The listener port is published in
-//! a file beside the lock, as every earlier release does, and callers verify it through an
-//! identification handshake, so any edition can reveal the instance that owns the directory.
+//! a file beside the lock, the protocol every Speakeasy edition sharing the directory uses, and
+//! callers verify it through an identification handshake, so any edition can reveal the instance
+//! that owns the directory.
 
 use std::{
     fs::{self, File, OpenOptions},
@@ -142,7 +143,7 @@ fn reveal_running(path: &Path) -> anyhow::Result<()> {
         }
         thread::sleep(REVEAL_RETRY);
     }
-    bail!("Speakeasy is already running. Open Settings from its tray icon.");
+    bail!("Speakeasy is already running. Open Settings from its menu bar icon.");
 }
 
 fn serve(listener: &TcpListener, requests: &Sender<Request>) {
@@ -174,7 +175,7 @@ fn handshake(stream: &mut TcpStream) -> io::Result<Option<Request>> {
 fn connect(port_file: &Path) -> anyhow::Result<TcpStream> {
     let mut port = String::new();
     File::open(port_file)
-        .context("Start Speakeasy before using a desktop shortcut")?
+        .context("Speakeasy is not running. Start it, then try again.")?
         .take(MAX_PORT_FILE_BYTES)
         .read_to_string(&mut port)?;
     let port: u16 = port.trim().parse()?;

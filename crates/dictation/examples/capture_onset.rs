@@ -1,5 +1,5 @@
-//! Times each stage of opening the default microphone, cold as every dictation does today and from
-//! a stream built in advance, to show where capture onset goes.
+//! Times each stage of opening the default microphone, cold and from a stream built in advance, to
+//! show where capture onset goes.
 //!
 //! Opt-in native acceptance: it opens the real microphone, so macOS asks the terminal for
 //! Microphone access, and the menu bar shows the microphone indicator while each run captures. It
@@ -59,7 +59,7 @@ fn cold(run: u32) -> anyhow::Result<()> {
     let teardown = Instant::now();
     drop(stream);
     println!(
-        r#"{{"mode":"cold","run":{run},"host_ms":{},"device_ms":{},"config_ms":{},"build_ms":{},"play_ms":{},"first_callback_ms":{},"teardown_ms":{},"rate":{},"channels":{},"first_frames":{frames}}}"#,
+        r#"{{"mode":"cold","run":{run},"host_ms":{},"device_ms":{},"config_ms":{},"build_ms":{},"play_ms":{},"first_callback_ms":{},"teardown_ms":{},"rate":{},"channels":{},"first_samples":{frames}}}"#,
         milliseconds(host_ready),
         milliseconds(device_ready),
         milliseconds(configured),
@@ -85,7 +85,7 @@ fn prepared(run: u32) -> anyhow::Result<()> {
     let playing = started.elapsed();
     let (arrived, frames) = first_callback.recv_timeout(FIRST_CALLBACK_TIMEOUT)?;
     println!(
-        r#"{{"mode":"prepared","run":{run},"play_ms":{},"first_callback_ms":{},"first_frames":{frames}}}"#,
+        r#"{{"mode":"prepared","run":{run},"play_ms":{},"first_callback_ms":{},"first_samples":{frames}}}"#,
         milliseconds(playing),
         milliseconds(arrived.saturating_duration_since(started)),
     );

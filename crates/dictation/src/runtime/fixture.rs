@@ -9,7 +9,7 @@ use tokio::time::timeout;
 use super::*;
 use crate::{audio::Replay, local_speech::LocalSpeech, ports::Recording};
 
-/// Outlasts the worker's own startup bounds, 120 s to serve and 120 s to warm up, by 5 s.
+/// Outlasts the worker's own startup bounds, to serve and to warm up, by 5 s.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(2 * 120 + 5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const PHASE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -58,7 +58,11 @@ impl Ports for Fixture {
 
     fn report_timing(&self, line: String) {
         if let Some(timings) = &self.timings {
-            let _reported = timings.try_send(line);
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "The profile reads only the timings it waits for; a full lane drops the rest"
+            )]
+            let _ = timings.try_send(line);
         }
     }
 
@@ -116,7 +120,7 @@ impl Recording for FixtureRecording {
             Self::Whole { id, wav, events } => {
                 let captured = Captured {
                     wav: Some(wav.clone()),
-                    speculated: Vec::new(),
+                    standing: Vec::new(),
                     segments: 0,
                 };
                 events
@@ -213,7 +217,8 @@ async fn profile_fixture_dictation() -> anyhow::Result<()> {
 
 /// Times a held dictation as a person makes it: the audio plays in real time from the press, and
 /// the shortcut is released `SPEAKEASY_FIXTURE_RELEASE_MS` (default 300) after the last word.
-/// `SPEAKEASY_FIXTURE_NO_SPECULATION` replays 0.3.3's request path.
+/// `SPEAKEASY_FIXTURE_NO_SPECULATION` turns pause speculation off, so each recording makes its own
+/// request.
 #[tokio::test]
 #[ignore = "Profiles real local inference in real time; requires SPEAKEASY_FIXTURE_CONFIG and SPEAKEASY_FIXTURE_WAV"]
 async fn profile_held_dictation() -> anyhow::Result<()> {
