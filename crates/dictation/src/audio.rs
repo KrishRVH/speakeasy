@@ -71,12 +71,10 @@ impl Capture {
         })
     }
 
-    fn spawn(
+    fn spawn<R: Into<Recorded>>(
         id: SessionId,
         events: Sender<CaptureEvent>,
-        work: impl FnOnce(&Sender<CaptureEvent>, &Arc<Control>) -> anyhow::Result<Option<Captured>>
-        + Send
-        + 'static,
+        work: impl FnOnce(&Sender<CaptureEvent>, &Arc<Control>) -> R + Send + 'static,
     ) -> anyhow::Result<Self> {
         let control = Arc::new(Control::default());
         let (exit, alive) = async_channel::bounded::<Infallible>(1);
@@ -84,15 +82,21 @@ impl Capture {
             let control = control.clone();
             move || {
                 // A panicked capture's state is discarded; only its event lane is used afterwards.
-                let result = panic::catch_unwind(AssertUnwindSafe(|| work(&events, &control)))
-                    .unwrap_or_else(|_| {
-                        Err(anyhow!("Microphone stopped unexpectedly. Try recording again."))
-                    });
+                let Recorded { outcome, device } =
+                    panic::catch_unwind(AssertUnwindSafe(|| work(&events, &control).into()))
+                        .unwrap_or_else(|_| {
+                            Recorded::from(Err(anyhow!(
+                                "Microphone stopped unexpectedly. Try recording again."
+                            )))
+                        });
                 #[expect(
                     clippy::let_underscore_must_use,
                     reason = "A closed event lane belongs to a departed owner; retirement still observes this thread's exit"
                 )]
-                let _ = events.send_blocking(CaptureEvent::Finished(id, result));
+                let _ = events.send_blocking(CaptureEvent::Finished(id, outcome));
+                // Stopping the device after reporting keeps its teardown off the path from release
+                // to recognition; retirement still waits for it below.
+                drop(device);
                 // Naming `alive` moves it into this closure; dropping it last closes `exit`.
                 drop(alive);
             }
@@ -170,21 +174,41 @@ impl<E: Into<anyhow::Error>> From<E> for Startup {
     }
 }
 
-/// A playing stream and the audio it has delivered so far. Fields drop in declaration order: the
-/// audio is erased first, then the stream stops before the device and host that opened it.
+/// What a capture leaves behind: its outcome, and the device to stop once that is reported.
+struct Recorded {
+    outcome: anyhow::Result<Option<Captured>>,
+    device: Option<LiveStream>,
+}
+
+impl From<anyhow::Result<Option<Captured>>> for Recorded {
+    fn from(outcome: anyhow::Result<Option<Captured>>) -> Self {
+        Self {
+            outcome,
+            device: None,
+        }
+    }
+}
+
+/// A playing stream and what opened it. Fields drop in declaration order, so the stream stops
+/// before the device and host.
+struct LiveStream {
+    _stream: cpal::Stream,
+    _device: cpal::Device,
+    _host: cpal::Host,
+}
+
+/// A playing stream and the audio it has delivered so far. The audio is erased when it drops.
 struct Recorder {
     pcm: Pcm16,
     speech: Speech,
     /// The latest pause handed to the owner for speculative recognition.
     pause: Option<Pause>,
-    stream: Option<cpal::Stream>,
+    device: LiveStream,
     ring: Consumer<f32>,
     errors: Receiver<cpal::Error>,
     started: Instant,
     rate: u32,
     limit: usize,
-    _device: cpal::Device,
-    _host: cpal::Host,
 }
 
 impl Recorder {
@@ -235,38 +259,63 @@ impl Recorder {
             pcm,
             speech,
             pause: None,
-            stream: Some(stream),
+            device: LiveStream {
+                _stream: stream,
+                _device: device,
+                _host: host,
+            },
             ring,
             errors: stream_errors,
             started,
             rate,
             limit,
-            _device: device,
-            _host: host,
         })
     }
 
-    /// Delivers audio until finished; `opened` is how long the device took to start.
+    /// Delivers audio until finished, then hands back its outcome with the still-running device;
+    /// `opened` is how long the device took to start.
     fn record(
         mut self,
         id: SessionId,
         opened: Duration,
         events: &Sender<CaptureEvent>,
         control: &Control,
-    ) -> anyhow::Result<Option<Captured>> {
+    ) -> Recorded {
+        let outcome = match self.drain(id, opened, events, control) {
+            Ok(true) => self.finalize(control),
+            Ok(false) => Ok(None),
+            Err(error) => Err(error),
+        };
+        Recorded {
+            outcome,
+            device: Some(self.device),
+        }
+    }
+
+    /// Moves audio from the ring until the recording stops, returning whether it finished rather
+    /// than being cancelled.
+    fn drain(
+        &mut self,
+        id: SessionId,
+        opened: Duration,
+        events: &Sender<CaptureEvent>,
+        control: &Control,
+    ) -> anyhow::Result<bool> {
         let mut meter = LevelMeter::new();
         let mut ready = false;
         loop {
             if control.mode() == Mode::Cancelled || events.is_closed() {
-                return Ok(None);
+                return Ok(false);
             }
             capture_failure(control, &self.errors)?;
-            if control.mode() == Mode::Finishing
+            let stopping = control.mode() == Mode::Finishing
                 || self.started.elapsed() >= RECORDING_LIMIT
-                || self.pcm.samples() >= self.limit
-            {
+                || self.pcm.samples() >= self.limit;
+            if stopping {
+                // The stream keeps running until the outcome is reported, so wait out any callback
+                // still publishing a packet it began before the finish; later ones publish nothing.
                 control.finish();
-                self.stream = None;
+                control.quiesce();
             }
             if !ready && !self.ring.is_empty() {
                 ready = true;
@@ -284,14 +333,13 @@ impl Recorder {
                 )]
                 let _ = events.try_send(CaptureEvent::Level(id, level));
             }
-            if self.stream.is_none() {
-                break;
+            if stopping {
+                return Ok(true);
             }
             // Finish and cancel unpark this thread at once, and an unpark that lands before the
             // wait is not lost; the timeout only paces draining of the ring.
             thread::park_timeout(if ready { DRAIN_INTERVAL } else { STARTUP_DRAIN });
         }
-        self.finalize(control)
     }
 
     /// Hands a copy of the audio up to a pause to the owner, which may recognize it before the
@@ -317,7 +365,7 @@ impl Recorder {
         Ok(())
     }
 
-    fn finalize(mut self, control: &Control) -> anyhow::Result<Option<Captured>> {
+    fn finalize(&mut self, control: &Control) -> anyhow::Result<Option<Captured>> {
         if control.mode() == Mode::Cancelled {
             return Ok(None);
         }
@@ -339,7 +387,7 @@ impl Recorder {
             .map(|pause| pause.sequence);
         self.pcm.keep(range);
         Ok(Some(Captured {
-            wav: self.pcm.into_wav(self.rate)?,
+            wav: mem::take(&mut self.pcm).into_wav(self.rate)?,
             speculated,
         }))
     }
@@ -354,6 +402,7 @@ struct Pause {
 /// Mono PCM16 behind a reserved WAV header, so encoding never copies the audio. Audio that is not
 /// encoded is zeroed on drop, best effort: copies in the ring, allocator, HTTP client, or engine
 /// remain.
+#[derive(Default)]
 struct Pcm16 {
     bytes: Vec<u8>,
 }
@@ -524,12 +573,12 @@ fn record(
     microphone: Option<&str>,
     events: &Sender<CaptureEvent>,
     control: &Arc<Control>,
-) -> anyhow::Result<Option<Captured>> {
+) -> Recorded {
     let begun = Instant::now();
     match Recorder::open(microphone, events, control) {
         Ok(recorder) => recorder.record(id, begun.elapsed(), events, control),
-        Err(Startup::Stopped) => Ok(None),
-        Err(Startup::Failed(error)) => Err(error),
+        Err(Startup::Stopped) => Recorded::from(Ok(None)),
+        Err(Startup::Failed(error)) => Recorded::from(Err(error)),
     }
 }
 
@@ -619,6 +668,7 @@ where
     let mut queued_total = 0_usize;
     (
         move |data: &[T]| {
+            let _publishing = control.publishing();
             if control.mode() != Mode::Recording || started.elapsed() >= RECORDING_LIMIT {
                 return;
             }
@@ -945,12 +995,20 @@ mod tests {
                 control.cancel();
             }
             let (events, _audio) = async_channel::bounded(1);
-            assert!(record(SessionId::FIRST, None, &events, &control)?.is_none());
+            assert!(
+                record(SessionId::FIRST, None, &events, &control)
+                    .outcome?
+                    .is_none()
+            );
         }
         let (events, _audio) = async_channel::bounded(1);
         events.close();
         let control = Arc::new(Control::default());
-        assert!(record(SessionId::FIRST, None, &events, &control)?.is_none());
+        assert!(
+            record(SessionId::FIRST, None, &events, &control)
+                .outcome?
+                .is_none()
+        );
         Ok(())
     }
 
@@ -1084,7 +1142,7 @@ mod tests {
     #[tokio::test]
     async fn a_panicked_capture_reports_failure_and_still_retires() -> anyhow::Result<()> {
         let (events, audio) = async_channel::bounded(1);
-        let capture = Capture::spawn(SessionId::FIRST, events, |_, _| {
+        let capture = Capture::spawn(SessionId::FIRST, events, |_, _| -> Recorded {
             panic::resume_unwind(Box::new(()));
         })?;
         let report = timeout(PATIENCE, audio.recv()).await??;

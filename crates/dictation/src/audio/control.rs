@@ -1,6 +1,9 @@
 //! Capture-local synchronization for callbacks that cannot wait on the owner.
 
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::{
+    sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
+    thread,
+};
 
 /// Modes only advance in declaration order, so a late finish cannot undo a cancel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,13 +36,30 @@ pub(super) struct Control {
         reason = "The owner enables pause excerpts for the running consumer, which it reaches only through this shared control"
     )]
     speculating: AtomicBool,
+    #[expect(
+        clippy::disallowed_types,
+        reason = "The consumer must learn that no callback is still publishing after a finish, and the callback cannot wait"
+    )]
+    publishing: AtomicUsize,
 }
 
+/// A callback inside its publishing section, which ends when this drops.
+pub(super) struct Publishing<'a>(&'a Control);
+
+impl Drop for Publishing<'_> {
+    fn drop(&mut self) {
+        self.0.publishing.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+// The mode and the publishing count are sequentially consistent: a callback counts itself before it
+// reads the mode, and `quiesce` reads the count after the finish, so any callback that missed the
+// finish is still counted.
 impl Control {
     pub(super) fn mode(&self) -> Mode {
         const RECORDING: u8 = Mode::Recording as u8;
         const FINISHING: u8 = Mode::Finishing as u8;
-        match self.mode.load(Ordering::Acquire) {
+        match self.mode.load(Ordering::SeqCst) {
             RECORDING => Mode::Recording,
             FINISHING => Mode::Finishing,
             _ => Mode::Cancelled,
@@ -47,11 +67,25 @@ impl Control {
     }
 
     pub(super) fn finish(&self) {
-        self.mode.fetch_max(Mode::Finishing as u8, Ordering::AcqRel);
+        self.mode.fetch_max(Mode::Finishing as u8, Ordering::SeqCst);
     }
 
     pub(super) fn cancel(&self) {
-        self.mode.fetch_max(Mode::Cancelled as u8, Ordering::AcqRel);
+        self.mode.fetch_max(Mode::Cancelled as u8, Ordering::SeqCst);
+    }
+
+    /// Opens a callback's publishing section; it must precede the callback's mode check.
+    pub(super) fn publishing(&self) -> Publishing<'_> {
+        self.publishing.fetch_add(1, Ordering::SeqCst);
+        Publishing(self)
+    }
+
+    /// After a finish, waits until no callback that began before it is still publishing. A section
+    /// spans one packet's downmix: microseconds.
+    pub(super) fn quiesce(&self) {
+        while self.publishing.load(Ordering::SeqCst) != 0 {
+            thread::yield_now();
+        }
     }
 
     pub(super) fn mark_overflowed(&self) {
@@ -77,5 +111,48 @@ impl Control {
 
     pub(super) fn speculating(&self) -> bool {
         self.speculating.load(Ordering::Acquire)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        sync::{Arc, mpsc},
+        time::Duration,
+    };
+
+    use super::*;
+
+    #[test]
+    fn quiescence_waits_for_a_callback_that_began_before_the_finish() {
+        let control = Arc::new(Control::default());
+        let (opened, open) = mpsc::channel();
+        let (close, closing) = mpsc::channel::<()>();
+        let callback = thread::spawn({
+            let control = control.clone();
+            move || {
+                let _publishing = control.publishing();
+                opened.send(control.mode()).unwrap();
+                closing.recv().unwrap();
+            }
+        });
+        assert_eq!(open.recv().unwrap(), Mode::Recording);
+        control.finish();
+        let (quiesced, done) = mpsc::channel();
+        let consumer = thread::spawn({
+            let control = control.clone();
+            move || {
+                control.quiesce();
+                quiesced.send(()).unwrap();
+            }
+        });
+        assert!(
+            done.recv_timeout(Duration::from_millis(50)).is_err(),
+            "Quiesced while a callback was still publishing"
+        );
+        close.send(()).unwrap();
+        done.recv_timeout(Duration::from_secs(5)).unwrap();
+        callback.join().unwrap();
+        consumer.join().unwrap();
     }
 }

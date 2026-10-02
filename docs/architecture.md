@@ -60,17 +60,20 @@ double-tap enables hands-free capture, and another press finishes it. A short si
 after the double-tap window. Escape passes to the focused app and invalidates the insertion gate
 immediately. The five-minute cap is independent of UI animation.
 
-Capture owns its microphone thread. Finishing and cancellation retire it asynchronously; a retry
-waits for device teardown before opening another capture. Shortcut monitoring initializes off the UI
-thread and reports desktop readiness through the session's input channel. Pause starts microphone,
-speech, and shortcut cleanup together and waits for their owned completion. The shell retains the
-native monitor, whose event tap lives on its own run-loop thread, through retirement.
-Application-owned Quit requests enter a terminal lifecycle state, stop services and setup, drain
-requested saves, and await cleanup while rendering continues. Repeated Quit requests are harmless,
-and delayed validation/save/setup completion cannot re-enable dictation. The instance lock is
-released after Settings writers. Cleanup waits without a time limit for audio-driver teardown,
-process reaping, insertion, setup, and saves. A stuck owner leaves Quitting visible while the UI
-remains responsive. Native forced termination still uses synchronous disposal as a fallback.
+Capture owns its microphone thread. On finishing, it waits out any callback still publishing a
+packet begun before the finish, drains the ring, reports the sealed audio, and only then stops the
+device, so teardown overlaps recognition. Finishing and cancellation retire the thread
+asynchronously; a retry waits for device teardown before opening another capture. Shortcut
+monitoring initializes off the UI thread and reports desktop readiness through the session's input
+channel. Pause starts microphone, speech, and shortcut cleanup together and waits for their owned
+completion. The shell retains the native monitor, whose event tap lives on its own run-loop thread,
+through retirement. Application-owned Quit requests enter a terminal lifecycle state, stop services
+and setup, drain requested saves, and await cleanup while rendering continues. Repeated Quit
+requests are harmless, and delayed validation/save/setup completion cannot re-enable dictation. The
+instance lock is released after Settings writers. Cleanup waits without a time limit for
+audio-driver teardown, process reaping, insertion, setup, and saves. A stuck owner leaves Quitting
+visible while the UI remains responsive. Native forced termination still uses synchronous disposal
+as a fallback.
 
 `runtime/mod.rs` exposes start, configure, stop, and completion acknowledgement. `owner.rs` receives
 one wake, handles it, advances ready work, and publishes a snapshot. Its decisions use owned state;
