@@ -199,11 +199,7 @@ impl Speech for LocalSpeech {
         let body = read_bounded(response).await?;
         let reply: Transcription =
             serde_json::from_slice(&body).context("Local speech returned invalid JSON")?;
-        reply
-            .text
-            .as_deref()
-            .map(join_segments)
-            .context("Local speech returned no transcript")
+        reply.text.context("Local speech returned no transcript")
     }
 
     async fn probe_with_silence(&self) -> anyhow::Result<()> {
@@ -347,11 +343,6 @@ async fn read_bounded(mut response: Response) -> anyhow::Result<Vec<u8>> {
         body.extend_from_slice(&chunk);
     }
     Ok(body)
-}
-
-/// Engine segments end in layout newlines, not dictated Enter presses.
-fn join_segments(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn startup_exit(status: ExitStatus) -> String {
@@ -562,10 +553,6 @@ mod tests {
         assert!(
             result.to_lowercase().contains("ask not what your country"),
             "Fixture recognition did not contain the expected phrase"
-        );
-        assert!(
-            !result.contains(['\r', '\n']),
-            "Segment boundaries became editor input"
         );
         let stopped = std::time::Instant::now();
         worker.stop().await;

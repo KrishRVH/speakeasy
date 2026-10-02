@@ -3,6 +3,7 @@
   "engine_executable": "tools/whisper/whisper-server.exe",
   "model": "models/ggml-small.en.bin",
   "language": "en",
+  "remove_fillers": true,
   "microphone": null,
   "threads": 4,
   "use_gpu": true,

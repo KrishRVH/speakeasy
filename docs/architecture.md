@@ -32,6 +32,7 @@ flowchart LR
 | `crates/platform/src/keyboard.rs`, `monitor.rs`, `insertion.rs` | Portable keyboard decisions, stop coordination for native event loops, and shared insertion eligibility; native adapters collect facts and submit effects.                 |
 | `crates/app/src/audio.rs`, `audio/control.rs`                   | CPAL capture, typed callback control, bounded ring, audio levels, speech gate, quiet-edge trimming, and five-minute recording limit.                                       |
 | `crates/app/src/local_speech.rs`                                | Warm Whisper or Parakeet process, loopback HTTP, bounded responses, and cancellation recovery.                                                                             |
+| `crates/app/src/transcript.rs`                                  | Linear transcript whitespace and filler cleanup before insertion.                                                                                                          |
 | `crates/app/src/ports.rs`                                       | Capture, speech, and insertion interfaces used by the session owner and unattended fixtures.                                                                               |
 | `crates/app/src/pill.rs` and `pill/`                            | Grille pill, measured audio envelope, and frame-driven motion.                                                                                                             |
 | `crates/app/src/setup.rs`                                       | Automatic setup: engine choice through NeMo's doctor, pinned resumable downloads, and extraction.                                                                          |
@@ -184,8 +185,19 @@ or redirects. Worker output and transcripts are not retained in diagnostic logs.
 Model loading starts in the background. GPU preference adds a silent warmup request before
 readiness. Linux CPU workers also validate one synthetic inference before readiness, because model
 loading alone cannot establish CPU compatibility. Whisper language travels with each request, so a
-language change does not reload the model. Whisper uses full context and default timestamp decoding;
-returned segment whitespace is normalized before insertion.
+language change does not reload the model. Whisper uses full context and default timestamp decoding.
+
+The transcription job runs `transcript::for_insertion` for either engine before publishing its
+result. Engine segment whitespace becomes single spaces, never Enter presses. With `remove_fillers`
+enabled (the default), whitespace-delimited “um” and “uh” tokens are removed without case
+sensitivity, including adjacent pause punctuation; compounds, identifiers, and individually quoted
+tokens stay literal. Whisper only removes fillers for explicit English requests; other languages and
+`auto` preserve literal words. Parakeet auto-detects without returning language metadata, so its
+cleanup switch expresses the user's English preference; disable it for other languages. Request-time
+preferences travel with the transcription job and do not reload the model. Cleanup removes a
+preceding filler comma and preserves sentence endings after content. Filler-only results follow the
+empty-recognition path without insertion. Cleanup takes linear time and one output allocation,
+without token collections, regular expressions, another model, or a background service.
 
 GPU cancellation drops the request and checks recovery with a bounded silent inference. A failed
 two-second recovery terminates and waits for the worker before replacement. Cancellation of active
@@ -228,9 +240,9 @@ manual-paste outcome and is never automatically repeated. Both paths check cance
 committing native input. Submission cannot prove that an editor accepted the text, and Escape cannot
 retract input already submitted to the OS.
 
-There are no accounts, cloud providers, automatic editing, transcript history, or telemetry. Capture
-begins only when dictation is triggered. Remote microphone routing belongs to the OS and the user's
-audio bridge; see [remote dictation](remote-dictation.md).
+There are no accounts, cloud providers, transcript history, or telemetry. Capture begins only when
+dictation is triggered. Remote microphone routing belongs to the OS and the user's audio bridge; see
+[remote dictation](remote-dictation.md).
 
 ## Verification
 
