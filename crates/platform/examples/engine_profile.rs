@@ -12,12 +12,16 @@
 //!
 //! Each fixture prints one JSON line of timings, never its transcript: the word count and an
 //! FNV-1a hash of the normalized words let paths be compared for identical output.
+//! `--warmup SECONDS` sets the silent warmup's length (the app uses one second), and
+//! `--idle SECONDS` waits before every request, to expose GPU residency or power-state costs
+//! that back-to-back requests hide.
 
 use std::{
     env,
     io::{BufRead, BufReader, Read, Write},
     net::TcpStream,
     path::PathBuf,
+    thread,
     time::{Duration, Instant},
 };
 
@@ -27,6 +31,8 @@ use speakeasy_platform::speech::{Accelerator, Recognizer};
 struct Arguments {
     engine: Engine,
     repetitions: usize,
+    warmup: u32,
+    idle: Duration,
     fixtures: Vec<PathBuf>,
 }
 
@@ -50,6 +56,8 @@ impl Arguments {
         let mut address = None;
         let mut key = String::new();
         let mut repetitions = 5;
+        let mut warmup = 1;
+        let mut idle = Duration::ZERO;
         let mut fixtures = Vec::new();
         let mut arguments = env::args_os().skip(1);
         while let Some(argument) = arguments.next() {
@@ -70,6 +78,19 @@ impl Arguments {
                         .and_then(|count| count.to_str()?.parse().ok())
                         .context("--repetitions needs a count")?;
                 },
+                Some("--warmup") => {
+                    warmup = arguments
+                        .next()
+                        .and_then(|seconds| seconds.to_str()?.parse().ok())
+                        .context("--warmup needs whole seconds")?;
+                },
+                Some("--idle") => {
+                    idle = arguments
+                        .next()
+                        .and_then(|seconds| seconds.to_str()?.parse().ok())
+                        .map(Duration::from_secs_f64)
+                        .context("--idle needs seconds")?;
+                },
                 Some(flag) if flag.starts_with("--") => bail!("Unknown option {flag}"),
                 _ => fixtures.push(PathBuf::from(argument)),
             }
@@ -85,6 +106,8 @@ impl Arguments {
         Ok(Self {
             engine,
             repetitions,
+            warmup,
+            idle,
             fixtures,
         })
     }
@@ -181,9 +204,10 @@ fn main() -> anyhow::Result<()> {
     let started = Instant::now();
     let mut path = Path::open(arguments.engine)?;
     let load = started.elapsed();
+    let samples = 16_000_usize.saturating_mul(usize::try_from(arguments.warmup)?);
     let silence = Fixture {
-        wav: silent_wav(),
-        samples: vec![0.0; 16_000],
+        wav: silent_wav(u32::try_from(samples)?)?,
+        samples: vec![0.0; samples],
         rate: 16_000,
     };
     let started = Instant::now();
@@ -198,6 +222,7 @@ fn main() -> anyhow::Result<()> {
         let mut runs = Vec::with_capacity(arguments.repetitions);
         let mut output = None;
         for _ in 0..arguments.repetitions {
+            thread::sleep(arguments.idle);
             let started = Instant::now();
             let text = path.transcribe(&fixture)?;
             runs.push(milliseconds(started.elapsed()));
@@ -292,13 +317,16 @@ impl Client {
     }
 }
 
-/// One second of 16 kHz silence as a PCM16 WAV, the app's warmup request.
-fn silent_wav() -> Vec<u8> {
-    const DATA_BYTES: u32 = 32_000;
+/// `samples` of 16 kHz silence as a PCM16 WAV; one second is the app's warmup request.
+fn silent_wav(samples: u32) -> anyhow::Result<Vec<u8>> {
+    let data_bytes = samples.checked_mul(2).context("Warmup is too long")?;
     let mut wav = Vec::new();
     for field in [
         &b"RIFF"[..],
-        &(DATA_BYTES + 36).to_le_bytes(),
+        &data_bytes
+            .checked_add(36)
+            .context("Warmup is too long")?
+            .to_le_bytes(),
         b"WAVEfmt ",
         &16_u32.to_le_bytes(),
         &1_u16.to_le_bytes(),
@@ -308,12 +336,12 @@ fn silent_wav() -> Vec<u8> {
         &2_u16.to_le_bytes(),
         &16_u16.to_le_bytes(),
         b"data",
-        &DATA_BYTES.to_le_bytes(),
+        &data_bytes.to_le_bytes(),
     ] {
         wav.extend_from_slice(field);
     }
-    wav.resize(wav.len().saturating_add(DATA_BYTES as usize), 0);
-    wav
+    wav.resize(wav.len().saturating_add(usize::try_from(data_bytes)?), 0);
+    Ok(wav)
 }
 
 /// Lowercase alphanumeric words, so harmless spacing differences between paths compare equal.
