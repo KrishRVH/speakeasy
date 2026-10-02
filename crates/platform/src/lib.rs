@@ -17,6 +17,8 @@ mod macos;
 mod monitor;
 mod owned_thread;
 mod process;
+#[cfg(unix)]
+pub mod speech;
 #[cfg(target_os = "windows")]
 mod windows;
 

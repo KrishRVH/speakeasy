@@ -5634,6 +5634,7 @@ dependencies = [
  "objc2-foundation",
  "raw-window-handle",
  "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "windows-sys 0.61.2",
