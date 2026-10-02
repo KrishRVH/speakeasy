@@ -254,6 +254,7 @@ impl<P: Ports> Owner<P> {
     fn handle_capture(&mut self, event: CaptureEvent) {
         let gesture = self.gesture.state();
         let Some(session) = self.current_capture_mut(event.session()) else {
+            event.erase();
             return;
         };
         match event {
@@ -456,8 +457,10 @@ impl<P: Ports> Owner<P> {
 
     /// Hands-free capture ends with a separate press, usually well after the last word, so pauses
     /// are worth recognizing early. A held shortcut is released too soon after speech to benefit.
+    /// CPU inference is slow enough that a speculation made obsolete by later speech could hold the
+    /// recording's own request for seconds, so only the GPU speculates.
     fn speculate_when_hands_free(&self) {
-        if self.gesture.state() == State::HandsFree {
+        if self.config.use_gpu && self.gesture.state() == State::HandsFree {
             self.microphone.speculate();
         }
     }
@@ -484,8 +487,14 @@ impl<P: Ports> Owner<P> {
     }
 
     /// Removes the session, keeping its timeline until the owner reports how it ended.
+    ///
+    /// A speculation still running for it leaves the observation path like an abandoned request,
+    /// so its result or failure can never reach a later session.
     fn take_session(&mut self) -> Option<Session> {
         let session = self.session.take()?;
+        if session.speculating.is_some() && self.worker.is_transcribing() {
+            self.worker.recover(&self.ports, &self.config);
+        }
         self.ended = Some((session.timeline, now()));
         Some(session)
     }
@@ -563,8 +572,10 @@ impl<P: Ports> Owner<P> {
             return;
         };
         if session.is_capturing() {
-            // Speculation only uses an idle warm worker; it never loads one.
-            if self.worker.is_ready()
+            // Speculation only uses an idle warm worker, never loading one, and stops once a finish
+            // is requested: the recording's own audio is moments away.
+            if matches!(session.stage, Stage::Recording)
+                && self.worker.is_ready()
                 && let Some((sequence, wav)) = session.pending.take()
             {
                 match self.worker.transcribe(wav, &self.config) {
@@ -654,6 +665,7 @@ pub(super) async fn run<P: Ports>(wiring: Wiring<P>) {
     loop {
         let wake = owner.wait().await;
         if owner.handle(wake).is_break() {
+            owner.report_ended();
             break;
         }
         owner.advance().await;

@@ -312,7 +312,11 @@ impl Harness {
 impl Harness<JoinHandle<()>> {
     /// Runs the owner on this test's executor, so `tokio::time::advance` drives its deadlines.
     fn paused(customize: impl FnOnce(&mut FakePorts)) -> anyhow::Result<Self> {
-        Self::host(Config::default(), customize, |config, output, ports| {
+        Self::paused_with(Config::default(), customize)
+    }
+
+    fn paused_with(config: Config, customize: impl FnOnce(&mut FakePorts)) -> anyhow::Result<Self> {
+        Self::host(config, customize, |config, output, ports| {
             let (input, inputs) = input_lane();
             Runtime::host(config, output, ports, input, inputs, |wiring| {
                 Ok(tokio::spawn(owner::run(wiring)))
@@ -528,6 +532,38 @@ async fn an_identical_recording_waits_for_its_running_speculation_or_falls_back_
     h.transcribe_next_as("own request").await?;
     assert_eq!(receive(&h.pasted).await?, "own request");
     h.phase(Phase::Done).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_cancelled_speculation_cannot_reach_the_next_session() -> anyhow::Result<()> {
+    let mut h = Harness::paused(|ports| ports.delayed_finish = true)?;
+    receive(&h.loads).await?;
+    let (id, events) = h.start().await?;
+    events.send(CaptureEvent::Paused(id, 0, vec![3])).await?;
+    let (_, stale) = receive(&h.jobs).await?;
+    h.input(Input::Cancel);
+    h.phase(Phase::Cancelled).await?;
+    h.start().await?;
+    // Still observed, this failure would end the new recording; moved out, it has no listener.
+    let observed = stale.send(Err(anyhow!("stale engine failure"))).is_ok();
+    assert!(
+        still_pending(h.observe(|snapshot| snapshot.phase != Phase::Recording)).await,
+        "A cancelled speculation ended the next session (stale reply delivered: {observed})"
+    );
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn only_gpu_inference_speculates() -> anyhow::Result<()> {
+    let cpu = Config {
+        use_gpu: false,
+        ..Config::default()
+    };
+    let mut h = Harness::paused_with(cpu, |_| {})?;
+    receive(&h.loads).await?;
+    h.start().await?;
+    assert!(still_pending(receive(&h.speculations)).await);
     h.close().await
 }
 

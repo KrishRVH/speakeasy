@@ -142,6 +142,16 @@ pub(crate) struct Captured {
 }
 
 impl CaptureEvent {
+    /// Erases audio an event carries, best effort, when no session will use it.
+    fn erase(self) {
+        match self {
+            Self::Paused(_, _, mut wav) | Self::Finished(_, Ok(Some(Captured { mut wav, .. }))) => {
+                wav.fill(0);
+            },
+            Self::Ready(..) | Self::Level(..) | Self::Finished(..) => {},
+        }
+    }
+
     const fn session(&self) -> SessionId {
         match self {
             Self::Ready(session, _)

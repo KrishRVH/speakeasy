@@ -5,7 +5,7 @@
 //! at once, even while the engine thread is inside native inference.
 
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     io::{self, BufWriter, Read, Write},
     path::PathBuf,
     sync::mpsc,
@@ -21,6 +21,11 @@ use super::frame::{self, Request};
 
 /// The first argument that turns this executable into the speech helper.
 pub const HELPER_FLAG: &str = "--speech-helper";
+/// The pipe protocol's version, passed after [`HELPER_FLAG`]. The parent re-runs its own executable,
+/// which an update may have replaced with one that speaks another version.
+pub(super) const PROTOCOL: &str = "1";
+/// The helper's exit status when the parent speaks another protocol version.
+pub(super) const PROTOCOL_MISMATCH: i32 = 65;
 
 /// Malformed arguments or a thread that cannot start: `EX_USAGE`.
 const USAGE: i32 = 64;
@@ -47,6 +52,9 @@ pub(super) struct Job {
 /// Loads `library` and `model` from `arguments`, answers requests until the parent closes standard
 /// input, then ends the process.
 pub fn run_helper(mut arguments: impl Iterator<Item = OsString>) -> ! {
+    if arguments.next().as_deref().and_then(OsStr::to_str) != Some(PROTOCOL) {
+        exit_now(PROTOCOL_MISMATCH);
+    }
     let (Some(library), Some(model), Some(accelerator), None) = (
         arguments.next(),
         arguments.next(),

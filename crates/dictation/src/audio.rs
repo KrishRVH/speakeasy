@@ -356,11 +356,13 @@ impl Recorder {
             return Ok(());
         };
         let wav = self.pcm.excerpt(range.clone(), self.rate)?;
-        if events
-            .try_send(CaptureEvent::Paused(id, sequence, wav))
-            .is_ok()
-        {
-            self.pause = Some(Pause { sequence, range });
+        match events.try_send(CaptureEvent::Paused(id, sequence, wav)) {
+            Ok(()) => self.pause = Some(Pause { sequence, range }),
+            Err(unsent) => {
+                if let CaptureEvent::Paused(_, _, mut wav) = unsent.into_inner() {
+                    wav.fill(0);
+                }
+            },
         }
         Ok(())
     }
@@ -1357,6 +1359,22 @@ mod tests {
 
         let mut click = pcm_from(&[(rate / 20, 3000), (rate * 2 - rate / 20, 0)]);
         assert!(!click.trim_quiet_edges(u32::try_from(rate).unwrap()));
+    }
+
+    #[test]
+    fn a_pause_excerpt_is_byte_for_byte_the_recording_stopped_there() -> anyhow::Result<()> {
+        let rate = 44_100;
+        let mut pcm = pcm_from(&[(rate * 2, 0), (rate, 3000), (rate / 2, 0)]);
+        let mut speech = Speech::new(u32::try_from(rate)?).context("Unsupported rate")?;
+        speech.complete(pcm.audio());
+        let range = speech
+            .retained(pcm.audio().len())
+            .context("No speech found")?;
+        assert_ne!(range.start, 0, "The fixture must trim leading quiet");
+        let excerpt = pcm.excerpt(range.clone(), u32::try_from(rate)?)?;
+        pcm.keep(range);
+        assert_eq!(excerpt, pcm.into_wav(u32::try_from(rate)?)?);
+        Ok(())
     }
 
     #[test]

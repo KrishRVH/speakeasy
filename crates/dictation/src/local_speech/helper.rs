@@ -20,7 +20,10 @@ use tokio::{
 };
 
 pub use self::child::{HELPER_FLAG, run_helper};
-use self::frame::Request;
+use self::{
+    child::{PROTOCOL, PROTOCOL_MISMATCH},
+    frame::Request,
+};
 use super::{
     INFERENCE_TIMEOUT, MAX_TEXT_BYTES, STARTUP_TIMEOUT, Warmup, contain, unless_cancelled,
 };
@@ -52,8 +55,18 @@ pub(crate) struct Helper {
 /// One request and where its outcome goes; a dropped receiver discards the reply.
 struct Exchange {
     rate: u32,
-    wav: Vec<u8>,
+    wav: Erased,
     reply: oneshot::Sender<anyhow::Result<String>>,
+}
+
+/// A recording erased, best effort, however its request ends: answered, queued when the helper
+/// stops, or in flight when the pipe task is aborted.
+struct Erased(Vec<u8>);
+
+impl Drop for Erased {
+    fn drop(&mut self) {
+        self.0.fill(0);
+    }
 }
 
 impl Helper {
@@ -66,6 +79,7 @@ impl Helper {
         let mut command = owned_command(std::env::current_exe()?);
         command
             .arg(HELPER_FLAG)
+            .arg(PROTOCOL)
             .arg(library)
             .arg(&config.model)
             .arg(if config.use_gpu { "gpu" } else { "cpu" })
@@ -95,6 +109,15 @@ impl Helper {
             Err(error) => {
                 group.terminate();
                 kill_and_reap(&mut child).await;
+                let updated = matches!(
+                    child.try_wait(),
+                    Ok(Some(status)) if status.code() == Some(PROTOCOL_MISMATCH)
+                );
+                if updated {
+                    bail!(
+                        "Speakeasy was updated while running. Quit and reopen it to load the model."
+                    );
+                }
                 return Err(error);
             },
         };
@@ -126,12 +149,12 @@ impl Speech for Helper {
     async fn transcribe(&self, wav: Vec<u8>, _: &str) -> anyhow::Result<String> {
         let rate = audio::wav_sample_rate(&wav).context("Missing recording sample rate")?;
         let (reply, outcome) = oneshot::channel();
-        if self
-            .exchanges
-            .send(Exchange { rate, wav, reply })
-            .await
-            .is_err()
-        {
+        let exchange = Exchange {
+            rate,
+            wav: Erased(wav),
+            reply,
+        };
+        if self.exchanges.send(exchange).await.is_err() {
             bail!(STOPPED);
         }
         match timeout(INFERENCE_TIMEOUT, outcome).await {
@@ -174,20 +197,14 @@ async fn exchange(
     mut output: impl AsyncRead + Unpin,
     exchanges: async_channel::Receiver<Exchange>,
 ) {
-    while let Ok(Exchange {
-        rate,
-        mut wav,
-        reply,
-    }) = exchanges.recv().await
-    {
+    while let Ok(Exchange { rate, wav, reply }) = exchanges.recv().await {
         let request =
-            audio::wav_pcm(&wav).and_then(|pcm| Some((Request::for_pcm(rate, pcm)?, pcm)));
+            audio::wav_pcm(&wav.0).and_then(|pcm| Some((Request::for_pcm(rate, pcm)?, pcm)));
         let outcome = match request {
             None => Ok(Err(Failure::Audio)),
             Some((request, pcm)) => round_trip(&mut input, &mut output, request, pcm).await,
         };
-        // The pipe holds its own copy until the helper reads it; this one is no longer needed.
-        wav.fill(0);
+        drop(wav);
         let broken = outcome.is_err();
         drop(reply.send(match outcome {
             Ok(Ok(text)) => Ok(text),
@@ -278,7 +295,7 @@ mod tests {
         exchanges
             .send(Exchange {
                 rate: 48_000,
-                wav,
+                wav: Erased(wav),
                 reply,
             })
             .await?;
@@ -325,6 +342,13 @@ mod tests {
             "A broken stream kept accepting requests"
         );
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_unloadable_library_stays_identifiable_for_the_server_fallback() {
+        let mut output: &[u8] = &[Failure::Library as u8];
+        let error = loaded(&mut output).await.unwrap_err();
+        assert_eq!(error.downcast_ref::<Failure>(), Some(&Failure::Library));
     }
 
     #[test]

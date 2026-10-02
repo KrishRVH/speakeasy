@@ -40,6 +40,50 @@ ready model automatically, or report a faster subcomponent as a faster product. 
 must pass quality and native interaction gates before its speed is considered. An optimization
 remains experimental until the relevant gate passes.
 
+## Status and next gates
+
+The fork has removed Windows and Linux, extracted the GPUI-free service into `crates/dictation`, and
+implemented these candidates. The full gate passes on GitHub's `macos-15` runner, including the app
+build, tests, the owned-window rendering check, and packaging. None has been measured on a Mac with
+a microphone, the engine, or a person, so each remains experimental under this PRD.
+
+| Candidate                                                          | Hypothesis                                                                                       | Regression guard                                                                                |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| Parakeet helper over pipes, via the engine's C ABI, replacing HTTP | Removes multipart upload, server WAV parsing, and JSON; grows with recording length              | Identical text hashes for helper and HTTP routes; helper exits when the app dies; HTTP fallback |
+| Hands-free GPU pause speculation with byte-identical audio reuse   | Removes recognition from the stop path whenever the stop press comes 500 ms or more after speech | Paused-clock owner tests; a speculation can delay a request that resumes speech after a pause   |
+| Trailing quiet beyond 500 ms trimmed (was kept below one second)   | Lets a stop 0.5–1 s after speech match its pause; slightly less audio to recognize               | Corpus check with 0.5 s and up to 1 s of trailing quiet                                         |
+| Sealed audio reported before the device stops                      | Moves Audio Unit stop and dispose off release-to-sealed                                          | Quiescence test; native `release→sealed` and `device` timings                                   |
+| Ring drained every 16 ms once audio flows (was 5 ms)               | About a third of the consumer wakeups while recording                                            | Meter cadence unchanged at 32 ms; finish and cancel still wake at once                          |
+| Modifier release rechecked every 2 ms (was 10 ms)                  | Speculated text is often ready while the stopping press is still down                            | Insertion eligibility tests                                                                     |
+
+`SPEAKEASY_TIMING=1` reports each session's stage timings, `engine_profile` compares the helper and
+HTTP routes and varies warmup length, idle gaps, and a shortcut-press primer, and `capture_onset`
+splits microphone startup into stages. [Performance](performance.md#measuring) gives their commands.
+
+Run the next gates on the reference Macs in order, keeping raw output under `artifacts/`:
+
+1. Build with `bash scripts/package-macos.sh`, complete setup with the development bundle and a
+   temporary `--config`, and confirm that dictation runs a `--speech-helper` child.
+2. Run `engine_profile` for public 1, 5, 10, 30, 60, and 300 second fixtures through the helper
+   library and through `nemo-speech serve`, alternating routes in at least three blocks. Build them
+   from NeMo-Speech.cpp's `test_files/asr/wav/test/jfk.wav` and LibriSpeech test-clean, converted to
+   mono PCM16 at 48 kHz with `afconvert -f WAVE -d LEI16@48000 -c 1`. Matching hashes establish
+   identical output; the difference measures transport cost by length.
+3. Repeat with `NEMO_SPEECH_TIMING=1` to split features, encoder, and decoding; if per-step decoding
+   dominates, profile the engine's Metal decoder before anything else.
+4. Measure first-request cost with `--warmup 1` versus `--warmup 10`, idle cost with `--idle 240`
+   with and without `GGML_METAL_RESIDENCY_KEEP_ALIVE_S`, and `--prime 300` after idle. Adopt a
+   longer warmup, a residency policy, or a press-time primer only for a measured win.
+5. Run `capture_onset` with Microphone permission. If the prepared stream's start is materially
+   faster than a cold open, prototype a prepared stream and verify that the microphone indicator
+   stays off while it is idle.
+6. With explicit opt-in, dictate held and hands-free in an owned editor with `SPEAKEASY_TIMING=1`,
+   against 0.3.2 built from `v0.3.2`; record release-to-done distributions and `speculated` hits.
+7. Score the trimming change and the helper on the corpus, then sample idle and recording CPU,
+   memory, and footprint for app and engine with `scripts/profile_macos.py`, and energy with
+   `powermetrics` or Instruments.
+8. Only then run the blinded perceptibility tasks below.
+
 ## Required feature parity
 
 Use the frozen 0.3.2 implementation and tests as behavioral references. The matrix below scopes

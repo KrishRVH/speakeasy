@@ -100,6 +100,10 @@ stateDiagram-v2
     Opening --> Stopping: finish requested
     Recording --> Stopping: release / next press / limit
     Stopping --> AwaitingWorker: audio complete; retire microphone
+    Stopping --> Inserting: audio matches a recognized pause
+    Stopping --> AwaitingSpeculation: audio matches the running pause
+    AwaitingSpeculation --> Inserting: pause recognized
+    AwaitingSpeculation --> AwaitingWorker: pause failed
     AwaitingWorker --> Transcribing: worker ready
     Transcribing --> Inserting: nonempty text
     Inserting --> [*]: submitted / copied / cancelled
@@ -150,16 +154,21 @@ pauses. WAV preparation stays off the UI. The native acceptance procedure is in
 [performance](performance.md#native-acceptance). Heavily trimmed recordings release excess PCM
 capacity when at least 8 MiB is unused and capacity is at least four times the remaining length.
 
-Hands-free recordings speculate. Once new speech has been followed by 500 ms of quiet, the consumer
-copies the audio a recording stopped at that moment would keep and reports it as a numbered pause;
-the owner recognizes the latest pause whenever the warm worker is idle, never loading one for it.
-Because the same window classification trims both, the finished recording's audio is byte-for-byte
-the latest pause's exactly when their kept ranges match, and the capture names that pause. The owner
-then inserts the pause's text, or waits for its running recognition, instead of requesting another.
-Speech after a pause moves the range, so that pause's text is discarded and the recording makes its
-own request, waiting behind any running speculation. A failed or cancelled speculation sends an
-identical recording to its own request. Held recordings never speculate: the shortcut's release
-follows the last word too closely to benefit, and a speculation could delay the final request.
+Hands-free recordings on the GPU speculate. Once new speech has been followed by 500 ms of quiet,
+the consumer copies the audio a recording stopped at that moment would keep and reports it as a
+numbered pause. While still recording, the owner recognizes the latest pause whenever the warm
+worker is idle, never loading one for it. Because the same window classification trims both, the
+finished recording's audio is byte-for-byte the latest pause's exactly when their kept ranges match,
+and the capture names that pause. The owner then inserts the pause's text, or waits for its running
+recognition, instead of requesting another. Speech after a pause moves the range, so that pause's
+text is discarded and the recording makes its own request, waiting behind any running speculation. A
+failed or cancelled speculation sends an identical recording to its own request. A session that ends
+with its speculation running moves that job out of observation like an abandoned request, so its
+result or failure cannot reach a later session. Held recordings never speculate: the shortcut's
+release follows the last word too closely to benefit, and a speculation could delay the final
+request. CPU inference never speculates, since an obsolete speculation could hold the recording's
+own request for seconds. Copies of audio no session will use are erased when they are dropped, best
+effort.
 
 ## Setup
 
@@ -191,9 +200,12 @@ the reply to an abandoned request is read and discarded rather than mistaken for
 helper scales samples by 1/32768 exactly as the engine's WAV reader does, so it sees the same input
 as the HTTP route. It answers on a private copy of standard output, with descriptor 1 redirected to
 standard error, so a library that prints cannot corrupt a reply. Closing its standard input, as the
-parent's death does, ends the helper at once even during inference. Whisper, and a Parakeet
-installation without the C library, run the engine's own HTTP server; audio is posted from memory on
-loopback, through a client without proxies or redirects.
+parent's death does, ends the helper at once even during inference. The parent passes a protocol
+version, so a helper started from an executable an update has replaced exits with a remedy instead
+of misreading the pipes. If the helper cannot load the library, Parakeet falls back to the
+installation's HTTP server. Whisper, and a Parakeet installation without the C library, run the
+engine's own HTTP server; audio is posted from memory on loopback, through a client without proxies
+or redirects.
 
 Model loading starts in the background. GPU preference adds a silent warmup request before
 readiness. Whisper language travels with each request, so a

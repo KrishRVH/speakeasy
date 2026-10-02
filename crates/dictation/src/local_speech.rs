@@ -11,7 +11,7 @@ mod server;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
-use speakeasy_platform::ProcessGroup;
+use speakeasy_platform::{ProcessGroup, speech::Failure};
 use tokio::{process::Child, sync::watch};
 
 pub use self::helper::{HELPER_FLAG, run_helper};
@@ -38,13 +38,18 @@ impl LocalSpeech {
         config: Config,
         cancelled: watch::Receiver<bool>,
     ) -> anyhow::Result<Self> {
-        match helper::library(&config) {
-            Some(library) if config.engine == Engine::Parakeet => {
-                Helper::start(config, library, cancelled)
-                    .await
-                    .map(Self::Helper)
+        let Some(library) = helper::library(&config).filter(|_| config.engine == Engine::Parakeet)
+        else {
+            return Server::start(config, cancelled).await.map(Self::Server);
+        };
+        match Helper::start(config.clone(), library, cancelled.clone()).await {
+            Ok(helper) => Ok(Self::Helper(helper)),
+            // A library this process cannot load, such as one a hardened runtime refuses, still
+            // leaves the installation's own server.
+            Err(error) if error.downcast_ref::<Failure>() == Some(&Failure::Library) => {
+                Server::start(config, cancelled).await.map(Self::Server)
             },
-            _ => Server::start(config, cancelled).await.map(Self::Server),
+            Err(error) => Err(error),
         }
     }
 }
