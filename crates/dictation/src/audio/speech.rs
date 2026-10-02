@@ -149,6 +149,22 @@ impl Speech {
     pub(super) const fn speech_end(&self) -> usize {
         self.end
     }
+
+    /// Bytes of further quiet until the next mark this pause has not reported, once speech exists.
+    pub(super) fn quiet_until_next_mark(&self) -> Option<usize> {
+        self.first?;
+        let reported = if self.end <= self.paused_at {
+            self.paused_marks
+        } else {
+            0
+        };
+        let next = self
+            .early_pauses
+            .iter()
+            .chain([&self.padding])
+            .nth(reported)?;
+        Some(next.saturating_sub(self.scanned.saturating_sub(self.end)))
+    }
 }
 
 fn is_audible(window: &[u8]) -> bool {
@@ -194,6 +210,10 @@ mod tests {
         let speaking = audio(&[(SECOND * 2, 0), (SECOND, 3000), (SECOND / 2, 0)]);
         let spoken = SECOND * 3;
         let mut live = Speech::new(RATE).unwrap();
+        live.extend(&speaking[..SECOND]);
+        assert_eq!(live.quiet_until_next_mark(), None, "No speech yet");
+        live.extend(&speaking[..spoken]);
+        assert_eq!(live.quiet_until_next_mark(), Some(SECOND / 10));
         live.extend(&speaking[..spoken + SECOND / 10 - 2]);
         assert_eq!(live.pause(), None, "Half a window short of the first mark");
         let mut early = Vec::new();
@@ -215,6 +235,11 @@ mod tests {
                 .all(|pause| !pause.full && pause.speech_end == paused.speech_end)
         );
         assert_eq!(live.pause(), None, "A pause is reported fully once");
+        assert_eq!(
+            live.quiet_until_next_mark(),
+            None,
+            "Every mark was reported"
+        );
 
         let mut stopped_later = speaking.clone();
         stopped_later.extend(audio(&[(SECOND * 3 / 4, 20)]));

@@ -51,6 +51,8 @@ const METER_INTERVAL: Duration = Duration::from_millis(32);
 const STARTUP_DRAIN: Duration = Duration::from_millis(5);
 /// How often it drains once audio flows: twice per meter interval, well inside the ring's second.
 const DRAIN_INTERVAL: Duration = Duration::from_millis(16);
+/// How soon a due pause mark is rechecked when its audio has not reached the ring yet.
+const MARK_RECHECK: Duration = Duration::from_millis(2);
 const METER_FLOOR_DBFS: f32 = -60.0;
 const METER_TOP_DBFS: f32 = -6.0;
 const RECLAIM_SLACK_BYTES: usize = 8 * 1024 * 1024;
@@ -259,6 +261,21 @@ impl Tracker {
         Ok(())
     }
 
+    /// How long to sleep before draining again: the drain interval, or less when quiet follows
+    /// speech and a pause mark falls due sooner, so the mark's speculation starts on time instead of
+    /// up to an interval late. A mark whose audio has not arrived is rechecked shortly.
+    fn next_wake(&self) -> Duration {
+        let Some(bytes) = self.speech.quiet_until_next_mark() else {
+            return DRAIN_INTERVAL;
+        };
+        let samples = u64::try_from(bytes / SAMPLE_BYTES).unwrap_or(u64::MAX);
+        let micros = samples
+            .saturating_mul(1_000_000)
+            .checked_div(u64::from(self.rate))
+            .unwrap_or(u64::MAX);
+        Duration::from_micros(micros).clamp(MARK_RECHECK, DRAIN_INTERVAL)
+    }
+
     /// The finished recording's tail after its last segment, or `None` without speech.
     fn finish(&mut self) -> anyhow::Result<Option<Captured>> {
         self.speech.complete(self.pcm.audio());
@@ -352,18 +369,15 @@ fn feed(
     let started = Instant::now();
     events.send_blocking(CaptureEvent::Ready(id, Duration::ZERO))?;
     let mut fed = 0_usize;
-    for tick in 1_u32.. {
+    loop {
         match control.mode() {
             Mode::Cancelled => return Ok(None),
             Mode::Finishing => return tracker.finish(),
             Mode::Recording => {},
         }
-        let elapsed = DRAIN_INTERVAL.saturating_mul(tick);
-        let due = started
-            .checked_add(elapsed)
-            .context("Replay ran too long")?;
         let target = usize::try_from(
-            elapsed
+            started
+                .elapsed()
                 .as_micros()
                 .saturating_mul(per_second)
                 .checked_div(1_000_000)
@@ -380,9 +394,8 @@ fn feed(
         }
         tracker.at_pause(id, events, control.speculating())?;
         // Finish and cancel unpark this thread at once, as they do the live consumer.
-        thread::park_timeout(due.saturating_duration_since(Instant::now()));
+        thread::park_timeout(tracker.next_wake());
     }
-    Ok(None)
 }
 
 #[cfg(test)]
@@ -543,7 +556,11 @@ impl Recorder {
             }
             // Finish and cancel unpark this thread at once, and an unpark that lands before the
             // wait is not lost; the timeout only paces draining of the ring.
-            thread::park_timeout(if ready { DRAIN_INTERVAL } else { STARTUP_DRAIN });
+            thread::park_timeout(if ready {
+                self.tracker.next_wake()
+            } else {
+                STARTUP_DRAIN
+            });
         }
     }
 
