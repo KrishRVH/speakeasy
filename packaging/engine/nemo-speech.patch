@@ -1,0 +1,426 @@
+diff --git a/src/asr/encoder/fastconformer.cpp b/src/asr/encoder/fastconformer.cpp
+index ec039c8..dd5e516 100644
+--- a/src/asr/encoder/fastconformer.cpp
++++ b/src/asr/encoder/fastconformer.cpp
+@@ -14,6 +14,8 @@ using namespace nemo_speech::asr;
+ 
+ #include "runtime.h"
+ 
++#include <cstdlib>
++
+ // CUDA implements asymmetric left padding directly. Other builds retain the
+ // pad+roll formulation because Metal's PAD kernel rejects nonzero left pads.
+ // Keeping that compatibility choice at graph construction time avoids paying
+@@ -131,6 +133,11 @@ SubSampling::build_graph(
+     ggml_runtime::Session* session, ggml_runtime::TensorBag input_tensors,
+     ggml_runtime::TensorContainer* session_tensor_container) {
+     const bool causal = (cfg_.conv_context == ConvContext::Causal);
++    const auto* features = input_tensors.get_tensor(0).tensor;
++    if (!causal && features->ne[2] == 1 && features->ne[3] == 1 &&
++        std::getenv("NEMO_SPEECH_LEGACY_SUBSAMPLING") == nullptr) {
++        return build_channel_last(session, input_tensors, session_tensor_container);
++    }
+     ggml_runtime::TensorBag conv_output;
+     if (!causal) {
+         // Symmetric convolutions use their native padding.
+@@ -182,6 +189,74 @@ SubSampling::build_graph(
+     return out_->build_graph(session, output_tensors, session_tensor_container);
+ }
+ 
++ggml_runtime::TensorBag
++SubSampling::build_channel_last(
++    ggml_runtime::Session* session, ggml_runtime::TensorBag input_tensors,
++    ggml_runtime::TensorContainer* session_tensor_container) {
++    // Activations are [C, F, T]: channel-inner, then frequency, then time. ggml's conv_2d and
++    // conv_2d_dw lower through F16 im2col, per-channel matrix-vector products, and transposes back
++    // to [F, T, C]; on Metal that costs about five times this formulation.
++    const int channels = cfg_.subsampling_conv_channels;
++    const int stages = static_cast<int>(std::log2(cfg_.subsampling_factor));
++    auto model_tensor = [&](int index, const char* part) {
++        return session->model_tensor_container
++            ->get_tensor_by_name(name_ + ".conv." + std::to_string(index) + part)
++            .tensor;
++    };
++    auto features = input_tensors.get_tensor(0);
++    auto* stem = model_tensor(0, ".weight");
++    auto bf_ctx = session_tensor_container->get_ctx_of_buffer_type(
++        session->model_tensor_container->get_tensor_by_name(name_ + ".conv.0.weight").buft);
++    ggml_context* ctx = bf_ctx.ctx;
++
++    // Stem: 3x3 stride-2 convolution from one channel, as im2col taps times the [9, C] kernel.
++    ggml_tensor* taps = ggml_im2col(ctx, stem, features.tensor, 2, 2, 1, 1, 1, 1, true, GGML_TYPE_F32);
++    ggml_tensor* y = ggml_mul_mat(
++        ctx, ggml_cast(ctx, ggml_reshape_2d(ctx, stem, 9, channels), GGML_TYPE_F32),
++        ggml_reshape_2d(ctx, taps, 9, taps->ne[1] * taps->ne[2]));
++    y = ggml_reshape_3d(ctx, y, channels, taps->ne[1], taps->ne[2]);
++    y = ggml_relu(ctx, ggml_add(ctx, y, ggml_reshape_1d(ctx, model_tensor(0, ".bias"), channels)));
++
++    int index = 2;  // after the stem's Conv2D and ReLU
++    for (int stage = 1; stage < stages; ++stage, index += 3) {
++        // Depthwise 3x3, stride 2, zero padding 1: nine strided views scaled per channel.
++        const int64_t out_f = (y->ne[1] - 1) / 2 + 1;
++        const int64_t out_t = (y->ne[2] - 1) / 2 + 1;
++        ggml_tensor* padded = ggml_roll(ctx, ggml_pad(ctx, y, 0, 2, 2, 0), 0, 1, 1, 0);
++        ggml_tensor* weights = ggml_cont(
++            ctx, ggml_transpose(
++                     ctx, ggml_cast(
++                              ctx, ggml_reshape_2d(ctx, model_tensor(index, ".weight"), 9, channels),
++                              GGML_TYPE_F32)));  // [C, 9]
++        ggml_tensor* sum = nullptr;
++        for (int kt = 0; kt < 3; ++kt) {
++            for (int kf = 0; kf < 3; ++kf) {
++                ggml_tensor* window = ggml_view_3d(
++                    ctx, padded, channels, out_f, out_t, 2 * padded->nb[1], 2 * padded->nb[2],
++                    kf * padded->nb[1] + kt * padded->nb[2]);
++                ggml_tensor* tap = ggml_view_1d(ctx, weights, channels, (kt * 3 + kf) * weights->nb[1]);
++                ggml_tensor* term = ggml_mul(ctx, window, tap);
++                sum = sum == nullptr ? term : ggml_add(ctx, sum, term);
++            }
++        }
++        y = ggml_add(ctx, sum, ggml_reshape_1d(ctx, model_tensor(index, ".bias"), channels));
++
++        // Pointwise 1x1: one [C, C] product over every position.
++        ggml_tensor* mixed = ggml_mul_mat(
++            ctx, ggml_reshape_2d(ctx, model_tensor(index + 1, ".weight"), channels, channels),
++            ggml_reshape_2d(ctx, y, channels, y->ne[1] * y->ne[2]));
++        y = ggml_reshape_3d(ctx, mixed, channels, y->ne[1], y->ne[2]);
++        y = ggml_relu(ctx, ggml_add(ctx, y, ggml_reshape_1d(ctx, model_tensor(index + 1, ".bias"), channels)));
++    }
++
++    // NeMo flattens (C, F) per frame with frequency fastest: [C, F, T] -> [F, C, T] -> [F*C, T].
++    ggml_tensor* frames = ggml_cont(ctx, ggml_permute(ctx, y, 1, 0, 2, 3));
++    frames = ggml_reshape_4d(ctx, frames, frames->ne[0] * frames->ne[1], frames->ne[2], 1, 1);
++    ggml_runtime::TensorBag output_tensors;
++    output_tensors.add_tensor(ggml_runtime::ggml_bf_tensor(frames, bf_ctx.buft));
++    return out_->build_graph(session, output_tensors, session_tensor_container);
++}
++
+ void
+ SubSampling::set_data(ggml_runtime::Session* session) {
+     conv_->set_data(session);
+@@ -287,6 +362,17 @@ ConformerConv::define_tensors(ggml_runtime::Session* session) {
+     else
+         layer_norm_->define_tensors(session);
+     pointwise_conv2_->define_tensors(session);
++    if (folds_batch_norm()) {
++        session->model_tensor_container->create_tensor_2d(
++            name_ + ".folded_dw_taps", GGML_TYPE_F32, kernel_size_, d_model_);
++        session->model_tensor_container->create_tensor_1d(
++            name_ + ".folded_dw_bias", GGML_TYPE_F32, d_model_);
++    }
++}
++
++bool
++ConformerConv::folds_batch_norm() const {
++    return norm_kind_ == ConvNorm::BatchNorm && context_ == ConvContext::Symmetric;
+ }
+ 
+ // Internal helper: shared graph body from GLU output through pointwise_conv2.
+@@ -438,6 +524,10 @@ ConformerConv::build_graph(
+                    ? ggml_add(bf_ctx.ctx, x_ct, b1.tensor)
+                    : ggml_add_inplace(bf_ctx.ctx, x_ct, b1.tensor);
+     }
++    if (folds_batch_norm() && x_ct->ne[2] == 1 && x_ct->ne[3] == 1 &&
++        std::getenv("NEMO_SPEECH_LEGACY_CONV") == nullptr) {
++        return build_channel_last(session, x_ct, session_tensor_container, input_tensor.buft);
++    }
+     ggml_runtime::TensorBag out_bag;
+ #ifdef NEMO_SPEECH_FASTCONFORMER_CUDA_FUSIONS
+     if (session->params.use_gpu) {
+@@ -621,6 +711,92 @@ ConformerConv::set_data(ggml_runtime::Session* session) {
+     else
+         layer_norm_->set_data(session);
+     pointwise_conv2_->set_data(session);
++    if (!folds_batch_norm()) {
++        return;
++    }
++    // taps[k, c] = w[k, c] * s[c] and bias[c] = (b[c] - mean[c]) * s[c] + beta[c], where
++    // s = gamma / sqrt(var + 1e-5): BatchNorm(conv(x) + b) as one scaled convolution.
++    auto read = [&](const std::string& name) {
++        ggml_tensor* t = session->model_tensor_container->get_tensor_by_name(name).tensor;
++        std::vector<float> values(static_cast<size_t>(ggml_nelements(t)));
++        if (t->type == GGML_TYPE_F16) {
++            std::vector<ggml_fp16_t> half(values.size());
++            ggml_backend_tensor_get(t, half.data(), 0, ggml_nbytes(t));
++            for (size_t i = 0; i < half.size(); ++i) values[i] = ggml_fp16_to_fp32(half[i]);
++        } else {
++            ggml_backend_tensor_get(t, values.data(), 0, ggml_nbytes(t));
++        }
++        return values;
++    };
++    const auto weights = read(name_ + ".depthwise_conv.weight");  // [K, 1, C]
++    const auto gamma = read(name_ + ".batch_norm.weight");
++    const auto beta = read(name_ + ".batch_norm.bias");
++    const auto mean = read(name_ + ".batch_norm.running_mean");
++    const auto var = read(name_ + ".batch_norm.running_var");
++    const auto conv_bias =
++        use_bias_ ? read(name_ + ".depthwise_conv.bias") : std::vector<float>(d_model_, 0.0f);
++    std::vector<float> taps(static_cast<size_t>(d_model_) * kernel_size_);
++    std::vector<float> bias(static_cast<size_t>(d_model_));
++    for (int c = 0; c < d_model_; ++c) {
++        const float scale = gamma[c] / std::sqrt(var[c] + 1e-5f);
++        for (int k = 0; k < kernel_size_; ++k) {
++            const size_t at = static_cast<size_t>(c) * kernel_size_ + k;
++            taps[at] = weights[at] * scale;
++        }
++        bias[c] = (conv_bias[c] - mean[c]) * scale + beta[c];
++    }
++    auto* taps_tensor =
++        session->model_tensor_container->get_tensor_by_name(name_ + ".folded_dw_taps").tensor;
++    auto* bias_tensor =
++        session->model_tensor_container->get_tensor_by_name(name_ + ".folded_dw_bias").tensor;
++    ggml_backend_tensor_set(taps_tensor, taps.data(), 0, ggml_nbytes(taps_tensor));
++    ggml_backend_tensor_set(bias_tensor, bias.data(), 0, ggml_nbytes(bias_tensor));
++}
++
++ggml_runtime::TensorBag
++ConformerConv::build_channel_last(
++    ggml_runtime::Session* session, ggml_tensor* x_ct,
++    ggml_runtime::TensorContainer* session_tensor_container, ggml_backend_buffer_type_t buft) {
++    auto bf_ctx = session_tensor_container->get_ctx_of_buffer_type(buft);
++    ggml_context* ctx = bf_ctx.ctx;
++    const int64_t channels = d_model_;
++    const int64_t frames = x_ct->ne[1];
++    // GLU over channels: first half times the sigmoid of the second.
++    ggml_tensor* gate = ggml_sigmoid(
++        ctx, ggml_view_2d(ctx, x_ct, channels, frames, x_ct->nb[1], channels * x_ct->nb[0]));
++    ggml_tensor* glu =
++        ggml_mul(ctx, ggml_view_2d(ctx, x_ct, channels, frames, x_ct->nb[1], 0), gate);
++
++    // Same-length depthwise convolution with zero padding (K - 1) / 2 on each side. SSM_CONV is
++    // a one-kernel depthwise cross-correlation over time-inner input that returns [C, T].
++    const int pad = (kernel_size_ - 1) / 2;
++    ggml_tensor* by_time = ggml_cont(ctx, ggml_transpose(ctx, glu));  // [T, C]
++    ggml_tensor* padded = ggml_roll(ctx, ggml_pad(ctx, by_time, 2 * pad, 0, 0, 0), pad, 0, 0, 0);
++    ggml_tensor* conv = ggml_ssm_conv(
++        ctx, ggml_reshape_3d(ctx, padded, padded->ne[0], channels, 1),
++        session->model_tensor_container->get_tensor_by_name(name_ + ".folded_dw_taps").tensor);
++    ggml_tensor* normed = ggml_add(
++        ctx, ggml_reshape_2d(ctx, conv, channels, frames),
++        session->model_tensor_container->get_tensor_by_name(name_ + ".folded_dw_bias").tensor);
++    ggml_tensor* activated = ggml_silu(ctx, normed);
++
++    auto w2 =
++        session->model_tensor_container->get_tensor_by_name(name_ + ".pointwise_conv2.weight");
++    ggml_tensor* w2_mat = w2.tensor;
++    if (w2_mat->ne[0] == 1 && w2_mat->ne[2] > 1) {
++        w2_mat = ggml_reshape_2d(ctx, w2_mat, w2_mat->ne[1], w2_mat->ne[2]);
++    }
++    ggml_tensor* out = ggml_mul_mat(ctx, w2_mat, activated);
++    if (use_bias_) {
++        out = ggml_add_inplace(
++            ctx, out,
++            session->model_tensor_container
++                ->get_tensor_by_name(name_ + ".pointwise_conv2.bias")
++                .tensor);
++    }
++    ggml_runtime::TensorBag out_bag;
++    out_bag.add_tensor(ggml_runtime::ggml_bf_tensor(out, buft));
++    return out_bag;
+ }
+ 
+ ConformerLayer::ConformerLayer(const std::string& name, const EncoderConfig& cfg)
+diff --git a/src/asr/encoder/fastconformer.h b/src/asr/encoder/fastconformer.h
+index e21b860..e44391b 100644
+--- a/src/asr/encoder/fastconformer.h
++++ b/src/asr/encoder/fastconformer.h
+@@ -165,6 +165,12 @@ class SubSampling : public ggml_runtime::Module {
+     void set_data(ggml_runtime::Session* session) override;
+ 
+    private:
++    // Symmetric single-item subsampling with activations kept channel-inner, so the 1x1
++    // convolutions are single matrix products and the depthwise ones are strided multiply-adds.
++    ggml_runtime::TensorBag build_channel_last(
++        ggml_runtime::Session* session, ggml_runtime::TensorBag input_tensors,
++        ggml_runtime::TensorContainer* tc);
++
+     std::string name_;
+     EncoderConfig cfg_;
+     ggml_runtime::SequenceModule* conv_;
+@@ -233,6 +239,14 @@ class ConformerConv : public ggml_runtime::Module {
+     int kernel_size() const { return kernel_size_; }
+ 
+    private:
++    // Offline symmetric BatchNorm modules on single items keep activations [C, T]: GLU on
++    // strided halves, then the depthwise convolution as shifted views scaled by taps with the
++    // BatchNorm folded in at load time, so no transposes or im2col run per layer.
++    bool folds_batch_norm() const;
++    ggml_runtime::TensorBag build_channel_last(
++        ggml_runtime::Session* session, ggml_tensor* x_ct,
++        ggml_runtime::TensorContainer* session_tensor_container, ggml_backend_buffer_type_t buft);
++
+     std::string name_;
+     int d_model_;
+     int kernel_size_;
+diff --git a/src/asr/encoder/rel_pos_attention.cpp b/src/asr/encoder/rel_pos_attention.cpp
+index f7fceda..f394681 100644
+--- a/src/asr/encoder/rel_pos_attention.cpp
++++ b/src/asr/encoder/rel_pos_attention.cpp
+@@ -6,6 +6,7 @@
+ // Licensed under the MIT License. See THIRD_PARTY_NOTICES.md.
+ // Implementations for RelPositionalEncoding + RelPositionMultiHeadAttention.
+ // Extracted from runtime/ggml/nn.cpp - these are FastConformer-specific.
++#include <cstdlib>
+ #include "rel_pos_attention.h"
+ 
+ #include <ggml-backend.h>
+@@ -271,10 +272,19 @@ RelPositionMultiHeadAttention::build_graph_masked(
+         // Every reshape and view must retain the B stride.
+         const int64_t T = input_tensor.tensor->ne[1];
+         const int64_t B = input_tensor.tensor->ne[2];
+-        auto qh = ggml_cont(bf_ctx.ctx, ggml_permute(bf_ctx.ctx, q_multi_head, 0, 2, 1, 3));
+-        auto kh = ggml_cont(bf_ctx.ctx, k_multi_head);
+-        auto vh = ggml_cont(bf_ctx.ctx, ggml_permute(bf_ctx.ctx, v_reshaped, 0, 2, 1, 3));
+-        auto ph = ggml_cont(bf_ctx.ctx, ggml_permute(bf_ctx.ctx, p, 0, 2, 1, 3));
++        // Row-contiguous head views feed the bias adds and products directly; only V needs a
++        // copy, for its transpose.
++        const bool legacy_copies = std::getenv("NEMO_SPEECH_LEGACY_ATTN_COPIES") != nullptr;
++        auto qh = ggml_permute(bf_ctx.ctx, q_multi_head, 0, 2, 1, 3);
++        auto kh = k_multi_head;
++        auto vh = ggml_permute(bf_ctx.ctx, v_reshaped, 0, 2, 1, 3);
++        auto ph = ggml_permute(bf_ctx.ctx, p, 0, 2, 1, 3);
++        if (legacy_copies) {
++            qh = ggml_cont(bf_ctx.ctx, qh);
++            kh = ggml_cont(bf_ctx.ctx, kh);
++            vh = ggml_cont(bf_ctx.ctx, vh);
++            ph = ggml_cont(bf_ctx.ctx, ph);
++        }
+         auto bu = ggml_reshape_4d(bf_ctx.ctx, pos_bias_u_tensor.tensor, d_k, 1, n_head, 1);
+         auto bv = ggml_reshape_4d(bf_ctx.ctx, pos_bias_v_tensor.tensor, d_k, 1, n_head, 1);
+         auto qu = ggml_add(bf_ctx.ctx, qh, bu);
+@@ -283,7 +293,14 @@ RelPositionMultiHeadAttention::build_graph_masked(
+         auto matrix_ac = ggml_mul_mat(bf_ctx.ctx, kh, qu);  // [T,T,H,B]
+         auto matrix_bd = ggml_mul_mat(bf_ctx.ctx, ph, qv);  // [2T-1,T,H,B]
+ 
+-        // Portable one-row left pad followed by the Transformer-XL relative shift.
++        // Transformer-XL relative shift: out[j, i] = bd[T - 1 + j - i, i], which lies at flat offset
++        // (T - 1) + j + i * (2T - 2) of the contiguous [2T-1, T] product, so a strided view is exact.
++        if (std::getenv("NEMO_SPEECH_LEGACY_RELSHIFT") == nullptr) {
++            const size_t es = ggml_element_size(matrix_bd);
++            matrix_bd = ggml_view_4d(
++                bf_ctx.ctx, matrix_bd, T, T, n_head, B, static_cast<size_t>(2 * T - 2) * es,
++                matrix_bd->nb[2], matrix_bd->nb[3], static_cast<size_t>(T - 1) * es);
++        } else {
+         auto first_row = ggml_view_4d(
+             bf_ctx.ctx, matrix_bd, 1, T, n_head, B, matrix_bd->nb[1], matrix_bd->nb[2],
+             matrix_bd->nb[3], 0);
+@@ -299,6 +316,7 @@ RelPositionMultiHeadAttention::build_graph_masked(
+             bf_ctx.ctx, matrix_bd, T, T, n_head, B, matrix_bd->nb[1], matrix_bd->nb[2],
+             matrix_bd->nb[3], 0);
+         matrix_bd = ggml_cont(bf_ctx.ctx, matrix_bd);
++        }
+ 
+         auto scores = ggml_scale_inplace(
+             bf_ctx.ctx, ggml_add(bf_ctx.ctx, matrix_ac, matrix_bd), scale_factor);
+diff --git a/src/asr/model.cpp b/src/asr/model.cpp
+index cac4953..e206b40 100644
+--- a/src/asr/model.cpp
++++ b/src/asr/model.cpp
+@@ -1628,8 +1628,16 @@ RnntModel::RnntModel(ggml_runtime::BackendManager& bm, Common&& c, const Batchin
+     rnnt_encoder_tail_ = std::make_unique<RnntEncoderTail>(rnnt_joint_.get(), prompt_fusion_.get());
+     rnnt_decoder_stages_ = std::make_unique<RnntDecoderStages>(
+         rnnt_predictor_.get(), rnnt_joint_.get(), decoder_arena_slots_);
++    ggml_runtime::BackendManager* decoder_manager = &backend_manager();
++    if (backend_manager().get_params().use_gpu && !enc_cfg_.cache_supported &&
++        std::getenv("NEMO_SPEECH_GPU_DECODER") == nullptr) {
++        auto cpu_params = backend_manager().get_params();
++        cpu_params.use_gpu = false;
++        decoder_bm_ = std::make_unique<ggml_runtime::BackendManager>(cpu_params);
++        decoder_manager = decoder_bm_.get();
++    }
+     decoder_session_ = std::make_unique<ggml_runtime::Session>(
+-        backend_manager(), rnnt_decoder_stages_.get(), loader());
++        *decoder_manager, rnnt_decoder_stages_.get(), loader());
+     // Bound graph variants across predictor batch and joint time shapes.
+     decoder_session_->set_run_cache_capacity(64);
+     decoder_session_->setup();
+diff --git a/src/asr/model.h b/src/asr/model.h
+index ce5114a..ce3b055 100644
+--- a/src/asr/model.h
++++ b/src/asr/model.h
+@@ -276,6 +276,10 @@ class RnntModel final : public AsrModel, public RnntEngine {
+     std::unique_ptr<PromptFusionModule> prompt_fusion_;
+     std::unique_ptr<RnntEncoderTail> rnnt_encoder_tail_;
+     std::unique_ptr<RnntDecoderStages> rnnt_decoder_stages_;
++    // A CPU-only lane for the decoder when the encoder runs on a GPU: each greedy step is a
++    // few megaflops, so a GPU round trip per step costs more than the arithmetic. Declared
++    // before decoder_session_ so the session is destroyed first.
++    std::unique_ptr<ggml_runtime::BackendManager> decoder_bm_;
+     std::unique_ptr<ggml_runtime::Session> decoder_session_;
+     std::unique_ptr<DecoderBatchers> decoder_batchers_;
+     int decoder_arena_slots_ = 0;
+diff --git a/src/runtime/ggml/backend.cpp b/src/runtime/ggml/backend.cpp
+index 886648a..e2c6e76 100644
+--- a/src/runtime/ggml/backend.cpp
++++ b/src/runtime/ggml/backend.cpp
+@@ -10,6 +10,8 @@
+ 
+ #include "runtime.h"
+ 
++#include <ggml-cpu.h>
++
+ namespace ggml_runtime {
+ 
+ BackendManager::BackendManager(Params params) {
+@@ -99,6 +101,15 @@ BackendManager::init_backends() {
+         throw std::runtime_error("failed to initialize CPU backend");
+     }
+     GGMLF_LOG_INFO("Using CPU backend\n");
++    if (std::getenv("NEMO_SPEECH_DISPOSABLE_CPU_THREADS") == nullptr) {
++        const char* requested = std::getenv("NEMO_SPEECH_CPU_THREADS");
++        const int threads = requested != nullptr && std::atoi(requested) > 0 ? std::atoi(requested) : 4;
++        auto pool_params = ggml_threadpool_params_default(threads);
++        cpu_threadpool_ = ggml_threadpool_new(&pool_params);
++        if (cpu_threadpool_ != nullptr) {
++            ggml_backend_cpu_set_threadpool(backend_cpu, cpu_threadpool_);
++        }
++    }
+     backends.emplace_back(backend_cpu);
+ 
+     auto* cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+@@ -129,7 +140,13 @@ BackendManager::get_backends() {
+     return handles;
+ }
+ 
+-BackendManager::~BackendManager() = default;
++BackendManager::~BackendManager() {
++    gpu_backend = nullptr;
++    backends.clear();
++    if (cpu_threadpool_ != nullptr) {
++        ggml_threadpool_free(cpu_threadpool_);
++    }
++}
+ 
+ buft_list_t
+ BackendManager::get_buft_list() {
+diff --git a/src/runtime/ggml/runtime.h b/src/runtime/ggml/runtime.h
+index 4864071..7ddcdb4 100644
+--- a/src/runtime/ggml/runtime.h
++++ b/src/runtime/ggml/runtime.h
+@@ -196,6 +196,9 @@ class BackendManager {
+     std::vector<ggml_backend_ptr> backends;
+     // Non-owning alias into `backends`.
+     ggml_backend_t gpu_backend = nullptr;
++    // Workers for the CPU backend that outlive each graph, so small graphs (one greedy decoder
++    // step) do not create and join threads per compute. Freed after `backends`.
++    ggml_threadpool_t cpu_threadpool_ = nullptr;
+     buft_list_t buft_list;
+     std::mutex compute_mu_;
+ };
+diff --git a/src/runtime/ggml/session.cpp b/src/runtime/ggml/session.cpp
+index f5b12dc..58483a2 100644
+--- a/src/runtime/ggml/session.cpp
++++ b/src/runtime/ggml/session.cpp
+@@ -900,7 +900,11 @@ Session::run_impl(
+         }
+ 
+         auto _t2 = _clk::now();
+-        if (!ggml_graph_compute_helper_async(sched.get(), cr.gf, 4)) {
++        static const int cpu_threads = [] {
++            const char* v = std::getenv("NEMO_SPEECH_CPU_THREADS");
++            return v != nullptr && std::atoi(v) > 0 ? std::atoi(v) : 4;
++        }();
++        if (!ggml_graph_compute_helper_async(sched.get(), cr.gf, cpu_threads)) {
+             GGMLF_LOG_ERROR("Failed to compute graph\n");
+             throw std::runtime_error("failed to compute graph");
+         }

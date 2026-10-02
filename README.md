@@ -47,27 +47,27 @@ language is set to English.
 ## What's said here stays here
 
 - Speech runs in a local NeMo-Speech.cpp or whisper.cpp process that Speakeasy owns and stops. Setup
-  downloads the engine and model once; nothing is uploaded.
+  downloads the model once; nothing is uploaded.
 - The microphone opens only while you dictate. Audio, transcripts, and engine output are never
   logged.
 - There are no accounts, cloud providers, telemetry, or transcript history.
 
 ## Get started
 
-Build the app bundle on a Mac with Apple silicon, macOS 14 or later, and the Xcode command line
-tools, then open it and allow Microphone and Accessibility access when asked:
+Build the app bundle on a Mac with Apple silicon, macOS 14 or later, Xcode with its Metal toolchain,
+and CMake, then open it and allow Microphone and Accessibility access when asked:
 
 ```sh
 bash scripts/package-macos.sh
 open artifacts/Speakeasy.app
 ```
 
-The first launch downloads the Metal build of
-[NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) and NVIDIA's Parakeet v3 model, about
-0.8 GB in all, into `~/Library/Application Support/speakeasy`, then turns dictation on. Downloads
-come from pinned GitHub and Hugging Face URLs and are checked against their SHA-256 before use.
-**Cancel** pauses setup, and the next attempt resumes where it stopped. Then hold <kbd>Fn</kbd> in
-an editor and speak.
+The app carries its own Metal build of [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp),
+tuned for Apple silicon. The first launch installs it and downloads NVIDIA's Parakeet v3 model,
+about 0.7 GB, into `~/Library/Application Support/speakeasy`, then turns dictation on. The model
+comes from a pinned Hugging Face revision and is checked against its SHA-256 before use. **Cancel**
+pauses setup, and the next attempt resumes where it stopped. Then hold <kbd>Fn</kbd> in an editor
+and speak.
 
 Settings also choose the microphone, GPU use, filler removal, clipboard behavior, reduced motion,
 and theme: **Jet & Champagne**, **Emerald Lounge**, **Iris**, or **Midnight Chrome**. Changes apply
@@ -146,9 +146,11 @@ the app itself builds only on macOS. See the
 
 <br>
 
-- `bash scripts/package-macos.sh` packages the app into `artifacts/`. The bundle carries no engine
-  or model; setup downloads them on first launch. It carries its microphone usage declaration and a
-  local signature. Distribution needs Developer ID signing and notarization.
+- `bash scripts/package-macos.sh` packages the app into `artifacts/`. It runs
+  `scripts/build-engine.sh`, which fetches pinned NeMo-Speech.cpp, ggml, and SentencePiece sources,
+  applies [Speakeasy's engine patches](packaging/engine/README.md), and builds for M1 and macOS 14.
+  The bundle carries that engine but no model, its microphone usage declaration, and a local
+  signature. Distribution needs Developer ID signing and notarization.
 - With `SPEAKEASY_FIXTURE_CONFIG` pointing at a settings file and `SPEAKEASY_FIXTURE_WAV` at public
   audio such as whisper.cpp's `samples/jfk.wav`:
 
@@ -160,7 +162,9 @@ the app itself builds only on macOS. See the
   The first checks recognition and worker shutdown. The second times the real session owner and
   engine with fake capture and insertion; it excludes microphone teardown and OS paste latency. With
   only `SPEAKEASY_FIXTURE_WAV`, `cargo test -p speakeasy-dictation install_chooses -- --ignored`
-  runs setup into a temporary directory, downloading about 0.8 GB, and recognizes the fixture.
+  runs setup into a temporary directory and recognizes the fixture; `SPEAKEASY_FIXTURE_ENGINE` names
+  a `scripts/build-engine.sh` build to install instead of downloading NVIDIA's. A test binary cannot
+  run the Parakeet helper, so set `SPEAKEASY_FIXTURE_HELPER` to a built `speakeasy` binary.
 
 - `cargo run --release -p speakeasy-platform --example engine_profile` times warm recognition of
   public WAV fixtures through the engine's C library or its HTTP server; see

@@ -83,6 +83,19 @@ through first callback and teardown, beside starting a stream built in advance:
 cargo run --release -p speakeasy-dictation --example capture_onset -- --runs 20
 ```
 
+## Engine build
+
+The packaged app runs [Speakeasy's engine build](../packaging/engine/README.md). Compare a change
+against the graph it replaces in one build by setting its `NEMO_SPEECH_LEGACY_*` variable for
+alternating `engine_profile` blocks, and against NVIDIA's release by alternating `--library` between
+the two installations. Every candidate must keep the fixture hashes or pass a corpus review. Point
+`--library` at `artifacts/engine/<build>/nemo-speech/lib/libnemo_speech_asr_c.1.dylib` after
+`bash scripts/build-engine.sh`.
+
+The engine's Metal library is compiled at build time. NVIDIA's release compiles its embedded source
+when an executable first loads it, which macOS caches per executable, so each new app binary pays
+that compile again; time a fresh helper's startup with `profile_fixture_dictation` to compare.
+
 ## Process sampling
 
 `profile_macos.py` samples explicit app and engine PIDs through `ps`: cumulative CPU time, resident

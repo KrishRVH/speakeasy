@@ -33,7 +33,7 @@ flowchart LR
 | `dictation/src/local_speech.rs` and `local_speech/`             | The warm engine process: the Parakeet helper over pipes, or an engine's HTTP server; bounded replies and cancellation recovery.                                   |
 | `dictation/src/transcript.rs`                                   | Linear transcript whitespace and filler cleanup before insertion.                                                                                                 |
 | `dictation/src/ports.rs`                                        | Capture, speech, and insertion interfaces used by the session owner and unattended fixtures.                                                                      |
-| `dictation/src/setup.rs`                                        | Automatic setup: the Metal engine build checked by its own doctor, pinned resumable downloads, and extraction.                                                    |
+| `dictation/src/setup.rs`                                        | Automatic setup: the bundled Metal engine build checked by its own doctor, pinned resumable downloads, and extraction.                                            |
 | `dictation/src/{lifecycle,save}.rs`                             | Service ownership across enable, pause, and quit, and ordered durable settings writes.                                                                            |
 | `dictation/src/instance.rs`                                     | Configuration-directory lock and an owned loopback listener for Reveal, Toggle, and Cancel commands from later launches.                                          |
 | `dictation/src/config.rs`, `status.rs`, `theme.rs`              | Typed settings with validation and atomic saves, shared readiness status, and the four color themes.                                                              |
@@ -177,15 +177,19 @@ configured. Setup owns its thread and runtime. Cancel signals it immediately and
 cleanup acknowledges; Quit joins active and retiring setup work. A machine-local `setup.lock`
 serializes directory writes across retries and app instances. Cancellation terminates and waits for
 the owned extraction or doctor process before releasing that lock; partial downloads remain
-available to resume. Setup installs NeMo-Speech.cpp's Metal build and uses the GPU when the engine's
-`doctor` command confirms that its accelerator works.
+available to resume. A packaged app carries Speakeasy's patched Metal build of NeMo-Speech.cpp under
+`Contents/Resources/engine/<build>`; setup copies it into `engines/<build>` with `ditto`, keeping
+its library links, and reuses an installed build of the same name. An unpackaged run downloads
+NVIDIA's Metal build instead. Setup uses the GPU when the engine's `doctor` command confirms that
+its accelerator works.
 
-Downloads use pinned GitHub release and Hugging Face revision URLs. Each is written beside its
+Downloads use pinned Hugging Face revision and GitHub release URLs. Each is written beside its
 destination as a `.part` file, resumed with an HTTP range request, and renamed into place only after
 its size and SHA-256 match. A complete partial file is verified locally without another download.
 Resumed data is hashed in bounded chunks with cancellation opportunities between reads. The system
-`tar` unpacks the engine archive into a staging directory that is then renamed, and unused builds
-are removed. The result is saved like a manual choice and enables dictation.
+`tar` unpacks a downloaded engine archive into a staging directory that is then renamed, as is a
+copied build, and unused builds are removed. The result is saved like a manual choice and enables
+dictation.
 
 ## Local recognition
 
@@ -274,16 +278,16 @@ performance gaps are in [performance](performance.md).
 
 ### Change and test map
 
-| Change                                          | Read first                                                     | Relevant default checks                                                                                            |
-| ----------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Gestures, deadlines, startup, cancellation      | `runtime/owner.rs`, `session.rs`, `microphone.rs`, `worker.rs` | `runtime/tests.rs` drives the production owner; paused Tokio time tests the same deadlines used in production.     |
-| Device errors, callback limits, PCM preparation | `audio.rs`, `audio/control.rs`, `ports.rs`                     | Synthetic samples check callback budgets, cancellation, checked WAV encoding, and controlled thread teardown.      |
-| Pause, reconfigure, quit, delayed saves         | `shell/services.rs`, `lifecycle.rs`, `shutdown.rs`, `save.rs`  | Lifecycle and save tests check terminal quit, latest pending configuration, ordered writes, and later edits/Pause. |
-| Keyboard policy                                 | `platform/keyboard.rs`, `platform/macos.rs`                    | Pure key decisions run on every host; the native event tap requires opt-in.                                        |
-| Insertion                                       | `platform/insertion.rs`, `InsertPermit`, `platform/macos.rs`   | Eligibility, cancellation/commit, and partial key submission.                                                      |
-| Engine startup/recovery                         | `local_speech/`, `runtime/worker.rs`, `platform/speech.rs`     | Helper framing, ordering, and failures over in-memory pipes; server exit/cancellation; the C ABI's struct layouts. |
-| Dependency patches                              | Each vendor `README.speakeasy.md`                              | Portable GPUI fixtures plus the macOS rendering check.                                                             |
-| Profiling and packaging                         | `scripts/profile_macos.py`, `scripts/package-macos.sh`         | Public `ps`/`vmmap` fixtures under an explicit clock.                                                              |
+| Change                                          | Read first                                                                        | Relevant default checks                                                                                            |
+| ----------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Gestures, deadlines, startup, cancellation      | `runtime/owner.rs`, `session.rs`, `microphone.rs`, `worker.rs`                    | `runtime/tests.rs` drives the production owner; paused Tokio time tests the same deadlines used in production.     |
+| Device errors, callback limits, PCM preparation | `audio.rs`, `audio/control.rs`, `ports.rs`                                        | Synthetic samples check callback budgets, cancellation, checked WAV encoding, and controlled thread teardown.      |
+| Pause, reconfigure, quit, delayed saves         | `shell/services.rs`, `lifecycle.rs`, `shutdown.rs`, `save.rs`                     | Lifecycle and save tests check terminal quit, latest pending configuration, ordered writes, and later edits/Pause. |
+| Keyboard policy                                 | `platform/keyboard.rs`, `platform/macos.rs`                                       | Pure key decisions run on every host; the native event tap requires opt-in.                                        |
+| Insertion                                       | `platform/insertion.rs`, `InsertPermit`, `platform/macos.rs`                      | Eligibility, cancellation/commit, and partial key submission.                                                      |
+| Engine startup/recovery                         | `local_speech/`, `runtime/worker.rs`, `platform/speech.rs`                        | Helper framing, ordering, and failures over in-memory pipes; server exit/cancellation; the C ABI's struct layouts. |
+| Dependency patches                              | Each vendor `README.speakeasy.md`                                                 | Portable GPUI fixtures plus the macOS rendering check.                                                             |
+| Profiling and packaging                         | `scripts/profile_macos.py`, `scripts/package-macos.sh`, `scripts/build-engine.sh` | Public `ps`/`vmmap` fixtures under an explicit clock.                                                              |
 
 Live microphone, the event tap, clipboard/editor acceptance, and mixed-display frame pacing require
 explicit native acceptance.

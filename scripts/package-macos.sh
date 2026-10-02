@@ -10,8 +10,12 @@ if [[ "$(uname -s)" != Darwin ]]; then
   exit 1
 fi
 MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release --locked -p speakeasy
+engine="$(bash scripts/build-engine.sh | tail -n 1)"
 bundle="artifacts/Speakeasy.app"
-mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
+rm -rf "$bundle/Contents/Resources/engine"
+mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources/engine"
+# Setup copies this build out of the bundle; the name carries the build's input hash.
+ditto "$engine" "$bundle/Contents/Resources/engine/$(basename "$engine")"
 cp target/release/speakeasy "$bundle/Contents/MacOS/speakeasy"
 cp packaging/macos/Info.plist "$bundle/Contents/Info.plist"
 cp packaging/macos/Speakeasy.icns "$bundle/Contents/Resources/"

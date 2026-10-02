@@ -1,7 +1,8 @@
 //! Automatic setup of NeMo-Speech.cpp's Metal build and the Parakeet v3 model.
 //!
-//! Every download is pinned by URL, size, and SHA-256, resumes after interruption, and is renamed
-//! into place only once verified.
+//! A packaged app carries Speakeasy's own engine build, which setup copies out of the bundle. Every
+//! download, including NVIDIA's engine build for an unpackaged app, is pinned by URL, size, and
+//! SHA-256, resumes after interruption, and is renamed into place only once verified.
 
 use std::{
     convert::Infallible,
@@ -108,7 +109,9 @@ impl Setup {
                     &root,
                     &progress,
                     &cancelled,
-                    async |installation| install(&root, &progress, installation).await,
+                    async |installation| {
+                        install(&root, bundled_engine(), &progress, installation).await
+                    },
                 )),
                 Err(error) => Some(Err(error.into())),
             }
@@ -287,6 +290,7 @@ fn data_root() -> PathBuf {
 
 async fn install(
     root: &Path,
+    bundled: Option<PathBuf>,
     progress: &watch::Sender<Progress>,
     installation: &mut Installation,
 ) -> anyhow::Result<Installed> {
@@ -294,7 +298,7 @@ async fn install(
         .connect_timeout(Duration::from_secs(15))
         .read_timeout(Duration::from_secs(30))
         .build()?;
-    let engine = choose_engine(&client, root, progress, installation).await?;
+    let engine = choose_engine(&client, bundled, root, progress, installation).await?;
     let model = fetch(
         &client,
         &MODEL,
@@ -310,14 +314,19 @@ async fn install(
     })
 }
 
-/// Installs the Metal build and uses the GPU when the engine's own doctor confirms it works.
+/// Installs the bundled engine build, or NVIDIA's Metal build without one, and uses the GPU when
+/// the engine's own doctor confirms it works.
 async fn choose_engine(
     client: &Client,
+    bundled: Option<PathBuf>,
     root: &Path,
     progress: &watch::Sender<Progress>,
     installation: &mut Installation,
 ) -> anyhow::Result<ChosenEngine> {
-    let metal = unpack(client, &METAL, root, progress, installation).await?;
+    let metal = match bundled {
+        Some(build) => copy_out(&build, root, progress, installation).await?,
+        None => unpack(client, &METAL, root, progress, installation).await?,
+    };
     let report = doctor(&metal, installation)
         .await
         .context("The speech engine cannot run on this Mac.")?;
@@ -325,6 +334,57 @@ async fn choose_engine(
         executable: keep_only(root, &metal)?,
         use_gpu: is_accelerated(&report),
     })
+}
+
+/// The engine build a packaged app carries: `Contents/Resources/engine/<build>/nemo-speech`.
+fn bundled_engine() -> Option<PathBuf> {
+    let contents = std::env::current_exe()
+        .ok()?
+        .parent()?
+        .parent()?
+        .to_path_buf();
+    fs::read_dir(contents.join("Resources/engine"))
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|build| build.join(EXECUTABLE).is_file())
+}
+
+/// Copies a bundled engine build into its own directory under `engines/`, keeping the build's
+/// name so a newer app's build installs beside the old one instead of reusing it.
+async fn copy_out(
+    build: &Path,
+    root: &Path,
+    progress: &watch::Sender<Progress>,
+    installation: &mut Installation,
+) -> anyhow::Result<PathBuf> {
+    let name = build
+        .file_name()
+        .context("The bundled speech engine has no name")?;
+    let engines = root.join("engines");
+    let directory = engines.join(name);
+    if directory.join(EXECUTABLE).is_file() {
+        return Ok(directory);
+    }
+    progress.send_replace(Progress {
+        step: Some("Installing the speech engine"),
+        ..Progress::default()
+    });
+    let mut staging = directory.clone().into_os_string();
+    staging.push(".part");
+    let staging = PathBuf::from(staging);
+    remove_engine_directory(&staging)?;
+    fs::create_dir_all(&engines)?;
+    // ditto keeps the build's library symlinks, permissions, and signatures.
+    let mut command = owned_command("/usr/bin/ditto");
+    command.arg(build).arg(&staging).stdout(Stdio::null());
+    let (status, _) = installation.output(&mut command).await?;
+    if !status.success() {
+        bail!("Cannot install the speech engine. Check free disk space, then try again.");
+    }
+    remove_engine_directory(&directory)?;
+    fs::rename(&staging, &directory)?;
+    Ok(directory)
 }
 
 /// Removes every other engine build and returns this build's executable.
@@ -698,6 +758,51 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn a_bundled_engine_is_copied_out_once_with_its_library_links() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let build = directory
+            .path()
+            .join("bundle/nemo-speech-0.1.0-speakeasy-fixture");
+        fs::create_dir_all(build.join("nemo-speech/bin"))?;
+        fs::create_dir_all(build.join("nemo-speech/lib"))?;
+        fs::write(build.join(EXECUTABLE), b"#!/bin/sh\n")?;
+        fs::write(build.join("nemo-speech/lib/libengine.1.dylib"), b"library")?;
+        std::os::unix::fs::symlink(
+            "libengine.1.dylib",
+            build.join("nemo-speech/lib/libengine.dylib"),
+        )?;
+        let root = directory.path().join("support");
+        let (progress, _) = watch::channel(Progress::default());
+        let mut installation = Installation {
+            child: None,
+            _lock: Installation::lock(&root, &progress).await?,
+        };
+        let installed = copy_out(&build, &root, &progress, &mut installation).await?;
+        assert_eq!(
+            installed,
+            root.join("engines/nemo-speech-0.1.0-speakeasy-fixture")
+        );
+        assert!(installed.join(EXECUTABLE).is_file());
+        let link = installed.join("nemo-speech/lib/libengine.dylib");
+        assert_eq!(fs::read_link(&link)?, Path::new("libengine.1.dylib"));
+        assert!(
+            !root
+                .join("engines/nemo-speech-0.1.0-speakeasy-fixture.part")
+                .exists()
+        );
+
+        // An installed build is reused as is, never recopied over a running engine.
+        fs::write(build.join(EXECUTABLE), b"changed")?;
+        assert_eq!(
+            copy_out(&build, &root, &progress, &mut installation).await?,
+            installed
+        );
+        assert_eq!(fs::read(installed.join(EXECUTABLE))?, b"#!/bin/sh\n");
+        assert!(installation.child.is_none());
+        Ok(())
+    }
+
     #[test]
     #[ignore = "Owned subprocess fixture for setup cancellation tests"]
     fn setup_child_fixture() -> anyhow::Result<()> {
@@ -1035,15 +1140,16 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Downloads about 0.8 GB; requires SPEAKEASY_FIXTURE_WAV (whisper.cpp samples/jfk.wav)"]
+    #[ignore = "Downloads about 0.8 GB; requires SPEAKEASY_FIXTURE_WAV (whisper.cpp samples/jfk.wav) and optionally SPEAKEASY_FIXTURE_ENGINE (a scripts/build-engine.sh build)"]
     async fn install_chooses_an_engine_that_recognizes_fixture_speech() -> anyhow::Result<()> {
         let wav = fs::read(std::env::var("SPEAKEASY_FIXTURE_WAV")?)?;
+        let bundled = std::env::var_os("SPEAKEASY_FIXTURE_ENGINE").map(PathBuf::from);
         let root = tempfile::tempdir()?;
         let (progress, _) = watch::channel(Progress::default());
         let (_cancel, cancelled) = async_channel::bounded::<Infallible>(1);
         let installed =
             Installation::run(root.path(), &progress, &cancelled, async |installation| {
-                install(root.path(), &progress, installation).await
+                install(root.path(), bundled, &progress, installation).await
             })
             .await
             .context("Setup was cancelled")??;

@@ -44,8 +44,24 @@ remains experimental until the relevant gate passes.
 
 The fork has removed Windows and Linux, extracted the GPUI-free service into `crates/dictation`, and
 implemented these candidates. The full gate passes on GitHub's `macos-15` runner, including the app
-build, tests, the owned-window rendering check, and packaging. None has been measured on a Mac with
-a microphone, the engine, or a person, so each remains experimental under this PRD.
+build, tests, the owned-window rendering check, and packaging. None has been measured with a
+microphone or a person, so each remains experimental under this PRD.
+
+Engine measurements on an M4 Pro Mac mini (24 GB, macOS 27, warm, q8_0 model, Metal) on 2026-10-02
+used the 48 kHz public fixtures, with interleaved blocks of six requests and identical text hashes
+on every fixture:
+
+- The engine is 80–93% of release-to-text. Its encoder, not transport, dominates: NVIDIA's HTTP
+  server route costs 0.5–5 ms more than the helper up to a minute of audio and 35 ms at 290 s. A
+  q8_0 model and an f16 conversion recognize at the same speed.
+- Speakeasy's engine build cuts warm recognition from 29 to 21 ms at 1.3 s, 63 to 40 ms at 5 s, 106
+  to 60 ms at 10 s, 318 to 168 ms at 30 s, 580 to 300 ms at 52 s, and 6.5 to 2.6 s at 290 s. Through
+  the real session owner with fake capture and insertion, the 11-second JFK fixture's
+  stop-to-insertion falls from 115 to 67 ms.
+- A first helper start after an app build loads NVIDIA's engine in 7.1 s, mostly compiling its Metal
+  source, and Speakeasy's build in 0.7 s; warm restarts take 0.14–0.16 s with either.
+- Feed-forward matrix products are now about half of the encoder; the TDT decoder's CPU steps are
+  bandwidth-bound at about 0.13 ms each.
 
 | Candidate                                                          | Hypothesis                                                                                       | Regression guard                                                                                |
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
@@ -55,6 +71,7 @@ a microphone, the engine, or a person, so each remains experimental under this P
 | Sealed audio reported before the device stops                      | Moves Audio Unit stop and dispose off release-to-sealed                                          | Quiescence test; native `release→sealed` and `device` timings                                   |
 | Ring drained every 16 ms once audio flows (was 5 ms)               | About a third of the consumer wakeups while recording                                            | Meter cadence unchanged at 32 ms; finish and cancel still wake at once                          |
 | Modifier release rechecked every 2 ms (was 10 ms)                  | Speculated text is often ready while the stopping press is still down                            | Insertion eligibility tests                                                                     |
+| Speakeasy's engine build bundled in the app                        | Engine graph changes and a compiled Metal library cut recognition and cold model loading         | Identical fixture hashes per change; original graphs behind `NEMO_SPEECH_LEGACY_*`; bundle test |
 
 `SPEAKEASY_TIMING=1` reports each session's stage timings, `engine_profile` compares the helper and
 HTTP routes and varies warmup length, idle gaps, and a shortcut-press primer, and `capture_onset`
