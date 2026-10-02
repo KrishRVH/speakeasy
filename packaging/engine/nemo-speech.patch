@@ -648,7 +648,7 @@ index 0d6004d..9c7b02f 100644
          output->push_back(filtered_sample(source_index_, phase_index()));
          ++next_output_;
 diff --git a/src/runtime/ggml/backend.cpp b/src/runtime/ggml/backend.cpp
-index 886648a..f6bd9b9 100644
+index 886648a..08d5965 100644
 --- a/src/runtime/ggml/backend.cpp
 +++ b/src/runtime/ggml/backend.cpp
 @@ -10,6 +10,8 @@
@@ -660,14 +660,16 @@ index 886648a..f6bd9b9 100644
  namespace ggml_runtime {
  
  BackendManager::BackendManager(Params params) {
-@@ -29,6 +31,14 @@ BackendManager::init_backends() {
+@@ -29,6 +31,16 @@ BackendManager::init_backends() {
          putenv(kv);
      }
  #endif  // GGML_USE_VULKAN
 +#if defined(GGML_USE_METAL)
 +    // Metal's graph optimization reorders nodes for concurrency. These graphs are chains, so it only
-+    // adds planning to every new input length; respect user overrides.
-+    if (std::getenv("GGML_METAL_GRAPH_OPTIMIZE_DISABLE") == nullptr) {
++    // adds planning to every new input length. ggml disables it whenever the variable exists, so
++    // NEMO_SPEECH_METAL_GRAPH_OPTIMIZE=1 is the way to keep it.
++    if (std::getenv("NEMO_SPEECH_METAL_GRAPH_OPTIMIZE") == nullptr &&
++        std::getenv("GGML_METAL_GRAPH_OPTIMIZE_DISABLE") == nullptr) {
 +        static char kv[] = "GGML_METAL_GRAPH_OPTIMIZE_DISABLE=1";
 +        putenv(kv);
 +    }
@@ -675,7 +677,7 @@ index 886648a..f6bd9b9 100644
  
      ggml_time_init();
  
-@@ -99,6 +109,15 @@ BackendManager::init_backends() {
+@@ -99,6 +111,15 @@ BackendManager::init_backends() {
          throw std::runtime_error("failed to initialize CPU backend");
      }
      GGMLF_LOG_INFO("Using CPU backend\n");
@@ -691,7 +693,7 @@ index 886648a..f6bd9b9 100644
      backends.emplace_back(backend_cpu);
  
      auto* cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
-@@ -129,7 +148,13 @@ BackendManager::get_backends() {
+@@ -129,7 +150,13 @@ BackendManager::get_backends() {
      return handles;
  }
  

@@ -11,10 +11,10 @@ index 4aac509..71c9753 100644
                                              "ggml: metal minimum macOS version")
  set   (GGML_METAL_STD "" CACHE STRING       "ggml: metal standard version (-std flag)")
 diff --git a/src/ggml-alloc.c b/src/ggml-alloc.c
-index 3bda9ab..917d8ed 100644
+index 3bda9ab..75731d5 100644
 --- a/src/ggml-alloc.c
 +++ b/src/ggml-alloc.c
-@@ -428,6 +428,12 @@ static struct vbuffer * ggml_vbuffer_alloc(ggml_backend_buffer_type_t buft, cons
+@@ -428,7 +428,17 @@ static struct vbuffer * ggml_vbuffer_alloc(ggml_backend_buffer_type_t buft, cons
  
      for (int n = 0; n < talloc->n_chunks; n++) {
          size_t chunk_size = talloc->chunks[n]->max_size;
@@ -25,8 +25,13 @@ index 3bda9ab..917d8ed 100644
 +            chunk_size = MAX(chunk_size, MIN(padded, ggml_backend_buft_get_max_size(buft)));
 +        }
          buf->chunks[n] = ggml_backend_buft_alloc_buffer(buft, chunk_size);
++        if (buf->chunks[n] == NULL && chunk_size != talloc->chunks[n]->max_size) {
++            // Headroom is optional: a graph that fits exactly still runs when memory is short.
++            buf->chunks[n] = ggml_backend_buft_alloc_buffer(buft, talloc->chunks[n]->max_size);
++        }
          if (buf->chunks[n] == NULL) {
              ggml_vbuffer_free(buf);
+             return NULL;
 diff --git a/src/ggml-metal/CMakeLists.txt b/src/ggml-metal/CMakeLists.txt
 index 42054d8..2ea90a3 100644
 --- a/src/ggml-metal/CMakeLists.txt
