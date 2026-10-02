@@ -46,8 +46,8 @@ const SHADOW_OFFSET: f32 = 4.0;
 const SHADOW_BLUR: f32 = 16.0;
 /// Room under the shown capsule for its drop shadow and for the `HIDDEN_LIFT` it sinks while hiding.
 const SHADOW_ROOM: f32 = SHADOW_OFFSET + SHADOW_BLUR + HIDDEN_LIFT;
-/// The window's clearance above the display's bottom edge until macOS moves the pill onto the work
-/// area under the pointer.
+/// The window's initial clearance above the primary display's bottom edge; each show places it on the
+/// work area under the pointer.
 const BOTTOM_CLEARANCE: f32 = 50.0;
 
 const LID_OPEN: f32 = 0.0;

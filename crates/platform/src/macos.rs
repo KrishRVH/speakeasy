@@ -40,11 +40,13 @@ use objc2_foundation::{
 use raw_window_handle::{AppKitWindowHandle, RawWindowHandle};
 
 use super::{
-    Delivery, Input, InputSender, InsertPermit, Inserted, OwnedThread, PILL_MARGIN, PILL_WIDTH,
-    insertion,
+    Delivery, Input, InputSender, InsertPermit, Inserted, OwnedThread, PILL_WIDTH, insertion,
     keyboard::{self, MacEvent},
     monitor::MonitorControl,
 };
+
+/// The gap in device-independent pixels between the pill window and the bottom of the work area.
+const PILL_MARGIN: u16 = 2;
 
 /// Tags input Speakeasy synthesizes, so its own event tap ignores it.
 const OWN_INPUT: i64 = 0x5350_4541;

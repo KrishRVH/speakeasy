@@ -434,10 +434,10 @@ fn button(
         .hover(|style| style.bg(rgb(mix(palette.raise, palette.ink, 0.08))))
         .focus(|style| style.border_color(rgb(palette.lamp)))
         .cursor_pointer()
-        .on_click(cx.listener(move |view, _, window, cx| view.act(action, window, cx)))
-        .on_key_down(cx.listener(move |view, event: &KeyDownEvent, window, cx| {
+        .on_click(cx.listener(move |view, _, _, cx| view.act(action, cx)))
+        .on_key_down(cx.listener(move |view, event: &KeyDownEvent, _, cx| {
             if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                view.act(action, window, cx);
+                view.act(action, cx);
                 cx.stop_propagation();
             }
         }))

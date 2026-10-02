@@ -78,7 +78,7 @@ enum Action {
     Release,
     Lock,
     Cancel,
-    /// Cancel, then release: another shortcut or a session change ended the hold.
+    /// Cancel, then release: another key ended the hold.
     Interrupt,
 }
 

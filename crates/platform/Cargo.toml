@@ -10,7 +10,7 @@ anyhow.workspace = true
 async-channel.workspace = true
 libc.workspace = true
 libloading.workspace = true
-tokio = { workspace = true, features = ["rt", "time", "macros", "net", "sync"] }
+tokio = { workspace = true, features = ["rt", "time", "macros", "sync"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 arboard.workspace = true
@@ -19,7 +19,7 @@ block2.workspace = true
 core-foundation.workspace = true
 core-graphics.workspace = true
 objc2.workspace = true
-objc2-app-kit = { workspace = true, features = ["NSAlert", "NSApplication", "NSRunningApplication", "NSScreen", "NSWindow", "NSWorkspace"] }
+objc2-app-kit.workspace = true
 objc2-foundation.workspace = true
 
 [dev-dependencies]

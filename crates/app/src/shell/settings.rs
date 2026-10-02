@@ -6,7 +6,7 @@ mod render;
 use std::{path::PathBuf, time::Duration};
 
 use async_channel::Receiver;
-use gpui::{App, BorrowAppContext, Context, SharedString, Task, Timer, Window};
+use gpui::{App, BorrowAppContext, Context, SharedString, Task, Timer};
 use speakeasy_dictation::{
     audio::{self, InputDevice},
     config::{Config, Engine},
@@ -86,14 +86,14 @@ impl Settings {
         }
     }
 
-    fn act(&mut self, action: Action, window: &Window, cx: &mut Context<Self>) {
+    fn act(&mut self, action: Action, cx: &mut Context<Self>) {
         if cx.global::<Services>().quitting() {
             return;
         }
         match action {
             Action::Setup => self.toggle_setup(cx),
             Action::Engine => self.switch_engine(),
-            Action::Choose(file) => self.choose(file, window, cx),
+            Action::Choose(file) => self.choose(file, cx),
             Action::Refresh => self.refresh_microphones(cx),
             Action::Microphone => self.cycle_microphone(),
             Action::Language => self.toggle_language(),
@@ -159,9 +159,7 @@ impl Settings {
         self.config.theme = self.config.theme.next();
         self.mark_unsaved();
         if is_demo(cx) {
-            let theme = self.config.theme;
-            cx.update_global::<Services, _>(|services, _| services.config.theme = theme);
-            show_theme(theme, cx);
+            show_theme(self.config.theme, cx);
             self.notice = None;
         }
     }
@@ -179,7 +177,7 @@ impl Settings {
                     Ok(microphones) => view.microphones = microphones,
                     Err(_) => {
                         view.notice =
-                            Some("Cannot list microphones. Check OS audio settings.".into());
+                            Some("Cannot list microphones. Check Sound in System Settings.".into());
                     },
                 }
                 view.microphone_scan = None;
@@ -188,7 +186,7 @@ impl Settings {
         }));
     }
 
-    fn choose(&mut self, file: EngineFile, window: &Window, cx: &Context<Self>) {
+    fn choose(&mut self, file: EngineFile, cx: &Context<Self>) {
         if self.file_picker.is_some() {
             return;
         }
@@ -198,12 +196,7 @@ impl Settings {
             (Engine::Whisper, EngineFile::Executable) => "Choose whisper-server",
             (Engine::Whisper, EngineFile::Model) => "Choose a Whisper GGML model",
         };
-        let filter = match (self.config.engine, file) {
-            (_, EngineFile::Executable) => ["Programs", "*.exe"],
-            (Engine::Parakeet, EngineFile::Model) => ["Parakeet models", "*.gguf"],
-            (Engine::Whisper, EngineFile::Model) => ["Whisper models", "*.bin"],
-        };
-        let picker = choose_file(window, title, filter, cx);
+        let picker = choose_file(title, cx);
         self.file_picker = Some(cx.spawn(async move |this, cx| {
             let result = picker.await;
             this.update_if_alive(cx, |view, cx| view.finish_choice(result, file, cx));
@@ -514,15 +507,13 @@ fn next_microphone(microphones: &[InputDevice], current: Option<&str>) -> Option
     next.map(|device| device.id.clone())
 }
 
-/// The pill and tray show the saved theme; only Settings previews the draft.
+/// The pill shows the saved theme; only Settings previews the draft.
 fn show_theme(theme: Theme, cx: &mut App) {
     let pill = cx.global::<Services>().pill;
     pill.update_if_open(cx, |view, _, cx| {
         view.set_theme(theme);
         cx.notify();
     });
-    // Republishing the current snapshot makes the tray redraw its icon.
-    cx.global::<Services>().output.send_modify(|_| ());
 }
 
 fn show_motion(reduced_motion: bool, cx: &mut App) {

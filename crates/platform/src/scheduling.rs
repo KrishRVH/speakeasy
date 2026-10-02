@@ -1,8 +1,7 @@
 //! Scheduling for latency-sensitive dictation work. User-initiated `QoS` puts capture, the session
 //! owner, and the speech engine ahead of default and background work when cores are contended. An
-//! activity keeps App Nap from throttling a menu-bar process that has no visible window; a throttled
-//! process ran an 11-second recognition in 141 ms instead of 63 ms on an M4 Pro, and thread `QoS`
-//! cannot lift that clamp.
+//! activity keeps App Nap from throttling a menu-bar process that has no visible window, a clamp
+//! that thread `QoS` cannot lift.
 
 #[cfg(target_os = "macos")]
 use objc2::{rc::Retained, runtime::ProtocolObject};
@@ -15,11 +14,11 @@ pub fn prefer_responsive_thread() {
     #[cfg(target_os = "macos")]
     {
         // SAFETY: the call changes only the calling thread's scheduling class and takes no
-        // pointers. A refusal leaves scheduling unchanged, which is the safe outcome.
-        let refused = unsafe {
-            libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INITIATED, 0)
-        };
-        debug_assert!(refused == 0, "QoS change refused: {refused}");
+        // pointers. A refusal leaves scheduling unchanged, which is the safe outcome, so its status
+        // is not needed.
+        unsafe {
+            libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INITIATED, 0);
+        }
     }
 }
 

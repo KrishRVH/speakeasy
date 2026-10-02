@@ -20,7 +20,6 @@ struct TrayState {
     status: Status,
     service: ServiceState,
     activity: Activity,
-    desktop_ready: bool,
     /// Whether the dictation commands act; a demo shows them disabled.
     interactive: bool,
 }
@@ -31,7 +30,6 @@ impl TrayState {
             status: services.status(snapshot),
             service: services.service_state(),
             activity: activity(snapshot.phase),
-            desktop_ready: snapshot.desktop_ready,
             interactive: !services.mode.is_demo(),
         }
     }

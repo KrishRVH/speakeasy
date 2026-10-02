@@ -87,20 +87,13 @@ fn set_visible(settings: WindowHandle<Settings>, visible: bool, cx: &mut App) {
 }
 
 fn hide_on_close(_: &mut Window, cx: &mut App) -> bool {
-    if !cx.has_global::<Services>() {
+    let Some(services) = cx.try_global::<Services>() else {
         return true;
-    }
-    hide_to_tray(cx);
-    false
-}
-
-fn hide_to_tray(cx: &mut App) {
-    if let Some(settings) = cx
-        .try_global::<Services>()
-        .and_then(|services| services.settings)
-    {
+    };
+    if let Some(settings) = services.settings {
         set_visible(settings, false, cx);
     }
+    false
 }
 
 fn show_tray_hint(cx: &mut App) {
@@ -123,11 +116,9 @@ fn show_tray_hint(cx: &mut App) {
     }
 }
 
-/// Asks for one file. GPUI's picker takes no file-type filter, so `filter` is unused.
+/// Asks for one file.
 pub(super) fn choose_file(
-    _: &Window,
     title: &'static str,
-    _: [&'static str; 2],
     cx: &App,
 ) -> impl Future<Output = anyhow::Result<Option<PathBuf>>> + use<> {
     let paths = cx.prompt_for_paths(PathPromptOptions {

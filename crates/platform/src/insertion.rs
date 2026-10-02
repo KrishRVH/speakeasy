@@ -1,4 +1,4 @@
-//! Delivery choices and the pre-commit checks every native adapter shares.
+//! Delivery choices and the pre-commit checks the macOS adapter runs.
 
 #[cfg(any(target_os = "macos", test))]
 use std::{
@@ -11,7 +11,7 @@ use super::{InsertPermit, Inserted};
 
 /// How long insertion waits for the user to let go of shortcut modifiers.
 #[cfg(any(target_os = "macos", test))]
-pub(crate) const MODIFIER_WAIT: Duration = Duration::from_millis(800);
+const MODIFIER_WAIT: Duration = Duration::from_millis(800);
 /// How often insertion rechecks held modifiers while it waits. Text recognized early can be ready
 /// while the stopping press is still down, so each poll's delay adds directly to visible latency.
 #[cfg(any(target_os = "macos", test))]
@@ -30,7 +30,7 @@ impl Delivery {
     /// Returns the outcome that stops insertion before it touches the target: Speakeasy has focus,
     /// or shortcut keys are still held. Focus takes precedence.
     ///
-    /// Adapters run it as the last check before committing, after every slow preparation step, so
+    /// The adapter runs it as the last check before committing, after every slow preparation step, so
     /// the focus and keys it judges are current.
     #[cfg(any(target_os = "macos", test))]
     pub(crate) fn preflight(
@@ -44,7 +44,7 @@ impl Delivery {
 
     /// Returns the outcome that stops insertion while Speakeasy itself has focus.
     #[cfg(any(target_os = "macos", test))]
-    pub(crate) fn check_focus(self, external_focus: bool) -> Option<Inserted> {
+    fn check_focus(self, external_focus: bool) -> Option<Inserted> {
         if external_focus {
             return None;
         }

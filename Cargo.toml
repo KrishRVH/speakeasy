@@ -44,7 +44,7 @@ future_incompatible = { level = "deny", priority = -1 }
 missing_docs = "deny"
 unexpected_cfgs = "deny"
 unreachable_pub = "deny"
-# Native FFI lives in platform; core and the application forbid unsafe locally.
+# Native FFI lives in platform; core, dictation, and the app forbid unsafe locally.
 unsafe_op_in_unsafe_fn = "deny"
 unfulfilled_lint_expectations = "deny"
 

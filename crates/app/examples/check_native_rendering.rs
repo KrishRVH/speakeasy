@@ -6,7 +6,7 @@ mod icons;
 
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, ensure};
+use anyhow::{bail, ensure};
 use gpui::{
     AppContext, Application, AsyncApp, Bounds, PathBuilder, Pixels, Timer, Window, WindowBounds,
     WindowHandle, WindowKind, WindowOptions, canvas, div, point, prelude::*, px, rgb, size, svg,
@@ -63,15 +63,14 @@ fn main() -> anyhow::Result<()> {
         std::env::args().nth(1).as_deref() == Some("--native-gui"),
         "Pass --native-gui to opt into opening owned test windows"
     );
-    let (completed, outcome) = std::sync::mpsc::channel();
-    Application::new().with_assets(icons::Icons).run(move |cx| {
+    Application::new().with_assets(icons::Icons).run(|cx| {
         cx.spawn(async move |cx| {
-            let result = exercise(cx).await;
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "A closed acceptance result lane has no caller; quitting still disposes all owned windows"
-            )]
-            let _ = completed.send(result);
+            // Quitting terminates the process with status 0 from inside the run loop, so a failure
+            // ends the process itself to reach the caller.
+            if let Err(error) = exercise(cx).await {
+                eprintln!("Native rendering check failed: {error:#}");
+                speakeasy_platform::exit_now(1);
+            }
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "A disposed app has already ended the native acceptance loop"
@@ -80,9 +79,7 @@ fn main() -> anyhow::Result<()> {
         })
         .detach();
     });
-    outcome
-        .try_recv()
-        .context("Native rendering check did not complete")?
+    bail!("Native rendering check ended without quitting")
 }
 
 #[expect(

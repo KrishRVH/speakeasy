@@ -39,8 +39,6 @@ pub use self::{
 pub const PILL_WIDTH: u16 = 400;
 /// The pill window's height in device-independent pixels.
 pub const PILL_HEIGHT: u16 = 100;
-/// The gap in device-independent pixels between the pill window and the bottom of the work area.
-pub const PILL_MARGIN: u16 = 2;
 
 /// The hold-to-talk shortcut as people see it.
 pub const SHORTCUT: &str = "Fn";
@@ -120,12 +118,6 @@ impl InputSender {
         if self.sender.try_send(event).is_err() {
             self.close();
         }
-    }
-
-    /// Reports that desktop access failed, then disables native input and insertion.
-    pub fn fail(&self, message: String) {
-        self.deliver(Input::Unavailable(message));
-        self.close();
     }
 
     /// Whether native input and insertion are permanently disabled.

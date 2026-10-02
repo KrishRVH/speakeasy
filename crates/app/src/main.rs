@@ -191,7 +191,7 @@ fn print_help() {
         "Hold to dictate; add Space or double-tap for hands-free. {CANCEL_SHORTCUT} cancels.\n--toggle / --cancel start, finish or discard dictation in the running app, for scripts."
     );
     println!(
-        "--demo uses simulated audio without microphone, hook, or clipboard access.\n--demo-tray also previews native tray, minimize, close and relaunch behavior."
+        "--demo uses simulated audio without microphone, keyboard monitoring, or clipboard access.\n--demo-tray also previews the menu bar item, closing Settings, and relaunching."
     );
 }
 

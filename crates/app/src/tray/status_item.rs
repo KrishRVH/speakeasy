@@ -5,7 +5,7 @@ use gpui::{App, Global, Task};
 use speakeasy_dictation::status::Indicator;
 use speakeasy_platform::{Activity, ServiceState};
 use tray_icon::{
-    BadIcon, Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent,
+    BadIcon, Icon, TrayIcon, TrayIconBuilder,
     menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
 };
 
@@ -137,26 +137,14 @@ fn draw_icon(indicator: Indicator) -> Result<Icon, BadIcon> {
     Icon::from_rgba(icon::raster(indicator), icon::SIZE, icon::SIZE)
 }
 
-/// Installs the native click handlers, which run outside GPUI and can only queue commands.
+/// Installs the native menu handler, which runs outside GPUI and can only queue commands.
 fn queue_commands<const N: usize>(
     items: [(MenuId, TrayCommand); N],
 ) -> async_channel::Receiver<TrayCommand> {
     let (queue, commands) = async_channel::bounded(COMMAND_BACKLOG);
-    let menu_queue = queue.clone();
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         if let Some(&(_, command)) = items.iter().find(|(id, _)| *id == event.id) {
-            offer(&menu_queue, command);
-        }
-    }));
-    TrayIconEvent::set_event_handler(Some(move |event| {
-        if matches!(
-            event,
-            TrayIconEvent::DoubleClick {
-                button: MouseButton::Left,
-                ..
-            }
-        ) {
-            offer(&queue, TrayCommand::Settings);
+            offer(&queue, command);
         }
     }));
     commands
