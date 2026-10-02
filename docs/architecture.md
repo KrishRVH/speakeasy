@@ -149,10 +149,11 @@ discontinuity fails the recording rather than silently transcribing potentially 
 Refused real-time priority and automatic route changes keep the stream active. Fatal stream errors
 return through a bounded, nonblocking channel with their driver details, while a full application
 ring has a separate error. The consumer drains the ring every 5 ms until the first samples arrive,
-then every 16 ms; Finish and Cancel wake it at once. It classifies each 20 ms window as audible or
-quiet once, as audio arrives. After stopping, it requires 100 ms of audible windows, trims leading
-quiet of at least one second and trailing quiet beyond 500 ms of padding, and preserves interior
-pauses. WAV preparation stays off the UI. The native acceptance procedure is in
+then every 16 ms, or sooner once quiet follows speech and a pause mark falls due, rechecking every 2
+ms until that audio arrives; Finish and Cancel wake it at once. It classifies each 20 ms window as
+audible or quiet once, as audio arrives. After stopping, it requires 100 ms of audible windows,
+trims leading quiet of at least one second and trailing quiet beyond 500 ms of padding, and
+preserves interior pauses. WAV preparation stays off the UI. The native acceptance procedure is in
 [performance](performance.md#native-acceptance). Heavily trimmed recordings release excess PCM
 capacity when at least 8 MiB is unused and capacity is at least four times the remaining length.
 
