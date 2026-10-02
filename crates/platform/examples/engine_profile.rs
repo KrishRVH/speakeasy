@@ -14,7 +14,9 @@
 //! FNV-1a hash of the normalized words let paths be compared for identical output.
 //! `--warmup SECONDS` sets the silent warmup's length (the app uses one second), and
 //! `--idle SECONDS` waits before every request, to expose GPU residency or power-state costs
-//! that back-to-back requests hide.
+//! that back-to-back requests hide. `--prime MILLISECONDS` then sends a tenth of a second of
+//! silence and waits that long before each timed request, as a primer sent when the shortcut is
+//! pressed would run while someone speaks.
 
 use std::{
     env,
@@ -33,6 +35,7 @@ struct Arguments {
     repetitions: usize,
     warmup: u32,
     idle: Duration,
+    prime: Option<Duration>,
     fixtures: Vec<PathBuf>,
 }
 
@@ -58,6 +61,7 @@ impl Arguments {
         let mut repetitions = 5;
         let mut warmup = 1;
         let mut idle = Duration::ZERO;
+        let mut prime = None;
         let mut fixtures = Vec::new();
         let mut arguments = env::args_os().skip(1);
         while let Some(argument) = arguments.next() {
@@ -84,6 +88,13 @@ impl Arguments {
                         .and_then(|seconds| seconds.to_str()?.parse().ok())
                         .context("--warmup needs whole seconds")?;
                 },
+                Some("--prime") => {
+                    let milliseconds = arguments
+                        .next()
+                        .and_then(|milliseconds| milliseconds.to_str()?.parse().ok())
+                        .context("--prime needs milliseconds")?;
+                    prime = Some(Duration::from_millis(milliseconds));
+                },
                 Some("--idle") => {
                     idle = arguments
                         .next()
@@ -108,6 +119,7 @@ impl Arguments {
             repetitions,
             warmup,
             idle,
+            prime,
             fixtures,
         })
     }
@@ -166,6 +178,15 @@ impl Fixture {
         bail!("{} has no audio", path.display())
     }
 
+    /// `samples` of 16 kHz silence.
+    fn silence(samples: u32) -> anyhow::Result<Self> {
+        Ok(Self {
+            wav: silent_wav(samples)?,
+            samples: vec![0.0; usize::try_from(samples)?],
+            rate: 16_000,
+        })
+    }
+
     fn seconds(&self) -> f64 {
         self.samples.len() as f64 / f64::from(self.rate)
     }
@@ -204,12 +225,8 @@ fn main() -> anyhow::Result<()> {
     let started = Instant::now();
     let mut path = Path::open(arguments.engine)?;
     let load = started.elapsed();
-    let samples = 16_000_usize.saturating_mul(usize::try_from(arguments.warmup)?);
-    let silence = Fixture {
-        wav: silent_wav(u32::try_from(samples)?)?,
-        samples: vec![0.0; samples],
-        rate: 16_000,
-    };
+    let silence = Fixture::silence(16_000_u32.saturating_mul(arguments.warmup))?;
+    let primer = Fixture::silence(1_600)?;
     let started = Instant::now();
     path.transcribe(&silence)?;
     println!(
@@ -223,6 +240,10 @@ fn main() -> anyhow::Result<()> {
         let mut output = None;
         for _ in 0..arguments.repetitions {
             thread::sleep(arguments.idle);
+            if let Some(speaking) = arguments.prime {
+                path.transcribe(&primer)?;
+                thread::sleep(speaking);
+            }
             let started = Instant::now();
             let text = path.transcribe(&fixture)?;
             runs.push(milliseconds(started.elapsed()));
