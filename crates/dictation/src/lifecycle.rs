@@ -6,10 +6,12 @@ use std::mem;
 /// Advances whenever the requested service state changes, so a late completion can tell that it is
 /// stale.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct ConfigEpoch(u64);
+pub struct ConfigEpoch(u64);
 
 impl ConfigEpoch {
-    pub(super) const fn next(self) -> Self {
+    /// The epoch after this one; wrapping is harmless because only equality is compared.
+    #[must_use]
+    pub const fn next(self) -> Self {
         Self(self.0.wrapping_add(1))
     }
 }
@@ -17,7 +19,7 @@ impl ConfigEpoch {
 /// Where the service owners are between enable, pause, and quit. Generic so tests can stand in for
 /// the native owners and the restart they queue.
 #[derive(Default)]
-pub(super) enum Lifecycle<Owners, Restart> {
+pub enum Lifecycle<Owners, Restart> {
     /// Dictation is off; no owners exist or are starting.
     #[default]
     Disabled,
@@ -28,7 +30,9 @@ pub(super) enum Lifecycle<Owners, Restart> {
     Running(Owners),
     /// Owners are retiring; `pending` restarts the service once they acknowledge.
     Stopping {
+        /// The retiring owners, held until they acknowledge.
         owners: Owners,
+        /// The latest restart requested while they retire.
         pending: Option<Restart>,
     },
     /// Terminal. Holds owners until they acknowledge retirement; `None` once none remain.
@@ -37,7 +41,7 @@ pub(super) enum Lifecycle<Owners, Restart> {
 
 impl<Owners, Restart> Lifecycle<Owners, Restart> {
     /// Starts validating for `epoch` and returns true, unless live or retiring owners exist.
-    pub(super) fn validate(&mut self, epoch: ConfigEpoch) -> bool {
+    pub fn validate(&mut self, epoch: ConfigEpoch) -> bool {
         if matches!(self, Self::Disabled | Self::Validating(_)) {
             *self = Self::Validating(epoch);
             true
@@ -46,7 +50,8 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         }
     }
 
-    pub(super) fn active(&self) -> Option<&Owners> {
+    /// The live owners, if dictation is running.
+    pub fn active(&self) -> Option<&Owners> {
         match self {
             Self::Running(owners) => Some(owners),
             Self::Disabled | Self::Validating(_) | Self::Stopping { .. } | Self::Quitting(_) => {
@@ -55,7 +60,8 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         }
     }
 
-    pub(super) fn retiring(&self) -> Option<&Owners> {
+    /// The owners awaiting retirement, while pausing or quitting.
+    pub fn retiring(&self) -> Option<&Owners> {
         match self {
             Self::Stopping { owners, .. } | Self::Quitting(Some(owners)) => Some(owners),
             Self::Disabled | Self::Validating(_) | Self::Running(_) | Self::Quitting(None) => None,
@@ -64,21 +70,23 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
 
     /// Whether the UI shows Pausing: owners are stopping, or Quit has begun. Either way, no resume
     /// may start owners.
-    pub(super) fn pausing(&self) -> bool {
+    pub fn pausing(&self) -> bool {
         matches!(self, Self::Stopping { .. } | Self::Quitting(_))
     }
 
-    pub(super) fn quitting(&self) -> bool {
+    /// Whether Quit has begun; nothing may restart afterwards.
+    pub fn quitting(&self) -> bool {
         matches!(self, Self::Quitting(_))
     }
 
-    pub(super) fn validating(&self, epoch: ConfigEpoch) -> bool {
+    /// Whether the settings check for `epoch` is still the one that may start owners.
+    pub fn validating(&self, epoch: ConfigEpoch) -> bool {
         matches!(self, Self::Validating(current) if *current == epoch)
     }
 
     /// Queues `restart` to run once retirement completes; returns whether owners are stopping to
     /// receive it.
-    pub(super) fn queue(&mut self, restart: Restart) -> bool {
+    pub fn queue(&mut self, restart: Restart) -> bool {
         if let Self::Stopping { pending, .. } = self {
             *pending = Some(restart);
             true
@@ -87,7 +95,8 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         }
     }
 
-    pub(super) fn has_pending(&self) -> bool {
+    /// Whether a restart waits behind retiring owners.
+    pub fn has_pending(&self) -> bool {
         matches!(
             self,
             Self::Stopping {
@@ -99,7 +108,7 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
 
     /// Moves live owners to Stopping, abandoning any validation or queued restart. Returns whether
     /// retirement must start.
-    pub(super) fn pause(&mut self) -> bool {
+    pub fn pause(&mut self) -> bool {
         let (owners, started) = match mem::take(self) {
             Self::Running(owners) => (owners, true),
             Self::Stopping { owners, .. } => (owners, false),
@@ -118,7 +127,7 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
 
     /// Enters the terminal Quitting state, keeping owners for retirement. Returns false when
     /// already quitting.
-    pub(super) fn quit(&mut self) -> bool {
+    pub fn quit(&mut self) -> bool {
         let owners = match mem::take(self) {
             Self::Running(owners) | Self::Stopping { owners, .. } => Some(owners),
             quitting @ Self::Quitting(_) => {
@@ -132,7 +141,7 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
     }
 
     /// Releases retired owners and returns the restart queued behind them.
-    pub(super) fn retired(&mut self) -> Option<Restart> {
+    pub fn retired(&mut self) -> Option<Restart> {
         match self {
             Self::Stopping { pending, .. } => {
                 let pending = pending.take();

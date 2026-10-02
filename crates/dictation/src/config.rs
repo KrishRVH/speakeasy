@@ -13,16 +13,21 @@ use speakeasy_platform::{Delivery, DesktopOptions};
 
 use crate::theme::Theme;
 
+/// The local speech engine family the configured executable belongs to.
 #[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Engine {
+pub enum Engine {
+    /// A whisper.cpp server.
     #[default]
     Whisper,
+    /// A NeMo-Speech.cpp server running Parakeet.
     Parakeet,
 }
 
 impl Engine {
-    pub(crate) const fn label(self) -> &'static str {
+    /// The name Settings and the tray show.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
         match self {
             Self::Whisper => "Whisper",
             Self::Parakeet => "Parakeet",
@@ -30,39 +35,54 @@ impl Engine {
     }
 }
 
+/// The user's settings file.
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "Each flag persists an independent user preference that can be toggled separately"
 )]
-pub(crate) struct Config {
+pub struct Config {
+    /// Linux desktop bindings, omitted from saved files while they hold defaults.
     #[serde(default, skip_serializing_if = "LinuxSettings::is_default")]
     pub linux: LinuxSettings,
+    /// The engine family `engine_executable` belongs to.
     #[serde(default)]
     pub engine: Engine,
+    /// The saved microphone identifier; `None` follows the system default.
     #[serde(default)]
     pub microphone: Option<String>,
+    /// The local speech server executable.
     pub engine_executable: PathBuf,
+    /// The model the engine loads.
     pub model: PathBuf,
+    /// Whisper's language code, or `auto`.
     #[serde(default = "default_language")]
     pub language: String,
+    /// Whether English hesitations (`um`, `uh`) are removed before insertion.
     #[serde(default = "default_enabled")]
     pub remove_fillers: bool,
+    /// Whisper's CPU thread count.
     #[serde(default = "default_threads")]
     pub threads: u16,
+    /// Whether the engine may use the GPU.
     #[serde(default = "default_enabled")]
     pub use_gpu: bool,
+    /// Whether motion is reduced regardless of the OS preference.
     #[serde(default)]
     pub reduced_motion: bool,
+    /// Whether text is typed directly, leaving the clipboard untouched.
     #[serde(default)]
     pub preserve_clipboard: bool,
+    /// The color theme.
     #[serde(default)]
     pub theme: Theme,
 }
 
 impl Config {
-    pub(crate) const fn delivery(&self) -> Delivery {
+    /// How dictated text reaches the focused application.
+    #[must_use]
+    pub const fn delivery(&self) -> Delivery {
         if self.preserve_clipboard {
             Delivery::Direct
         } else {
@@ -71,11 +91,14 @@ impl Config {
     }
 
     /// Whether the user or the OS asks for reduced motion.
-    pub(crate) fn prefers_reduced_motion(&self) -> bool {
+    #[must_use]
+    pub fn prefers_reduced_motion(&self) -> bool {
         self.reduced_motion || speakeasy_platform::reduced_motion()
     }
 
-    pub(crate) fn desktop_options(&self) -> DesktopOptions {
+    /// The Linux desktop bindings native input uses.
+    #[must_use]
+    pub fn desktop_options(&self) -> DesktopOptions {
         DesktopOptions {
             shortcut: self.linux.shortcut.clone(),
             cancel: self.linux.cancel.clone(),
@@ -85,7 +108,11 @@ impl Config {
         }
     }
 
-    pub(crate) fn read(path: &Path) -> anyhow::Result<Self> {
+    /// Reads settings without validating their paths.
+    ///
+    /// # Errors
+    /// Returns an error naming the file when it is unreadable or invalid.
+    pub fn read(path: &Path) -> anyhow::Result<Self> {
         serde_json::from_slice(
             &fs::read(path).with_context(|| format!("Cannot read {}", path.display()))?,
         )
@@ -105,7 +132,8 @@ impl Config {
     }
 
     /// Whether `next` needs a different engine process.
-    pub(crate) fn speech_changed(&self, next: &Self) -> bool {
+    #[must_use]
+    pub fn speech_changed(&self, next: &Self) -> bool {
         self.engine != next.engine
             || self.engine_executable != next.engine_executable
             || self.model != next.model
@@ -115,7 +143,10 @@ impl Config {
 
     /// Resolves the engine and model against the settings directory and canonicalizes them, then
     /// checks that they exist and that the remaining values are in range.
-    pub(crate) fn validate(&mut self, path: &Path) -> anyhow::Result<()> {
+    ///
+    /// # Errors
+    /// Returns an actionable error for a missing file or an out-of-range value.
+    pub fn validate(&mut self, path: &Path) -> anyhow::Result<()> {
         let directory = path.parent().unwrap_or_else(|| Path::new("."));
         for file in [&mut self.engine_executable, &mut self.model] {
             ensure!(
@@ -149,7 +180,11 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn save(&self, path: &Path) -> anyhow::Result<()> {
+    /// Writes the settings atomically, refusing to replace a file the user still has to repair.
+    ///
+    /// # Errors
+    /// Returns an error if the existing file is invalid or the write fails.
+    pub fn save(&self, path: &Path) -> anyhow::Result<()> {
         let directory = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
@@ -186,13 +221,19 @@ impl Default for Config {
     }
 }
 
+/// Linux desktop bindings.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct LinuxSettings {
+pub struct LinuxSettings {
+    /// The dictation shortcut.
     pub shortcut: String,
+    /// The cancellation shortcut.
     pub cancel: String,
+    /// Whether paste uses the terminal shortcut.
     pub terminal_paste: bool,
+    /// Whether text is only copied.
     pub manual_paste: bool,
+    /// Whether desktop command bindings replace the shortcut.
     pub external_shortcut: bool,
 }
 
@@ -215,7 +256,9 @@ impl Default for LinuxSettings {
     }
 }
 
-pub(crate) fn default_path() -> PathBuf {
+/// The settings file location when `--config` is absent.
+#[must_use]
+pub fn default_path() -> PathBuf {
     #[cfg(target_os = "windows")]
     let base = std::env::var_os("APPDATA").map(PathBuf::from);
     #[cfg(target_os = "macos")]

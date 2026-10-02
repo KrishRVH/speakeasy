@@ -2,18 +2,25 @@
 
 use serde::{Deserialize, Serialize};
 
+/// A selectable color theme, saved by its snake-case name.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Theme {
+pub enum Theme {
+    /// Jet & Champagne, the default.
     #[default]
     Jet,
+    /// Emerald Lounge.
     Emerald,
+    /// Iris.
     Iris,
+    /// Midnight Chrome.
     Chrome,
 }
 
 impl Theme {
-    pub(crate) fn name(self) -> &'static str {
+    /// The name Settings shows.
+    #[must_use]
+    pub fn name(self) -> &'static str {
         match self {
             Self::Jet => "Jet & Champagne",
             Self::Emerald => "Emerald Lounge",
@@ -22,7 +29,9 @@ impl Theme {
         }
     }
 
-    pub(crate) fn next(self) -> Self {
+    /// The theme after this one in Settings' cycle.
+    #[must_use]
+    pub fn next(self) -> Self {
         match self {
             Self::Jet => Self::Emerald,
             Self::Emerald => Self::Iris,
@@ -31,7 +40,9 @@ impl Theme {
         }
     }
 
-    pub(crate) fn palette(self) -> &'static Palette {
+    /// The colors every surface paints with.
+    #[must_use]
+    pub fn palette(self) -> &'static Palette {
         match self {
             Self::Jet => &Palette {
                 room: 0x0A_0A_0B,
@@ -83,7 +94,7 @@ impl Theme {
 }
 
 /// A theme's `0xRRGGBB` colors, by role.
-pub(crate) struct Palette {
+pub struct Palette {
     /// The Settings window background.
     pub room: u32,
     /// The pill's capsule.
@@ -106,13 +117,15 @@ pub(crate) struct Palette {
 
 impl Palette {
     /// `muted` faded toward `room`, for the quietest text and idle marks.
-    pub(crate) fn faint(&self) -> u32 {
+    #[must_use]
+    pub fn faint(&self) -> u32 {
         mix(self.room, self.muted, 0.6)
     }
 }
 
 /// Linear blend of two `0xRRGGBB` colors; `weight` in `0.0..=1.0` moves from `from` to `to`.
-pub(crate) fn mix(from: u32, to: u32, weight: f32) -> u32 {
+#[must_use]
+pub fn mix(from: u32, to: u32, weight: f32) -> u32 {
     [16, 8, 0].into_iter().fold(0, |mixed, shift| {
         let channel = |color: u32| ((color >> shift) & 0xFF) as f32;
         let (start, end) = (channel(from), channel(to));
@@ -129,14 +142,7 @@ pub(crate) fn mix(from: u32, to: u32, weight: f32) -> u32 {
     clippy::cast_sign_loss,
     reason = "Negative values saturate to zero, which no in-range channel produces"
 )]
-pub(crate) fn quantize(value: f32) -> u8 {
+#[must_use]
+pub fn quantize(value: f32) -> u8 {
     value.round() as u8
-}
-
-/// A `0xRRGGBB` color with an opacity, for GPUI fills and borders.
-pub(crate) fn alpha(color: u32, opacity: f32) -> gpui::Rgba {
-    gpui::Rgba {
-        a: opacity,
-        ..gpui::rgb(color)
-    }
 }

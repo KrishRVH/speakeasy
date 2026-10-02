@@ -9,24 +9,34 @@ use crate::{
     runtime::{LOADING, ModelState, Phase, Snapshot},
 };
 
+/// The glyph state Settings and the tray show.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Indicator {
+pub enum Indicator {
+    /// Dictation is ready.
     Ready,
+    /// Dictation is paused.
     Paused,
+    /// Work is in progress.
     Busy,
+    /// The microphone is open.
     Recording,
+    /// Something needs the user's attention.
     Attention,
 }
 
 /// What Settings and the tray show for a snapshot: one indicator and the text that explains it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Status {
+pub struct Status {
+    /// The glyph state.
     pub indicator: Indicator,
+    /// The sentence that explains it.
     pub description: Cow<'static, str>,
 }
 
 impl Status {
-    pub(crate) fn new(snapshot: &Snapshot, service: ServiceState, engine: Engine) -> Self {
+    /// Derives the status of `snapshot` while the service is `service` with `engine` configured.
+    #[must_use]
+    pub fn new(snapshot: &Snapshot, service: ServiceState, engine: Engine) -> Self {
         let (indicator, description): (_, Cow<'static, str>) =
             match (service, snapshot.phase, snapshot.desktop_ready) {
                 (ServiceState::Pausing, ..) => (Indicator::Busy, "Pausing dictation…".into()),

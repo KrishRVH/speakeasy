@@ -19,24 +19,36 @@ use crate::{
 };
 
 /// The status while a speech worker loads, shared by the owner, Settings, and the tray.
-pub(crate) const LOADING: &str = "Loading local model…";
+pub const LOADING: &str = "Loading local model…";
 
+/// Where the latest session is, from microphone startup to its outcome.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum Phase {
+pub enum Phase {
+    /// No session has run since dictation started.
     #[default]
     Idle,
+    /// The microphone is opening.
     Starting,
+    /// Audio is arriving.
     Recording,
+    /// Capture is finishing its last audio.
     Stopping,
+    /// Speech is being recognized or inserted.
     Processing,
+    /// Text was submitted to the focused application.
     Done,
+    /// The recording held no speech.
     Empty,
+    /// The user discarded the session.
     Cancelled,
+    /// The session failed; the snapshot message explains why.
     Error,
 }
 
 impl Phase {
-    pub(crate) const fn is_active(self) -> bool {
+    /// Whether a session is in progress rather than finished.
+    #[must_use]
+    pub const fn is_active(self) -> bool {
         matches!(
             self,
             Self::Starting | Self::Recording | Self::Stopping | Self::Processing
@@ -44,33 +56,44 @@ impl Phase {
     }
 }
 
+/// Whether the local speech model can serve a recording.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum ModelState {
+pub enum ModelState {
+    /// The model is starting or recovering.
     Loading,
+    /// The model is warm.
     Ready,
+    /// No model is running.
     #[default]
     Unavailable,
 }
 
 /// The presentation of owned session state that Settings, the tray, and the pill render.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Snapshot {
+pub struct Snapshot {
     /// The shell lifecycle it belongs to; an owner publishes only while its epoch is current.
     pub epoch: u64,
     /// The latest session, so a new session differs even when its phase repeats.
     pub id: u64,
+    /// The latest session's phase.
     pub phase: Phase,
+    /// Whether capture continues until the next press.
     pub hands_free: bool,
+    /// The latest speech meter level in `0.0..=1.0`.
     pub level: f32,
     /// Advances with every level report, so a repeated level still reaches the meter.
     pub meter_tick: u64,
     /// When the latest session started; the pill's recording clock counts from it.
     pub started: Instant,
+    /// The status or failure text Settings shows.
     pub message: String,
+    /// The speech model's readiness.
     pub model: ModelState,
     /// Whether native input can start capture; false while desktop startup is pending.
     pub desktop_ready: bool,
+    /// The dictation shortcut as people see it.
     pub shortcut: Arc<str>,
+    /// The cancellation shortcut as people see it.
     pub cancel_shortcut: Arc<str>,
 }
 
@@ -110,15 +133,21 @@ impl CaptureEvent {
 
 /// Controls for the dictation owner. `Owner` hosts its loop: a dedicated thread, joined on drop
 /// once stop has been requested, or a task on the test executor for paused-clock tests.
-pub(crate) struct Runtime<Owner = OwnedThread> {
+pub struct Runtime<Owner = OwnedThread> {
     owner: Owner,
+    /// The lane native input and shell commands use to reach the owner.
     pub input: InputSender,
     configuration: watch::Sender<Config>,
     stop: Sender<Infallible>,
 }
 
 impl Runtime {
-    pub(crate) fn start(
+    /// Starts the owner on its own thread with native capture, recognition, and insertion,
+    /// returning the shortcut monitor that feeds it.
+    ///
+    /// # Errors
+    /// Returns an error if native input or the owner thread cannot start.
+    pub fn start(
         config: Config,
         snapshots: watch::Sender<Snapshot>,
     ) -> anyhow::Result<(Self, InputMonitor)> {
@@ -154,12 +183,14 @@ impl Runtime {
         )
     }
 
-    pub(crate) fn is_running(&self) -> bool {
+    /// Whether the owner still accepts input.
+    #[must_use]
+    pub fn is_running(&self) -> bool {
         !self.input.is_closed() && !self.owner.is_finished()
     }
 
     /// Resolves once the owner has finished its native cleanup and exited.
-    pub(crate) fn stopped(&self) -> impl Future<Output = ()> + use<> {
+    pub fn stopped(&self) -> impl Future<Output = ()> + use<> {
         self.owner.exited()
     }
 }
@@ -194,7 +225,8 @@ impl<Owner> Runtime<Owner> {
         })
     }
 
-    pub(crate) fn configure(&self, config: Config) {
+    /// Applies new settings, revoking any pending insertion first.
+    pub fn configure(&self, config: Config) {
         // Revoke now, so a preparing insertion cannot commit before the owner applies the change.
         self.input.cancel();
         self.configuration.send_replace(config);
@@ -202,7 +234,7 @@ impl<Owner> Runtime<Owner> {
 
     /// Wakes the owner on its stop lane before closing input, so a normal pause never reports a
     /// shortcut failure or drains queued presses.
-    pub(crate) fn request_stop(&self) {
+    pub fn request_stop(&self) {
         self.stop.close();
         self.input.close();
     }

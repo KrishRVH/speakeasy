@@ -1,5 +1,5 @@
-//! GPUI conveniences: updates whose only failure is that their target no longer exists, and native
-//! handles for platform calls.
+//! GPUI conveniences: updates whose only failure is that their target no longer exists, native
+//! handles for platform calls, and theme colors as GPUI fills.
 //!
 //! Each update closure returns `()`, so these helpers can never discard an error the closure itself
 //! produced.
@@ -70,4 +70,12 @@ pub(crate) fn raw_handle(window: &Window, name: &str) -> anyhow::Result<RawWindo
     HasWindowHandle::window_handle(window)
         .map(|handle| handle.as_raw())
         .map_err(|error| anyhow::anyhow!("Cannot access {name} window: {error}"))
+}
+
+/// A `0xRRGGBB` color with an opacity, for GPUI fills and borders.
+pub(crate) fn alpha(color: u32, opacity: f32) -> gpui::Rgba {
+    gpui::Rgba {
+        a: opacity,
+        ..gpui::rgb(color)
+    }
 }

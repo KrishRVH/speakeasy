@@ -7,24 +7,20 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use async_channel::Receiver;
 use gpui::{App, BorrowAppContext, Context, SharedString, Task, Timer, Window};
-use tokio::sync::watch;
-
-use super::{
-    Services, demo,
-    lifecycle::ConfigEpoch,
-    request_quit,
-    save::{SaveProgress, SaveQueue, SaveRequest, SavedConfig},
-    window::choose_file,
-};
-use crate::{
+use speakeasy_dictation::{
     audio::{self, InputDevice},
     config::{Config, Engine},
-    gpui_ext::{EntityUpdate, WindowUpdate},
+    lifecycle::ConfigEpoch,
     runtime::Snapshot,
+    save::{SaveProgress, SaveQueue, SaveRequest, SavedConfig},
     setup::{Installed, Setup},
     status::Indicator,
     theme::Theme,
 };
+use tokio::sync::watch;
+
+use super::{Services, demo, request_quit, window::choose_file};
+use crate::gpui_ext::{EntityUpdate, WindowUpdate};
 
 const PROGRESS_THROTTLE: Duration = Duration::from_millis(100);
 
@@ -558,7 +554,21 @@ fn show_motion(reduced_motion: bool, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shell::save::valid_config;
+
+    /// Settings that pass validation: a fake engine and model written into `directory`.
+    fn valid_config(directory: &std::path::Path) -> anyhow::Result<Config> {
+        use std::os::unix::fs::PermissionsExt;
+        let engine_executable = directory.join("engine");
+        let model = directory.join("model.gguf");
+        std::fs::write(&engine_executable, b"fake engine")?;
+        std::fs::write(&model, b"fake model")?;
+        std::fs::set_permissions(&engine_executable, std::fs::Permissions::from_mode(0o700))?;
+        Ok(Config {
+            engine_executable,
+            model,
+            ..Config::default()
+        })
+    }
 
     fn microphones(ids: &[&str]) -> Vec<InputDevice> {
         ids.iter()

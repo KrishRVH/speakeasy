@@ -1,6 +1,8 @@
-//! The configuration-directory lock and a loopback listener through which later launches send fixed
-//! reveal, toggle, and cancel requests. Windows file locks also deny reads, so the listener port is
-//! published in a separate file that callers verify through an identification handshake.
+//! The configuration-directory lock, and a loopback listener for later launches' requests.
+//!
+//! Later launches send fixed reveal, toggle, and cancel requests. Windows file locks also deny
+//! reads, so the listener port is published in a separate file that callers verify through an
+//! identification handshake.
 
 use std::{
     fs::{self, File, OpenOptions},
@@ -27,9 +29,12 @@ const REVEAL_RETRY: Duration = Duration::from_millis(20);
 /// A fixed command a later launch sends to the running instance; never text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
-pub(crate) enum Request {
+pub enum Request {
+    /// Shows Settings.
     Reveal = 0,
+    /// Starts or finishes hands-free dictation.
     Toggle = 1,
+    /// Discards the active recording.
     Cancel = 2,
 }
 
@@ -46,7 +51,7 @@ impl Request {
 
 /// Owns the configuration-directory lock and a loopback server sleeping in accept. Dropping it
 /// wakes and joins the server, then removes the port file, and only then releases the lock.
-pub(crate) struct Instance {
+pub struct Instance {
     requests: Sender<Request>,
     address: SocketAddr,
     // Declaration order is release order: a relaunch that took the lock first would have its new
@@ -58,7 +63,10 @@ pub(crate) struct Instance {
 
 impl Instance {
     /// Takes the single-instance lock, or returns `None` after asking its holder to show Settings.
-    pub(crate) fn acquire(path: &Path) -> anyhow::Result<Option<(Self, Receiver<Request>)>> {
+    ///
+    /// # Errors
+    /// Returns an error if the settings directory, lock, or listener cannot be prepared.
+    pub fn acquire(path: &Path) -> anyhow::Result<Option<(Self, Receiver<Request>)>> {
         let directory = path.parent().context("Settings path has no directory")?;
         fs::create_dir_all(directory)?;
         let lock = OpenOptions::new()
@@ -92,7 +100,10 @@ impl Instance {
     }
 
     /// Sends `request` to the running instance once it has identified itself.
-    pub(crate) fn send(path: &Path, request: Request) -> anyhow::Result<()> {
+    ///
+    /// # Errors
+    /// Returns an error if no verified instance answers.
+    pub fn send(path: &Path, request: Request) -> anyhow::Result<()> {
         let mut stream = connect(&path.with_file_name(PORT_FILE))?;
         stream.write_all(&[request as u8])?;
         Ok(())

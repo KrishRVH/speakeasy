@@ -1,6 +1,7 @@
-//! Automatic setup installs the NeMo-Speech.cpp build that suits this machine and the Parakeet v3
-//! model. Every download is pinned by URL, size, and SHA-256, resumes after interruption, and is
-//! renamed into place only once verified.
+//! Automatic setup of the NeMo-Speech.cpp build that suits this machine and the Parakeet v3 model.
+//!
+//! Every download is pinned by URL, size, and SHA-256, resumes after interruption, and is renamed
+//! into place only once verified.
 
 use std::{
     convert::Infallible,
@@ -106,9 +107,12 @@ struct Download<'a> {
 /// What setup is doing. No step yet means it is checking this machine; `done` and `total` count the
 /// bytes of the current step.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct Progress {
+pub struct Progress {
+    /// The current step's description.
     pub step: Option<&'static str>,
+    /// Bytes completed in the current step.
     pub done: u64,
+    /// Bytes the current step needs.
     pub total: u64,
 }
 
@@ -119,14 +123,15 @@ struct ChosenEngine {
 }
 
 /// The engine and model a finished setup chose for this machine.
-pub(crate) struct Installed {
+pub struct Installed {
     engine_executable: PathBuf,
     model: PathBuf,
     use_gpu: bool,
 }
 
 impl Installed {
-    pub(crate) fn apply_to(self, config: &mut Config) {
+    /// Selects the installed engine and model in `config`, like a manual choice.
+    pub fn apply_to(self, config: &mut Config) {
         config.engine = Engine::Parakeet;
         config.engine_executable = self.engine_executable;
         config.model = self.model;
@@ -136,7 +141,7 @@ impl Installed {
 
 /// A setup running on its own thread. Dropping it cancels the setup and joins the thread;
 /// cancellation keeps partial downloads for the next run.
-pub(crate) struct Setup {
+pub struct Setup {
     thread: OwnedThread,
     updates: watch::Receiver<Progress>,
     result: async_channel::Receiver<anyhow::Result<Installed>>,
@@ -144,7 +149,11 @@ pub(crate) struct Setup {
 }
 
 impl Setup {
-    pub(crate) fn start() -> anyhow::Result<Self> {
+    /// Starts automatic setup on its own thread.
+    ///
+    /// # Errors
+    /// Returns the operating system's refusal to create the thread.
+    pub fn start() -> anyhow::Result<Self> {
         Self::spawn(|progress, cancelled| {
             let root = data_root();
             match tokio::runtime::Builder::new_current_thread()
@@ -190,19 +199,21 @@ impl Setup {
         })
     }
 
-    pub(crate) fn progress(&self) -> Progress {
+    /// The latest progress.
+    #[must_use]
+    pub fn progress(&self) -> Progress {
         *self.updates.borrow()
     }
 
-    pub(crate) fn progress_changes(&self) -> watch::Receiver<Progress> {
+    /// A receiver that wakes whenever progress changes.
+    #[must_use]
+    pub fn progress_changes(&self) -> watch::Receiver<Progress> {
         self.updates.clone()
     }
 
     /// Resolves once the thread has stopped, with its result, or `None` when it stopped without
     /// one.
-    pub(crate) fn outcome(
-        &self,
-    ) -> impl Future<Output = Option<anyhow::Result<Installed>>> + use<> {
+    pub fn outcome(&self) -> impl Future<Output = Option<anyhow::Result<Installed>>> + use<> {
         let result = self.result.clone();
         let stopped = self.stopped();
         async move {
@@ -212,15 +223,19 @@ impl Setup {
         }
     }
 
-    pub(crate) fn stopped(&self) -> impl Future<Output = ()> + use<> {
+    /// Resolves once the setup thread has exited.
+    pub fn stopped(&self) -> impl Future<Output = ()> + use<> {
         self.thread.exited()
     }
 
-    pub(crate) fn is_finished(&self) -> bool {
+    /// Whether the setup thread has exited.
+    #[must_use]
+    pub fn is_finished(&self) -> bool {
         self.thread.is_finished()
     }
 
-    pub(crate) fn request_stop(&self) {
+    /// Cancels setup without waiting; partial downloads remain for the next run.
+    pub fn request_stop(&self) {
         self.cancel.close();
     }
 }

@@ -14,15 +14,15 @@ use gpui::{
     canvas, div, point, prelude::*, px, rgb, rgba, size,
 };
 use speakeasy_core::{gesture::RECORDING_LIMIT, motion::Spring};
+use speakeasy_dictation::{
+    runtime::{Phase, Snapshot},
+    theme::{Palette, Theme},
+};
 use speakeasy_platform::{PILL_HEIGHT, PILL_WIDTH};
 use tokio::sync::watch;
 
 use self::{grille::Grille, symbol::Symbol};
-use crate::{
-    gpui_ext::{EntityUpdate, raw_handle},
-    runtime::{Phase, Snapshot},
-    theme::{Palette, Theme, alpha},
-};
+use crate::gpui_ext::{EntityUpdate, alpha, raw_handle};
 
 const METER_BARS: usize = 24;
 const FRAME_INTERVAL: Duration = Duration::from_millis(5);

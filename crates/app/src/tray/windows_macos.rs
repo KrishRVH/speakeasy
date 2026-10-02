@@ -2,6 +2,7 @@
 //! thread runs them and presents each tray state.
 
 use gpui::{App, Global, Task};
+use speakeasy_dictation::{status::Indicator, theme::Theme};
 use speakeasy_platform::{Activity, ServiceState};
 use tray_icon::{
     BadIcon, Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent,
@@ -12,7 +13,7 @@ use super::{
     TrayChanges, TrayCommand, TrayState,
     icon::{self, IconStyle},
 };
-use crate::{shell::Services, status::Indicator, theme::Theme};
+use crate::shell::Services;
 
 const ICON_STYLE: IconStyle = if cfg!(target_os = "macos") {
     IconStyle::Template

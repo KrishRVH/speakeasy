@@ -8,6 +8,11 @@ mod linux;
 mod windows_macos;
 
 use gpui::{App, AsyncApp};
+use speakeasy_dictation::{
+    runtime::{Phase, Snapshot},
+    status::Status,
+    theme::Theme,
+};
 use speakeasy_platform::{Activity, Input, ServiceState};
 use tokio::sync::watch;
 
@@ -15,12 +20,7 @@ use tokio::sync::watch;
 pub(crate) use self::linux::{Tray, install};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 pub(crate) use self::windows_macos::{Tray, install};
-use crate::{
-    runtime::{Phase, Snapshot},
-    shell::{self, Services},
-    status::Status,
-    theme::Theme,
-};
+use crate::shell::{self, Services};
 
 #[derive(PartialEq, Eq)]
 struct TrayState {

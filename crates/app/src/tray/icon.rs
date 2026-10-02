@@ -2,7 +2,7 @@
 //! add a cut-jewel badge; Recording turns the slot red, or adds its own badge in a macOS template,
 //! which cannot show color. Shapes are signed distances in icon pixels, negative inside.
 
-use crate::{
+use speakeasy_dictation::{
     status::Indicator,
     theme::{Theme, quantize},
 };

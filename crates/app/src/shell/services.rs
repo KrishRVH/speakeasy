@@ -4,22 +4,18 @@
 use std::path::PathBuf;
 
 use gpui::{App, BorrowAppContext, Global, Task, WindowHandle};
-use speakeasy_platform::{Input, InputMonitor, ServiceState};
-use tokio::sync::watch;
-
-use super::{
-    lifecycle::{ConfigEpoch, Lifecycle},
-    settings::Settings,
-    window::reveal,
-};
-use crate::{
+use speakeasy_dictation::{
     config::Config,
-    gpui_ext::AppUpdate,
     instance::{Instance, Request},
-    pill::Pill,
+    lifecycle::{ConfigEpoch, Lifecycle},
     runtime::{self, Phase, Runtime, Snapshot},
     status::Status,
 };
+use speakeasy_platform::{Input, InputMonitor, ServiceState};
+use tokio::sync::watch;
+
+use super::{settings::Settings, window::reveal};
+use crate::{gpui_ext::AppUpdate, pill::Pill};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LaunchMode {

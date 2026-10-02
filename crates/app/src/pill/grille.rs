@@ -5,9 +5,10 @@ use gpui::{
     Bounds, BoxShadow, ContentMask, Corners, PathBuilder, Pixels, Rgba, Window, fill,
     linear_color_stop, linear_gradient, point, px, rgb, size,
 };
+use speakeasy_dictation::theme::{Palette, mix};
 
 use super::METER_BARS;
-use crate::theme::{Palette, alpha, mix};
+use crate::gpui_ext::alpha;
 
 const OLDEST_AGE: usize = METER_BARS - 1;
 const BAR_WIDTH: f32 = 2.0;

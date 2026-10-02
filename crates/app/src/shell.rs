@@ -2,8 +2,6 @@
 //! the UI thread; Settings edits a draft that applies only once saved.
 
 mod demo;
-mod lifecycle;
-mod save;
 mod services;
 mod settings;
 mod shutdown;

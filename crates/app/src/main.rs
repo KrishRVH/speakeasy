@@ -3,21 +3,10 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-mod audio;
-mod child;
-mod config;
 mod gpui_ext;
 mod icons;
-mod instance;
-mod local_speech;
 mod pill;
-mod ports;
-mod runtime;
-mod setup;
 mod shell;
-mod status;
-mod theme;
-mod transcript;
 mod tray;
 
 use std::{
@@ -27,15 +16,15 @@ use std::{
 
 use anyhow::{Context as _, bail, ensure};
 use gpui::{App, Application, BorrowAppContext};
+use speakeasy_dictation::{
+    config::{self, Config},
+    instance::{Instance, Request},
+    runtime::{Phase, Snapshot},
+};
 use speakeasy_platform::{CANCEL_SHORTCUT, SHORTCUT};
 use tokio::sync::watch;
 
-use crate::{
-    config::Config,
-    instance::{Instance, Request},
-    runtime::{Phase, Snapshot},
-    shell::{LaunchMode, Services},
-};
+use crate::shell::{LaunchMode, Services};
 
 // Josefin Sans SemiBold, SIL Open Font License 1.1 (assets/JosefinSans-OFL.txt).
 const WORDMARK_FONT: &str = "Josefin Sans";

@@ -6,25 +6,29 @@ use std::path::PathBuf;
 use async_channel::Receiver;
 use speakeasy_platform::OwnedThread;
 
-use super::lifecycle::ConfigEpoch;
-use crate::config::Config;
+use crate::{config::Config, lifecycle::ConfigEpoch};
 
-pub(super) struct SaveRequest {
-    pub(super) draft: Config,
-    pub(super) epoch: ConfigEpoch,
-    pub(super) path: PathBuf,
+/// One requested durable write of the Settings draft.
+pub struct SaveRequest {
+    /// The draft as the user left it.
+    pub draft: Config,
+    /// The lifecycle epoch the save belongs to, so a later Pause can outrank it.
+    pub epoch: ConfigEpoch,
+    /// Where the settings file lives.
+    pub path: PathBuf,
 }
 
 /// A durable write: the draft as submitted and the settings validation resolved from it.
-pub(super) struct SavedConfig {
+pub struct SavedConfig {
     submitted: Config,
-    pub(super) validated: Config,
+    /// The settings as written, with paths resolved by validation.
+    pub validated: Config,
 }
 
 impl SavedConfig {
     /// Adopts the validated settings if the draft is unchanged since submission, returning whether
     /// it was.
-    pub(super) fn update_draft(&self, draft: &mut Config) -> bool {
+    pub fn update_draft(&self, draft: &mut Config) -> bool {
         if *draft == self.submitted {
             *draft = self.validated.clone();
             true
@@ -34,20 +38,25 @@ impl SavedConfig {
     }
 }
 
-pub(super) enum SaveProgress {
+/// What the queue is doing after a submission or completion.
+pub enum SaveProgress {
     /// A write started; hand its result to [`SaveQueue::finish`].
     Writing(Receiver<anyhow::Result<SavedConfig>>),
     /// The queue drained: the newest durable save, the latest error, and the newest request's
     /// epoch.
     Finished {
+        /// The newest durable write, if any succeeded.
         saved: Option<Box<SavedConfig>>,
+        /// The latest failure, which Settings reports.
         error: Option<String>,
+        /// The newest request's epoch.
         epoch: ConfigEpoch,
     },
 }
 
+/// Serialized settings writes: one running, at most the latest one queued.
 #[derive(Default)]
-pub(super) struct SaveQueue {
+pub struct SaveQueue {
     writing: Option<SaveWork>,
     pending: Option<SaveRequest>,
     saved: Option<SavedConfig>,
@@ -58,7 +67,7 @@ pub(super) struct SaveQueue {
 impl SaveQueue {
     /// Starts writing `request`, or returns `None` after queuing it behind the running write in
     /// place of any request queued before.
-    pub(super) fn submit(&mut self, request: SaveRequest) -> Option<SaveProgress> {
+    pub fn submit(&mut self, request: SaveRequest) -> Option<SaveProgress> {
         self.epoch = request.epoch;
         if self.writing.is_some() {
             self.pending = Some(request);
@@ -70,7 +79,7 @@ impl SaveQueue {
 
     /// Records the running write's result, then starts the queued request or reports the drained
     /// queue.
-    pub(super) fn finish(&mut self, result: anyhow::Result<SavedConfig>) -> SaveProgress {
+    pub fn finish(&mut self, result: anyhow::Result<SavedConfig>) -> SaveProgress {
         // The result follows the durable write, so this join never waits on storage.
         self.writing = None;
         let error = match result {
@@ -97,13 +106,15 @@ impl SaveQueue {
         }
     }
 
-    pub(super) fn is_idle(&self) -> bool {
+    /// Whether no write is running or queued.
+    #[must_use]
+    pub fn is_idle(&self) -> bool {
         self.writing.is_none() && self.pending.is_none()
     }
 
     /// Blocks until the running write finishes, then writes the latest queued request and waits for
     /// that write too.
-    pub(super) fn flush(&mut self) {
+    pub fn flush(&mut self) {
         self.writing = None;
         if let Some(pending) = self.pending.take() {
             // Dropping the work joins its thread; nothing remains to report a failed start to.
@@ -151,7 +162,7 @@ impl SaveWork {
 
 /// Settings that pass validation: a fake engine and model written into `directory`.
 #[cfg(test)]
-pub(super) fn valid_config(directory: &std::path::Path) -> anyhow::Result<Config> {
+pub(crate) fn valid_config(directory: &std::path::Path) -> anyhow::Result<Config> {
     let engine_executable = directory.join("engine");
     let model = directory.join("model.gguf");
     std::fs::write(&engine_executable, b"fake engine")?;

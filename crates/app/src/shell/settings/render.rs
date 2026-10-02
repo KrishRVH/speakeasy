@@ -7,17 +7,15 @@ use gpui::{
     AnyElement, App, Context, Div, FontWeight, KeyDownEvent, SharedString, Window, div, prelude::*,
     px, relative, rgb, svg,
 };
+use speakeasy_dictation::{
+    config::Engine,
+    setup::Progress,
+    status::Indicator,
+    theme::{Palette, mix},
+};
 
 use super::{Action, EngineFile, Setting, Settings, is_demo};
-use crate::{
-    WORDMARK_FONT,
-    config::Engine,
-    icons::KEYSTONE,
-    setup::Progress,
-    shell::Services,
-    status::Indicator,
-    theme::{Palette, alpha, mix},
-};
+use crate::{WORDMARK_FONT, gpui_ext::alpha, icons::KEYSTONE, shell::Services};
 
 impl Render for Settings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

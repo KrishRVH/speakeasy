@@ -5,12 +5,10 @@ use std::time::{Duration, Instant};
 
 use gpui::Timer;
 use speakeasy_core::gesture::RECORDING_LIMIT;
+use speakeasy_dictation::runtime::{ModelState, Phase, Snapshot};
 use tokio::sync::watch;
 
-use crate::{
-    pill::COUNTDOWN,
-    runtime::{ModelState, Phase, Snapshot},
-};
+use crate::pill::COUNTDOWN;
 
 /// Two seconds into the pill's countdown, so the preview shows it.
 const NEAR_RECORDING_LIMIT: Duration = RECORDING_LIMIT

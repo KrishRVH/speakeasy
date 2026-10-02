@@ -456,7 +456,8 @@ impl LevelMeter {
     }
 }
 
-pub(crate) struct InputDevice {
+/// A microphone Settings can offer.
+pub struct InputDevice {
     /// The stable device identifier saved in settings.
     pub id: String,
     /// For display only; device names need not be unique.
@@ -742,7 +743,10 @@ fn bytes_in(samples: usize) -> usize {
 
 /// Lists input devices without opening a stream. Drivers may block, and CPAL leaves its calling
 /// thread in a single-threaded COM apartment, so enumeration runs on its own detached thread.
-pub(crate) async fn microphones() -> anyhow::Result<Vec<InputDevice>> {
+///
+/// # Errors
+/// Returns an error if the audio host cannot enumerate its devices.
+pub async fn microphones() -> anyhow::Result<Vec<InputDevice>> {
     let (reply, devices) = async_channel::bounded(1);
     thread::Builder::new()
         .name("microphone-scan".into())

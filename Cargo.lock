@@ -5601,6 +5601,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "speakeasy-core",
+ "speakeasy-dictation",
  "speakeasy-platform",
  "tempfile",
  "tokio",
@@ -5613,6 +5614,24 @@ name = "speakeasy-core"
 version = "0.3.3"
 dependencies = [
  "proptest",
+]
+
+[[package]]
+name = "speakeasy-dictation"
+version = "0.3.3"
+dependencies = [
+ "anyhow",
+ "async-channel 2.5.0",
+ "cpal",
+ "reqwest",
+ "rtrb",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "speakeasy-core",
+ "speakeasy-platform",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
