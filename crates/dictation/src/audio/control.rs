@@ -41,6 +41,11 @@ pub(super) struct Control {
         reason = "The consumer must learn that no callback is still publishing after a finish, and the callback cannot wait"
     )]
     publishing: AtomicUsize,
+    #[expect(
+        clippy::disallowed_types,
+        reason = "The consumer asks the callback to wake it once audio it waits for is queued, and the callback cannot wait"
+    )]
+    wake_at: AtomicUsize,
 }
 
 /// A callback inside its publishing section, which ends when this drops.
@@ -104,6 +109,24 @@ impl Control {
         self.first_sample_queued.load(Ordering::Acquire)
     }
 
+    /// Asks the callback to wake the consumer once `samples` have been queued since capture began, or
+    /// not at all.
+    pub(super) fn wake_at(&self, samples: Option<usize>) {
+        self.wake_at
+            .store(samples.unwrap_or(usize::MAX), Ordering::Release);
+    }
+
+    /// Whether `queued` samples reach the requested wake, which this clears so the consumer is
+    /// woken once per request.
+    pub(super) fn reached_wake(&self, queued: usize) -> bool {
+        let target = self.wake_at.load(Ordering::Acquire);
+        queued >= target
+            && self
+                .wake_at
+                .compare_exchange(target, usize::MAX, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+    }
+
     /// Asks the consumer to offer the audio up to each pause for speculative recognition.
     pub(super) fn speculate(&self) {
         self.speculating.store(true, Ordering::Release);
@@ -122,6 +145,17 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn a_requested_wake_is_reached_once_and_only_once_its_audio_is_queued() {
+        let control = Control::default();
+        control.wake_at(Some(480));
+        assert!(!control.reached_wake(479));
+        assert!(control.reached_wake(512));
+        assert!(!control.reached_wake(1024), "One request woke the consumer twice");
+        control.wake_at(None);
+        assert!(!control.reached_wake(usize::MAX - 1));
+    }
 
     #[test]
     fn quiescence_waits_for_a_callback_that_began_before_the_finish() {

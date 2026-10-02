@@ -150,9 +150,10 @@ impl Speech {
         self.end
     }
 
-    /// Bytes of further quiet until the next mark this pause has not reported, once enough audible
-    /// audio exists for a pause to report.
-    pub(super) fn quiet_until_next_mark(&self) -> Option<usize> {
+    /// Where the next mark this pause has not reported falls due, as a byte offset, once enough
+    /// audible audio exists for a pause to report: the first window boundary that much quiet
+    /// reaches, where [`Self::pause`] reports it.
+    pub(super) fn next_mark(&self) -> Option<usize> {
         self.first
             .filter(|_| self.audible_samples >= self.minimum_audible)?;
         let reported = if self.end <= self.paused_at {
@@ -165,7 +166,10 @@ impl Speech {
             .iter()
             .chain([&self.padding])
             .nth(reported)?;
-        Some(next.saturating_sub(self.scanned.saturating_sub(self.end)))
+        Some(
+            self.end
+                .saturating_add(next.div_ceil(self.window).saturating_mul(self.window)),
+        )
     }
 }
 
@@ -213,9 +217,9 @@ mod tests {
         let spoken = SECOND * 3;
         let mut live = Speech::new(RATE).unwrap();
         live.extend(&speaking[..SECOND]);
-        assert_eq!(live.quiet_until_next_mark(), None, "No speech yet");
+        assert_eq!(live.next_mark(), None, "No speech yet");
         live.extend(&speaking[..spoken]);
-        assert_eq!(live.quiet_until_next_mark(), Some(SECOND / 10));
+        assert_eq!(live.next_mark(), Some(spoken + SECOND / 10));
         live.extend(&speaking[..spoken + SECOND / 10 - 2]);
         assert_eq!(live.pause(), None, "Half a window short of the first mark");
         let mut early = Vec::new();
@@ -237,11 +241,7 @@ mod tests {
                 .all(|pause| !pause.full && pause.speech_end == paused.speech_end)
         );
         assert_eq!(live.pause(), None, "A pause is reported fully once");
-        assert_eq!(
-            live.quiet_until_next_mark(),
-            None,
-            "Every mark was reported"
-        );
+        assert_eq!(live.next_mark(), None, "Every mark was reported");
 
         let mut stopped_later = speaking.clone();
         stopped_later.extend(audio(&[(SECOND * 3 / 4, 20)]));
@@ -276,13 +276,28 @@ mod tests {
     }
 
     #[test]
+    fn the_next_mark_names_the_window_boundary_where_its_pause_is_reported() {
+        // At 11025 Hz a 20 ms window holds 220 samples but 100 ms of quiet is 1102.
+        let rate = 11_025;
+        let spoken = 50 * 2 * 220;
+        let pcm = audio(&[(spoken, 3000), (2 * 11_025, 0)]);
+        let mut speech = Speech::new(rate).unwrap();
+        speech.extend(&pcm[..spoken]);
+        let due = speech.next_mark().unwrap();
+        speech.extend(&pcm[..due - 2]);
+        assert_eq!(speech.pause(), None);
+        speech.extend(&pcm[..due]);
+        assert!(speech.pause().is_some(), "The mark was not reported where it fell due");
+    }
+
+    #[test]
     fn clicks_never_count_as_speech_or_pauses() {
         let click = audio(&[(SECOND / 20, 3000), (SECOND * 2, 0)]);
         let mut speech = Speech::new(RATE).unwrap();
         speech.extend(&click);
         assert_eq!(speech.pause(), None);
         // A pause the click cannot report must not keep capture waking for its marks.
-        assert_eq!(speech.quiet_until_next_mark(), None);
+        assert_eq!(speech.next_mark(), None);
         speech.complete(&click);
         assert_eq!(speech.retained(click.len()), None);
     }

@@ -46,12 +46,13 @@ const MINIMUM_RECORDING: Duration = Duration::from_millis(200);
 /// is recognized while it continues and recognition stays linear in its length.
 const SEGMENT: Duration = Duration::from_secs(20);
 const METER_INTERVAL: Duration = Duration::from_millis(32);
-/// How often the consumer drains the ring until the first samples arrive, so startup feedback is
-/// prompt.
+/// How often the consumer drains the ring until the first samples arrive, should the callback's wake
+/// for them be missed.
 const STARTUP_DRAIN: Duration = Duration::from_millis(5);
 /// How often it drains once audio flows: twice per meter interval, well inside the ring's second.
 const DRAIN_INTERVAL: Duration = Duration::from_millis(16);
-/// How soon a due pause mark is rechecked when its audio has not reached the ring yet.
+/// How soon the timing replay, which has no callback to wake it, rechecks a due pause mark.
+#[cfg(test)]
 const MARK_RECHECK: Duration = Duration::from_millis(2);
 const METER_FLOOR_DBFS: f32 = -60.0;
 const METER_TOP_DBFS: f32 = -6.0;
@@ -268,14 +269,22 @@ impl Tracker {
         Ok(())
     }
 
-    /// How long to sleep before draining again: the drain interval, or less when quiet follows
-    /// speech and a pause mark falls due sooner, so the mark's speculation starts on time instead of
-    /// up to an interval late. A mark whose audio has not arrived is rechecked shortly.
+    /// How many samples capture must hold for the next pause mark to fall due, once quiet follows
+    /// speech, so the mark's speculation can start as soon as its audio arrives.
+    fn mark_due(&self) -> Option<usize> {
+        self.speech
+            .next_mark()
+            .map(|bytes| bytes.div_ceil(SAMPLE_BYTES))
+    }
+
+    /// How long the timing replay sleeps before feeding again: the drain interval, or until the next
+    /// pause mark's audio is due, rechecked shortly while it has not arrived.
+    #[cfg(test)]
     fn next_wake(&self) -> Duration {
-        let Some(bytes) = self.speech.quiet_until_next_mark() else {
+        let Some(due) = self.mark_due() else {
             return DRAIN_INTERVAL;
         };
-        let samples = u64::try_from(bytes / SAMPLE_BYTES).unwrap_or(u64::MAX);
+        let samples = u64::try_from(due.saturating_sub(self.pcm.samples())).unwrap_or(u64::MAX);
         let micros = samples
             .saturating_mul(1_000_000)
             .checked_div(u64::from(self.rate))
@@ -471,6 +480,7 @@ impl Recorder {
             channels,
             producer,
             control: control.clone(),
+            consumer: thread::current(),
             errors,
             started,
             limit,
@@ -563,10 +573,21 @@ impl Recorder {
             if stopping {
                 return Ok(true);
             }
-            // Finish and cancel unpark this thread at once, and an unpark that lands before the
-            // wait is not lost; the timeout only paces draining of the ring.
+            // The callback wakes this thread when the first samples or a due pause mark's audio is
+            // queued, and finish and cancel wake it at once; an unpark that lands before the wait is
+            // not lost. The timeout only paces draining of the ring.
+            let due = if ready {
+                self.tracker.mark_due()
+            } else {
+                Some(1)
+            };
+            control.wake_at(due);
+            let held = self.tracker.pcm.samples().saturating_add(self.ring.slots());
+            if due.is_some_and(|due| held >= due) {
+                continue;
+            }
             thread::park_timeout(if ready {
-                self.tracker.next_wake()
+                DRAIN_INTERVAL
             } else {
                 STARTUP_DRAIN
             });
@@ -704,6 +725,8 @@ struct CallbackState {
     channels: NonZeroUsize,
     producer: Producer<f32>,
     control: Arc<Control>,
+    /// The thread draining the ring, which the callback wakes when audio it waits for is queued.
+    consumer: Thread,
     errors: Sender<cpal::Error>,
     started: Instant,
     limit: usize,
@@ -859,6 +882,7 @@ where
         channels,
         mut producer,
         control,
+        consumer,
         errors,
         started,
         limit,
@@ -891,6 +915,10 @@ where
             queued_total = queued_total.saturating_add(queued);
             if queued < frames {
                 control.mark_overflowed();
+            }
+            // Waking signals a semaphore: no allocation, lock, or wait on the audio thread.
+            if control.reached_wake(queued_total) {
+                consumer.unpark();
             }
         },
         move |error| handle_stream_error(error, &errors, &error_control),
@@ -1104,6 +1132,7 @@ mod tests {
             channels: NonZeroUsize::new(channels).unwrap(),
             producer,
             control: control.clone(),
+            consumer: thread::current(),
             errors,
             started: Instant::now(),
             limit,
@@ -1456,6 +1485,22 @@ mod tests {
             assert!(ring.pop().is_err());
         }
         Ok(())
+    }
+
+    #[test]
+    fn the_callback_wakes_the_consumer_once_the_audio_it_awaits_is_queued() {
+        let (state, _ring, _, control) = callback_fixture(1, 16, 16);
+        let (mut data, _) = capture_callbacks::<f32>(state);
+        control.wake_at(Some(4));
+        data(&[0.0; 3]);
+        data(&[0.0; 2]);
+        // The fixture's consumer is this thread, so a wake left its token for this park.
+        let started = Instant::now();
+        thread::park_timeout(PATIENCE);
+        assert!(
+            started.elapsed() < PATIENCE,
+            "The consumer slept through its due audio"
+        );
     }
 
     #[test]
