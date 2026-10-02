@@ -59,6 +59,16 @@ struct Exchange {
     reply: oneshot::Sender<anyhow::Result<String>>,
 }
 
+/// This executable, re-run in helper mode. A test binary cannot answer the helper flag, so opt-in
+/// tests that start a real worker name a built app with `SPEAKEASY_FIXTURE_HELPER`.
+fn helper_executable() -> std::io::Result<PathBuf> {
+    #[cfg(test)]
+    if let Some(app) = std::env::var_os("SPEAKEASY_FIXTURE_HELPER") {
+        return Ok(PathBuf::from(app));
+    }
+    std::env::current_exe()
+}
+
 /// A recording erased, best effort, however its request ends: answered, queued when the helper
 /// stops, or in flight when the pipe task is aborted.
 struct Erased(Vec<u8>);
@@ -76,7 +86,7 @@ impl Helper {
         mut cancelled: watch::Receiver<bool>,
     ) -> anyhow::Result<Self> {
         ensure!(!*cancelled.borrow(), STARTUP_CANCELLED);
-        let mut command = owned_command(std::env::current_exe()?);
+        let mut command = owned_command(helper_executable()?);
         command
             .arg(HELPER_FLAG)
             .arg(PROTOCOL)
