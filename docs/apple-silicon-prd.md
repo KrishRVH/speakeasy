@@ -74,11 +74,17 @@ on every fixture:
   total work falls from 2.6 to 1.7 s.
 - Held dictation, replayed in real time through capture's speech tracking with 2 s between
   dictations: the 0.3.3 path (NVIDIA's engine, no held speculation) takes 113–157 ms from release to
-  insertion at 300 ms after the last word. With speculation at 100, 200, and 500 ms of quiet, the 11
-  s JFK fixture takes 115, 67, 12, and 0.1–0.3 ms when released 100, 150, 200, and 250–600 ms after
-  its last word; 5, 10, and 30 s fixtures take 0.1–21 ms at 200 ms and 0.1–1.6 ms from 250 ms. A
-  text taken from a pause is what a release at that pause would have inserted. Each pause of 100 ms
-  or more costs a recognition of the audio so far, so GPU work per dictation grows several times.
+  insertion at 300 ms after the last word. With speculation at 100, 200, and 500 ms of quiet and
+  capture waking when each mark falls due, the 11 s JFK fixture takes 105, 58, and 0.1 ms when
+  released 100, 150, and 200 ms after its last word, and 0.1–0.3 ms from 250 ms; 5 and 10 s fixtures
+  take 0.0–16 ms at 150 ms and 0.1 ms from 200 ms. A text taken from a pause is what a release at
+  that pause would have inserted. Each pause of 100 ms or more costs a recognition of the audio so
+  far: LibriSpeech's 5, 10, and 30 s fixtures trigger 7, 6, and 32 instead of one request.
+- At background QoS an 11 s recognition takes 141 ms instead of 63 ms; utility QoS costs nothing.
+  Capture, the owner, the input monitor, and the helper run at user-initiated QoS and hold an App
+  Nap activity; a process already clamped to background is not lifted by thread QoS, and App Nap
+  itself was not reproducible on this host.
+- The first request after a 1 s or a 10 s warmup costs at most 4 ms more than later ones.
 - After 2 s idle, an 11 s recognition takes 121 ms instead of 66 ms warm; 140 ms of continuous small
   requests first brings it to 75 ms. The 100 ms speculation mark serves as that warm-up for the 200
   ms one.
