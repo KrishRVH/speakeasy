@@ -766,6 +766,21 @@ fn record(
     }
 }
 
+/// Pays the audio system's first use in this process, 25-35 ms on an M4 Pro, on its own thread
+/// before the first recording waits on it. Only the default input device is read, as listing
+/// microphones does; no stream opens, so input never starts and the microphone indicator stays off.
+pub(crate) fn prepare_capture() {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "Warming is best effort; the first recording opens its device and reports any failure"
+    )]
+    let _ = thread::Builder::new()
+        .name("audio-warmup".into())
+        .spawn(|| {
+            let _device = cpal::default_host().default_input_device();
+        });
+}
+
 fn select_device(
     host: &cpal::Host,
     microphone: Option<&str>,

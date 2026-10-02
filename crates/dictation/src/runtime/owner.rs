@@ -128,6 +128,7 @@ impl<P: Ports> Owner<P> {
         let (events, captures) = async_channel::bounded(64);
         let desktop_ready = !ports.prepares_desktop();
         let worker = Worker::load(&ports, &config);
+        ports.prepare_capture();
         Self {
             ports,
             config,

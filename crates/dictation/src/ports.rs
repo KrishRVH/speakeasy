@@ -8,7 +8,10 @@ use speakeasy_platform::{Delivery, InsertPermit, Inserted};
 use tokio::sync::watch;
 
 #[cfg(target_os = "macos")]
-use crate::{audio::Capture, local_speech::LocalSpeech};
+use crate::{
+    audio::{self, Capture},
+    local_speech::LocalSpeech,
+};
 use crate::{
     config::Config,
     runtime::{CaptureEvent, SessionId},
@@ -36,9 +39,8 @@ pub(crate) trait Speech: Send + Sync + 'static {
         language: &str,
     ) -> impl Future<Output = anyhow::Result<String>> + Send;
 
-    /// Transcribes silence and discards the text. Engines serialize requests, so completion proves
-    /// that an abandoned inference has drained and the model still responds, which a health check
-    /// cannot.
+    /// Transcribes silence and discards the text, so startup proves the model responds, which a
+    /// health check cannot, and the accelerator is warm before the first dictation.
     fn probe_with_silence(&self) -> impl Future<Output = anyhow::Result<()>> + Send;
 
     /// Terminates the engine; resolves only once its process has been reaped.
@@ -51,6 +53,10 @@ pub(crate) trait Ports: Send + 'static {
 
     /// Whether input must await `DesktopReady` before it can start capture.
     fn prepares_desktop(&self) -> bool;
+
+    /// Pays the audio system's first-use cost ahead of the first recording, without opening a
+    /// device.
+    fn prepare_capture(&self) {}
 
     /// Opens `microphone`, or the system default when it is `None`, reporting to `events` as `id`.
     fn record(
@@ -94,6 +100,10 @@ impl Ports for Desktop {
 
     fn prepares_desktop(&self) -> bool {
         true
+    }
+
+    fn prepare_capture(&self) {
+        audio::prepare_capture();
     }
 
     fn record(
