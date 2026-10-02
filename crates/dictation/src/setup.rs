@@ -341,6 +341,32 @@ async fn choose_engine(
     })
 }
 
+/// The engine build a packaged app carries, looked up once so a view can ask about it cheaply.
+pub struct BundledEngine(PathBuf);
+
+impl BundledEngine {
+    /// The running app's bundled build, if it has one.
+    #[must_use]
+    pub fn find() -> Option<Self> {
+        bundled_engine().map(Self)
+    }
+
+    /// Whether `config` runs an earlier engine that automatic setup installed, which setup would
+    /// replace with this build. A manually chosen executable is never offered a replacement.
+    #[must_use]
+    pub fn upgrades(&self, config: &Config) -> bool {
+        upgrades(&data_root().join("engines"), &self.0, config)
+    }
+}
+
+fn upgrades(engines: &Path, build: &Path, config: &Config) -> bool {
+    config.engine == Engine::Parakeet
+        && config.engine_executable.starts_with(engines)
+        && build
+            .file_name()
+            .is_some_and(|name| config.engine_executable != engines.join(name).join(EXECUTABLE))
+}
+
 /// The engine build the running app's bundle carries.
 fn bundled_engine() -> Option<PathBuf> {
     let executable = std::env::current_exe().ok()?.canonicalize().ok()?;
@@ -774,6 +800,36 @@ mod tests {
         );
         assert!(installation.child.is_none());
         Ok(())
+    }
+
+    #[test]
+    fn only_an_earlier_automatic_install_is_offered_the_bundled_build() {
+        let engines = Path::new("/support/engines");
+        let build = Path::new("/App.app/Contents/Resources/engine/nemo-speech-0.1.0-speakeasy-new");
+        let config = |engine, executable: &str| Config {
+            engine,
+            engine_executable: PathBuf::from(executable),
+            ..Config::default()
+        };
+        let nvidia =
+            "/support/engines/nemo-speech-0.1.0-macos-aarch64-metal/nemo-speech/bin/nemo-speech";
+        let older = "/support/engines/nemo-speech-0.1.0-speakeasy-old/nemo-speech/bin/nemo-speech";
+        let current =
+            "/support/engines/nemo-speech-0.1.0-speakeasy-new/nemo-speech/bin/nemo-speech";
+        assert!(upgrades(engines, build, &config(Engine::Parakeet, nvidia)));
+        assert!(upgrades(engines, build, &config(Engine::Parakeet, older)));
+        assert!(!upgrades(
+            engines,
+            build,
+            &config(Engine::Parakeet, current)
+        ));
+        assert!(!upgrades(
+            engines,
+            build,
+            &config(Engine::Parakeet, "/opt/custom/nemo-speech")
+        ));
+        assert!(!upgrades(engines, build, &config(Engine::Whisper, nvidia)));
+        assert!(!upgrades(engines, build, &config(Engine::Parakeet, "")));
     }
 
     #[test]

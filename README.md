@@ -67,7 +67,9 @@ tuned for Apple silicon. The first launch installs it and downloads NVIDIA's Par
 about 0.7 GB, into `~/Library/Application Support/speakeasy`, then turns dictation on. The model
 comes from a pinned Hugging Face revision and is checked against its SHA-256 before use. **Cancel**
 pauses setup, and the next attempt resumes where it stopped. Then hold <kbd>Fn</kbd> in an editor
-and speak.
+and speak. A configuration that automatic setup made earlier keeps its engine until you choose
+**Install it** in Settings, which installs the bundled build and keeps the model; a manually chosen
+engine is never replaced.
 
 Settings also choose the microphone, GPU use, filler removal, clipboard behavior, reduced motion,
 and theme: **Jet & Champagne**, **Emerald Lounge**, **Iris**, or **Midnight Chrome**. Changes apply

@@ -13,7 +13,7 @@ use speakeasy_dictation::{
     lifecycle::ConfigEpoch,
     runtime::Snapshot,
     save::{SaveProgress, SaveQueue, SaveRequest, SavedConfig},
-    setup::{Installed, Setup},
+    setup::{BundledEngine, Installed, Setup},
     status::Indicator,
     theme::Theme,
 };
@@ -34,6 +34,8 @@ pub(super) struct Settings {
     preview: Option<Task<()>>,
     setup: Option<(Setup, Task<()>)>,
     retiring_setups: Vec<(Setup, Task<()>)>,
+    /// The engine build this app carries, which setup can install over an older automatic one.
+    bundled_engine: Option<BundledEngine>,
     saving: Option<Task<()>>,
     saves: SaveQueue,
     _updates: Task<()>,
@@ -67,6 +69,7 @@ impl Settings {
             preview: None,
             setup: None,
             retiring_setups: Vec::new(),
+            bundled_engine: BundledEngine::find(),
             saving: None,
             saves: SaveQueue::default(),
             _updates: follow_updates,
@@ -607,6 +610,7 @@ mod tests {
             preview: None,
             setup: None,
             retiring_setups: Vec::new(),
+            bundled_engine: None,
             saving: None,
             saves,
             _updates: Task::ready(()),

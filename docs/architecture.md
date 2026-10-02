@@ -187,12 +187,14 @@ rest. Segment audio is erased when its session ends.
 
 ## Setup
 
-A fresh install opens Settings and starts setup; later launches offer it only while no engine is
-configured. Setup owns its thread and runtime. Cancel signals it immediately and retains it until
-cleanup acknowledges; Quit joins active and retiring setup work. A machine-local `setup.lock`
-serializes directory writes across retries and app instances. Cancellation terminates and waits for
-the owned extraction or doctor process before releasing that lock; partial downloads remain
-available to resume. A packaged app carries Speakeasy's patched Metal build of NeMo-Speech.cpp under
+A fresh install opens Settings and starts setup; later launches offer it while no engine is
+configured, or while the configured engine is an earlier automatic install under `engines/` and the
+app carries a different build. A manually chosen executable is never offered a replacement. Setup
+owns its thread and runtime. Cancel signals it immediately and retains it until cleanup
+acknowledges; Quit joins active and retiring setup work. A machine-local `setup.lock` serializes
+directory writes across retries and app instances. Cancellation terminates and waits for the owned
+extraction or doctor process before releasing that lock; partial downloads remain available to
+resume. A packaged app carries Speakeasy's patched Metal build of NeMo-Speech.cpp under
 `Contents/Resources/engine/<build>`; setup copies it into `engines/<build>` with `ditto`, keeping
 its library links, and reuses an installed build of the same name. An unpackaged run downloads
 NVIDIA's Metal build instead. Setup uses the GPU when the engine's `doctor` command confirms that

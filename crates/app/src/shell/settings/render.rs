@@ -21,6 +21,11 @@ impl Render for Settings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = self.config.theme.palette();
         let unconfigured = !is_demo(cx) && self.config.engine_executable.as_os_str().is_empty();
+        let upgradable = !is_demo(cx)
+            && self
+                .bundled_engine
+                .as_ref()
+                .is_some_and(|engine| engine.upgrades(&self.config));
         div()
             .id("settings")
             .on_key_down(cycle_focus)
@@ -33,8 +38,9 @@ impl Render for Settings {
             .flex_col()
             .gap(px(20.0))
             .child(header(self.presentation.indicator, palette))
-            .child(if self.is_setting_up() || unconfigured {
-                self.setup_card(palette, cx).into_any_element()
+            .child(if self.is_setting_up() || unconfigured || upgradable {
+                self.setup_card(palette, unconfigured, cx)
+                    .into_any_element()
             } else {
                 self.gesture_hints(palette).into_any_element()
             })
@@ -55,12 +61,21 @@ impl Settings {
         self.setup.is_some()
     }
 
-    fn setup_card(&self, palette: &'static Palette, cx: &Context<Self>) -> impl IntoElement {
+    /// Setup for a new install, or an offer to replace an older automatic engine install with the
+    /// faster build this app carries.
+    fn setup_card(
+        &self,
+        palette: &'static Palette,
+        unconfigured: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
         let progress = self.setup.as_ref().map(|(setup, _)| setup.progress());
         let (title, command) = if self.is_setting_up() {
             ("Setting up dictation", "Cancel")
-        } else {
+        } else if unconfigured {
             ("Set up dictation", "Set up automatically")
+        } else {
+            ("A faster speech engine is ready", "Install it")
         };
         panel(palette)
             .flex()
@@ -71,7 +86,7 @@ impl Settings {
                 div()
                     .text_size(px(12.0))
                     .text_color(rgb(palette.muted))
-                    .child(setup_detail(progress)),
+                    .child(setup_detail(progress, unconfigured)),
             )
             .when_some(progress, |card, progress| {
                 card.child(progress_bar(progress, palette))
@@ -286,9 +301,14 @@ impl Settings {
     }
 }
 
-fn setup_detail(progress: Option<Progress>) -> String {
+fn setup_detail(progress: Option<Progress>, unconfigured: bool) -> String {
     let Some(Progress { step, done, total }) = progress else {
-        return "Speakeasy downloads the Parakeet speech model and its Metal engine, about 0.8 GB, then turns dictation on.".into();
+        return if unconfigured {
+            "Speakeasy installs its Metal speech engine and downloads the Parakeet model, about 0.7 GB, then turns dictation on."
+        } else {
+            "Speakeasy's own Metal build recognizes speech faster with the same model. Setup installs it and keeps your model."
+        }
+        .into();
     };
     match step {
         Some(step) if total > 0 => {
