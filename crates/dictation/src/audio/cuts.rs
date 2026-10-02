@@ -1,8 +1,11 @@
-//! Where a recording divides into segments recognized while it continues, and the tail a stop
-//! would hold. Offsets count bytes of PCM16 audio, as [`Speech`](super::speech::Speech) reports
-//! them; a segment plus every later segment and the tail is exactly the recording's kept audio.
+//! Where a recording divides into segments recognized while it continues, the tail a stop would
+//! hold, and which speculated pauses can stand in for that tail. Offsets count bytes of PCM16 audio,
+//! as [`Speech`](super::speech::Speech) reports them; a segment plus every later segment and the
+//! tail is exactly the recording's kept audio.
 
 use std::ops::Range;
+
+use super::speech::Pause;
 
 /// What a pause asks of the capture thread.
 #[derive(Debug, PartialEq, Eq)]
@@ -20,8 +23,13 @@ pub(super) struct Cuts {
     /// Where the audio after the latest sent segment begins.
     committed: Option<usize>,
     segments: u32,
-    /// The latest pause offered for speculation, and its tail.
-    pause: Option<(u32, Range<usize>)>,
+    /// The latest pause offered for speculation.
+    sequence: Option<u32>,
+    /// Pauses offered since the speech last ended, which a stop with nothing audible after them may
+    /// take as its text, oldest first.
+    standing: Vec<u32>,
+    /// Where that speech ended.
+    standing_end: usize,
 }
 
 impl Cuts {
@@ -30,20 +38,22 @@ impl Cuts {
             segment,
             committed: None,
             segments: 0,
-            pause: None,
+            sequence: None,
+            standing: Vec::new(),
+            standing_end: 0,
         }
     }
 
-    /// `kept` is what a recording stopped at this pause would keep.
-    pub(super) fn at_pause(&self, kept: Range<usize>, speculating: bool) -> AtPause {
-        let tail = self.tail_of(kept);
-        if tail.len() >= self.segment {
+    /// A pause becomes a segment once its full padding has followed enough speech since the last
+    /// segment; otherwise, while speculating, its tail is offered for recognition.
+    pub(super) fn at_pause(&self, pause: Pause, speculating: bool) -> AtPause {
+        let tail = self.tail_of(pause.kept);
+        if pause.full && tail.len() >= self.segment {
             return AtPause::Segment(self.segments, tail);
         }
         let sequence = self
-            .pause
-            .as_ref()
-            .map_or(Some(0), |(sequence, _)| sequence.checked_add(1));
+            .sequence
+            .map_or(Some(0), |sequence| sequence.checked_add(1));
         match sequence {
             Some(sequence) if speculating && !tail.is_empty() => AtPause::Speculate(sequence, tail),
             _ => AtPause::Nothing,
@@ -54,28 +64,36 @@ impl Cuts {
     pub(super) fn segment_sent(&mut self, segment: &Range<usize>) {
         self.committed = Some(segment.end);
         self.segments = self.segments.saturating_add(1);
-        self.pause = None;
+        self.standing.clear();
     }
 
-    pub(super) fn speculation_sent(&mut self, sequence: u32, tail: Range<usize>) {
-        self.pause = Some((sequence, tail));
+    /// The owner received pause `sequence`, whose speech ended at `speech_end`.
+    pub(super) fn speculation_sent(&mut self, sequence: u32, speech_end: usize) {
+        if speech_end != self.standing_end {
+            self.standing.clear();
+            self.standing_end = speech_end;
+        }
+        self.sequence = Some(sequence);
+        self.standing.push(sequence);
     }
 
     /// The tail of a stopped recording that keeps `kept`, if any speech followed the last segment,
-    /// and the speculated pause whose tail is byte for byte the same.
+    /// and the speculated pauses that nothing audible followed: a stop then would have kept the
+    /// same speech with less of its quiet, so their text stands in for the tail's.
     pub(super) fn finish(
         &mut self,
         kept: Option<Range<usize>>,
-    ) -> (Option<Range<usize>>, Option<u32>) {
+        speech_end: usize,
+    ) -> (Option<Range<usize>>, Vec<u32>) {
         let tail = kept
             .map(|kept| self.tail_of(kept))
             .filter(|tail| !tail.is_empty());
-        let speculated = self
-            .pause
-            .take()
-            .filter(|(_, pause)| Some(pause) == tail.as_ref())
-            .map(|(sequence, _)| sequence);
-        (tail, speculated)
+        let standing = if tail.is_some() && speech_end == self.standing_end {
+            std::mem::take(&mut self.standing)
+        } else {
+            Vec::new()
+        };
+        (tail, standing)
     }
 
     pub(super) const fn segments(&self) -> u32 {
@@ -94,12 +112,12 @@ mod tests {
     const RATE: u32 = 16_000;
     const SECOND: usize = 32_000;
 
-    /// Segments, speculated pauses, then the tail and the pause matching it.
+    /// Segments, speculated pauses, then the tail and the pauses that may stand in for it.
     type Recorded = (
         Vec<Range<usize>>,
         Vec<(u32, Range<usize>)>,
         Option<Range<usize>>,
-        Option<u32>,
+        Vec<u32>,
     );
 
     /// PCM16 holding `(seconds, amplitude)` spans in order.
@@ -121,24 +139,25 @@ mod tests {
         let (mut segments, mut pauses) = (Vec::new(), Vec::new());
         for end in (512..pcm.len()).step_by(512).chain([pcm.len()]) {
             speech.extend(&pcm[..end]);
-            let Some(kept) = speech.pause() else {
+            let Some(pause) = speech.pause() else {
                 continue;
             };
-            match cuts.at_pause(kept, speculating) {
+            let speech_end = pause.speech_end;
+            match cuts.at_pause(pause, speculating) {
                 AtPause::Segment(index, segment) => {
                     assert_eq!(index as usize, segments.len());
                     cuts.segment_sent(&segment);
                     segments.push(segment);
                 },
                 AtPause::Speculate(sequence, tail) => {
-                    cuts.speculation_sent(sequence, tail.clone());
+                    cuts.speculation_sent(sequence, speech_end);
                     pauses.push((sequence, tail));
                 },
                 AtPause::Nothing => {},
             }
         }
         speech.complete(pcm);
-        let (tail, speculated) = cuts.finish(speech.retained(pcm.len()));
+        let (tail, speculated) = cuts.finish(speech.retained(pcm.len()), speech.speech_end());
         assert_eq!(cuts.segments() as usize, segments.len());
         (segments, pauses, tail, speculated)
     }
@@ -182,7 +201,7 @@ mod tests {
         let (segments, _, tail, speculated) = record(&pcm, true);
         assert_eq!(segments.len(), 1);
         assert_eq!(tail, None);
-        assert_eq!(speculated, None);
+        assert_eq!(speculated, Vec::<u32>::new());
     }
 
     #[test]
@@ -190,10 +209,23 @@ mod tests {
         let pcm = audio(&[(1, 0), (8, 3000), (1, 0), (8, 3000), (1, 0)]);
         let (segments, pauses, tail, speculated) = record(&pcm, true);
         assert_eq!(segments, []);
-        assert_eq!(pauses.len(), 2);
-        // Stopping in the final pause leaves the tail its speculation recognized.
-        assert_eq!(speculated, Some(1));
-        assert_eq!(tail, Some(pauses[1].1.clone()));
+        // Each pause is offered with 100 and 200 ms of its quiet, and again with the full padding.
+        assert_eq!(pauses.len(), 6);
+        assert_eq!(pauses[3].1.end + 100 * SECOND / 1000, pauses[4].1.end);
+        assert_eq!(pauses[4].1.end + 300 * SECOND / 1000, pauses[5].1.end);
+        // Stopping in the final pause keeps its full padding, and any of its speculations can stand
+        // in: nothing audible followed them.
+        assert_eq!(speculated, [3, 4, 5]);
+        assert_eq!(tail, Some(pauses[5].1.clone()));
+    }
+
+    #[test]
+    fn speech_after_a_pause_withdraws_its_speculations() {
+        let pcm = audio(&[(8, 3000), (1, 0), (2, 3000)]);
+        let (_, pauses, tail, speculated) = record(&pcm, true);
+        assert_eq!(pauses.len(), 3);
+        assert!(tail.is_some());
+        assert_eq!(speculated, Vec::<u32>::new());
     }
 
     #[test]
@@ -201,10 +233,11 @@ mod tests {
         let pcm = audio(&[(22, 3000), (1, 0), (3, 3000), (1, 0)]);
         let (segments, pauses, tail, speculated) = record(&pcm, true);
         assert_eq!(segments.len(), 1);
-        assert_eq!(pauses.len(), 1);
-        assert_eq!(pauses[0].1.start, segments[0].end);
-        assert_eq!(speculated, Some(pauses[0].0));
-        assert_eq!(tail, Some(pauses[0].1.clone()));
+        // The first pause's early offers predate its segment; the second pause covers the tail.
+        assert_eq!(pauses.len(), 5);
+        assert_eq!(pauses[2].1.start, segments[0].end);
+        assert_eq!(speculated, [2, 3, 4]);
+        assert_eq!(tail, Some(pauses[4].1.clone()));
     }
 
     #[test]
@@ -214,14 +247,20 @@ mod tests {
         let mut cuts = Cuts::new(20 * SECOND);
         for end in (512..pcm.len()).step_by(512).chain([pcm.len()]) {
             speech.extend(&pcm[..end]);
-            if let Some(kept) = speech.pause() {
+            if let Some(pause) = speech.pause().filter(|pause| pause.full) {
                 // A full event lane: the capture thread drops the segment instead of sending it.
-                assert!(matches!(cuts.at_pause(kept, false), AtPause::Segment(0, _)));
+                assert!(matches!(
+                    cuts.at_pause(pause, false),
+                    AtPause::Segment(0, _)
+                ));
             }
         }
         speech.complete(&pcm);
         let kept = speech.retained(pcm.len());
-        assert_eq!(cuts.finish(kept.clone()), (kept, None));
+        assert_eq!(
+            cuts.finish(kept.clone(), speech.speech_end()),
+            (kept, Vec::new())
+        );
         assert_eq!(cuts.segments(), 0);
     }
 }

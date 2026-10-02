@@ -292,7 +292,7 @@ impl<P: Ports> Owner<P> {
                     .and_then(audio::wav_duration)
                     .unwrap_or_default();
                 session.timeline.sealed(now(), tail);
-                let recognized = session.seal(wav, speculated);
+                let recognized = session.seal(wav, &speculated);
                 self.conclude_capture();
                 if let Some(text) = recognized {
                     self.deliver_speculation(text);
@@ -524,18 +524,18 @@ impl<P: Ports> Owner<P> {
                 self.worker.revive(&self.ports, &self.config);
                 self.outcome = Outcome::Cancelled;
             },
-            Some(Action::ModeChanged) => self.speculate_when_hands_free(),
+            Some(Action::ModeChanged) => self.speculate_on_gpu(),
             None => {},
         }
         ControlFlow::Continue(())
     }
 
-    /// Hands-free capture ends with a separate press, usually well after the last word, so pauses
-    /// are worth recognizing early. A held shortcut is released too soon after speech to benefit.
-    /// CPU inference is slow enough that a speculation made obsolete by later speech could hold the
-    /// recording's own request for seconds, so only the GPU speculates.
-    fn speculate_when_hands_free(&self) {
-        if self.config.use_gpu && self.gesture.state() == State::HandsFree {
+    /// Pauses are worth recognizing early: a held shortcut released 200 ms or more after the last
+    /// word, or a hands-free stop pressed later still, finds the text ready. CPU inference is slow
+    /// enough that a speculation made obsolete by later speech could hold the recording's own
+    /// request for seconds, so only the GPU speculates.
+    fn speculate_on_gpu(&self) {
+        if self.config.use_gpu {
             self.microphone.speculate();
         }
     }
@@ -639,7 +639,7 @@ impl<P: Ports> Owner<P> {
                 }
                 self.microphone = Microphone::Open(recording);
                 session.stage = Stage::Opening;
-                self.speculate_when_hands_free();
+                self.speculate_on_gpu();
             },
             Err(error) => self.fail(format!("Could not start microphone worker: {error}")),
         }

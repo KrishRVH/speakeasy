@@ -102,8 +102,8 @@ stateDiagram-v2
     Stopping --> AwaitingWorker: audio complete; retire microphone
     Stopping --> AwaitingSegments: no speech after the last segment
     AwaitingSegments --> Inserting: segments recognized
-    Stopping --> Inserting: audio matches a recognized pause
-    Stopping --> AwaitingSpeculation: audio matches the running pause
+    Stopping --> Inserting: a standing pause was recognized
+    Stopping --> AwaitingSpeculation: a standing pause is running
     AwaitingSpeculation --> Inserting: pause recognized
     AwaitingSpeculation --> AwaitingWorker: pause failed
     AwaitingWorker --> Transcribing: worker ready
@@ -156,21 +156,21 @@ pauses. WAV preparation stays off the UI. The native acceptance procedure is in
 [performance](performance.md#native-acceptance). Heavily trimmed recordings release excess PCM
 capacity when at least 8 MiB is unused and capacity is at least four times the remaining length.
 
-Hands-free recordings on the GPU speculate. Once new speech has been followed by 500 ms of quiet,
-the consumer copies the audio a recording stopped at that moment would keep and reports it as a
-numbered pause. While still recording, the owner recognizes the latest pause whenever the warm
-worker is idle, never loading one for it. Because the same window classification trims both, the
-finished recording's audio is byte-for-byte the latest pause's exactly when their kept ranges match,
-and the capture names that pause. The owner then inserts the pause's text, or waits for its running
-recognition, instead of requesting another. Speech after a pause moves the range, so that pause's
-text is discarded and the recording makes its own request, waiting behind any running speculation. A
-failed or cancelled speculation sends an identical recording to its own request. A session that ends
-with its speculation running moves that job out of observation like an abandoned request, so its
-result or failure cannot reach a later session. Held recordings never speculate: the shortcut's
-release follows the last word too closely to benefit, and a speculation could delay the final
-request. CPU inference never speculates, since an obsolete speculation could hold the recording's
-own request for seconds. Copies of audio no session will use are erased when they are dropped, best
-effort.
+Recordings on the GPU speculate, held or hands-free. Once new speech has been followed by 200 ms of
+quiet, the consumer copies the speech with that much of its quiet and reports it as a numbered
+pause, and again with the full 500 ms padding, which is what a recording stopped then would keep.
+While still recording, the owner recognizes the latest pause whenever the warm worker is idle, never
+loading one for it. A finished recording names its standing pauses: those nothing audible followed,
+whose speech and leading trim it shares and whose quiet it holds at least as much of. Stopping at
+such a pause would have kept the same speech, so its text is what that earlier stop would have
+inserted. The owner inserts the latest recognized standing pause's text, or waits for a standing
+pause's running recognition, instead of requesting another. Speech after a pause withdraws it, and
+the recording makes its own request, waiting behind any running speculation. A failed or cancelled
+speculation sends the recording to its own request. A session that ends with its speculation running
+moves that job out of observation like an abandoned request, so its result or failure cannot reach a
+later session. CPU inference never speculates, since an obsolete speculation could hold the
+recording's own request for seconds. Copies of audio no session will use are erased when they are
+dropped, best effort.
 
 Long recordings are recognized in segments. At a pause, once at least 20 seconds of kept audio have
 accumulated since the previous segment, the consumer hands that audio to the owner as the next

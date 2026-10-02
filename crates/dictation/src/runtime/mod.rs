@@ -141,8 +141,9 @@ pub(crate) enum CaptureEvent {
 pub(crate) struct Captured {
     /// The tail, or `None` when no speech followed the last segment.
     pub wav: Option<Vec<u8>>,
-    /// The pause whose audio is byte-for-byte this tail's, if any.
-    pub speculated: Option<u32>,
+    /// Pauses that nothing audible followed, oldest first: a stop at any of them would have kept
+    /// this tail's speech with less of its quiet, so its recognized text stands in for the tail's.
+    pub speculated: Vec<u32>,
     /// How many segments came before the tail.
     pub segments: u32,
 }

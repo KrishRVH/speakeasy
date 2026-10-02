@@ -204,10 +204,11 @@ impl Session {
         }
     }
 
-    /// Moves the sealed tail on and returns its text if a pause with identical audio was already
-    /// recognized, or an empty text when no speech followed the last segment. Otherwise it awaits
-    /// that pause's recognition, or the worker. Delivery waits for every segment either way.
-    pub(super) fn seal(&mut self, wav: Option<Vec<u8>>, speculated: Option<u32>) -> Option<String> {
+    /// Moves the sealed tail on and returns text a standing pause already has: a recognized pause
+    /// that nothing audible followed is what a stop at that moment would have inserted. Otherwise it
+    /// awaits such a pause's running recognition, or the worker; with no speech after the last
+    /// segment, it awaits the segments. Delivery waits for every segment either way.
+    pub(super) fn seal(&mut self, wav: Option<Vec<u8>>, standing: &[u32]) -> Option<String> {
         if let Some((_, mut pending)) = self.pending.take() {
             pending.fill(0);
         }
@@ -216,13 +217,15 @@ impl Session {
             self.stage = Stage::AwaitingSegments;
             return None;
         };
-        let recognized = self.speculated.take();
-        match (speculated, recognized) {
-            (Some(sequence), Some((done, text))) if sequence == done => {
+        match self.speculated.take() {
+            Some((done, text)) if standing.contains(&done) => {
                 wav.fill(0);
                 Some(text)
             },
-            (Some(sequence), _) if self.speculating == Some(sequence) => {
+            _ if self
+                .speculating
+                .is_some_and(|running| standing.contains(&running)) =>
+            {
                 self.stage = Stage::AwaitingSpeculation(wav);
                 None
             },

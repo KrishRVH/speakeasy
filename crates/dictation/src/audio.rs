@@ -202,17 +202,218 @@ struct LiveStream {
     _host: cpal::Host,
 }
 
-/// A playing stream and the audio it has delivered so far. The audio is erased when it drops.
-struct Recorder {
+/// The audio a recording has delivered, which parts of it are speech, and which parts went to the
+/// owner early. Live capture and the timing replay drive the same tracker; the audio is erased when
+/// it drops.
+pub(crate) struct Tracker {
     pcm: Pcm16,
     speech: Speech,
-    /// Segments handed to the owner, and the latest pause offered for speculation.
+    /// Segments handed to the owner, and pauses offered for speculation.
     cuts: Cuts,
+    rate: u32,
+}
+
+impl Tracker {
+    fn new(rate: u32) -> anyhow::Result<Self> {
+        Ok(Self {
+            pcm: Pcm16::with_reservation(samples_in(INITIAL_RESERVATION, rate)),
+            speech: Speech::new(rate).context("Unsupported microphone format")?,
+            cuts: Cuts::new(bytes_in(samples_in(SEGMENT, rate))),
+            rate,
+        })
+    }
+
+    /// At a pause, hands the owner a copy of the speech since the previous segment: as a segment of
+    /// its own once it is long enough, or otherwise, while speculating, as the tail a recording
+    /// stopped now would hold. A full event lane forgoes this pause rather than blocking capture;
+    /// an unsent segment stays in the tail.
+    fn at_pause(
+        &mut self,
+        id: SessionId,
+        events: &Sender<CaptureEvent>,
+        speculating: bool,
+    ) -> anyhow::Result<()> {
+        self.speech.extend(self.pcm.audio());
+        let Some(pause) = self.speech.pause() else {
+            return Ok(());
+        };
+        let speech_end = pause.speech_end;
+        match self.cuts.at_pause(pause, speculating) {
+            AtPause::Segment(index, segment) => {
+                let wav = self.pcm.excerpt(segment.clone(), self.rate)?;
+                match events.try_send(CaptureEvent::Segment(id, index, wav)) {
+                    Ok(()) => self.cuts.segment_sent(&segment),
+                    Err(unsent) => unsent.into_inner().erase(),
+                }
+            },
+            AtPause::Speculate(sequence, tail) => {
+                let wav = self.pcm.excerpt(tail, self.rate)?;
+                match events.try_send(CaptureEvent::Paused(id, sequence, wav)) {
+                    Ok(()) => self.cuts.speculation_sent(sequence, speech_end),
+                    Err(unsent) => unsent.into_inner().erase(),
+                }
+            },
+            AtPause::Nothing => {},
+        }
+        Ok(())
+    }
+
+    /// The finished recording's tail after its last segment, or `None` without speech.
+    fn finish(&mut self) -> anyhow::Result<Option<Captured>> {
+        self.speech.complete(self.pcm.audio());
+        let kept = self
+            .speech
+            .retained(self.pcm.audio().len())
+            .filter(|_| self.pcm.samples() >= samples_in(MINIMUM_RECORDING, self.rate));
+        let (tail, speculated) = self.cuts.finish(kept, self.speech.speech_end());
+        let segments = self.cuts.segments();
+        let Some(tail) = tail else {
+            return Ok((segments > 0).then_some(Captured {
+                wav: None,
+                speculated,
+                segments,
+            }));
+        };
+        self.pcm.keep(tail);
+        Ok(Some(Captured {
+            wav: Some(mem::take(&mut self.pcm).into_wav(self.rate)?),
+            speculated,
+            segments,
+        }))
+    }
+}
+
+/// Public audio fed through capture's tracker in real time, then quiet until finished, so the owner
+/// and engine see pauses and finishes at the instants a microphone would deliver them. It opens no
+/// device.
+#[cfg(test)]
+pub(crate) struct Replay {
+    control: Arc<Control>,
+    thread: Option<JoinHandle<()>>,
+    /// Whether the owner may enable speculation; off replays the 0.3.3 request path.
+    speculation: bool,
+}
+
+#[cfg(test)]
+impl Replay {
+    /// Starts feeding `wav`'s mono PCM16. `spoken` receives the instant its last audible window has
+    /// been fed.
+    pub(crate) fn start(
+        id: SessionId,
+        wav: &[u8],
+        speculation: bool,
+        events: Sender<CaptureEvent>,
+        spoken: Sender<Instant>,
+    ) -> anyhow::Result<Self> {
+        let rate = wav_sample_rate(wav).context("Fixture is not a WAV")?;
+        let samples: Vec<i16> = wav
+            .get(WAV_HEADER_BYTES..)
+            .unwrap_or_default()
+            .as_chunks::<SAMPLE_BYTES>()
+            .0
+            .iter()
+            .map(|pair| i16::from_le_bytes(*pair))
+            .collect();
+        let mut classifier = Speech::new(rate).context("Unsupported fixture rate")?;
+        let bytes: Vec<u8> = samples
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect();
+        classifier.complete(&bytes);
+        let last_word = classifier.speech_end() / SAMPLE_BYTES;
+        let control = Arc::new(Control::default());
+        let feeding = control.clone();
+        let thread = thread::spawn(move || {
+            let outcome = feed(id, rate, &samples, last_word, &events, &feeding, &spoken);
+            let _sent = events.send_blocking(CaptureEvent::Finished(id, outcome));
+        });
+        Ok(Self {
+            control,
+            thread: Some(thread),
+            speculation,
+        })
+    }
+}
+
+#[cfg(test)]
+fn feed(
+    id: SessionId,
+    rate: u32,
+    samples: &[i16],
+    last_word: usize,
+    events: &Sender<CaptureEvent>,
+    control: &Control,
+    spoken: &Sender<Instant>,
+) -> anyhow::Result<Option<Captured>> {
+    let mut tracker = Tracker::new(rate)?;
+    let limit = usize::try_from(rate)?.saturating_mul(300);
+    let per_second = u128::from(rate);
+    let started = Instant::now();
+    events.send_blocking(CaptureEvent::Ready(id, Duration::ZERO))?;
+    let mut fed = 0_usize;
+    for tick in 1_u32.. {
+        match control.mode() {
+            Mode::Cancelled => return Ok(None),
+            Mode::Finishing => return tracker.finish(),
+            Mode::Recording => {},
+        }
+        let elapsed = DRAIN_INTERVAL.saturating_mul(tick);
+        let due = started
+            .checked_add(elapsed)
+            .context("Replay ran too long")?;
+        let target = usize::try_from(
+            elapsed
+                .as_micros()
+                .saturating_mul(per_second)
+                .checked_div(1_000_000)
+                .unwrap_or_default(),
+        )?;
+        while fed < target {
+            tracker
+                .pcm
+                .push(samples.get(fed).copied().unwrap_or(0), limit);
+            fed = fed.saturating_add(1);
+            if fed == last_word {
+                spoken.try_send(Instant::now())?;
+            }
+        }
+        tracker.at_pause(id, events, control.speculating())?;
+        // Finish and cancel unpark this thread at once, as they do the live consumer.
+        thread::park_timeout(due.saturating_duration_since(Instant::now()));
+    }
+    Ok(None)
+}
+
+#[cfg(test)]
+impl Recording for Replay {
+    fn finish(&self) {
+        self.control.finish();
+        if let Some(thread) = &self.thread {
+            thread.thread().unpark();
+        }
+    }
+
+    fn speculate(&self) {
+        if self.speculation {
+            self.control.speculate();
+        }
+    }
+
+    async fn retire(mut self) {
+        self.control.cancel();
+        if let Some(thread) = self.thread.take() {
+            let _joined = tokio::task::spawn_blocking(move || thread.join()).await;
+        }
+    }
+}
+
+/// A playing stream and the audio it has delivered so far.
+struct Recorder {
+    tracker: Tracker,
     device: LiveStream,
     ring: Consumer<f32>,
     errors: Receiver<cpal::Error>,
     started: Instant,
-    rate: u32,
     limit: usize,
 }
 
@@ -256,14 +457,11 @@ impl Recorder {
         let stream = build_stream(&device, &format, callbacks)?;
         checkpoint()?;
         // PCM stays at the device's native rate; the engine resamples.
-        let pcm = Pcm16::with_reservation(samples_in(INITIAL_RESERVATION, rate));
-        let speech = Speech::new(rate).context("Unsupported microphone format")?;
+        let tracker = Tracker::new(rate)?;
         checkpoint()?;
         stream.play().map_err(microphone_error)?;
         Ok(Self {
-            pcm,
-            speech,
-            cuts: Cuts::new(bytes_in(samples_in(SEGMENT, rate))),
+            tracker,
             device: LiveStream {
                 _stream: stream,
                 _device: device,
@@ -272,7 +470,6 @@ impl Recorder {
             ring,
             errors: stream_errors,
             started,
-            rate,
             limit,
         })
     }
@@ -315,7 +512,7 @@ impl Recorder {
             capture_failure(control, &self.errors)?;
             let stopping = control.mode() == Mode::Finishing
                 || self.started.elapsed() >= RECORDING_LIMIT
-                || self.pcm.samples() >= self.limit;
+                || self.tracker.pcm.samples() >= self.limit;
             if stopping {
                 // The stream keeps running until the outcome is reported, so wait out any callback
                 // still publishing a packet it began before the finish; later ones publish nothing.
@@ -326,9 +523,13 @@ impl Recorder {
                 ready = true;
                 events.send_blocking(CaptureEvent::Ready(id, opened))?;
             }
-            consume_pcm(&mut self.ring, &mut self.pcm, &mut meter, self.limit);
-            self.speech.extend(self.pcm.audio());
-            self.at_pause(id, events, control)?;
+            consume_pcm(
+                &mut self.ring,
+                &mut self.tracker.pcm,
+                &mut meter,
+                self.limit,
+            );
+            self.tracker.at_pause(id, events, control.speculating())?;
             if let Some(level) = meter.take_level() {
                 #[expect(
                     clippy::let_underscore_must_use,
@@ -345,65 +546,13 @@ impl Recorder {
         }
     }
 
-    /// At a pause, hands the owner a copy of the speech since the previous segment: as a segment of
-    /// its own once it is long enough, or otherwise, while speculating, as the tail a recording
-    /// stopped now would hold. A full event lane forgoes this pause rather than blocking capture;
-    /// an unsent segment stays in the tail.
-    fn at_pause(
-        &mut self,
-        id: SessionId,
-        events: &Sender<CaptureEvent>,
-        control: &Control,
-    ) -> anyhow::Result<()> {
-        let Some(kept) = self.speech.pause() else {
-            return Ok(());
-        };
-        match self.cuts.at_pause(kept, control.speculating()) {
-            AtPause::Segment(index, segment) => {
-                let wav = self.pcm.excerpt(segment.clone(), self.rate)?;
-                match events.try_send(CaptureEvent::Segment(id, index, wav)) {
-                    Ok(()) => self.cuts.segment_sent(&segment),
-                    Err(unsent) => unsent.into_inner().erase(),
-                }
-            },
-            AtPause::Speculate(sequence, tail) => {
-                let wav = self.pcm.excerpt(tail.clone(), self.rate)?;
-                match events.try_send(CaptureEvent::Paused(id, sequence, wav)) {
-                    Ok(()) => self.cuts.speculation_sent(sequence, tail),
-                    Err(unsent) => unsent.into_inner().erase(),
-                }
-            },
-            AtPause::Nothing => {},
-        }
-        Ok(())
-    }
-
     fn finalize(&mut self, control: &Control) -> anyhow::Result<Option<Captured>> {
         if control.mode() == Mode::Cancelled {
             return Ok(None);
         }
         // A callback may have failed between the last poll and stream teardown.
         capture_failure(control, &self.errors)?;
-        self.speech.complete(self.pcm.audio());
-        let kept = self
-            .speech
-            .retained(self.pcm.audio().len())
-            .filter(|_| self.pcm.samples() >= samples_in(MINIMUM_RECORDING, self.rate));
-        let (tail, speculated) = self.cuts.finish(kept);
-        let segments = self.cuts.segments();
-        let Some(tail) = tail else {
-            return Ok((segments > 0).then_some(Captured {
-                wav: None,
-                speculated: None,
-                segments,
-            }));
-        };
-        self.pcm.keep(tail);
-        Ok(Some(Captured {
-            wav: Some(mem::take(&mut self.pcm).into_wav(self.rate)?),
-            speculated,
-            segments,
-        }))
+        self.tracker.finish()
     }
 }
 

@@ -83,6 +83,18 @@ through first callback and teardown, beside starting a stream built in advance:
 cargo run --release -p speakeasy-dictation --example capture_onset -- --runs 20
 ```
 
+`profile_held_dictation` times a held dictation as a person makes it: public audio plays through
+capture's own speech tracking in real time from the press, quiet follows, and the shortcut is
+released `SPEAKEASY_FIXTURE_RELEASE_MS` after the last word. It reports release to fake insertion
+and how many releases took a speculated pause; `SPEAKEASY_FIXTURE_NO_SPECULATION=1` replays the
+0.3.3 request path. It opens no device and touches no input or clipboard:
+
+```sh
+SPEAKEASY_FIXTURE_HELPER=target/release/speakeasy SPEAKEASY_FIXTURE_CONFIG=settings.json \
+  SPEAKEASY_FIXTURE_WAV=jfk-48k.wav SPEAKEASY_FIXTURE_RELEASE_MS=300 \
+  cargo test --release -p speakeasy-dictation profile_held_dictation -- --ignored --nocapture
+```
+
 ## Engine build
 
 The packaged app runs [Speakeasy's engine build](../packaging/engine/README.md). Compare a change

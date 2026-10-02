@@ -365,6 +365,78 @@ index ce5114a..a3a2ef7 100644
      std::unique_ptr<ggml_runtime::Session> decoder_session_;
      std::unique_ptr<DecoderBatchers> decoder_batchers_;
      int decoder_arena_slots_ = 0;
+diff --git a/src/common/audio_resampler.cpp b/src/common/audio_resampler.cpp
+index 0d6004d..9c7b02f 100644
+--- a/src/common/audio_resampler.cpp
++++ b/src/common/audio_resampler.cpp
+@@ -149,11 +149,63 @@ AudioResampler::emit_available(bool final, std::vector<float>* output) {
+     const uint64_t final_count =
+         final ? rounded_output_count(total_input_, input_rate_, output_rate_) : 0;
+ 
++    const auto ready = [&](uint64_t source, uint64_t produced) {
++        if (final)
++            return produced < final_count;
++        return source < total_input_ && total_input_ - source > static_cast<uint64_t>(kHalfTaps);
++    };
++    if (final)
++        output->reserve(output->size() + static_cast<size_t>(final_count - next_output_));
++    else
++        output->reserve(
++            output->size() +
++            static_cast<size_t>(rounded_output_count(total_input_ - source_index_, input_rate_, output_rate_)));
++
++    // Interior outputs read their taps straight from history, four at a time. Each keeps its own
++    // accumulator and tap order, so the sums are bit-identical to filtered_sample(); four
++    // independent chains hide the multiply-add latency that bounds one.
++    constexpr size_t kLanes = 4;
+     while (true) {
+-        if (final && next_output_ >= final_count)
+-            break;
+-        if (!final && (source_index_ >= total_input_ ||
+-                       total_input_ - source_index_ <= static_cast<uint64_t>(kHalfTaps)))
++        uint64_t sources[kLanes];
++        size_t phases[kLanes];
++        uint64_t source = source_index_;
++        uint64_t remainder = source_remainder_;
++        bool interior = true;
++        for (size_t lane = 0; lane < kLanes && interior; ++lane) {
++            const uint64_t first = source + 1;
++            interior = ready(source, next_output_ + lane) && source >= static_cast<uint64_t>(kHalfTaps) &&
++                       first - static_cast<uint64_t>(kHalfTaps) >= input_start_ &&
++                       source + static_cast<uint64_t>(kHalfTaps) < total_input_;
++            sources[lane] = source;
++            phases[lane] = exact_phase_table_
++                               ? static_cast<size_t>(remainder / rate_gcd_)
++                               : static_cast<size_t>(
++                                     remainder * static_cast<uint64_t>(phase_count_) /
++                                     static_cast<uint64_t>(output_rate_));
++            remainder += static_cast<uint64_t>(input_rate_);
++            source += remainder / static_cast<uint64_t>(output_rate_);
++            remainder %= static_cast<uint64_t>(output_rate_);
++        }
++        if (interior) {
++            const float* x[kLanes];
++            const float* c[kLanes];
++            double sum[kLanes] = {0.0, 0.0, 0.0, 0.0};
++            for (size_t lane = 0; lane < kLanes; ++lane) {
++                x[lane] = input_.data() +
++                          static_cast<size_t>(sources[lane] + 1 - kHalfTaps - input_start_);
++                c[lane] = coefficients_.data() + phases[lane] * kTaps;
++            }
++            for (size_t tap = 0; tap < kTaps; ++tap)
++                for (size_t lane = 0; lane < kLanes; ++lane)
++                    sum[lane] += static_cast<double>(x[lane][tap]) * c[lane][tap];
++            for (size_t lane = 0; lane < kLanes; ++lane)
++                output->push_back(static_cast<float>(sum[lane]));
++            next_output_ += kLanes;
++            source_index_ = source;
++            source_remainder_ = remainder;
++            continue;
++        }
++        if (!ready(source_index_, next_output_))
+             break;
+         output->push_back(filtered_sample(source_index_, phase_index()));
+         ++next_output_;
 diff --git a/src/runtime/ggml/backend.cpp b/src/runtime/ggml/backend.cpp
 index 886648a..e2c6e76 100644
 --- a/src/runtime/ggml/backend.cpp

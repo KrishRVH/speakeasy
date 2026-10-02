@@ -429,7 +429,7 @@ async fn receive<T>(receiver: &Receiver<T>) -> anyhow::Result<T> {
 fn captured(speculated: Option<u32>) -> Captured {
     Captured {
         wav: Some(vec![1, 2]),
-        speculated,
+        speculated: speculated.into_iter().collect(),
         segments: 0,
     }
 }
@@ -592,7 +592,7 @@ fn tail(wav: Option<Vec<u8>>, segments: u32) -> CaptureEvent {
         SessionId::FIRST,
         Ok(Some(Captured {
             wav,
-            speculated: None,
+            speculated: Vec::new(),
             segments,
         })),
     )
@@ -688,7 +688,7 @@ async fn a_cancelled_recording_drops_its_segments_and_their_late_text() -> anyho
             id,
             Ok(Some(Captured {
                 wav: Some(vec![12]),
-                speculated: None,
+                speculated: Vec::new(),
                 segments: 0,
             })),
         ))
@@ -761,15 +761,35 @@ async fn only_gpu_inference_speculates() -> anyhow::Result<()> {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_held_recording_never_speculates() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|_| {})?;
+async fn a_held_release_takes_a_recognized_standing_pause_without_a_request() -> anyhow::Result<()>
+{
+    let mut h = Harness::paused(|ports| ports.delayed_finish = true)?;
     receive(&h.loads).await?;
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
-    receive(&h.captures).await?;
-    assert!(h.speculations.try_recv().is_err());
-    h.input(Input::Lock);
-    receive(&h.speculations).await?;
+    let (id, events) = receive(&h.captures).await?;
+    assert_eq!(receive(&h.speculations).await?, id);
+    events.send(CaptureEvent::Paused(id, 0, vec![3])).await?;
+    h.transcribe_next_as("Early.").await?;
+    events.send(CaptureEvent::Paused(id, 1, vec![4])).await?;
+    let (_, later) = receive(&h.jobs).await?;
+    h.input(Input::Release);
+    let captured = Captured {
+        wav: Some(vec![1, 2]),
+        speculated: vec![0, 1],
+        segments: 0,
+    };
+    events
+        .send(CaptureEvent::Finished(id, Ok(Some(captured))))
+        .await?;
+    // The early pause's text is ready; the later one, still running, is not awaited.
+    assert_eq!(receive(&h.pasted).await?, "Early.");
+    h.phase(Phase::Done).await?;
+    assert!(
+        h.jobs.try_recv().is_err(),
+        "A standing pause still made a request"
+    );
+    drop(later);
     h.close().await
 }
 

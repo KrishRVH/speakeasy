@@ -14,6 +14,10 @@ const MINIMUM_AUDIBLE: Duration = Duration::from_millis(100);
 const LEADING_QUIET: Duration = Duration::from_secs(1);
 /// Quiet kept on each side of speech, so soft word edges survive trimming.
 const PADDING: Duration = Duration::from_millis(500);
+/// Quiet after speech that reports a pause before the full padding: a shortcut released after the
+/// last word can take the latest such pause's recognition instead of making its own request. The
+/// first also wakes the GPU's clocks for the second.
+const EARLY_PAUSES: [Duration; 2] = [Duration::from_millis(100), Duration::from_millis(200)];
 const AUDIBLE_RMS: f64 = 0.003;
 
 /// Audibility of the windows classified so far. Offsets count bytes of PCM16 audio.
@@ -21,6 +25,7 @@ pub(super) struct Speech {
     window: usize,
     leading_quiet: usize,
     padding: usize,
+    early_pauses: [usize; 2],
     minimum_audible: usize,
     /// Bytes classified: whole windows until the final partial one.
     scanned: usize,
@@ -28,8 +33,20 @@ pub(super) struct Speech {
     /// The end of the last audible window.
     end: usize,
     audible_samples: usize,
-    /// `end` when the latest pause was reported.
+    /// `end` when the latest pause was reported, and how many marks it has reported, the full
+    /// padding last.
     paused_at: usize,
+    paused_marks: usize,
+}
+
+/// Quiet after speech: what a recording stopped now would keep, through an early mark or the full
+/// padding, and where its speech ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Pause {
+    pub kept: Range<usize>,
+    pub speech_end: usize,
+    /// Whether the full padding of quiet has followed the speech.
+    pub full: bool,
 }
 
 impl Speech {
@@ -39,12 +56,14 @@ impl Speech {
             window: bytes_in(samples_in(WINDOW, rate).max(1)),
             leading_quiet: bytes_in(samples_in(LEADING_QUIET, rate)),
             padding: bytes_in(samples_in(PADDING, rate)),
+            early_pauses: EARLY_PAUSES.map(|mark| bytes_in(samples_in(mark, rate))),
             minimum_audible: samples_in(MINIMUM_AUDIBLE, rate).max(1),
             scanned: 0,
             first: None,
             end: 0,
             audible_samples: 0,
             paused_at: 0,
+            paused_marks: 0,
         })
     }
 
@@ -89,16 +108,46 @@ impl Speech {
         Some(start..self.end.saturating_add(self.padding).min(length))
     }
 
-    /// Once new speech has been followed by a full padding of quiet, the range a recording stopped
-    /// now would keep. Each pause is reported once.
-    pub(super) fn pause(&mut self) -> Option<Range<usize>> {
+    /// Reports a pause at each mark its quiet reaches: 100 and 200 ms after new speech, keeping that
+    /// much, then the full padding, keeping what a recording stopped then would. Marks passed at once
+    /// are reported as the latest of them.
+    pub(super) fn pause(&mut self) -> Option<Pause> {
         let quiet = self.scanned.saturating_sub(self.end);
-        if self.end <= self.paused_at || quiet < self.padding {
+        let marks = self
+            .early_pauses
+            .iter()
+            .chain([&self.padding])
+            .take_while(|&&mark| quiet >= mark)
+            .count();
+        let reported = if self.end <= self.paused_at {
+            self.paused_marks
+        } else {
+            0
+        };
+        if marks <= reported {
             return None;
         }
-        let range = self.retained(self.scanned)?;
+        let mut kept = self.retained(self.scanned)?;
+        let full = marks > self.early_pauses.len();
+        if let Some(mark) = self
+            .early_pauses
+            .get(marks.saturating_sub(1))
+            .filter(|_| !full)
+        {
+            kept.end = self.end.saturating_add(*mark);
+        }
         self.paused_at = self.end;
-        Some(range)
+        self.paused_marks = marks;
+        Some(Pause {
+            kept,
+            speech_end: self.end,
+            full,
+        })
+    }
+
+    /// The end of the last audible window.
+    pub(super) const fn speech_end(&self) -> usize {
+        self.end
     }
 }
 
@@ -141,22 +190,43 @@ mod tests {
     }
 
     #[test]
-    fn a_pause_reports_exactly_what_stopping_there_would_keep() {
+    fn a_pause_reports_each_early_mark_then_what_stopping_after_the_padding_would_keep() {
         let speaking = audio(&[(SECOND * 2, 0), (SECOND, 3000), (SECOND / 2, 0)]);
+        let spoken = SECOND * 3;
         let mut live = Speech::new(RATE).unwrap();
+        live.extend(&speaking[..spoken + SECOND / 10 - 2]);
+        assert_eq!(live.pause(), None, "Half a window short of the first mark");
+        let mut early = Vec::new();
+        for mark in [spoken + SECOND / 10, spoken + SECOND / 5] {
+            live.extend(&speaking[..mark]);
+            early.push(live.pause().unwrap());
+            assert_eq!(live.pause(), None, "Each mark is reported once");
+        }
+        assert_eq!(early[0].kept.end, spoken + SECOND / 10);
+        assert_eq!(early[1].kept.end, spoken + SECOND / 5);
         live.extend(&speaking[..speaking.len() - 2]);
         assert_eq!(live.pause(), None, "Half a window short of the padding");
         live.extend(&speaking);
         let paused = live.pause().unwrap();
-        assert_eq!(live.pause(), None, "A pause is reported once");
+        assert!(paused.full);
+        assert!(
+            early
+                .iter()
+                .all(|pause| !pause.full && pause.speech_end == paused.speech_end)
+        );
+        assert_eq!(live.pause(), None, "A pause is reported fully once");
 
         let mut stopped_later = speaking.clone();
         stopped_later.extend(audio(&[(SECOND * 3 / 4, 20)]));
         live.complete(&stopped_later);
-        assert_eq!(live.retained(stopped_later.len()), Some(paused.clone()));
+        assert_eq!(live.speech_end(), paused.speech_end);
+        assert_eq!(
+            live.retained(stopped_later.len()),
+            Some(paused.kept.clone())
+        );
         let mut batch = Speech::new(RATE).unwrap();
         batch.complete(&stopped_later);
-        assert_eq!(batch.retained(stopped_later.len()), Some(paused));
+        assert_eq!(batch.retained(stopped_later.len()), Some(paused.kept));
     }
 
     #[test]
@@ -165,13 +235,17 @@ mod tests {
         let mut speech = Speech::new(RATE).unwrap();
         speech.extend(&recording);
         let first = speech.pause().unwrap();
+        assert!(
+            first.full,
+            "Quiet that arrives at once is reported only fully"
+        );
         recording.extend(audio(&[(SECOND / 5, 3000), (SECOND / 2, 0)]));
         speech.extend(&recording);
         let second = speech.pause().unwrap();
-        assert_eq!(second.start, first.start);
-        assert!(second.end > first.end);
+        assert_eq!(second.kept.start, first.kept.start);
+        assert!(second.speech_end > first.speech_end);
         speech.complete(&recording);
-        assert_eq!(speech.retained(recording.len()), Some(second));
+        assert_eq!(speech.retained(recording.len()), Some(second.kept));
     }
 
     #[test]
