@@ -2,14 +2,14 @@
 
 Status: in progress, updated 2026-10-02 UTC. Target: Apple silicon Macs, macOS 14.0 or later. The
 `high-perf-macos` branch is a macOS-only optimization fork that never merges into `main`. It keeps
-the features and interaction of released Speakeasy 0.3.2 at
-`cd302b4c864ea3ea64decd47d8fa9eee721c6088` (tag `v0.3.2`) and has removed the Windows and Linux
+the features and interaction of released Speakeasy 0.3.3 at
+`f30791273cc4130c2073077df703794263a675a0` (tag `v0.3.3`) and has removed the Windows and Linux
 adapters, packaging, and checks. It does not authorize publishing a release.
 
 For this target, this document owns product requirements, performance decisions, and completion
 gates. [Interaction design](interaction-design.md) owns exact visual and gesture behavior;
 [Architecture](architecture.md) describes the existing implementation.
-[Comparison baseline](apple-silicon-baseline.md) records the 0.3.2 source map, verification, and
+[Comparison baseline](apple-silicon-baseline.md) records the 0.3.3 source map, verification, and
 historical measurements. [Platform research](apple-silicon-research.md) supplies primary sources and
 API limitations. Follow the repository's [agent guide](../AGENTS.md) for privacy, native opt-in,
 FFI, and verification.
@@ -17,7 +17,7 @@ FFI, and verification.
 ## Objective and decision priority
 
 Build an aggressively optimized macOS-only fork and determine whether users can perceive a
-difference from 0.3.2 while using the same features. A user triggers dictation, speaks, releases,
+difference from 0.3.3 while using the same features. A user triggers dictation, speaks, releases,
 and receives correct text in the application already in focus. Optimize the whole experience,
 including cancellation and cleanup, while retaining warm model readiness and the same visual and
 gesture behavior.
@@ -78,7 +78,7 @@ Run the next gates on the reference Macs in order, keeping raw output under `art
    faster than a cold open, prototype a prepared stream and verify that the microphone indicator
    stays off while it is idle.
 6. With explicit opt-in, dictate held and hands-free in an owned editor with `SPEAKEASY_TIMING=1`,
-   against 0.3.2 built from `v0.3.2`; record release-to-done distributions and `speculated` hits.
+   against 0.3.3 built from `v0.3.3`; record release-to-done distributions and `speculated` hits.
 7. Score the trimming change and the helper on the corpus, then sample idle and recording CPU,
    memory, and footprint for app and engine with `scripts/profile_macos.py`, and energy with
    `powermetrics` or Instruments.
@@ -86,23 +86,23 @@ Run the next gates on the reference Macs in order, keeping raw output under `art
 
 ## Required feature parity
 
-Use the frozen 0.3.2 implementation and tests as behavioral references. The matrix below scopes
+Use the frozen 0.3.3 implementation and tests as behavioral references. The matrix below scopes
 parity to macOS.
 
-| Contract              | Required behavior and acceptance                                                                                                                                                                                                                                                                                                                                                                                                           |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Gestures              | Fn hold/release; short-tap window; double-tap hands-free; Fn+Space hands-free; next shortcut finishes. Only the locking Space is suppressed, including its matching release. Fn remains observable by the focused app. Escape cancels without being swallowed. Other-key interruption retains existing semantics.                                                                                                                          |
-| Time and silence      | Hard five-minute cap owned outside UI; final-30-second cue; current minimum capture/audible-window gate; quiet-edge trimming with padding; interior pauses retained. No speech has its own result. Measure from the same boundaries as the current owner.                                                                                                                                                                                  |
-| Ownership             | Preserve 0.3.2's session stages, publisher epochs, and generation-bound commit. Stale capture, readiness, inference, insertion, setup, and save completions cannot alter a newer generation. Retry waits for microphone and worker retirement. Pause revokes authority promptly; application-owned Quit drains cleanup and requested writes while the UI remains responsive.                                                               |
-| Pill                  | Nonactivating, click-through; pointer-screen placement and fixed position during visibility; all current states, dimensions, timings, themes, continuous spring retargeting, the −60 to −6 dBFS speech meter, and reduced motion. Displayed feedback never delays or authorizes insertion.                                                                                                                                                 |
-| Menu bar and Settings | Shape-distinct template status icons, current menu actions, initial setup, persistent local errors, reveal same instance, close-to-hide with unsaved drafts preserved, normal macOS minimize. Settings remains responsive during capture, model loading, save, and teardown.                                                                                                                                                               |
-| Configuration         | Current theme, microphone, engine, executable, model, language, threads, GPU preference, reduced motion, and keep-clipboard choices. Preserve existing settings and path resolution. Theme, microphone, language, motion, and clipboard changes preserve the warm model; engine/executable/model/thread/GPU changes retire and replace it. Coalesced durable saves preserve later edits and Pause intent; Quit waits for requested writes. |
-| Engines               | Local Parakeet automatic setup and explicit Whisper/custom executable/model selection remain available. Preserve explicit CPU preference and language behavior. Unsupported combinations return an actionable local error. No silent model/provider/accelerator substitution.                                                                                                                                                              |
-| Installation          | Pinned model/runtime artifacts, size/hash verification, resumable partials, atomic promotion, serialized writes, cancellable setup, no detached extraction/detection process after Quit. Clean install and manual setup both work.                                                                                                                                                                                                         |
-| CLI and safe previews | Preserve `--config PATH`, `--help`, `--demo`, and `--demo-tray`. Demo modes use simulated audio/status and start no real capture, model, insertion, or setup; they access no microphone, global input, real clipboard, or network downloads. Tray demo exercises owned native window/relaunch behavior with isolated test settings.                                                                                                        |
-| Insertion             | Normal guarded clipboard/paste and keep-clipboard Unicode input. Preserve cancellation, focus-before-modifier eligibility, clipboard ownership checks, and actionable manual-paste errors. Prepare before the generation-bound commit; an incomplete result may include submitted input, so a post-commit failure is never automatically repeated. Submission does not claim the editor accepted it.                                       |
-| Permissions/lifecycle | Local microphone and accessibility guidance; permission failure without retry loops; safe sleep/wake, device disappearance, route change, app termination, helper failure, and configuration changes during work.                                                                                                                                                                                                                          |
-| Privacy               | User-triggered capture, local inference, no saved audio/history/accounts/telemetry/upload. Setup network access is explicit; prepared model inference works offline. Diagnostics contain timing/counters/errors, never audio, transcript text, or engine output.                                                                                                                                                                           |
+| Contract              | Required behavior and acceptance                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Gestures              | Fn hold/release; short-tap window; double-tap hands-free; Fn+Space hands-free; next shortcut finishes. Only the locking Space is suppressed, including its matching release. Fn remains observable by the focused app. Escape cancels without being swallowed. Other-key interruption retains existing semantics.                                                                                                                                                  |
+| Time and silence      | Hard five-minute cap owned outside UI; final-30-second cue; current minimum capture/audible-window gate; quiet-edge trimming with padding; interior pauses retained. No speech has its own result. Measure from the same boundaries as the current owner.                                                                                                                                                                                                          |
+| Ownership             | Preserve 0.3.3's session stages, publisher epochs, and generation-bound commit. Stale capture, readiness, inference, insertion, setup, and save completions cannot alter a newer generation. Retry waits for microphone and worker retirement. Pause revokes authority promptly; application-owned Quit drains cleanup and requested writes while the UI remains responsive.                                                                                       |
+| Pill                  | Nonactivating, click-through; pointer-screen placement and fixed position during visibility; all current states, dimensions, timings, themes, continuous spring retargeting, the −60 to −6 dBFS speech meter, and reduced motion. Displayed feedback never delays or authorizes insertion.                                                                                                                                                                         |
+| Menu bar and Settings | Shape-distinct template status icons, current menu actions, initial setup, persistent local errors, reveal same instance, close-to-hide with unsaved drafts preserved, normal macOS minimize. Settings remains responsive during capture, model loading, save, and teardown.                                                                                                                                                                                       |
+| Configuration         | Current theme, microphone, engine, executable, model, language, filler removal, threads, GPU preference, reduced motion, and keep-clipboard choices. Preserve existing settings and path resolution. Theme, microphone, language, filler, motion, and clipboard changes preserve the warm model; engine/executable/model/thread/GPU changes retire and replace it. Coalesced durable saves preserve later edits and Pause intent; Quit waits for requested writes. |
+| Engines               | Local Parakeet automatic setup and explicit Whisper/custom executable/model selection remain available. Preserve explicit CPU preference and language behavior. Unsupported combinations return an actionable local error. No silent model/provider/accelerator substitution.                                                                                                                                                                                      |
+| Installation          | Pinned model/runtime artifacts, size/hash verification, resumable partials, atomic promotion, serialized writes, cancellable setup, no detached extraction/detection process after Quit. Clean install and manual setup both work.                                                                                                                                                                                                                                 |
+| CLI and safe previews | Preserve `--config PATH`, `--help`, `--demo`, and `--demo-tray`. Demo modes use simulated audio/status and start no real capture, model, insertion, or setup; they access no microphone, global input, real clipboard, or network downloads. Tray demo exercises owned native window/relaunch behavior with isolated test settings.                                                                                                                                |
+| Insertion             | Normal guarded clipboard/paste and keep-clipboard Unicode input. Preserve cancellation, focus-before-modifier eligibility, clipboard ownership checks, and actionable manual-paste errors. Prepare before the generation-bound commit; an incomplete result may include submitted input, so a post-commit failure is never automatically repeated. Submission does not claim the editor accepted it.                                                               |
+| Permissions/lifecycle | Local microphone and accessibility guidance; permission failure without retry loops; safe sleep/wake, device disappearance, route change, app termination, helper failure, and configuration changes during work.                                                                                                                                                                                                                                                  |
+| Privacy               | User-triggered capture, local inference, no saved audio/history/accounts/telemetry/upload. Setup network access is explicit; prepared model inference works offline. Diagnostics contain timing/counters/errors, never audio, transcript text, or engine output.                                                                                                                                                                                                   |
 
 Exact interaction values come from `docs/interaction-design.md` and current core gesture/audio
 logic, not from new UI defaults. Preserve the four themes and their draft-versus-saved behavior. Do
@@ -129,7 +129,7 @@ without acquiring real input.
 
 ## Provisional stack and module ownership
 
-Use native baseline traces to select experiments from the following stack. Keep the 0.3.2
+Use native baseline traces to select experiments from the following stack. Keep the 0.3.3
 implementation as the control for each changed path; isolate shell, transport, capture, and
 inference changes before combining them. The table gives provisional build directions, not an
 obligation to rewrite every path or a claim that these components are globally fastest.
@@ -168,7 +168,7 @@ not own recording deadlines, PCM, decoding, or commit permits. The owner publish
 snapshots with session identity. Capture, helper, insertion, setup, and settings work have owned
 completion and explicit retirement. Avoid parallel Rust/Swift state machines that can disagree.
 
-The 0.3.2 session implementation already avoids direct GPUI imports but remains inside the
+The 0.3.3 session implementation already avoids direct GPUI imports but remains inside the
 application crate. Extract it as a library with its dependencies and production-owner tests; retain
 its Tokio clock, typed stages, retirement acknowledgements, and immediate permit revocation. Reuse
 `shell/lifecycle.rs` for enable/pause/quit semantics and the `shell/save.rs` queue, and port
@@ -291,7 +291,7 @@ a product decision before changing a ratified target.
 | Presentation              | p95 displayed update within two refresh periods; missed frames do not exceed the paired current baseline. Hidden/settled pill has zero app animation callbacks.                                                                                                                                                                                                                                                                                      |
 | Warm idle                 | Zero app-owned polling/repeated health probes. Target app-plus-helper CPU ≤ 0.1% of one logical core averaged over five idle minutes; separately report OS/display callbacks and full-system idle energy.                                                                                                                                                                                                                                            |
 | Memory                    | Target non-model app private footprint ≤ 40 MiB after setup/Settings use. Report helper, weights, scratch, unified GPU allocations and total process footprint separately. No unexplained monotonic retained growth across 100 short/cancel cycles and repeated long inputs after each workload's warm high-water allocations settle; state tolerance and allocator/OS variation.                                                                    |
-| Inference/product latency | Establish full stop-to-text distributions for 1/10/60/300-second fixtures on baseline M1 and a newer reference Mac. Explore at least 20% lower warm p95 on the dominant measured path against frozen 0.3.2; always report absolute milliseconds and regressions by fixture class. This target does not establish perceptibility or determine experiment completion. Small long-fixture runs report median/max and exploratory empirical percentiles. |
+| Inference/product latency | Establish full stop-to-text distributions for 1/10/60/300-second fixtures on baseline M1 and a newer reference Mac. Explore at least 20% lower warm p95 on the dominant measured path against frozen 0.3.3; always report absolute milliseconds and regressions by fixture class. This target does not establish perceptibility or determine experiment completion. Small long-fixture runs report median/max and exploratory empirical percentiles. |
 | Energy                    | Every accepted substantial inference/UI change must reduce its targeted latency/work or energy and disclose effects on total per-dictation and idle energy. No percentage energy claim without a scoped native measurement.                                                                                                                                                                                                                          |
 
 Use separate timestamps for shortcut receipt, owner receipt, stream request, first sample, stop
@@ -308,7 +308,7 @@ thread settings, warmups, sample count, and load. Keep profiling symbols and met
 shipped artifacts. Opt-in signposts carry IDs/times/counts only and do not create permanent
 telemetry.
 
-Compare frozen 0.3.2 and candidate release builds on the same machine in interleaved paired blocks;
+Compare frozen 0.3.3 and candidate release builds on the same machine in interleaved paired blocks;
 use at least three blocks and report variance/order. For short latency paths, collect at least 200
 observations per condition to discuss p95, and thousands for callback p99. For costly long fixtures,
 report the actual small sample count and maximum; do not present a stable tail estimate without
@@ -377,14 +377,14 @@ each selected candidate with evidence before Stage 7. Portable work can advance 
 hardware is unavailable; native and participant gates remain unresolved until tested.
 
 1. **Native baseline and harness.** Build the current app on baseline M1 and a newer Apple silicon
-   Mac from the frozen baseline commit `cd302b4c864ea3ea64decd47d8fa9eee721c6088` (`v0.3.2`), using
+   Mac from the frozen baseline commit `f30791273cc4130c2073077df703794263a675a0` (`v0.3.3`), using
    an isolated checkout and temporary configuration. Compare the candidate separately; never advance
    the baseline to candidate HEAD. Capture matched fixture, idle, Settings, recording, cancellation,
    cold/warm startup, memory, and frame traces. Define owned editor observation, regression
    tolerances, and perception tasks. Done when the manifest and repeatable commands distinguish
    observations, hypotheses, and unavailable checks, with engineering targets and analysis fixed
    before trials.
-2. **GPUI-free session and bridge.** Reuse the 0.3.2 `runtime/` implementation, real/fake ports,
+2. **GPUI-free session and bridge.** Reuse the 0.3.3 `runtime/` implementation, real/fake ports,
    portable policy, and paused-clock regression tests. Bridge bounded snapshots/commands to Swift
    and port shell lifecycle coordination. Done when baseline targets and race fixtures pass, there
    is one session authority, and bridge/owner overhead is measured against the ratified target.
@@ -406,7 +406,7 @@ hardware is unavailable; native and participant gates remain unresolved until te
    against a named bottleneck. Done when selected changes pass full corpus, total-work/energy,
    memory-pressure, cancellation and fixture-class comparisons. An experiment concluding no win also
    closes that candidate.
-7. **Perceptibility and experiment conclusion.** Run the declared blinded tasks against frozen 0.3.2
+7. **Perceptibility and experiment conclusion.** Run the declared blinded tasks against frozen 0.3.3
    after parity/native correctness passes. Done when the end-to-end and resource comparisons,
    participant evidence, uncertainty, and each selected candidate's accepted/rejected result support
    a scoped conclusion. A result of no useful or no perceptible gain is valid. Missing hardware or
@@ -451,7 +451,7 @@ reference/version/link checks and identify which decisions remain provisional; t
 performance evidence. Preserve user edits/settings, avoid committing generated models/profiles, and
 retain profiling evidence in an ignored or external artifact directory.
 
-The experiment is complete when the candidate has full 0.3.2 macOS feature parity, passes the native
+The experiment is complete when the candidate has full 0.3.3 macOS feature parity, passes the native
 and failure-boundary matrix, and yields a scoped comparison on baseline and newer hardware with
 uncertainty and perceptibility evidence. A faithful optimized fork with no useful or no perceptible
 difference can complete the experiment. An unresolved native or participant gate remains unresolved;

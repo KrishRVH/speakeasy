@@ -1,5 +1,5 @@
 //! Times warm recognition of public WAV fixtures, in process through the engine's C ABI or through
-//! the `nemo-speech serve` HTTP route that the 0.3.2 app uses.
+//! the `nemo-speech serve` HTTP route that the 0.3.3 app uses.
 //!
 //! ```sh
 //! cargo run --release -p speakeasy-platform --example engine_profile -- \
@@ -11,8 +11,8 @@
 //! ```
 //!
 //! Each fixture prints one JSON line of timings, never its transcript: the word count and an
-//! FNV-1a hash of the text, with whitespace collapsed as the app inserts it, let routes be compared
-//! for identical output.
+//! FNV-1a hash of the engine text with whitespace collapsed let routes be compared for identical
+//! output. The app's filler cleanup is deterministic, so equal hashes mean equal inserted text.
 //! `--warmup SECONDS` sets the silent warmup's length (the app uses one second), and
 //! `--idle SECONDS` waits before every request, to expose GPU residency or power-state costs
 //! that back-to-back requests hide. `--prime MILLISECONDS` then sends a tenth of a second of
@@ -267,7 +267,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 /// One keep-alive connection to the engine's OpenAI-compatible transcription route, sending the
-/// same multipart WAV upload as the 0.3.2 app.
+/// same multipart WAV upload as the 0.3.3 app.
 struct Client {
     stream: BufReader<TcpStream>,
     address: String,
@@ -367,7 +367,7 @@ fn silent_wav(samples: u32) -> anyhow::Result<Vec<u8>> {
 }
 
 /// A transcript's word count and hash, never its text. Whitespace collapses as the app inserts it,
-/// so only differences an editor would receive change the hash.
+/// so engine layout differences that never reach an editor leave the hash unchanged.
 struct Digest {
     words: usize,
     hash: u64,

@@ -15,7 +15,7 @@
   <a href="docs/architecture.md">Architecture</a>
 </p>
 
-This branch is the macOS-only performance fork of Speakeasy 0.3.2. It drops Windows and Linux to
+This branch is the macOS-only performance fork of Speakeasy 0.3.3. It drops Windows and Linux to
 optimize one target, Apple silicon, and to measure whether people can feel the difference. The
 [fork PRD](docs/apple-silicon-prd.md) owns its goals, measurements, and acceptance gates.
 

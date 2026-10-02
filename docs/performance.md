@@ -49,9 +49,10 @@ speakeasy timing: press→audio 41.3 ms · release→sealed 1.2 ms · sealed→e
 
 `engine_profile` times warm recognition of public WAV fixtures with the same engine and model as the
 app, either in process through the engine's C library or through the `nemo-speech serve` HTTP route
-that the 0.3.2 app uses. Each fixture prints its timings, word count, and an FNV-1a hash of its text
-with whitespace collapsed as the app inserts it, never the text, so the two routes can be checked
-for identical output:
+that the 0.3.3 app uses. Each fixture prints its timings, word count, and an FNV-1a hash of the
+engine text with whitespace collapsed, never the text, so the two routes can be checked for
+identical output. Filler cleanup runs after recognition and is deterministic, so equal hashes mean
+equal inserted text:
 
 ```sh
 engine=~/Library/Application\ Support/speakeasy/engines/nemo-speech-0.1.0-macos-aarch64-metal/nemo-speech

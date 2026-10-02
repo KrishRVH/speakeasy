@@ -1,19 +1,19 @@
 # Apple silicon fork: comparison baseline
 
 The [draft PRD](apple-silicon-prd.md) freezes the feature and performance comparison at released
-Speakeasy **0.3.2**, tag `v0.3.2`, commit `cd302b4c864ea3ea64decd47d8fa9eee721c6088`. The
+Speakeasy **0.3.3**, tag `v0.3.3`, commit `f30791273cc4130c2073077df703794263a675a0`. The
 `high-perf-macos` branch carries these notes on that release's code. Future fork changes belong to
 the candidate; keep the control checkout at the frozen commit.
 
-## Released 0.3.2 evidence and remaining baseline work
+## Released 0.3.3 evidence and remaining baseline work
 
-The [main checks](https://github.com/KrishRVH/speakeasy/actions/runs/36943082578) and
-[release verification](https://github.com/KrishRVH/speakeasy/actions/runs/36943082592) passed at the
-frozen commit. Linux passed 149 Rust tests and 19 tooling tests; Windows and macOS each passed 126
+The [cross-platform checks](https://github.com/KrishRVH/speakeasy/actions/runs/37025868825) and
+[release verification](https://github.com/KrishRVH/speakeasy/actions/runs/37025868693) passed at the
+frozen commit. Linux passed 155 Rust tests and 19 tooling tests; Windows and macOS each passed 132
 Rust tests. Native opt-in tests remained skipped: 8 on Linux, 7 on Windows, and 6 on macOS.
-Verification also covered owned-window rendering on Windows/macOS, Windows hidden-window paint, and
-Linux private-display pixels and packaged launchers. All three platform packages passed before
-[0.3.2 was published](https://github.com/KrishRVH/speakeasy/releases/tag/v0.3.2). These checks
+Verification also covered owned-window rendering on Windows/macOS and Linux private-display pixels,
+and all three platform packages passed before
+[0.3.3 was published](https://github.com/KrishRVH/speakeasy/releases/tag/v0.3.3). These checks
 establish build and owned-window behavior; they do not measure native Mac dictation or user
 perceptibility.
 
@@ -29,7 +29,7 @@ contracts and their regression seams. Historical
 [0.3.0 refactor validation](https://github.com/KrishRVH/speakeasy/blob/2dbaaf835fdc0f79d735eb554932b7cf995a2bbe/docs/refactor-validation.md)
 recorded ready-text-to-fake-insertion median/p95 of 52/67 µs over 100 Linux requests, against 51/60
 µs before that refactor. Toolchain and scheduler differences prevent treating this as an established
-regression. It is neither a 0.3.2 nor a native Mac measurement; rerun relevant components on the
+regression. It is neither a 0.3.3 nor a native Mac measurement; rerun relevant components on the
 reference Macs.
 
 No native Mac microphone-onset, stop-to-visible-text, energy, memory, inference, or perceptibility
@@ -41,7 +41,7 @@ gain.
 ## Historical 0.2.2 audit
 
 The following audit was recorded 2026-09-30 at `2ffed9af5f209ab9a0c527cffdcc58a271d74ff2` (0.2.2).
-Its values and artifacts remain historical evidence, not the 0.3.2 comparison baseline. They cannot
+Its values and artifacts remain historical evidence, not the 0.3.3 comparison baseline. They cannot
 establish Mac performance or the effect of a native rewrite.
 
 ### Environment and measurement limits
@@ -117,7 +117,7 @@ Useful constraints are:
 
 ## Source audit and experiments
 
-The following maps the frozen 0.3.2 implementation, whose owned threads, native monitors, and engine
+The following maps the frozen 0.3.3 implementation, whose owned threads, native monitors, and engine
 processes are joined, woken, or killed and reaped before a replacement starts. Existing tests remain
 the behavioral reference when moving these modules into a native shell.
 

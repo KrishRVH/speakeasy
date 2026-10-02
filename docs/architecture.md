@@ -31,7 +31,7 @@ flowchart LR
 | `crates/platform/src/keyboard.rs`, `monitor.rs`, `insertion.rs` | Portable Fn decisions, stop coordination for the tap's run loop, and insertion eligibility; the native adapter collects facts and submits effects.                |
 | `dictation/src/audio.rs`, `audio/control.rs`                    | CPAL capture, typed callback control, bounded ring, audio levels, speech gate, quiet-edge trimming, and five-minute recording limit.                              |
 | `dictation/src/local_speech.rs` and `local_speech/`             | The warm engine process: the Parakeet helper over pipes, or an engine's HTTP server; bounded replies and cancellation recovery.                                   |
-| `dictation/src/transcript.rs`                                  | Linear transcript whitespace and filler cleanup before insertion. |
+| `dictation/src/transcript.rs`                                   | Linear transcript whitespace and filler cleanup before insertion.                                                                                                 |
 | `dictation/src/ports.rs`                                        | Capture, speech, and insertion interfaces used by the session owner and unattended fixtures.                                                                      |
 | `dictation/src/setup.rs`                                        | Automatic setup: the Metal engine build checked by its own doctor, pinned resumable downloads, and extraction.                                                    |
 | `dictation/src/{lifecycle,save}.rs`                             | Service ownership across enable, pause, and quit, and ordered durable settings writes.                                                                            |
@@ -208,8 +208,8 @@ engine's own HTTP server; audio is posted from memory on loopback, through a cli
 or redirects.
 
 Model loading starts in the background. GPU preference adds a silent warmup request before
-readiness. Whisper language travels with each request, so a
-language change does not reload the model. Whisper uses full context and default timestamp decoding.
+readiness. Whisper language travels with each request, so a language change does not reload the
+model. Whisper uses full context and default timestamp decoding.
 
 The transcription job runs `transcript::for_insertion` for either engine before publishing its
 result. Engine segment whitespace becomes single spaces, never Enter presses. With `remove_fillers`
