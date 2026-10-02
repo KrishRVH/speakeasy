@@ -128,24 +128,37 @@ pub(crate) enum CaptureEvent {
     /// Samples arrived; the capture thread took the duration to open and start the device.
     Ready(SessionId, Duration),
     Level(SessionId, f32),
-    /// Speech paused; the WAV is what the recording would hold if it stopped now, numbered so the
-    /// finished recording can name an identical pause.
+    /// A long recording paused; the WAV is its speech since the previous segment, which the
+    /// finished recording no longer holds. Segments are numbered from zero in order.
+    Segment(SessionId, u32, Vec<u8>),
+    /// Speech paused; the WAV is what the recording's tail would hold if it stopped now, numbered
+    /// so the finished recording can name an identical pause.
     Paused(SessionId, u32, Vec<u8>),
     Finished(SessionId, anyhow::Result<Option<Captured>>),
 }
 
-/// A finished recording's trimmed audio.
+/// A finished recording's trimmed audio after its last segment.
 pub(crate) struct Captured {
-    pub wav: Vec<u8>,
-    /// The pause whose audio is byte-for-byte this recording's, if any.
+    /// The tail, or `None` when no speech followed the last segment.
+    pub wav: Option<Vec<u8>>,
+    /// The pause whose audio is byte-for-byte this tail's, if any.
     pub speculated: Option<u32>,
+    /// How many segments came before the tail.
+    pub segments: u32,
 }
 
 impl CaptureEvent {
     /// Erases audio an event carries, best effort, when no session will use it.
-    fn erase(self) {
+    pub(crate) fn erase(self) {
         match self {
-            Self::Paused(_, _, mut wav) | Self::Finished(_, Ok(Some(Captured { mut wav, .. }))) => {
+            Self::Segment(_, _, mut wav)
+            | Self::Paused(_, _, mut wav)
+            | Self::Finished(
+                _,
+                Ok(Some(Captured {
+                    wav: Some(mut wav), ..
+                })),
+            ) => {
                 wav.fill(0);
             },
             Self::Ready(..) | Self::Level(..) | Self::Finished(..) => {},
@@ -156,6 +169,7 @@ impl CaptureEvent {
         match self {
             Self::Ready(session, _)
             | Self::Level(session, _)
+            | Self::Segment(session, ..)
             | Self::Paused(session, ..)
             | Self::Finished(session, _) => *session,
         }

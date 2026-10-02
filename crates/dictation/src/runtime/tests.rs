@@ -72,6 +72,7 @@ struct FakePorts {
     insertion: Option<Gate<InsertPermit>>,
     captures: Sender<OpenedCapture>,
     jobs: Sender<TranscriptionJob>,
+    heard: Sender<Vec<u8>>,
     pasted: Sender<String>,
     loads: Sender<()>,
     timings: Sender<String>,
@@ -82,6 +83,7 @@ struct FakePorts {
 struct Reports {
     captures: Receiver<OpenedCapture>,
     jobs: Receiver<TranscriptionJob>,
+    heard: Receiver<Vec<u8>>,
     pasted: Receiver<String>,
     loads: Receiver<()>,
     timings: Receiver<String>,
@@ -92,6 +94,8 @@ impl FakePorts {
     fn new() -> (Self, Reports) {
         let (captures, opened) = async_channel::bounded(8);
         let (jobs, requested) = async_channel::bounded(8);
+        // Unbounded, so tests that ignore which audio was recognized never stall the fake.
+        let (heard, recognized) = async_channel::unbounded();
         let (pasted, submitted) = async_channel::bounded(8);
         let (loads, loaded) = async_channel::bounded(8);
         let (timings, reported) = async_channel::bounded(8);
@@ -107,6 +111,7 @@ impl FakePorts {
             insertion: None,
             captures,
             jobs,
+            heard,
             pasted,
             loads,
             timings,
@@ -115,6 +120,7 @@ impl FakePorts {
         let reports = Reports {
             captures: opened,
             jobs: requested,
+            heard: recognized,
             pasted: submitted,
             loads: loaded,
             timings: reported,
@@ -169,6 +175,7 @@ impl Ports for FakePorts {
         let load_results = self.load_results.clone();
         let speech = FakeSpeech {
             jobs: self.jobs.clone(),
+            heard: self.heard.clone(),
             stop: self.stop.clone(),
             recovery: self.recovery.clone(),
         };
@@ -247,12 +254,14 @@ impl Recording for FakeRecording {
 
 struct FakeSpeech {
     jobs: Sender<TranscriptionJob>,
+    heard: Sender<Vec<u8>>,
     stop: Option<Gate<()>>,
     recovery: Option<Receiver<anyhow::Result<()>>>,
 }
 
 impl Speech for FakeSpeech {
-    async fn transcribe(&self, _: Vec<u8>, language: &str) -> anyhow::Result<String> {
+    async fn transcribe(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<String> {
+        self.heard.send(wav).await?;
         let (reply, result) = oneshot::channel();
         self.jobs.send((language.to_owned(), reply)).await?;
         result.await?
@@ -293,6 +302,7 @@ struct Harness<Owner = OwnedThread> {
     updates: watch::Receiver<Snapshot>,
     captures: Receiver<OpenedCapture>,
     jobs: Receiver<TranscriptionJob>,
+    heard: Receiver<Vec<u8>>,
     pasted: Receiver<String>,
     loads: Receiver<()>,
     timings: Receiver<String>,
@@ -350,6 +360,7 @@ impl<Owner: Sync> Harness<Owner> {
             updates,
             captures: reports.captures,
             jobs: reports.jobs,
+            heard: reports.heard,
             pasted: reports.pasted,
             loads: reports.loads,
             timings: reports.timings,
@@ -417,8 +428,9 @@ async fn receive<T>(receiver: &Receiver<T>) -> anyhow::Result<T> {
 /// Fake trimmed audio, identical to the numbered pause's when `speculated` names one.
 fn captured(speculated: Option<u32>) -> Captured {
     Captured {
-        wav: vec![1, 2],
+        wav: Some(vec![1, 2]),
         speculated,
+        segments: 0,
     }
 }
 
@@ -572,6 +584,166 @@ async fn a_cancelled_speculation_cannot_reach_the_next_session() -> anyhow::Resu
         still_pending(h.observe(|snapshot| snapshot.phase != Phase::Recording)).await,
         "A cancelled speculation ended the next session (stale reply delivered: {observed})"
     );
+    h.close().await
+}
+
+fn tail(wav: Option<Vec<u8>>, segments: u32) -> CaptureEvent {
+    CaptureEvent::Finished(
+        SessionId::FIRST,
+        Ok(Some(Captured {
+            wav,
+            speculated: None,
+            segments,
+        })),
+    )
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_long_recording_recognizes_segments_while_capturing_and_joins_them_with_its_tail()
+-> anyhow::Result<()> {
+    let mut h = Harness::paused(|ports| ports.delayed_finish = true)?;
+    receive(&h.loads).await?;
+    let (id, events) = h.start().await?;
+    events.send(CaptureEvent::Segment(id, 0, vec![10])).await?;
+    h.transcribe_next_as("Part one.").await?;
+    events.send(CaptureEvent::Segment(id, 1, vec![11])).await?;
+    h.transcribe_next_as("part, uh, two").await?;
+    assert_eq!(h.snapshot().phase, Phase::Recording);
+    h.input(Input::Toggle);
+    events.send(tail(Some(vec![12]), 2)).await?;
+    h.transcribe_next_as("\nand the end.\n").await?;
+    assert_eq!(receive(&h.pasted).await?, "Part one. part two and the end.");
+    for expected in [[10], [11], [12]] {
+        assert_eq!(receive(&h.heard).await?, expected);
+    }
+    h.phase(Phase::Done).await?;
+    assert!(receive(&h.timings).await?.contains(" · segments 2 · done"));
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_recording_ending_at_a_segment_delivers_once_that_segment_is_recognized()
+-> anyhow::Result<()> {
+    let mut h = Harness::paused(|ports| ports.delayed_finish = true)?;
+    receive(&h.loads).await?;
+    let (id, events) = h.start().await?;
+    events.send(CaptureEvent::Segment(id, 0, vec![10])).await?;
+    let (_, segment) = receive(&h.jobs).await?;
+    h.input(Input::Toggle);
+    events.send(tail(None, 1)).await?;
+    h.phase(Phase::Processing).await?;
+    assert!(
+        still_pending(receive(&h.jobs)).await,
+        "A recording with no tail made a request"
+    );
+    answer(segment, "Only part.")?;
+    assert_eq!(receive(&h.pasted).await?, "Only part.");
+    h.phase(Phase::Done).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn cpu_inference_recognizes_segments_in_order_once_the_recording_ends() -> anyhow::Result<()>
+{
+    let cpu = Config {
+        use_gpu: false,
+        ..Config::default()
+    };
+    let mut h = Harness::paused_with(cpu, |ports| ports.delayed_finish = true)?;
+    receive(&h.loads).await?;
+    let (id, events) = h.start().await?;
+    events.send(CaptureEvent::Segment(id, 0, vec![10])).await?;
+    assert!(
+        still_pending(receive(&h.jobs)).await,
+        "CPU inference ran while recording"
+    );
+    h.input(Input::Toggle);
+    events.send(tail(Some(vec![12]), 1)).await?;
+    h.transcribe_next_as("First.").await?;
+    h.transcribe_next_as("Second.").await?;
+    assert_eq!(receive(&h.pasted).await?, "First. Second.");
+    assert_eq!(receive(&h.heard).await?, [10]);
+    assert_eq!(receive(&h.heard).await?, [12]);
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_cancelled_recording_drops_its_segments_and_their_late_text() -> anyhow::Result<()> {
+    let mut h = Harness::paused(|ports| ports.delayed_finish = true)?;
+    receive(&h.loads).await?;
+    let (id, events) = h.start().await?;
+    events.send(CaptureEvent::Segment(id, 0, vec![10])).await?;
+    let (_, stale) = receive(&h.jobs).await?;
+    h.input(Input::Cancel);
+    h.phase(Phase::Cancelled).await?;
+    let (id, events) = h.start().await?;
+    let observed = stale.send(Ok("stale segment".into())).is_ok();
+    assert!(
+        still_pending(receive(&h.jobs)).await,
+        "A cancelled segment's reply reached the next session (delivered: {observed})"
+    );
+    h.input(Input::Toggle);
+    events
+        .send(CaptureEvent::Finished(
+            id,
+            Ok(Some(Captured {
+                wav: Some(vec![12]),
+                speculated: None,
+                segments: 0,
+            })),
+        ))
+        .await?;
+    h.transcribe_next_as("fresh").await?;
+    assert_eq!(receive(&h.pasted).await?, "fresh");
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_missing_or_failed_segment_fails_the_recording_instead_of_dropping_speech()
+-> anyhow::Result<()> {
+    let mut h = Harness::paused(|ports| ports.delayed_finish = true)?;
+    receive(&h.loads).await?;
+    let (id, events) = h.start().await?;
+    events.send(CaptureEvent::Segment(id, 0, vec![10])).await?;
+    h.transcribe_next_as("Kept.").await?;
+    h.input(Input::Toggle);
+    events.send(tail(Some(vec![12]), 2)).await?;
+    h.phase(Phase::Error).await?;
+    assert!(h.pasted.try_recv().is_err());
+
+    let (id, events) = h.start().await?;
+    events.send(CaptureEvent::Segment(id, 0, vec![10])).await?;
+    let (_, segment) = receive(&h.jobs).await?;
+    ensure!(segment.send(Err(anyhow!("engine stopped"))).is_ok());
+    h.phase(Phase::Error).await?;
+    assert!(h.pasted.try_recv().is_err());
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_recording_waiting_only_on_segments_fails_when_the_model_cannot_load()
+-> anyhow::Result<()> {
+    let (results, loading) = async_channel::bounded(2);
+    let cpu = Config {
+        use_gpu: false,
+        ..Config::default()
+    };
+    let mut h = Harness::paused_with(cpu, |ports| {
+        ports.load_results = Some(loading);
+        ports.delayed_finish = true;
+    })?;
+    receive(&h.loads).await?;
+    results.send(Err(anyhow!("Model warmup failed"))).await?;
+    h.observe(|snapshot| snapshot.message == "Model warmup failed")
+        .await?;
+    let (id, events) = h.start().await?;
+    events.send(CaptureEvent::Segment(id, 0, vec![10])).await?;
+    h.input(Input::Toggle);
+    events.send(tail(None, 1)).await?;
+    receive(&h.loads).await?;
+    results.send(Err(anyhow!("Model warmup failed"))).await?;
+    h.phase(Phase::Error).await?;
+    assert!(h.pasted.try_recv().is_err());
     h.close().await
 }
 

@@ -90,8 +90,9 @@ struct FixtureRecording {
 impl Recording for FixtureRecording {
     fn finish(&self) {
         let captured = Captured {
-            wav: self.wav.clone(),
+            wav: Some(self.wav.clone()),
             speculated: None,
+            segments: 0,
         };
         let finished = CaptureEvent::Finished(self.id, Ok(Some(captured)));
         self.events

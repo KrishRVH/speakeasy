@@ -100,6 +100,8 @@ stateDiagram-v2
     Opening --> Stopping: finish requested
     Recording --> Stopping: release / next press / limit
     Stopping --> AwaitingWorker: audio complete; retire microphone
+    Stopping --> AwaitingSegments: no speech after the last segment
+    AwaitingSegments --> Inserting: segments recognized
     Stopping --> Inserting: audio matches a recognized pause
     Stopping --> AwaitingSpeculation: audio matches the running pause
     AwaitingSpeculation --> Inserting: pause recognized
@@ -169,6 +171,19 @@ release follows the last word too closely to benefit, and a speculation could de
 request. CPU inference never speculates, since an obsolete speculation could hold the recording's
 own request for seconds. Copies of audio no session will use are erased when they are dropped, best
 effort.
+
+Long recordings are recognized in segments. At a pause, once at least 20 seconds of kept audio have
+accumulated since the previous segment, the consumer hands that audio to the owner as the next
+numbered segment instead of a speculation; later pauses, speculation, and the finished recording
+then cover only the tail after it. Segments and the tail abut, so together they are exactly the
+recording's kept audio, and shorter recordings are never divided. A full event lane leaves a segment
+in the tail. The owner queues segments in order and recognizes them before any speculation or the
+tail: on the GPU while the recording continues, from an idle warm worker, and on the CPU only once
+it ends, so a cancellation never interrupts CPU inference. Each segment's text receives the same
+cleanup as the tail's, and the owner joins the nonempty parts with single spaces. A recording that
+ends at a segment waits for its segments without another request. A failed segment, or a finished
+recording reporting segments the owner never received, fails the recording rather than inserting the
+rest. Segment audio is erased when its session ends.
 
 ## Setup
 

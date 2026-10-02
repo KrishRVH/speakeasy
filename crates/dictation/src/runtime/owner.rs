@@ -263,15 +263,41 @@ impl<P: Ports> Owner<P> {
                 session.audio_ready(gesture);
             },
             CaptureEvent::Level(_, level) => session.show_level(level),
-            CaptureEvent::Paused(_, sequence, wav) => session.paused(sequence, wav),
-            CaptureEvent::Finished(_, Ok(Some(Captured { wav, speculated }))) => {
+            CaptureEvent::Segment(_, index, wav) => {
                 session
                     .timeline
-                    .sealed(now(), audio::wav_duration(&wav).unwrap_or_default());
+                    .segment(audio::wav_duration(&wav).unwrap_or_default());
+                session.segment(index, wav);
+            },
+            CaptureEvent::Paused(_, sequence, wav) => session.paused(sequence, wav),
+            CaptureEvent::Finished(
+                _,
+                Ok(Some(Captured {
+                    wav,
+                    speculated,
+                    segments,
+                })),
+            ) => {
+                if usize::try_from(segments).ok() != Some(session.segments.len()) {
+                    if let Some(mut wav) = wav {
+                        wav.fill(0);
+                    }
+                    self.conclude_capture();
+                    self.end_session();
+                    self.fail("Part of the recording was lost. Try dictating again.".into());
+                    return;
+                }
+                let tail = wav
+                    .as_deref()
+                    .and_then(audio::wav_duration)
+                    .unwrap_or_default();
+                session.timeline.sealed(now(), tail);
                 let recognized = session.seal(wav, speculated);
                 self.conclude_capture();
                 if let Some(text) = recognized {
                     self.deliver_speculation(text);
+                } else {
+                    self.deliver_segments();
                 }
             },
             CaptureEvent::Finished(_, Ok(None)) => {
@@ -314,6 +340,14 @@ impl<P: Ports> Owner<P> {
             },
             Completion::Loaded(Err(error)) => self.fail(error.to_string()),
             Completion::Transcribed(result) => {
+                let segment = self
+                    .session
+                    .as_mut()
+                    .and_then(|session| session.segmenting.take());
+                if let Some(index) = segment {
+                    self.segment_recognized(index, result);
+                    return;
+                }
                 let speculation = self
                     .session
                     .as_mut()
@@ -361,6 +395,43 @@ impl<P: Ports> Owner<P> {
         }
     }
 
+    /// Keeps a segment's text for delivery with the tail. A failed segment fails its recording:
+    /// inserting the rest would silently drop speech.
+    fn segment_recognized(
+        &mut self,
+        index: usize,
+        result: anyhow::Result<(P::Speech, Transcript)>,
+    ) {
+        match result {
+            Ok((worker, Transcript::Text(text))) => {
+                self.worker = Worker::Ready(worker);
+                if let Some(session) = &mut self.session {
+                    session.segment_recognized(index, text);
+                }
+                self.deliver_segments();
+            },
+            Ok((worker, Transcript::Cancelled)) => {
+                self.worker = Worker::Ready(worker);
+                self.fail("Recognition stopped before the recording finished. Try again.".into());
+            },
+            Err(error) => {
+                self.fail(error.to_string());
+                self.worker.revive(&self.ports, &self.config);
+            },
+        }
+    }
+
+    /// Delivers the segments' text once a recording with no speech after its last segment has
+    /// every segment recognized.
+    fn deliver_segments(&mut self) {
+        if let Some(session) = &self.session
+            && matches!(session.stage, Stage::AwaitingSegments)
+            && !session.has_unrecognized_segments()
+        {
+            self.deliver(String::new());
+        }
+    }
+
     /// A recording that waited on a failed or cancelled speculation makes its own request.
     fn speculation_lost(&mut self) {
         if let Some(session) = &mut self.session
@@ -373,9 +444,12 @@ impl<P: Ports> Owner<P> {
     /// A session not yet waiting for the worker survives a failed warmup: its gesture finishes on
     /// its own terms, and an owned microphone must be released before a retry may start.
     fn session_survives_warmup_failure(&self) -> bool {
-        self.session
-            .as_ref()
-            .is_some_and(|session| !matches!(session.stage, Stage::AwaitingWorker(_)))
+        self.session.as_ref().is_some_and(|session| {
+            !matches!(
+                session.stage,
+                Stage::AwaitingWorker(_) | Stage::AwaitingSegments
+            )
+        })
     }
 
     /// Only the current job's transcript arrives here: abandoning a session first moves its job out
@@ -400,11 +474,12 @@ impl<P: Ports> Owner<P> {
         self.deliver(text);
     }
 
-    /// Inserts the current session's text, or ends it as empty.
+    /// Inserts the current session's text after its segments' text, or ends it as empty.
     fn deliver(&mut self, text: String) {
         let Some(session) = self.session.as_mut() else {
             return;
         };
+        let text = session.joined(text);
         if text.is_empty() {
             self.abandon();
             self.gesture.complete();
@@ -488,11 +563,14 @@ impl<P: Ports> Owner<P> {
 
     /// Removes the session, keeping its timeline until the owner reports how it ended.
     ///
-    /// A speculation still running for it leaves the observation path like an abandoned request,
-    /// so its result or failure can never reach a later session.
+    /// A speculation or segment still running for it leaves the observation path like an abandoned
+    /// request, so its result or failure can never reach a later session.
     fn take_session(&mut self) -> Option<Session> {
-        let session = self.session.take()?;
-        if session.speculating.is_some() && self.worker.is_transcribing() {
+        let mut session = self.session.take()?;
+        session.erase_segments();
+        if (session.speculating.is_some() || session.segmenting.is_some())
+            && self.worker.is_transcribing()
+        {
             self.worker.recover(&self.ports, &self.config);
         }
         self.ended = Some((session.timeline, now()));
@@ -523,7 +601,7 @@ impl<P: Ports> Owner<P> {
             Stage::Transcribing if self.worker.is_transcribing() => {
                 self.worker.recover(&self.ports, &self.config);
             },
-            Stage::Queued | Stage::Transcribing => {},
+            Stage::Queued | Stage::AwaitingSegments | Stage::Transcribing => {},
         }
     }
 
@@ -571,6 +649,27 @@ impl<P: Ports> Owner<P> {
         let Some(session) = self.session.as_mut() else {
             return;
         };
+        // Segments go first, in order; the tail and any speculation follow them. While capturing,
+        // only an idle warm GPU worker takes one: CPU inference waits for the recording to end, so
+        // a cancellation never has to replace a worker in the middle of it.
+        if session.has_waiting_segment() {
+            if session.is_capturing() && !self.config.use_gpu {
+                return;
+            }
+            if !session.is_capturing() && self.worker.revive(&self.ports, &self.config) {
+                self.notice = Some(Notice::LoadingModel);
+            }
+            if let Some((index, wav)) = session.take_waiting_segment() {
+                match self.worker.transcribe(wav, &self.config) {
+                    Ok(()) => session.segmenting = Some(index),
+                    Err(unclaimed) => session.return_segment(index, unclaimed),
+                }
+            }
+            return;
+        }
+        if session.segmenting.is_some() {
+            return;
+        }
         if session.is_capturing() {
             // Speculation only uses an idle warm worker, never loading one, and stops once a finish
             // is requested: the recording's own audio is moments away.

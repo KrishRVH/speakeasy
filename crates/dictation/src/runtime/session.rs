@@ -1,7 +1,7 @@
 //! Authority and presentation stage for one recording. Retired native work belongs to the owner, so
 //! abandoning a session never waits or opens its replacement.
 
-use std::time::Instant;
+use std::{mem, time::Instant};
 
 use speakeasy_core::gesture::State;
 use speakeasy_platform::{InsertPermit, Inserted};
@@ -43,6 +43,17 @@ pub(super) struct Session {
     pub speculating: Option<u32>,
     /// The latest pause the worker has recognized, and its text.
     pub speculated: Option<(u32, String)>,
+    /// A long recording's segments in order, recognized before its tail.
+    pub segments: Vec<Segment>,
+    /// The segment the worker is recognizing for this session.
+    pub segmenting: Option<usize>,
+}
+
+/// A segment's audio until the worker takes it, then its text.
+pub(super) enum Segment {
+    Waiting(Vec<u8>),
+    Recognizing,
+    Done(String),
 }
 
 impl Session {
@@ -57,6 +68,8 @@ impl Session {
             pending: None,
             speculating: None,
             speculated: None,
+            segments: Vec::new(),
+            segmenting: None,
         }
     }
 
@@ -67,6 +80,7 @@ impl Session {
             Stage::Stopping => Phase::Stopping,
             Stage::AwaitingWorker(_)
             | Stage::AwaitingSpeculation(_)
+            | Stage::AwaitingSegments
             | Stage::Transcribing
             | Stage::Inserting(_) => Phase::Processing,
         }
@@ -116,12 +130,92 @@ impl Session {
         }
     }
 
-    /// Moves the sealed recording on and returns its text if a pause with identical audio was
-    /// already recognized. Otherwise it awaits that pause's recognition, or the worker.
-    pub(super) fn seal(&mut self, mut wav: Vec<u8>, speculated: Option<u32>) -> Option<String> {
+    /// Queues a segment's audio for the worker, in capture order.
+    pub(super) fn segment(&mut self, index: u32, mut wav: Vec<u8>) {
+        if usize::try_from(index).is_ok_and(|index| index == self.segments.len()) {
+            self.segments.push(Segment::Waiting(wav));
+        } else {
+            wav.fill(0);
+        }
+    }
+
+    /// The first segment still waiting for the worker, which it now recognizes.
+    pub(super) fn take_waiting_segment(&mut self) -> Option<(usize, Vec<u8>)> {
+        let index = self
+            .segments
+            .iter()
+            .position(|segment| matches!(segment, Segment::Waiting(_)))?;
+        let segment = self.segments.get_mut(index)?;
+        let Segment::Waiting(wav) = mem::replace(segment, Segment::Recognizing) else {
+            return None;
+        };
+        Some((index, wav))
+    }
+
+    /// Hands a segment's audio back when the worker could not take it.
+    pub(super) fn return_segment(&mut self, index: usize, wav: Vec<u8>) {
+        if let Some(segment) = self.segments.get_mut(index) {
+            *segment = Segment::Waiting(wav);
+        }
+    }
+
+    pub(super) fn segment_recognized(&mut self, index: usize, text: String) {
+        if let Some(segment) = self.segments.get_mut(index) {
+            *segment = Segment::Done(text);
+        }
+    }
+
+    pub(super) fn has_waiting_segment(&self) -> bool {
+        self.segments
+            .iter()
+            .any(|segment| matches!(segment, Segment::Waiting(_)))
+    }
+
+    pub(super) fn has_unrecognized_segments(&self) -> bool {
+        self.segments
+            .iter()
+            .any(|segment| !matches!(segment, Segment::Done(_)))
+    }
+
+    /// The recognized segments' text followed by the tail's, one space between non-empty parts.
+    pub(super) fn joined(&mut self, tail: String) -> String {
+        let mut parts = mem::take(&mut self.segments)
+            .into_iter()
+            .filter_map(|segment| match segment {
+                Segment::Done(text) => Some(text),
+                Segment::Waiting(mut wav) => {
+                    wav.fill(0);
+                    None
+                },
+                Segment::Recognizing => None,
+            })
+            .collect::<Vec<_>>();
+        parts.push(tail);
+        parts.retain(|part| !part.is_empty());
+        parts.join(" ")
+    }
+
+    /// Erases audio held for segments the worker has not taken.
+    pub(super) fn erase_segments(&mut self) {
+        for segment in &mut self.segments {
+            if let Segment::Waiting(wav) = segment {
+                wav.fill(0);
+            }
+        }
+    }
+
+    /// Moves the sealed tail on and returns its text if a pause with identical audio was already
+    /// recognized, or an empty text when no speech followed the last segment. Otherwise it awaits
+    /// that pause's recognition, or the worker. Delivery waits for every segment either way.
+    pub(super) fn seal(&mut self, wav: Option<Vec<u8>>, speculated: Option<u32>) -> Option<String> {
         if let Some((_, mut pending)) = self.pending.take() {
             pending.fill(0);
         }
+        let Some(mut wav) = wav else {
+            self.speculated = None;
+            self.stage = Stage::AwaitingSegments;
+            return None;
+        };
         let recognized = self.speculated.take();
         match (speculated, recognized) {
             (Some(sequence), Some((done, text))) if sequence == done => {
@@ -152,6 +246,8 @@ pub(super) enum Stage {
     /// The worker is recognizing a pause with identical audio; the WAV is the fallback if that
     /// recognition fails.
     AwaitingSpeculation(Vec<u8>),
+    /// No speech followed the last segment; waits for the segments' text.
+    AwaitingSegments,
     Transcribing,
     Inserting(InsertTask),
 }

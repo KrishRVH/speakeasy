@@ -17,6 +17,9 @@ pub(super) struct Timeline {
     transcribed: Option<Instant>,
     /// Whether the text came from recognizing a pause with identical audio.
     speculated: bool,
+    /// Segments recognized before the tail, and their audio.
+    segments: u32,
+    segmented: Duration,
 }
 
 impl Timeline {
@@ -31,6 +34,8 @@ impl Timeline {
             transcribing: None,
             transcribed: None,
             speculated: false,
+            segments: 0,
+            segmented: Duration::ZERO,
         }
     }
 
@@ -43,7 +48,13 @@ impl Timeline {
         self.released.get_or_insert(at);
     }
 
-    /// Capture handed over `recorded` of audio after trimming.
+    /// Capture handed over a segment holding `recorded` of audio.
+    pub(super) fn segment(&mut self, recorded: Duration) {
+        self.segments = self.segments.saturating_add(1);
+        self.segmented = self.segmented.saturating_add(recorded);
+    }
+
+    /// Capture handed over the tail, `recorded` of audio after trimming.
     pub(super) fn sealed(&mut self, at: Instant, recorded: Duration) {
         self.sealed.get_or_insert(at);
         self.recorded.get_or_insert(recorded);
@@ -78,13 +89,18 @@ impl Timeline {
             Some(milliseconds(label, to?.saturating_duration_since(from?)))
         });
         let device = self.device.map(|device| milliseconds("device", device));
-        let audio = self
-            .recorded
-            .map(|recorded| format!("audio {:.2} s", recorded.as_secs_f64()));
+        let audio = self.recorded.map(|recorded| {
+            format!(
+                "audio {:.2} s",
+                recorded.saturating_add(self.segmented).as_secs_f64()
+            )
+        });
+        let segments = (self.segments > 0).then(|| format!("segments {}", self.segments));
         let speculated = self.speculated.then(|| "speculated".to_owned());
         let parts: Vec<String> = spans
             .chain(device)
             .chain(audio)
+            .chain(segments)
             .chain(speculated)
             .chain([outcome.to_owned()])
             .collect();

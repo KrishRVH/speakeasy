@@ -2,6 +2,7 @@
 //! allocating; the capture thread encodes them in place behind a reserved WAV header.
 
 mod control;
+mod cuts;
 mod speech;
 
 use std::{
@@ -26,6 +27,7 @@ use speakeasy_core::gesture::RECORDING_LIMIT;
 
 use self::{
     control::{Control, Mode},
+    cuts::{AtPause, Cuts},
     speech::Speech,
 };
 use crate::{
@@ -40,6 +42,9 @@ const MAX_SAMPLE_RATE: u32 = 192_000;
 const MAX_CHANNELS: usize = 32;
 const INITIAL_RESERVATION: Duration = Duration::from_secs(10);
 const MINIMUM_RECORDING: Duration = Duration::from_millis(200);
+/// Speech since the previous segment that a pause commits as its own segment, so a long recording
+/// is recognized while it continues and recognition stays linear in its length.
+const SEGMENT: Duration = Duration::from_secs(20);
 const METER_INTERVAL: Duration = Duration::from_millis(32);
 /// How often the consumer drains the ring until the first samples arrive, so startup feedback is
 /// prompt.
@@ -201,8 +206,8 @@ struct LiveStream {
 struct Recorder {
     pcm: Pcm16,
     speech: Speech,
-    /// The latest pause handed to the owner for speculative recognition.
-    pause: Option<Pause>,
+    /// Segments handed to the owner, and the latest pause offered for speculation.
+    cuts: Cuts,
     device: LiveStream,
     ring: Consumer<f32>,
     errors: Receiver<cpal::Error>,
@@ -258,7 +263,7 @@ impl Recorder {
         Ok(Self {
             pcm,
             speech,
-            pause: None,
+            cuts: Cuts::new(bytes_in(samples_in(SEGMENT, rate))),
             device: LiveStream {
                 _stream: stream,
                 _device: device,
@@ -323,9 +328,7 @@ impl Recorder {
             }
             consume_pcm(&mut self.ring, &mut self.pcm, &mut meter, self.limit);
             self.speech.extend(self.pcm.audio());
-            if control.speculating() {
-                self.offer_pause(id, events)?;
-            }
+            self.at_pause(id, events, control)?;
             if let Some(level) = meter.take_level() {
                 #[expect(
                     clippy::let_underscore_must_use,
@@ -342,27 +345,35 @@ impl Recorder {
         }
     }
 
-    /// Hands a copy of the audio up to a pause to the owner, which may recognize it before the
-    /// recording ends. A full event lane forgoes this pause rather than blocking capture.
-    fn offer_pause(&mut self, id: SessionId, events: &Sender<CaptureEvent>) -> anyhow::Result<()> {
-        let Some(range) = self.speech.pause() else {
+    /// At a pause, hands the owner a copy of the speech since the previous segment: as a segment of
+    /// its own once it is long enough, or otherwise, while speculating, as the tail a recording
+    /// stopped now would hold. A full event lane forgoes this pause rather than blocking capture;
+    /// an unsent segment stays in the tail.
+    fn at_pause(
+        &mut self,
+        id: SessionId,
+        events: &Sender<CaptureEvent>,
+        control: &Control,
+    ) -> anyhow::Result<()> {
+        let Some(kept) = self.speech.pause() else {
             return Ok(());
         };
-        let Some(sequence) = self
-            .pause
-            .as_ref()
-            .map_or(Some(0), |pause| pause.sequence.checked_add(1))
-        else {
-            return Ok(());
-        };
-        let wav = self.pcm.excerpt(range.clone(), self.rate)?;
-        match events.try_send(CaptureEvent::Paused(id, sequence, wav)) {
-            Ok(()) => self.pause = Some(Pause { sequence, range }),
-            Err(unsent) => {
-                if let CaptureEvent::Paused(_, _, mut wav) = unsent.into_inner() {
-                    wav.fill(0);
+        match self.cuts.at_pause(kept, control.speculating()) {
+            AtPause::Segment(index, segment) => {
+                let wav = self.pcm.excerpt(segment.clone(), self.rate)?;
+                match events.try_send(CaptureEvent::Segment(id, index, wav)) {
+                    Ok(()) => self.cuts.segment_sent(&segment),
+                    Err(unsent) => unsent.into_inner().erase(),
                 }
             },
+            AtPause::Speculate(sequence, tail) => {
+                let wav = self.pcm.excerpt(tail.clone(), self.rate)?;
+                match events.try_send(CaptureEvent::Paused(id, sequence, wav)) {
+                    Ok(()) => self.cuts.speculation_sent(sequence, tail),
+                    Err(unsent) => unsent.into_inner().erase(),
+                }
+            },
+            AtPause::Nothing => {},
         }
         Ok(())
     }
@@ -374,31 +385,26 @@ impl Recorder {
         // A callback may have failed between the last poll and stream teardown.
         capture_failure(control, &self.errors)?;
         self.speech.complete(self.pcm.audio());
-        let retained = self.speech.retained(self.pcm.audio().len());
-        let Some(range) =
-            retained.filter(|_| self.pcm.samples() >= samples_in(MINIMUM_RECORDING, self.rate))
-        else {
-            return Ok(None);
+        let kept = self
+            .speech
+            .retained(self.pcm.audio().len())
+            .filter(|_| self.pcm.samples() >= samples_in(MINIMUM_RECORDING, self.rate));
+        let (tail, speculated) = self.cuts.finish(kept);
+        let segments = self.cuts.segments();
+        let Some(tail) = tail else {
+            return Ok((segments > 0).then_some(Captured {
+                wav: None,
+                speculated: None,
+                segments,
+            }));
         };
-        // Speech that resumed after the latest pause moves the range, so the pause's audio and
-        // this recording's are identical exactly when their ranges are.
-        let speculated = self
-            .pause
-            .take()
-            .filter(|pause| pause.range == range)
-            .map(|pause| pause.sequence);
-        self.pcm.keep(range);
+        self.pcm.keep(tail);
         Ok(Some(Captured {
-            wav: mem::take(&mut self.pcm).into_wav(self.rate)?,
+            wav: Some(mem::take(&mut self.pcm).into_wav(self.rate)?),
             speculated,
+            segments,
         }))
     }
-}
-
-/// A pause whose audio the owner received.
-struct Pause {
-    sequence: u32,
-    range: Range<usize>,
 }
 
 /// Mono PCM16 behind a reserved WAV header, so encoding never copies the audio. Audio that is not
