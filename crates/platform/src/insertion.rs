@@ -12,9 +12,10 @@ use super::{InsertPermit, Inserted};
 /// How long insertion waits for the user to let go of shortcut modifiers.
 #[cfg(any(target_os = "macos", test))]
 pub(crate) const MODIFIER_WAIT: Duration = Duration::from_millis(800);
-/// How often insertion rechecks held modifiers while it waits.
+/// How often insertion rechecks held modifiers while it waits. Text recognized early can be ready
+/// while the stopping press is still down, so each poll's delay adds directly to visible latency.
 #[cfg(any(target_os = "macos", test))]
-const MODIFIER_POLL: Duration = Duration::from_millis(10);
+const MODIFIER_POLL: Duration = Duration::from_millis(2);
 
 /// How dictated text reaches the focused editor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
