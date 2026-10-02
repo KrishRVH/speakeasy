@@ -387,7 +387,7 @@ specifiers = ["nightly-2026-10-01"]
 [tools.rust.options]
 components = "clippy,rustfmt"
 profile = "minimal"
-targets = "aarch64-apple-darwin,x86_64-pc-windows-msvc"
+targets = "aarch64-apple-darwin"
 
 [[tools.shellcheck]]
 version = "0.11.0"
