@@ -15,8 +15,7 @@ const LEADING_QUIET: Duration = Duration::from_secs(1);
 /// Quiet kept on each side of speech, so soft word edges survive trimming.
 const PADDING: Duration = Duration::from_millis(500);
 /// Quiet after speech that reports a pause before the full padding: a shortcut released after the
-/// last word can take the latest such pause's recognition instead of making its own request. The
-/// first also wakes the GPU's clocks for the second.
+/// last word can take the latest such pause's recognition instead of making its own request.
 const EARLY_PAUSES: [Duration; 2] = [Duration::from_millis(100), Duration::from_millis(200)];
 const AUDIBLE_RMS: f64 = 0.003;
 

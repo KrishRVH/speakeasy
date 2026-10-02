@@ -19,9 +19,15 @@ an environment variable for paired comparisons in one build:
 | Attention products read head views directly; only V is copied for its transpose                                      | `NEMO_SPEECH_LEGACY_ATTN_COPIES=1`     |
 | The TDT greedy decoder runs on a CPU backend beside a GPU encoder instead of one GPU round trip per step             | `NEMO_SPEECH_GPU_DECODER=1`            |
 | CPU backend workers persist across graphs instead of being created per decoder step                                  | `NEMO_SPEECH_DISPOSABLE_CPU_THREADS=1` |
+| GPU sessions project the central 384-frame positional window once per layer at load; inputs of 9–384 frames slice it | `NEMO_SPEECH_LEGACY_POS_PROJECTION=1`  |
 
 The CPU keeps the attention copies, since Accelerate multiplies only contiguous operands.
-`NEMO_SPEECH_CPU_THREADS` overrides the CPU backend's four threads. `ggml.patch` embeds a compiled
-Metal library beside the source, so loading the engine skips the runtime Metal compiler on devices
-without the tensor API, and uses float4 binary kernels only on 16-byte-aligned rows;
-`GGML_METAL_COMPILE_SOURCE=1` compiles the source instead.
+`NEMO_SPEECH_CPU_THREADS` overrides the CPU backend's four threads. On Metal the engine sets
+`GGML_METAL_GRAPH_OPTIMIZE_DISABLE`, since reordering these chain-shaped graphs only adds planning
+to each new input length.
+
+`ggml.patch` embeds a compiled Metal library beside the source, so loading the engine skips the
+runtime Metal compiler on devices without the tensor API, and uses float4 binary kernels only on
+16-byte-aligned rows; `GGML_METAL_COMPILE_SOURCE=1` compiles the source instead. Waiting for the GPU
+polls with `WFE` instead of sleeping, so the CPU work after each graph runs on cores that kept their
+clock, and compute buffers grow with a quarter of headroom, so a slightly longer input reuses them.

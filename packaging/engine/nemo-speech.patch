@@ -1,5 +1,5 @@
 diff --git a/src/asr/encoder/fastconformer.cpp b/src/asr/encoder/fastconformer.cpp
-index ec039c8..dd5e516 100644
+index ec039c8..9046181 100644
 --- a/src/asr/encoder/fastconformer.cpp
 +++ b/src/asr/encoder/fastconformer.cpp
 @@ -14,6 +14,8 @@ using namespace nemo_speech::asr;
@@ -220,11 +220,69 @@ index ec039c8..dd5e516 100644
  }
  
  ConformerLayer::ConformerLayer(const std::string& name, const EncoderConfig& cfg)
+@@ -630,7 +806,8 @@ ConformerLayer::ConformerLayer(const std::string& name, const EncoderConfig& cfg
+     feed_forward1_ = new ConformerFF(name_ + ".feed_forward1", cfg.d_model, cfg.d_ff, cfg.use_bias);
+     norm_self_att_ = new ggml_runtime::LayerNorm(name_ + ".norm_self_att", input_shape);
+     self_attn_ = new ggml_runtime::RelPositionMultiHeadAttention(
+-        name_ + ".self_attn", cfg.n_heads, cfg.d_model, cfg.use_bias);
++        name_ + ".self_attn", cfg.n_heads, cfg.d_model, cfg.use_bias,
++        cfg.cache_mode == CacheMode::Disabled ? cfg.offline_pos_table_frames() : 0);
+     norm_conv_ = new ggml_runtime::LayerNorm(name_ + ".norm_conv", input_shape);
+     conv_ = new ConformerConv(
+         name_ + ".conv", cfg.d_model, cfg.conv_kernel_size, cfg.use_bias, cfg.conv_norm,
+@@ -1192,6 +1369,37 @@ FastConformerEncoder::build_precompute_graph(
+     return out;
+ }
+ 
++// One-shot graph filling each offline layer's positional table: linear_pos over the pe rows
++// centered on max_len, through the same matrix-matrix kernel an input's own window would take.
++ggml_runtime::TensorBag
++FastConformerEncoder::build_pos_table_graph(
++    ggml_runtime::Session* session, ggml_runtime::TensorContainer* session_tensor_container) {
++    auto pe_tensor = session->model_tensor_container->get_tensor_by_name(name_ + ".pos_enc.pe");
++    auto bf_ctx = session_tensor_container->get_ctx_of_buffer_type(pe_tensor.buft);
++    const int frames = cfg_.offline_pos_table_frames();
++    const size_t offset =
++        static_cast<size_t>(cfg_.pos_emb_max_len - frames) * pe_tensor.tensor->nb[1];
++    auto window = ggml_view_2d(
++        bf_ctx.ctx, pe_tensor.tensor, pe_tensor.tensor->ne[0], 2 * frames - 1,
++        pe_tensor.tensor->nb[1], offset);
++
++    ggml_runtime::TensorBag out;
++    for (int l = 0; l < cfg_.n_layers; l++) {
++        const std::string attention = name_ + ".layers." + std::to_string(l) + ".self_attn";
++        const std::string table_name =
++            ggml_runtime::RelPositionMultiHeadAttention::pos_table_name_for(attention);
++        if (!session->model_tensor_container->has_tensor_by_name(table_name))
++            continue;
++        auto wp = session->model_tensor_container->get_tensor_by_name(
++            attention + ".linear_pos.weight");
++        auto table = session->model_tensor_container->get_tensor_by_name(table_name);
++        auto store =
++            ggml_cpy(bf_ctx.ctx, ggml_mul_mat(bf_ctx.ctx, wp.tensor, window), table.tensor);
++        out.add_tensor(ggml_runtime::ggml_bf_tensor(store, table.buft));
++    }
++    return out;
++}
++
+ void
+ FastConformerEncoder::define_tensors(ggml_runtime::Session* session) {
+     pre_encode_->define_tensors(session);
 diff --git a/src/asr/encoder/fastconformer.h b/src/asr/encoder/fastconformer.h
-index e21b860..e44391b 100644
+index e21b860..49c01c4 100644
 --- a/src/asr/encoder/fastconformer.h
 +++ b/src/asr/encoder/fastconformer.h
-@@ -165,6 +165,12 @@ class SubSampling : public ggml_runtime::Module {
+@@ -48,6 +48,9 @@ struct EncoderConfig {
+     int subsampling_conv_channels = 256;
+     int feat_in = 80;  // mel bins
+     int pos_emb_max_len = 5000;
++    // Frames the offline positional tables cover: 30.7 s of audio, at 37.7 MB over 24 layers of
++    // d_model 1024. Longer inputs project their own window.
++    int offline_pos_table_frames() const { return pos_emb_max_len < 384 ? pos_emb_max_len : 384; }
+     bool xscaling = true;
+     bool use_bias = true;
+ 
+@@ -165,6 +168,12 @@ class SubSampling : public ggml_runtime::Module {
      void set_data(ggml_runtime::Session* session) override;
  
     private:
@@ -237,7 +295,7 @@ index e21b860..e44391b 100644
      std::string name_;
      EncoderConfig cfg_;
      ggml_runtime::SequenceModule* conv_;
-@@ -233,6 +239,14 @@ class ConformerConv : public ggml_runtime::Module {
+@@ -233,6 +242,14 @@ class ConformerConv : public ggml_runtime::Module {
      int kernel_size() const { return kernel_size_; }
  
     private:
@@ -252,8 +310,19 @@ index e21b860..e44391b 100644
      std::string name_;
      int d_model_;
      int kernel_size_;
+@@ -385,6 +402,10 @@ class FastConformerEncoder : public ggml_runtime::Module {
+     std::string dw_ct_name(int layer) const;
+     ggml_runtime::TensorBag build_precompute_graph(
+         ggml_runtime::Session* session, ggml_runtime::TensorContainer* tc);
++    // Offline GPU sessions fill every layer's positional table in one run, triggered by an input
++    // named kPrecomputeTrigger right after setup.
++    ggml_runtime::TensorBag build_pos_table_graph(
++        ggml_runtime::Session* session, ggml_runtime::TensorContainer* tc);
+ 
+    private:
+     std::string name_;
 diff --git a/src/asr/encoder/rel_pos_attention.cpp b/src/asr/encoder/rel_pos_attention.cpp
-index f7fceda..af67384 100644
+index f7fceda..06197b5 100644
 --- a/src/asr/encoder/rel_pos_attention.cpp
 +++ b/src/asr/encoder/rel_pos_attention.cpp
 @@ -6,6 +6,7 @@
@@ -264,7 +333,72 @@ index f7fceda..af67384 100644
  #include "rel_pos_attention.h"
  
  #include <ggml-backend.h>
-@@ -271,10 +272,21 @@ RelPositionMultiHeadAttention::build_graph_masked(
+@@ -133,8 +134,18 @@ RelPositionalEncoding::set_data(Session* session) {
+ }
+ 
+ 
++bool
++RelPositionMultiHeadAttention::uses_pos_table(Session* session) const {
++    static const bool per_input = std::getenv("NEMO_SPEECH_LEGACY_POS_PROJECTION") != nullptr;
++    return pos_table_frames > 0 && session->params.use_gpu && !per_input;
++}
++
+ void
+ RelPositionMultiHeadAttention::define_tensors(Session* session) {
++    if (uses_pos_table(session)) {
++        session->model_tensor_container->create_tensor_2d(
++            pos_table_name, GGML_TYPE_F16, n_feat, 2 * pos_table_frames - 1);
++    }
+     session->model_tensor_container->create_tensor_4d(
+         pos_bias_u_name, GGML_TYPE_F32, d_k, n_head, 1, 1);
+     session->model_tensor_container->create_tensor_4d(
+@@ -205,19 +216,32 @@ RelPositionMultiHeadAttention::build_graph_masked(
+         v_reshaped = slice(2);
+     }
+ 
+-    auto linear_pos_input_bag = TensorBag();
+-    // Keep pos_len in ne[1] (not a singleton-padded ne[2]) so the projection
+-    // dispatches as one GEMM over pos_len columns rather than a per-position
+-    // batched GEMV. Same memory layout; only the mul_mat path changes.
+-    auto pos_emb_reshaped = ggml_reshape_4d(
+-        bf_ctx.ctx, pos_emb_tensor.tensor, pos_emb_tensor.tensor->ne[0],
+-        pos_emb_tensor.tensor->ne[1], pos_emb_tensor.tensor->ne[2], 1);
+-    linear_pos_input_bag.add_tensor(ggml_bf_tensor(pos_emb_reshaped, bf_ctx.buft));
+-    auto pos_linear_out =
+-        linear_pos->build_graph(session, linear_pos_input_bag, session_tensor_container);
+-    auto pos_linear_out_tensor = pos_linear_out.get_tensor(0);
+-    auto p = ggml_reshape_3d(
+-        bf_ctx.ctx, pos_linear_out_tensor.tensor, d_k, n_head, pos_linear_out_tensor.tensor->ne[1]);
++    ggml_tensor* p = nullptr;
++    // The table holds the same matrix-matrix product, and the position product below takes the
++    // matrix-matrix kernel for F16 or F32 alike, which rounds its input to half either way. Both
++    // need more than 8 columns, so shorter inputs keep the in-graph projection.
++    if (uses_pos_table(session) && qlen > 8 && qlen <= pos_table_frames) {
++        ggml_tensor* table =
++            session->model_tensor_container->get_tensor_by_name(pos_table_name).tensor;
++        p = ggml_view_3d(
++            bf_ctx.ctx, table, d_k, n_head, 2 * qlen - 1, d_k * ggml_element_size(table),
++            table->nb[1], static_cast<size_t>(pos_table_frames - qlen) * table->nb[1]);
++    } else {
++        auto linear_pos_input_bag = TensorBag();
++        // Keep pos_len in ne[1] (not a singleton-padded ne[2]) so the projection
++        // dispatches as one GEMM over pos_len columns rather than a per-position
++        // batched GEMV. Same memory layout; only the mul_mat path changes.
++        auto pos_emb_reshaped = ggml_reshape_4d(
++            bf_ctx.ctx, pos_emb_tensor.tensor, pos_emb_tensor.tensor->ne[0],
++            pos_emb_tensor.tensor->ne[1], pos_emb_tensor.tensor->ne[2], 1);
++        linear_pos_input_bag.add_tensor(ggml_bf_tensor(pos_emb_reshaped, bf_ctx.buft));
++        auto pos_linear_out =
++            linear_pos->build_graph(session, linear_pos_input_bag, session_tensor_container);
++        auto pos_linear_out_tensor = pos_linear_out.get_tensor(0);
++        p = ggml_reshape_3d(
++            bf_ctx.ctx, pos_linear_out_tensor.tensor, d_k, n_head,
++            pos_linear_out_tensor.tensor->ne[1]);
++    }
+ 
+     ggml_bf_tensor pos_bias_u_tensor =
+         session->model_tensor_container->get_tensor_by_name(pos_bias_u_name);
+@@ -271,10 +295,21 @@ RelPositionMultiHeadAttention::build_graph_masked(
          // Every reshape and view must retain the B stride.
          const int64_t T = input_tensor.tensor->ne[1];
          const int64_t B = input_tensor.tensor->ne[2];
@@ -290,7 +424,7 @@ index f7fceda..af67384 100644
          auto bu = ggml_reshape_4d(bf_ctx.ctx, pos_bias_u_tensor.tensor, d_k, 1, n_head, 1);
          auto bv = ggml_reshape_4d(bf_ctx.ctx, pos_bias_v_tensor.tensor, d_k, 1, n_head, 1);
          auto qu = ggml_add(bf_ctx.ctx, qh, bu);
-@@ -283,7 +295,15 @@ RelPositionMultiHeadAttention::build_graph_masked(
+@@ -283,7 +318,15 @@ RelPositionMultiHeadAttention::build_graph_masked(
          auto matrix_ac = ggml_mul_mat(bf_ctx.ctx, kh, qu);  // [T,T,H,B]
          auto matrix_bd = ggml_mul_mat(bf_ctx.ctx, ph, qv);  // [2T-1,T,H,B]
  
@@ -307,7 +441,7 @@ index f7fceda..af67384 100644
          auto first_row = ggml_view_4d(
              bf_ctx.ctx, matrix_bd, 1, T, n_head, B, matrix_bd->nb[1], matrix_bd->nb[2],
              matrix_bd->nb[3], 0);
-@@ -299,6 +319,7 @@ RelPositionMultiHeadAttention::build_graph_masked(
+@@ -299,6 +342,7 @@ RelPositionMultiHeadAttention::build_graph_masked(
              bf_ctx.ctx, matrix_bd, T, T, n_head, B, matrix_bd->nb[1], matrix_bd->nb[2],
              matrix_bd->nb[3], 0);
          matrix_bd = ggml_cont(bf_ctx.ctx, matrix_bd);
@@ -315,11 +449,73 @@ index f7fceda..af67384 100644
  
          auto scores = ggml_scale_inplace(
              bf_ctx.ctx, ggml_add(bf_ctx.ctx, matrix_ac, matrix_bd), scale_factor);
+diff --git a/src/asr/encoder/rel_pos_attention.h b/src/asr/encoder/rel_pos_attention.h
+index e20ef0d..ebb61ed 100644
+--- a/src/asr/encoder/rel_pos_attention.h
++++ b/src/asr/encoder/rel_pos_attention.h
+@@ -40,10 +40,19 @@ class RelPositionalEncoding : public Module {
+ 
+ class RelPositionMultiHeadAttention : public Module {
+    public:
++    // A positive `pos_table_frames` gives a GPU session a table of linear_pos over the central
++    // positional window for inputs of up to that many frames, filled once at load (see
++    // pos_table_name), so each input slices it instead of projecting its own window.
+     RelPositionMultiHeadAttention(
+-        const std::string& name, int n_head, int n_feat, bool use_bias = true)
+-        : name(name), n_head(n_head), n_feat(n_feat), use_bias(use_bias) {
++        const std::string& name, int n_head, int n_feat, bool use_bias = true,
++        int pos_table_frames = 0)
++        : name(name),
++          n_head(n_head),
++          n_feat(n_feat),
++          use_bias(use_bias),
++          pos_table_frames(pos_table_frames) {
+         d_k = n_feat / n_head;
++        pos_table_name = this->name + ".pos_table";
+         pos_bias_u_name = this->name + ".pos_bias_u";
+         pos_bias_v_name = this->name + ".pos_bias_v";
+ 
+@@ -77,8 +86,16 @@ class RelPositionMultiHeadAttention : public Module {
+         ggml_tensor* attn_mask);
+     void set_data(Session* session) override;
+ 
++    // F16 [n_feat, 2 * pos_table_frames - 1]: linear_pos over the pe rows centered on max_len.
++    static std::string pos_table_name_for(const std::string& attention_name) {
++        return attention_name + ".pos_table";
++    }
++
+    private:
++    bool uses_pos_table(Session* session) const;
++
+     std::string name;
++    std::string pos_table_name;
+     std::string pos_bias_u_name;
+     std::string pos_bias_v_name;
+     std::string qkv_weight_name;
+@@ -87,6 +104,7 @@ class RelPositionMultiHeadAttention : public Module {
+     int n_feat;
+     int d_k;
+     bool use_bias;
++    int pos_table_frames;
+     Linear* linear_out;
+     Linear* linear_pos;
+ };
 diff --git a/src/asr/model.cpp b/src/asr/model.cpp
-index cac4953..77ef286 100644
+index cac4953..664cb08 100644
 --- a/src/asr/model.cpp
 +++ b/src/asr/model.cpp
-@@ -1628,8 +1628,16 @@ RnntModel::RnntModel(ggml_runtime::BackendManager& bm, Common&& c, const Batchin
+@@ -151,6 +151,10 @@ class RnntModel::OfflineEncoderRoot : public ggml_runtime::Module {
+     ggml_runtime::TensorBag build_graph(
+         ggml_runtime::Session* s, ggml_runtime::TensorBag input,
+         ggml_runtime::TensorContainer* tc) override {
++        if (std::string(input.get_tensor(0).tensor->name) ==
++            FastConformerEncoder::kPrecomputeTrigger) {
++            return encoder_->build_pos_table_graph(s, tc);
++        }
+         auto enc = encoder_->build_graph(s, input, tc);
+         ggml_runtime::TensorBag tail_input;
+         tail_input.add_tensor(enc.get_tensor(0));
+@@ -1628,8 +1632,16 @@ RnntModel::RnntModel(ggml_runtime::BackendManager& bm, Common&& c, const Batchin
      rnnt_encoder_tail_ = std::make_unique<RnntEncoderTail>(rnnt_joint_.get(), prompt_fusion_.get());
      rnnt_decoder_stages_ = std::make_unique<RnntDecoderStages>(
          rnnt_predictor_.get(), rnnt_joint_.get(), decoder_arena_slots_);
@@ -337,7 +533,21 @@ index cac4953..77ef286 100644
      // Bound graph variants across predictor batch and joint time shapes.
      decoder_session_->set_run_cache_capacity(64);
      decoder_session_->setup();
-@@ -1965,7 +1973,7 @@ RnntModel::zero_decoder_slots(std::vector<int> slots) {
+@@ -1687,6 +1699,13 @@ RnntModel::ensure_offline_path() {
+     offline_encoder_session_->set_weight_load_hook(planar_q8_weight_load_hook());
+     offline_encoder_session_->set_run_cache_capacity(16);
+     offline_encoder_session_->setup();
++    if (offline_encoder_session_->params.use_gpu) {
++        float trigger = 0.0f;
++        std::vector<ggml_runtime::Session::Input> inputs = {
++            {FastConformerEncoder::kPrecomputeTrigger, GGML_TYPE_F32, &trigger, {1}}};
++        std::vector<ggml_runtime::Session::Output> outputs;
++        offline_encoder_session_->run(inputs, outputs);
++    }
+     offline_encoder_batcher_ = std::make_unique<OfflineEncoderBatcher>(this, batching_cfg_);
+ }
+ 
+@@ -1965,7 +1984,7 @@ RnntModel::zero_decoder_slots(std::vector<int> slots) {
          return;
      std::sort(slots.begin(), slots.end());
      slots.erase(std::unique(slots.begin(), slots.end()), slots.end());
@@ -438,7 +648,7 @@ index 0d6004d..9c7b02f 100644
          output->push_back(filtered_sample(source_index_, phase_index()));
          ++next_output_;
 diff --git a/src/runtime/ggml/backend.cpp b/src/runtime/ggml/backend.cpp
-index 886648a..e2c6e76 100644
+index 886648a..f6bd9b9 100644
 --- a/src/runtime/ggml/backend.cpp
 +++ b/src/runtime/ggml/backend.cpp
 @@ -10,6 +10,8 @@
@@ -450,7 +660,22 @@ index 886648a..e2c6e76 100644
  namespace ggml_runtime {
  
  BackendManager::BackendManager(Params params) {
-@@ -99,6 +101,15 @@ BackendManager::init_backends() {
+@@ -29,6 +31,14 @@ BackendManager::init_backends() {
+         putenv(kv);
+     }
+ #endif  // GGML_USE_VULKAN
++#if defined(GGML_USE_METAL)
++    // Metal's graph optimization reorders nodes for concurrency. These graphs are chains, so it only
++    // adds planning to every new input length; respect user overrides.
++    if (std::getenv("GGML_METAL_GRAPH_OPTIMIZE_DISABLE") == nullptr) {
++        static char kv[] = "GGML_METAL_GRAPH_OPTIMIZE_DISABLE=1";
++        putenv(kv);
++    }
++#endif  // GGML_USE_METAL
+ 
+     ggml_time_init();
+ 
+@@ -99,6 +109,15 @@ BackendManager::init_backends() {
          throw std::runtime_error("failed to initialize CPU backend");
      }
      GGMLF_LOG_INFO("Using CPU backend\n");
@@ -466,7 +691,7 @@ index 886648a..e2c6e76 100644
      backends.emplace_back(backend_cpu);
  
      auto* cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
-@@ -129,7 +140,13 @@ BackendManager::get_backends() {
+@@ -129,7 +148,13 @@ BackendManager::get_backends() {
      return handles;
  }
  

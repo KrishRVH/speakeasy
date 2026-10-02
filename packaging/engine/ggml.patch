@@ -10,6 +10,23 @@ index 4aac509..71c9753 100644
  set   (GGML_METAL_MACOSX_VERSION_MIN "" CACHE STRING
                                              "ggml: metal minimum macOS version")
  set   (GGML_METAL_STD "" CACHE STRING       "ggml: metal standard version (-std flag)")
+diff --git a/src/ggml-alloc.c b/src/ggml-alloc.c
+index 3bda9ab..917d8ed 100644
+--- a/src/ggml-alloc.c
++++ b/src/ggml-alloc.c
+@@ -428,6 +428,12 @@ static struct vbuffer * ggml_vbuffer_alloc(ggml_backend_buffer_type_t buft, cons
+ 
+     for (int n = 0; n < talloc->n_chunks; n++) {
+         size_t chunk_size = talloc->chunks[n]->max_size;
++        if (usage == GGML_BACKEND_BUFFER_USAGE_COMPUTE) {
++            // Growth leaves a quarter of headroom, so a graph slightly larger than the largest yet
++            // reuses this buffer instead of reallocating it and invalidating every placement in it.
++            const size_t padded = GGML_PAD(chunk_size + chunk_size / 4, 1 << 20);
++            chunk_size = MAX(chunk_size, MIN(padded, ggml_backend_buft_get_max_size(buft)));
++        }
+         buf->chunks[n] = ggml_backend_buft_alloc_buffer(buft, chunk_size);
+         if (buf->chunks[n] == NULL) {
+             ggml_vbuffer_free(buf);
 diff --git a/src/ggml-metal/CMakeLists.txt b/src/ggml-metal/CMakeLists.txt
 index 42054d8..2ea90a3 100644
 --- a/src/ggml-metal/CMakeLists.txt
@@ -49,6 +66,25 @@ index 42054d8..2ea90a3 100644
      target_sources(ggml-metal PRIVATE "${METALLIB_EMBED_ASM}")
  else()
      # copy metal files to bin directory
+diff --git a/src/ggml-metal/ggml-metal-context.m b/src/ggml-metal/ggml-metal-context.m
+index 32d97cd..d9a0c9f 100644
+--- a/src/ggml-metal/ggml-metal-context.m
++++ b/src/ggml-metal/ggml-metal-context.m
+@@ -239,7 +239,13 @@ const char * ggml_metal_get_name(ggml_metal_t ctx) {
+ void ggml_metal_synchronize(ggml_metal_t ctx) {
+     // wait for any backend operations to finish
+     if (ctx->cmd_buf_last) {
+-        [ctx->cmd_buf_last waitUntilCompleted];
++        // Polling instead of sleeping keeps this thread running, and with it the CPU cluster's clock
++        // up, while the GPU works: the CPU steps that follow a graph otherwise run on cores that
++        // clocked down during the wait, which after an idle gap costs more than the GPU's own ramp.
++        // WFE idles the core between checks, at well under half a busy spin's energy.
++        while ([ctx->cmd_buf_last status] < MTLCommandBufferStatusCompleted) {
++            __asm__ __volatile__("wfe");
++        }
+         ctx->cmd_buf_last = nil;
+     }
+ 
 diff --git a/src/ggml-metal/ggml-metal-device.cpp b/src/ggml-metal/ggml-metal-device.cpp
 index e288a27..f37b90e 100644
 --- a/src/ggml-metal/ggml-metal-device.cpp

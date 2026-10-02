@@ -6,6 +6,8 @@ locale = "en-us"
 [default.extend-words]
 # Emulated Input Server is the native portal/libei interface name.
 EIS = "EIS"
+# ggml names its copy operation `ggml_cpy`, which the engine patches call.
+cpy = "cpy"
 
 [files]
 extend-exclude = ["vendor", "target", "artifacts", ".scratch", ".venv", "node_modules", "Cargo.lock", "bun.lock", "uv.lock", ".config/mise/mise.lock"]

@@ -62,11 +62,18 @@ on every fixture:
   source, and Speakeasy's build in 0.7 s; warm restarts take 0.14–0.16 s with either.
 - Feed-forward matrix products are now about half of the encoder; the TDT decoder's CPU steps are
   bandwidth-bound at about 0.13 ms each.
-- After 30–200 s of idle the GPU clocks down, and the 10-second fixture takes 93–111 ms instead of
-  about 60 ms. A press-time primer 1.5 s before the request did not help (93–102 ms); a primer every
-  50 ms while speaking recovered half the penalty at roughly 40% GPU duty, so neither is adopted.
-  Idle gaps of 30 s and 200 s cost about the same although ggml keeps residency sets for 180 s,
-  which points at clock-down rather than residency; the keep-alive itself was not varied.
+- Most of the slowdown after idle is the CPU, not the GPU: its frontend and decoder steps run on
+  clocked-down cores while the caller sleeps through each GPU wait. Polling for GPU completion with
+  `WFE` keeps the cluster's clock up and takes the 11 s fixture after 3 s idle from 117 to 85 ms and
+  the 5 s fixture from 80 to 59 ms, for about 0.14 J of CPU energy per request against 0.36 J for a
+  busy spin; warm requests are unchanged. GPU primers before or during speech did not help enough to
+  adopt.
+- Speakeasy's engine build `e8fbd53f337b` also projects the positional window once per layer at
+  load, grows compute buffers with a quarter of headroom, and turns off Metal graph optimization for
+  these chain-shaped graphs: warm requests take 35.5, 53.1, 60.0, and 148.8 ms for the 5, 10, 11,
+  and 30 s fixtures, 5–6% less than `39df496c40ef`, with identical hashes. Forty requests from 2 to
+  9.8 s, each the longest yet, cost 1743 ms with exact-size buffers and graph optimization, 1688 ms
+  with headroom, and 1658 ms without optimization, as fast as the same lengths in decreasing order.
 - Segmented recognition at pauses with at least 20 s per segment kept every word of the 30 s and 52
   s fixtures and lowered 290 s WER from 3.28% to 1.88% under lowercase, punctuation-free scoring,
   with ten comma or capitalization differences at segment boundaries reviewed by hand. The 290 s
@@ -74,10 +81,11 @@ on every fixture:
   total work falls from 2.6 to 1.7 s.
 - Held dictation, replayed in real time through capture's speech tracking with 2 s between
   dictations: the 0.3.3 path (NVIDIA's engine, no held speculation) takes 113–157 ms from release to
-  insertion at 300 ms after the last word. With speculation at 100, 200, and 500 ms of quiet and
-  capture waking when each mark falls due, the 11 s JFK fixture takes 105, 58, and 0.1 ms when
-  released 100, 150, and 200 ms after its last word, and 0.1–0.3 ms from 250 ms; 5 and 10 s fixtures
-  take 0.0–16 ms at 150 ms and 0.1 ms from 200 ms. A text taken from a pause is what a release at
+  insertion at 300 ms after the last word. With engine `e8fbd53f337b`, speculation at 100, 200, and
+  500 ms of quiet, and capture woken by the audio callback when each mark falls due, the 11 s JFK
+  fixture takes 79–82, 31–33, and 0.1 ms when released 100, 150, and 200 ms after its last word; 5
+  and 10 s fixtures take 0.1 and 18 ms at 150 ms and 0.1 ms from 200 ms. Without speculation the
+  same fixtures take 92.5, 63.5, and 85 ms at 300 ms. A text taken from a pause is what a release at
   that pause would have inserted. Each pause of 100 ms or more costs a recognition of the audio so
   far: LibriSpeech's 5, 10, and 30 s fixtures trigger 7, 6, and 32 instead of one request.
 - Under a process-wide background clamp an 11 s recognition takes 141 ms instead of 63 ms, and 2 ms
@@ -98,9 +106,6 @@ on every fixture:
   quiet. A release taking the 100 ms pause's text can lack a final period that 200–300 ms of quiet
   would have produced: 152, 163, and 168 of 200 end in punctuation at 100, 200, and 300 ms.
 - The first request after a 1 s or a 10 s warmup costs at most 4 ms more than later ones.
-- After 2 s idle, an 11 s recognition takes 121 ms instead of 66 ms warm; 140 ms of continuous small
-  requests first brings it to 75 ms. The 100 ms speculation mark serves as that warm-up for the 200
-  ms one.
 - parakeet-mlx (MLX, bf16 or f16) took 51, 74, 113, 296, 464, and 3390 ms for 1.3, 5, 10, 30, 52,
   and 290 s: slower than this build at every length.
 - NVIDIA's Parakeet v3 in Core ML (FluidAudio, int8 encoder) on the Neural Engine took 33, 44, 53,
