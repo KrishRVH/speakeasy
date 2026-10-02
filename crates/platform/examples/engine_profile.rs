@@ -11,7 +11,8 @@
 //! ```
 //!
 //! Each fixture prints one JSON line of timings, never its transcript: the word count and an
-//! FNV-1a hash of the normalized words let paths be compared for identical output.
+//! FNV-1a hash of the text, with whitespace collapsed as the app inserts it, let routes be compared
+//! for identical output.
 //! `--warmup SECONDS` sets the silent warmup's length (the app uses one second), and
 //! `--idle SECONDS` waits before every request, to expose GPU residency or power-state costs
 //! that back-to-back requests hide. `--prime MILLISECONDS` then sends a tenth of a second of
@@ -22,7 +23,7 @@ use std::{
     env,
     io::{BufRead, BufReader, Read, Write},
     net::TcpStream,
-    path::PathBuf,
+    path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
 };
@@ -133,7 +134,7 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn read(path: &PathBuf) -> anyhow::Result<Self> {
+    fn read(path: &Path) -> anyhow::Result<Self> {
         let bytes = std::fs::read(path)?;
         ensure!(
             bytes.get(..4) == Some(b"RIFF") && bytes.get(8..12) == Some(b"WAVE"),
@@ -192,13 +193,13 @@ impl Fixture {
     }
 }
 
-/// A warm recognition path.
-enum Path {
+/// A warm recognition route.
+enum Route {
     InProcess(Recognizer),
     Http(Client),
 }
 
-impl Path {
+impl Route {
     fn open(engine: Engine) -> anyhow::Result<Self> {
         Ok(match engine {
             Engine::InProcess {
@@ -223,12 +224,12 @@ impl Path {
 fn main() -> anyhow::Result<()> {
     let arguments = Arguments::parse()?;
     let started = Instant::now();
-    let mut path = Path::open(arguments.engine)?;
+    let mut route = Route::open(arguments.engine)?;
     let load = started.elapsed();
     let silence = Fixture::silence(16_000_u32.saturating_mul(arguments.warmup))?;
     let primer = Fixture::silence(1_600)?;
     let started = Instant::now();
-    path.transcribe(&silence)?;
+    route.transcribe(&silence)?;
     println!(
         r#"{{"event":"ready","load_ms":{:.3},"warmup_ms":{:.3}}}"#,
         milliseconds(load),
@@ -241,15 +242,15 @@ fn main() -> anyhow::Result<()> {
         for _ in 0..arguments.repetitions {
             thread::sleep(arguments.idle);
             if let Some(speaking) = arguments.prime {
-                path.transcribe(&primer)?;
+                route.transcribe(&primer)?;
                 thread::sleep(speaking);
             }
             let started = Instant::now();
-            let text = path.transcribe(&fixture)?;
+            let text = route.transcribe(&fixture)?;
             runs.push(milliseconds(started.elapsed()));
-            output.get_or_insert_with(|| Normalized::of(&text));
+            output.get_or_insert_with(|| Digest::of(&text));
         }
-        let Normalized { words, hash } = output.context("--repetitions must be positive")?;
+        let Digest { words, hash } = output.context("--repetitions must be positive")?;
         let runs = runs
             .iter()
             .map(|run| format!("{run:.3}"))
@@ -365,25 +366,17 @@ fn silent_wav(samples: u32) -> anyhow::Result<Vec<u8>> {
     Ok(wav)
 }
 
-/// Lowercase alphanumeric words, so harmless spacing differences between paths compare equal.
-struct Normalized {
+/// A transcript's word count and hash, never its text. Whitespace collapses as the app inserts it,
+/// so only differences an editor would receive change the hash.
+struct Digest {
     words: usize,
     hash: u64,
 }
 
-impl Normalized {
+impl Digest {
     fn of(text: &str) -> Self {
-        let words = text
-            .split_whitespace()
-            .map(|word| {
-                word.chars()
-                    .filter(|character| character.is_alphanumeric())
-                    .flat_map(char::to_lowercase)
-                    .collect::<String>()
-            })
-            .filter(|word| !word.is_empty())
-            .collect::<Vec<_>>();
-        // FNV-1a over the space-joined words: stable across runs, toolchains, and languages.
+        let words = text.split_whitespace().collect::<Vec<_>>();
+        // FNV-1a: stable across runs and toolchains, unlike the standard library's hasher.
         let hash = words
             .join(" ")
             .bytes()
