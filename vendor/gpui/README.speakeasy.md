@@ -27,9 +27,7 @@ The source patches cover native windows, frame scheduling, and path resources:
 - `src/platform/windows/vsync.rs` and `vsync/interval.rs` convert timing
   fractions without truncating the frequency, and reject invalid intervals
   through the existing 60 Hz fallback. Valid reduced refresh ratios must not
-  divide by zero or terminate the redraw thread. The portable integration
-  test in `crates/app/tests/gpui_timing.rs` exercises this production helper
-  on every host.
+  divide by zero or terminate the redraw thread.
 - `src/platform/mac/display_link.rs` and `mac/window.rs` backport
   [zed commit 96ce8f2a05f8912851e5d20d808fe21f4134bd45](https://github.com/zed-industries/zed/commit/96ce8f2a05f8912851e5d20d808fe21f4134bd45)
   ([PR #60696](https://github.com/zed-industries/zed/pull/60696)). One registry
@@ -58,13 +56,9 @@ The source patches cover native windows, frame scheduling, and path resources:
   The matching media requirement is documented in the
   [media compatibility patch](../gpui_media/README.speakeasy.md).
 
-The Linux native pill tests and `scripts/check_demo_linux.py` exercise real
-windows in a private X server without microphone, shortcut, or clipboard access.
-They verify initial visibility, delayed rendering, and hidden display disconnect.
 The opt-in `check_native_rendering` example runs on the process main thread and
-exercises SVG and path scenes, resizing, repeated visibility, and disposal.
-Linux verifies actual SVG and path pixels; Windows and macOS verify native
-render callbacks without pixel assertions.
+exercises SVG and path scenes, resizing, repeated visibility, and disposal,
+verifying native render callbacks without pixel assertions.
 
 The root `[patch.crates-io]` selects this directory, which is excluded from the
 workspace. Remove the override and this directory when a compatible published

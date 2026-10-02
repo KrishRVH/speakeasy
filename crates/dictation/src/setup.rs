@@ -1257,7 +1257,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Downloads about 0.8 GB; requires SPEAKEASY_FIXTURE_WAV (whisper.cpp samples/jfk.wav) and optionally SPEAKEASY_FIXTURE_ENGINE (a scripts/build-engine.sh build)"]
+    #[ignore = "Downloads about 0.8 GB; requires SPEAKEASY_FIXTURE_WAV (whisper.cpp samples/jfk.wav), SPEAKEASY_FIXTURE_HELPER (a built speakeasy binary), and optionally SPEAKEASY_FIXTURE_ENGINE (a scripts/build-engine.sh build)"]
     async fn install_chooses_an_engine_that_recognizes_fixture_speech() -> anyhow::Result<()> {
         let wav = fs::read(std::env::var("SPEAKEASY_FIXTURE_WAV")?)?;
         let bundled = std::env::var_os("SPEAKEASY_FIXTURE_ENGINE").map(PathBuf::from);

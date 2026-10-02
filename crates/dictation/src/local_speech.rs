@@ -121,7 +121,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore = "Requires SPEAKEASY_FIXTURE_CONFIG and SPEAKEASY_FIXTURE_WAV (whisper.cpp samples/jfk.wav)"]
+    #[ignore = "Requires SPEAKEASY_FIXTURE_CONFIG, SPEAKEASY_FIXTURE_WAV (whisper.cpp samples/jfk.wav), and for Parakeet SPEAKEASY_FIXTURE_HELPER"]
     async fn local_worker_recognizes_fixture_and_stops() -> anyhow::Result<()> {
         let config = Config::load(Path::new(&std::env::var("SPEAKEASY_FIXTURE_CONFIG")?))?;
         let wav = std::fs::read(std::env::var("SPEAKEASY_FIXTURE_WAV")?)?;

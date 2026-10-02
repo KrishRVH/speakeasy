@@ -173,7 +173,7 @@ async fn wait_for_phase(
 }
 
 #[tokio::test]
-#[ignore = "Profiles real local inference; requires SPEAKEASY_FIXTURE_CONFIG and SPEAKEASY_FIXTURE_WAV"]
+#[ignore = "Profiles real local inference; requires SPEAKEASY_FIXTURE_CONFIG, SPEAKEASY_FIXTURE_WAV, and for Parakeet SPEAKEASY_FIXTURE_HELPER"]
 async fn profile_fixture_dictation() -> anyhow::Result<()> {
     let config = Config::load(Path::new(&std::env::var("SPEAKEASY_FIXTURE_CONFIG")?))?;
     let wav = std::fs::read(std::env::var("SPEAKEASY_FIXTURE_WAV")?)?;
@@ -220,7 +220,7 @@ async fn profile_fixture_dictation() -> anyhow::Result<()> {
 /// `SPEAKEASY_FIXTURE_NO_SPECULATION` turns pause speculation off, so each recording makes its own
 /// request.
 #[tokio::test]
-#[ignore = "Profiles real local inference in real time; requires SPEAKEASY_FIXTURE_CONFIG and SPEAKEASY_FIXTURE_WAV"]
+#[ignore = "Profiles real local inference in real time; requires SPEAKEASY_FIXTURE_CONFIG, SPEAKEASY_FIXTURE_WAV, and for Parakeet SPEAKEASY_FIXTURE_HELPER"]
 async fn profile_held_dictation() -> anyhow::Result<()> {
     let config = Config::load(Path::new(&std::env::var("SPEAKEASY_FIXTURE_CONFIG")?))?;
     let wav = std::fs::read(std::env::var("SPEAKEASY_FIXTURE_WAV")?)?;

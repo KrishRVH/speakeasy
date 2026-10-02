@@ -78,8 +78,7 @@ property tests for generated boundary inputs and commit proptest regression seed
 Default tests use fakes or public fixtures. They must not record live microphone audio, install a
 global hook, or modify the user's clipboard or focused app. `--demo` is simulated. Native
 microphone/input/clipboard acceptance requires explicit opt-in; report it separately from mocked
-checks. Owned-window rendering checks run on private or native displays without microphone or input
-access.
+checks. Owned-window rendering checks run on native displays without microphone or input access.
 
 Get an independent read-only agent review for nontrivial behavior or architecture changes. Verify
 findings with source evidence or a regression test. One writer owns one worktree; reviewers stay

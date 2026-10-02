@@ -2,8 +2,7 @@
 
 The [draft PRD](apple-silicon-prd.md) freezes the feature and performance comparison at released
 Speakeasy **0.3.3**, tag `v0.3.3`, commit `f30791273cc4130c2073077df703794263a675a0`. The
-`high-perf-macos` branch carries these notes on that release's code. Future fork changes belong to
-the candidate; keep the control checkout at the frozen commit.
+`high-perf-macos` branch carries the candidate; keep the control checkout at the frozen commit.
 
 ## Released 0.3.3 evidence and remaining baseline work
 

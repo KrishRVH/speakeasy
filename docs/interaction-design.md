@@ -68,7 +68,10 @@ frames; capture uses a timer for its clock and recording-limit cue.
 Configured native launches stay in the menu bar. First setup and invalid configuration open
 Settings. A fresh install sets itself up there: a card names each step with its progress, **Cancel**
 pauses and later resumes, and completion enables dictation. The manual engine controls stay hidden
-while setup runs.
+while setup runs. While a configuration that automatic setup made runs a different engine build than
+the app carries, Settings offers **A faster speech engine is ready** with **Install it**, which
+installs the bundled build and keeps the model; a manually chosen engine is never offered a
+replacement.
 
 Close hides the existing window, preserving edits; minimize retains normal Dock behavior. Relaunch
 and the menu's Settings action reveal the same window. A brief first-hide hint explains the menu bar
@@ -95,8 +98,8 @@ are unsaved edits.
 - Insertion does not steal focus. OS submission is the observable result; success in every editor
   cannot be inferred from submitting keystrokes.
 - Settings exposes automatic setup, manual engine/model selection, microphone selection, language
-  where applicable, GPU preference, clipboard preservation, reduced motion, and theme. Errors remain
-  visible there after the pill notice ends.
+  where applicable, GPU preference, filler removal, clipboard preservation, reduced motion, and
+  theme. Errors remain visible there after the pill notice ends.
 
 ## Acceptance
 

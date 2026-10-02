@@ -1,10 +1,10 @@
 # Speakeasy Apple silicon fork experiment: draft PRD
 
 Status: in progress, updated 2026-10-02 UTC. Target: Apple silicon Macs, macOS 14.0 or later. The
-`high-perf-macos` branch is a macOS-only optimization fork that never merges into `main`. It keeps
-the features and interaction of released Speakeasy 0.3.3 at
-`f30791273cc4130c2073077df703794263a675a0` (tag `v0.3.3`) and has removed the Windows and Linux
-adapters, packaging, and checks. It does not authorize publishing a release.
+`high-perf-macos` branch is a macOS-only optimization fork. It keeps the features and interaction of
+released Speakeasy 0.3.3 at `f30791273cc4130c2073077df703794263a675a0` (tag `v0.3.3`) and has
+removed the Windows and Linux adapters, packaging, and checks. It does not authorize publishing a
+release.
 
 For this target, this document owns product requirements, performance decisions, and completion
 gates. [Interaction design](interaction-design.md) owns exact visual and gesture behavior;
@@ -42,10 +42,10 @@ remains experimental until the relevant gate passes.
 
 ## Status and next gates
 
-The fork has removed Windows and Linux, extracted the GPUI-free service into `crates/dictation`, and
-implemented these candidates. The full gate passes on GitHub's `macos-15` runner, including the app
-build, tests, the owned-window rendering check, and packaging. None has been measured with a
-microphone or a person, so each remains experimental under this PRD.
+The fork has extracted the GPUI-free service into `crates/dictation` and implemented these
+candidates. The full gate passes on GitHub's `macos-15` runner, including the app build, tests, the
+owned-window rendering check, and packaging. None has been measured with a microphone or a person,
+so each remains experimental under this PRD.
 
 Engine measurements on an M4 Pro Mac mini (24 GB, macOS 27, warm, q8_0 model, Metal) on 2026-10-02
 used the 48 kHz public fixtures, with interleaved blocks of six requests and identical text hashes
@@ -74,6 +74,12 @@ on every fixture:
   and 30 s fixtures, 5–6% less than `39df496c40ef`, with identical hashes. Forty requests from 2 to
   9.8 s, each the longest yet, cost 1743 ms with exact-size buffers and graph optimization, 1688 ms
   with headroom, and 1658 ms without optimization, as fast as the same lengths in decreasing order.
+  The bundled build `225bed50dc83` adds a switch that keeps graph optimization and an exact-size
+  retry when a buffer's headroom does not fit, with the same hashes and timings.
+- Deviations to decide: Parakeet uses the native helper whenever the configured installation ships
+  `lib/libnemo_speech_asr_c.1.dylib`, without an explicit selection step, while never replacing the
+  executable setting; and `scripts/package-macos.sh` signs the development bundle with the
+  production identifier `dev.speakeasy.dictation`, so it shares production permission grants.
 - Segmented recognition at pauses with at least 20 s per segment kept every word of the 30 s and 52
   s fixtures and lowered 290 s WER from 3.28% to 1.88% under lowercase, punctuation-free scoring,
   with ten comma or capitalization differences at segment boundaries reviewed by hand. The 290 s
@@ -82,12 +88,13 @@ on every fixture:
 - Held dictation, replayed in real time through capture's speech tracking with 2 s between
   dictations: the 0.3.3 path (NVIDIA's engine, no held speculation) takes 113–157 ms from release to
   insertion at 300 ms after the last word. With engine `e8fbd53f337b`, speculation at 100, 200, and
-  500 ms of quiet, and capture woken by the audio callback when each mark falls due, the 11 s JFK
-  fixture takes 79–82, 31–33, and 0.1 ms when released 100, 150, and 200 ms after its last word; 5
-  and 10 s fixtures take 0.1 and 18 ms at 150 ms and 0.1 ms from 200 ms. Without speculation the
-  same fixtures take 92.5, 63.5, and 85 ms at 300 ms. A text taken from a pause is what a release at
-  that pause would have inserted. Each pause of 100 ms or more costs a recognition of the audio so
-  far: LibriSpeech's 5, 10, and 30 s fixtures trigger 7, 6, and 32 instead of one request.
+  500 ms of quiet, and capture woken when each mark's audio is due (the replay sleeps until then;
+  live capture is woken by the audio callback), the 11 s JFK fixture takes 79–82, 31–33, and 0.1 ms
+  when released 100, 150, and 200 ms after its last word; 5 and 10 s fixtures take 0.1 and 18 ms at
+  150 ms and 0.1 ms from 200 ms. Without speculation the same fixtures take 92.5, 63.5, and 85 ms at
+  300 ms. A text taken from a pause is what a release at that pause would have inserted. Each pause
+  of 100 ms or more costs a recognition of the audio so far: LibriSpeech's 5, 10, and 30 s fixtures
+  trigger 7, 6, and 32 instead of one request.
 - Under a process-wide background clamp an 11 s recognition takes 141 ms instead of 63 ms, and 2 ms
   sleeps last 73–87 ms; thread QoS changes neither on an idle machine and cannot lift the clamp.
   Capture, the owner, the input monitor, and the helper's engine thread run at user-initiated QoS,
@@ -96,10 +103,10 @@ on every fixture:
   was not reproducible on this host.
 - The first audio property read in a process costs 24–31 ms; reading the default input device at
   runtime start, without opening a stream, brings the first press's device lookup to 0.1 ms.
-- A pause recognition still running when its session ends finishes unobserved on its warm worker,
-  instead of a cancellation, a 1 s silent probe, and a "Loading local model" state after fast
-  releases; one still running after 2 s is replaced. Speech after a pause withdraws a pause still
-  waiting for the worker.
+- A pause recognition still running when its session ends finishes unobserved on its warm worker, so
+  a fast release never shows Loading local model; one still running after 2 s is cancelled and its
+  worker replaced. Speech after a pause, or a segment, withdraws a pause still waiting for the
+  worker.
 - Quiet filled to 500 ms by mirroring a pause's first 100 or 200 ms raised sentence-final
   punctuation on 200 LibriSpeech utterances from 152 to 177 but changed words in 8 of 200 against
   real quiet (5 for 100 ms of real quiet) and WER from 1.95% to 2.05%, so pauses keep only real
@@ -113,21 +120,25 @@ on every fixture:
   build below about 8 s and faster beyond, mostly through 15 s windows. It remains a candidate for
   energy and long input, not adopted.
 
-| Candidate                                                            | Hypothesis                                                                                       | Regression guard                                                                                  |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| Parakeet helper over pipes, via the engine's C ABI, replacing HTTP   | Removes multipart upload, server WAV parsing, and JSON; grows with recording length              | Identical text hashes for helper and HTTP routes; helper exits when the app dies; HTTP fallback   |
-| Hands-free GPU pause speculation with byte-identical audio reuse     | Removes recognition from the stop path whenever the stop press comes 500 ms or more after speech | Paused-clock owner tests; a speculation can delay a request that resumes speech after a pause     |
-| Trailing quiet beyond 500 ms trimmed (was kept below one second)     | Lets a stop 0.5–1 s after speech match its pause; slightly less audio to recognize               | Corpus check with 0.5 s and up to 1 s of trailing quiet                                           |
-| Sealed audio reported before the device stops                        | Moves Audio Unit stop and dispose off release-to-sealed                                          | Quiescence test; native `release→sealed` and `device` timings                                     |
-| Ring drained every 16 ms once audio flows (was 5 ms)                 | About a third of the consumer wakeups while recording                                            | Meter cadence unchanged at 32 ms; finish and cancel still wake at once                            |
-| Modifier release rechecked every 2 ms (was 10 ms)                    | Speculated text is often ready while the stopping press is still down                            | Insertion eligibility tests                                                                       |
-| Speakeasy's engine build bundled in the app                          | Engine graph changes and a compiled Metal library cut recognition and cold model loading         | Identical fixture hashes per change; original graphs behind `NEMO_SPEECH_LEGACY_*`; bundle test   |
-| Long recordings recognized in 20 s segments at pauses                | Stop waits for one tail instead of the whole recording; total work becomes linear                | Segment and tail coverage tests; owner ordering, cancel, failure tests; corpus WER and boundaries |
-| Held and hands-free GPU speculation at 100, 200, and 500 ms of quiet | A release at least 200 ms after the last word finds its text recognized                          | Standing-pause tests; real-time replay by release delay; pad sweep for WER and punctuation        |
+| Candidate                                                                                          | Hypothesis                                                                               | Regression guard                                                                                                                                                                       |
+| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Parakeet helper over pipes, via the engine's C ABI, replacing HTTP                                 | Removes multipart upload, server WAV parsing, and JSON; grows with recording length      | Identical text hashes for helper and HTTP routes; helper exits when the app dies; HTTP fallback                                                                                        |
+| Trailing quiet beyond 500 ms trimmed (was kept below one second)                                   | Lets a stop 0.5–1 s after speech match its pause; slightly less audio to recognize       | Corpus check with 0.5 s and up to 1 s of trailing quiet                                                                                                                                |
+| Sealed audio reported before the device stops                                                      | Moves Audio Unit stop and dispose off release-to-sealed                                  | Quiescence test; native `release→sealed` and `device` timings                                                                                                                          |
+| Ring drained every 16 ms once audio flows (was 5 ms)                                               | About a third of the consumer wakeups while recording                                    | Meter cadence unchanged at 32 ms; finish and cancel still wake at once                                                                                                                 |
+| Modifier release rechecked every 2 ms (was 10 ms)                                                  | Speculated text is often ready while the stopping press is still down                    | Insertion eligibility tests                                                                                                                                                            |
+| Speakeasy's engine build bundled in the app                                                        | Engine graph changes and a compiled Metal library cut recognition and cold model loading | Identical fixture hashes per change; the engine build's restore variables; bundle test                                                                                                 |
+| Long recordings recognized in 20 s segments at pauses                                              | Stop waits for one tail instead of the whole recording; total work becomes linear        | Segment and tail coverage tests; owner ordering, cancel, failure tests; corpus WER and boundaries                                                                                      |
+| Held and hands-free GPU speculation at 100, 200, and 500 ms of quiet, reusing byte-identical audio | A release at least 200 ms after the last word finds its text recognized                  | Standing-pause and paused-clock owner tests; real-time replay by release delay; pad sweep for WER and punctuation; a speculation can delay a request that resumes speech after a pause |
+| Default input device read at runtime start                                                         | The first press skips the audio system's first-use cost                                  | No stream opens; first-press device lookup timing                                                                                                                                      |
+| User-initiated QoS and App Nap activities                                                          | Capture, the owner, and the engine keep their pace under contention or while windowless  | Background-clamp recognition timings                                                                                                                                                   |
+| Abandoned GPU transcriptions settle on their warm worker for up to 2 s                             | Fast releases neither reload nor show the model as loading                               | Settling, overrun, and replacement-state owner tests                                                                                                                                   |
+| Capture woken by the audio callback when a pause mark's audio arrives                              | Speculation starts on time instead of after a stretched timer                            | Callback wake and Resumed tracker tests                                                                                                                                                |
 
 `SPEAKEASY_TIMING=1` reports each session's stage timings, `engine_profile` compares the helper and
-HTTP routes and varies warmup length, idle gaps, and a shortcut-press primer, and `capture_onset`
-splits microphone startup into stages. [Performance](performance.md#measuring) gives their commands.
+HTTP routes and varies warmup length, idle gaps, and a shortcut-press primer, `capture_onset` splits
+microphone startup into stages, and `profile_held_dictation` replays held dictations in real time.
+[Performance](performance.md#measuring) gives their commands.
 
 Run the next gates on the reference Macs in order, keeping raw output under `artifacts/`:
 
@@ -139,7 +150,8 @@ Run the next gates on the reference Macs in order, keeping raw output under `art
    mono PCM16 at 48 kHz with `afconvert -f WAVE -d LEI16@48000 -c 1`. Matching hashes establish
    identical output; the difference measures transport cost by length.
 3. Repeat with `NEMO_SPEECH_TIMING=1` to split features, encoder, and decoding; if per-step decoding
-   dominates, profile the engine's Metal decoder before anything else.
+   dominates, profile the TDT decoder's CPU steps, or the Metal decoder with
+   `NEMO_SPEECH_GPU_DECODER=1`, before anything else.
 4. On M1, measure first-request cost with `--warmup 1` versus `--warmup 10` and repeat the idle and
    primer measurements above; adopt a policy only for a measured win.
 5. Run `capture_onset` with Microphone permission. If the prepared stream's start is materially
@@ -167,7 +179,7 @@ parity to macOS.
 | Configuration         | Current theme, microphone, engine, executable, model, language, filler removal, threads, GPU preference, reduced motion, and keep-clipboard choices. Preserve existing settings and path resolution. Theme, microphone, language, filler, motion, and clipboard changes preserve the warm model; engine/executable/model/thread/GPU changes retire and replace it. Coalesced durable saves preserve later edits and Pause intent; Quit waits for requested writes. |
 | Engines               | Local Parakeet automatic setup and explicit Whisper/custom executable/model selection remain available. Preserve explicit CPU preference and language behavior. Unsupported combinations return an actionable local error. No silent model/provider/accelerator substitution.                                                                                                                                                                                      |
 | Installation          | Pinned model/runtime artifacts, size/hash verification, resumable partials, atomic promotion, serialized writes, cancellable setup, no detached extraction/detection process after Quit. Clean install and manual setup both work.                                                                                                                                                                                                                                 |
-| CLI and safe previews | Preserve `--config PATH`, `--help`, `--demo`, and `--demo-tray`. Demo modes use simulated audio/status and start no real capture, model, insertion, or setup; they access no microphone, global input, real clipboard, or network downloads. Tray demo exercises owned native window/relaunch behavior with isolated test settings.                                                                                                                                |
+| CLI and safe previews | Preserve `--config PATH`, `--toggle`, `--cancel`, `--help`, `--demo`, and `--demo-tray`. Demo modes use simulated audio/status and start no real capture, model, insertion, or setup; they access no microphone, global input, real clipboard, or network downloads. Tray demo exercises owned native window/relaunch behavior with isolated test settings.                                                                                                        |
 | Insertion             | Normal guarded clipboard/paste and keep-clipboard Unicode input. Preserve cancellation, focus-before-modifier eligibility, clipboard ownership checks, and actionable manual-paste errors. Prepare before the generation-bound commit; an incomplete result may include submitted input, so a post-commit failure is never automatically repeated. Submission does not claim the editor accepted it.                                                               |
 | Permissions/lifecycle | Local microphone and accessibility guidance; permission failure without retry loops; safe sleep/wake, device disappearance, route change, app termination, helper failure, and configuration changes during work.                                                                                                                                                                                                                                                  |
 | Privacy               | User-triggered capture, local inference, no saved audio/history/accounts/telemetry/upload. Setup network access is explicit; prepared model inference works offline. Diagnostics contain timing/counters/errors, never audio, transcript text, or engine output.                                                                                                                                                                                                   |
@@ -189,11 +201,11 @@ action and must not replace a user's custom executable setting.
 Development uses a distinct bundle identity and temporary `--config` directories, preserving the
 user's production permissions/settings. Benchmark old and new editions serially. Before native
 dictation enables, establish that no other edition owns keyboard/capture/insertion for that user;
-enforce an owned lease between new instances and account for a legacy app that does not implement
-it. Detect conflicts at activation and native app lifecycle changes, give an actionable local error,
-and avoid permanent polling. Do not terminate another edition automatically. Test relaunch,
-overlapping configuration paths, legacy/new overlap, and owner death. Demo preview remains available
-without acquiring real input.
+enforce an owned lease between new instances and account for a 0.3.3 app that does not implement it.
+Detect conflicts at activation and native app lifecycle changes, give an actionable local error, and
+avoid permanent polling. Do not terminate another edition automatically. Test relaunch, overlapping
+configuration paths, 0.3.3/fork overlap, and owner death. Demo preview remains available without
+acquiring real input.
 
 ## Provisional stack and module ownership
 
@@ -236,20 +248,20 @@ not own recording deadlines, PCM, decoding, or commit permits. The owner publish
 snapshots with session identity. Capture, helper, insertion, setup, and settings work have owned
 completion and explicit retirement. Avoid parallel Rust/Swift state machines that can disagree.
 
-The 0.3.3 session implementation already avoids direct GPUI imports but remains inside the
-application crate. Extract it as a library with its dependencies and production-owner tests; retain
-its Tokio clock, typed stages, retirement acknowledgements, and immediate permit revocation. Reuse
-`shell/lifecycle.rs` for enable/pause/quit semantics and the `shell/save.rs` queue, and port
-`shell/services.rs` and `shutdown.rs` coordination to AppKit, including requested saves and
-instance-lock ordering. Keep pure gestures/motion in `crates/core`, including private gesture state
-and checked deadlines that expire immediately on overflow. Reuse the portable keyboard and insertion
-policy in `crates/platform`. Keep unsafe Rust/native bridge and OS FFI there with local safety
-explanations. Use narrow concrete adapters for actual effects, and keep fake implementations at
-those boundaries. Specify C ABI byte encoding, lengths, allocation/free owner, callback lifetime,
-thread affinity, versioning, errors, and panic/exception containment. No unowned callback crosses
-the bridge. Extracted Rust crates inherit workspace lints and retain the core/app unsafe
-prohibition; the native boundary remains in platform. Keep release overflow checks and explicit
-arithmetic failure handling when measuring candidate builds.
+The session implementation, lifecycle, and save queue live in the GPUI-free `crates/dictation`
+library with their production-owner tests, retaining 0.3.3's Tokio clock, typed stages, retirement
+acknowledgements, and immediate permit revocation. A native shell reuses `lifecycle.rs` and the
+`save.rs` queue and ports `crates/app/src/shell/services.rs` and `shutdown.rs` coordination to
+AppKit, including requested saves and instance-lock ordering. Keep pure gestures/motion in
+`crates/core`, including private gesture state and checked deadlines that expire immediately on
+overflow. Reuse the portable keyboard and insertion policy in `crates/platform`. Keep unsafe
+Rust/native bridge and OS FFI there with local safety explanations. Use narrow concrete adapters for
+actual effects, and keep fake implementations at those boundaries. Specify C ABI byte encoding,
+lengths, allocation/free owner, callback lifetime, thread affinity, versioning, errors, and
+panic/exception containment. No unowned callback crosses the bridge. Extracted Rust crates inherit
+workspace lints and retain the core/app unsafe prohibition; the native boundary remains in platform.
+Keep release overflow checks and explicit arithmetic failure handling when measuring candidate
+builds.
 
 ## Audio and inference contracts
 
@@ -277,11 +289,11 @@ reclaimed/reused. Cancellation invalidates result authority immediately but does
 completion or permit early reuse. Erase app-owned canceled PCM as the current implementation does;
 do not promise complete erasure of opaque model/runtime copies.
 
-Warm readiness means the model is loaded and the chosen execution path has completed a bounded
-synthetic warmup. Keep one owned ready worker by default; Pause releases it. Measure repeated
-short/long/short requests, scratch growth, memory pressure, warmup, and reload. Changes to
-precision, decoding, timestamps, quantization, scratch reuse, or Metal command scheduling must pass
-the same corpus and lifecycle tests before adoption.
+Warm readiness means the model is loaded and, on the GPU, a bounded silent warmup has completed.
+Keep one owned ready worker by default; Pause releases it. Measure repeated short/long/short
+requests, scratch growth, memory pressure, warmup, and reload. Changes to precision, decoding,
+timestamps, quantization, scratch reuse, or Metal command scheduling must pass the same corpus and
+lifecycle tests before adoption.
 
 The pinned offline native recognition API does not provide a demonstrated preemptive cancellation
 contract. Dropping a request/XPC call does not stop GPU work. Immediately revoke insertion
@@ -351,8 +363,8 @@ a product decision before changing a ratified target.
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Warm owner handling       | Ready-text through fake insertion p95 ≤ 1 ms on baseline M1, excluding native OS preparation and model work.                                                                                                                                                                                                                                                                                                                                         |
 | Launch and reveal         | Establish cold launch, model readiness, first setup, and retained Settings reveal distributions. No material regression against the paired baseline; loading never blocks input cancellation or AppKit.                                                                                                                                                                                                                                              |
-| Native cancellation       | Tap event to commit-permit revocation p95 ≤ 1 ms; presentation acknowledgement p95 ≤ two display periods. Report scheduling outliers and separately measure worker retirement/recovery.                                                                                                                                                                                                                                                              |
-| Helper containment        | Proposed deadline ≤ 1 second from parent-channel EOF to controlled helper exit, including during blocked inference. Recovery that cannot prove a healthy worker within two seconds terminates and waits for it before replacement. Report reload latency separately.                                                                                                                                                                                 |
+| Native cancellation       | Tap event to commit-permit revocation p95 ≤ 1 ms; presentation acknowledgement p95 ≤ two display periods. Report scheduling outliers and separately measure worker retirement and replacement.                                                                                                                                                                                                                                                       |
+| Helper containment        | Proposed deadline ≤ 1 second from parent-channel EOF to controlled helper exit, including during blocked inference. An abandoned transcription still running after two seconds is cancelled, and its worker is terminated and awaited before replacement. Report reload latency separately.                                                                                                                                                          |
 | Callback                  | Zero app allocations/blocking; callback p99 below 10% of the negotiated buffer period under load, with zero application ring loss on accepted fixtures. Report maximum and deadline misses.                                                                                                                                                                                                                                                          |
 | Capture onset             | Trigger to first valid native sample p95 ≤ 100 ms for a warm system using the built-in microphone. Report cold permission/startup and external/Bluetooth devices separately. Never retain idle capture to meet this budget.                                                                                                                                                                                                                          |
 | Stop overhead             | Sum of app-owned stop/queue/drain/trim/seal/transport spans and result-delivery/preparation/commit spans p95 ≤ 5 ms with released physical modifiers. Exclude separately timed native driver teardown, model execution, and OS/editor delivery from this component budget; include them in total user latency.                                                                                                                                       |
@@ -508,16 +520,15 @@ native Swift/helper build and contract checks to the same workflow when those co
 their tools and record compiler/SDK differences. The existing gate owns Rust formatting, lint, docs,
 tests, dependency-use and compiler-policy checks, plus tooling validation. Performance runs use
 release builds and are not flaky timing assertions in ordinary CI. Keep the benchmark manifest and
-concise accepted/rejected findings current; do not add fuzzing, mutation, coverage targets, ADR
-gates, or a permanent benchmark service.
+concise accepted/rejected findings current.
 
 ## Handoff and definition of complete
 
-An agent handoff reports changed behavior, commands/results, paired performance evidence, corpus
-outcome, memory/energy tradeoffs, and unavailable native checks. Documentation-only turns report
-reference/version/link checks and identify which decisions remain provisional; they do not claim new
-performance evidence. Preserve user edits/settings, avoid committing generated models/profiles, and
-retain profiling evidence in an ignored or external artifact directory.
+In addition to the agent guide's handoff report, include paired performance evidence, corpus
+outcome, and memory/energy tradeoffs. Documentation-only turns report reference/version/link checks
+and identify which decisions remain provisional; they do not claim new performance evidence.
+Preserve user edits/settings, avoid committing generated models/profiles, and retain profiling
+evidence in an ignored or external artifact directory.
 
 The experiment is complete when the candidate has full 0.3.3 macOS feature parity, passes the native
 and failure-boundary matrix, and yields a scoped comparison on baseline and newer hardware with

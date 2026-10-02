@@ -7,15 +7,17 @@ decisions, and the perceptibility experiment; this page owns constraints and met
 
 ## Implementation constraints
 
-- Recognize the whole recording. Whisper retains full audio context and default timestamp decoding;
-  returned text contains no timecodes. Chunking or changing decoding needs paired accuracy and
-  punctuation checks before adoption.
+- Recognize all of the recording's kept audio. Recordings divide at half-second pauses once 20
+  seconds of kept audio accumulate, and pause speculation reuses only byte-identical audio. Whisper
+  keeps full context within each segment and default timestamp decoding; returned text contains no
+  timecodes. Other chunking or decoding changes need paired accuracy and punctuation checks before
+  adoption.
 - The session owner receives completion messages and owns capture, inference, insertion,
   cancellation, and replacement. Native cleanup acknowledges before replacements open; Pause and
   application-owned Quit keep the UI responsive.
-- GPU cancellation reuses a worker only after a bounded health request succeeds. Failed checks and
-  cancelled CPU inference retire the worker. A retained worker may keep its largest model buffers
-  until Pause releases it.
+- An abandoned GPU transcription finishes unobserved on its warm worker; one still running after two
+  seconds, and cancelled CPU inference, retire the worker. A retained worker may keep its largest
+  model buffers until Pause releases it.
 - The audio callback allocates nothing and writes to a bounded single-producer, single-consumer
   ring. Consumer-side PCM starts with a ten-second reservation and cannot grow past five minutes.
   Callback sample count, owner timer, and consumer limit defend the bound independently.
@@ -35,13 +37,18 @@ about a newly changed revision.
 
 Record hardware, model and runtime, sample rate, request boundaries, warmup, and competing load.
 Compare paired runs and check word accuracy and formatting as well as latency. Keep transcripts out
-of logs. The opt-in tests `profile_fixture_dictation` and `profile_ready_text_latency` exercise the
-real session owner with public audio or fake devices; the README lists the fixture variables.
+of logs. The opt-in tests `profile_fixture_dictation`, `profile_held_dictation`, and
+`profile_ready_text_latency` exercise the real session owner with public audio or fake devices, and
+`profile_audio_pipeline` times synthetic callback, ring, and trim work without a device. The README
+lists the recognition fixture variables; this page lists the profiling ones.
 
 Launching the app with `SPEAKEASY_TIMING=1` prints one line per session to standard error, on the
 session owner's clock: press to first audio, the device's own open time, release to sealed audio,
 any wait for the worker, the engine round trip, text to the insertion outcome, release to outcome,
-the recorded length, and how the session ended. It carries durations only, never audio or text:
+the recorded length including segments, how many segments were recognized while recording
+(`segments N`), whether the text came from a recognized pause (`speculated`), and how the session
+ended (`done`, `no speech`, `cancelled`, `failed`, or `abandoned`). It carries durations only, never
+audio or text:
 
 ```text
 speakeasy timing: press→audio 41.3 ms · release→sealed 1.2 ms · sealed→engine 0.0 ms · engine 152.4 ms · text→done 7.9 ms · release→done 161.5 ms · device 33.0 ms · audio 4.20 s · done
@@ -55,7 +62,7 @@ identical output. Filler cleanup runs after recognition and is deterministic, so
 equal inserted text:
 
 ```sh
-engine=~/Library/Application\ Support/speakeasy/engines/nemo-speech-0.1.0-macos-aarch64-metal/nemo-speech
+engine=~/Library/Application\ Support/speakeasy/engines/<build>/nemo-speech
 model=~/Library/Application\ Support/speakeasy/models/parakeet-tdt-0.6b-v3.q8_0.gguf
 cargo run --release -p speakeasy-platform --example engine_profile -- \
   --library "$engine/lib/libnemo_speech_asr_c.1.dylib" --model "$model" --repetitions 20 jfk.wav
@@ -65,8 +72,10 @@ cargo run --release -p speakeasy-platform --example engine_profile -- \
   --http 127.0.0.1:8178 --key profile --repetitions 20 jfk.wav
 ```
 
-Setting `NEMO_SPEECH_TIMING=1` in the engine's environment adds its own feature, encoder, and decode
-stage timings on standard error; those lines carry numbers only.
+Use the build under `engines/` that `engine_executable` names: `nemo-speech-0.1.0-speakeasy-<hash>`
+for the packaged app, `nemo-speech-0.1.0-macos-aarch64-metal` for NVIDIA's release. `--cpu` loads
+the model on the CPU. Setting `NEMO_SPEECH_TIMING=1` in the engine's environment adds its own
+feature, encoder, and decode stage timings on standard error; those lines carry numbers only.
 
 `--warmup SECONDS` varies the silent warmup's length, to show whether the app's one-second warmup
 leaves Metal pipelines for longer audio to compile during the first dictation. `--idle SECONDS`
@@ -85,9 +94,11 @@ cargo run --release -p speakeasy-dictation --example capture_onset -- --runs 20
 
 `profile_held_dictation` times a held dictation as a person makes it: public audio plays through
 capture's own speech tracking in real time from the press, quiet follows, and the shortcut is
-released `SPEAKEASY_FIXTURE_RELEASE_MS` after the last word. It reports release to fake insertion
-and how many releases took a speculated pause; `SPEAKEASY_FIXTURE_NO_SPECULATION=1` replays the
-0.3.3 request path. It opens no device and touches no input or clipboard:
+released `SPEAKEASY_FIXTURE_RELEASE_MS` (default 300) after the last word, `SPEAKEASY_FIXTURE_RUNS`
+times (default 5) with 2 s of idle between dictations. It reports release to fake insertion and how
+many releases took a speculated pause; `SPEAKEASY_FIXTURE_NO_SPECULATION=1` turns pause speculation
+off, while recordings past 20 seconds still segment. It opens no device and touches no input or
+clipboard:
 
 ```sh
 SPEAKEASY_FIXTURE_HELPER=target/release/speakeasy SPEAKEASY_FIXTURE_CONFIG=settings.json \
@@ -98,15 +109,18 @@ SPEAKEASY_FIXTURE_HELPER=target/release/speakeasy SPEAKEASY_FIXTURE_CONFIG=setti
 ## Engine build
 
 The packaged app runs [Speakeasy's engine build](../packaging/engine/README.md). Compare a change
-against the graph it replaces in one build by setting its `NEMO_SPEECH_LEGACY_*` variable for
-alternating `engine_profile` blocks, and against NVIDIA's release by alternating `--library` between
-the two installations. Every candidate must keep the fixture hashes or pass a corpus review. Point
-`--library` at `artifacts/engine/<build>/nemo-speech/lib/libnemo_speech_asr_c.1.dylib` after
+against the graph it replaces in one build by setting the restore variable that
+[the engine build's table](../packaging/engine/README.md) names for alternating `engine_profile`
+blocks, and against NVIDIA's release by alternating `--library` between the two installations. Every
+candidate must keep the fixture hashes or pass a corpus review. Point `--library` at
+`artifacts/engine/<build>/nemo-speech/lib/libnemo_speech_asr_c.1.dylib` after
 `bash scripts/build-engine.sh`.
 
-The engine's Metal library is compiled at build time. NVIDIA's release compiles its embedded source
-when an executable first loads it, which macOS caches per executable, so each new app binary pays
-that compile again; time a fresh helper's startup with `profile_fixture_dictation` to compare.
+On devices with bfloat support and without the Metal tensor API, the engine loads a Metal library
+compiled at build time; NVIDIA's release, and Speakeasy's build on other devices, compile the
+embedded source when an executable first loads it, which macOS caches per executable, so each new
+app binary pays that compile again; time a fresh helper's startup with `profile_fixture_dictation`
+to compare.
 
 ## Process sampling
 
