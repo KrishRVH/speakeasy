@@ -80,10 +80,23 @@ on every fixture:
   take 0.0–16 ms at 150 ms and 0.1 ms from 200 ms. A text taken from a pause is what a release at
   that pause would have inserted. Each pause of 100 ms or more costs a recognition of the audio so
   far: LibriSpeech's 5, 10, and 30 s fixtures trigger 7, 6, and 32 instead of one request.
-- At background QoS an 11 s recognition takes 141 ms instead of 63 ms; utility QoS costs nothing.
-  Capture, the owner, the input monitor, and the helper run at user-initiated QoS and hold an App
-  Nap activity; a process already clamped to background is not lifted by thread QoS, and App Nap
-  itself was not reproducible on this host.
+- Under a process-wide background clamp an 11 s recognition takes 141 ms instead of 63 ms, and 2 ms
+  sleeps last 73–87 ms; thread QoS changes neither on an idle machine and cannot lift the clamp.
+  Capture, the owner, the input monitor, and the helper's engine thread run at user-initiated QoS,
+  which orders them ahead of default and background work under contention; new threads start at the
+  default class whatever their creator's. Both processes hold an App Nap activity; App Nap itself
+  was not reproducible on this host.
+- The first audio property read in a process costs 24–31 ms; reading the default input device at
+  runtime start, without opening a stream, brings the first press's device lookup to 0.1 ms.
+- A pause recognition still running when its session ends finishes unobserved on its warm worker,
+  instead of a cancellation, a 1 s silent probe, and a "Loading local model" state after fast
+  releases; one still running after 2 s is replaced. Speech after a pause withdraws a pause still
+  waiting for the worker.
+- Quiet filled to 500 ms by mirroring a pause's first 100 or 200 ms raised sentence-final
+  punctuation on 200 LibriSpeech utterances from 152 to 177 but changed words in 8 of 200 against
+  real quiet (5 for 100 ms of real quiet) and WER from 1.95% to 2.05%, so pauses keep only real
+  quiet. A release taking the 100 ms pause's text can lack a final period that 200–300 ms of quiet
+  would have produced: 152, 163, and 168 of 200 end in punctuation at 100, 200, and 300 ms.
 - The first request after a 1 s or a 10 s warmup costs at most 4 ms more than later ones.
 - After 2 s idle, an 11 s recognition takes 121 ms instead of 66 ms warm; 140 ms of continuous small
   requests first brings it to 75 ms. The 100 ms speculation mark serves as that warm-up for the 200

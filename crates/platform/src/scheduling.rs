@@ -1,14 +1,16 @@
-//! Scheduling for latency-sensitive dictation work. User-initiated `QoS` keeps capture, the session
-//! owner, and the speech engine's threads on performance cores; at background `QoS` an 11-second
-//! recognition took 141 ms instead of 63 ms on an M4 Pro. An activity keeps App Nap from
-//! throttling a menu-bar process that has no visible window.
+//! Scheduling for latency-sensitive dictation work. User-initiated `QoS` puts capture, the session
+//! owner, and the speech engine ahead of default and background work when cores are contended. An
+//! activity keeps App Nap from throttling a menu-bar process that has no visible window; a throttled
+//! process ran an 11-second recognition in 141 ms instead of 63 ms on an M4 Pro, and thread `QoS`
+//! cannot lift that clamp.
 
 #[cfg(target_os = "macos")]
 use objc2::{rc::Retained, runtime::ProtocolObject};
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSActivityOptions, NSObjectProtocol, NSProcessInfo, NSString};
 
-/// Raises the calling thread to user-initiated `QoS`; threads it creates afterwards inherit it.
+/// Raises the calling thread to user-initiated `QoS`. New threads start at the default class
+/// whatever their creator's, so each latency-sensitive thread calls this itself.
 pub fn prefer_responsive_thread() {
     #[cfg(target_os = "macos")]
     {

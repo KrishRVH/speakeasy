@@ -71,14 +71,13 @@ pub fn run_helper(mut arguments: impl Iterator<Item = OsString>) -> ! {
     let Ok(replies) = private_stdout(&io::stdout()) else {
         exit_now(USAGE)
     };
-    // The engine thread and the engine's own CPU workers inherit this class, keeping recognition
-    // on performance cores; the activity keeps App Nap from throttling this windowless process.
-    speakeasy_platform::prefer_responsive_thread();
+    // The activity keeps App Nap from throttling this windowless process.
     let _responsive = speakeasy_platform::Responsive::begin("Speech recognition");
     let (jobs, received) = mpsc::channel();
     let engine = thread::Builder::new()
         .name("speech-engine".into())
         .spawn(move || {
+            speakeasy_platform::prefer_responsive_thread();
             let loaded =
                 Recognizer::load(&PathBuf::from(library), &PathBuf::from(model), accelerator);
             let code = if loaded.is_ok() { 0 } else { LOAD_FAILED };
