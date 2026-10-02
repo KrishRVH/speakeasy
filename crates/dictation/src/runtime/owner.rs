@@ -9,7 +9,7 @@ use speakeasy_platform::{Input, InputSender, Inserted};
 use tokio::{sync::watch, task::JoinError};
 
 use super::{
-    CaptureEvent, Captured, LOADING, Phase, Snapshot, Wiring,
+    CaptureEvent, Captured, LOADING, ModelState, Phase, Snapshot, Wiring,
     microphone::Microphone,
     now, reap,
     session::{InsertTask, Session, SessionId, Stage},
@@ -245,7 +245,7 @@ impl<P: Ports> Owner<P> {
         self.abandon();
         self.worker.revive(&self.ports, &self.config);
         self.outcome = Outcome::Idle;
-        self.notice = Some(if self.worker.is_ready() {
+        self.notice = Some(if self.worker.model() == ModelState::Ready {
             Notice::SettingsApplied
         } else {
             Notice::LoadingModel
@@ -271,7 +271,7 @@ impl<P: Ports> Owner<P> {
                 session.segment(index, wav);
             },
             CaptureEvent::Paused(_, sequence, wav) => session.paused(sequence, wav),
-            CaptureEvent::Resumed(_) => session.resumed(),
+            CaptureEvent::Resumed(_) => session.withdraw_pauses(),
             CaptureEvent::Finished(
                 _,
                 Ok(Some(Captured {
@@ -341,6 +341,14 @@ impl<P: Ports> Owner<P> {
                 self.notice = Some(Notice::WarmupFailed(error.to_string()));
             },
             Completion::Loaded(Err(error)) => self.fail(error.to_string()),
+            Completion::Settled(Ok(Some(worker))) => self.worker = Worker::Ready(worker),
+            // An abandoned transcription that failed or overran has stopped its worker.
+            Completion::Settled(_) => {
+                self.worker.revive(&self.ports, &self.config);
+                if self.session.as_ref().is_some_and(Session::awaits_worker) {
+                    self.notice = Some(Notice::LoadingModel);
+                }
+            },
             Completion::Transcribed(result) => {
                 let segment = self
                     .session

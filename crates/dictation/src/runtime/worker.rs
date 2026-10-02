@@ -26,10 +26,11 @@ const ABANDONED_GPU_BOUND: Duration = Duration::from_secs(2);
 pub(super) enum Worker<W> {
     #[default]
     Unavailable,
-    /// Starting a worker, or replacing one whose abandoned transcription could not be kept.
+    /// Starting a worker, or replacing one whose abandoned CPU inference was cancelled.
     Loading(Job<W>),
-    /// Letting an abandoned GPU transcription finish unobserved, so its warm worker is kept.
-    Settling(Job<W>),
+    /// Letting an abandoned GPU transcription finish unobserved: resolves to its warm worker, or to
+    /// none once the worker has been stopped because the transcription failed or overran its bound.
+    Settling(Job<Option<W>>),
     Ready(W),
     Transcribing(Job<(W, Transcript)>),
 }
@@ -61,9 +62,8 @@ impl<W: Speech> Worker<W> {
     /// until the owner stores the outcome. Cancel-safe: dropped early, it leaves the job running.
     pub(super) async fn completed(&mut self) -> Completion<W> {
         let completion = match self {
-            Self::Loading(job) | Self::Settling(job) => {
-                Completion::Loaded(joined((&mut job.task).await))
-            },
+            Self::Loading(job) => Completion::Loaded(joined((&mut job.task).await)),
+            Self::Settling(job) => Completion::Settled(joined((&mut job.task).await)),
             Self::Transcribing(job) => Completion::Transcribed(joined((&mut job.task).await)),
             Self::Unavailable | Self::Ready(_) => pending().await,
         };
@@ -94,31 +94,27 @@ impl<W: Speech> Worker<W> {
     }
 
     /// Moves a transcription whose session ended out of observation, discarding its result. Engines
-    /// serialize requests and a GPU request ends within moments, so it runs out and the warm worker
-    /// is kept without loading or probing; one that overruns the bound, or a CPU inference that
-    /// could run for seconds, is cancelled and its worker replaced.
+    /// serialize requests and a GPU request ends within moments, so it settles and the warm worker
+    /// is kept, while the owner loads a replacement for one that fails or overruns the bound. A CPU
+    /// inference could run for seconds, so it is cancelled and its worker replaced at once.
     pub(super) fn abandon<P: Ports<Speech = W>>(&mut self, ports: &P, config: &Config) {
         let previous = mem::take(self);
-        let bound = if config.use_gpu {
-            ABANDONED_GPU_BOUND
-        } else {
-            Duration::ZERO
-        };
-        let job = Job::spawn(|mut cancelled| {
+        if config.use_gpu {
+            *self = Self::Settling(Job::spawn(|mut cancelled| async move {
+                Ok(previous.settled(ABANDONED_GPU_BOUND, &mut cancelled).await)
+            }));
+            return;
+        }
+        *self = Self::Loading(Job::spawn(|mut cancelled| {
             let load = ports.load(config.clone(), cancelled.clone());
             async move {
-                if let Some(worker) = previous.settled(bound, &mut cancelled).await {
+                if let Some(worker) = previous.settled(Duration::ZERO, &mut cancelled).await {
                     return Ok(worker);
                 }
                 ensure!(!*cancelled.borrow(), STARTUP_CANCELLED);
                 load.await
             }
-        });
-        *self = if config.use_gpu {
-            Self::Settling(job)
-        } else {
-            Self::Loading(job)
-        };
+        }));
     }
 
     /// Starts transcribing on a ready worker, or hands the audio back.
@@ -161,7 +157,8 @@ impl<W: Speech> Worker<W> {
 
     pub(super) fn request_stop(&self) {
         match self {
-            Self::Loading(job) | Self::Settling(job) => job.cancel(),
+            Self::Loading(job) => job.cancel(),
+            Self::Settling(job) => job.cancel(),
             Self::Transcribing(job) => job.cancel(),
             Self::Unavailable | Self::Ready(_) => {},
         }
@@ -211,7 +208,8 @@ impl<W: Speech> Worker<W> {
     async fn into_worker(self) -> Option<W> {
         match self {
             Self::Ready(worker) => Some(worker),
-            Self::Loading(job) | Self::Settling(job) => job.task.await.ok()?.ok(),
+            Self::Loading(job) => job.task.await.ok()?.ok(),
+            Self::Settling(job) => job.task.await.ok()?.ok().flatten(),
             Self::Transcribing(job) => job.task.await.ok()?.ok().map(|(worker, _)| worker),
             Self::Unavailable => None,
         }
@@ -220,6 +218,7 @@ impl<W: Speech> Worker<W> {
 
 pub(super) enum Completion<W> {
     Loaded(anyhow::Result<W>),
+    Settled(anyhow::Result<Option<W>>),
     Transcribed(anyhow::Result<(W, Transcript)>),
 }
 

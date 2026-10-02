@@ -86,6 +86,11 @@ impl Session {
         }
     }
 
+    /// Whether the sealed recording waits for the worker to make its own request.
+    pub(super) const fn awaits_worker(&self) -> bool {
+        matches!(self.stage, Stage::AwaitingWorker(_))
+    }
+
     pub(super) const fn is_capturing(&self) -> bool {
         matches!(
             self.stage,
@@ -130,17 +135,19 @@ impl Session {
         }
     }
 
-    /// Speech resumed, so neither a pause waiting for the worker nor recognized pause text can stand
-    /// in for the tail; dropping the waiting pause keeps an obsolete recognition off the worker.
-    pub(super) fn resumed(&mut self) {
+    /// Neither a pause waiting for the worker nor recognized pause text can stand in for the tail any
+    /// longer; dropping the waiting pause keeps an obsolete recognition off the worker.
+    pub(super) fn withdraw_pauses(&mut self) {
         if let Some((_, mut pending)) = self.pending.take() {
             pending.fill(0);
         }
         self.speculated = None;
     }
 
-    /// Queues a segment's audio for the worker, in capture order.
+    /// Queues a segment's audio for the worker, in capture order. Pauses offered before it cover
+    /// audio the segment now holds, so none can stand in for the tail.
     pub(super) fn segment(&mut self, index: u32, mut wav: Vec<u8>) {
+        self.withdraw_pauses();
         if usize::try_from(index).is_ok_and(|index| index == self.segments.len()) {
             self.segments.push(Segment::Waiting(wav));
         } else {

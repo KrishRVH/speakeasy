@@ -1,7 +1,7 @@
 //! Capture-local synchronization for callbacks that cannot wait on the owner.
 
 use std::{
-    sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering, fence},
     thread,
 };
 
@@ -41,6 +41,8 @@ pub(super) struct Control {
         reason = "The consumer must learn that no callback is still publishing after a finish, and the callback cannot wait"
     )]
     publishing: AtomicUsize,
+    /// Samples queued since capture began at which the callback wakes the consumer; zero, the
+    /// default, wakes it at the first packet.
     #[expect(
         clippy::disallowed_types,
         reason = "The consumer asks the callback to wake it once audio it waits for is queued, and the callback cannot wait"
@@ -114,11 +116,15 @@ impl Control {
     pub(super) fn wake_at(&self, samples: Option<usize>) {
         self.wake_at
             .store(samples.unwrap_or(usize::MAX), Ordering::Release);
+        // Pairs with the fence in `reached_wake`: either the consumer then sees the callback's
+        // newly queued audio in the ring, or the callback sees this request and wakes it.
+        fence(Ordering::SeqCst);
     }
 
     /// Whether `queued` samples reach the requested wake, which this clears so the consumer is
     /// woken once per request.
     pub(super) fn reached_wake(&self, queued: usize) -> bool {
+        fence(Ordering::SeqCst);
         let target = self.wake_at.load(Ordering::Acquire);
         queued >= target
             && self

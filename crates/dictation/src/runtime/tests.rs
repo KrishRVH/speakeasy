@@ -93,12 +93,13 @@ impl FakePorts {
     fn new() -> (Self, Reports) {
         let (captures, opened) = async_channel::bounded(8);
         let (jobs, requested) = async_channel::bounded(8);
-        // Unbounded, so tests that ignore which audio was recognized never stall the fake.
+        // Unbounded, so tests that ignore which audio was recognized, the stage timings, or which
+        // sessions speculated never stall the fake.
         let (heard, recognized) = async_channel::unbounded();
         let (pasted, submitted) = async_channel::bounded(8);
         let (loads, loaded) = async_channel::bounded(8);
-        let (timings, reported) = async_channel::bounded(8);
-        let (speculations, speculating) = async_channel::bounded(8);
+        let (timings, reported) = async_channel::unbounded();
+        let (speculations, speculating) = async_channel::unbounded();
         let ports = Self {
             desktop_pending: false,
             record_error: None,
@@ -1315,6 +1316,69 @@ async fn an_overrunning_abandoned_transcription_stops_its_worker_before_a_replac
     // Pre-release the stop gate, so the shutdown stop passes without harness cleanup.
     stopping.release().await?;
     Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_segment_withdraws_pauses_offered_before_it() -> anyhow::Result<()> {
+    let mut h = Harness::paused(|ports| ports.delayed_finish = true)?;
+    receive(&h.loads).await?;
+    let (id, events) = h.start().await?;
+    events.send(CaptureEvent::Paused(id, 0, vec![3])).await?;
+    let (_, running) = receive(&h.jobs).await?;
+    assert_eq!(receive(&h.heard).await?, [3]);
+    events.send(CaptureEvent::Paused(id, 1, vec![4])).await?;
+    events.send(CaptureEvent::Segment(id, 0, vec![5])).await?;
+    answer(running, "obsolete")?;
+    h.transcribe_next_as("segment").await?;
+    assert_eq!(receive(&h.heard).await?, [5]);
+    assert!(
+        still_pending(receive(&h.jobs)).await,
+        "A pause the segment already holds was still recognized"
+    );
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_replacement_for_an_overrunning_abandoned_transcription_reports_loading()
+-> anyhow::Result<()> {
+    let (results, loading) = async_channel::bounded(4);
+    let mut h = Harness::paused(|ports| ports.load_results = Some(loading))?;
+    receive(&h.loads).await?;
+    results.send(Ok(())).await?;
+    h.observe(|snapshot| snapshot.model == ModelState::Ready)
+        .await?;
+    h.start().await?;
+    let _abandoned = h.finish().await?;
+    h.input(Input::Cancel);
+    h.phase(Phase::Cancelled).await?;
+    // The replacement loads only once the abandoned transcription overruns its bound.
+    timeout(PATIENCE * 2, h.loads.recv()).await??;
+    h.observe(|snapshot| snapshot.model == ModelState::Loading)
+        .await?;
+    results.send(Ok(())).await?;
+    h.observe(|snapshot| snapshot.model == ModelState::Ready)
+        .await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_settings_change_while_abandoned_work_settles_keeps_the_warm_model() -> anyhow::Result<()>
+{
+    let mut h = Harness::paused(|_| {})?;
+    receive(&h.loads).await?;
+    h.start().await?;
+    let _abandoned = h.finish().await?;
+    let mut config = h.runtime.configuration.borrow().clone();
+    config.reduced_motion = !config.reduced_motion;
+    h.runtime.configure(config);
+    h.phase(Phase::Idle).await?;
+    let snapshot = h.snapshot();
+    assert_eq!(snapshot.model, ModelState::Ready);
+    assert_ne!(
+        snapshot.message, LOADING,
+        "A settling warm model was reported as loading"
+    );
+    h.close().await
 }
 
 #[tokio::test(start_paused = true)]

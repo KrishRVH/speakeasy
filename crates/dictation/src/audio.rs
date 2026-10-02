@@ -550,16 +550,16 @@ impl Recorder {
                 control.finish();
                 control.quiesce();
             }
-            if !ready && !self.ring.is_empty() {
-                ready = true;
-                events.send_blocking(CaptureEvent::Ready(id, opened))?;
-            }
             consume_pcm(
                 &mut self.ring,
                 &mut self.tracker.pcm,
                 &mut meter,
                 self.limit,
             );
+            if !ready && self.tracker.pcm.samples() > 0 {
+                ready = true;
+                events.send_blocking(CaptureEvent::Ready(id, opened))?;
+            }
             // The recording's own audio is moments away once it stops, so a last pause is not offered.
             self.tracker
                 .at_pause(id, events, control.speculating() && !stopping)?;
@@ -575,7 +575,8 @@ impl Recorder {
             }
             // The callback wakes this thread when the first samples or a due pause mark's audio is
             // queued, and finish and cancel wake it at once; an unpark that lands before the wait is
-            // not lost. The timeout only paces draining of the ring.
+            // not lost, and audio queued before the wake was requested is found in the ring here.
+            // The timeout only paces draining of the ring.
             let due = if ready {
                 self.tracker.mark_due()
             } else {
@@ -1483,8 +1484,44 @@ mod tests {
         Ok(())
     }
 
+    /// Feeds `samples` of `amplitude` in 20 ms drains, as capture does, offering pauses.
+    fn track(
+        tracker: &mut Tracker,
+        events: &Sender<CaptureEvent>,
+        samples: usize,
+        amplitude: i16,
+    ) -> anyhow::Result<()> {
+        for _ in 0..samples / 320 {
+            for _ in 0..320 {
+                tracker.pcm.push(amplitude, usize::MAX);
+            }
+            tracker.at_pause(SessionId::FIRST, events, true)?;
+        }
+        Ok(())
+    }
+
     #[test]
-    fn the_callback_wakes_the_consumer_once_the_audio_it_awaits_is_queued() {
+    fn speech_after_an_offered_pause_tells_the_owner_once() -> anyhow::Result<()> {
+        let (events, received) = async_channel::unbounded();
+        let mut tracker = Tracker::new(16_000)?;
+        track(&mut tracker, &events, 16_000, 3000)?;
+        track(&mut tracker, &events, 4_800, 0)?;
+        track(&mut tracker, &events, 16_000, 3000)?;
+        let mut kinds = Vec::new();
+        while let Ok(event) = received.try_recv() {
+            kinds.push(match event {
+                CaptureEvent::Paused(..) => "paused",
+                CaptureEvent::Resumed(_) => "resumed",
+                _ => "other",
+            });
+        }
+        // The 300 ms of quiet offers its 100 and 200 ms pauses; the speech after it withdraws both.
+        assert_eq!(kinds, ["paused", "paused", "resumed"]);
+        Ok(())
+    }
+
+    #[test]
+    fn the_callback_wakes_the_consumer_when_its_wake_is_reached() {
         let (state, _ring, _, control) = callback_fixture(1, 16, 16);
         let (mut data, _) = capture_callbacks::<f32>(state);
         control.wake_at(Some(4));
