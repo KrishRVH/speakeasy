@@ -13,9 +13,11 @@ use super::{
     microphone::Microphone,
     now, reap,
     session::{InsertTask, Session, SessionId, Stage},
+    timeline::Timeline,
     worker::{Completion, Transcript, Worker},
 };
 use crate::{
+    audio,
     config::Config,
     ports::{Ports, Recording},
 };
@@ -30,6 +32,17 @@ enum Outcome {
 }
 
 impl Outcome {
+    /// How the timing report names the way a session ended.
+    const fn label(&self) -> &'static str {
+        match self {
+            Self::Idle => "abandoned",
+            Self::Done => "done",
+            Self::Empty => "no speech",
+            Self::Cancelled => "cancelled",
+            Self::Failed(_) => "failed",
+        }
+    }
+
     const fn phase(&self) -> Phase {
         match self {
             Self::Idle => Phase::Idle,
@@ -82,6 +95,8 @@ struct Owner<P: Ports> {
     permits: InputSender,
     gesture: Gesture,
     session: Option<Session>,
+    /// The latest ended session's stages, reported once its outcome is known.
+    ended: Option<(Timeline, Instant)>,
     latest_id: SessionId,
     latest_started: Instant,
 
@@ -124,6 +139,7 @@ impl<P: Ports> Owner<P> {
             permits,
             gesture: Gesture::default(),
             session: None,
+            ended: None,
             latest_id: SessionId::default(),
             latest_started: now(),
             worker,
@@ -241,9 +257,15 @@ impl<P: Ports> Owner<P> {
             return;
         };
         match event {
-            CaptureEvent::Ready(_) => session.audio_ready(gesture),
+            CaptureEvent::Ready(_, device) => {
+                session.timeline.audio(now(), device);
+                session.audio_ready(gesture);
+            },
             CaptureEvent::Level(_, level) => session.show_level(level),
             CaptureEvent::Finished(_, Ok(Some(wav))) => {
+                session
+                    .timeline
+                    .sealed(now(), audio::wav_duration(&wav).unwrap_or_default());
                 session.stage = Stage::AwaitingWorker(wav);
                 self.conclude_capture();
             },
@@ -317,6 +339,7 @@ impl<P: Ports> Owner<P> {
         else {
             return;
         };
+        session.timeline.transcribed(now());
         if text.is_empty() {
             self.abandon();
             self.gesture.complete();
@@ -352,6 +375,7 @@ impl<P: Ports> Owner<P> {
             Some(Action::Finish) => {
                 self.microphone.finish();
                 if let Some(session) = &mut self.session {
+                    session.timeline.released(now());
                     session.finish();
                 }
             },
@@ -376,19 +400,34 @@ impl<P: Ports> Owner<P> {
         self.latest_started = now();
         self.outcome = Outcome::Idle;
         self.notice = None;
-        self.session = Some(Session::new(id, permit));
+        self.session = Some(Session::new(id, permit, self.latest_started));
         ControlFlow::Continue(())
     }
 
     fn end_session(&mut self) {
-        if let Some(session) = self.session.take() {
+        if let Some(session) = self.take_session() {
             session.permit.revoke();
+        }
+    }
+
+    /// Removes the session, keeping its timeline until the owner reports how it ended.
+    fn take_session(&mut self) -> Option<Session> {
+        let session = self.session.take()?;
+        self.ended = Some((session.timeline, now()));
+        Some(session)
+    }
+
+    /// Hands the ended session's timings to the ports once this wake has settled its outcome.
+    fn report_ended(&mut self) {
+        if let Some((timeline, ended)) = self.ended.take() {
+            self.ports
+                .report_timing(timeline.report(ended, self.outcome.label()));
         }
     }
 
     /// Revokes the session and hands its native work to cleanup without awaiting any OS call.
     fn abandon(&mut self) {
-        let Some(session) = self.session.take() else {
+        let Some(session) = self.take_session() else {
             return;
         };
         session.permit.revoke();
@@ -453,7 +492,10 @@ impl<P: Ports> Owner<P> {
             self.notice = Some(Notice::LoadingModel);
         }
         match self.worker.transcribe(mem::take(wav), &self.config) {
-            Ok(()) => session.stage = Stage::Transcribing,
+            Ok(()) => {
+                session.timeline.transcribing(now());
+                session.stage = Stage::Transcribing;
+            },
             Err(unclaimed) => *wav = unclaimed,
         }
     }
@@ -526,6 +568,7 @@ pub(super) async fn run<P: Ports>(wiring: Wiring<P>) {
             break;
         }
         owner.advance().await;
+        owner.report_ended();
         owner.publish();
     }
     owner.shutdown().await;

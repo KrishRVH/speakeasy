@@ -35,7 +35,7 @@ impl Ports for Fixture {
         _: Option<&str>,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<FixtureRecording> {
-        events.try_send(CaptureEvent::Ready(id))?;
+        events.try_send(CaptureEvent::Ready(id, Duration::ZERO))?;
         Ok(FixtureRecording {
             id,
             wav: self.wav.clone(),

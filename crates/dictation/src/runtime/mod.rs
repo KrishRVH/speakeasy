@@ -4,9 +4,15 @@
 mod microphone;
 mod owner;
 mod session;
+mod timeline;
 mod worker;
 
-use std::{convert::Infallible, io, sync::Arc, time::Instant};
+use std::{
+    convert::Infallible,
+    io,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use async_channel::{Receiver, Sender};
 #[cfg(target_os = "macos")]
@@ -119,7 +125,8 @@ impl Default for Snapshot {
 
 /// A capture thread's report about the session that opened it.
 pub(crate) enum CaptureEvent {
-    Ready(SessionId),
+    /// Samples arrived; the capture thread took the duration to open and start the device.
+    Ready(SessionId, Duration),
     Level(SessionId, f32),
     Finished(SessionId, anyhow::Result<Option<Vec<u8>>>),
 }
@@ -127,7 +134,9 @@ pub(crate) enum CaptureEvent {
 impl CaptureEvent {
     const fn session(&self) -> SessionId {
         match self {
-            Self::Ready(session) | Self::Level(session, _) | Self::Finished(session, _) => *session,
+            Self::Ready(session, _) | Self::Level(session, _) | Self::Finished(session, _) => {
+                *session
+            },
         }
     }
 }
@@ -155,7 +164,10 @@ impl Runtime {
     ) -> anyhow::Result<(Self, InputMonitor)> {
         let (input, inputs) = input_lane();
         let (monitor, inserter) = speakeasy_platform::prepare(input.clone())?;
-        let ports = Desktop { inserter };
+        let ports = Desktop {
+            inserter,
+            timing: std::env::var_os("SPEAKEASY_TIMING").is_some(),
+        };
         let runtime = Self::host(
             config,
             snapshots,

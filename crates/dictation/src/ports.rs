@@ -64,6 +64,9 @@ pub(crate) trait Ports: Send + 'static {
         cancelled: watch::Receiver<bool>,
     ) -> impl Future<Output = anyhow::Result<Self::Speech>> + Send + 'static;
 
+    /// Hands an ended session's stage timings, numbers only, to whoever asked for them.
+    fn report_timing(&self, _line: String) {}
+
     /// Submits `text` as `delivery` asks; no native input happens unless `permit` commits first.
     fn insert(
         &self,
@@ -77,6 +80,8 @@ pub(crate) trait Ports: Send + 'static {
 #[cfg(target_os = "macos")]
 pub(crate) struct Desktop {
     pub inserter: Inserter,
+    /// Whether `SPEAKEASY_TIMING` asked for each session's stage timings on standard error.
+    pub timing: bool,
 }
 
 #[cfg(target_os = "macos")]
@@ -103,6 +108,12 @@ impl Ports for Desktop {
         cancelled: watch::Receiver<bool>,
     ) -> impl Future<Output = anyhow::Result<LocalSpeech>> + Send + 'static {
         LocalSpeech::start(config, cancelled)
+    }
+
+    fn report_timing(&self, line: String) {
+        if self.timing {
+            eprintln!("{line}");
+        }
     }
 
     fn insert(

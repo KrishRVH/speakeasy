@@ -233,9 +233,11 @@ impl Recorder {
         })
     }
 
+    /// Delivers audio until finished; `opened` is how long the device took to start.
     fn record(
         mut self,
         id: SessionId,
+        opened: Duration,
         events: &Sender<CaptureEvent>,
         control: &Control,
     ) -> anyhow::Result<Option<Vec<u8>>> {
@@ -255,7 +257,7 @@ impl Recorder {
             }
             if !ready && !self.ring.is_empty() {
                 ready = true;
-                events.send_blocking(CaptureEvent::Ready(id))?;
+                events.send_blocking(CaptureEvent::Ready(id, opened))?;
             }
             consume_pcm(&mut self.ring, &mut self.pcm, &mut meter, self.limit);
             if let Some(level) = meter.take_level() {
@@ -470,8 +472,9 @@ fn record(
     events: &Sender<CaptureEvent>,
     control: &Arc<Control>,
 ) -> anyhow::Result<Option<Vec<u8>>> {
+    let begun = Instant::now();
     match Recorder::open(microphone, events, control) {
-        Ok(recorder) => recorder.record(id, events, control),
+        Ok(recorder) => recorder.record(id, begun.elapsed(), events, control),
         Err(Startup::Stopped) => Ok(None),
         Err(Startup::Failed(error)) => Err(error),
     }
@@ -731,6 +734,13 @@ pub(crate) fn wav_sample_rate(wav: &[u8]) -> Option<u32> {
 /// The PCM16 samples behind a header written by this module.
 pub(crate) fn wav_pcm(wav: &[u8]) -> Option<&[u8]> {
     wav.get(WAV_HEADER_BYTES..)
+}
+
+/// How much audio a WAV written by this module holds.
+pub(crate) fn wav_duration(wav: &[u8]) -> Option<Duration> {
+    let samples = wav_pcm(wav)?.len() / SAMPLE_BYTES;
+    let rate = wav_sample_rate(wav).filter(|&rate| rate > 0)?;
+    Some(Duration::from_secs_f64(samples as f64 / f64::from(rate)))
 }
 
 pub(crate) fn silent_wav(rate: u32, duration: Duration) -> anyhow::Result<Vec<u8>> {
@@ -1017,7 +1027,7 @@ mod tests {
     #[tokio::test]
     async fn closing_audio_events_unblocks_owned_capture_retirement() -> anyhow::Result<()> {
         let (events, audio) = async_channel::bounded(1);
-        events.try_send(CaptureEvent::Ready(SessionId::FIRST))?;
+        events.try_send(CaptureEvent::Ready(SessionId::FIRST, Duration::ZERO))?;
         let capture = Capture::spawn(SessionId::FIRST, events, |_, _| Ok(None))?;
         let retirement = capture.retire();
         tokio::pin!(retirement);

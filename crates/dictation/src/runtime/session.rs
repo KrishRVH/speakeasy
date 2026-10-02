@@ -1,11 +1,13 @@
 //! Authority and presentation stage for one recording. Retired native work belongs to the owner, so
 //! abandoning a session never waits or opens its replacement.
 
+use std::time::Instant;
+
 use speakeasy_core::gesture::State;
 use speakeasy_platform::{InsertPermit, Inserted};
 use tokio::task::JoinHandle;
 
-use super::Phase;
+use super::{Phase, timeline::Timeline};
 
 /// Identifies one recording; capture events carry it, so late audio cannot reach a newer session.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -34,16 +36,18 @@ pub(super) struct Session {
     pub level: f32,
     pub meter_tick: u64,
     pub stage: Stage,
+    pub timeline: Timeline,
 }
 
 impl Session {
-    pub(super) const fn new(id: SessionId, permit: InsertPermit) -> Self {
+    pub(super) const fn new(id: SessionId, permit: InsertPermit, pressed: Instant) -> Self {
         Self {
             id,
             permit,
             level: 0.0,
             meter_tick: 0,
             stage: Stage::Queued,
+            timeline: Timeline::new(pressed),
         }
     }
 

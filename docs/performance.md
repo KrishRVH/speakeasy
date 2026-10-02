@@ -38,6 +38,15 @@ Compare paired runs and check word accuracy and formatting as well as latency. K
 of logs. The opt-in tests `profile_fixture_dictation` and `profile_ready_text_latency` exercise the
 real session owner with public audio or fake devices; the README lists the fixture variables.
 
+Launching the app with `SPEAKEASY_TIMING=1` prints one line per session to standard error, on the
+session owner's clock: press to first audio, the device's own open time, release to sealed audio,
+any wait for the worker, the engine round trip, text to the insertion outcome, release to outcome,
+the recorded length, and how the session ended. It carries durations only, never audio or text:
+
+```text
+speakeasy timing: press→audio 41.3 ms · release→sealed 1.2 ms · sealed→engine 0.0 ms · engine 152.4 ms · text→done 7.9 ms · release→done 161.5 ms · device 33.0 ms · audio 4.20 s · done
+```
+
 `engine_profile` times warm recognition of public WAV fixtures with the same engine and model as the
 app, either in process through the engine's C library or through the `nemo-speech serve` HTTP route
 that the 0.3.2 app uses. Each fixture prints its timings, word count, and an FNV-1a hash of its

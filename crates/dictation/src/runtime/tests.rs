@@ -74,6 +74,7 @@ struct FakePorts {
     jobs: Sender<TranscriptionJob>,
     pasted: Sender<String>,
     loads: Sender<()>,
+    timings: Sender<String>,
 }
 
 /// What the fakes report back to the test.
@@ -82,6 +83,7 @@ struct Reports {
     jobs: Receiver<TranscriptionJob>,
     pasted: Receiver<String>,
     loads: Receiver<()>,
+    timings: Receiver<String>,
 }
 
 impl FakePorts {
@@ -90,6 +92,7 @@ impl FakePorts {
         let (jobs, requested) = async_channel::bounded(8);
         let (pasted, submitted) = async_channel::bounded(8);
         let (loads, loaded) = async_channel::bounded(8);
+        let (timings, reported) = async_channel::bounded(8);
         let ports = Self {
             desktop_pending: false,
             record_error: None,
@@ -103,12 +106,14 @@ impl FakePorts {
             jobs,
             pasted,
             loads,
+            timings,
         };
         let reports = Reports {
             captures: opened,
             jobs: requested,
             pasted: submitted,
             loads: loaded,
+            timings: reported,
         };
         (ports, reports)
     }
@@ -141,7 +146,7 @@ impl Ports for FakePorts {
             bail!(error);
         }
         self.captures.try_send((id, events.clone()))?;
-        events.try_send(CaptureEvent::Ready(id))?;
+        events.try_send(CaptureEvent::Ready(id, Duration::ZERO))?;
         Ok(FakeRecording {
             id,
             events,
@@ -173,6 +178,12 @@ impl Ports for FakePorts {
             }
             Ok(speech)
         }
+    }
+
+    fn report_timing(&self, line: String) {
+        self.timings
+            .try_send(line)
+            .expect("timing lane has room for each ended session");
     }
 
     fn insert(
@@ -271,6 +282,7 @@ struct Harness<Owner = OwnedThread> {
     jobs: Receiver<TranscriptionJob>,
     pasted: Receiver<String>,
     loads: Receiver<()>,
+    timings: Receiver<String>,
 }
 
 impl Harness {
@@ -322,6 +334,7 @@ impl<Owner: Sync> Harness<Owner> {
             jobs: reports.jobs,
             pasted: reports.pasted,
             loads: reports.loads,
+            timings: reports.timings,
         })
     }
 
@@ -396,6 +409,26 @@ async fn still_pending(future: impl Future) -> bool {
 
 fn level_is(level: f32) -> impl FnMut(&Snapshot) -> bool {
     move |snapshot| snapshot.level.to_bits() == level.to_bits()
+}
+
+#[tokio::test(start_paused = true)]
+async fn each_ended_session_reports_its_stage_timings_once() -> anyhow::Result<()> {
+    let mut h = Harness::paused(|_| {})?;
+    receive(&h.loads).await?;
+    h.start().await?;
+    tokio::time::advance(Duration::from_millis(500)).await;
+    let reply = h.finish().await?;
+    tokio::time::advance(Duration::from_millis(120)).await;
+    answer(reply, "fixture text")?;
+    h.phase(Phase::Done).await?;
+    let report = receive(&h.timings).await?;
+    assert!(report.contains(" engine 120.0 ms "), "{report}");
+    assert!(report.ends_with(" · done"), "{report}");
+    assert!(h.timings.try_recv().is_err(), "A session reported twice");
+    h.start().await?;
+    h.input(Input::Cancel);
+    assert!(receive(&h.timings).await?.ends_with(" · cancelled"));
+    h.close().await
 }
 
 #[tokio::test(start_paused = true)]
