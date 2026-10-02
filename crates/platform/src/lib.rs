@@ -13,6 +13,7 @@ mod macos;
 mod monitor;
 mod owned_thread;
 mod process;
+mod scheduling;
 pub mod speech;
 
 use std::sync::{
@@ -31,6 +32,7 @@ pub use self::{
     insertion::Delivery,
     owned_thread::OwnedThread,
     process::{ProcessGroup, exit_now, private_stdout},
+    scheduling::{Responsive, prefer_responsive_thread},
 };
 
 /// The pill window's width in device-independent pixels.

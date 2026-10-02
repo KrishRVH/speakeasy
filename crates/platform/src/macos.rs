@@ -67,7 +67,10 @@ impl InputMonitor {
         let control = Arc::new(MonitorControl::default());
         let thread = OwnedThread::spawn("input-monitor", {
             let control = Arc::clone(&control);
-            move || monitor(&input, &control)
+            move || {
+                crate::prefer_responsive_thread();
+                monitor(&input, &control);
+            }
         })?;
         Ok(Self {
             thread,

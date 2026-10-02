@@ -308,7 +308,13 @@ struct Wiring<P> {
 
 impl<P: Ports> Wiring<P> {
     fn run_on_own_thread(self) -> io::Result<OwnedThread> {
-        OwnedThread::spawn("dictation", move || self.run_on_current_thread())
+        OwnedThread::spawn("dictation", move || {
+            speakeasy_platform::prefer_responsive_thread();
+            // A menu-bar app without a visible window is a candidate for App Nap, which would
+            // throttle the press-to-capture and release-to-insert paths while dictation is enabled.
+            let _responsive = speakeasy_platform::Responsive::begin("Dictation");
+            self.run_on_current_thread();
+        })
     }
 
     fn run_on_current_thread(self) {

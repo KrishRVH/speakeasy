@@ -86,6 +86,7 @@ impl Capture {
         let thread = thread::Builder::new().name("audio-capture".into()).spawn({
             let control = control.clone();
             move || {
+                speakeasy_platform::prefer_responsive_thread();
                 // A panicked capture's state is discarded; only its event lane is used afterwards.
                 let Recorded { outcome, device } =
                     panic::catch_unwind(AssertUnwindSafe(|| work(&events, &control).into()))
