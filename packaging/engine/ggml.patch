@@ -49,11 +49,30 @@ index 42054d8..2ea90a3 100644
      target_sources(ggml-metal PRIVATE "${METALLIB_EMBED_ASM}")
  else()
      # copy metal files to bin directory
+diff --git a/src/ggml-metal/ggml-metal-device.cpp b/src/ggml-metal/ggml-metal-device.cpp
+index e288a27..f37b90e 100644
+--- a/src/ggml-metal/ggml-metal-device.cpp
++++ b/src/ggml-metal/ggml-metal-device.cpp
+@@ -1538,7 +1538,13 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_bin(ggml_metal_l
+     const char * t1_str = ggml_type_name(op->src[1]->type);
+     const char * t_str  = ggml_type_name(op->type);
+ 
+-    const bool is_c4 = (op->src[0]->ne[0] % 4 == 0) && (op->src[1]->ne[0] % 4 == 0);
++    // float4 access needs 16-byte aligned rows; strided views (e.g. a relative-position shift) may
++    // have row counts divisible by four without aligned rows.
++    const auto aligned16 = [](const ggml_tensor * t) {
++        return ((uintptr_t) t->data % 16 == 0) && t->nb[1] % 16 == 0 && t->nb[2] % 16 == 0 && t->nb[3] % 16 == 0;
++    };
++    const bool is_c4 = (op->src[0]->ne[0] % 4 == 0) && (op->src[1]->ne[0] % 4 == 0) &&
++                       aligned16(op->src[0]) && aligned16(op->src[1]) && aligned16(op);
+ 
+     const bool is_cb = op->src[0]->ne[0] != op->src[1]->ne[0];
+     const bool is_rb = ggml_is_contiguous(op->src[0]) && ggml_is_contiguous(op->src[1]) && (ggml_nrows(op->src[1]) == 1) && ggml_nelements(op) < 65536;
 diff --git a/src/ggml-metal/ggml-metal-device.m b/src/ggml-metal/ggml-metal-device.m
-index 780dfe8..b51a39b 100644
+index 780dfe8..10994c3 100644
 --- a/src/ggml-metal/ggml-metal-device.m
 +++ b/src/ggml-metal/ggml-metal-device.m
-@@ -208,6 +208,27 @@ ggml_metal_library_t ggml_metal_library_init(ggml_metal_device_t dev) {
+@@ -208,6 +208,31 @@ ggml_metal_library_t ggml_metal_library_init(ggml_metal_device_t dev) {
          }
  #endif
  
@@ -64,10 +83,14 @@ index 780dfe8..b51a39b 100644
 +            !ggml_metal_device_get_props(dev)->has_tensor && getenv("GGML_METAL_COMPILE_SOURCE") == NULL) {
 +            extern const char ggml_metallib_compiled_start[];
 +            extern const char ggml_metallib_compiled_end[];
++            // The bytes live in this image's data section: an empty destructor wraps them without a copy.
 +            dispatch_data_t compiled = dispatch_data_create(
 +                ggml_metallib_compiled_start, ggml_metallib_compiled_end - ggml_metallib_compiled_start,
-+                NULL, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
++                NULL, ^{});
 +            library = [device newLibraryWithData:compiled error:&error];
++#if !__has_feature(objc_arc)
++            dispatch_release(compiled);
++#endif
 +            if (error) {
 +                GGML_LOG_WARN("%s: compiled library rejected, compiling source: %s\n", __func__, [[error description] UTF8String]);
 +                library = nil;

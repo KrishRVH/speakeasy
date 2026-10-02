@@ -253,7 +253,7 @@ index e21b860..e44391b 100644
      int d_model_;
      int kernel_size_;
 diff --git a/src/asr/encoder/rel_pos_attention.cpp b/src/asr/encoder/rel_pos_attention.cpp
-index f7fceda..f394681 100644
+index f7fceda..af67384 100644
 --- a/src/asr/encoder/rel_pos_attention.cpp
 +++ b/src/asr/encoder/rel_pos_attention.cpp
 @@ -6,6 +6,7 @@
@@ -264,7 +264,7 @@ index f7fceda..f394681 100644
  #include "rel_pos_attention.h"
  
  #include <ggml-backend.h>
-@@ -271,10 +272,19 @@ RelPositionMultiHeadAttention::build_graph_masked(
+@@ -271,10 +272,21 @@ RelPositionMultiHeadAttention::build_graph_masked(
          // Every reshape and view must retain the B stride.
          const int64_t T = input_tensor.tensor->ne[1];
          const int64_t B = input_tensor.tensor->ne[2];
@@ -274,7 +274,9 @@ index f7fceda..f394681 100644
 -        auto ph = ggml_cont(bf_ctx.ctx, ggml_permute(bf_ctx.ctx, p, 0, 2, 1, 3));
 +        // Row-contiguous head views feed the bias adds and products directly; only V needs a
 +        // copy, for its transpose.
-+        const bool legacy_copies = std::getenv("NEMO_SPEECH_LEGACY_ATTN_COPIES") != nullptr;
++        // Accelerate takes only contiguous operands, so the CPU keeps the copies.
++        const bool legacy_copies = !session->params.use_gpu ||
++                                   std::getenv("NEMO_SPEECH_LEGACY_ATTN_COPIES") != nullptr;
 +        auto qh = ggml_permute(bf_ctx.ctx, q_multi_head, 0, 2, 1, 3);
 +        auto kh = k_multi_head;
 +        auto vh = ggml_permute(bf_ctx.ctx, v_reshaped, 0, 2, 1, 3);
@@ -288,7 +290,7 @@ index f7fceda..f394681 100644
          auto bu = ggml_reshape_4d(bf_ctx.ctx, pos_bias_u_tensor.tensor, d_k, 1, n_head, 1);
          auto bv = ggml_reshape_4d(bf_ctx.ctx, pos_bias_v_tensor.tensor, d_k, 1, n_head, 1);
          auto qu = ggml_add(bf_ctx.ctx, qh, bu);
-@@ -283,7 +293,14 @@ RelPositionMultiHeadAttention::build_graph_masked(
+@@ -283,7 +295,15 @@ RelPositionMultiHeadAttention::build_graph_masked(
          auto matrix_ac = ggml_mul_mat(bf_ctx.ctx, kh, qu);  // [T,T,H,B]
          auto matrix_bd = ggml_mul_mat(bf_ctx.ctx, ph, qv);  // [2T-1,T,H,B]
  
@@ -296,6 +298,7 @@ index f7fceda..f394681 100644
 +        // Transformer-XL relative shift: out[j, i] = bd[T - 1 + j - i, i], which lies at flat offset
 +        // (T - 1) + j + i * (2T - 2) of the contiguous [2T-1, T] product, so a strided view is exact.
 +        if (std::getenv("NEMO_SPEECH_LEGACY_RELSHIFT") == nullptr) {
++            GGML_ASSERT(matrix_bd->ne[0] == 2 * T - 1);
 +            const size_t es = ggml_element_size(matrix_bd);
 +            matrix_bd = ggml_view_4d(
 +                bf_ctx.ctx, matrix_bd, T, T, n_head, B, static_cast<size_t>(2 * T - 2) * es,
@@ -304,7 +307,7 @@ index f7fceda..f394681 100644
          auto first_row = ggml_view_4d(
              bf_ctx.ctx, matrix_bd, 1, T, n_head, B, matrix_bd->nb[1], matrix_bd->nb[2],
              matrix_bd->nb[3], 0);
-@@ -299,6 +316,7 @@ RelPositionMultiHeadAttention::build_graph_masked(
+@@ -299,6 +319,7 @@ RelPositionMultiHeadAttention::build_graph_masked(
              bf_ctx.ctx, matrix_bd, T, T, n_head, B, matrix_bd->nb[1], matrix_bd->nb[2],
              matrix_bd->nb[3], 0);
          matrix_bd = ggml_cont(bf_ctx.ctx, matrix_bd);
@@ -313,7 +316,7 @@ index f7fceda..f394681 100644
          auto scores = ggml_scale_inplace(
              bf_ctx.ctx, ggml_add(bf_ctx.ctx, matrix_ac, matrix_bd), scale_factor);
 diff --git a/src/asr/model.cpp b/src/asr/model.cpp
-index cac4953..e206b40 100644
+index cac4953..77ef286 100644
 --- a/src/asr/model.cpp
 +++ b/src/asr/model.cpp
 @@ -1628,8 +1628,16 @@ RnntModel::RnntModel(ggml_runtime::BackendManager& bm, Common&& c, const Batchin
@@ -334,11 +337,20 @@ index cac4953..e206b40 100644
      // Bound graph variants across predictor batch and joint time shapes.
      decoder_session_->set_run_cache_capacity(64);
      decoder_session_->setup();
+@@ -1965,7 +1973,7 @@ RnntModel::zero_decoder_slots(std::vector<int> slots) {
+         return;
+     std::sort(slots.begin(), slots.end());
+     slots.erase(std::unique(slots.begin(), slots.end()), slots.end());
+-    std::lock_guard<std::mutex> compute_lock(backend_manager().compute_mutex());
++    std::lock_guard<std::mutex> compute_lock(decoder_manager().compute_mutex());
+     for (size_t first = 0; first < slots.size();) {
+         size_t last = first + 1;
+         while (last < slots.size() && slots[last] == slots[last - 1] + 1) ++last;
 diff --git a/src/asr/model.h b/src/asr/model.h
-index ce5114a..ce3b055 100644
+index ce5114a..a3a2ef7 100644
 --- a/src/asr/model.h
 +++ b/src/asr/model.h
-@@ -276,6 +276,10 @@ class RnntModel final : public AsrModel, public RnntEngine {
+@@ -276,6 +276,14 @@ class RnntModel final : public AsrModel, public RnntEngine {
      std::unique_ptr<PromptFusionModule> prompt_fusion_;
      std::unique_ptr<RnntEncoderTail> rnnt_encoder_tail_;
      std::unique_ptr<RnntDecoderStages> rnnt_decoder_stages_;
@@ -346,6 +358,10 @@ index ce5114a..ce3b055 100644
 +    // few megaflops, so a GPU round trip per step costs more than the arithmetic. Declared
 +    // before decoder_session_ so the session is destroyed first.
 +    std::unique_ptr<ggml_runtime::BackendManager> decoder_bm_;
++    // The lane the decoder session runs on: its own CPU manager beside a GPU encoder.
++    ggml_runtime::BackendManager& decoder_manager() {
++        return decoder_bm_ ? *decoder_bm_ : backend_manager();
++    }
      std::unique_ptr<ggml_runtime::Session> decoder_session_;
      std::unique_ptr<DecoderBatchers> decoder_batchers_;
      int decoder_arena_slots_ = 0;

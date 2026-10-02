@@ -20,6 +20,11 @@ jobs:
       - name: Check native rendering and frame-source lifetime
         timeout-minutes: 3
         run: cargo run --locked -p speakeasy --example check_native_rendering -- --native-gui
+      - name: Restore the engine build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: artifacts/engine
+          key: engine-${{ runner.os }}-${{ hashFiles('scripts/build-engine.sh', 'packaging/engine/*.patch') }}
       - name: Package
         run: bash scripts/package-macos.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -17,13 +17,15 @@ work="artifacts/engine-build"
 nemo_commit=4f9676226f667d14608487df744f375db87127f8
 ggml_commit=c03b4e2bcece5134827881af90242086daf75be5
 sentencepiece_commit=17d7580d6407802f85855d2cc9190634e2c95624
+httplib_commit=62d899feac3cf9215a55f2b43da250fdd98d2156
 # M1 is the oldest supported Mac; never tune the CPU code for the build machine.
 cpu_arch=armv8.5-a+fp16+dotprod
 deployment=14.0
 
 key="$(
   {
-    printf '%s\n' "$nemo_commit" "$ggml_commit" "$sentencepiece_commit" "$cpu_arch" "$deployment"
+    printf '%s\n' "$nemo_commit" "$ggml_commit" "$sentencepiece_commit" "$httplib_commit" \
+      "$cpu_arch" "$deployment"
     cat scripts/build-engine.sh packaging/engine/nemo-speech.patch packaging/engine/ggml.patch
   } | shasum -a 256 | cut -c1-12
 )"
@@ -54,6 +56,7 @@ checkout() {
 }
 checkout "$work/nemo" https://github.com/NVIDIA/NeMo-Speech.cpp.git "$nemo_commit"
 checkout "$work/nemo/ggml" https://github.com/ggml-org/ggml.git "$ggml_commit"
+checkout "$work/nemo/third_party/cpp-httplib" https://github.com/yhirose/cpp-httplib.git "$httplib_commit"
 checkout "$work/sentencepiece" https://github.com/google/sentencepiece.git "$sentencepiece_commit"
 git -C "$work/nemo" apply "$PWD/packaging/engine/nemo-speech.patch"
 git -C "$work/nemo/ggml" apply "$PWD/packaging/engine/ggml.patch"
@@ -75,7 +78,7 @@ quiet cmake "${common[@]}" -S "$work/nemo" -B "$work/build" \
   -DNEMO_SPEECH_BUILD_DIAR=OFF \
   -DNEMO_SPEECH_BUILD_TTS=OFF \
   -DNEMO_SPEECH_BUILD_NMT=OFF \
-  -DNEMO_SPEECH_BUILD_HTTP=OFF \
+  -DNEMO_SPEECH_BUILD_HTTP=ON \
   -DNEMO_SPEECH_BUILD_MIC_CAPTURE=OFF \
   -DNEMO_SPEECH_BUILD_EXAMPLES=OFF \
   -DNEMO_SPEECH_BUILD_TESTS=OFF \
@@ -111,6 +114,12 @@ while IFS= read -r binary; do
     exit 1
   fi
 done < <(find "$part/nemo-speech/bin" "$part/nemo-speech/lib" -type f)
+
+# The engine must load and find its accelerator here before it ships.
+if ! "$part/nemo-speech/bin/nemo-speech" doctor --json > "$work/doctor.json"; then
+  echo "The built engine failed its doctor check" >&2
+  exit 1
+fi
 
 rm -rf "${staging:?}/$name"
 mv "$part" "$staging/$name"

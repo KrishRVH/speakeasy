@@ -323,26 +323,32 @@ async fn choose_engine(
     progress: &watch::Sender<Progress>,
     installation: &mut Installation,
 ) -> anyhow::Result<ChosenEngine> {
+    let copied = bundled.is_some();
     let metal = match bundled {
         Some(build) => copy_out(&build, root, progress, installation).await?,
         None => unpack(client, &METAL, root, progress, installation).await?,
     };
-    let report = doctor(&metal, installation)
-        .await
-        .context("The speech engine cannot run on this Mac.")?;
+    let Some(report) = doctor(&metal, installation).await else {
+        // A copy is cheap to make again, so the next attempt starts from the bundle.
+        if copied {
+            remove_engine_directory(&metal)?;
+        }
+        bail!("The speech engine cannot run on this Mac.");
+    };
     Ok(ChosenEngine {
         executable: keep_only(root, &metal)?,
         use_gpu: is_accelerated(&report),
     })
 }
 
-/// The engine build a packaged app carries: `Contents/Resources/engine/<build>/nemo-speech`.
+/// The engine build the running app's bundle carries.
 fn bundled_engine() -> Option<PathBuf> {
-    let contents = std::env::current_exe()
-        .ok()?
-        .parent()?
-        .parent()?
-        .to_path_buf();
+    let executable = std::env::current_exe().ok()?.canonicalize().ok()?;
+    bundled_engine_in(executable.parent()?.parent()?)
+}
+
+/// The engine build under a bundle's `Contents`: `Resources/engine/<build>/nemo-speech`.
+fn bundled_engine_in(contents: &Path) -> Option<PathBuf> {
     fs::read_dir(contents.join("Resources/engine"))
         .ok()?
         .flatten()
@@ -375,9 +381,14 @@ async fn copy_out(
     let staging = PathBuf::from(staging);
     remove_engine_directory(&staging)?;
     fs::create_dir_all(&engines)?;
-    // ditto keeps the build's library symlinks, permissions, and signatures.
+    // ditto keeps the build's library symlinks, permissions, and signatures. The user already
+    // opened the bundle carrying it, so a downloaded app's quarantine stays with the app.
     let mut command = owned_command("/usr/bin/ditto");
-    command.arg(build).arg(&staging).stdout(Stdio::null());
+    command
+        .arg("--noqtn")
+        .arg(build)
+        .arg(&staging)
+        .stdout(Stdio::null());
     let (status, _) = installation.output(&mut command).await?;
     if !status.success() {
         bail!("Cannot install the speech engine. Check free disk space, then try again.");
@@ -811,13 +822,27 @@ mod tests {
             "libengine.1.dylib",
             build.join("nemo-speech/lib/libengine.dylib"),
         )?;
+        let contents = directory.path().join("Contents");
+        assert_eq!(bundled_engine_in(&contents), None);
+        fs::create_dir_all(contents.join("Resources/engine"))?;
+        std::os::unix::fs::symlink(
+            &build,
+            contents.join("Resources/engine/nemo-speech-0.1.0-speakeasy-fixture"),
+        )?;
+        assert_eq!(
+            bundled_engine_in(&contents),
+            Some(contents.join("Resources/engine/nemo-speech-0.1.0-speakeasy-fixture"))
+        );
         let root = directory.path().join("support");
+        // A stale staging copy from an interrupted attempt is replaced.
+        fs::create_dir_all(root.join("engines/nemo-speech-0.1.0-speakeasy-fixture.part/stale"))?;
         let (progress, _) = watch::channel(Progress::default());
         let mut installation = Installation {
             child: None,
             _lock: Installation::lock(&root, &progress).await?,
         };
         let installed = copy_out(&build, &root, &progress, &mut installation).await?;
+        assert!(!installed.join("stale").exists());
         assert_eq!(
             installed,
             root.join("engines/nemo-speech-0.1.0-speakeasy-fixture")
