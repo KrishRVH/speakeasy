@@ -482,6 +482,27 @@ async fn a_hands_free_pause_is_recognized_early_and_reused_by_an_identical_recor
 }
 
 #[tokio::test(start_paused = true)]
+async fn speculated_text_gets_the_same_filler_cleanup_as_the_recordings_own_request()
+-> anyhow::Result<()> {
+    let config = Config {
+        engine: Engine::Parakeet,
+        ..Config::default()
+    };
+    let mut h = Harness::paused_with(config, |ports| ports.delayed_finish = true)?;
+    receive(&h.loads).await?;
+    let (id, events) = h.start().await?;
+    events.send(CaptureEvent::Paused(id, 0, vec![3])).await?;
+    h.transcribe_next_as("\nUm, early, uh, text.\n").await?;
+    h.input(Input::Toggle);
+    events
+        .send(CaptureEvent::Finished(id, Ok(Some(captured(Some(0))))))
+        .await?;
+    assert_eq!(receive(&h.pasted).await?, "early text.");
+    h.phase(Phase::Done).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
 async fn speech_after_a_pause_discards_its_text_for_the_recordings_own_request()
 -> anyhow::Result<()> {
     let mut h = Harness::paused(|ports| ports.delayed_finish = true)?;
