@@ -20,7 +20,7 @@ use tokio::{
 };
 
 use super::{
-    INFERENCE_TIMEOUT, MAX_TEXT_BYTES, STARTUP_TIMEOUT, Warmup, contain, unless_cancelled,
+    INFERENCE_TIMEOUT, MAX_TEXT_BYTES, STARTUP_TIMEOUT, contain, unless_cancelled, warm_up,
 };
 use crate::{
     audio,
@@ -89,7 +89,7 @@ impl Server {
             client,
             _directory: directory,
         };
-        if let Err(error) = speech.become_ready(&config, &mut cancelled).await {
+        if let Err(error) = speech.become_ready(config.use_gpu, &mut cancelled).await {
             speech.stop().await;
             return Err(error);
         }
@@ -98,7 +98,7 @@ impl Server {
 
     async fn become_ready(
         &mut self,
-        config: &Config,
+        use_gpu: bool,
         cancelled: &mut watch::Receiver<bool>,
     ) -> anyhow::Result<()> {
         unless_cancelled(cancelled, async {
@@ -107,14 +107,8 @@ impl Server {
                 .context("Local model startup timed out")?
         })
         .await?;
-        if let Some(warmup) = Warmup::required(config) {
-            unless_cancelled(cancelled, async {
-                timeout(STARTUP_TIMEOUT, self.probe_with_silence())
-                    .await
-                    .context(warmup.timed_out)?
-                    .context(warmup.failed)
-            })
-            .await?;
+        if use_gpu {
+            warm_up(&*self, cancelled).await?;
         }
         ensure!(!*cancelled.borrow(), STARTUP_CANCELLED);
         Ok(())
@@ -192,12 +186,6 @@ impl Speech for Server {
         let reply: Transcription =
             serde_json::from_slice(&body).context("Local speech returned invalid JSON")?;
         reply.text.context("Local speech returned no transcript")
-    }
-
-    async fn probe_with_silence(&self) -> anyhow::Result<()> {
-        let silence = audio::silent_wav(16_000, Duration::from_secs(1))?;
-        self.transcribe(silence, "en").await?;
-        Ok(())
     }
 
     async fn stop(&mut self) {

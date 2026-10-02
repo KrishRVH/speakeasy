@@ -3,7 +3,7 @@
 
 mod render;
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 use async_channel::Receiver;
 use gpui::{App, BorrowAppContext, Context, SharedString, Task, Timer, Window};
@@ -407,8 +407,6 @@ impl Drop for Settings {
 #[derive(PartialEq, Eq)]
 struct Presentation {
     indicator: Indicator,
-    shortcut: Arc<str>,
-    cancel_shortcut: Arc<str>,
     message: String,
 }
 
@@ -417,8 +415,6 @@ impl Presentation {
         let status = services.status(snapshot);
         Self {
             indicator: status.indicator,
-            shortcut: snapshot.shortcut.clone(),
-            cancel_shortcut: snapshot.cancel_shortcut.clone(),
             message: if snapshot.message.is_empty() {
                 status.description.into_owned()
             } else {
@@ -599,8 +595,6 @@ mod tests {
             config,
             presentation: Presentation {
                 indicator: Indicator::Paused,
-                shortcut: Arc::from(""),
-                cancel_shortcut: Arc::from(""),
                 message: String::new(),
             },
             notice: None,

@@ -12,19 +12,20 @@ use std::time::Duration;
 
 use anyhow::{Context, bail};
 use speakeasy_platform::{ProcessGroup, speech::Failure};
-use tokio::{process::Child, sync::watch};
+use tokio::{process::Child, sync::watch, time::timeout};
 
 pub use self::helper::{HELPER_FLAG, run_helper};
 use self::{helper::Helper, server::Server};
 use crate::{
+    audio,
     child::kill_and_reap,
     config::{Config, Engine},
     ports::{STARTUP_CANCELLED, Speech},
 };
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
-// CPU inference of a five-minute recording can take minutes; Escape and bounded recovery end real
-// waits long before this.
+// CPU inference of a five-minute recording can take minutes; cancellation and the bound on
+// abandoned transcriptions end real waits long before this.
 const INFERENCE_TIMEOUT: Duration = Duration::from_mins(30);
 const MAX_TEXT_BYTES: usize = 1024 * 1024;
 
@@ -42,7 +43,7 @@ impl LocalSpeech {
         else {
             return Server::start(config, cancelled).await.map(Self::Server);
         };
-        match Helper::start(config.clone(), library, cancelled.clone()).await {
+        match Helper::start(&config, library, cancelled.clone()).await {
             Ok(helper) => Ok(Self::Helper(helper)),
             // A library this process cannot load, such as one a hardened runtime refuses, still
             // leaves the installation's own server.
@@ -62,13 +63,6 @@ impl Speech for LocalSpeech {
         }
     }
 
-    async fn probe_with_silence(&self) -> anyhow::Result<()> {
-        match self {
-            Self::Helper(helper) => helper.probe_with_silence().await,
-            Self::Server(server) => server.probe_with_silence().await,
-        }
-    }
-
     async fn stop(&mut self) {
         match self {
             Self::Helper(helper) => helper.stop().await,
@@ -77,20 +71,22 @@ impl Speech for LocalSpeech {
     }
 }
 
-/// Loading weights does not prepare every GPU kernel, so GPU configurations transcribe silence
-/// before reporting ready.
-struct Warmup {
-    timed_out: &'static str,
-    failed: &'static str,
-}
-
-impl Warmup {
-    fn required(config: &Config) -> Option<Self> {
-        config.use_gpu.then_some(Self {
-            timed_out: "Local GPU warmup timed out. Check the selected engine and GPU dependencies.",
-            failed: "Local GPU warmup failed. Check the selected engine and GPU dependencies.",
-        })
-    }
+/// Loading weights does not prepare every GPU kernel, so a GPU engine transcribes a second of
+/// silence before reporting ready; completing it also proves the model responds, which a health
+/// check cannot.
+async fn warm_up(
+    speech: &impl Speech,
+    cancelled: &mut watch::Receiver<bool>,
+) -> anyhow::Result<()> {
+    let silence = audio::silent_wav(16_000, Duration::from_secs(1))?;
+    unless_cancelled(cancelled, async {
+        timeout(STARTUP_TIMEOUT, speech.transcribe(silence, "en"))
+            .await
+            .context("Local GPU warmup timed out. Check the selected engine and GPU dependencies.")?
+            .context("Local GPU warmup failed. Check the selected engine and GPU dependencies.")
+    })
+    .await?;
+    Ok(())
 }
 
 /// Takes termination authority over a freshly spawned engine, or reaps it when that fails.

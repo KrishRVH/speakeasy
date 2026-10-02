@@ -42,7 +42,7 @@ impl Render for Settings {
                 self.setup_card(palette, unconfigured, cx)
                     .into_any_element()
             } else {
-                self.gesture_hints(palette).into_any_element()
+                Self::gesture_hints(palette).into_any_element()
             })
             .when(!self.is_setting_up(), |settings| {
                 settings.child(self.engine_section(palette, cx))
@@ -98,9 +98,9 @@ impl Settings {
             )
     }
 
-    fn gesture_hints(&self, palette: &'static Palette) -> impl IntoElement {
-        let shortcut = &self.presentation.shortcut;
-        let cancel_shortcut = &self.presentation.cancel_shortcut;
+    fn gesture_hints(palette: &'static Palette) -> impl IntoElement {
+        let shortcut = speakeasy_platform::SHORTCUT;
+        let cancel_shortcut = speakeasy_platform::CANCEL_SHORTCUT;
         panel(palette)
             .text_size(px(13.0))
             .line_height(px(23.0))

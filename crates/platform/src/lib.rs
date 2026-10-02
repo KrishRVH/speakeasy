@@ -86,12 +86,7 @@ pub enum Input {
     /// Desktop access failed; the message explains how to resume.
     Unavailable(String),
     /// Shortcut and insertion preparation has completed.
-    DesktopReady {
-        /// The accepted dictation shortcut for display in Settings.
-        shortcut: String,
-        /// The accepted cancellation shortcut for display in Settings.
-        cancel: String,
-    },
+    DesktopReady,
 }
 
 /// The lane from OS callbacks to the session owner, carrying the recording's commit gate.

@@ -39,10 +39,6 @@ pub(crate) trait Speech: Send + Sync + 'static {
         language: &str,
     ) -> impl Future<Output = anyhow::Result<String>> + Send;
 
-    /// Transcribes silence and discards the text, so startup proves the model responds, which a
-    /// health check cannot, and the accelerator is warm before the first dictation.
-    fn probe_with_silence(&self) -> impl Future<Output = anyhow::Result<()>> + Send;
-
     /// Terminates the engine; resolves only once its process has been reaped.
     fn stop(&mut self) -> impl Future<Output = ()> + Send;
 }

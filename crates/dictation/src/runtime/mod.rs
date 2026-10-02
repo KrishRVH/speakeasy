@@ -10,7 +10,6 @@ mod worker;
 use std::{
     convert::Infallible,
     io,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -98,10 +97,6 @@ pub struct Snapshot {
     pub model: ModelState,
     /// Whether native input can start capture; false while desktop startup is pending.
     pub desktop_ready: bool,
-    /// The dictation shortcut as people see it.
-    pub shortcut: Arc<str>,
-    /// The cancellation shortcut as people see it.
-    pub cancel_shortcut: Arc<str>,
 }
 
 impl Default for Snapshot {
@@ -117,8 +112,6 @@ impl Default for Snapshot {
             message: String::new(),
             model: ModelState::Unavailable,
             desktop_ready: true,
-            shortcut: speakeasy_platform::SHORTCUT.into(),
-            cancel_shortcut: speakeasy_platform::CANCEL_SHORTCUT.into(),
         }
     }
 }

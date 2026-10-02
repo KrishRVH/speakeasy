@@ -40,8 +40,8 @@ use objc2_foundation::{
 use raw_window_handle::{AppKitWindowHandle, RawWindowHandle};
 
 use super::{
-    CANCEL_SHORTCUT, Delivery, Input, InputSender, InsertPermit, Inserted, OwnedThread,
-    PILL_MARGIN, PILL_WIDTH, SHORTCUT, insertion,
+    Delivery, Input, InputSender, InsertPermit, Inserted, OwnedThread, PILL_MARGIN, PILL_WIDTH,
+    insertion,
     keyboard::{self, MacEvent},
     monitor::MonitorControl,
 };
@@ -109,10 +109,7 @@ impl RunLoopReady<'_> {
     fn publish(&self) {
         let run_loop = CFRunLoop::get_current();
         let started = self.control.start(run_loop.clone(), || {
-            self.input.deliver(Input::DesktopReady {
-                shortcut: SHORTCUT.into(),
-                cancel: CANCEL_SHORTCUT.into(),
-            });
+            self.input.deliver(Input::DesktopReady);
         });
         if !started {
             run_loop.stop();

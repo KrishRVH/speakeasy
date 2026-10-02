@@ -1,7 +1,7 @@
 //! The single session authority. Each wake handles one message, advances work whose prerequisites
 //! are satisfied, then publishes a projection of owned state.
 
-use std::{convert::Infallible, mem, ops::ControlFlow, sync::Arc, time::Instant};
+use std::{convert::Infallible, mem, ops::ControlFlow, time::Instant};
 
 use async_channel::{Receiver, RecvError, Sender};
 use speakeasy_core::gesture::{Action, Gesture, State};
@@ -109,8 +109,6 @@ struct Owner<P: Ports> {
     outcome: Outcome,
     notice: Option<Notice>,
     desktop_ready: bool,
-    shortcut: Arc<str>,
-    cancel_shortcut: Arc<str>,
 }
 
 impl<P: Ports> Owner<P> {
@@ -151,8 +149,6 @@ impl<P: Ports> Owner<P> {
             outcome: Outcome::Idle,
             notice: Some(Notice::LoadingModel),
             desktop_ready,
-            shortcut: speakeasy_platform::SHORTCUT.into(),
-            cancel_shortcut: speakeasy_platform::CANCEL_SHORTCUT.into(),
         }
     }
 
@@ -218,10 +214,8 @@ impl<P: Ports> Owner<P> {
             Input::Lock => self.gesture.lock(),
             Input::Cancel => self.gesture.cancel(),
             Input::Unavailable(message) => return self.stop_with_failure(message),
-            Input::DesktopReady { shortcut, cancel } => {
+            Input::DesktopReady => {
                 self.desktop_ready = true;
-                self.shortcut = shortcut.into();
-                self.cancel_shortcut = cancel.into();
                 None
             },
         };
@@ -743,8 +737,6 @@ impl<P: Ports> Owner<P> {
             message: self.message().to_owned(),
             model: self.worker.model(),
             desktop_ready: self.desktop_ready,
-            shortcut: self.shortcut.clone(),
-            cancel_shortcut: self.cancel_shortcut.clone(),
         };
         self.snapshots.send_if_modified(|published| {
             if published.epoch != self.epoch || *published == snapshot {

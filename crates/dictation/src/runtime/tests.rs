@@ -264,10 +264,6 @@ impl Speech for FakeSpeech {
         result.await?
     }
 
-    fn probe_with_silence(&self) -> impl Future<Output = anyhow::Result<()>> {
-        std::future::ready(Ok(()))
-    }
-
     async fn stop(&mut self) {
         if let Some(gate) = &self.stop {
             gate.pass_during_cleanup(()).await;
@@ -793,14 +789,9 @@ async fn desktop_readiness_blocks_capture_until_native_startup_completes() -> an
     receive(&h.loads).await?;
     h.input(Input::Press);
     h.input(Input::Toggle);
-    h.input(Input::DesktopReady {
-        shortcut: "fixture shortcut".into(),
-        cancel: "fixture cancel".into(),
-    });
+    h.input(Input::DesktopReady);
     h.observe(|snapshot| snapshot.desktop_ready).await?;
     assert!(h.captures.try_recv().is_err());
-    assert_eq!(&*h.snapshot().shortcut, "fixture shortcut");
-    assert_eq!(&*h.snapshot().cancel_shortcut, "fixture cancel");
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     receive(&h.captures).await?;

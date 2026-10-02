@@ -7,7 +7,7 @@
 mod child;
 mod frame;
 
-use std::{io, path::PathBuf, process::Stdio, time::Duration};
+use std::{io, path::PathBuf, process::Stdio};
 
 use anyhow::{Context, anyhow, bail, ensure};
 use speakeasy_platform::{ProcessGroup, speech::Failure};
@@ -25,7 +25,7 @@ use self::{
     frame::Request,
 };
 use super::{
-    INFERENCE_TIMEOUT, MAX_TEXT_BYTES, STARTUP_TIMEOUT, Warmup, contain, unless_cancelled,
+    INFERENCE_TIMEOUT, MAX_TEXT_BYTES, STARTUP_TIMEOUT, contain, unless_cancelled, warm_up,
 };
 use crate::{
     audio,
@@ -81,7 +81,7 @@ impl Drop for Erased {
 
 impl Helper {
     pub(super) async fn start(
-        config: Config,
+        config: &Config,
         library: PathBuf,
         mut cancelled: watch::Receiver<bool>,
     ) -> anyhow::Result<Self> {
@@ -138,18 +138,11 @@ impl Helper {
             group,
             child,
         };
-        if let Some(warmup) = Warmup::required(&config) {
-            let warmed = unless_cancelled(&mut cancelled, async {
-                timeout(STARTUP_TIMEOUT, helper.probe_with_silence())
-                    .await
-                    .context(warmup.timed_out)?
-                    .context(warmup.failed)
-            })
-            .await;
-            if let Err(error) = warmed {
-                helper.stop().await;
-                return Err(error);
-            }
+        if config.use_gpu
+            && let Err(error) = warm_up(&helper, &mut cancelled).await
+        {
+            helper.stop().await;
+            return Err(error);
         }
         Ok(helper)
     }
@@ -171,12 +164,6 @@ impl Speech for Helper {
                 bail!("Transcription timed out. Try GPU acceleration or a shorter recording.")
             },
         }
-    }
-
-    async fn probe_with_silence(&self) -> anyhow::Result<()> {
-        let silence = audio::silent_wav(16_000, Duration::from_secs(1))?;
-        self.transcribe(silence, "en").await?;
-        Ok(())
     }
 
     async fn stop(&mut self) {
@@ -253,6 +240,8 @@ async fn round_trip(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use tokio::io::{DuplexStream, duplex};
 
     use super::*;
