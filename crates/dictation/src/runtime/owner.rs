@@ -270,6 +270,7 @@ impl<P: Ports> Owner<P> {
                 session.segment(index, wav);
             },
             CaptureEvent::Paused(_, sequence, wav) => session.paused(sequence, wav),
+            CaptureEvent::Resumed(_) => session.resumed(),
             CaptureEvent::Finished(
                 _,
                 Ok(Some(Captured {
@@ -571,7 +572,7 @@ impl<P: Ports> Owner<P> {
         if (session.speculating.is_some() || session.segmenting.is_some())
             && self.worker.is_transcribing()
         {
-            self.worker.recover(&self.ports, &self.config);
+            self.worker.abandon(&self.ports, &self.config);
         }
         self.ended = Some((session.timeline, now()));
         Some(session)
@@ -599,7 +600,7 @@ impl<P: Ports> Owner<P> {
             Stage::Inserting(task) => self.retiring_insertions.push(task),
             Stage::AwaitingWorker(mut wav) | Stage::AwaitingSpeculation(mut wav) => wav.fill(0),
             Stage::Transcribing if self.worker.is_transcribing() => {
-                self.worker.recover(&self.ports, &self.config);
+                self.worker.abandon(&self.ports, &self.config);
             },
             Stage::Queued | Stage::AwaitingSegments | Stage::Transcribing => {},
         }

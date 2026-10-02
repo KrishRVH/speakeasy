@@ -66,7 +66,6 @@ struct FakePorts {
     record_error: Option<&'static str>,
     delayed_finish: bool,
     load_results: Option<Receiver<anyhow::Result<()>>>,
-    recovery: Option<Receiver<anyhow::Result<()>>>,
     retirement: Option<Gate<()>>,
     stop: Option<Gate<()>>,
     insertion: Option<Gate<InsertPermit>>,
@@ -105,7 +104,6 @@ impl FakePorts {
             record_error: None,
             delayed_finish: false,
             load_results: None,
-            recovery: None,
             retirement: None,
             stop: None,
             insertion: None,
@@ -177,7 +175,6 @@ impl Ports for FakePorts {
             jobs: self.jobs.clone(),
             heard: self.heard.clone(),
             stop: self.stop.clone(),
-            recovery: self.recovery.clone(),
         };
         let loads = self.loads.clone();
         async move {
@@ -256,7 +253,6 @@ struct FakeSpeech {
     jobs: Sender<TranscriptionJob>,
     heard: Sender<Vec<u8>>,
     stop: Option<Gate<()>>,
-    recovery: Option<Receiver<anyhow::Result<()>>>,
 }
 
 impl Speech for FakeSpeech {
@@ -267,11 +263,8 @@ impl Speech for FakeSpeech {
         result.await?
     }
 
-    async fn probe_with_silence(&self) -> anyhow::Result<()> {
-        match &self.recovery {
-            Some(result) => result.recv().await?,
-            None => Ok(()),
-        }
+    fn probe_with_silence(&self) -> impl Future<Output = anyhow::Result<()>> {
+        std::future::ready(Ok(()))
     }
 
     async fn stop(&mut self) {
@@ -1212,14 +1205,11 @@ async fn cancelled_inference_and_late_audio_cannot_affect_the_next_session() -> 
     let mut h = Harness::new()?;
     receive(&h.loads).await?;
     let (old_id, old_events) = h.start().await?;
-    let mut old_reply = h.finish().await?;
+    let old_reply = h.finish().await?;
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
-    timeout(PATIENCE, old_reply.closed()).await?;
-    assert!(
-        answer(old_reply, "discard this").is_err(),
-        "Cancelled inference stayed alive"
-    );
+    // The abandoned GPU request runs out on its warm worker; its text has no session to reach.
+    answer(old_reply, "discard this")?;
     let (new_id, _) = h.start().await?;
     assert_ne!(new_id, old_id);
     let late_failure = CaptureEvent::Finished(old_id, Err(anyhow!("old device failed")));
@@ -1258,22 +1248,49 @@ async fn failures_recover_the_worker_and_hook_loss_stops_without_inserting() -> 
     Ok(())
 }
 
-#[tokio::test]
-async fn failed_recovery_stops_worker_before_loading_replacement() -> anyhow::Result<()> {
+#[tokio::test(start_paused = true)]
+async fn an_abandoned_gpu_transcription_finishes_unobserved_on_its_warm_worker()
+-> anyhow::Result<()> {
+    let mut h = Harness::paused(|ports| ports.delayed_finish = true)?;
+    receive(&h.loads).await?;
+    let (id, events) = h.start().await?;
+    events.send(CaptureEvent::Paused(id, 0, vec![3])).await?;
+    let (_, abandoned) = receive(&h.jobs).await?;
+    h.input(Input::Cancel);
+    h.phase(Phase::Cancelled).await?;
+    assert_eq!(h.snapshot().model, ModelState::Ready, "The warm model looked unloaded");
+    answer(abandoned, "discarded")?;
+    let (id, events) = h.start().await?;
+    events.send(CaptureEvent::Paused(id, 0, vec![4])).await?;
+    h.transcribe_next_as("next pause").await?;
+    assert!(
+        h.loads.try_recv().is_err(),
+        "An abandoned transcription replaced a healthy worker"
+    );
+    h.input(Input::Toggle);
+    events
+        .send(CaptureEvent::Finished(id, Ok(Some(captured(Some(0))))))
+        .await?;
+    assert_eq!(receive(&h.pasted).await?, "next pause");
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_overrunning_abandoned_transcription_stops_its_worker_before_a_replacement_loads()
+-> anyhow::Result<()> {
     let (stop, stopping) = gate(2);
-    let (recover, recovery) = async_channel::bounded(1);
-    let mut h = Harness::with_ports(Config::default(), |ports| {
-        ports.stop = Some(stop);
-        ports.recovery = Some(recovery);
-    })?;
+    let mut h = Harness::paused(|ports| ports.stop = Some(stop))?;
     receive(&h.loads).await?;
     h.start().await?;
     let mut old_reply = h.finish().await?;
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
+    assert!(
+        still_pending(old_reply.closed()).await,
+        "A GPU transcription was cancelled before its bound"
+    );
     timeout(PATIENCE, old_reply.closed()).await?;
     assert!(answer(old_reply, "discard this").is_err());
-    recover.send(Err(anyhow!("Recovery failed"))).await?;
     stopping.reached().await?;
     assert!(
         h.loads.try_recv().is_err(),
@@ -1284,17 +1301,41 @@ async fn failed_recovery_stops_worker_before_loading_replacement() -> anyhow::Re
     h.phase(Phase::Processing).await?;
     assert!(
         h.jobs.try_recv().is_err(),
-        "Inference began before recovery finished"
+        "Inference began before the replacement loaded"
     );
     stopping.release().await?;
     receive(&h.loads).await?;
-    h.transcribe_next_as("after recovery").await?;
-    assert_eq!(receive(&h.pasted).await?, "after recovery");
+    h.transcribe_next_as("after replacement").await?;
+    assert_eq!(receive(&h.pasted).await?, "after replacement");
     h.phase(Phase::Done).await?;
-    assert!(h.pasted.try_recv().is_err());
     // Pre-release the stop gate, so the shutdown stop passes without harness cleanup.
     stopping.release().await?;
     Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn resumed_speech_withdraws_a_pause_waiting_for_the_worker() -> anyhow::Result<()> {
+    let mut h = Harness::paused(|ports| ports.delayed_finish = true)?;
+    receive(&h.loads).await?;
+    let (id, events) = h.start().await?;
+    events.send(CaptureEvent::Paused(id, 0, vec![3])).await?;
+    let (_, running) = receive(&h.jobs).await?;
+    assert_eq!(receive(&h.heard).await?, [3]);
+    events.send(CaptureEvent::Paused(id, 1, vec![4])).await?;
+    events.send(CaptureEvent::Resumed(id)).await?;
+    answer(running, "obsolete")?;
+    assert!(
+        still_pending(receive(&h.jobs)).await,
+        "A withdrawn pause was still recognized"
+    );
+    h.input(Input::Toggle);
+    events
+        .send(CaptureEvent::Finished(id, Ok(Some(captured(None)))))
+        .await?;
+    h.transcribe_next_as("own request").await?;
+    assert_eq!(receive(&h.heard).await?, [1, 2]);
+    assert_eq!(receive(&h.pasted).await?, "own request");
+    h.close().await
 }
 
 #[tokio::test]

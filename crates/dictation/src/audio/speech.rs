@@ -150,9 +150,11 @@ impl Speech {
         self.end
     }
 
-    /// Bytes of further quiet until the next mark this pause has not reported, once speech exists.
+    /// Bytes of further quiet until the next mark this pause has not reported, once enough audible
+    /// audio exists for a pause to report.
     pub(super) fn quiet_until_next_mark(&self) -> Option<usize> {
-        self.first?;
+        self.first
+            .filter(|_| self.audible_samples >= self.minimum_audible)?;
         let reported = if self.end <= self.paused_at {
             self.paused_marks
         } else {
@@ -279,6 +281,8 @@ mod tests {
         let mut speech = Speech::new(RATE).unwrap();
         speech.extend(&click);
         assert_eq!(speech.pause(), None);
+        // A pause the click cannot report must not keep capture waking for its marks.
+        assert_eq!(speech.quiet_until_next_mark(), None);
         speech.complete(&click);
         assert_eq!(speech.retained(click.len()), None);
     }

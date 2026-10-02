@@ -237,6 +237,13 @@ impl Tracker {
         speculating: bool,
     ) -> anyhow::Result<()> {
         self.speech.extend(self.pcm.audio());
+        if self.cuts.resumed(self.speech.speech_end()) {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A lost withdrawal costs only an obsolete recognition; capture must not block on a full lane"
+            )]
+            let _ = events.try_send(CaptureEvent::Resumed(id));
+        }
         let Some(pause) = self.speech.pause() else {
             return Ok(());
         };
@@ -543,7 +550,9 @@ impl Recorder {
                 &mut meter,
                 self.limit,
             );
-            self.tracker.at_pause(id, events, control.speculating())?;
+            // The recording's own audio is moments away once it stops, so a last pause is not offered.
+            self.tracker
+                .at_pause(id, events, control.speculating() && !stopping)?;
             if let Some(level) = meter.take_level() {
                 #[expect(
                     clippy::let_underscore_must_use,

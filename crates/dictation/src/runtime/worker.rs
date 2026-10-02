@@ -18,15 +18,18 @@ use crate::{
     transcript::{self, Fillers},
 };
 
-/// How long a recovering worker may take to answer a silent request.
-const RECOVERY_PROBE: Duration = Duration::from_secs(2);
+/// How long a GPU transcription abandoned with its session may run on before its worker is
+/// replaced.
+const ABANDONED_GPU_BOUND: Duration = Duration::from_secs(2);
 
 #[derive(Default)]
 pub(super) enum Worker<W> {
     #[default]
     Unavailable,
-    /// Starting a worker, or recovering the one a cancelled transcription left behind.
+    /// Starting a worker, or replacing one whose abandoned transcription could not be kept.
     Loading(Job<W>),
+    /// Letting an abandoned GPU transcription finish unobserved, so its warm worker is kept.
+    Settling(Job<W>),
     Ready(W),
     Transcribing(Job<(W, Transcript)>),
 }
@@ -42,7 +45,7 @@ impl<W: Speech> Worker<W> {
         match self {
             Self::Unavailable => ModelState::Unavailable,
             Self::Loading(_) => ModelState::Loading,
-            Self::Ready(_) | Self::Transcribing(_) => ModelState::Ready,
+            Self::Ready(_) | Self::Settling(_) | Self::Transcribing(_) => ModelState::Ready,
         }
     }
 
@@ -58,7 +61,9 @@ impl<W: Speech> Worker<W> {
     /// until the owner stores the outcome. Cancel-safe: dropped early, it leaves the job running.
     pub(super) async fn completed(&mut self) -> Completion<W> {
         let completion = match self {
-            Self::Loading(job) => Completion::Loaded(joined((&mut job.task).await)),
+            Self::Loading(job) | Self::Settling(job) => {
+                Completion::Loaded(joined((&mut job.task).await))
+            },
             Self::Transcribing(job) => Completion::Transcribed(joined((&mut job.task).await)),
             Self::Unavailable | Self::Ready(_) => pending().await,
         };
@@ -88,22 +93,32 @@ impl<W: Speech> Worker<W> {
         }));
     }
 
-    /// Keeps the worker of a cancelled transcription when it still responds; otherwise stops it and
-    /// loads a replacement.
-    pub(super) fn recover<P: Ports<Speech = W>>(&mut self, ports: &P, config: &Config) {
-        let previous = self.take_cancelled();
-        // Engines serialize requests, and an abandoned CPU inference outlasts the probe bound.
-        let probe = config.use_gpu;
-        *self = Self::Loading(Job::spawn(|mut cancelled| {
+    /// Moves a transcription whose session ended out of observation, discarding its result. Engines
+    /// serialize requests and a GPU request ends within moments, so it runs out and the warm worker
+    /// is kept without loading or probing; one that overruns the bound, or a CPU inference that
+    /// could run for seconds, is cancelled and its worker replaced.
+    pub(super) fn abandon<P: Ports<Speech = W>>(&mut self, ports: &P, config: &Config) {
+        let previous = mem::take(self);
+        let bound = if config.use_gpu {
+            ABANDONED_GPU_BOUND
+        } else {
+            Duration::ZERO
+        };
+        let job = Job::spawn(|mut cancelled| {
             let load = ports.load(config.clone(), cancelled.clone());
             async move {
-                if let Some(worker) = previous.into_responsive(probe, &mut cancelled).await {
+                if let Some(worker) = previous.settled(bound, &mut cancelled).await {
                     return Ok(worker);
                 }
                 ensure!(!*cancelled.borrow(), STARTUP_CANCELLED);
                 load.await
             }
-        }));
+        });
+        *self = if config.use_gpu {
+            Self::Settling(job)
+        } else {
+            Self::Loading(job)
+        };
     }
 
     /// Starts transcribing on a ready worker, or hands the audio back.
@@ -146,7 +161,7 @@ impl<W: Speech> Worker<W> {
 
     pub(super) fn request_stop(&self) {
         match self {
-            Self::Loading(job) => job.cancel(),
+            Self::Loading(job) | Self::Settling(job) => job.cancel(),
             Self::Transcribing(job) => job.cancel(),
             Self::Unavailable | Self::Ready(_) => {},
         }
@@ -155,22 +170,32 @@ impl<W: Speech> Worker<W> {
     /// Cancels any job and resolves once its worker has stopped.
     pub(super) async fn stop(self) {
         self.request_stop();
-        if let Some((mut worker, _)) = self.into_worker().await {
+        if let Some(mut worker) = self.into_worker().await {
             worker.stop().await;
         }
     }
 
-    /// Returns the worker if its transcription completed or, when probing is allowed, it answers a
-    /// silent request in time; otherwise, or once cancelled, stops it.
-    async fn into_responsive(
-        self,
-        probe: bool,
-        cancelled: &mut watch::Receiver<bool>,
-    ) -> Option<W> {
-        let (mut worker, transcribed) = self.into_worker().await?;
-        if !*cancelled.borrow() && (transcribed || (probe && responds(&worker, cancelled).await)) {
-            return Some(worker);
-        }
+    /// Returns the worker once its transcription finishes within `bound`; otherwise, or once
+    /// cancelled, cancels the transcription and stops the worker.
+    async fn settled(self, bound: Duration, cancelled: &mut watch::Receiver<bool>) -> Option<W> {
+        let Self::Transcribing(mut job) = self else {
+            return self.into_worker().await;
+        };
+        let finished = tokio::select! {
+            biased;
+            _ = cancelled.changed() => None,
+            finished = timeout(bound, &mut job.task) => finished.ok(),
+        };
+        let mut worker = match finished {
+            Some(Ok(Ok((worker, _)))) if !*cancelled.borrow() => return Some(worker),
+            Some(Ok(Ok((worker, _)))) => worker,
+            // A failed transcription has already stopped its worker.
+            Some(_) => return None,
+            None => {
+                job.cancel();
+                job.task.await.ok()?.ok()?.0
+            },
+        };
         worker.stop().await;
         None
     }
@@ -182,17 +207,12 @@ impl<W: Speech> Worker<W> {
         previous
     }
 
-    /// Waits out any job and returns its worker, noting whether it just completed a transcript.
-    async fn into_worker(self) -> Option<(W, bool)> {
+    /// Waits out any job and returns its worker.
+    async fn into_worker(self) -> Option<W> {
         match self {
-            Self::Ready(worker) => Some((worker, false)),
-            Self::Loading(job) => job.task.await.ok()?.ok().map(|worker| (worker, false)),
-            Self::Transcribing(job) => job
-                .task
-                .await
-                .ok()?
-                .ok()
-                .map(|(worker, transcript)| (worker, matches!(transcript, Transcript::Text(_)))),
+            Self::Ready(worker) => Some(worker),
+            Self::Loading(job) | Self::Settling(job) => job.task.await.ok()?.ok(),
+            Self::Transcribing(job) => job.task.await.ok()?.ok().map(|(worker, _)| worker),
             Self::Unavailable => None,
         }
     }
@@ -237,13 +257,4 @@ fn joined<T>(result: Result<anyhow::Result<T>, JoinError>) -> anyhow::Result<T> 
             "Transcription worker stopped unexpectedly. Try again."
         ))
     })
-}
-
-/// Whether a silent request completes within the recovery bound, unless cancellation comes first.
-async fn responds<W: Speech>(worker: &W, cancelled: &mut watch::Receiver<bool>) -> bool {
-    tokio::select! {
-        biased;
-        _ = cancelled.changed() => false,
-        result = timeout(RECOVERY_PROBE, worker.probe_with_silence()) => matches!(result, Ok(Ok(()))),
-    }
 }

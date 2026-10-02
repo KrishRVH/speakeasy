@@ -77,6 +77,16 @@ impl Cuts {
         self.standing.push(sequence);
     }
 
+    /// Whether speech ended at `speech_end` resumed after the standing pauses, which it withdraws;
+    /// reported once.
+    pub(super) fn resumed(&mut self, speech_end: usize) -> bool {
+        let resumed = !self.standing.is_empty() && speech_end != self.standing_end;
+        if resumed {
+            self.standing.clear();
+        }
+        resumed
+    }
+
     /// The tail of a stopped recording that keeps `kept`, if any speech followed the last segment,
     /// and the speculated pauses that nothing audible followed: a stop then would have kept the
     /// same speech with less of its quiet, so their text stands in for the tail's.
@@ -226,6 +236,29 @@ mod tests {
         assert_eq!(pauses.len(), 3);
         assert!(tail.is_some());
         assert_eq!(speculated, Vec::<u32>::new());
+    }
+
+    #[test]
+    fn resumed_speech_is_reported_once_per_withdrawal() {
+        let pcm = audio(&[(8, 3000), (1, 0), (2, 3000), (1, 0)]);
+        let mut speech = Speech::new(RATE).unwrap();
+        let mut cuts = Cuts::new(20 * SECOND);
+        let mut resumed = 0;
+        for end in (512..pcm.len()).step_by(512).chain([pcm.len()]) {
+            speech.extend(&pcm[..end]);
+            resumed += usize::from(cuts.resumed(speech.speech_end()));
+            if let Some(pause) = speech.pause() {
+                let speech_end = pause.speech_end;
+                if let AtPause::Speculate(sequence, _) = cuts.at_pause(pause, true) {
+                    cuts.speculation_sent(sequence, speech_end);
+                }
+            }
+        }
+        // Only the first pause's speech resumed; the second pause still stands.
+        assert_eq!(resumed, 1);
+        speech.complete(&pcm);
+        let (_, standing) = cuts.finish(speech.retained(pcm.len()), speech.speech_end());
+        assert_eq!(standing, [3, 4, 5]);
     }
 
     #[test]

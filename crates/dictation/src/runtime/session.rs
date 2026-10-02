@@ -130,6 +130,15 @@ impl Session {
         }
     }
 
+    /// Speech resumed, so neither a pause waiting for the worker nor recognized pause text can stand
+    /// in for the tail; dropping the waiting pause keeps an obsolete recognition off the worker.
+    pub(super) fn resumed(&mut self) {
+        if let Some((_, mut pending)) = self.pending.take() {
+            pending.fill(0);
+        }
+        self.speculated = None;
+    }
+
     /// Queues a segment's audio for the worker, in capture order.
     pub(super) fn segment(&mut self, index: u32, mut wav: Vec<u8>) {
         if usize::try_from(index).is_ok_and(|index| index == self.segments.len()) {

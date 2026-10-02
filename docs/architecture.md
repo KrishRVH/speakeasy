@@ -79,11 +79,11 @@ as a fallback.
 one wake, handles it, advances ready work, and publishes a snapshot. Its decisions use owned state;
 snapshots are presentation only. `Session` owns a generation-bound permit and its current stage.
 `Microphone` is `Free`, `Open`, or `Retiring`, so opening cannot replace an unreaped device.
-`Worker` is unavailable, loading (including recovery after a cancelled transcription), ready, or
-transcribing; load and transcription jobs have different result types. Replacement consumes the old
-job and reaps its process before loading another. Stopping capture during a failed warmup retains
-the gesture and device until audio completion; the next on-demand load can retry without a warmup
-retry loop.
+`Worker` is unavailable, loading (including replacement of a worker an abandoned transcription could
+not keep), settling (an abandoned GPU transcription finishing unobserved), ready, or transcribing;
+load and transcription jobs have different result types. Replacement consumes the old job and reaps
+its process before loading another. Stopping capture during a failed warmup retains the gesture and
+device until audio completion; the next on-demand load can retry without a warmup retry loop.
 
 Capture callbacks carry a typed `SessionId`. One lookup checks both identity and capture stage.
 Moving inference or insertion handles out of the observation path makes their obsolete results
@@ -110,7 +110,7 @@ stateDiagram-v2
     Transcribing --> Inserting: nonempty text
     Inserting --> [*]: submitted / copied / cancelled
     Recording --> [*]: cancel; revoke permit and retire
-    Transcribing --> [*]: cancel; revoke permit and recover worker
+    Transcribing --> [*]: cancel; revoke permit and abandon the job
 ```
 
 The shell lifecycle owns one runtime/monitor pair: disabled, validating, running, stopping with an
@@ -157,21 +157,22 @@ preserves interior pauses. WAV preparation stays off the UI. The native acceptan
 [performance](performance.md#native-acceptance). Heavily trimmed recordings release excess PCM
 capacity when at least 8 MiB is unused and capacity is at least four times the remaining length.
 
-Recordings on the GPU speculate, held or hands-free. Once new speech has been followed by 200 ms of
+Recordings on the GPU speculate, held or hands-free. Once new speech has been followed by 100 ms of
 quiet, the consumer copies the speech with that much of its quiet and reports it as a numbered
-pause, and again with the full 500 ms padding, which is what a recording stopped then would keep.
-While still recording, the owner recognizes the latest pause whenever the warm worker is idle, never
-loading one for it. A finished recording names its standing pauses: those nothing audible followed,
-whose speech and leading trim it shares and whose quiet it holds at least as much of. Stopping at
-such a pause would have kept the same speech, so its text is what that earlier stop would have
-inserted. The owner inserts the latest recognized standing pause's text, or waits for a standing
-pause's running recognition, instead of requesting another. Speech after a pause withdraws it, and
-the recording makes its own request, waiting behind any running speculation. A failed or cancelled
-speculation sends the recording to its own request. A session that ends with its speculation running
-moves that job out of observation like an abandoned request, so its result or failure cannot reach a
-later session. CPU inference never speculates, since an obsolete speculation could hold the
-recording's own request for seconds. Copies of audio no session will use are erased when they are
-dropped, best effort.
+pause, again at 200 ms, and again with the full 500 ms padding, which is what a recording stopped
+then would keep. A stopping recording reports no further pause. While still recording, the owner
+recognizes the latest pause whenever the warm worker is idle, never loading one for it. A finished
+recording names its standing pauses: those nothing audible followed, whose speech and leading trim
+it shares and whose quiet it holds at least as much of. Stopping at such a pause would have kept the
+same speech, so its text is what that earlier stop would have inserted. The owner inserts the latest
+recognized standing pause's text, or waits for a standing pause's running recognition, instead of
+requesting another. Speech after a pause withdraws it: the consumer tells the owner, which drops a
+pause still waiting for the worker, and the recording makes its own request, waiting behind any
+running speculation. A failed or cancelled speculation sends the recording to its own request. A
+session that ends with its speculation running moves that job out of observation like any abandoned
+transcription, so its result or failure cannot reach a later session. CPU inference never
+speculates, since an obsolete speculation could hold the recording's own request for seconds. Copies
+of audio no session will use are erased when they are dropped, best effort.
 
 Long recordings are recognized in segments. At a pause, once at least 20 seconds of kept audio have
 accumulated since the previous segment, the consumer hands that audio to the owner as the next
@@ -246,15 +247,16 @@ preceding filler comma and preserves sentence endings after content. Filler-only
 empty-recognition path without insertion. Cleanup takes linear time and one output allocation,
 without token collections, regular expressions, another model, or a background service.
 
-GPU cancellation drops the request and checks recovery with a bounded silent inference. A failed
-two-second recovery terminates and waits for the worker before replacement. Cancellation of active
-CPU inference terminates the worker and reloads it. The engine's process group is cleaned up during
-orderly shutdown; a force-quit can leave a worker running. Pause retires the runtime asynchronously;
-Quit waits for owned cleanup. A failed warmup does not retry-loop. Startup errors report the exit
-status and a local remedy for unsupported CPU instructions or incompatible server arguments. Engine
-stderr remains discarded because it can include private text; diagnostic messages never forward
-engine output. Model startup and inference receive cooperative cancellation. Retirement waits for
-process exit before loading a replacement, while the session owner continues receiving input.
+An abandoned GPU transcription runs out unobserved and keeps its warm worker, which the model state
+still reports as ready; one still running after two seconds is cancelled, and its worker is
+terminated and awaited before replacement. Cancellation of active CPU inference terminates the
+worker and reloads it. The engine's process group is cleaned up during orderly shutdown; a
+force-quit can leave a worker running. Pause retires the runtime asynchronously; Quit waits for
+owned cleanup. A failed warmup does not retry-loop. Startup errors report the exit status and a
+local remedy for unsupported CPU instructions or incompatible server arguments. Engine stderr
+remains discarded because it can include private text; diagnostic messages never forward engine
+output. Model startup and inference receive cooperative cancellation. Retirement waits for process
+exit before loading a replacement, while the session owner continues receiving input.
 
 ## Insertion and privacy
 

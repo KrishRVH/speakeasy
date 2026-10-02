@@ -134,6 +134,8 @@ pub(crate) enum CaptureEvent {
     /// Speech paused; the WAV is what the recording's tail would hold if it stopped now, numbered
     /// so the finished recording can name an identical pause.
     Paused(SessionId, u32, Vec<u8>),
+    /// Speech resumed after the pauses offered so far, so none of them can stand in for the tail.
+    Resumed(SessionId),
     Finished(SessionId, anyhow::Result<Option<Captured>>),
 }
 
@@ -162,7 +164,7 @@ impl CaptureEvent {
             ) => {
                 wav.fill(0);
             },
-            Self::Ready(..) | Self::Level(..) | Self::Finished(..) => {},
+            Self::Ready(..) | Self::Level(..) | Self::Resumed(_) | Self::Finished(..) => {},
         }
     }
 
@@ -172,6 +174,7 @@ impl CaptureEvent {
             | Self::Level(session, _)
             | Self::Segment(session, ..)
             | Self::Paused(session, ..)
+            | Self::Resumed(session)
             | Self::Finished(session, _) => *session,
         }
     }
