@@ -1,7 +1,7 @@
 # Apple-silicon performance research
 
-API research date: 2026-09-30; source mapping updated 2026-10-01 UTC for released Speakeasy 0.3.1 at
-`23c3b7146ad5dddc446e90ecf7dc42f50bf48e41`. This note supports the
+API research date: 2026-09-30; source mapping updated 2026-10-02 UTC for released Speakeasy 0.3.2 at
+`cd302b4c864ea3ea64decd47d8fa9eee721c6088`. This note supports the
 [fork experiment PRD](apple-silicon-prd.md). It separates documented API capabilities, frozen source
 facts, and optimization hypotheses. The pinned engine/CPAL API findings are retained; this update
 adds no native performance evidence. It does not establish that a rewritten Mac app is faster than
@@ -11,7 +11,7 @@ application was accessed.
 
 ## Recommendation and evidence boundary
 
-Collect the frozen 0.3.1 native baseline, then select prototypes from measured costs: a Swift/AppKit
+Collect the frozen 0.3.2 native baseline, then select prototypes from measured costs: a Swift/AppKit
 shell around the existing Rust owner and a native PCM helper alongside the HTTP worker. Retain the
 same Parakeet/Metal model/runtime as the quality and speed control. Keep capture and transport
 behind narrow existing side-effect boundaries. A direct HAL implementation, Core ML conversion,
@@ -26,14 +26,15 @@ decisions, not results from a cross-stack benchmark. The PRD owns the blinded pe
 protocol and valid no-gain outcomes; resource or microbenchmark gains alone cannot answer whether
 the app feels different.
 
-The [0.3.1 source map](apple-silicon-baseline.md#source-audit-and-experiments) and
+The [0.3.2 source map](apple-silicon-baseline.md#source-audit-and-experiments) and
 [architecture](architecture.md#change-and-test-map) identify reusable owner, lifecycle, keyboard,
 insertion, and regression-test modules. The session code has no direct GPUI imports but still needs
 library extraction from the app crate; preserve its typed stages, publisher epochs, paused clock,
-and retirement ordering. The 0.3.1 control also has typed capture cancellation, checked WAV/rate and
-gesture deadline boundaries, and bounded instance requests with shutdown wakeup. Carry those
-contracts and their tests into extracted modules; the native shell must retain verified reopen
-compatibility and incomplete-insertion recovery.
+and retirement ordering. The 0.3.2 control also has typed capture cancellation, checked WAV/rate and
+gesture deadline boundaries, bounded instance requests with shutdown wakeup, and owned threads,
+monitors, and children that are joined, woken, or reaped before replacement. Carry those contracts
+and their tests into extracted modules; the native shell must retain verified reopen compatibility
+and incomplete-insertion recovery.
 
 ## Scope, versions, and deployment floor
 
@@ -249,15 +250,17 @@ named persistent audio files. Sources:
 [XPC cancellation](<https://developer.apple.com/documentation/xpc/xpc_connection_cancel(_:)>),
 [XPC shared memory](<https://developer.apple.com/documentation/xpc/xpc_shmem_create(_:_:)>).
 
-The existing Unix process group terminates children on normal owner cleanup but has no OS
+Engine and setup children are killed when their owner drops and reaped before replacement. The
+existing Unix process group terminates children on normal owner cleanup but has no OS
 kill-on-parent-close equivalent: force-killing the parent bypasses Rust destructors. Native
 crash/force-quit acceptance must prove that no orphan model remains. An app-owned helper can watch a
 parent-owned connection on an independent control thread and exit on EOF; prove this during real GPU
 inference and loss of the parent. External custom Whisper/NeMo executable support needs its own
 containment policy rather than assuming the controlled helper protocol.
-[Current process containment](../crates/platform/src/process.rs).
+[Current process containment](../crates/platform/src/process.rs),
+[owned children](../crates/app/src/child.rs).
 
-The 0.3.1 [worker state](../crates/app/src/runtime/worker.rs) separates loading, transcribing,
+The 0.3.2 [worker state](../crates/app/src/runtime/worker.rs) separates loading, transcribing,
 recovery, and replacement. Its [Quit coordinator](../crates/app/src/shell/shutdown.rs) awaits owned
 work and requested saves while the UI remains responsive. These normal-cleanup guarantees do not
 establish containment after abrupt parent death.
