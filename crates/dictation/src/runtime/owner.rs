@@ -649,6 +649,9 @@ impl<P: Ports> Owner<P> {
     async fn shutdown(mut self) {
         self.permits.close();
         self.captures.close();
+        while let Ok(event) = self.captures.try_recv() {
+            event.erase();
+        }
         self.abandon();
         let insertions = async {
             for task in self.retiring_insertions {

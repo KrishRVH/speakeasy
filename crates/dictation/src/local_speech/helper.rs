@@ -147,13 +147,10 @@ impl Helper {
 
 impl Speech for Helper {
     async fn transcribe(&self, wav: Vec<u8>, _: &str) -> anyhow::Result<String> {
-        let rate = audio::wav_sample_rate(&wav).context("Missing recording sample rate")?;
+        let wav = Erased(wav);
+        let rate = audio::wav_sample_rate(&wav.0).context("Missing recording sample rate")?;
         let (reply, outcome) = oneshot::channel();
-        let exchange = Exchange {
-            rate,
-            wav: Erased(wav),
-            reply,
-        };
+        let exchange = Exchange { rate, wav, reply };
         if self.exchanges.send(exchange).await.is_err() {
             bail!(STOPPED);
         }
