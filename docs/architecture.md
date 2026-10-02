@@ -203,8 +203,9 @@ destination as a `.part` file, resumed with an HTTP range request, and renamed i
 its size and SHA-256 match. A complete partial file is verified locally without another download.
 Resumed data is hashed in bounded chunks with cancellation opportunities between reads. The system
 `tar` unpacks a downloaded engine archive into a staging directory that is then renamed, as is a
-copied build, and unused builds are removed. The result is saved like a manual choice and enables
-dictation.
+copied build. Older builds of the same kind are removed; Speakeasy's builds and NVIDIA's do not
+prune each other, so an edition sharing the directory, such as 0.3.3, keeps the engine it uses. The
+result is saved like a manual choice and enables dictation.
 
 ## Local recognition
 

@@ -387,10 +387,17 @@ async fn copy_out(
     Ok(directory)
 }
 
-/// Removes every other engine build and returns this build's executable.
+/// Removes other builds of the same kind, Speakeasy's or NVIDIA's, and returns this build's
+/// executable. Builds of the other kind stay for a Speakeasy edition that still uses them, such as
+/// 0.3.3 sharing this directory.
 fn keep_only(root: &Path, directory: &Path) -> anyhow::Result<PathBuf> {
+    let speakeasy_build = |path: &Path| {
+        path.file_name()
+            .is_some_and(|name| name.to_string_lossy().contains("-speakeasy-"))
+    };
+    let kind = speakeasy_build(directory);
     for entry in fs::read_dir(root.join("engines"))?.flatten() {
-        if entry.path() != directory {
+        if entry.path() != directory && speakeasy_build(&entry.path()) == kind {
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "Failure to prune an unused engine cache must not prevent the verified selected engine from running"
@@ -755,6 +762,38 @@ mod tests {
             b"not a directory"
         );
         assert!(installation.child.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn pruning_keeps_builds_of_the_other_kind_for_other_editions() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let engines = directory.path().join("engines");
+        let builds = [
+            "nemo-speech-0.1.0-macos-aarch64-metal",
+            "nemo-speech-0.1.0-speakeasy-old",
+            "nemo-speech-0.1.0-speakeasy-new",
+            "nemo-speech-0.1.0-speakeasy-old.part",
+        ];
+        for build in builds {
+            fs::create_dir_all(engines.join(build))?;
+        }
+        let selected = engines.join("nemo-speech-0.1.0-speakeasy-new");
+        assert_eq!(
+            keep_only(directory.path(), &selected)?,
+            selected.join(EXECUTABLE)
+        );
+        let mut left = fs::read_dir(&engines)?
+            .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                "nemo-speech-0.1.0-macos-aarch64-metal",
+                "nemo-speech-0.1.0-speakeasy-new"
+            ]
+        );
         Ok(())
     }
 
