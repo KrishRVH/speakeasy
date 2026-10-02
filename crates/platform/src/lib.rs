@@ -1,26 +1,19 @@
-//! Native desktop input, presentation, and child-process ownership.
+//! Native macOS input, presentation, insertion, speech-engine, and child-process ownership.
 //!
 //! Callbacks deliver events to the session owner. Insertion permits authorize one recording and can
-//! be revoked while a native clipboard call is blocked.
-
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-compile_error!("Speakeasy supports Windows, macOS, and Linux.");
+//! be revoked while a native clipboard call is blocked. The portable policy and ownership types
+//! also build on other Unix hosts, so the service's tests run without a Mac.
 
 mod insertion;
-#[cfg(any(target_os = "windows", target_os = "macos", test))]
+#[cfg(any(target_os = "macos", test))]
 mod keyboard;
-#[cfg(target_os = "linux")]
-mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
-#[cfg(any(target_os = "windows", target_os = "macos", test))]
+#[cfg(any(target_os = "macos", test))]
 mod monitor;
 mod owned_thread;
 mod process;
-#[cfg(unix)]
 pub mod speech;
-#[cfg(target_os = "windows")]
-mod windows;
 
 use std::sync::{
     Arc,
@@ -29,24 +22,10 @@ use std::sync::{
 
 use async_channel::Sender;
 
-#[cfg(target_os = "linux")]
-pub use self::linux::{
-    APPLICATION_ID, InputMonitor, Inserter, NativeTray, TrayAction, TrayPresentation,
-    configure_pill, prepare, reduced_motion, set_pill_visible, set_settings_visible, show_error,
-};
-#[cfg(target_os = "macos")]
-use self::macos as native;
 #[cfg(target_os = "macos")]
 pub use self::macos::{
     InputMonitor, configure_pill, reduced_motion, set_pill_visible, set_settings_visible,
     show_error,
-};
-#[cfg(target_os = "windows")]
-use self::windows as native;
-#[cfg(target_os = "windows")]
-pub use self::windows::{
-    InputMonitor, choose_file, configure_pill, minimize_to_tray, reduced_motion, set_pill_visible,
-    set_settings_visible, show_error,
 };
 pub use self::{insertion::Delivery, owned_thread::OwnedThread, process::ProcessGroup};
 
@@ -58,21 +37,10 @@ pub const PILL_HEIGHT: u16 = 100;
 pub const PILL_MARGIN: u16 = 2;
 
 /// The hold-to-talk shortcut as people see it.
-#[cfg(target_os = "macos")]
 pub const SHORTCUT: &str = "Fn";
-/// The hold-to-talk shortcut as people see it.
-#[cfg(target_os = "windows")]
-pub const SHORTCUT: &str = "Ctrl + Win";
-/// The hold-to-talk shortcut as people see it.
-#[cfg(target_os = "linux")]
-pub const SHORTCUT: &str = "Ctrl + Super + Space";
 
 /// The shortcut that discards a recording, as people see it.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub const CANCEL_SHORTCUT: &str = "Escape";
-/// The shortcut that discards a recording, as people see it.
-#[cfg(target_os = "linux")]
-pub const CANCEL_SHORTCUT: &str = "Ctrl + Super + Escape";
 
 /// Whether dictation runs, as the tray and Settings present it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -165,12 +133,6 @@ impl InputSender {
         self.sender.is_closed()
     }
 
-    /// Resolves once native input and insertion are permanently disabled.
-    #[cfg(target_os = "linux")]
-    pub(crate) fn closed(&self) -> impl Future<Output = ()> + '_ {
-        self.sender.closed()
-    }
-
     /// Authorizes a new recording, invalidating every older permit.
     ///
     /// Returns `None` once the lane is closed or generations run out.
@@ -219,11 +181,6 @@ pub struct InsertPermit {
 }
 
 impl InsertPermit {
-    #[cfg(target_os = "linux")]
-    fn same_recording(&self, other: &Self) -> bool {
-        self.gate.is_same(&other.gate) && self.generation == other.generation
-    }
-
     /// Revokes only this recording, including while an OS operation is blocked. An obsolete permit
     /// cannot revoke a newer recording.
     pub fn revoke(&self) {
@@ -296,11 +253,6 @@ impl Gate {
     fn is_authorized(&self) -> bool {
         self.0.load(Ordering::Acquire) & Self::STATE == Self::AUTHORIZED
     }
-
-    #[cfg(target_os = "linux")]
-    fn is_same(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
 }
 
 /// Submission outcome; native input cannot prove that the target accepted text.
@@ -316,39 +268,12 @@ pub enum Inserted {
     Unavailable(&'static str),
 }
 
-/// Explicit desktop shortcut and insertion choices.
-#[derive(Clone)]
-pub struct DesktopOptions {
-    /// Reserved Linux dictation chord in portal syntax.
-    pub shortcut: String,
-    /// Reserved Linux cancellation chord in portal syntax.
-    pub cancel: String,
-    /// Whether clipboard submission pastes with Ctrl+Shift+V.
-    pub terminal_paste: bool,
-    /// Whether text is only copied, for the user to paste without keyboard-control permission.
-    pub manual_paste: bool,
-    /// Whether desktop command bindings replace observing a native shortcut.
-    pub external_shortcut: bool,
-}
-
-impl Default for DesktopOptions {
-    fn default() -> Self {
-        Self {
-            shortcut: "CTRL+LOGO+space".into(),
-            cancel: "CTRL+LOGO+Escape".into(),
-            terminal_paste: false,
-            manual_paste: false,
-            external_shortcut: false,
-        }
-    }
-}
-
 /// Serializes native clipboard and input operations without blocking the session owner.
 ///
 /// Requests wait for their turn without occupying a blocking thread, and each keeps its turn until
 /// its native work ends, even if the caller stops waiting, so a cancelled request never races a
 /// newer clipboard write.
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 #[derive(Clone)]
 pub struct Inserter {
     #[expect(
@@ -358,7 +283,7 @@ pub struct Inserter {
     serial: Arc<tokio::sync::Mutex<()>>,
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 impl Inserter {
     /// Submits authorized text through the chosen delivery.
     ///
@@ -375,8 +300,8 @@ impl Inserter {
             return Ok(Inserted::Cancelled);
         }
         tokio::task::spawn_blocking(move || {
-            insertion::wait_for_released_modifiers(&permit, || Ok(native::modifiers_down()))?;
-            let inserted = native::insert(&text, &permit, delivery);
+            insertion::wait_for_released_modifiers(&permit, || Ok(macos::modifiers_down()))?;
+            let inserted = macos::insert(&text, &permit, delivery);
             // Moving the turn in holds it through native work even if the caller stops awaiting.
             drop(turn);
             inserted
@@ -389,8 +314,8 @@ impl Inserter {
 ///
 /// # Errors
 /// Returns thread startup or native desktop initialization failures.
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-pub fn prepare(input: InputSender, _: DesktopOptions) -> anyhow::Result<(InputMonitor, Inserter)> {
+#[cfg(target_os = "macos")]
+pub fn prepare(input: InputSender) -> anyhow::Result<(InputMonitor, Inserter)> {
     Ok((
         InputMonitor::start(input)?,
         Inserter {

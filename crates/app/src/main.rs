@@ -1,7 +1,6 @@
 //! Native dictation UI and the single-owner recording runtime.
 
 #![forbid(unsafe_code)]
-#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod gpui_ext;
 mod icons;
@@ -108,10 +107,6 @@ fn run() -> anyhow::Result<()> {
             !mode.is_demo(),
             "Desktop commands cannot be combined with a demo"
         );
-        ensure!(
-            cfg!(target_os = "linux"),
-            "Desktop commands are available on Linux"
-        );
         return Instance::send(&path, command);
     }
     let acquired = if mode.is_resident() {
@@ -174,8 +169,7 @@ fn launch(
             shell::request_quit(cx);
             return;
         }
-        // Linux always opens Settings so portal permissions and tray availability stay reachable.
-        if !configured || !cx.global::<Services>().running() || cfg!(target_os = "linux") {
+        if !configured || !cx.global::<Services>().running() {
             shell::reveal(cx);
         }
         if !mode.is_resident() {
@@ -185,21 +179,12 @@ fn launch(
 }
 
 fn print_help() {
-    let commands = if cfg!(target_os = "linux") {
-        " | --toggle | --cancel"
-    } else {
-        ""
-    };
-    println!("speakeasy [--config PATH] [--demo | --demo-tray{commands}]\nShortcut: {SHORTCUT}");
-    if cfg!(target_os = "linux") {
-        println!(
-            "Hold to dictate or double-tap for hands-free. {CANCEL_SHORTCUT} cancels. Desktop-approved bindings may differ.\n--toggle / --cancel control a running app when Desktop bindings is enabled."
-        );
-    } else {
-        println!(
-            "Hold to dictate; add Space or double-tap for hands-free. {CANCEL_SHORTCUT} cancels."
-        );
-    }
+    println!(
+        "speakeasy [--config PATH] [--demo | --demo-tray | --toggle | --cancel]\nShortcut: {SHORTCUT}"
+    );
+    println!(
+        "Hold to dictate; add Space or double-tap for hands-free. {CANCEL_SHORTCUT} cancels.\n--toggle / --cancel start, finish or discard dictation in the running app, for scripts."
+    );
     println!(
         "--demo uses simulated audio without microphone, hook, or clipboard access.\n--demo-tray also previews native tray, minimize, close and relaunch behavior."
     );

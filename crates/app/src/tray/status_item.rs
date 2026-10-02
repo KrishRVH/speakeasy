@@ -1,25 +1,16 @@
-//! The Windows and macOS tray through `tray-icon`. Native callbacks only queue commands; the UI
+//! The menu bar status item through `tray-icon`. Native callbacks only queue commands; the UI
 //! thread runs them and presents each tray state.
 
 use gpui::{App, Global, Task};
-use speakeasy_dictation::{status::Indicator, theme::Theme};
+use speakeasy_dictation::status::Indicator;
 use speakeasy_platform::{Activity, ServiceState};
 use tray_icon::{
     BadIcon, Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent,
     menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
 };
 
-use super::{
-    TrayChanges, TrayCommand, TrayState,
-    icon::{self, IconStyle},
-};
-use crate::shell::Services;
+use super::{TrayChanges, TrayCommand, TrayState, icon};
 
-const ICON_STYLE: IconStyle = if cfg!(target_os = "macos") {
-    IconStyle::Template
-} else {
-    IconStyle::Color
-};
 const COMMAND_BACKLOG: usize = 16;
 
 pub(crate) struct Tray {
@@ -37,12 +28,12 @@ struct Presenter {
     pause: MenuItem,
     toggle: MenuItem,
     cancel: MenuItem,
-    drawn: Option<(Indicator, Theme)>,
+    drawn: Option<Indicator>,
 }
 
 impl Presenter {
     fn present(&mut self, state: &TrayState) {
-        self.redraw_icon(state.status.indicator, state.theme);
+        self.redraw_icon(state.status.indicator);
         self.status.set_text(&state.status.description);
         best_effort(self.icon.set_tooltip(Some(format!(
             "Speakeasy · {}\nHold {} to dictate",
@@ -67,19 +58,15 @@ impl Presenter {
         self.cancel.set_enabled(can_cancel);
     }
 
-    fn redraw_icon(&mut self, indicator: Indicator, theme: Theme) {
-        if self.drawn == Some((indicator, theme)) {
+    fn redraw_icon(&mut self, indicator: Indicator) {
+        if self.drawn == Some(indicator) {
             return;
         }
-        self.drawn = Some((indicator, theme));
-        let Ok(image) = draw_icon(indicator, theme) else {
+        self.drawn = Some(indicator);
+        let Ok(image) = draw_icon(indicator) else {
             return;
         };
-        #[cfg(target_os = "macos")]
-        let updated = self.icon.set_icon_templated(Some(image));
-        #[cfg(target_os = "windows")]
-        let updated = self.icon.set_icon(Some(image));
-        best_effort(updated);
+        best_effort(self.icon.set_icon_templated(Some(image)));
     }
 }
 
@@ -101,7 +88,7 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
         &settings,
         &quit,
     ])?;
-    let icon = build_icon(menu, cx.global::<Services>().config.theme)?;
+    let icon = build_icon(menu)?;
     let commands = queue_commands([
         (settings.id().clone(), TrayCommand::Settings),
         (pause.id().clone(), TrayCommand::Pause),
@@ -138,24 +125,16 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn build_icon(menu: Menu, theme: Theme) -> anyhow::Result<TrayIcon> {
-    let image = draw_icon(Indicator::Paused, theme)?;
-    let builder = TrayIconBuilder::new()
+fn build_icon(menu: Menu) -> anyhow::Result<TrayIcon> {
+    Ok(TrayIconBuilder::new()
         .with_tooltip("Speakeasy")
-        .with_menu(Box::new(menu));
-    #[cfg(target_os = "macos")]
-    let builder = builder.with_icon_templated(image);
-    #[cfg(target_os = "windows")]
-    let builder = builder.with_icon(image);
-    Ok(builder.build()?)
+        .with_menu(Box::new(menu))
+        .with_icon_templated(draw_icon(Indicator::Paused)?)
+        .build()?)
 }
 
-fn draw_icon(indicator: Indicator, theme: Theme) -> Result<Icon, BadIcon> {
-    Icon::from_rgba(
-        icon::raster(indicator, theme, ICON_STYLE),
-        icon::SIZE,
-        icon::SIZE,
-    )
+fn draw_icon(indicator: Indicator) -> Result<Icon, BadIcon> {
+    Icon::from_rgba(icon::raster(indicator), icon::SIZE, icon::SIZE)
 }
 
 /// Installs the native click handlers, which run outside GPUI and can only queue commands.

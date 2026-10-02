@@ -104,21 +104,14 @@ async fn exercise(cx: &AsyncApp) -> anyhow::Result<()> {
         },
         |_, cx| cx.new(|_| Scene::default()),
     )?;
-    let (raw, scale) = cx.update(|cx| {
+    let raw = cx.update(|cx| {
         window.update(cx, |_, window, _| {
             HasWindowHandle::window_handle(window)
-                .map(|handle| (handle.as_raw(), window.scale_factor()))
+                .map(|handle| handle.as_raw())
                 .map_err(|error| anyhow::anyhow!("Native window handle: {error}"))
         })?
     })??;
-    #[cfg(not(target_os = "linux"))]
-    let _ = scale;
     speakeasy_platform::configure_pill(raw)?;
-    #[cfg(target_os = "linux")]
-    let xcb = match raw {
-        raw_window_handle::RawWindowHandle::Xcb(handle) => handle.window.get(),
-        _ => anyhow::bail!("Expected an XCB window on the private display"),
-    };
     for iteration in 0..CYCLES {
         // A pathless first cycle makes a later one exercise the renderer's lazy path targets.
         let draws_path = iteration != 0;
@@ -133,20 +126,12 @@ async fn exercise(cx: &AsyncApp) -> anyhow::Result<()> {
             })
         })??;
         wait_for_render(window, preceding, cx).await?;
-        #[cfg(target_os = "linux")]
-        linux::wait_for_pixels(xcb, scale, draws_path).await?;
         speakeasy_platform::set_pill_visible(raw, false);
         Timer::after(PRESENT_SETTLE).await;
     }
-    if cfg!(target_os = "linux") {
-        println!(
-            "PASS: SVG and path pixels verified across resize and {CYCLES} native show/hide cycles."
-        );
-    } else {
-        println!(
-            "PASS: native render callbacks completed across SVG/path scenes, resize, and {CYCLES} show/hide cycles."
-        );
-    }
+    println!(
+        "PASS: native render callbacks completed across SVG/path scenes, resize, and {CYCLES} show/hide cycles."
+    );
     Ok(())
 }
 
@@ -182,108 +167,5 @@ fn paint_diamond(bounds: Bounds<Pixels>, window: &mut Window) {
     path.close();
     if let Ok(path) = path.build() {
         window.paint_path(path, rgb(0xFF_77_33));
-    }
-}
-
-#[cfg(target_os = "linux")]
-mod linux {
-    //! Pixel samples of the owned window on the private X11 display.
-
-    use std::time::Instant;
-
-    use anyhow::{Context as _, ensure};
-    use gpui::Timer;
-    use x11rb::{
-        protocol::xproto::{ConnectionExt as _, ImageFormat},
-        rust_connection::RustConnection,
-    };
-
-    use super::{POLL_INTERVAL, TIMEOUT};
-
-    pub(super) async fn wait_for_pixels(
-        window: u32,
-        scale: f32,
-        draws_path: bool,
-    ) -> anyhow::Result<()> {
-        let (connection, _) = x11rb::connect(None)?;
-        let started = Instant::now();
-        let deadline = started.checked_add(TIMEOUT).unwrap_or(started);
-        loop {
-            match verify_pixels(&connection, window, scale, draws_path) {
-                Ok(()) => return Ok(()),
-                Err(error) => {
-                    if Instant::now() >= deadline {
-                        return Err(error);
-                    }
-                    Timer::after(POLL_INTERVAL).await;
-                },
-            }
-        }
-    }
-
-    fn verify_pixels(
-        connection: &RustConnection,
-        window: u32,
-        scale: f32,
-        draws_path: bool,
-    ) -> anyhow::Result<()> {
-        let geometry = connection.get_geometry(window)?.reply()?;
-        let image = connection
-            .get_image(
-                ImageFormat::Z_PIXMAP,
-                window,
-                0,
-                0,
-                geometry.width,
-                geometry.height,
-                u32::MAX,
-            )?
-            .reply()?;
-        let pixels = image.data.as_chunks::<4>().0;
-        let color = |x: u16, y: u16| -> anyhow::Result<u32> {
-            let column = pixel_coordinate(x, scale)?;
-            let row = pixel_coordinate(y, scale)?;
-            ensure!(
-                column < usize::from(geometry.width) && row < usize::from(geometry.height),
-                "Sample coordinate is outside the owned window"
-            );
-            let index = row
-                .checked_mul(usize::from(geometry.width))
-                .and_then(|offset| offset.checked_add(column))
-                .context("Native image geometry is unsupported")?;
-            let pixel = pixels
-                .get(index)
-                .context("Native image is shorter than its geometry")?;
-            Ok(u32::from_ne_bytes(*pixel) & 0x00FF_FFFF)
-        };
-        ensure!(color(13, 13)? == 0xCC_99_55, "Embedded SVG did not render");
-        ensure!(
-            color(50, 50)? == 0x11_33_55,
-            "Window background did not render"
-        );
-        if draws_path {
-            ensure!(
-                color(24, 24)? == 0xFF_77_33,
-                "Path did not render after allocation or resize"
-            );
-        }
-        Ok(())
-    }
-
-    fn pixel_coordinate(logical: u16, scale: f32) -> anyhow::Result<usize> {
-        let physical = f32::from(logical) * scale;
-        ensure!(
-            scale.is_finite() && scale > 0.0 && (0.0..=f32::from(u16::MAX)).contains(&physical),
-            "Native display scale is unsupported"
-        );
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "Sampling intentionally rounds a validated native coordinate down to its containing pixel"
-        )]
-        #[expect(
-            clippy::cast_sign_loss,
-            reason = "The physical coordinate is validated as finite and nonnegative before conversion"
-        )]
-        Ok(physical as usize)
     }
 }

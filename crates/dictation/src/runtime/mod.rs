@@ -9,14 +9,15 @@ mod worker;
 use std::{convert::Infallible, io, sync::Arc, time::Instant};
 
 use async_channel::{Receiver, Sender};
-use speakeasy_platform::{Input, InputMonitor, InputSender, OwnedThread};
+#[cfg(target_os = "macos")]
+use speakeasy_platform::InputMonitor;
+use speakeasy_platform::{Input, InputSender, OwnedThread};
 use tokio::{sync::watch, task::JoinError};
 
 pub(crate) use self::session::SessionId;
-use crate::{
-    config::Config,
-    ports::{Desktop, Ports},
-};
+#[cfg(target_os = "macos")]
+use crate::ports::Desktop;
+use crate::{config::Config, ports::Ports};
 
 /// The status while a speech worker loads, shared by the owner, Settings, and the tray.
 pub const LOADING: &str = "Loading local model…";
@@ -147,13 +148,13 @@ impl Runtime {
     ///
     /// # Errors
     /// Returns an error if native input or the owner thread cannot start.
+    #[cfg(target_os = "macos")]
     pub fn start(
         config: Config,
         snapshots: watch::Sender<Snapshot>,
     ) -> anyhow::Result<(Self, InputMonitor)> {
         let (input, inputs) = input_lane();
-        let (monitor, inserter) =
-            speakeasy_platform::prepare(input.clone(), config.desktop_options())?;
+        let (monitor, inserter) = speakeasy_platform::prepare(input.clone())?;
         let ports = Desktop { inserter };
         let runtime = Self::host(
             config,

@@ -605,8 +605,8 @@ fn handle_stream_error(error: cpal::Error, errors: &Sender<cpal::Error>, control
 
 fn is_recoverable(kind: cpal::ErrorKind, first_sample_queued: bool) -> bool {
     match kind {
-        // WASAPI can report a discontinuity before its first packet, when no queued speech can be
-        // lost. Later, an Xrun may have dropped words, so it fails the recording.
+        // A discontinuity before the first packet cannot lose queued speech. Later, an Xrun may have
+        // dropped words, so it fails the recording.
         cpal::ErrorKind::Xrun => !first_sample_queued,
         // Refused real-time priority and automatic rerouting leave the stream delivering.
         cpal::ErrorKind::RealtimeDenied | cpal::ErrorKind::DeviceChanged => true,
@@ -741,8 +741,8 @@ fn bytes_in(samples: usize) -> usize {
     samples.saturating_mul(SAMPLE_BYTES)
 }
 
-/// Lists input devices without opening a stream. Drivers may block, and CPAL leaves its calling
-/// thread in a single-threaded COM apartment, so enumeration runs on its own detached thread.
+/// Lists input devices without opening a stream. Drivers may block, so enumeration runs on its own
+/// detached thread.
 ///
 /// # Errors
 /// Returns an error if the audio host cannot enumerate its devices.

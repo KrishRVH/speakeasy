@@ -16,7 +16,7 @@ uv = "0.12.19"
 bun = "1.4.2"
 shellcheck = "0.11.0"
 shfmt = "3.14.0"
-# Static Linux build keeps the tooling gate usable on the glibc 2.35 release builder.
+# The static build keeps the tooling gate usable on any Linux host.
 lychee = { version = "0.24.2", libc = "musl" }
 typos = "1.48.0"
 actionlint = "1.7.12"
@@ -52,7 +52,7 @@ depends = ["rust:metadata"]
 env = { CARGO_NET_OFFLINE = "true" }
 run = "cargo machete --with-metadata --skip-target-dir crates"
 
-# Python discards cargo's metadata JSON portably, including on Windows CI.
+# Python discards cargo's metadata JSON without a shell redirect.
 [tasks."rust:metadata"]
 description = "Validate locked metadata and fetch platform sources before offline analysis"
 run = '''python -c "import subprocess; subprocess.run(['cargo', 'metadata', '--all-features', '--locked', '--format-version=1'], check=True, stdout=subprocess.DEVNULL)"'''
@@ -101,20 +101,19 @@ run = ["uv run --no-sync ruff check --fix scripts tests", "uv run --no-sync ruff
 depends = ["py:fmt:check", "py:lint", "py:type", "py:test"]
 
 [tasks."shell:fmt"]
-run = "shfmt -w -i 2 -ci -sr scripts/*.sh packaging/linux/AppRun"
+run = "shfmt -w -i 2 -ci -sr scripts/*.sh"
 
 [tasks."shell:fmt:check"]
-run = "shfmt -d -i 2 -ci -sr scripts/*.sh packaging/linux/AppRun"
+run = "shfmt -d -i 2 -ci -sr scripts/*.sh"
 
 [tasks."shell:lint"]
-run = ["shellcheck --severity=style scripts/*.sh packaging/linux/AppRun", "for script in scripts/*.sh; do bash -n \"$script\"; done", "sh -n packaging/linux/AppRun"]
+run = ["shellcheck --severity=style scripts/*.sh", "for script in scripts/*.sh; do bash -n \"$script\"; done"]
 
 [tasks."shell:standards"]
 depends = ["shell:fmt"]
 
-# The launcher tests exercise the shell scripts, so shell checks run them too.
 [tasks."shell:standards:check"]
-depends = ["shell:fmt:check", "shell:lint", "py:test"]
+depends = ["shell:fmt:check", "shell:lint"]
 
 [tasks."md:lock"]
 run = "bun install"
@@ -158,18 +157,6 @@ depends = ["rust:standards:check", "py:standards:check", "shell:standards:check"
 
 [tasks."ci:lint"]
 run = "actionlint"
-
-[tasks."ps:syntax"]
-description = "Parse Windows scripts on a native PowerShell host"
-shell = "pwsh -NoProfile -Command"
-run = """
-foreach ($script in Get-ChildItem scripts/*.ps1) {
-  $parseErrors = $null
-  $tokens = $null
-  $null = [System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$parseErrors)
-  if ($parseErrors) { throw ($parseErrors | Out-String) }
-}
-"""
 
 [tasks.hygiene]
 description = "Check current repository paths, task references, and size"

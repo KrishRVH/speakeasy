@@ -1,14 +1,12 @@
 # Architecture
 
-Speakeasy is a Rust desktop app for Windows, macOS, and Linux. GPUI renders Settings and one
-non-activating dictation pill. A session owner coordinates native input, CPAL capture, a local
-speech worker, and insertion into the focused application. Linux has experimental X11/Wayland
-desktop support; native desktop acceptance is pending.
-[Linux implementation](linux-implementation.md) records its support limits and remaining checks.
+Speakeasy is a Rust dictation app for Apple silicon Macs. GPUI renders Settings and one
+non-activating dictation pill. A session owner coordinates the Fn event tap, Core Audio capture
+through CPAL, a local speech worker, and insertion into the focused application.
 
 ```mermaid
 flowchart LR
-    Shortcut[Native shortcut] --> Session[Session owner]
+    Shortcut[Fn event tap] --> Session[Session owner]
     Session --> Capture[CPAL capture]
     Capture --> Audio[In-memory WAV]
     Audio --> Worker[Owned local speech worker]
@@ -16,39 +14,38 @@ flowchart LR
     Session --> Insert[Native insertion]
     Insert --> Editor[Focused application]
     Session --> Pill[GPUI pill]
-    Cancel[Native cancellation] --> Gate[Cancellation gate]
+    Cancel[Passive Escape] --> Gate[Cancellation gate]
     Gate --> Session
     Gate --> Insert
 ```
 
 ## Modules
 
-| Area                                                            | Responsibility                                                                                                                                                             |
-| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `crates/core`                                                   | Pure gesture deadlines and analytic motion springs.                                                                                                                        |
-| `crates/platform`                                               | Native keyboard input, lifecycle notifications, pill windows, the Windows file dialog, insertion, reduced-motion preference, owned threads, and owned process containment. |
-| `crates/app/src/runtime/`                                       | One session owner; recording, inference, cancellation, settings changes, and final insertion ordering.                                                                     |
-| `runtime/session.rs`, `microphone.rs`, `worker.rs`              | Session authority and presentation stages; one open or retiring microphone; one ready worker or owned load/inference/recovery job.                                         |
-| `crates/platform/src/keyboard.rs`, `monitor.rs`, `insertion.rs` | Portable keyboard decisions, stop coordination for native event loops, and shared insertion eligibility; native adapters collect facts and submit effects.                 |
-| `crates/app/src/audio.rs`, `audio/control.rs`                   | CPAL capture, typed callback control, bounded ring, audio levels, speech gate, quiet-edge trimming, and five-minute recording limit.                                       |
-| `crates/app/src/local_speech.rs`                                | Warm Whisper or Parakeet process, loopback HTTP, bounded responses, and cancellation recovery.                                                                             |
-| `crates/app/src/transcript.rs`                                  | Linear transcript whitespace and filler cleanup before insertion.                                                                                                          |
-| `crates/app/src/ports.rs`                                       | Capture, speech, and insertion interfaces used by the session owner and unattended fixtures.                                                                               |
-| `crates/app/src/pill.rs` and `pill/`                            | Grille pill, measured audio envelope, and frame-driven motion.                                                                                                             |
-| `crates/app/src/setup.rs`                                       | Automatic setup: engine choice through NeMo's doctor, pinned resumable downloads, and extraction.                                                                          |
-| `crates/app/src/shell.rs` and `shell/`                          | Settings, ordered durable saves, service lifecycle, pause, and coordinated shutdown.                                                                                       |
-| `crates/app/src/tray.rs` and `tray/`                            | Owned native tray icon, menu actions, and snapshot-driven status updates.                                                                                                  |
-| `crates/app/src/status.rs`                                      | Shared readiness and capture status for Settings and the tray.                                                                                                             |
-| `crates/app/src/theme.rs`                                       | Selectable color themes shared by Settings, the pill, and the tray.                                                                                                        |
-| `crates/app/src/icons.rs`                                       | Embedded Settings icon assets for GPUI's existing SVG atlas.                                                                                                               |
-| `crates/app/src/gpui_ext.rs`                                    | GPUI updates that become no-ops once their entity, window, or app is gone, and native window handles for platform calls.                                                   |
-| `crates/app/src/child.rs`                                       | Hidden child processes, killed with their owner and reaped before anything replaces them.                                                                                  |
-| `crates/app/src/instance.rs`                                    | Configuration-directory lock and an owned loopback listener for revealing Settings and dispatching desktop Toggle and Cancel commands.                                     |
-| `crates/app/src/config.rs`                                      | Typed settings, path resolution, validation, and atomic saves.                                                                                                             |
+| Area                                                            | Responsibility                                                                                                                                                    |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crates/core`                                                   | Pure gesture deadlines and analytic motion springs.                                                                                                               |
+| `crates/platform`                                               | The Fn event tap, lifecycle notifications, pill window configuration, insertion, reduced-motion preference, the speech engine's C ABI, and owned process groups.  |
+| `crates/dictation`                                              | The GPUI-free service: session owner, capture, recognition worker, settings, setup, instance ownership, status, themes, and the shell's lifecycle and save queue. |
+| `dictation/src/runtime/`                                        | One session owner; recording, inference, cancellation, settings changes, and final insertion ordering.                                                            |
+| `runtime/session.rs`, `microphone.rs`, `worker.rs`              | Session authority and presentation stages; one open or retiring microphone; one ready worker or owned load/inference/recovery job.                                |
+| `crates/platform/src/keyboard.rs`, `monitor.rs`, `insertion.rs` | Portable Fn decisions, stop coordination for the tap's run loop, and insertion eligibility; the native adapter collects facts and submits effects.                |
+| `dictation/src/audio.rs`, `audio/control.rs`                    | CPAL capture, typed callback control, bounded ring, audio levels, speech gate, quiet-edge trimming, and five-minute recording limit.                              |
+| `dictation/src/local_speech.rs`                                 | Warm Whisper or Parakeet process, loopback HTTP, bounded responses, and cancellation recovery.                                                                    |
+| `dictation/src/transcript.rs`                                  | Linear transcript whitespace and filler cleanup before insertion. |
+| `dictation/src/ports.rs`                                        | Capture, speech, and insertion interfaces used by the session owner and unattended fixtures.                                                                      |
+| `dictation/src/setup.rs`                                        | Automatic setup: the Metal engine build checked by its own doctor, pinned resumable downloads, and extraction.                                                    |
+| `dictation/src/{lifecycle,save}.rs`                             | Service ownership across enable, pause, and quit, and ordered durable settings writes.                                                                            |
+| `dictation/src/instance.rs`                                     | Configuration-directory lock and an owned loopback listener for Reveal, Toggle, and Cancel commands from later launches.                                          |
+| `dictation/src/config.rs`, `status.rs`, `theme.rs`              | Typed settings with validation and atomic saves, shared readiness status, and the four color themes.                                                              |
+| `crates/app/src/pill.rs` and `pill/`                            | Grille pill, measured audio envelope, and frame-driven motion.                                                                                                    |
+| `crates/app/src/shell.rs` and `shell/`                          | Settings, service wiring, pause, and coordinated shutdown.                                                                                                        |
+| `crates/app/src/tray.rs` and `tray/`                            | Owned menu bar item, template icon, menu actions, and snapshot-driven status updates.                                                                             |
+| `crates/app/src/gpui_ext.rs`, `icons.rs`                        | GPUI updates that become no-ops once their target is gone, native window handles, theme fills, and embedded Settings icons.                                       |
 
-Core and app forbid unsafe code. Platform contains native FFI with local safety explanations.
-Application tests live beside their modules; dependency regression fixtures under `crates/app/tests`
-include the patched helpers directly.
+Core, dictation, and the app forbid unsafe code; platform contains native FFI with local safety
+explanations. The GPUI-free crates build and test on any Unix host, so the session owner's tests run
+without a Mac; the app builds only on macOS. Tests live beside their modules; dependency regression
+fixtures under `crates/app/tests` include the patched helpers directly.
 
 The root Cargo patch selects a narrowly patched GPUI 0.2.2 source under `vendor/gpui`, outside the
 workspace. Its native handle, visibility, queued-event, timing, frame-source lifetime, and
@@ -58,24 +55,22 @@ license are preserved; regression checks cover the patched behavior.
 
 ## Session ownership
 
-Capture starts on the first shortcut press. Hold/release finishes a recording; Space during the hold
-on Windows/macOS or a double-tap enables hands-free capture, and another press finishes it. A short
-single tap finishes after the double-tap window. Windows/macOS Escape passes to the focused app;
-Linux uses a reserved cancel chord or explicit desktop command. Both invalidate the insertion gate
+Capture starts on the first Fn press. Hold/release finishes a recording; Space during the hold or a
+double-tap enables hands-free capture, and another press finishes it. A short single tap finishes
+after the double-tap window. Escape passes to the focused app and invalidates the insertion gate
 immediately. The five-minute cap is independent of UI animation.
 
 Capture owns its microphone thread. Finishing and cancellation retire it asynchronously; a retry
 waits for device teardown before opening another capture. Shortcut monitoring initializes off the UI
-thread on every platform and reports desktop readiness through the session's input channel. Pause
-starts microphone, speech, and shortcut cleanup together and waits for their owned completion. The
-shell retains thread-affine native monitors on the UI thread through retirement. Application-owned
-Quit requests enter a terminal lifecycle state, stop services and setup, drain requested saves, and
-await cleanup while rendering continues. Repeated Quit requests are harmless, and delayed
-validation/save/setup completion cannot re-enable dictation. The instance lock is released after
-Settings writers. Cleanup waits without a time limit for audio-driver teardown, process reaping,
-insertion, setup, and saves. A stuck owner leaves Quitting visible while the UI remains responsive.
-Native forced termination still uses synchronous disposal as a fallback; its responsiveness requires
-native acceptance before changing GPUI termination handling.
+thread and reports desktop readiness through the session's input channel. Pause starts microphone,
+speech, and shortcut cleanup together and waits for their owned completion. The shell retains the
+native monitor, whose event tap lives on its own run-loop thread, through retirement.
+Application-owned Quit requests enter a terminal lifecycle state, stop services and setup, drain
+requested saves, and await cleanup while rendering continues. Repeated Quit requests are harmless,
+and delayed validation/save/setup completion cannot re-enable dictation. The instance lock is
+released after Settings writers. Cleanup waits without a time limit for audio-driver teardown,
+process reaping, insertion, setup, and saves. A stuck owner leaves Quitting visible while the UI
+remains responsive. Native forced termination still uses synchronous disposal as a fallback.
 
 `runtime/mod.rs` exposes start, configure, stop, and completion acknowledgement. `owner.rs` receives
 one wake, handles it, advances ready work, and publishes a snapshot. Its decisions use owned state;
@@ -121,25 +116,19 @@ coalesce into the pending frame; session changes redraw immediately. Native visi
 the latest pill state before showing or hiding it, so a queued dismissal cannot hide a later
 recording.
 
-Settings stays alive when hidden, preserving unsaved edits. On Windows, file choices use a native
-Open dialog on its own thread; shown from GPUI's UI thread, the dialog stays unpainted while GPUI is
-idle. Windows intercepts the native minimize command with a window-owned subclass and enqueues a
-hide; macOS retains its normal minimize behavior. Native show/hide runs outside GPUI borrows. The
-Windows pill consumes hidden paint messages with a native paint cycle; merely validating its region
-can leave paint pending and spin the message loop. Visible paint reaches GPUI. Tray tasks are
-cancelled before session services are retired at quit.
-
-Settings validation and durable saves run off the UI thread. Saves serialize the requested drafts,
-coalescing queued requests to the latest one. Completion preserves edits made after Save, and Pause
-invalidates a pending enable request. Quit waits for requested writes. Resume validates configured
-files in the background before enabling dictation.
+Settings stays alive when hidden, preserving unsaved edits; minimize keeps normal Dock behavior.
+Native show/hide runs outside GPUI borrows. Menu bar tasks are cancelled before session services are
+retired at quit. Settings validation and durable saves run off the UI thread. Saves serialize the
+requested drafts, coalescing queued requests to the latest one. Completion preserves edits made
+after Save, and Pause invalidates a pending enable request. Quit waits for requested writes. Resume
+validates configured files in the background before enabling dictation.
 
 Relaunch discovery uses `instance.port` next to the locked `instance.lock`. The loopback listener
 accepts fixed Reveal, Toggle, and Cancel commands, returns a fixed identification response, and
-carries no audio or transcript data. Linux exposes Toggle/Cancel only when desktop command bindings
-are enabled. Its thread sleeps in accept, is explicitly woken and joined at shutdown, and holds the
-lock until cleanup finishes. The first-hide hint is remembered in `tray-hint-seen` beside settings
-without rewriting the user's configuration.
+carries no audio or transcript data. `speakeasy --toggle` and `--cancel` send the latter two. Its
+thread sleeps in accept, is explicitly woken and joined at shutdown, and holds the lock until
+cleanup finishes. The first-hide hint is remembered in `tray-hint-seen` beside settings without
+rewriting the user's configuration.
 
 The audio callback writes to a bounded ring without allocating. The speech meter spans −60 to −6
 dBFS; its top is a speech reference, not a clipping indication. Unencoded PCM is zeroed whenever its
@@ -163,17 +152,15 @@ configured. Setup owns its thread and runtime. Cancel signals it immediately and
 cleanup acknowledges; Quit joins active and retiring setup work. A machine-local `setup.lock`
 serializes directory writes across retries and app instances. Cancellation terminates and waits for
 the owned extraction or doctor process before releasing that lock; partial downloads remain
-available to resume. It chooses a NeMo-Speech.cpp build by asking each candidate's `doctor` command
-whether its accelerator works: CUDA when an NVIDIA driver and a working GPU of at least 6 GB are
-present; otherwise the Vulkan build, using the GPU only with at least 6 GB; and the CPU build only
-when Vulkan cannot run. Apple silicon uses Metal.
+available to resume. Setup installs NeMo-Speech.cpp's Metal build and uses the GPU when the engine's
+`doctor` command confirms that its accelerator works.
 
 Downloads use pinned GitHub release and Hugging Face revision URLs. Each is written beside its
 destination as a `.part` file, resumed with an HTTP range request, and renamed into place only after
 its size and SHA-256 match. A complete partial file is verified locally without another download.
 Resumed data is hashed in bounded chunks with cancellation opportunities between reads. The system
-`tar` unpacks engine archives into a staging directory that is then renamed, and unused builds are
-removed. The result is saved like a manual choice and enables dictation.
+`tar` unpacks the engine archive into a staging directory that is then renamed, and unused builds
+are removed. The result is saved like a manual choice and enables dictation.
 
 ## Local recognition
 
@@ -183,8 +170,7 @@ Rust. Audio is posted from memory to the owned worker on loopback, through a cli
 or redirects. Worker output and transcripts are not retained in diagnostic logs.
 
 Model loading starts in the background. GPU preference adds a silent warmup request before
-readiness. Linux CPU workers also validate one synthetic inference before readiness, because model
-loading alone cannot establish CPU compatibility. Whisper language travels with each request, so a
+readiness. Whisper language travels with each request, so a
 language change does not reload the model. Whisper uses full context and default timestamp decoding.
 
 The transcription job runs `transcript::for_insertion` for either engine before publishing its
@@ -201,14 +187,13 @@ without token collections, regular expressions, another model, or a background s
 
 GPU cancellation drops the request and checks recovery with a bounded silent inference. A failed
 two-second recovery terminates and waits for the worker before replacement. Cancellation of active
-CPU inference terminates the worker and reloads it. Windows Job Objects terminate owned children
-when the app exits. Unix process groups are cleaned up during orderly shutdown; a force-quit can
-leave a worker running. Pause retires the runtime asynchronously; Quit waits for owned cleanup. A
-failed warmup does not retry-loop. Startup errors report the exit status and a local remedy for
-unsupported CPU instructions, Windows loader errors, or incompatible server arguments. Engine stderr
-remains discarded because it can include private text; diagnostic messages never forward engine
-output. Model startup and inference receive cooperative cancellation. Retirement waits for process
-exit before loading a replacement, while the session owner continues receiving input.
+CPU inference terminates the worker and reloads it. The engine's process group is cleaned up during
+orderly shutdown; a force-quit can leave a worker running. Pause retires the runtime asynchronously;
+Quit waits for owned cleanup. A failed warmup does not retry-loop. Startup errors report the exit
+status and a local remedy for unsupported CPU instructions or incompatible server arguments. Engine
+stderr remains discarded because it can include private text; diagnostic messages never forward
+engine output. Model startup and inference receive cooperative cancellation. Retirement waits for
+process exit before loading a replacement, while the session owner continues receiving input.
 
 ## Insertion and privacy
 
@@ -217,41 +202,31 @@ the session owner or authorize a newer recording. Only the currently owned compl
 session; shutdown awaits obsolete insertion cleanup.
 
 Insertion waits briefly for physical modifiers to be released. Normal mode writes text to the
-clipboard and submits the platform paste shortcut. Windows clipboard sequence and Mac change-count
-checks preserve newer copies. Linux uses X11 selection ownership or portal ownership notifications;
-it never restores a stale clipboard payload during cleanup. If automatic paste cannot proceed after
-copying, Settings explains how to paste manually. Target focus takes precedence over held modifiers
-on Windows and macOS. Linux follows X11/Xwayland focus ancestors and checks `_NET_WM_PID`
-immediately before submitting input; own Settings windows and failed focus lookups use manual paste.
-On the portal path, X focus None means no Speakeasy X window is focused; PointerRoot stays refused.
-These read-only focus queries run on the owned X worker, keeping portal cancellation responsive; its
-native clipboard is opened only for paste requests. GPUI currently renders through X11/Xwayland on
-Linux, including Wayland sessions. Correct focus loss when switching to a native Wayland editor
-remains a native acceptance item. Linux manual copy skips modifier waiting. X11 enqueues the entire
-paste and its releases before one server synchronization, then checks every submission. Wayland
-clipboard preparation and bounded selection transfers remain owned by the desktop service; blocking
-X11 fallback clipboard calls use a serialized worker. Serving a committed clipboard selection
-outlives its paste permit and ends when that selection loses ownership or the service retires.
+clipboard and submits Command-V; the pasteboard change count preserves newer copies. If automatic
+paste cannot proceed after copying, Settings explains how to paste manually. Target focus takes
+precedence over held modifiers.
 
-**Keep clipboard** uses native Unicode input and leaves the clipboard untouched. Linux requires
-advertised EI text support; X11 reports this mode as unavailable. All text validation precedes the
-single permit commit. After commit, a native failure reports a partial/unavailable submission or
-manual-paste outcome and is never automatically repeated. Both paths check cancellation before
-committing native input. Submission cannot prove that an editor accepted the text, and Escape cannot
-retract input already submitted to the OS.
+**Keep clipboard** uses native Unicode input and leaves the clipboard untouched. All text validation
+precedes the single permit commit. After commit, a native failure reports a partial/unavailable
+submission or manual-paste outcome and is never automatically repeated. Both paths check
+cancellation before committing native input. Submission cannot prove that an editor accepted the
+text, and Escape cannot retract input already submitted to the OS.
 
 There are no accounts, cloud providers, transcript history, or telemetry. Capture begins only when
-dictation is triggered. Remote microphone routing belongs to the OS and the user's audio bridge; see
-[remote dictation](remote-dictation.md).
+dictation is triggered.
 
 ## Verification
 
-`mise run standards:check` is the local and Linux CI gate. Native Windows/macOS CI runs the Rust
-gate with each platform's SDK; release builds additionally run owned-window rendering checks. From
-Linux,
-`cargo clippy -p speakeasy-platform -p speakeasy-core --all-targets --locked --target aarch64-apple-darwin -- -D warnings`
-(and the same with `--target x86_64-pc-windows-msvc`) type-checks the native adapters; it cannot
-verify native runtime behavior or the SDK-dependent GPUI application build.
+`mise run standards:check` is the local and CI gate; CI runs it on a macOS runner with the owned
+window rendering check and packaging. On another Unix host, these commands type-check the GPUI-free
+crates for Apple silicon and run their tests; neither verifies native runtime behavior or builds the
+GPUI application:
+
+```sh
+cargo clippy -p speakeasy-core -p speakeasy-platform -p speakeasy-dictation --all-targets \
+  --locked --target aarch64-apple-darwin -- -D warnings
+cargo nextest run -p speakeasy-core -p speakeasy-platform -p speakeasy-dictation --locked
+```
 
 Default checks use fake capture and insertion. Public-audio fixtures exercise the real session owner
 and local worker; `--demo` uses the actual views with scripted levels and no microphone, global
@@ -261,21 +236,21 @@ performance gaps are in [performance](performance.md).
 
 ### Change and test map
 
-| Change                                            | Read first                                                         | Relevant default checks                                                                                                             |
-| ------------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Gestures, deadlines, startup, cancellation        | `runtime/owner.rs`, `session.rs`, `microphone.rs`, `worker.rs`     | `runtime/tests.rs` drives the production owner; paused Tokio time tests the same deadlines used in production.                      |
-| Device errors, callback limits, PCM preparation   | `audio.rs`, `audio/control.rs`, `ports.rs`                         | Synthetic samples check callback budgets, cancellation, checked WAV encoding, and controlled thread teardown.                       |
-| Pause, reconfigure, quit, delayed saves           | `shell/services.rs`, `lifecycle.rs`, `shutdown.rs`, `save.rs`      | Lifecycle and save tests check terminal quit, latest pending configuration, ordered writes, and later edits/Pause.                  |
-| Windows/macOS keyboard policy                     | `platform/keyboard.rs`, native callback adapter                    | Pure key decisions run on every host; native hook lifecycle requires opt-in.                                                        |
-| Insertion                                         | `platform/insertion.rs`, `InsertPermit`, selected native adapter   | Eligibility, cancellation/commit, clipboard ownership, focus ancestry, and partial key submission.                                  |
-| Engine startup/recovery                           | `local_speech.rs`, `runtime/worker.rs`                             | Controlled process exit/cancellation and fake worker retirement; public fixture checks are separate.                                |
-| Dependency patches                                | Each vendor `README.speakeasy.md`                                  | Portable GPUI fixtures plus native CI and Linux GUI checks.                                                                         |
-| Profiling, packaged launchers, private GUI checks | `scripts/profile_linux.py`, `check_demo_linux.py`, package scripts | Public `/proc` fixtures, explicit clocks, owned child processes, argument admission, and AppRun argument/library-path preservation. |
+| Change                                          | Read first                                                     | Relevant default checks                                                                                                   |
+| ----------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Gestures, deadlines, startup, cancellation      | `runtime/owner.rs`, `session.rs`, `microphone.rs`, `worker.rs` | `runtime/tests.rs` drives the production owner; paused Tokio time tests the same deadlines used in production.            |
+| Device errors, callback limits, PCM preparation | `audio.rs`, `audio/control.rs`, `ports.rs`                     | Synthetic samples check callback budgets, cancellation, checked WAV encoding, and controlled thread teardown.             |
+| Pause, reconfigure, quit, delayed saves         | `shell/services.rs`, `lifecycle.rs`, `shutdown.rs`, `save.rs`  | Lifecycle and save tests check terminal quit, latest pending configuration, ordered writes, and later edits/Pause.        |
+| Keyboard policy                                 | `platform/keyboard.rs`, `platform/macos.rs`                    | Pure key decisions run on every host; the native event tap requires opt-in.                                               |
+| Insertion                                       | `platform/insertion.rs`, `InsertPermit`, `platform/macos.rs`   | Eligibility, cancellation/commit, and partial key submission.                                                             |
+| Engine startup/recovery                         | `local_speech.rs`, `runtime/worker.rs`, `platform/speech.rs`   | Controlled process exit/cancellation, fake worker retirement, and the C ABI's struct layouts; public fixtures are opt-in. |
+| Dependency patches                              | Each vendor `README.speakeasy.md`                              | Portable GPUI fixtures plus the macOS rendering check.                                                                    |
+| Profiling and packaging                         | `scripts/profile_macos.py`, `scripts/package-macos.sh`         | Public `ps`/`vmmap` fixtures under an explicit clock.                                                                     |
 
-Live microphone, hooks, clipboard/editor acceptance, compositor behavior, and mixed-display frame
-pacing require explicit native acceptance.
+Live microphone, the event tap, clipboard/editor acceptance, and mixed-display frame pacing require
+explicit native acceptance.
 
 Use explicit gates for fake cleanup, closing them when a failed test disposes its harness. Timer
 timeouts inside fakes change paused-time behavior; use bounded observation helpers instead. Add a
 port only for an actual side effect. Keep native mechanics in the adapter and deterministic
-decisions in portable code. PR checks run on Linux, Windows, and macOS.
+decisions in portable code.

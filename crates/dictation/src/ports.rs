@@ -2,13 +2,15 @@
 //! boundary; gesture, cancellation, and insertion ordering stay real.
 
 use async_channel::Sender;
-use speakeasy_platform::{Delivery, InsertPermit, Inserted, Inserter};
+#[cfg(target_os = "macos")]
+use speakeasy_platform::Inserter;
+use speakeasy_platform::{Delivery, InsertPermit, Inserted};
 use tokio::sync::watch;
 
+#[cfg(target_os = "macos")]
+use crate::{audio::Capture, local_speech::LocalSpeech};
 use crate::{
-    audio::Capture,
     config::Config,
-    local_speech::LocalSpeech,
     runtime::{CaptureEvent, SessionId},
 };
 
@@ -71,10 +73,13 @@ pub(crate) trait Ports: Send + 'static {
     ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static;
 }
 
+/// The native microphone, local engine, and insertion adapter.
+#[cfg(target_os = "macos")]
 pub(crate) struct Desktop {
     pub inserter: Inserter,
 }
 
+#[cfg(target_os = "macos")]
 impl Ports for Desktop {
     type Recording = Capture;
     type Speech = LocalSpeech;

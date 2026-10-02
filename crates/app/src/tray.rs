@@ -1,31 +1,23 @@
-//! The tray mirrors service state into a native icon and menu and routes menu commands to the
-//! shell. Both backends present only states that differ from the last one shown.
+//! The menu bar item mirrors service state into a template icon and menu and routes menu commands
+//! to the shell. It presents only states that differ from the last one shown.
 
 mod icon;
-#[cfg(target_os = "linux")]
-mod linux;
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-mod windows_macos;
+mod status_item;
 
 use gpui::{App, AsyncApp};
 use speakeasy_dictation::{
     runtime::{Phase, Snapshot},
     status::Status,
-    theme::Theme,
 };
 use speakeasy_platform::{Activity, Input, ServiceState};
 use tokio::sync::watch;
 
-#[cfg(target_os = "linux")]
-pub(crate) use self::linux::{Tray, install};
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-pub(crate) use self::windows_macos::{Tray, install};
+pub(crate) use self::status_item::{Tray, install};
 use crate::shell::{self, Services};
 
 #[derive(PartialEq, Eq)]
 struct TrayState {
     status: Status,
-    theme: Theme,
     service: ServiceState,
     activity: Activity,
     desktop_ready: bool,
@@ -37,7 +29,6 @@ impl TrayState {
     fn new(services: &Services, snapshot: &Snapshot) -> Self {
         Self {
             status: services.status(snapshot),
-            theme: services.config.theme,
             service: services.service_state(),
             activity: activity(snapshot.phase),
             desktop_ready: snapshot.desktop_ready,

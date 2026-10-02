@@ -3,11 +3,9 @@
 
 use std::path::PathBuf;
 
-#[cfg(not(target_os = "windows"))]
-use gpui::PathPromptOptions;
 use gpui::{
-    App, AppContext, Bounds, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions,
-    px, size,
+    App, AppContext, Bounds, PathPromptOptions, TitlebarOptions, Window, WindowBounds,
+    WindowHandle, WindowOptions, px, size,
 };
 
 use super::{Services, settings::Settings};
@@ -50,14 +48,6 @@ fn open(cx: &mut App) -> anyhow::Result<()> {
             view
         })
     })?;
-    #[cfg(target_os = "windows")]
-    if mode.is_resident() {
-        settings.update(cx, |view, window, cx| {
-            let hook = minimize_to_tray(window, cx).inspect_err(|_| window.remove_window())?;
-            view.minimize_to_tray = Some(hook);
-            anyhow::Ok(())
-        })??;
-    }
     cx.global_mut::<Services>().settings = Some(settings);
     if mode.is_demo() {
         settings.update_if_open(cx, |view, _, cx| view.play(cx));
@@ -67,8 +57,6 @@ fn open(cx: &mut App) -> anyhow::Result<()> {
 
 fn window_options(cx: &App) -> WindowOptions {
     WindowOptions {
-        #[cfg(target_os = "linux")]
-        app_id: Some(speakeasy_platform::APPLICATION_ID.into()),
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
             size(px(560.0), px(720.0)),
@@ -101,15 +89,6 @@ fn set_visible(settings: WindowHandle<Settings>, visible: bool, cx: &mut App) {
 fn hide_on_close(_: &mut Window, cx: &mut App) -> bool {
     if !cx.has_global::<Services>() {
         return true;
-    }
-    // Without a working tray icon, nothing could bring a hidden Settings back.
-    #[cfg(target_os = "linux")]
-    if !cx
-        .try_global::<crate::tray::Tray>()
-        .is_some_and(|tray| tray.available)
-    {
-        super::request_quit(cx);
-        return false;
     }
     hide_to_tray(cx);
     false
@@ -144,37 +123,7 @@ fn show_tray_hint(cx: &mut App) {
     }
 }
 
-#[cfg(target_os = "windows")]
-fn minimize_to_tray(window: &Window, cx: &App) -> anyhow::Result<gpui::Task<()>> {
-    let (hide, hidden) = async_channel::bounded(1);
-    speakeasy_platform::minimize_to_tray(raw_handle(window, WINDOW_NAME)?, hide)?;
-    Ok(cx.spawn(async move |cx| {
-        while hidden.recv().await.is_ok() {
-            if cx.update(hide_to_tray).is_err() {
-                break;
-            }
-        }
-    }))
-}
-
-/// Asks for one file; `filter` is a (label, pattern) pair such as `["Programs", "*.exe"]`.
-///
-/// Windows gets the platform dialog: GPUI shows its picker inside the UI thread's message loop,
-/// where it stays unpainted while GPUI is idle.
-#[cfg(target_os = "windows")]
-pub(super) fn choose_file(
-    window: &Window,
-    title: &'static str,
-    filter: [&'static str; 2],
-    _: &App,
-) -> impl Future<Output = anyhow::Result<Option<PathBuf>>> + use<> {
-    let picker = raw_handle(window, WINDOW_NAME)
-        .map(|owner| speakeasy_platform::choose_file(owner, title, filter));
-    async move { picker?.await }
-}
-
-/// GPUI's picker takes no file-type filter.
-#[cfg(not(target_os = "windows"))]
+/// Asks for one file. GPUI's picker takes no file-type filter, so `filter` is unused.
 pub(super) fn choose_file(
     _: &Window,
     title: &'static str,

@@ -18,12 +18,9 @@ anyhow = "1.0.104"
 arboard = { version = "3.6.1", default-features = false }
 async-channel = "2.5.0"
 block2 = "0.6.2"
-clipboard-win = "5.4.1"
 core-foundation = "0.10.1"
 core-graphics = "0.25.0"
 cpal = "0.18.2"
-embed-resource = "3.0.11"
-futures-util = "0.3.34"
 gpui = { version = "=0.2.2", default-features = false }
 libc = "0.2.189"
 libloading = "0.9.0"
@@ -40,10 +37,6 @@ sha2 = "0.11.0"
 tempfile = "3.27.0"
 tokio = "1.53.1"
 tray-icon = { version = "0.26.0", default-features = false }
-windows-sys = "0.61.2"
-x11rb = "0.14.0"
-xkbcommon = "0.9.0"
-zbus = { version = "5.19.0", default-features = false }
 
 [workspace.lints.rust]
 future_incompatible = { level = "deny", priority = -1 }

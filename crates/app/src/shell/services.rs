@@ -188,13 +188,9 @@ impl Services {
             return Ok(());
         }
         self.config_epoch = self.config_epoch.next();
-        // A dead runtime or changed Linux desktop options need fresh owners: stopping makes the
-        // queue below restart with `config` once the old owners retire.
+        // A dead runtime needs fresh owners: stopping makes the queue below restart with `config`
+        // once the old owners retire.
         if self.runtime().is_some_and(|runtime| !runtime.is_running()) {
-            self.stop(cx);
-        }
-        #[cfg(target_os = "linux")]
-        if self.runtime().is_some() && self.config.linux != config.linux {
             self.stop(cx);
         }
         if self.lifecycle.queue(Restart::Apply(config.clone())) {
@@ -382,11 +378,7 @@ fn handle_request(request: Request, cx: &mut App) {
         Request::Toggle => Input::Toggle,
         Request::Cancel => Input::Cancel,
     };
-    // Only Linux desktop bindings drive dictation through a relaunch; otherwise the native shortcut
-    // owns the gesture.
-    if cfg!(target_os = "linux") && cx.global::<Services>().config.linux.external_shortcut {
-        send(input, cx);
-    }
+    send(input, cx);
 }
 
 #[cfg(test)]

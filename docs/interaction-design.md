@@ -2,21 +2,21 @@
 
 Speakeasy centers on one task: dictate into the application where the user is already working. The
 name supplies the organizing idea: a speakeasy is a room behind an ordinary door, entered by saying
-the word at a small slot, where what is said stays inside. The tray icon is the door, the pill is
-the slot, and the house rule is local-only dictation. Feedback should be calm, continuous, and
+the word at a small slot, where what is said stays inside. The menu bar icon is the door, the pill
+is the slot, and the house rule is local-only dictation. Feedback should be calm, continuous, and
 truthful about capture and processing.
 
 ## Brand
 
 The visual language is Art Deco with restraint: stepped forms, keystone diamonds, and fine inlaid
 rules. Three rules keep it fast and legible. Ornament scales with size: the app icon carries the
-full inlay, the pill a hairline, and the 16 px tray glyph only its silhouette. Ornament holds still;
+full inlay, the pill a hairline, and the menu bar glyph only its silhouette. Ornament holds still;
 only voice level, processing, and submission move. Red means on air: each theme's `live` color
 appears only while capture is open, and its `lamp` accent never signals recording.
 
-`crates/app/src/theme.rs` defines four themes. Jet & Champagne is the default; Emerald Lounge, Iris,
-and Midnight Chrome are selectable in Settings. Settings previews an unsaved theme; the pill and
-tray change when it is saved. The Settings wordmark is Josefin Sans SemiBold, embedded under the SIL
+`crates/dictation/src/theme.rs` defines four themes. Jet & Champagne is the default; Emerald Lounge,
+Iris, and Midnight Chrome are selectable in Settings. Settings previews an unsaved theme; the pill
+changes when it is saved. The Settings wordmark is Josefin Sans SemiBold, embedded under the SIL
 Open Font License, and the line is “Say the word.” App icons are rendered from the SVG sources in
 `packaging/brand`; sizes of 32 px and below omit the ornament.
 
@@ -42,11 +42,9 @@ non-activating and click-through.
 | Cancelled        | Collapsing     | Quiet dismissal without a completion mark.                                             |
 | Error            | 360 × 64       | Up to two message lines and a Settings reminder, visible for eight seconds.            |
 
-Windows places the pill at the bottom center of the foreground window's monitor work area. macOS
-uses the screen under the pointer. Both place the capsule about 28 DIP above the work area's bottom
-edge when shown. Position stays fixed while the pill remains visible; it does not follow the caret.
-Linux uses GPUI's display placement and passive X11 hints; native monitor/fullscreen acceptance is
-pending.
+The pill appears at the bottom center of the screen under the pointer, with the capsule about 28 DIP
+above the work area's bottom edge. Position stays fixed while the pill remains visible; it does not
+follow the caret.
 
 Width, height, opacity, vertical entry, lid, and meter values use analytic critically damped
 springs. Changing the target preserves velocity. Geometry uses a response of 28/s, opacity 40/s,
@@ -65,40 +63,33 @@ Reduced motion, from Settings or the OS, snaps transitions, the lid, and level c
 level bar, and keeps the processing highlight still. Settled hidden views request no animation
 frames; capture uses a timer for its clock and recording-limit cue.
 
-## Tray and Settings
+## Menu bar and Settings
 
-Configured native launches stay in the tray/menu bar. First setup and invalid configuration open
+Configured native launches stay in the menu bar. First setup and invalid configuration open
 Settings. A fresh install sets itself up there: a card names each step with its progress, **Cancel**
 pauses and later resumes, and completion enables dictation. The manual engine controls stay hidden
-while setup runs. Linux opens Settings at startup to expose desktop permissions and tray state.
+while setup runs.
 
-Close hides the existing window, preserving edits; Windows minimize also hides it. macOS minimize
-retains normal Dock behavior. Relaunch and the tray's Settings action reveal the same window. A
-brief first-hide hint explains the tray/menu bar when the pill is idle. On Linux, closing Settings
-without a tray host quits; the launcher reopens it.
+Close hides the existing window, preserving edits; minimize retains normal Dock behavior. Relaunch
+and the menu's Settings action reveal the same window. A brief first-hide hint explains the menu bar
+item when the pill is idle.
 
-The tray shows the Grille mark with its slot lit in the theme's lamp color and its bars cut through.
-Recording turns the slot red; busy, paused, and attention add a cut-jewel badge. macOS renders a
-template icon, so recording also adds a diamond badge and every state differs by shape. On Windows a
-faint keyline keeps the lamp color legible on light taskbars. The menu shows current status and
-engine, Pause/Resume, Start/Finish, Cancel, Settings, and Quit. It never animates while idle. Errors
-remain accessible in Settings after the pill's notice expires, including while there are unsaved
-edits.
+The menu bar item shows the Grille mark as a template image with its bars cut through the slot.
+macOS recolors templates, so every state differs by shape: recording adds a diamond badge, busy a
+ring, paused two bars over a dimmed slot, and attention an exclamation mark. The menu shows current
+status and engine, Pause/Resume, Start/Finish, Cancel, Settings, and Quit. It never animates while
+idle. Errors remain accessible in Settings after the pill's notice expires, including while there
+are unsaved edits.
 
 ## Interaction contracts
 
-- Hold Ctrl+Win on Windows or Fn on macOS to dictate; release to finish. Adding Space during the
-  hold, or double-tapping, switches to hands-free; press the shortcut again to finish. A short
-  single tap finishes after its tap window.
-- Linux holds Ctrl+Super+Space or double-taps it for hands-free; its accepted binding is shown in
-  Settings. Desktop command bindings start/finish hands-free.
-- On Windows/macOS, the shortcut's modifiers are observed, never swallowed. Only the Space that
-  locks hands-free is withheld from the focused app. Any other key during a hold belongs to a
-  different shortcut: dictation cancels and waits for release. On Windows, an unassigned mask key
-  keeps the released Win key from opening Start.
-- Windows/macOS Escape cancels immediately and continues to the focused app. Linux uses a reserved
-  Ctrl+Super+Escape chord or an explicit command binding; bare Escape is not globally captured.
-  Animation never delays cancellation or owns the microphone lifetime.
+- Hold Fn to dictate; release to finish. Adding Space during the hold, or double-tapping, switches
+  to hands-free; press Fn again to finish. A short single tap finishes after its tap window.
+- Fn is observed, never swallowed. Only the Space that locks hands-free is withheld from the focused
+  app. Any other key during a hold belongs to a different shortcut: dictation cancels and waits for
+  release.
+- Escape cancels immediately and continues to the focused app. Animation never delays cancellation
+  or owns the microphone lifetime.
 - Readiness follows the first captured buffer. Startup feedback does not imply that speech before
   that buffer can be recovered.
 - Insertion does not steal focus. OS submission is the observable result; success in every editor
@@ -110,10 +101,10 @@ edits.
 ## Acceptance
 
 Run `--demo` to inspect the same Settings and pill views without live devices or insertion. Use
-`--demo-tray` for native tray and Settings lifecycle checks; its dictation controls are disabled.
-Both modes bypass engine/model configuration. Public-audio tests cover recognition with fake capture
-and insertion. None of these establish physical microphone onset, target-editor behavior,
-screen-reader usability, display removal, or mixed-DPI presentation.
+`--demo-tray` for native menu bar and Settings lifecycle checks; its dictation controls are
+disabled. Both modes bypass engine/model configuration. Public-audio tests cover recognition with
+fake capture and insertion. None of these establish physical microphone onset, target-editor
+behavior, screen-reader usability, display removal, or mixed-DPI presentation.
 
 For visual acceptance, inspect interrupted transitions, quick completion, long processing,
 hands-free silence, and cancellation over light and dark content, in every theme. Use reduced motion

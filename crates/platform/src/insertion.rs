@@ -1,15 +1,19 @@
 //! Delivery choices and the pre-commit checks every native adapter shares.
 
+#[cfg(any(target_os = "macos", test))]
 use std::{
     thread,
     time::{Duration, Instant},
 };
 
+#[cfg(any(target_os = "macos", test))]
 use super::{InsertPermit, Inserted};
 
 /// How long insertion waits for the user to let go of shortcut modifiers.
+#[cfg(any(target_os = "macos", test))]
 pub(crate) const MODIFIER_WAIT: Duration = Duration::from_millis(800);
 /// How often insertion rechecks held modifiers while it waits.
+#[cfg(any(target_os = "macos", test))]
 const MODIFIER_POLL: Duration = Duration::from_millis(10);
 
 /// How dictated text reaches the focused editor.
@@ -27,7 +31,7 @@ impl Delivery {
     ///
     /// Adapters run it as the last check before committing, after every slow preparation step, so
     /// the focus and keys it judges are current.
-    #[cfg(any(target_os = "windows", target_os = "macos", test))]
+    #[cfg(any(target_os = "macos", test))]
     pub(crate) fn preflight(
         self,
         external_focus: bool,
@@ -38,6 +42,7 @@ impl Delivery {
     }
 
     /// Returns the outcome that stops insertion while Speakeasy itself has focus.
+    #[cfg(any(target_os = "macos", test))]
     pub(crate) fn check_focus(self, external_focus: bool) -> Option<Inserted> {
         if external_focus {
             return None;
@@ -52,7 +57,7 @@ impl Delivery {
         })
     }
 
-    #[cfg(any(target_os = "windows", target_os = "macos", test))]
+    #[cfg(any(target_os = "macos", test))]
     fn check_shortcut(self, shortcut_released: bool) -> Option<Inserted> {
         if shortcut_released {
             return None;
@@ -70,6 +75,7 @@ impl Delivery {
 
 /// Gives the user up to [`MODIFIER_WAIT`] to let go of the shortcut, unless the recording is
 /// revoked first; returns whether `held` still reported shortcut keys down.
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn wait_for_released_modifiers(
     permit: &InsertPermit,
     mut held: impl FnMut() -> anyhow::Result<bool>,

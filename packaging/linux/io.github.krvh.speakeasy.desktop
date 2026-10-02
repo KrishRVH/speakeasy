@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Speakeasy
-Comment=Private local dictation
-Exec=speakeasy
-Icon=io.github.krvh.speakeasy
-Terminal=false
-Categories=Utility;Accessibility;
-StartupWMClass=io.github.krvh.speakeasy

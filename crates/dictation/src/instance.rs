@@ -1,8 +1,8 @@
 //! The configuration-directory lock, and a loopback listener for later launches' requests.
 //!
-//! Later launches send fixed reveal, toggle, and cancel requests. Windows file locks also deny
-//! reads, so the listener port is published in a separate file that callers verify through an
-//! identification handshake.
+//! Later launches send fixed reveal, toggle, and cancel requests. The listener port is published in
+//! a file beside the lock, as every earlier release does, and callers verify it through an
+//! identification handshake, so any edition can reveal the instance that owns the directory.
 
 use std::{
     fs::{self, File, OpenOptions},

@@ -2,7 +2,8 @@
 
 Optimize the time from finishing speech to usable text while preserving recognition quality,
 cancellation, smooth animation, idle cost, and memory bounds. A faster model request is useful only
-when the full interaction remains correct.
+when the full interaction remains correct. The [fork PRD](apple-silicon-prd.md) owns targets,
+decisions, and the perceptibility experiment; this page owns constraints and methods.
 
 ## Implementation constraints
 
@@ -35,78 +36,70 @@ about a newly changed revision.
 Record hardware, model and runtime, sample rate, request boundaries, warmup, and competing load.
 Compare paired runs and check word accuracy and formatting as well as latency. Keep transcripts out
 of logs. The opt-in tests `profile_fixture_dictation` and `profile_ready_text_latency` exercise the
-real session owner with public audio or fake devices; the README lists the fixture variables. Use
-ordinary native profilers rather than a permanent benchmark suite.
+real session owner with public audio or fake devices; the README lists the fixture variables.
 
-## Native process sampling
-
-`profile_linux.py` reads numeric `/proc` metadata, including CPU time, RSS, PSS, private resident
-pages, threads and descriptors. It detects process exit and PID reuse. Linux context-switch counters
-describe the main thread, not all threads. Fixture tests cover numeric parsing, unknown optional
-data, identity changes, counter regression, CPU denominators, and nearest-rank percentiles.
-
-`profile-windows.ps1` samples process CPU, working set, private committed memory, threads and
-handles. Windows private committed memory and Linux private resident pages are different metrics;
-compare each on the same OS. The Windows script requires a native Windows host; Linux fixture tests
-do not verify its runtime behavior.
-
-Pass explicit app and worker PIDs, reported separately. For example:
+`engine_profile` times warm recognition of public WAV fixtures with the same engine and model as the
+app, either in process through the engine's C library or through the `nemo-speech serve` HTTP route
+that the 0.3.2 app uses. Each fixture prints its timings, word count, and an FNV-1a hash of its
+normalized words, never the text, so the two paths can be checked for identical output:
 
 ```sh
-mise exec -- python scripts/profile_linux.py --pid 1234 --pid 1235 --label idle-hidden \
-  --seconds 30 --output artifacts/profiles/linux-idle.json
-cargo test -p speakeasy --release --locked profile_audio_pipeline -- --ignored --nocapture
-cargo test -p speakeasy --release --locked profile_ready_text_latency -- --ignored --nocapture
+engine=~/Library/Application\ Support/speakeasy/engines/nemo-speech-0.1.0-macos-aarch64-metal/nemo-speech
+model=~/Library/Application\ Support/speakeasy/models/parakeet-tdt-0.6b-v3.q8_0.gguf
+cargo run --release -p speakeasy-platform --example engine_profile -- \
+  --library "$engine/lib/libnemo_speech_asr_c.1.dylib" --model "$model" --repetitions 20 jfk.wav
+NEMO_SPEECH_HTTP_API_KEY=profile "$engine/bin/nemo-speech" serve --asr-model "$model" \
+  --device auto --port 8178 --no-ui --threads 1 --asr.batching.enabled=false &
+cargo run --release -p speakeasy-platform --example engine_profile -- \
+  --http 127.0.0.1:8178 --key profile --repetitions 20 jfk.wav
 ```
 
-```powershell
-./scripts/profile-windows.ps1 -ProcessIds 1234,1235 -Label idle-hidden `
-  -Seconds 30 -OutputPath artifacts/profiles/windows-idle.json
+Setting `NEMO_SPEECH_TIMING=1` in the engine's environment adds its own feature, encoder, and decode
+stage timings on standard error; those lines carry numbers only.
+
+## Process sampling
+
+`profile_macos.py` samples explicit app and engine PIDs through `ps`: cumulative CPU time, resident
+memory, and threads, with each process's physical footprint from `vmmap -summary` at the end. It
+detects process exit and PID reuse, reads no command lines, audio, transcripts, keystrokes, or
+engine output, and reports app and engine separately:
+
+```sh
+mise exec -- python scripts/profile_macos.py --pid 1234 --pid 1235 --label idle-hidden \
+  --seconds 30 --output artifacts/profiles/idle.json
 ```
 
-100% CPU means one logical core; machine-normalized samples divide by the logical CPU count. Use at
-least 30 seconds for low idle CPU, where OS tick quantization matters. Keep raw reports under
-ignored `artifacts/`. The scripts read no command lines, audio, transcripts, keystrokes or engine
-output. Do not add app and worker RSS as unique physical memory: shared pages can be counted twice.
-Linux PSS can be apportioned; report Windows process working sets individually.
+100% CPU means one logical core. Use at least 30 seconds for low idle CPU. Keep raw reports under
+ignored `artifacts/`. Physical footprint counts compressed and GPU-wired pages that resident memory
+misses; do not add app and engine figures as unique physical memory, because shared pages can be
+counted twice.
 
 For each candidate, collect paired runs after warmup with the same hardware, model, backend, display
 refresh, competing load and settings:
 
-| Phase                            | Footprint                                                    | UX checks                                                      |
-| -------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------- |
-| Launch and warmup                | CPU time, elapsed readiness, peak memory, worker lifetime    | Settings and Cancel remain responsive                          |
-| Hidden idle and visible Settings | CPU, resident/private memory, threads, descriptors/handles   | Reopen and save latency                                        |
-| Recording and pill motion        | App CPU, memory growth, GPU activity, displayed frame pacing | Audio onset, 60/144/200/high-refresh pacing and no lost speech |
-| Short and long inference         | Worker CPU/GPU memory, peak app PCM memory                   | Stop-to-insertion p50/p95 and recognition quality              |
-| Cancel, Pause and Quit           | Cleanup time, returning memory and resource counts           | No stale paste, stuck keys or surviving owned work             |
+| Phase                            | Footprint                                                    | UX checks                                          |
+| -------------------------------- | ------------------------------------------------------------ | -------------------------------------------------- |
+| Launch and warmup                | CPU time, elapsed readiness, peak memory, worker lifetime    | Settings and Cancel remain responsive              |
+| Hidden idle and visible Settings | CPU, resident memory, physical footprint, threads            | Reopen and save latency                            |
+| Recording and pill motion        | App CPU, memory growth, GPU activity, displayed frame pacing | Audio onset, 60/120 Hz pacing and no lost speech   |
+| Short and long inference         | Worker CPU/GPU memory, peak app PCM memory                   | Stop-to-insertion p50/p95 and recognition quality  |
+| Cancel, Pause and Quit           | Cleanup time, returning memory and resource counts           | No stale paste, stuck keys or surviving owned work |
 
-Process sampling cannot measure GPU energy, displayed frames, microphone onset or editor acceptance.
-Use the native platform's frame/CPU/GPU profiler for those checks, and report live
-microphone/input/clipboard acceptance separately. Keep the frame ceiling, native display pacing,
-speech quality and interaction policy as constraints.
+Process sampling cannot measure GPU energy, displayed frames, microphone onset, idle wakeups, or
+editor acceptance. Use Instruments (Time Profiler, System Trace, Metal System Trace, Allocations)
+and `powermetrics` for those, and report live microphone/input/clipboard acceptance separately. Keep
+the frame ceiling, native display pacing, speech quality and interaction policy as constraints.
 
 ## Native acceptance
 
 Default tests and `--demo` do not establish microphone quality or real editor insertion. Before
 making a native performance claim, opt in explicitly and compare live microphone onset, lost speech,
-device teardown, stop-to-editor latency, cancellation, and resource return on the target OS. Keep
-Settings and Cancel responsive under competing CPU/GPU load.
+device teardown, stop-to-editor latency, cancellation, and resource return. Keep Settings and Cancel
+responsive under competing CPU/GPU load.
 
 Exercise short dictation, long recordings, the five-minute boundary, denied and revoked permissions,
-device removal, clipboard-owner changes, and focus changes. Include fullscreen apps such as games,
-terminals, protected fields, mixed-DPI and mixed-refresh displays, and display removal. Report
-editor acceptance separately from an OS accepting injected input. Never capture or log private
-transcript data for a benchmark.
-
-Use native frame/CPU/GPU profilers for displayed pacing, driver work, power, and energy. Process CPU
-counters alone do not establish those outcomes. In particular,
-[QueryProcessCycleTime](https://learn.microsoft.com/en-us/windows/win32/api/realtimeapiset/nf-realtimeapiset-queryprocesscycletime)
-counts CPU cycles, not elapsed time; frequency and core placement affect their relationship. Measure
-sustained idle periods after warmup and report native verification limits with the exact revision
-and environment.
-
-Linux GNOME/KDE/X11 editor, portal, and audio acceptance remains separate from the private Mesa
-rendering fixture. Windows/macOS hooks and insertion also need native acceptance. Hands-on macOS
-runtime performance, accessibility, idle power, and representative mixed-display pacing remain
-measurement gaps.
+device removal, clipboard-owner changes, and focus changes. Include fullscreen apps, terminals,
+protected fields, mixed-scale and mixed-refresh displays, and display removal. Report editor
+acceptance separately from the OS accepting injected input. Never capture or log private transcript
+data for a benchmark. Hands-on runtime performance, accessibility, idle power, and representative
+mixed-display pacing remain measurement gaps until measured on a Mac.

@@ -17,10 +17,6 @@ target-version = "py314"
 unsafe-fixes = false
 extend-exclude = ["vendor"]
 
-[tool.ruff.per-file-target-version]
-# Owned GUI checks also run with Ubuntu 24.04's Python inside the private display container.
-"scripts/check_demo_linux.py" = "py312"
-
 [tool.ruff.format]
 docstring-code-format = true
 line-ending = "lf"

@@ -504,7 +504,7 @@ fn clipboard_sequence() -> isize {
     NSPasteboard::generalPasteboard().changeCount()
 }
 
-/// Returns whether the system asks apps to reduce motion; Linux uses the app setting.
+/// Returns whether the system asks apps to reduce motion.
 #[must_use]
 pub fn reduced_motion() -> bool {
     NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()

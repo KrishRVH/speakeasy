@@ -41,9 +41,6 @@ impl Render for Settings {
             .when(!self.is_setting_up(), |settings| {
                 settings.child(self.engine_section(palette, cx))
             })
-            .when(cfg!(target_os = "linux"), |settings| {
-                settings.child(self.linux_section(palette, cx))
-            })
             .child(self.microphone_section(palette, cx))
             .child(self.preferences_section(palette, cx))
             .child(self.commands(palette, cx))
@@ -89,24 +86,13 @@ impl Settings {
     fn gesture_hints(&self, palette: &'static Palette) -> impl IntoElement {
         let shortcut = &self.presentation.shortcut;
         let cancel_shortcut = &self.presentation.cancel_shortcut;
-        let desktop_bindings = cfg!(target_os = "linux") && self.config.linux.external_shortcut;
-        let hold_hint = if desktop_bindings {
-            "Use your desktop shortcut to start or finish dictation.".into()
-        } else {
-            format!("Hold {shortcut} to speak.")
-        };
-        let gesture_hint = if desktop_bindings {
-            "Use your desktop's cancel binding to discard a recording.".into()
-        } else if cfg!(target_os = "linux") {
-            format!("Double-tap for hands-free. {cancel_shortcut} cancels.")
-        } else {
-            "Add Space, or double-tap, for hands-free. Escape cancels.".into()
-        };
         panel(palette)
             .text_size(px(13.0))
             .line_height(px(23.0))
-            .child(hold_hint)
-            .child(div().child(gesture_hint))
+            .child(format!("Hold {shortcut} to speak."))
+            .child(div().child(format!(
+                "Add Space, or double-tap, for hands-free. {cancel_shortcut} cancels."
+            )))
     }
 
     fn engine_section(&self, palette: &'static Palette, cx: &Context<Self>) -> impl IntoElement {
@@ -138,43 +124,6 @@ impl Settings {
                 &self.config.model,
                 "Choose model",
                 EngineFile::Model,
-                palette,
-                cx,
-            ))
-    }
-
-    fn linux_section(&self, palette: &'static Palette, cx: &Context<Self>) -> impl IntoElement {
-        let shortcut = &self.presentation.shortcut;
-        let cancel_shortcut = &self.presentation.cancel_shortcut;
-        let linux = &self.config.linux;
-        panel(palette)
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .child(heading("LINUX DESKTOP", palette))
-            .child(div().text_size(px(12.0)).child(format!("Shortcut: {shortcut}")))
-            .child(div().text_size(px(12.0)).child(format!("Cancel: {cancel_shortcut}")))
-            .child(button(
-                if linux.external_shortcut {
-                    "Shortcuts: Desktop bindings"
-                } else {
-                    "Shortcuts: Native desktop"
-                },
-                Action::Toggle(Setting::DesktopBindings),
-                palette,
-                cx,
-            ))
-            .child(div().text_size(px(12.0)).child(
-                "Desktop bindings: assign speakeasy --toggle and speakeasy --cancel in your desktop's shortcut settings.",
-            ))
-            .child(self.switch("Copy for manual paste", Setting::ManualPaste, palette, cx))
-            .child(button(
-                if linux.terminal_paste {
-                    "Paste shortcut: Ctrl+Shift+V"
-                } else {
-                    "Paste shortcut: Ctrl+V"
-                },
-                Action::Toggle(Setting::TerminalPaste),
                 palette,
                 cx,
             ))
@@ -339,14 +288,7 @@ impl Settings {
 
 fn setup_detail(progress: Option<Progress>) -> String {
     let Some(Progress { step, done, total }) = progress else {
-        return format!(
-            "Speakeasy downloads the Parakeet speech model and the engine that suits this {}, about 0.8 GB, then turns dictation on.",
-            if cfg!(target_os = "macos") {
-                "Mac"
-            } else {
-                "PC"
-            }
-        );
+        return "Speakeasy downloads the Parakeet speech model and its Metal engine, about 0.8 GB, then turns dictation on.".into();
     };
     match step {
         Some(step) if total > 0 => {

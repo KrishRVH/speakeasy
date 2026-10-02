@@ -67,8 +67,8 @@ Sources:
 The engine source examined is Speakeasy's pinned NeMo-Speech.cpp `v0.1.0`, commit
 `4f9676226f667d14608487df744f375db87127f8`, rather than assuming that current upstream `main`
 describes the deployed binary. The app downloads Parakeet v3 Q8_0 from a pinned model revision;
-retain those identities in paired experiments. See [setup source](../crates/app/src/setup.rs) and
-the
+retain those identities in paired experiments. See [setup source](../crates/dictation/src/setup.rs)
+and the
 [pinned engine tree](https://github.com/NVIDIA/NeMo-Speech.cpp/tree/4f9676226f667d14608487df744f375db87127f8).
 
 The pinned release publishes `nemo-speech-0.1.0-macos-aarch64-metal.tar.gz` and an aarch64 CPU
@@ -177,7 +177,8 @@ converts float32 to PCM16 bytes. Finish/cancel unparks it immediately. These fac
 experiments, not measured Mac bottlenecks: replace polling with a real-time-safe notification
 strategy; retain native timestamps; compare PCM16 staging with native float32; batch consumer work;
 measure startup stages and actual first-sample capture. Preserve overflow, discontinuity,
-device-loss, sample-count and wall-clock limit checks. [Audio source](../crates/app/src/audio.rs).
+device-loss, sample-count and wall-clock limit checks.
+[Audio source](../crates/dictation/src/audio.rs).
 
 AVAudioEngine is another native candidate, but an `installTap` buffer size is a request and the
 implementation may choose another size. It is not an equivalent guarantee of tiny callback periods.
@@ -215,7 +216,7 @@ not a compressed codec: deleting its 44-byte header is not a meaningful optimiza
 native PCM path can remove server parsing, transport staging, conversion and resampling duplication
 where present. Measure all copies/allocations and full stop-to-result time to determine the gain; do
 not present removal of HTTP as a large inference speedup in advance.
-[Current speech worker](../crates/app/src/local_speech.rs).
+[Current speech worker](../crates/dictation/src/local_speech.rs).
 
 The native offline ABI has no caller cancellation callback/token. The presence of a CANCELLED status
 enum is not an interrupt contract. Do not destroy a recognizer concurrently with a running
@@ -258,9 +259,9 @@ parent-owned connection on an independent control thread and exit on EOF; prove 
 inference and loss of the parent. External custom Whisper/NeMo executable support needs its own
 containment policy rather than assuming the controlled helper protocol.
 [Current process containment](../crates/platform/src/process.rs),
-[owned children](../crates/app/src/child.rs).
+[owned children](../crates/dictation/src/child.rs).
 
-The 0.3.2 [worker state](../crates/app/src/runtime/worker.rs) separates loading, transcribing,
+The 0.3.2 [worker state](../crates/dictation/src/runtime/worker.rs) separates loading, transcribing,
 recovery, and replacement. Its [Quit coordinator](../crates/app/src/shell/shutdown.rs) awaits owned
 work and requested saves while the UI remains responsive. These normal-cleanup guarantees do not
 establish containment after abrupt parent death.

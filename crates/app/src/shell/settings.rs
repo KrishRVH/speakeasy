@@ -37,9 +37,6 @@ pub(super) struct Settings {
     saving: Option<Task<()>>,
     saves: SaveQueue,
     _updates: Task<()>,
-    /// Keeps the Windows minimize-to-tray hook alive while Settings is open.
-    #[cfg(target_os = "windows")]
-    pub(super) minimize_to_tray: Option<Task<()>>,
 }
 
 impl Settings {
@@ -73,8 +70,6 @@ impl Settings {
             saving: None,
             saves: SaveQueue::default(),
             _updates: follow_updates,
-            #[cfg(target_os = "windows")]
-            minimize_to_tray: None,
         };
         view.refresh_microphones(cx);
         view
@@ -461,9 +456,6 @@ impl Action {
             Self::Toggle(Setting::KeepClipboard) => "keep-clipboard",
             Self::Toggle(Setting::ReduceMotion) => "reduce-motion",
             Self::Toggle(Setting::RemoveFillers) => "remove-fillers",
-            Self::Toggle(Setting::ManualPaste) => "manual-paste",
-            Self::Toggle(Setting::TerminalPaste) => "terminal-paste",
-            Self::Toggle(Setting::DesktopBindings) => "desktop-bindings",
             Self::Theme => "theme",
             Self::Save => "save",
             Self::Pause => "pause",
@@ -485,9 +477,6 @@ enum Setting {
     KeepClipboard,
     ReduceMotion,
     RemoveFillers,
-    ManualPaste,
-    TerminalPaste,
-    DesktopBindings,
 }
 
 impl Setting {
@@ -497,9 +486,6 @@ impl Setting {
             Self::KeepClipboard => &mut config.preserve_clipboard,
             Self::ReduceMotion => &mut config.reduced_motion,
             Self::RemoveFillers => &mut config.remove_fillers,
-            Self::ManualPaste => &mut config.linux.manual_paste,
-            Self::TerminalPaste => &mut config.linux.terminal_paste,
-            Self::DesktopBindings => &mut config.linux.external_shortcut,
         }
     }
 
@@ -509,9 +495,6 @@ impl Setting {
             Self::KeepClipboard => config.preserve_clipboard,
             Self::ReduceMotion => config.reduced_motion,
             Self::RemoveFillers => config.remove_fillers,
-            Self::ManualPaste => config.linux.manual_paste,
-            Self::TerminalPaste => config.linux.terminal_paste,
-            Self::DesktopBindings => config.linux.external_shortcut,
         }
     }
 }
@@ -627,8 +610,6 @@ mod tests {
             saving: None,
             saves,
             _updates: Task::ready(()),
-            #[cfg(target_os = "windows")]
-            minimize_to_tray: None,
         });
         assert_eq!(Config::read(&path)?.threads, 8);
         Ok(())

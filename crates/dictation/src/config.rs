@@ -1,15 +1,17 @@
-//! Typed settings: path resolution, validation, and atomic saves. The JSON shape is a user-edited
-//! contract, so unknown fields are rejected and a default Linux block stays out of saved files.
+//! Typed settings: path resolution, validation, and atomic saves.
+//!
+//! The JSON shape is a user-edited contract, so unknown fields are rejected.
 
 use std::{
     fs,
     io::Write,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 
 use anyhow::{Context, ensure};
 use serde::{Deserialize, Serialize};
-use speakeasy_platform::{Delivery, DesktopOptions};
+use speakeasy_platform::Delivery;
 
 use crate::theme::Theme;
 
@@ -43,9 +45,6 @@ impl Engine {
     reason = "Each flag persists an independent user preference that can be toggled separately"
 )]
 pub struct Config {
-    /// Linux desktop bindings, omitted from saved files while they hold defaults.
-    #[serde(default, skip_serializing_if = "LinuxSettings::is_default")]
-    pub linux: LinuxSettings,
     /// The engine family `engine_executable` belongs to.
     #[serde(default)]
     pub engine: Engine,
@@ -91,21 +90,10 @@ impl Config {
     }
 
     /// Whether the user or the OS asks for reduced motion.
+    #[cfg(target_os = "macos")]
     #[must_use]
     pub fn prefers_reduced_motion(&self) -> bool {
         self.reduced_motion || speakeasy_platform::reduced_motion()
-    }
-
-    /// The Linux desktop bindings native input uses.
-    #[must_use]
-    pub fn desktop_options(&self) -> DesktopOptions {
-        DesktopOptions {
-            shortcut: self.linux.shortcut.clone(),
-            cancel: self.linux.cancel.clone(),
-            terminal_paste: self.linux.terminal_paste,
-            manual_paste: self.linux.manual_paste,
-            external_shortcut: self.linux.external_shortcut,
-        }
     }
 
     /// Reads settings without validating their paths.
@@ -161,14 +149,10 @@ impl Config {
                 .with_context(|| format!("File not found: {}", file.display()))?;
             ensure!(file.is_file(), "Expected a file: {}", file.display());
         }
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            ensure!(
-                self.engine_executable.metadata()?.permissions().mode() & 0o111 != 0,
-                "Speech executable is not executable. Choose an installed engine or enable its executable permission."
-            );
-        }
+        ensure!(
+            self.engine_executable.metadata()?.permissions().mode() & 0o111 != 0,
+            "Speech executable is not executable. Choose an installed engine or enable its executable permission."
+        );
         ensure!(
             (1..=256).contains(&self.threads),
             "threads must be between 1 and 256"
@@ -205,7 +189,6 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            linux: LinuxSettings::default(),
             engine: Engine::default(),
             microphone: None,
             engine_executable: PathBuf::new(),
@@ -221,55 +204,14 @@ impl Default for Config {
     }
 }
 
-/// Linux desktop bindings.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(default, deny_unknown_fields)]
-pub struct LinuxSettings {
-    /// The dictation shortcut.
-    pub shortcut: String,
-    /// The cancellation shortcut.
-    pub cancel: String,
-    /// Whether paste uses the terminal shortcut.
-    pub terminal_paste: bool,
-    /// Whether text is only copied.
-    pub manual_paste: bool,
-    /// Whether desktop command bindings replace the shortcut.
-    pub external_shortcut: bool,
-}
-
-impl LinuxSettings {
-    fn is_default(&self) -> bool {
-        *self == Self::default()
-    }
-}
-
-impl Default for LinuxSettings {
-    fn default() -> Self {
-        let options = DesktopOptions::default();
-        Self {
-            shortcut: options.shortcut,
-            cancel: options.cancel,
-            terminal_paste: false,
-            manual_paste: false,
-            external_shortcut: false,
-        }
-    }
-}
-
 /// The settings file location when `--config` is absent.
 #[must_use]
 pub fn default_path() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    let base = std::env::var_os("APPDATA").map(PathBuf::from);
-    #[cfg(target_os = "macos")]
-    let base = std::env::var_os("HOME")
-        .map(|home| PathBuf::from(home).join("Library/Application Support"));
-    #[cfg(target_os = "linux")]
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")));
-    base.unwrap_or_else(|| PathBuf::from("."))
+    std::env::var_os("HOME")
+        .map_or_else(
+            || PathBuf::from("."),
+            |home| PathBuf::from(home).join("Library/Application Support"),
+        )
         .join("speakeasy/settings.json")
 }
 
@@ -290,36 +232,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn saved_settings_preserve_linux_bindings_and_skip_defaults() -> anyhow::Result<()> {
-        let directory = tempfile::tempdir()?;
-        let path = directory.path().join("settings.json");
-        let mut config = Config::default();
-        config.save(&path)?;
-        let defaults: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
-        assert!(defaults.get("linux").is_none());
-        assert!(Config::read(&path)?.linux.is_default());
-
-        config.linux = LinuxSettings {
-            shortcut: "CTRL+ALT+d".into(),
-            cancel: "CTRL+ALT+Escape".into(),
-            terminal_paste: true,
-            manual_paste: true,
-            external_shortcut: true,
-        };
-        config.save(&path)?;
-        let restored = Config::read(&path)?;
-        assert_eq!(restored.linux, config.linux);
-        let options = restored.desktop_options();
-        assert_eq!(options.shortcut, "CTRL+ALT+d");
-        assert_eq!(options.cancel, "CTRL+ALT+Escape");
-        assert!(options.terminal_paste && options.manual_paste && options.external_shortcut);
-        Ok(())
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
     fn validation_requires_an_executable_engine() -> anyhow::Result<()> {
-        use std::os::unix::fs::PermissionsExt;
         let directory = tempfile::tempdir()?;
         let executable = directory.path().join("engine");
         let model = directory.path().join("model.gguf");

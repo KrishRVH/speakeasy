@@ -1,10 +1,9 @@
 //! One local speech engine process behind a loopback HTTP API. The process is contained and reaped
 //! on every exit path, and its output never reaches diagnostics.
 
-#[cfg(unix)]
-use std::os::unix::process::ExitStatusExt;
 use std::{
     net::TcpListener,
+    os::unix::process::ExitStatusExt,
     path::Path,
     process::{ExitStatus, Stdio},
     time::Duration,
@@ -22,7 +21,7 @@ use tokio::{
 
 use crate::{
     audio,
-    child::{hidden_command, kill_and_reap},
+    child::{kill_and_reap, owned_command},
     config::{Config, Engine},
     ports::{STARTUP_CANCELLED, Speech},
 };
@@ -38,10 +37,6 @@ const INFERENCE_TIMEOUT: Duration = Duration::from_mins(30);
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const SIGILL: i32 = 4;
 const USAGE_ERROR: u32 = 2;
-const STATUS_ILLEGAL_INSTRUCTION: u32 = 0xC000_001D;
-const STATUS_DLL_NOT_FOUND: u32 = 0xC000_0135;
-const STATUS_ENTRYPOINT_NOT_FOUND: u32 = 0xC000_0139;
-const STATUS_INVALID_IMAGE_FORMAT: u32 = 0xC000_007B;
 
 pub(crate) struct LocalSpeech {
     engine: Engine,
@@ -135,7 +130,6 @@ impl LocalSpeech {
         loop {
             if let Some(status) = self.child.try_wait()? {
                 // The reaped leader's process ID may be reused, so its group is never signaled.
-                #[cfg(unix)]
                 self.group.disarm();
                 bail!(startup_exit(status));
             }
@@ -214,8 +208,8 @@ impl Speech for LocalSpeech {
     }
 }
 
-/// Loading weights neither initializes every GPU kernel nor proves that a Linux build can run its
-/// CPU kernels, so these configurations transcribe silence before reporting ready.
+/// Loading weights does not prepare every GPU kernel, so GPU configurations transcribe silence
+/// before reporting ready.
 struct Warmup {
     timed_out: &'static str,
     failed: &'static str,
@@ -223,19 +217,10 @@ struct Warmup {
 
 impl Warmup {
     fn required(config: &Config) -> Option<Self> {
-        if config.use_gpu {
-            Some(Self {
-                timed_out: "Local GPU warmup timed out. Check the selected engine and GPU dependencies.",
-                failed: "Local GPU warmup failed. Check the selected engine and GPU dependencies.",
-            })
-        } else if cfg!(target_os = "linux") {
-            Some(Self {
-                timed_out: "Local CPU inference timed out. Choose a smaller model or a compatible engine executable in Settings.",
-                failed: "Local CPU inference failed. Check the model and CPU compatibility; choose a compatible engine executable in Settings.",
-            })
-        } else {
-            None
-        }
+        config.use_gpu.then_some(Self {
+            timed_out: "Local GPU warmup timed out. Check the selected engine and GPU dependencies.",
+            failed: "Local GPU warmup failed. Check the selected engine and GPU dependencies.",
+        })
     }
 }
 
@@ -247,7 +232,7 @@ struct Transcription {
 
 fn server_command(config: &Config, port: u16, secret: &str, served: &Path) -> Command {
     let port = port.to_string();
-    let mut command = hidden_command(&config.engine_executable);
+    let mut command = owned_command(&config.engine_executable);
     match config.engine {
         Engine::Parakeet => {
             let device = if config.use_gpu { "auto" } else { "cpu" };
@@ -297,7 +282,6 @@ fn server_command(config: &Config, port: u16, secret: &str, served: &Path) -> Co
     }
     // Engines may print dictated text; diagnostics report only the exit status.
     command.stdout(Stdio::null());
-    #[cfg(unix)]
     command.process_group(0);
     command
 }
@@ -346,26 +330,16 @@ async fn read_bounded(mut response: Response) -> anyhow::Result<Vec<u8>> {
 }
 
 fn startup_exit(status: ExitStatus) -> String {
-    #[cfg(unix)]
-    let signal = status.signal();
-    #[cfg(not(unix))]
-    let signal = None;
     format!(
         "Local speech exited before becoming ready ({status}). {}",
-        exit_remedy(status.code(), signal)
+        exit_remedy(status.code(), status.signal())
     )
 }
 
 fn exit_remedy(code: Option<i32>, signal: Option<i32>) -> &'static str {
     match (code.map(i32::cast_unsigned), signal) {
-        (Some(STATUS_ILLEGAL_INSTRUCTION), _) | (_, Some(SIGILL)) => {
+        (_, Some(SIGILL)) => {
             "This engine uses CPU instructions unavailable on this machine. Choose a compatible engine executable in Settings."
-        },
-        (
-            Some(STATUS_DLL_NOT_FOUND | STATUS_ENTRYPOINT_NOT_FOUND | STATUS_INVALID_IMAGE_FORMAT),
-            _,
-        ) => {
-            "This engine needs missing or incompatible native libraries. Run automatic setup or install the matching engine dependencies."
         },
         (Some(USAGE_ERROR), _) => {
             "Check that the selected engine supports Speakeasy's server arguments. Run automatic setup to install the supported engine, or choose its executable in Settings."
@@ -384,17 +358,6 @@ mod tests {
     fn exit_diagnostics_identify_actions_without_engine_output() {
         assert!(exit_remedy(Some(2), None).contains("server arguments"));
         assert!(exit_remedy(None, Some(SIGILL)).contains("CPU instructions"));
-        assert!(
-            exit_remedy(Some(STATUS_ILLEGAL_INSTRUCTION.cast_signed()), None)
-                .contains("CPU instructions")
-        );
-        for code in [
-            STATUS_DLL_NOT_FOUND,
-            STATUS_ENTRYPOINT_NOT_FOUND,
-            STATUS_INVALID_IMAGE_FORMAT,
-        ] {
-            assert!(exit_remedy(Some(code.cast_signed()), None).contains("native libraries"));
-        }
         assert!(exit_remedy(Some(1), None).contains("selected model"));
     }
 
@@ -466,7 +429,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     fn fake_engine(script: &str) -> anyhow::Result<(tempfile::TempDir, Config)> {
         use std::os::unix::fs::PermissionsExt;
         let directory = tempfile::tempdir()?;
@@ -481,7 +443,6 @@ mod tests {
         Ok((directory, config))
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn argument_failure_reports_exit_status_and_keeps_stderr_private() -> anyhow::Result<()> {
         let (_directory, config) =
@@ -499,7 +460,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn startup_cancellation_reaps_the_owned_process() -> anyhow::Result<()> {
         let (directory, config) = fake_engine(
@@ -514,14 +474,18 @@ mod tests {
                 .await?
                 .is_ok_and(|result| result.is_err())
         );
+        // `kill -0` succeeds for a zombie too, so failure proves the worker was reaped.
+        let probe = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(Stdio::null())
+            .status()?;
         assert!(
-            !Path::new(&format!("/proc/{pid}")).exists(),
+            !probe.success(),
             "Cancelled startup left a live or unreaped worker"
         );
         Ok(())
     }
 
-    #[cfg(target_os = "linux")]
     async fn fixture_pid(directory: &Path) -> u32 {
         loop {
             if let Ok(pid) = tokio::fs::read_to_string(directory.join("worker.pid")).await

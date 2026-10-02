@@ -1,13 +1,13 @@
-//! Pure keyboard policy for the modifier-only shortcuts: Ctrl+Win on Windows, Fn on macOS.
+//! Pure keyboard policy for the Fn shortcut.
 //!
-//! Native callbacks report key events and deliver the decided input. Modifiers and Escape stay
-//! passive; only Space used for hands-free is swallowed.
+//! The event tap reports key events and delivers the decided input. Fn and Escape stay passive;
+//! only Space used for hands-free is swallowed.
 
 use std::mem;
 
 use super::{Input, InputSender};
 
-/// Hold state for the modifier-only shortcut.
+/// Hold state for the Fn shortcut.
 ///
 /// Space during a hold locks hands-free; any other key belongs to a different shortcut, so it
 /// cancels dictation and waits for the chord's release.
@@ -124,8 +124,8 @@ impl Decision {
     }
 
     /// Whether the event starts a hold.
-    #[cfg(any(target_os = "windows", test))]
-    pub(super) fn starts(&self) -> bool {
+    #[cfg(test)]
+    fn starts(&self) -> bool {
         self.action == Some(Action::Press)
     }
 
@@ -136,72 +136,7 @@ impl Decision {
     }
 }
 
-/// Ctrl+Win policy over virtual-key codes from the low-level keyboard hook.
-#[cfg(any(target_os = "windows", test))]
-#[derive(Default)]
-pub(super) struct Windows {
-    chord: Chord,
-    chord_keys_down: [bool; 4],
-}
-
-#[cfg(any(target_os = "windows", test))]
-impl Windows {
-    /// Left Ctrl, right Ctrl, left Windows, and right Windows; either Ctrl with either Windows key
-    /// holds the chord.
-    pub(super) const CHORD_KEYS: [u16; 4] = [0xA2, 0xA3, 0x5B, 0x5C];
-    const ESCAPE: u16 = 0x1B;
-    const SPACE: u16 = 0x20;
-
-    /// Ends dictation for a session change, then waits for the chord's release.
-    pub(super) fn interrupt(&mut self, input: &InputSender) {
-        Action::Interrupt.deliver(input);
-        self.chord.interrupt();
-    }
-
-    /// Decides one hook event. `physical_before_event` is the OS state of [`Self::CHORD_KEYS`]
-    /// before this event; it clears chord keys whose release the hook missed.
-    pub(super) fn observe(
-        &mut self,
-        key: u32,
-        down: bool,
-        physical_before_event: [bool; 4],
-    ) -> Decision {
-        match u16::try_from(key) {
-            Ok(Self::ESCAPE) => Decision::pass(down.then_some(Action::Cancel)),
-            Ok(Self::SPACE) => self.chord.space(down),
-            Ok(key) if Self::CHORD_KEYS.contains(&key) => {
-                self.chord_key(key, down, physical_before_event)
-            },
-            _ => self.chord.other_key(down),
-        }
-    }
-
-    fn chord_key(&mut self, key: u16, down: bool, physical_before_event: [bool; 4]) -> Decision {
-        let mut fresh = false;
-        for ((&chord_key, tracked), physically_down) in Self::CHORD_KEYS
-            .iter()
-            .zip(&mut self.chord_keys_down)
-            .zip(physical_before_event)
-        {
-            if chord_key == key {
-                fresh = down && !*tracked;
-                *tracked = down;
-            } else if !physically_down {
-                *tracked = false;
-            }
-        }
-        let [left_control, right_control, left_windows, right_windows] = self.chord_keys_down;
-        let complete = (left_control || right_control) && (left_windows || right_windows);
-        Decision::pass(match (complete, fresh) {
-            (false, _) => self.chord.release(),
-            (true, true) => self.chord.press(),
-            (true, false) => None,
-        })
-    }
-}
-
 /// One event from the macOS keyboard event tap.
-#[cfg(any(target_os = "macos", test))]
 pub(super) enum MacEvent {
     /// A key went down, including autorepeat, or up.
     Key { code: i64, down: bool },
@@ -210,13 +145,11 @@ pub(super) enum MacEvent {
 }
 
 /// Fn policy over virtual key codes from the macOS event tap.
-#[cfg(any(target_os = "macos", test))]
 #[derive(Default)]
 pub(super) struct Mac {
     chord: Chord,
 }
 
-#[cfg(any(target_os = "macos", test))]
 impl Mac {
     const ESCAPE: i64 = 53;
     const FUNCTION: i64 = 63;
@@ -245,19 +178,6 @@ mod tests {
 
     use super::*;
 
-    const LEFT_CONTROL: u32 = 0xA2;
-    const RIGHT_CONTROL: u32 = 0xA3;
-    const LEFT_WINDOWS: u32 = 0x5B;
-    const RIGHT_WINDOWS: u32 = 0x5C;
-    const ESCAPE: u32 = 0x1B;
-    const SPACE: u32 = 0x20;
-    const LETTER_A: u32 = 0x41;
-    const NONE_HELD: [bool; 4] = [false; 4];
-
-    fn held(keys: &[u32]) -> [bool; 4] {
-        Windows::CHORD_KEYS.map(|chord_key| keys.contains(&u32::from(chord_key)))
-    }
-
     fn function(down: bool) -> MacEvent {
         MacEvent::FlagsChanged {
             code: Mac::FUNCTION,
@@ -279,83 +199,6 @@ mod tests {
         assert!(matches!(events.try_recv()?, Input::Cancel));
         assert!(matches!(events.try_recv()?, Input::Release));
         Ok(())
-    }
-
-    #[test]
-    fn windows_sides_repeats_space_and_passive_escape() {
-        let mut policy = Windows::default();
-        assert_eq!(policy.observe(LEFT_CONTROL, true, NONE_HELD).action, None);
-        assert!(
-            policy
-                .observe(RIGHT_WINDOWS, true, held(&[LEFT_CONTROL]))
-                .starts()
-        );
-        let both = held(&[LEFT_CONTROL, RIGHT_WINDOWS]);
-        assert_eq!(policy.observe(RIGHT_WINDOWS, true, both).action, None);
-        assert!(policy.observe(SPACE, true, both).swallows());
-        assert_eq!(
-            policy.observe(LEFT_CONTROL, false, both).action,
-            Some(Action::Release)
-        );
-        assert!(policy.observe(SPACE, false, NONE_HELD).swallows());
-        let escape = policy.observe(ESCAPE, true, NONE_HELD);
-        assert!(!escape.swallows());
-        assert_eq!(escape.action, Some(Action::Cancel));
-    }
-
-    #[test]
-    fn windows_lifecycle_interruption_waits_for_chord_release() {
-        let (sender, _events) = async_channel::bounded(4);
-        let input = InputSender::new(sender);
-        let mut policy = Windows::default();
-        policy.observe(LEFT_CONTROL, true, NONE_HELD);
-        assert!(
-            policy
-                .observe(LEFT_WINDOWS, true, held(&[LEFT_CONTROL]))
-                .starts()
-        );
-        policy.interrupt(&input);
-        assert_eq!(
-            policy
-                .observe(RIGHT_WINDOWS, true, held(&[LEFT_CONTROL, LEFT_WINDOWS]))
-                .action,
-            None
-        );
-        assert_eq!(policy.observe(RIGHT_WINDOWS, false, NONE_HELD).action, None);
-        policy.observe(RIGHT_CONTROL, true, NONE_HELD);
-        assert!(
-            policy
-                .observe(RIGHT_WINDOWS, true, held(&[RIGHT_CONTROL]))
-                .starts()
-        );
-    }
-
-    #[test]
-    fn windows_missed_release_and_other_shortcuts_do_not_restart_hold() {
-        let mut policy = Windows::default();
-        policy.observe(LEFT_CONTROL, true, NONE_HELD);
-        assert!(
-            policy
-                .observe(LEFT_WINDOWS, true, held(&[LEFT_CONTROL]))
-                .starts()
-        );
-        let both = held(&[LEFT_CONTROL, LEFT_WINDOWS]);
-        assert_eq!(
-            policy.observe(LETTER_A, true, both).action,
-            Some(Action::Interrupt)
-        );
-        assert!(!policy.observe(RIGHT_WINDOWS, true, both).starts());
-        assert_eq!(policy.observe(RIGHT_WINDOWS, false, NONE_HELD).action, None);
-        assert_eq!(policy.observe(RIGHT_CONTROL, true, NONE_HELD).action, None);
-        assert!(
-            policy
-                .observe(RIGHT_WINDOWS, true, held(&[RIGHT_CONTROL]))
-                .starts()
-        );
-        assert_eq!(
-            policy.observe(LEFT_CONTROL, true, NONE_HELD).action,
-            Some(Action::Release)
-        );
     }
 
     #[test]

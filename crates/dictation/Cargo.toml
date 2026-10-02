@@ -22,10 +22,7 @@ tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "proce
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-reqwest = { workspace = true, features = ["rustls"] }
-
-[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+[target.'cfg(target_os = "macos")'.dependencies]
 # Setup downloads over the operating system's TLS stack and trust store.
 reqwest = { workspace = true, features = ["native-tls"] }
 

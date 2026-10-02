@@ -1,9 +1,10 @@
 # Speakeasy Apple silicon fork experiment: draft PRD
 
-Status: experiment draft, updated 2026-10-02 UTC. Target: Apple silicon Macs, macOS 14.0 or later.
-This is a macOS-only optimization fork with the same features and interaction as released Speakeasy
-0.3.2 at `cd302b4c864ea3ea64decd47d8fa9eee721c6088` (tag `v0.3.2`). It does not authorize removing
-the existing Windows/Linux/macOS app or publishing a release.
+Status: in progress, updated 2026-10-02 UTC. Target: Apple silicon Macs, macOS 14.0 or later. The
+`high-perf-macos` branch is a macOS-only optimization fork that never merges into `main`. It keeps
+the features and interaction of released Speakeasy 0.3.2 at
+`cd302b4c864ea3ea64decd47d8fa9eee721c6088` (tag `v0.3.2`) and has removed the Windows and Linux
+adapters, packaging, and checks. It does not authorize publishing a release.
 
 For this target, this document owns product requirements, performance decisions, and completion
 gates. [Interaction design](interaction-design.md) owns exact visual and gesture behavior;
@@ -42,7 +43,7 @@ remains experimental until the relevant gate passes.
 ## Required feature parity
 
 Use the frozen 0.3.2 implementation and tests as behavioral references. The matrix below scopes
-parity to macOS; Windows/Linux desktop adapters are not part of this target.
+parity to macOS.
 
 | Contract              | Required behavior and acceptance                                                                                                                                                                                                                                                                                                                                                                                                           |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

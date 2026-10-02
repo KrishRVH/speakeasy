@@ -1,8 +1,9 @@
 # Speakeasy agent guide
 
-Speakeasy is a native Rust dictation app for Windows, macOS, and Linux. Keep it fast, small, and
-usable offline with local speech engines. Read `README.md` for setup and behavior. Before changing
-session, shutdown, keyboard, insertion, or module interfaces, read the
+Speakeasy is a native Rust dictation app; this `high-perf-macos` fork targets Apple silicon macOS
+only and never merges into `main`. Keep it fast, small, and usable offline with local speech
+engines. Read `README.md` for setup and behavior. Before changing session, shutdown, keyboard,
+insertion, or module interfaces, read the
 [architecture change and test map](docs/architecture.md#change-and-test-map).
 
 For Apple silicon fork work, follow the [draft PRD](docs/apple-silicon-prd.md). It owns feature
@@ -29,17 +30,18 @@ are outside this project's profile.
 
 ## Ownership and interfaces
 
-- `crates/core` owns pure gestures and motion; `crates/app` owns GPUI, session state, capture, and
-  the local worker; `crates/platform` owns native adapters.
-- Keep unsafe FFI confined to platform with a `SAFETY` explanation at every site. Core and the app
-  forbid unsafe code. Vendored code follows its upstream policy.
+- `crates/core` owns pure gestures and motion; `crates/dictation` owns session state, capture, the
+  local worker, settings, and setup without a UI; `crates/app` owns GPUI; `crates/platform` owns
+  native adapters.
+- Keep unsafe FFI confined to platform with a `SAFETY` explanation at every site. Core, dictation,
+  and the app forbid unsafe code. Vendored code follows its upstream policy.
 - Give session state one owner. Move cross-thread work over channels; callbacks cannot stop a newer
   recording, overwrite its state, or paste stale text.
 - Locks, cells, atomics, and shared ownership need a per-site reason explaining why the value cannot
   belong to the owner or arrive as an event. Immutable Arc snapshots are permitted. Native callback
   control, handle lifetime, and cancellation during blocked OS calls justify narrowly scoped
-  synchronization. Thread-local storage is confined to Windows native callbacks without context
-  arguments, including owned-window tests; its mutable value needs a site reason.
+  synchronization. Native callbacks without context arguments may use thread-local storage; its
+  mutable value needs a site reason.
 - Own asynchronous work, cancellation, and native resources. Retain resources until cleanup
   acknowledges before opening replacements. Keep UI and callbacks responsive; measure before
   introducing caches or background services.
@@ -58,9 +60,8 @@ are outside this project's profile.
 
 ## App contracts
 
-Preserve hold-to-talk, double-tap hands-free, and the hard five-minute recording limit. Windows and
-macOS observe passive Escape without swallowing it; Linux uses an explicit reserved cancel chord or
-desktop command binding.
+Preserve hold-to-talk, double-tap hands-free, and the hard five-minute recording limit. Escape is
+observed passively, never swallowed.
 
 Keep errors actionable and local. Never add transcript history, accounts, telemetry, automatic audio
 upload, or silent provider switching. Preserve user settings and edits. Keep secrets in ignored
