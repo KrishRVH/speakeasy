@@ -14,7 +14,7 @@ retain the five-minute limit. Audio and recognition stay local, with no transcri
 uploads.
 
 Windows x64 and Apple silicon macOS zip packages, plus experimental Linux x86_64 AppImage and
-bundled tar packages, are attached with SHA-256 checksums. CI verifies all three platforms and runs
-owned-window rendering checks. Live microphone, keyboard-hook, clipboard/editor, and compositor
-acceptance remain separate; see [architecture](architecture.md) and [performance](performance.md).
-Native end-to-end latency gains remain unmeasured.
+bundled tar packages, are attached with SHA-256 checksums. Verification and owned-window rendering
+checks run locally. Live microphone, keyboard-hook, clipboard/editor, and compositor acceptance
+remain separate; see [architecture](architecture.md) and [performance](performance.md). Native
+end-to-end latency gains remain unmeasured.
