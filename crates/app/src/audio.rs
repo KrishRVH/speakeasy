@@ -2,6 +2,7 @@
 //! allocating; the capture thread encodes them in place behind a reserved WAV header.
 
 mod control;
+mod speech;
 
 use std::{
     convert::Infallible,
@@ -23,7 +24,10 @@ use cpal::{
 use rtrb::{Consumer, Producer, RingBuffer};
 use speakeasy_core::gesture::RECORDING_LIMIT;
 
-use self::control::{Control, Mode};
+use self::{
+    control::{Control, Mode},
+    speech::Speech,
+};
 use crate::{
     ports::Recording,
     runtime::{CaptureEvent, SessionId},
@@ -36,11 +40,6 @@ const MAX_SAMPLE_RATE: u32 = 192_000;
 const MAX_CHANNELS: usize = 32;
 const INITIAL_RESERVATION: Duration = Duration::from_secs(10);
 const MINIMUM_RECORDING: Duration = Duration::from_millis(200);
-const ENERGY_WINDOW: Duration = Duration::from_millis(20);
-const MINIMUM_AUDIBLE: Duration = Duration::from_millis(100);
-const QUIET_EDGE: Duration = Duration::from_secs(1);
-const EDGE_PADDING: Duration = Duration::from_millis(500);
-const AUDIBLE_RMS: f64 = 0.003;
 const METER_INTERVAL: Duration = Duration::from_millis(32);
 const DRAIN_INTERVAL: Duration = Duration::from_millis(5);
 const METER_FLOOR_DBFS: f32 = -60.0;
@@ -68,10 +67,10 @@ impl Capture {
         })
     }
 
-    fn spawn(
+    fn spawn<D: 'static>(
         id: SessionId,
         events: Sender<CaptureEvent>,
-        work: impl FnOnce(&Sender<CaptureEvent>, &Arc<Control>) -> anyhow::Result<Option<Vec<u8>>>
+        work: impl FnOnce(&Sender<CaptureEvent>, &Arc<Control>) -> anyhow::Result<Recorded<D>>
         + Send
         + 'static,
     ) -> anyhow::Result<Self> {
@@ -85,11 +84,18 @@ impl Capture {
                     .unwrap_or_else(|_| {
                         Err(anyhow!("Microphone stopped unexpectedly. Try recording again."))
                     });
+                let (outcome, device) = match result {
+                    Ok(Recorded { outcome, device }) => (outcome, Some(device)),
+                    Err(error) => (Err(error), None),
+                };
                 #[expect(
                     clippy::let_underscore_must_use,
                     reason = "A closed event lane belongs to a departed owner; retirement still observes this thread's exit"
                 )]
-                let _ = events.send_blocking(CaptureEvent::Finished(id, result));
+                let _ = events.send_blocking(CaptureEvent::Finished(id, outcome));
+                // Audio is sealed before this potentially blocking driver teardown. Retirement
+                // acknowledges only after teardown, so another capture cannot overlap it.
+                drop(device);
                 // Naming `alive` moves it into this closure; dropping it last closes `exit`.
                 drop(alive);
             }
@@ -163,18 +169,30 @@ impl<E: Into<anyhow::Error>> From<E> for Startup {
     }
 }
 
-/// A playing stream and the audio it has delivered so far. Fields drop in declaration order: the
-/// audio is erased first, then the stream stops before the device and host that opened it.
+/// The sealed outcome and resources retained until it has been reported. The generic device is
+/// an internal seam for testing blocked teardown without opening a microphone.
+struct Recorded<D> {
+    outcome: anyhow::Result<Option<Vec<u8>>>,
+    device: D,
+}
+
+/// Fields drop in declaration order, so the stream stops before its device and host.
+struct LiveStream {
+    _stream: cpal::Stream,
+    _device: cpal::Device,
+    _host: cpal::Host,
+}
+
+/// A playing stream and the audio it has delivered so far. Unsealed PCM is erased on drop.
 struct Recorder {
     pcm: Pcm16,
-    stream: Option<cpal::Stream>,
+    speech: Speech,
+    device: LiveStream,
     ring: Consumer<f32>,
     errors: Receiver<cpal::Error>,
     started: Instant,
     rate: u32,
     limit: usize,
-    _device: cpal::Device,
-    _host: cpal::Host,
 }
 
 impl Recorder {
@@ -218,18 +236,22 @@ impl Recorder {
         checkpoint()?;
         // PCM stays at the device's native rate; the engine resamples.
         let pcm = Pcm16::with_reservation(samples_in(INITIAL_RESERVATION, rate));
+        let speech = Speech::new(rate).context("Unsupported microphone format")?;
         checkpoint()?;
         stream.play().map_err(microphone_error)?;
         Ok(Self {
             pcm,
-            stream: Some(stream),
+            speech,
+            device: LiveStream {
+                _stream: stream,
+                _device: device,
+                _host: host,
+            },
             ring,
             errors: stream_errors,
             started,
             rate,
             limit,
-            _device: device,
-            _host: host,
         })
     }
 
@@ -238,26 +260,55 @@ impl Recorder {
         id: SessionId,
         events: &Sender<CaptureEvent>,
         control: &Control,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
+    ) -> Recorded<LiveStream> {
+        let drained = self.drain(id, events, control);
+        control.finish();
+        control.quiesce();
+        let Self {
+            pcm,
+            speech,
+            device,
+            errors,
+            rate,
+            ..
+        } = self;
+        let outcome = drained.and_then(|finished| {
+            if !finished || control.mode() == Mode::Cancelled {
+                return Ok(None);
+            }
+            // A callback may have failed between the last poll and quiescence.
+            capture_failure(control, &errors)?;
+            pcm.seal(speech, rate)
+        });
+        Recorded { outcome, device }
+    }
+
+    fn drain(
+        &mut self,
+        id: SessionId,
+        events: &Sender<CaptureEvent>,
+        control: &Control,
+    ) -> anyhow::Result<bool> {
         let mut meter = LevelMeter::new();
         let mut ready = false;
         loop {
             if control.mode() == Mode::Cancelled || events.is_closed() {
-                return Ok(None);
+                return Ok(false);
             }
             capture_failure(control, &self.errors)?;
-            if control.mode() == Mode::Finishing
+            let stopping = control.mode() == Mode::Finishing
                 || self.started.elapsed() >= RECORDING_LIMIT
-                || self.pcm.samples() >= self.limit
-            {
+                || self.pcm.samples() >= self.limit;
+            if stopping {
                 control.finish();
-                self.stream = None;
+                control.quiesce();
             }
             if !ready && !self.ring.is_empty() {
                 ready = true;
                 events.send_blocking(CaptureEvent::Ready(id))?;
             }
             consume_pcm(&mut self.ring, &mut self.pcm, &mut meter, self.limit);
+            self.speech.extend(self.pcm.audio());
             if let Some(level) = meter.take_level() {
                 #[expect(
                     clippy::let_underscore_must_use,
@@ -265,28 +316,13 @@ impl Recorder {
                 )]
                 let _ = events.try_send(CaptureEvent::Level(id, level));
             }
-            if self.stream.is_none() {
-                break;
+            if stopping {
+                return Ok(true);
             }
             // Finish and cancel unpark this thread at once, and an unpark that lands before the
             // wait is not lost; the timeout only paces draining of the ring.
             thread::park_timeout(DRAIN_INTERVAL);
         }
-        self.finalize(control)
-    }
-
-    fn finalize(mut self, control: &Control) -> anyhow::Result<Option<Vec<u8>>> {
-        if control.mode() == Mode::Cancelled {
-            return Ok(None);
-        }
-        // A callback may have failed between the last poll and stream teardown.
-        capture_failure(control, &self.errors)?;
-        if self.pcm.samples() < samples_in(MINIMUM_RECORDING, self.rate)
-            || !self.pcm.trim_quiet_edges(self.rate)
-        {
-            return Ok(None);
-        }
-        self.pcm.into_wav(self.rate).map(Some)
     }
 }
 
@@ -330,44 +366,19 @@ impl Pcm16 {
         self.bytes.extend_from_slice(&sample.to_le_bytes());
     }
 
-    /// Trims quiet edges conservatively, keeping every interior pause, and reports whether enough
-    /// audible audio remains to transcribe.
-    fn trim_quiet_edges(&mut self, rate: u32) -> bool {
-        if !(1..=MAX_SAMPLE_RATE).contains(&rate) {
-            return false;
+    /// Seals a completed recording with its accumulated speech windows. Short recordings and
+    /// insufficient speech produce no WAV; retained audio keeps padding and checked encoding.
+    fn seal(mut self, mut speech: Speech, rate: u32) -> anyhow::Result<Option<Vec<u8>>> {
+        if self.samples() < samples_in(MINIMUM_RECORDING, rate) {
+            return Ok(None);
         }
-        let window_bytes = bytes_in(samples_in(ENERGY_WINDOW, rate).max(1));
-        let quiet_edge = bytes_in(samples_in(QUIET_EDGE, rate));
-        let padding = bytes_in(samples_in(EDGE_PADDING, rate));
-        let audio = self.audio();
-        let mut first = None;
-        let mut end = 0;
-        let mut audible = 0_usize;
-        for (index, window) in audio.chunks(window_bytes).enumerate() {
-            if is_audible(window) {
-                let offset = index.saturating_mul(window_bytes);
-                first.get_or_insert(offset);
-                end = offset.saturating_add(window.len());
-                audible = audible.saturating_add(window.len() / SAMPLE_BYTES);
-            }
-        }
-        let minimum_audible = samples_in(MINIMUM_AUDIBLE, rate).max(1);
-        let Some(first) = first.filter(|_| audible >= minimum_audible) else {
-            return false;
+        speech.complete(self.audio());
+        let Some(range) = speech.retained(self.audio().len()) else {
+            return Ok(None);
         };
-        let start = if first >= quiet_edge {
-            first.saturating_sub(padding)
-        } else {
-            0
-        };
-        let end = if audio.len().saturating_sub(end) >= quiet_edge {
-            end.saturating_add(padding).min(audio.len())
-        } else {
-            audio.len()
-        };
-        self.retain_audio(start..end);
+        self.retain_audio(range);
         self.release_excess_capacity();
-        true
+        self.into_wav(rate).map(Some)
     }
 
     fn retain_audio(&mut self, audio: Range<usize>) {
@@ -468,10 +479,19 @@ fn record(
     microphone: Option<&str>,
     events: &Sender<CaptureEvent>,
     control: &Arc<Control>,
-) -> anyhow::Result<Option<Vec<u8>>> {
+) -> anyhow::Result<Recorded<Option<LiveStream>>> {
     match Recorder::open(microphone, events, control) {
-        Ok(recorder) => recorder.record(id, events, control),
-        Err(Startup::Stopped) => Ok(None),
+        Ok(recorder) => {
+            let Recorded { outcome, device } = recorder.record(id, events, control);
+            Ok(Recorded {
+                outcome,
+                device: Some(device),
+            })
+        },
+        Err(Startup::Stopped) => Ok(Recorded {
+            outcome: Ok(None),
+            device: None,
+        }),
         Err(Startup::Failed(error)) => Err(error),
     }
 }
@@ -562,6 +582,7 @@ where
     let mut queued_total = 0_usize;
     (
         move |data: &[T]| {
+            let _publishing = control.publishing();
             if control.mode() != Mode::Recording || started.elapsed() >= RECORDING_LIMIT {
                 return;
             }
@@ -587,7 +608,12 @@ where
                 control.mark_overflowed();
             }
         },
-        move |error| handle_stream_error(error, &errors, &error_control),
+        move |error| {
+            let _publishing = error_control.publishing();
+            if error_control.mode() == Mode::Recording {
+                handle_stream_error(error, &errors, &error_control);
+            }
+        },
     )
 }
 
@@ -670,19 +696,6 @@ fn consume_pcm(ring: &mut Consumer<f32>, pcm: &mut Pcm16, meter: &mut LevelMeter
 fn speech_meter_level(rms: f32) -> f32 {
     let above_floor = 20.0_f32.mul_add(rms.max(0.000_001).log10(), -METER_FLOOR_DBFS);
     (above_floor / (METER_TOP_DBFS - METER_FLOOR_DBFS)).clamp(0.0, 1.0)
-}
-
-fn is_audible(window: &[u8]) -> bool {
-    let energy = window
-        .as_chunks::<SAMPLE_BYTES>()
-        .0
-        .iter()
-        .map(|pair| u64::from(i16::from_le_bytes(*pair).unsigned_abs()).pow(2))
-        // A 20 ms window at 192 kHz holds at most 3840 samples, whose squares sum below 2^42, so
-        // wrapping addition is exact and lets the compiler vectorize it.
-        .fold(0_u64, u64::wrapping_add);
-    let samples = window.len() / SAMPLE_BYTES;
-    energy as f64 / (32768.0 * 32768.0) >= AUDIBLE_RMS.powi(2) * samples as f64
 }
 
 /// The canonical header for `data_bytes` of mono PCM16, if they can be described.
@@ -886,13 +899,79 @@ mod tests {
                 control.cancel();
             }
             let (events, _audio) = async_channel::bounded(1);
-            assert!(record(SessionId::FIRST, None, &events, &control)?.is_none());
+            assert!(
+                record(SessionId::FIRST, None, &events, &control)?
+                    .outcome?
+                    .is_none()
+            );
         }
         let (events, _audio) = async_channel::bounded(1);
         events.close();
         let control = Arc::new(Control::default());
-        assert!(record(SessionId::FIRST, None, &events, &control)?.is_none());
+        assert!(
+            record(SessionId::FIRST, None, &events, &control)?
+                .outcome?
+                .is_none()
+        );
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn sealed_audio_is_reported_before_device_teardown_and_retirement_waits()
+    -> anyhow::Result<()> {
+        struct Device {
+            entered: Sender<()>,
+            release: Receiver<()>,
+        }
+        impl Drop for Device {
+            fn drop(&mut self) {
+                self.entered.send_blocking(()).unwrap();
+                // Closing the fixture gate on failure also releases teardown.
+                self.release.recv_blocking().unwrap_or_default();
+            }
+        }
+        let (events, audio) = async_channel::bounded(1);
+        let (entered, teardown) = async_channel::bounded(1);
+        let (release, waiting) = async_channel::bounded(1);
+        let capture = Capture::spawn(SessionId::FIRST, events, move |_, _| {
+            Ok(Recorded {
+                outcome: Ok(Some(vec![1, 2])),
+                device: Device {
+                    entered,
+                    release: waiting,
+                },
+            })
+        })?;
+        timeout(PATIENCE, teardown.recv()).await??;
+        let report = timeout(PATIENCE, audio.recv()).await;
+        let retirement = capture.retire();
+        tokio::pin!(retirement);
+        let pending = timeout(Duration::from_millis(30), retirement.as_mut())
+            .await
+            .is_err();
+        release.send(()).await?;
+        timeout(PATIENCE, retirement).await?;
+        assert!(
+            matches!(report?, Ok(CaptureEvent::Finished(SessionId::FIRST, Ok(Some(wav)))) if wav == [1, 2])
+        );
+        assert!(pending, "Retirement acknowledged before device teardown");
+        Ok(())
+    }
+
+    #[test]
+    fn callbacks_after_finish_cannot_publish_samples_or_teardown_errors() {
+        let (state, mut ring, errors, control) = callback_fixture(1, 10, 10);
+        let (mut data, mut error) = capture_callbacks::<f32>(state);
+        data(&[0.25; 3]);
+        control.finish();
+        control.quiesce();
+        data(&[0.5; 3]);
+        error(cpal::ErrorKind::DeviceNotAvailable.into());
+        assert_eq!(ring.slots(), 3);
+        let mut samples = [0.0; 3];
+        ring.pop_entire_slice(&mut samples).unwrap();
+        assert_eq!(samples, [0.25; 3]);
+        assert!(errors.try_recv().is_err());
     }
 
     #[tokio::test]
@@ -903,7 +982,10 @@ mod tests {
         let capture = Capture::spawn(SessionId::FIRST, events, move |_, control| {
             started.send_blocking(control.clone())?;
             waiting.recv_blocking()?;
-            Ok(None)
+            Ok(Recorded {
+                outcome: Ok(None),
+                device: (),
+            })
         })?;
         let control = starting.recv().await?;
         let retirement = capture.retire();
@@ -968,7 +1050,10 @@ mod tests {
             while control.mode() == Mode::Recording {
                 thread::park_timeout(Duration::from_secs(5));
             }
-            Ok(None)
+            Ok(Recorded {
+                outcome: Ok(None),
+                device: (),
+            })
         })?;
         let consumer = timeout(PATIENCE, arming.recv()).await??;
         let release = || -> anyhow::Result<()> {
@@ -1009,7 +1094,12 @@ mod tests {
     async fn closing_audio_events_unblocks_owned_capture_retirement() -> anyhow::Result<()> {
         let (events, audio) = async_channel::bounded(1);
         events.try_send(CaptureEvent::Ready(SessionId::FIRST))?;
-        let capture = Capture::spawn(SessionId::FIRST, events, |_, _| Ok(None))?;
+        let capture = Capture::spawn(SessionId::FIRST, events, |_, _| {
+            Ok(Recorded {
+                outcome: Ok(None),
+                device: (),
+            })
+        })?;
         let retirement = capture.retire();
         tokio::pin!(retirement);
         assert!(
@@ -1025,9 +1115,13 @@ mod tests {
     #[tokio::test]
     async fn a_panicked_capture_reports_failure_and_still_retires() -> anyhow::Result<()> {
         let (events, audio) = async_channel::bounded(1);
-        let capture = Capture::spawn(SessionId::FIRST, events, |_, _| {
-            panic::resume_unwind(Box::new(()));
-        })?;
+        let capture = Capture::spawn(
+            SessionId::FIRST,
+            events,
+            |_, _| -> anyhow::Result<Recorded<()>> {
+                panic::resume_unwind(Box::new(()));
+            },
+        )?;
         let report = timeout(PATIENCE, audio.recv()).await??;
         assert!(
             matches!(&report, CaptureEvent::Finished(SessionId::FIRST, Err(error))
@@ -1093,17 +1187,24 @@ mod tests {
         let fixture = pcm_from(&[(rate, 0), (rate * 297, 3000), (rate * 2, 0)]);
         let mut timings = Vec::new();
         for _ in 0..21 {
-            let mut pcm = Pcm16 {
+            let pcm = Pcm16 {
                 bytes: fixture.bytes.clone(),
             };
+            let mut speech = Speech::new(48_000).unwrap();
+            // Classification runs on the consumer during recording, outside the stop span.
+            for length in (480 * SAMPLE_BYTES..pcm.audio().len()).step_by(480 * SAMPLE_BYTES) {
+                speech.extend(black_box(&pcm.audio()[..length]));
+            }
             let started = Instant::now();
-            assert!(black_box(&mut pcm).trim_quiet_edges(48_000));
+            let wav = black_box(pcm)
+                .seal(speech, 48_000)?
+                .context("Audible fixture")?;
             timings.push(started.elapsed().as_secs_f64() * 1000.0);
-            black_box(&pcm.bytes);
+            black_box(&wav);
         }
         timings.sort_by(f64::total_cmp);
         eprintln!(
-            "audio_trim: seconds=300 median_ms={:.3} p95_ms={:.3} runs=21",
+            "audio_seal: seconds=300 median_ms={:.3} p95_ms={:.3} runs=21",
             timings[10], timings[19]
         );
         Ok(())
@@ -1227,7 +1328,7 @@ mod tests {
     #[test]
     fn quiet_edges_keep_word_padding_and_interior_pauses_but_clicks_are_rejected() {
         let rate = 16_000;
-        let mut pcm = pcm_from(&[
+        let pcm = pcm_from(&[
             (rate * 2, 0),
             (rate, 3000),
             (rate * 3, 0),
@@ -1235,11 +1336,35 @@ mod tests {
             (rate * 2, 0),
         ]);
         let expected = pcm.audio()[rate * 3..rate * 15].to_vec();
-        assert!(pcm.trim_quiet_edges(u32::try_from(rate).unwrap()));
-        assert_eq!(pcm.audio(), expected);
+        let click = pcm_from(&[(rate / 20, 3000), (rate * 2 - rate / 20, 0)]);
+        let rate = u32::try_from(rate).unwrap();
+        let wav = pcm.seal(Speech::new(rate).unwrap(), rate).unwrap().unwrap();
+        assert_eq!(&wav[WAV_HEADER_BYTES..], expected);
+        assert_eq!(wav_sample_rate(&wav), Some(rate));
 
-        let mut click = pcm_from(&[(rate / 20, 3000), (rate * 2 - rate / 20, 0)]);
-        assert!(!click.trim_quiet_edges(u32::try_from(rate).unwrap()));
+        assert!(
+            click
+                .seal(Speech::new(rate).unwrap(), rate)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn sealing_requires_two_hundred_milliseconds_of_recorded_audio() {
+        for rate in [8_000, 44_101, MAX_SAMPLE_RATE] {
+            for millis in [199, 200] {
+                let samples = samples_in(Duration::from_millis(millis), rate);
+                let pcm = pcm_from(&[(samples, 3000)]);
+                let mut speech = Speech::new(rate).unwrap();
+                speech.extend(pcm.audio());
+                let wav = pcm.seal(speech, rate).unwrap();
+                assert_eq!(wav.is_some(), millis == 200);
+                if let Some(wav) = wav {
+                    assert_eq!(wav.len(), WAV_HEADER_BYTES + bytes_in(samples));
+                }
+            }
+        }
     }
 
     #[test]
@@ -1253,9 +1378,10 @@ mod tests {
             pair.copy_from_slice(&3000_i16.to_le_bytes());
         }
         let expected = pcm.audio()[rate * 79..rate * 101].to_vec();
-        assert!(pcm.trim_quiet_edges(u32::try_from(rate).unwrap()));
-        assert_eq!(pcm.audio(), expected);
-        assert_eq!(pcm.bytes.capacity(), pcm.bytes.len());
+        let rate = u32::try_from(rate).unwrap();
+        let wav = pcm.seal(Speech::new(rate).unwrap(), rate).unwrap().unwrap();
+        assert_eq!(&wav[WAV_HEADER_BYTES..], expected);
+        assert_eq!(wav.capacity(), wav.len());
     }
 
     #[test]

@@ -23,28 +23,28 @@ flowchart LR
 
 ## Modules
 
-| Area                                                            | Responsibility                                                                                                                                                             |
-| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `crates/core`                                                   | Pure gesture deadlines and analytic motion springs.                                                                                                                        |
-| `crates/platform`                                               | Native keyboard input, lifecycle notifications, pill windows, the Windows file dialog, insertion, reduced-motion preference, owned threads, and owned process containment. |
-| `crates/app/src/runtime/`                                       | One session owner; recording, inference, cancellation, settings changes, and final insertion ordering.                                                                     |
-| `runtime/session.rs`, `microphone.rs`, `worker.rs`              | Session authority and presentation stages; one open or retiring microphone; one ready worker or owned load/inference/recovery job.                                         |
-| `crates/platform/src/keyboard.rs`, `monitor.rs`, `insertion.rs` | Portable keyboard decisions, stop coordination for native event loops, and shared insertion eligibility; native adapters collect facts and submit effects.                 |
-| `crates/app/src/audio.rs`, `audio/control.rs`                   | CPAL capture, typed callback control, bounded ring, audio levels, speech gate, quiet-edge trimming, and five-minute recording limit.                                       |
-| `crates/app/src/local_speech.rs`                                | Warm Whisper or Parakeet process, loopback HTTP, bounded responses, and cancellation recovery.                                                                             |
-| `crates/app/src/transcript.rs`                                  | Linear transcript whitespace and filler cleanup before insertion.                                                                                                          |
-| `crates/app/src/ports.rs`                                       | Capture, speech, and insertion interfaces used by the session owner and unattended fixtures.                                                                               |
-| `crates/app/src/pill.rs` and `pill/`                            | Grille pill, measured audio envelope, and frame-driven motion.                                                                                                             |
-| `crates/app/src/setup.rs`                                       | Automatic setup: engine choice through NeMo's doctor, pinned resumable downloads, and extraction.                                                                          |
-| `crates/app/src/shell.rs` and `shell/`                          | Settings, ordered durable saves, service lifecycle, pause, and coordinated shutdown.                                                                                       |
-| `crates/app/src/tray.rs` and `tray/`                            | Owned native tray icon, menu actions, and snapshot-driven status updates.                                                                                                  |
-| `crates/app/src/status.rs`                                      | Shared readiness and capture status for Settings and the tray.                                                                                                             |
-| `crates/app/src/theme.rs`                                       | Selectable color themes shared by Settings, the pill, and the tray.                                                                                                        |
-| `crates/app/src/icons.rs`                                       | Embedded Settings icon assets for GPUI's existing SVG atlas.                                                                                                               |
-| `crates/app/src/gpui_ext.rs`                                    | GPUI updates that become no-ops once their entity, window, or app is gone, and native window handles for platform calls.                                                   |
-| `crates/app/src/child.rs`                                       | Hidden child processes, killed with their owner and reaped before anything replaces them.                                                                                  |
-| `crates/app/src/instance.rs`                                    | Configuration-directory lock and an owned loopback listener for revealing Settings and dispatching desktop Toggle and Cancel commands.                                     |
-| `crates/app/src/config.rs`                                      | Typed settings, path resolution, validation, and atomic saves.                                                                                                             |
+| Area                                                             | Responsibility                                                                                                                                                             |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crates/core`                                                    | Pure gesture deadlines and analytic motion springs.                                                                                                                        |
+| `crates/platform`                                                | Native keyboard input, lifecycle notifications, pill windows, the Windows file dialog, insertion, reduced-motion preference, owned threads, and owned process containment. |
+| `crates/app/src/runtime/`                                        | One session owner; recording, inference, cancellation, settings changes, and final insertion ordering.                                                                     |
+| `runtime/session.rs`, `microphone.rs`, `worker.rs`               | Session authority and presentation stages; one open or retiring microphone; one ready worker or owned load/inference/recovery job.                                         |
+| `crates/platform/src/keyboard.rs`, `monitor.rs`, `insertion.rs`  | Portable keyboard decisions, stop coordination for native event loops, and shared insertion eligibility; native adapters collect facts and submit effects.                 |
+| `crates/app/src/audio.rs`, `audio/control.rs`, `audio/speech.rs` | CPAL capture, typed callback control, bounded ring, audio levels, speech gate, quiet-edge trimming, and five-minute recording limit.                                       |
+| `crates/app/src/local_speech.rs`                                 | Warm Whisper or Parakeet process, loopback HTTP, bounded responses, and cancellation recovery.                                                                             |
+| `crates/app/src/transcript.rs`                                   | Linear transcript whitespace and filler cleanup before insertion.                                                                                                          |
+| `crates/app/src/ports.rs`                                        | Capture, speech, and insertion interfaces used by the session owner and unattended fixtures.                                                                               |
+| `crates/app/src/pill.rs` and `pill/`                             | Grille pill, measured audio envelope, and frame-driven motion.                                                                                                             |
+| `crates/app/src/setup.rs`                                        | Automatic setup: engine choice through NeMo's doctor, pinned resumable downloads, and extraction.                                                                          |
+| `crates/app/src/shell.rs` and `shell/`                           | Settings, ordered durable saves, service lifecycle, pause, and coordinated shutdown.                                                                                       |
+| `crates/app/src/tray.rs` and `tray/`                             | Owned native tray icon, menu actions, and snapshot-driven status updates.                                                                                                  |
+| `crates/app/src/status.rs`                                       | Shared readiness and capture status for Settings and the tray.                                                                                                             |
+| `crates/app/src/theme.rs`                                        | Selectable color themes shared by Settings, the pill, and the tray.                                                                                                        |
+| `crates/app/src/icons.rs`                                        | Embedded Settings icon assets for GPUI's existing SVG atlas.                                                                                                               |
+| `crates/app/src/gpui_ext.rs`                                     | GPUI updates that become no-ops once their entity, window, or app is gone, and native window handles for platform calls.                                                   |
+| `crates/app/src/child.rs`                                        | Hidden child processes, killed with their owner and reaped before anything replaces them.                                                                                  |
+| `crates/app/src/instance.rs`                                     | Configuration-directory lock and an owned loopback listener for revealing Settings and dispatching desktop Toggle and Cancel commands.                                     |
+| `crates/app/src/config.rs`                                       | Typed settings, path resolution, validation, and atomic saves.                                                                                                             |
 
 Core and app forbid unsafe code. Platform contains native FFI with local safety explanations.
 Application tests live beside their modules; dependency regression fixtures under `crates/app/tests`
@@ -64,13 +64,15 @@ single tap finishes after the double-tap window. Windows/macOS Escape passes to 
 Linux uses a reserved cancel chord or explicit desktop command. Both invalidate the insertion gate
 immediately. The five-minute cap is independent of UI animation.
 
-Capture owns its microphone thread. Finishing and cancellation retire it asynchronously; a retry
-waits for device teardown before opening another capture. Shortcut monitoring initializes off the UI
-thread on every platform and reports desktop readiness through the session's input channel. Pause
-starts microphone, speech, and shortcut cleanup together and waits for their owned completion. The
-shell retains thread-affine native monitors on the UI thread through retirement. Application-owned
-Quit requests enter a terminal lifecycle state, stop services and setup, drain requested saves, and
-await cleanup while rendering continues. Repeated Quit requests are harmless, and delayed
+Capture owns its microphone thread. Finishing stops callback publication, waits for in-flight
+packets, and reports sealed audio before native stream teardown, so recognition can overlap cleanup.
+Cancellation also quiesces callbacks. Both retire the microphone asynchronously; a retry waits for
+device teardown before opening another capture. Shortcut monitoring initializes off the UI thread on
+every platform and reports desktop readiness through the session's input channel. Pause starts
+microphone, speech, and shortcut cleanup together and waits for their owned completion. The shell
+retains thread-affine native monitors on the UI thread through retirement. Application-owned Quit
+requests enter a terminal lifecycle state, stop services and setup, drain requested saves, and await
+cleanup while rendering continues. Repeated Quit requests are harmless, and delayed
 validation/save/setup completion cannot re-enable dictation. The instance lock is released after
 Settings writers. Cleanup waits without a time limit for audio-driver teardown, process reaping,
 insertion, setup, and saves. A stuck owner leaves Quitting visible while the UI remains responsive.
@@ -150,9 +152,10 @@ native discontinuity before the first sample is queued does not abort startup. A
 discontinuity fails the recording rather than silently transcribing potentially incomplete speech.
 Refused real-time priority and automatic route changes keep the stream active. Fatal stream errors
 return through a bounded, nonblocking channel with their driver details, while a full application
-ring has a separate error. After stopping, it requires 100 ms of audible 20 ms windows, trims quiet
+ring has a separate error. The consumer classifies complete 20 ms speech windows while recording,
+leaving the final partial window for finish. It requires 100 ms of audible windows, trims quiet
 edges of at least one second while retaining 500 ms padding, and preserves interior pauses. WAV
-preparation stays off the UI. The native acceptance procedure is in
+preparation reuses the PCM allocation and stays off the UI. The native acceptance procedure is in
 [performance](performance.md#native-acceptance). Heavily trimmed recordings release excess PCM
 capacity when at least 8 MiB is unused and capacity is at least four times the remaining length.
 
@@ -216,22 +219,23 @@ Insertion is asynchronous and owns a generation-bound commit permit. Native prep
 the session owner or authorize a newer recording. Only the currently owned completion can update the
 session; shutdown awaits obsolete insertion cleanup.
 
-Insertion waits briefly for physical modifiers to be released. Normal mode writes text to the
-clipboard and submits the platform paste shortcut. Windows clipboard sequence and Mac change-count
-checks preserve newer copies. Linux uses X11 selection ownership or portal ownership notifications;
-it never restores a stale clipboard payload during cleanup. If automatic paste cannot proceed after
-copying, Settings explains how to paste manually. Target focus takes precedence over held modifiers
-on Windows and macOS. Linux follows X11/Xwayland focus ancestors and checks `_NET_WM_PID`
-immediately before submitting input; own Settings windows and failed focus lookups use manual paste.
-On the portal path, X focus None means no Speakeasy X window is focused; PointerRoot stays refused.
-These read-only focus queries run on the owned X worker, keeping portal cancellation responsive; its
-native clipboard is opened only for paste requests. GPUI currently renders through X11/Xwayland on
-Linux, including Wayland sessions. Correct focus loss when switching to a native Wayland editor
-remains a native acceptance item. Linux manual copy skips modifier waiting. X11 enqueues the entire
-paste and its releases before one server synchronization, then checks every submission. Wayland
-clipboard preparation and bounded selection transfers remain owned by the desktop service; blocking
-X11 fallback clipboard calls use a serialized worker. Serving a committed clipboard selection
-outlives its paste permit and ends when that selection loses ownership or the service retires.
+Insertion waits up to 800 ms for physical modifiers to be released, rechecking every 2 ms. Normal
+mode writes text to the clipboard and submits the platform paste shortcut. Windows clipboard
+sequence and Mac change-count checks preserve newer copies. Linux uses X11 selection ownership or
+portal ownership notifications; it never restores a stale clipboard payload during cleanup. If
+automatic paste cannot proceed after copying, Settings explains how to paste manually. Target focus
+takes precedence over held modifiers on Windows and macOS. Linux follows X11/Xwayland focus
+ancestors and checks `_NET_WM_PID` immediately before submitting input; own Settings windows and
+failed focus lookups use manual paste. On the portal path, X focus None means no Speakeasy X window
+is focused; PointerRoot stays refused. These read-only focus queries run on the owned X worker,
+keeping portal cancellation responsive; its native clipboard is opened only for paste requests. GPUI
+currently renders through X11/Xwayland on Linux, including Wayland sessions. Correct focus loss when
+switching to a native Wayland editor remains a native acceptance item. Linux manual copy skips
+modifier waiting. X11 enqueues the entire paste and its releases before one server synchronization,
+then checks every submission. Wayland clipboard preparation and bounded selection transfers remain
+owned by the desktop service; blocking X11 fallback clipboard calls use a serialized worker. Serving
+a committed clipboard selection outlives its paste permit and ends when that selection loses
+ownership or the service retires.
 
 **Keep clipboard** uses native Unicode input and leaves the clipboard untouched. Linux requires
 advertised EI text support; X11 reports this mode as unavailable. All text validation precedes the
@@ -264,7 +268,7 @@ performance gaps are in [performance](performance.md).
 | Change                                            | Read first                                                         | Relevant default checks                                                                                                             |
 | ------------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Gestures, deadlines, startup, cancellation        | `runtime/owner.rs`, `session.rs`, `microphone.rs`, `worker.rs`     | `runtime/tests.rs` drives the production owner; paused Tokio time tests the same deadlines used in production.                      |
-| Device errors, callback limits, PCM preparation   | `audio.rs`, `audio/control.rs`, `ports.rs`                         | Synthetic samples check callback budgets, cancellation, checked WAV encoding, and controlled thread teardown.                       |
+| Device errors, callback limits, PCM preparation   | `audio.rs`, `audio/control.rs`, `audio/speech.rs`, `ports.rs`      | Synthetic samples check callback budgets, cancellation, checked WAV encoding, and controlled thread teardown.                       |
 | Pause, reconfigure, quit, delayed saves           | `shell/services.rs`, `lifecycle.rs`, `shutdown.rs`, `save.rs`      | Lifecycle and save tests check terminal quit, latest pending configuration, ordered writes, and later edits/Pause.                  |
 | Windows/macOS keyboard policy                     | `platform/keyboard.rs`, native callback adapter                    | Pure key decisions run on every host; native hook lifecycle requires opt-in.                                                        |
 | Insertion                                         | `platform/insertion.rs`, `InsertPermit`, selected native adapter   | Eligibility, cancellation/commit, clipboard ownership, focus ancestry, and partial key submission.                                  |
