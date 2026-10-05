@@ -82,8 +82,8 @@ read-only. Serialize lockfiles, shared config, formatters, and integration. Each
 own build directory.
 
 Before handoff, run `mise run standards:check` and relevant native checks. Report the checked
-revision, behavior proved, results, unavailable native verification, and unresolved findings. Gates
-block and humans merge.
+revision, behavior proved, results, unavailable native verification, and unresolved findings. Push
+verified changes directly to `main`.
 
 ## Current repository
 

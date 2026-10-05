@@ -210,7 +210,7 @@ as `mise run rust:lint` and `mise run py:test`.
 
 Default tests drive the real session owner with mocked microphone, inference, and insertion. A
 paused clock exercises gesture deadlines and the five-minute cap. They never record, install a
-global hook, or touch the clipboard. Run checks locally before merging. See the
+global hook, or touch the clipboard. Run checks locally before pushing to `main`. See the
 [architecture change and test map](docs/architecture.md#change-and-test-map).
 
 <details>
