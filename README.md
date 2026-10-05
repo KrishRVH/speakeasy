@@ -154,11 +154,10 @@ compatibility remain separate from the app's glibc baseline.
 
 `bash scripts/package-linux.sh` prepares an x86_64 AppImage and bundled tar on an older builder,
 checking glibc 2.35. `--native-tar` makes an unbundled archive for the current machine; extract it
-and run `Speakeasy.AppDir/AppRun`. The release workflow builds Linux on Ubuntu 22.04; Linux
-pull-request checks also upload the built packages. Native graphics checks run those binaries in an
-Ubuntu 24.04 container with stock Mesa, preserving the build ABI while exercising a corrected
-software driver. CPU, memory, latency, and frame pacing checks are described in
-[performance](docs/performance.md).
+and run `Speakeasy.AppDir/AppRun`. The release workflow builds Linux on Ubuntu 22.04. Local native
+graphics checks run those binaries in an Ubuntu 24.04 container with stock Mesa, preserving the
+build ABI while exercising a corrected software driver. CPU, memory, latency, and frame pacing
+checks are described in [performance](docs/performance.md).
 
 ## Speech engines
 
@@ -203,7 +202,7 @@ mise install
 mise run standards:check
 ```
 
-The pinned toolchain and lockfiles make the local and CI gate the same. It checks Rust formatting,
+The pinned toolchain and lockfiles make local checks reproducible. The gate checks Rust formatting,
 Clippy, docs, tests, and unused dependencies; Python formatting, lint, types, and fixture tests;
 shell formatting, lint, and syntax; and Markdown formatting, structure, local links, and spelling.
 `mise run standards` applies safe formatters and autofixes. `mise tasks` lists focused checks such
@@ -211,7 +210,7 @@ as `mise run rust:lint` and `mise run py:test`.
 
 Default tests drive the real session owner with mocked microphone, inference, and insertion. A
 paused clock exercises gesture deadlines and the five-minute cap. They never record, install a
-global hook, or touch the clipboard. PR CI runs these checks on Linux, Windows, and macOS. See the
+global hook, or touch the clipboard. Run checks locally before merging. See the
 [architecture change and test map](docs/architecture.md#change-and-test-map).
 
 <details>
@@ -251,17 +250,18 @@ global hook, or touch the clipboard. PR CI runs these checks on Linux, Windows, 
   need Mesa's X11 software presentation fix, included in Mesa 24.1.
   `bash scripts/check-rendering-linux.sh` builds the native fixtures and runs them, plus the release
   binary that `package-linux.sh` builds, in an Ubuntu 24.04 Docker container with stock Mesa;
-  `--packages` checks the AppImage and tar launchers. The release workflow uses this packaged check.
-  The separate `idle_native_pill_starts_unmapped_and_can_show_and_hide` opt-in test verifies the
-  pill starts hidden and supports native show/hide on that private display.
+  `--packages` checks the AppImage and tar launchers locally. The separate
+  `idle_native_pill_starts_unmapped_and_can_show_and_hide` opt-in test verifies the pill starts
+  hidden and supports native show/hide on that private display.
 - `cargo run --locked -p speakeasy --example check_native_rendering -- --native-gui` opens an owned
   non-activating window, renders an embedded SVG and paths, resizes, and repeats show/hide. It runs
   on the process main thread for AppKit. Linux needs a private display, such as `xvfb-run -a`;
   Windows and Mac use their native desktop. It accesses no microphone, global hook, or clipboard.
-- `.github/workflows/release.yml` verifies and builds Windows, macOS, and Linux packages and runs
-  owned-window rendering checks. Only `main` publishes the GitHub release for the workspace version;
-  manual branch runs verify packages. Update `docs/release-notes.md` when bumping the workspace
-  version.
+- `.github/workflows/release.yml` builds and uploads Windows, macOS, and Linux packages without
+  running checks or tests. A change to `Cargo.toml` on `main`, or a manual workflow dispatch, starts
+  packaging. Only `main` publishes the GitHub release for the workspace version; manual branch runs
+  upload build artifacts. Bump the workspace version and update `docs/release-notes.md` for each
+  release.
 
 Live microphone-to-editor dictation and interactive macOS use still need hands-on acceptance.
 

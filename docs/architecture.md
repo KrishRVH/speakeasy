@@ -250,9 +250,8 @@ dictation is triggered. Remote microphone routing belongs to the OS and the user
 
 ## Verification
 
-`mise run standards:check` is the local and Linux CI gate. Native Windows/macOS CI runs the Rust
-gate with each platform's SDK; release builds additionally run owned-window rendering checks. From
-Linux,
+`mise run standards:check` is the local gate. Run native checks locally on their target platform; CI
+only builds and publishes release packages. From Linux,
 `cargo clippy -p speakeasy-platform -p speakeasy-core --all-targets --locked --target aarch64-apple-darwin -- -D warnings`
 (and the same with `--target x86_64-pc-windows-msvc`) type-checks the native adapters; it cannot
 verify native runtime behavior or the SDK-dependent GPUI application build.
@@ -273,7 +272,7 @@ performance gaps are in [performance](performance.md).
 | Windows/macOS keyboard policy                     | `platform/keyboard.rs`, native callback adapter                    | Pure key decisions run on every host; native hook lifecycle requires opt-in.                                                        |
 | Insertion                                         | `platform/insertion.rs`, `InsertPermit`, selected native adapter   | Eligibility, cancellation/commit, clipboard ownership, focus ancestry, and partial key submission.                                  |
 | Engine startup/recovery                           | `local_speech.rs`, `runtime/worker.rs`                             | Controlled process exit/cancellation and fake worker retirement; public fixture checks are separate.                                |
-| Dependency patches                                | Each vendor `README.speakeasy.md`                                  | Portable GPUI fixtures plus native CI and Linux GUI checks.                                                                         |
+| Dependency patches                                | Each vendor `README.speakeasy.md`                                  | Portable GPUI fixtures plus local native and Linux GUI checks.                                                                      |
 | Profiling, packaged launchers, private GUI checks | `scripts/profile_linux.py`, `check_demo_linux.py`, package scripts | Public `/proc` fixtures, explicit clocks, owned child processes, argument admission, and AppRun argument/library-path preservation. |
 
 Live microphone, hooks, clipboard/editor acceptance, compositor behavior, and mixed-display frame
@@ -282,4 +281,4 @@ pacing require explicit native acceptance.
 Use explicit gates for fake cleanup, closing them when a failed test disposes its harness. Timer
 timeouts inside fakes change paused-time behavior; use bounded observation helpers instead. Add a
 port only for an actual side effect. Keep native mechanics in the adapter and deterministic
-decisions in portable code. PR checks run on Linux, Windows, and macOS.
+decisions in portable code.
