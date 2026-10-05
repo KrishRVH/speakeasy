@@ -5594,6 +5594,7 @@ dependencies = [
  "cpal",
  "embed-resource",
  "gpui",
+ "proptest",
  "raw-window-handle",
  "reqwest",
  "rtrb",

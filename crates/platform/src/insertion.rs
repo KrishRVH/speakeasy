@@ -10,7 +10,7 @@ use super::{InsertPermit, Inserted};
 /// How long insertion waits for the user to let go of shortcut modifiers.
 pub(crate) const MODIFIER_WAIT: Duration = Duration::from_millis(800);
 /// How often insertion rechecks held modifiers while it waits.
-const MODIFIER_POLL: Duration = Duration::from_millis(10);
+const MODIFIER_POLL: Duration = Duration::from_millis(2);
 
 /// How dictated text reaches the focused editor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

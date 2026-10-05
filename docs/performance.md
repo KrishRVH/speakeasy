@@ -21,8 +21,10 @@ when the full interaction remains correct.
 - Meter updates coalesce into a pending native frame. Session changes redraw immediately. Grille
   motion has a 200-FPS ceiling; settled and hidden views request no animation frames. Display
   refresh can impose a lower rate.
-- Edge trimming uses integer energy and keeps speech padding. WAV preparation reuses the PCM
-  allocation, checks lengths, and rejects unsupported input.
+- Speech classification runs incrementally on the capture consumer, leaving only a partial window to
+  classify at stop. [Architecture](architecture.md#session-ownership) owns trimming and sealed
+  audio/teardown ordering. WAV preparation reuses the PCM allocation, checks lengths, and rejects
+  unsupported input.
 - Do not add an always-on microphone, worker pool, cache, resampler, or background service without a
   measured user benefit and explicit resource ownership.
 
@@ -35,8 +37,12 @@ about a newly changed revision.
 Record hardware, model and runtime, sample rate, request boundaries, warmup, and competing load.
 Compare paired runs and check word accuracy and formatting as well as latency. Keep transcripts out
 of logs. The opt-in tests `profile_fixture_dictation` and `profile_ready_text_latency` exercise the
-real session owner with public audio or fake devices; the README lists the fixture variables. Use
-ordinary native profilers rather than a permanent benchmark suite.
+real session owner with public audio or fake devices; the README lists the fixture variables. The
+synthetic `profile_audio_pipeline` probe reports callback/downmix/consumer work and sealing of a
+five-minute recording whose speech windows were classified while recording. Sealing includes the
+remaining window, range selection, trimming, capacity reclamation, and WAV encoding; it excludes
+microphone teardown, inference, and insertion. Use ordinary native profilers rather than a permanent
+benchmark suite.
 
 ## Native process sampling
 
