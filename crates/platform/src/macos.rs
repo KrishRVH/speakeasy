@@ -3,6 +3,8 @@
 //!
 //! The tap's run-loop thread creates and removes every native resource its callbacks reach.
 
+pub(crate) mod screen;
+
 use std::{
     cell::RefCell,
     ffi::c_void,

@@ -17,6 +17,7 @@ mod macos;
 mod monitor;
 mod owned_thread;
 mod process;
+mod screen;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -46,7 +47,15 @@ pub use self::windows::{
     InputMonitor, attach_console, choose_file, configure_pill, minimize_to_tray, reduced_motion,
     set_pill_visible, set_settings_visible, show_error,
 };
-pub use self::{insertion::Delivery, owned_thread::OwnedThread, process::ProcessGroup};
+pub use self::{
+    insertion::Delivery,
+    owned_thread::OwnedThread,
+    process::ProcessGroup,
+    screen::{
+        Display, Frame, PointerMonitor, PointerSample, ScreenCapture, ScreenEvent,
+        configure_overlay, set_excluded_from_capture, set_overlay_visible,
+    },
+};
 
 /// The pill window's width in device-independent pixels.
 pub const PILL_WIDTH: u16 = 400;
