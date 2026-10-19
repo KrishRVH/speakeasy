@@ -44,6 +44,7 @@ use windows_sys::{
             Com::{
                 COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize,
             },
+            Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE},
             LibraryLoader::GetModuleHandleW,
             RemoteDesktop::{
                 NOTIFY_FOR_THIS_SESSION, WTSRegisterSessionNotification,
@@ -807,6 +808,19 @@ pub fn reduced_motion() -> bool {
         SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, (&raw mut animates).cast(), 0);
     }
     animates == FALSE
+}
+
+/// Sends output to the terminal that launched this windowed executable, if one did.
+///
+/// A windowed executable starts without a console, so command-line output would vanish. Output
+/// already redirected to a pipe or file keeps its destination.
+pub fn attach_console() {
+    // SAFETY: neither call takes pointers; a failed attach leaves output where it was.
+    unsafe {
+        if GetStdHandle(STD_OUTPUT_HANDLE).is_null() {
+            AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
 }
 
 /// Presents a local startup error; callers never include audio, transcripts, or credentials.

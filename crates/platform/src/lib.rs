@@ -43,8 +43,8 @@ pub use self::macos::{
 use self::windows as native;
 #[cfg(target_os = "windows")]
 pub use self::windows::{
-    InputMonitor, choose_file, configure_pill, minimize_to_tray, reduced_motion, set_pill_visible,
-    set_settings_visible, show_error,
+    InputMonitor, attach_console, choose_file, configure_pill, minimize_to_tray, reduced_motion,
+    set_pill_visible, set_settings_visible, show_error,
 };
 pub use self::{insertion::Delivery, owned_thread::OwnedThread, process::ProcessGroup};
 

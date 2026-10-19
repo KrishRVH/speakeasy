@@ -5587,7 +5587,7 @@ dependencies = [
 
 [[package]]
 name = "speakeasy"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
@@ -5603,6 +5603,7 @@ dependencies = [
  "sha2 0.11.0",
  "speakeasy-core",
  "speakeasy-platform",
+ "speakeasy-show",
  "tempfile",
  "tokio",
  "tray-icon",
@@ -5611,14 +5612,14 @@ dependencies = [
 
 [[package]]
 name = "speakeasy-core"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "speakeasy-platform"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "anyhow",
  "arboard",
@@ -5641,6 +5642,18 @@ dependencies = [
  "x11rb 0.14.0",
  "xkbcommon 0.9.0",
  "zbus",
+]
+
+[[package]]
+name = "speakeasy-show"
+version = "0.3.5"
+dependencies = [
+ "png 0.18.1",
+ "proptest",
+ "serde",
+ "serde_json",
+ "tiny-skia",
+ "ttf-parser 0.25.1",
 ]
 
 [[package]]

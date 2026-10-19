@@ -33,6 +33,7 @@ install -Dm755 packaging/linux/AppRun "$app_dir/AppRun"
 install -Dm644 packaging/linux/io.github.krvh.speakeasy.desktop "$app_dir/usr/share/applications/io.github.krvh.speakeasy.desktop"
 install -Dm644 packaging/brand/app-icon.svg "$app_dir/usr/share/icons/hicolor/scalable/apps/io.github.krvh.speakeasy.svg"
 install -Dm644 crates/app/assets/JosefinSans-OFL.txt "$app_dir/usr/share/licenses/speakeasy/JosefinSans-OFL.txt"
+install -Dm644 crates/show/NOTICE.md "$app_dir/usr/share/licenses/speakeasy/NOTICE.md"
 install -Dm644 settings.example.json "$app_dir/usr/share/speakeasy/settings.example.json"
 {
   printf 'Architecture: x86_64\nApplication glibc requirement: %s\n' "$required"

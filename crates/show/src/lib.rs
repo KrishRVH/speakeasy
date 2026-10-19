@@ -1,0 +1,42 @@
+//! Turns a recorded Show into a bundle a coding agent can read.
+//!
+//! A Show is a screen recording with narration, pointer events, and ink drawn over the screen.
+//! [`select`] picks the keyframes worth showing from frame signatures taken during capture, and
+//! [`compose`] annotates them and writes the contact sheet, summary, and manifest. Nothing here
+//! performs I/O: callers supply frames and receive encoded files.
+//!
+//! Selection, layout, and drawing follow Scrawl's, under the MIT License; see `NOTICE.md`.
+
+#![forbid(unsafe_code)]
+
+mod align;
+mod bundle;
+mod convert;
+mod demo;
+mod draw;
+mod error;
+mod geometry;
+mod image;
+mod ink;
+mod marks;
+mod moment;
+mod recording;
+mod select;
+mod serde_range;
+mod sheet;
+mod signature;
+mod typeface;
+
+pub use crate::{
+    bundle::{Bundle, File, Manifest, compose},
+    demo::Demo,
+    error::Error,
+    geometry::{Point, Rect},
+    image::Image,
+    marks::{Mark, Shape},
+    moment::{Moment, Span},
+    recording::{Action, EmptyStroke, InkPoint, Recording, Size, Speech, Stroke, Word, budget},
+    select::{Keyframe, Reason, Selection, select},
+    signature::{Sample, Signature},
+    typeface::Typeface,
+};

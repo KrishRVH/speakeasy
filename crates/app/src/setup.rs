@@ -316,8 +316,8 @@ impl Installation {
     }
 }
 
-/// Engines and models are machine-local, so they stay out of roaming settings.
-fn data_root() -> PathBuf {
+/// Engines, models, and Shows are machine-local, so they stay out of roaming settings.
+pub(crate) fn data_root() -> PathBuf {
     #[cfg(target_os = "windows")]
     let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
     #[cfg(target_os = "macos")]

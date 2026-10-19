@@ -26,6 +26,7 @@ flowchart LR
 | Area                                                             | Responsibility                                                                                                                                                             |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `crates/core`                                                    | Pure gesture deadlines and analytic motion springs.                                                                                                                        |
+| `crates/show`                                                    | Pure Show composition: frame signatures, ink marks, keyframe selection, narration alignment, annotation, the contact sheet, summary, and manifest. No I/O.                 |
 | `crates/platform`                                                | Native keyboard input, lifecycle notifications, pill windows, the Windows file dialog, insertion, reduced-motion preference, owned threads, and owned process containment. |
 | `crates/app/src/runtime/`                                        | One session owner; recording, inference, cancellation, settings changes, and final insertion ordering.                                                                     |
 | `runtime/session.rs`, `microphone.rs`, `worker.rs`               | Session authority and presentation stages; one open or retiring microphone; one ready worker or owned load/inference/recovery job.                                         |
@@ -45,8 +46,9 @@ flowchart LR
 | `crates/app/src/child.rs`                                        | Hidden child processes, killed with their owner and reaped before anything replaces them.                                                                                  |
 | `crates/app/src/instance.rs`                                     | Configuration-directory lock and an owned loopback listener for revealing Settings and dispatching desktop Toggle and Cancel commands.                                     |
 | `crates/app/src/config.rs`                                       | Typed settings, path resolution, validation, and atomic saves.                                                                                                             |
+| `crates/app/src/show.rs`                                         | Show bundle location and naming, private all-at-once bundle writes, and the `show` subcommand.                                                                             |
 
-Core and app forbid unsafe code. Platform contains native FFI with local safety explanations.
+Core, show, and app forbid unsafe code. Platform contains native FFI with local safety explanations.
 Application tests live beside their modules; dependency regression fixtures under `crates/app/tests`
 include the patched helpers directly.
 
@@ -274,6 +276,7 @@ performance gaps are in [performance](performance.md).
 | Engine startup/recovery                           | `local_speech.rs`, `runtime/worker.rs`                             | Controlled process exit/cancellation and fake worker retirement; public fixture checks are separate.                                |
 | Dependency patches                                | Each vendor `README.speakeasy.md`                                  | Portable GPUI fixtures plus local native and Linux GUI checks.                                                                      |
 | Profiling, packaged launchers, private GUI checks | `scripts/profile_linux.py`, `check_demo_linux.py`, package scripts | Public `/proc` fixtures, explicit clocks, owned child processes, argument admission, and AppRun argument/library-path preservation. |
+| Show keyframes, ink, contact sheet, summary       | `crates/show/src/select.rs`, `align.rs`, `sheet.rs`, `bundle.rs`   | Signature-only selection cases, a golden summary of the scripted demo, and layout properties; `show demo` writes a bundle to view.  |
 
 Live microphone, hooks, clipboard/editor acceptance, compositor behavior, and mixed-display frame
 pacing require explicit native acceptance.

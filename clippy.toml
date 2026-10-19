@@ -86,6 +86,7 @@ max-fn-params-bools = 3
 single-char-binding-names-threshold = 4
 too-many-arguments-threshold = 7
 
-# GPUI's transparent f32 coordinate wrapper has the same non-panicking
+# GPUI's and Show's f32 coordinate types have the same non-panicking
 # arithmetic as primitive floats; integer sizes, counters and deadlines do not.
-arithmetic-side-effects-allowed = ["gpui::Pixels"]
+# Clippy names a type from the crate being linted by its path within that crate.
+arithmetic-side-effects-allowed = ["gpui::Pixels", "geometry::Point"]

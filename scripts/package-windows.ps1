@@ -14,5 +14,6 @@ New-Item -ItemType Directory -Force -Path $destination | Out-Null
 Copy-Item 'target/x86_64-pc-windows-msvc/release/speakeasy.exe' $destination
 Copy-Item 'settings.example.json' $destination
 Copy-Item 'crates/app/assets/JosefinSans-OFL.txt' $destination
-Compress-Archive -LiteralPath "$destination/speakeasy.exe", "$destination/settings.example.json", "$destination/JosefinSans-OFL.txt" -DestinationPath 'artifacts/speakeasy-windows-x64.zip' -Force
+Copy-Item 'crates/show/NOTICE.md' $destination
+Compress-Archive -LiteralPath "$destination/speakeasy.exe", "$destination/settings.example.json", "$destination/JosefinSans-OFL.txt", "$destination/NOTICE.md" -DestinationPath 'artifacts/speakeasy-windows-x64.zip' -Force
 Write-Host "Built $destination"

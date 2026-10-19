@@ -17,6 +17,7 @@ cp packaging/macos/Info.plist "$bundle/Contents/Info.plist"
 cp packaging/macos/Speakeasy.icns "$bundle/Contents/Resources/"
 cp settings.example.json "$bundle/Contents/Resources/"
 cp crates/app/assets/JosefinSans-OFL.txt "$bundle/Contents/Resources/"
+cp crates/show/NOTICE.md "$bundle/Contents/Resources/"
 # Local development signature; distribution still requires Developer ID signing
 # and notarization. Keep the bundle identifier stable for OS permissions.
 codesign --force --sign - "$bundle"

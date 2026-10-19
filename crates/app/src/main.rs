@@ -15,6 +15,7 @@ mod ports;
 mod runtime;
 mod setup;
 mod shell;
+mod show;
 mod status;
 mod theme;
 mod transcript;
@@ -23,6 +24,7 @@ mod tray;
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
+    process::ExitCode,
 };
 
 use anyhow::{Context as _, bail, ensure};
@@ -37,9 +39,10 @@ use crate::{
     shell::{LaunchMode, Services},
 };
 
-// Josefin Sans SemiBold, SIL Open Font License 1.1 (assets/JosefinSans-OFL.txt).
+// Josefin Sans SemiBold, SIL Open Font License 1.1 (assets/JosefinSans-OFL.txt), draws the
+// wordmark and the badges on Show keyframes.
 const WORDMARK_FONT: &str = "Josefin Sans";
-const WORDMARK_FONT_FILE: &[u8] = include_bytes!("../assets/JosefinSans-SemiBold.ttf");
+const BRAND_FONT_FILE: &[u8] = include_bytes!("../assets/JosefinSans-SemiBold.ttf");
 
 struct Cli {
     mode: LaunchMode,
@@ -47,9 +50,25 @@ struct Cli {
     path: PathBuf,
 }
 
+/// What the command line asks for.
+enum Invocation {
+    Help,
+    App(Cli),
+    /// A `show` subcommand, or why its arguments were not understood.
+    Show(anyhow::Result<show::Command>),
+}
+
 impl Cli {
+    fn parse(args: impl Iterator<Item = String>) -> anyhow::Result<Invocation> {
+        let mut args = args.peekable();
+        if args.next_if(|arg| arg == "show").is_some() {
+            return Ok(Invocation::Show(show::Command::parse(args)));
+        }
+        Ok(Self::parse_app(args)?.map_or(Invocation::Help, Invocation::App))
+    }
+
     /// Returns `None` when help was requested.
-    fn parse(mut args: impl Iterator<Item = String>) -> anyhow::Result<Option<Self>> {
+    fn parse_app(mut args: impl Iterator<Item = String>) -> anyhow::Result<Option<Self>> {
         let mut cli = Self {
             mode: LaunchMode::Live,
             command: None,
@@ -97,22 +116,44 @@ impl ConfigState {
     }
 }
 
-fn main() {
-    if let Err(error) = run() {
-        speakeasy_platform::show_error(&format!("{error:#}"));
+fn main() -> ExitCode {
+    let invocation = Cli::parse(std::env::args().skip(1));
+    if matches!(invocation, Ok(Invocation::Show(_) | Invocation::Help)) {
+        attach_console();
+    }
+    match invocation {
+        Ok(Invocation::Help) => {
+            print_help();
+            ExitCode::SUCCESS
+        },
+        // Commands report to the terminal that ran them, not in a dialog.
+        Ok(Invocation::Show(command)) => match command.and_then(show::Command::run) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("speakeasy: {error:#}");
+                ExitCode::FAILURE
+            },
+        },
+        Ok(Invocation::App(cli)) => {
+            if let Err(error) = run(cli) {
+                speakeasy_platform::show_error(&format!("{error:#}"));
+            }
+            ExitCode::SUCCESS
+        },
+        Err(error) => {
+            speakeasy_platform::show_error(&format!("{error:#}"));
+            ExitCode::SUCCESS
+        },
     }
 }
 
-fn run() -> anyhow::Result<()> {
-    let Some(Cli {
+fn run(
+    Cli {
         mode,
         command,
         path,
-    }) = Cli::parse(std::env::args().skip(1))?
-    else {
-        print_help();
-        return Ok(());
-    };
+    }: Cli,
+) -> anyhow::Result<()> {
     let path = std::path::absolute(path)?;
     if let Some(command) = command {
         ensure!(
@@ -195,6 +236,13 @@ fn launch(
     });
 }
 
+/// Gives command-line output a terminal on Windows. Only commands attach: an app sharing the
+/// launching console would also receive its Ctrl+C.
+fn attach_console() {
+    #[cfg(target_os = "windows")]
+    speakeasy_platform::attach_console();
+}
+
 fn print_help() {
     let commands = if cfg!(target_os = "linux") {
         " | --toggle | --cancel"
@@ -213,6 +261,9 @@ fn print_help() {
     }
     println!(
         "--demo uses simulated audio without microphone, hook, or clipboard access.\n--demo-tray also previews native tray, minimize, close and relaunch behavior."
+    );
+    println!(
+        "speakeasy show demo [--out NEW_DIR] writes a scripted Show bundle and prints its summary."
     );
 }
 
@@ -243,7 +294,7 @@ fn load_wordmark_font(cx: &App) {
     )]
     let _ = cx
         .text_system()
-        .add_fonts(vec![Cow::Borrowed(WORDMARK_FONT_FILE)]);
+        .add_fonts(vec![Cow::Borrowed(BRAND_FONT_FILE)]);
 }
 
 fn release_services(cx: &mut App) -> impl Future<Output = ()> + use<> {
@@ -261,7 +312,7 @@ mod tests {
     use super::*;
 
     fn parse(args: &[&str]) -> anyhow::Result<Option<Cli>> {
-        Cli::parse(args.iter().map(|arg| (*arg).to_owned()))
+        Cli::parse_app(args.iter().map(|arg| (*arg).to_owned()))
     }
 
     #[test]
@@ -278,6 +329,22 @@ mod tests {
         assert!(parse(&["--help", "--unknown"])?.is_none());
         assert!(parse(&["--unknown", "--help"]).is_err());
         assert!(parse(&["--config"]).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn show_is_a_subcommand_only_in_first_position() -> anyhow::Result<()> {
+        let invoke = |args: &[&str]| Cli::parse(args.iter().map(|arg| (*arg).to_owned()));
+        assert!(matches!(
+            invoke(&["show", "demo"])?,
+            Invocation::Show(Ok(_))
+        ));
+        assert!(matches!(
+            invoke(&["show", "record"])?,
+            Invocation::Show(Err(_))
+        ));
+        assert!(matches!(invoke(&["--help"])?, Invocation::Help));
+        assert!(invoke(&["--demo", "show"]).is_err());
         Ok(())
     }
 }

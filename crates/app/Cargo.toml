@@ -12,6 +12,7 @@ ignored = ["embed-resource"]
 [dependencies]
 speakeasy-core = { path = "../core" }
 speakeasy-platform = { path = "../platform" }
+speakeasy-show = { path = "../show" }
 anyhow.workspace = true
 async-channel.workspace = true
 cpal.workspace = true

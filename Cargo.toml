@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/platform", "crates/app"]
+members = ["crates/core", "crates/show", "crates/platform", "crates/app"]
 exclude = ["vendor/gpui", "vendor/gpui_media"]
 resolver = "3"
 
@@ -8,7 +8,7 @@ gpui = { path = "vendor/gpui" }
 gpui_media = { path = "vendor/gpui_media" }
 
 [workspace.package]
-version = "0.3.4"
+version = "0.3.5"
 edition = "2024"
 rust-version = "1.98.1"
 publish = false
@@ -30,6 +30,7 @@ libloading = "0.9.0"
 objc2 = "0.6.4"
 objc2-app-kit = "0.3.2"
 objc2-foundation = "0.3.2"
+png = "0.18.1"
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 raw-window-handle = "0.6.2"
 reqwest = { version = "0.13.5", default-features = false }
@@ -38,8 +39,10 @@ serde = "1.0.229"
 serde_json = "1.0.151"
 sha2 = "0.11.0"
 tempfile = "3.27.0"
+tiny-skia = { version = "0.11.4", default-features = false, features = ["std", "simd"] }
 tokio = "1.53.1"
 tray-icon = { version = "0.26.0", default-features = false }
+ttf-parser = { version = "0.25.1", default-features = false, features = ["std"] }
 windows-sys = "0.61.2"
 x11rb = "0.14.0"
 xkbcommon = "0.9.0"
