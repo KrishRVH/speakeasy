@@ -357,6 +357,40 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn listeners_held_by_members_other_than_the_leader_count() -> anyhow::Result<()> {
+        use std::{
+            io::{BufRead, BufReader},
+            os::{fd::OwnedFd, unix::process::CommandExt},
+            process::{Command, Stdio},
+        };
+
+        use anyhow::Context;
+
+        let held = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let port = held.local_addr()?.port();
+        // Like a wrapper that does not exec its engine, the leader hands its only descriptor for
+        // the listener to a grandchild, so neither the leader's descriptors nor parentage find it;
+        // only group membership does. The leader reports once the grandchild exists.
+        let mut leader = Command::new("sh")
+            .args([
+                "-c",
+                "exec 3<&0; (sleep 60 <&3 3<&- &); exec 0</dev/null 3<&-; echo; exec sleep 60",
+            ])
+            .process_group(0)
+            .stdin(Stdio::from(OwnedFd::from(held)))
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let mut group = ProcessGroup::attach(leader.id())?;
+        let handed_over = leader.stdout.take().context("Leader output missing")?;
+        BufReader::new(handed_over).read_line(&mut String::new())?;
+        assert!(group.holds_loopback_listener(port)?);
+        group.terminate();
+        leader.wait()?;
+        Ok(())
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn only_listeners_held_inside_the_job_count() -> anyhow::Result<()> {
