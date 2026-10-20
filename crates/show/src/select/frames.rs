@@ -40,6 +40,7 @@ impl<'a> Frames<'a> {
     }
 
     fn sample(&self, frame: usize) -> &'a Sample {
+        debug_assert!(frame < self.samples.len(), "frame {frame} is out of bounds");
         self.samples.get(frame).copied().unwrap_or(self.first)
     }
 
