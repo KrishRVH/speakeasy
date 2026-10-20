@@ -5,7 +5,7 @@
 //! rebuilt exactly, for keyframes now and closer looks later. Each frame's [`Sample`] is kept and
 //! dropped with its tiles, so selection only picks frames the journal holds.
 
-use std::mem;
+use std::{mem, time::Duration};
 
 use crate::{
     Image, Moment, convert,
@@ -101,10 +101,14 @@ impl Journal {
         admitted
     }
 
-    /// Records `frame` and its signature as on screen at `at`, which must not precede the last
-    /// recorded moment, then thins the journal while it is over budget.
+    /// Records `frame` and its signature as on screen at `at`, then thins the journal while it is
+    /// over budget. A moment no later than the last recorded one moves just past it, so every
+    /// frame keeps a moment of its own and [`frame_at`](Journal::frame_at) rebuilds the frame
+    /// each sample fingerprints.
     pub fn record(&mut self, at: Moment, frame: Image) {
-        let at = self.samples.last().map_or(at, |last| at.max(last.at));
+        let at = self.samples.last().map_or(at, |last| {
+            at.max(last.at.saturating_add(Duration::from_millis(1)))
+        });
         let index = self.samples.len();
         self.samples.push(Sample {
             at,
@@ -532,7 +536,7 @@ mod tests {
 
         #[test]
         fn a_budget_thins_frames_and_their_samples_together(
-            arrivals in prop::collection::vec((1_u64..=300, 0_u8..4, 0_usize..3), 1..48),
+            arrivals in prop::collection::vec((-300_i64..=300, 0_u8..4, 0_usize..3), 1..48),
         ) {
             // A few frames' worth, so arrivals overrun it and the journal thins again and again.
             const BUDGET: usize = 1_500;
@@ -540,7 +544,8 @@ mod tests {
             let (mut shade, mut millis) = ([0_u8; 4], 0_u64);
             let (mut first, mut last) = (None, None);
             for (delta, quadrant, size) in arrivals {
-                millis = millis.wrapping_add(delta);
+                // Capture clocks can repeat a moment or step back.
+                millis = millis.saturating_add_signed(delta);
                 if let Some(value) = shade.get_mut(usize::from(quadrant)) {
                     *value = value.wrapping_add(40);
                 }
