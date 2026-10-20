@@ -253,7 +253,7 @@ impl Recorder {
         id: SessionId,
         events: &Sender<CaptureEvent>,
         control: &Control,
-    ) -> Captured<Option<LiveStream>> {
+    ) -> Captured<LiveStream> {
         let drained = self.drain(id, events, control);
         control.finish();
         control.quiesce();
@@ -273,10 +273,7 @@ impl Recorder {
             capture_failure(control, &errors)?;
             pcm.seal(speech, rate)
         });
-        Captured {
-            outcome,
-            device: Some(device),
-        }
+        Captured { outcome, device }
     }
 
     fn drain(
@@ -371,7 +368,13 @@ fn record(
     control: &Arc<Control>,
 ) -> anyhow::Result<Captured<Option<LiveStream>>> {
     match Recorder::open(microphone, events, control) {
-        Ok(recorder) => Ok(recorder.record(id, events, control)),
+        Ok(recorder) => {
+            let Captured { outcome, device } = recorder.record(id, events, control);
+            Ok(Captured {
+                outcome,
+                device: Some(device),
+            })
+        },
         Err(Startup::Stopped) => Ok(Captured {
             outcome: Ok(None),
             device: None,
