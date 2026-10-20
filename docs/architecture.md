@@ -150,12 +150,13 @@ last successful write. Completion preserves edits made after Save, and Pause inv
 enable request. Quit waits for requested writes. Resume validates configured files in the background
 before enabling dictation.
 
-Relaunch discovery uses `instance.port` next to the locked `instance.lock`. The loopback listener
-accepts fixed Reveal, Toggle, and Cancel commands, returns a fixed identification response, and
-carries no audio or transcript data. Linux exposes Toggle/Cancel only when desktop command bindings
-are enabled. Its thread sleeps in accept, is explicitly woken and joined at shutdown, and holds the
-lock until cleanup finishes. The first-hide hint is remembered in `tray-hint-seen` beside settings
-without rewriting the user's configuration.
+Relaunch discovery uses `instance.port` next to the locked `instance.lock`; only the user can read
+its port and per-launch secret. The loopback listener answers nothing until a caller presents the
+secret, then reads one fixed Reveal, Toggle, or Cancel command; a caller that times out before the
+acknowledgement has delivered nothing. It carries no audio or transcript data. Linux exposes
+Toggle/Cancel only when desktop command bindings are enabled. Its thread sleeps in accept, is
+explicitly woken and joined at shutdown, and holds the lock until cleanup finishes. The first-hide
+hint is remembered in `tray-hint-seen` beside settings without rewriting the user's configuration.
 
 The audio callback writes to a bounded ring without allocating. The speech meter spans −60 to −6
 dBFS; its top is a speech reference, not a clipping indication. Unencoded PCM is zeroed whenever its

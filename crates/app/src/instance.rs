@@ -1,6 +1,7 @@
 //! The configuration-directory lock and a loopback listener through which later launches send fixed
-//! reveal, toggle, and cancel requests. Windows file locks also deny reads, so the listener port is
-//! published in a separate file that callers verify through an identification handshake.
+//! reveal, toggle, and cancel requests. Windows file locks also deny reads, so the listener's port
+//! and a per-launch secret are published in a separate owner-only file, and the listener answers
+//! only callers that present the secret.
 
 use std::{
     fs::{self, File, OpenOptions},
@@ -17,9 +18,10 @@ use speakeasy_platform::OwnedThread;
 
 const LOCK_FILE: &str = "instance.lock";
 const PORT_FILE: &str = "instance.port";
-/// Bounds the read of a damaged port file; a decimal port needs at most five bytes.
-const MAX_PORT_FILE_BYTES: u64 = 16;
-const IDENTIFICATION: &[u8] = b"SPEAKEASY";
+/// Bounds the read of a damaged port file; a port and its secret need at most 38 bytes.
+const MAX_PORT_FILE_BYTES: u64 = 64;
+/// The listener's reply to a caller that presented the secret.
+const ACKNOWLEDGED: u8 = 0x06;
 const IO_TIMEOUT: Duration = Duration::from_millis(100);
 const REVEAL_ATTEMPTS: u32 = 25;
 const REVEAL_RETRY: Duration = Duration::from_millis(20);
@@ -74,24 +76,23 @@ impl Instance {
         }
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         let address = listener.local_addr()?;
-        let port_file = directory.join(PORT_FILE);
-        fs::write(&port_file, address.port().to_string())?;
+        let (Endpoint { nonce, .. }, port_file) = Endpoint::publish(address.port(), directory)?;
         let (requests, received) = async_channel::bounded(1);
         let server = OwnedThread::spawn("instance-server", {
             let requests = requests.clone();
-            move || serve(&listener, &requests)
+            move || serve(&listener, nonce, &requests)
         })?;
         let instance = Self {
             requests,
             address,
             _server: server,
-            _port_file: PortFile(port_file),
+            _port_file: port_file,
             _lock: lock,
         };
         Ok(Some((instance, received)))
     }
 
-    /// Sends `request` to the running instance once it has identified itself.
+    /// Sends `request` to the running instance once it has acknowledged the secret.
     pub(crate) fn send(path: &Path, request: Request) -> anyhow::Result<()> {
         let mut stream = connect(&path.with_file_name(PORT_FILE))?;
         stream.write_all(&[request as u8])?;
@@ -110,14 +111,59 @@ impl Drop for Instance {
     }
 }
 
-/// The published listener port, removed on drop.
+/// Where the running instance listens, and the per-launch secret a caller presents to prove it can
+/// read the owner-only port file.
+struct Endpoint {
+    port: u16,
+    nonce: u128,
+}
+
+impl Endpoint {
+    /// Mints a secret for `port` and publishes both in `directory`. The file is created owner-only
+    /// on Unix and inherits the per-user profile's ACL on Windows, then atomically replaces any
+    /// older one.
+    fn publish(port: u16, directory: &Path) -> anyhow::Result<(Self, PortFile)> {
+        let mut nonce = [0_u8; 16];
+        getrandom::fill(&mut nonce)?;
+        let endpoint = Self {
+            port,
+            nonce: u128::from_le_bytes(nonce),
+        };
+        let mut file = tempfile::NamedTempFile::new_in(directory)?;
+        write!(file, "{port} {:032x}", endpoint.nonce)?;
+        let path = directory.join(PORT_FILE);
+        file.persist(&path).map_err(|error| error.error)?;
+        Ok((endpoint, PortFile(path)))
+    }
+
+    /// Reads a published endpoint. Errors never quote the file.
+    fn read(port_file: &Path) -> anyhow::Result<Self> {
+        let mut text = String::new();
+        File::open(port_file)
+            .context("Start Speakeasy before using a desktop shortcut")?
+            .take(MAX_PORT_FILE_BYTES)
+            .read_to_string(&mut text)?;
+        // An older version publishes only its port.
+        text.trim()
+            .split_once(' ')
+            .and_then(|(port, nonce)| {
+                Some(Self {
+                    port: port.parse().ok()?,
+                    nonce: u128::from_str_radix(nonce, 16).ok()?,
+                })
+            })
+            .context("Restart Speakeasy to use desktop shortcuts")
+    }
+}
+
+/// The published endpoint, removed on drop.
 struct PortFile(PathBuf);
 
 impl Drop for PortFile {
     fn drop(&mut self) {
         #[expect(
             clippy::let_underscore_must_use,
-            reason = "The released lock is authoritative; a stale port file cannot pass instance identification"
+            reason = "The released lock is authoritative; a stale port file carries a dead secret"
         )]
         let _ = fs::remove_file(&self.0);
     }
@@ -134,12 +180,12 @@ fn reveal_running(path: &Path) -> anyhow::Result<()> {
     bail!("Speakeasy is already running. Open Settings from its tray icon.");
 }
 
-fn serve(listener: &TcpListener, requests: &Sender<Request>) {
+fn serve(listener: &TcpListener, nonce: u128, requests: &Sender<Request>) {
     while let Ok((mut stream, _)) = listener.accept() {
         if requests.is_closed() {
             break;
         }
-        let Ok(Some(request)) = handshake(&mut stream) else {
+        let Ok(Some(request)) = handshake(&mut stream, nonce) else {
             continue;
         };
         // Blocking keeps Toggle and Cancel from coalescing while the UI is busy; closing the lane
@@ -150,10 +196,17 @@ fn serve(listener: &TcpListener, requests: &Sender<Request>) {
     }
 }
 
-fn handshake(stream: &mut TcpStream) -> io::Result<Option<Request>> {
-    stream.set_write_timeout(Some(IO_TIMEOUT))?;
-    stream.write_all(IDENTIFICATION)?;
+/// Says nothing until the caller presents `nonce`, then acknowledges and reads one request. A caller
+/// that gives up before the acknowledgement has written no request, so nothing is delivered.
+fn handshake(stream: &mut TcpStream, nonce: u128) -> io::Result<Option<Request>> {
     stream.set_read_timeout(Some(IO_TIMEOUT))?;
+    stream.set_write_timeout(Some(IO_TIMEOUT))?;
+    let mut presented = [0; size_of::<u128>()];
+    stream.read_exact(&mut presented)?;
+    if u128::from_le_bytes(presented) != nonce {
+        return Ok(None);
+    }
+    stream.write_all(&[ACKNOWLEDGED])?;
     let mut request = [0];
     stream.read_exact(&mut request)?;
     let [byte] = request;
@@ -161,20 +214,16 @@ fn handshake(stream: &mut TcpStream) -> io::Result<Option<Request>> {
 }
 
 fn connect(port_file: &Path) -> anyhow::Result<TcpStream> {
-    let mut port = String::new();
-    File::open(port_file)
-        .context("Start Speakeasy before using a desktop shortcut")?
-        .take(MAX_PORT_FILE_BYTES)
-        .read_to_string(&mut port)?;
-    let port: u16 = port.trim().parse()?;
-    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    let endpoint = Endpoint::read(port_file)?;
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, endpoint.port));
     let mut stream = TcpStream::connect_timeout(&address, IO_TIMEOUT)?;
     stream.set_read_timeout(Some(IO_TIMEOUT))?;
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
-    let mut reply = [0; IDENTIFICATION.len()];
+    stream.write_all(&endpoint.nonce.to_le_bytes())?;
+    let mut reply = [0];
     stream.read_exact(&mut reply)?;
     ensure!(
-        reply == IDENTIFICATION,
+        reply == [ACKNOWLEDGED],
         "Speakeasy instance could not be verified"
     );
     Ok(stream)
@@ -203,13 +252,15 @@ mod tests {
     }
 
     /// Queues Toggle and then Cancel while the UI drains nothing: Cancel's send must keep the
-    /// server occupied, so a further caller receives no identification.
+    /// server occupied, so a further caller presenting the secret is not acknowledged.
     fn occupy_server_with_pending_requests(instance: &Instance, path: &Path) -> anyhow::Result<()> {
         Instance::send(path, Request::Toggle)?;
         Instance::send(path, Request::Cancel)?;
+        let endpoint = Endpoint::read(&path.with_file_name(PORT_FILE))?;
         let mut next = TcpStream::connect_timeout(&instance.address, PATIENCE)?;
         next.set_read_timeout(Some(IO_TIMEOUT))?;
-        assert!(next.read_exact(&mut [0; IDENTIFICATION.len()]).is_err());
+        next.write_all(&endpoint.nonce.to_le_bytes())?;
+        assert!(next.read_exact(&mut [0]).is_err());
         Ok(())
     }
 
@@ -230,6 +281,40 @@ mod tests {
         assert!(requests.is_closed());
         assert!(!directory.path().join(PORT_FILE).exists());
         assert!(Instance::acquire(&path)?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn requests_without_the_secret_are_never_delivered() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("settings.json");
+        let (instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
+        let endpoint = Endpoint::read(&path.with_file_name(PORT_FILE))?;
+        let mut forged = TcpStream::connect_timeout(&instance.address, PATIENCE)?;
+        forged.set_read_timeout(Some(PATIENCE))?;
+        forged.write_all(&(endpoint.nonce ^ 1).to_le_bytes())?;
+        forged.write_all(&[Request::Cancel as u8])?;
+        assert!(
+            forged.read_exact(&mut [0]).is_err(),
+            "A wrong secret was acknowledged"
+        );
+        Instance::send(&path, Request::Toggle)?;
+        assert_eq!(next_request(&requests)?, Request::Toggle);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_the_owner_can_read_the_published_secret() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("settings.json");
+        let _owner = Instance::acquire(&path)?.context("First owner missing")?;
+        let mode = fs::metadata(directory.path().join(PORT_FILE))?
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
         Ok(())
     }
 
