@@ -171,5 +171,5 @@ foreach ($script in Get-ChildItem scripts/*.ps1) {
 """
 
 [tasks.hygiene]
-description = "Check committed names and mise task references"
+description = "Check committed names, mise task references, and workspace lint inheritance"
 run = "python scripts/check_repository.py"
