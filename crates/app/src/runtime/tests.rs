@@ -77,6 +77,7 @@ struct FakePorts {
     show_error: Option<&'static str>,
     screen_retirement: Option<Gate<()>>,
     publication: Option<Gate<()>>,
+    publish_error: Option<&'static str>,
     captures: Sender<OpenedCapture>,
     shows: Sender<OpenedShow>,
     jobs: Sender<TranscriptionJob>,
@@ -116,6 +117,7 @@ impl FakePorts {
             show_error: None,
             screen_retirement: None,
             publication: None,
+            publish_error: None,
             captures,
             shows,
             jobs,
@@ -197,9 +199,13 @@ impl Ports for FakePorts {
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
         let published = self.published.clone();
         let publication = self.publication.clone();
+        let publish_error = self.publish_error;
         async move {
             if let Some(gate) = publication {
                 gate.pass(()).await?;
+            }
+            if let Some(error) = publish_error {
+                bail!(error);
             }
             if !permit.commit() {
                 return Ok(Published::Cancelled);
@@ -1417,6 +1423,56 @@ async fn cancelling_while_publishing_leaves_no_trace() -> anyhow::Result<()> {
     h.phase(Phase::Cancelled).await?;
     publishing.release().await?;
     assert!(still_pending(h.published.recv()).await);
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_show_that_cannot_be_published_explains_why() -> anyhow::Result<()> {
+    let mut h = Harness::paused(|ports| ports.publish_error = Some("disk full"))?;
+    start_show(&mut h).await?;
+    h.input(Input::Release);
+    h.input(Input::Press);
+    h.transcribe_next_as("look").await?;
+    h.phase(Phase::Error).await?;
+    assert!(h.snapshot().message.contains("disk full"));
+    assert!(h.published.try_recv().is_err());
+    h.close().await
+}
+
+#[tokio::test]
+async fn shutdown_awaits_a_retiring_screen() -> anyhow::Result<()> {
+    let (retirement, retiring) = gate(1);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.screen_retirement = Some(retirement);
+    })?;
+    start_show(&mut h).await?;
+    h.runtime.request_stop();
+    retiring.reached().await?;
+    assert!(still_pending(h.runtime.stopped()).await);
+    retiring.release().await?;
+    timeout(PATIENCE, h.runtime.stopped()).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn shutdown_revokes_and_owns_pending_publication_cleanup() -> anyhow::Result<()> {
+    let (publication, publishing) = gate(1);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.publication = Some(publication);
+    })?;
+    start_show(&mut h).await?;
+    h.input(Input::Release);
+    h.input(Input::Press);
+    h.transcribe_next_as("fixture").await?;
+    publishing.reached().await?;
+    h.runtime.request_stop();
+    assert!(still_pending(h.runtime.stopped()).await);
+    publishing.release().await?;
+    timeout(PATIENCE, h.runtime.stopped()).await?;
+    assert!(
+        h.published.try_recv().is_err(),
+        "A revoked Show was published"
+    );
     Ok(())
 }
 
