@@ -233,7 +233,7 @@ pub(crate) fn reduced_motion() -> bool {
 }
 
 pub(crate) fn copy_text(_: &str) -> anyhow::Result<()> {
-    anyhow::bail!("Shows are not available on Linux yet")
+    bail!("Shows are not available on Linux yet")
 }
 
 pub(crate) fn show_startup_error(message: &str) {

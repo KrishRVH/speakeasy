@@ -1,7 +1,7 @@
-//! X11 and Xwayland access: reserved-shortcut grabs, focus checks, clipboard ownership, and XTEST
-//! paste. Clipboard, focus, and paste calls, which can wait on another client, run on owned worker
-//! threads; the desktop service's loop makes only the server round trips that track shortcuts and
-//! the keyboard mapping.
+//! X11 and Xwayland access: reserved-shortcut grabs, focus checks, clipboard ownership, XTEST
+//! paste, and owned-window hints and visibility. Clipboard, focus, and paste calls run on owned
+//! worker threads, and window calls on the caller's thread through a short-lived connection; the
+//! desktop service's loop makes only the round trips that track shortcuts and the keyboard mapping.
 
 mod clipboard;
 #[cfg(test)]
@@ -279,7 +279,6 @@ pub(super) async fn run(
         shortcuts.grab(&connection, root, lock)?;
         observe_releases(&connection, root)?;
     }
-    connection.flush()?;
     let readiness = watch_readable(connection.as_fd())?;
     let _worker = InsertionWorker::spawn(input.clone(), options.clone(), requests)?;
     input.deliver(ShortcutLabels::new(options).into_desktop_ready());
@@ -449,7 +448,6 @@ pub(super) fn configure_pill(window: Window) -> anyhow::Result<()> {
             &[],
         )?
         .check()?;
-    connection.flush()?;
     Ok(())
 }
 
@@ -461,7 +459,6 @@ pub(super) fn set_visible(window: Window, visible: bool) {
         } else {
             connection.unmap_window(window)?.check()?;
         }
-        connection.flush()?;
         Ok(())
     };
     #[expect(
