@@ -184,20 +184,11 @@ impl Pill {
         }
         // Exact comparison: any tolerance would hide quiet speech.
         let history_changed = previous_history.map(f32::to_bits) != self.history.map(f32::to_bits);
+        self.snapshot = snapshot;
         // A hidden native window never renders, so it cannot wait for `render` to show it.
-        if state_changed
-            && !self.visible
-            && (snapshot.phase.is_active()
-                || feedback_remaining(
-                    snapshot.phase,
-                    snapshot.show,
-                    now.duration_since(self.phase_at),
-                )
-                .is_some())
-        {
+        if state_changed && !self.visible && self.scene(now).is_shown() {
             self.set_visible(true, cx);
         }
-        self.snapshot = snapshot;
         // An animating pill paints new levels on its pending frame.
         if state_changed || (history_changed && !self.animating) {
             cx.notify();
