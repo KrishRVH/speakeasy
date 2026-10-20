@@ -150,7 +150,7 @@ impl InsertPermit {
         self.gate.is_current(self.generation)
     }
 
-    /// Consumes this recording’s authority immediately before native input is submitted, returning
+    /// Consumes this recording's authority immediately before native input is submitted, returning
     /// whether it still held authority.
     #[must_use]
     pub fn commit(&self) -> bool {

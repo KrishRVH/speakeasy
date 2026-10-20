@@ -419,14 +419,11 @@ pub(super) fn copy_text(text: &str) -> anyhow::Result<()> {
 }
 
 /// The native steps of one insertion, which [`insertion::insert`] puts in order.
-pub(super) struct Insert {
-    /// The pasteboard written, kept to read back what it holds.
-    clipboard: Option<arboard::Clipboard>,
-}
+pub(super) struct Insert;
 
 impl Insert {
     pub(super) const fn new() -> Self {
-        Self { clipboard: None }
+        Self
     }
 }
 
@@ -443,7 +440,6 @@ impl insertion::NativeInsert for Insert {
 
     fn write(&mut self, mut lease: arboard::Clipboard, text: &str) -> anyhow::Result<()> {
         lease.set_text(text)?;
-        self.clipboard = Some(lease);
         Ok(())
     }
 
@@ -452,11 +448,7 @@ impl insertion::NativeInsert for Insert {
     }
 
     fn holds(&mut self, text: &str, mark: &isize) -> anyhow::Result<bool> {
-        let clipboard = self
-            .clipboard
-            .as_mut()
-            .context("Insertion read back a pasteboard it never wrote")?;
-        Ok(clipboard.get_text()? == text && clipboard_sequence() == *mark)
+        Ok(arboard::Clipboard::new()?.get_text()? == text && clipboard_sequence() == *mark)
     }
 
     fn paste_keys(&mut self) -> anyhow::Result<Vec<CGEvent>> {
