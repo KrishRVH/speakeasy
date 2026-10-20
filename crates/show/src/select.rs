@@ -1336,6 +1336,38 @@ mod tests {
     }
 
     #[test]
+    fn each_event_says_why_its_frame_was_chosen() {
+        let event = |shown: Option<Selection>| shown.unwrap().keyframes()[0].event.clone();
+        let still = samples(250, 10_000, |_| 128);
+        let drawn = recording(
+            vec![dab(2_000), dab(4_000)],
+            Vec::new(),
+            Narration::default(),
+        );
+        assert_eq!(
+            event(select_within(&drawn, &still, 12)),
+            "tapped x 0.50, y 0.50; tapped x 0.50, y 0.50"
+        );
+        let looked = recording(Vec::new(), Vec::new(), words(&[(3_000, "Look")]));
+        assert_eq!(event(select_within(&looked, &still, 12)), "said “look”");
+        let changed = [
+            sample(0, 0),
+            sample(1_000, 80),
+            sample(1_250, 160),
+            sample(1_500, 255),
+        ];
+        assert_eq!(
+            event(select_within(&Recording::default(), &changed, 12)),
+            "scene changed"
+        );
+        let quiet = [sample(0, 0), sample(1_000, 0), sample(2_000, 0)];
+        assert_eq!(
+            event(select_within(&Recording::default(), &quiet, 12)),
+            "the screen midway through"
+        );
+    }
+
+    #[test]
     fn a_quiet_show_falls_back_to_its_middle() {
         let frames = [sample(0, 0), sample(1_000, 0), sample(2_000, 0)];
         let shown = select_within(&Recording::default(), &frames, 12).unwrap();
