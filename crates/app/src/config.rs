@@ -9,7 +9,8 @@
 //! [`LinuxSettings`] stays strict because its shortcut and cancel keys exist only as hand edits, so a
 //! misspelled key fails instead of silently keeping a default; retiring one of its keys must keep
 //! accepting that key. A save writes only the keys Settings changed, so unknown keys, hand edits,
-//! path spellings and unchanged Linux defaults stay as the file has them.
+//! path spellings and unchanged Linux defaults stay as the file has them, though a number past
+//! 64-bit precision comes back rounded.
 
 use std::{
     fs,
@@ -19,7 +20,7 @@ use std::{
 };
 
 use anyhow::{Context, anyhow, ensure};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use speakeasy_platform::{Delivery, DesktopOptions};
 
@@ -169,10 +170,8 @@ impl Config {
     }
 
     pub(crate) fn read(path: &Path) -> anyhow::Result<Self> {
-        parse(
-            &fs::read(path).with_context(|| format!("Cannot read {}", path.display()))?,
-            path,
-        )
+        let contents = fs::read(path).with_context(|| format!("Cannot read {}", path.display()))?;
+        Ok(parse(&contents, path)?.0)
     }
 
     /// Reads the settings at `path` for launch: the draft Settings edits, and how it stands. A file
@@ -308,10 +307,8 @@ impl Config {
         let target = link_target(path).map_err(cannot_save)?;
         let contents = match fs::read(&target) {
             Ok(contents) => {
-                // Never replace a file the user still has to repair. Parsing the bytes as settings,
-                // not the map below, keeps the line and column in the error.
-                parse::<Self>(&contents, path)?;
-                let mut file: Map<String, Value> = parse(&contents, path)?;
+                // Never replace a file the user still has to repair.
+                let (_, mut file) = parse(&contents, path)?;
                 patch(&mut file, held, draft, validated)
                     .with_context(|| format!("Cannot save settings to {}", path.display()))?;
                 serde_json::to_vec_pretty(&file)?
@@ -325,8 +322,12 @@ impl Config {
     }
 }
 
-fn parse<T: DeserializeOwned>(contents: &[u8], path: &Path) -> anyhow::Result<T> {
+/// Parses `contents` as settings and as the map a save patches, so a file that reads is always one a
+/// save can patch: skipping an unknown key accepts values that holding it does not, such as `1e400`
+/// or a lone surrogate. Settings parse first, so a repair notice names the setting to fix.
+fn parse(contents: &[u8], path: &Path) -> anyhow::Result<(Config, Map<String, Value>)> {
     serde_json::from_slice(contents)
+        .and_then(|config| Ok((config, serde_json::from_slice(contents)?)))
         .with_context(|| format!("Invalid settings in {}", path.display()))
 }
 

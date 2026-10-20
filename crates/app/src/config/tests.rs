@@ -238,6 +238,35 @@ fn unknown_top_level_keys_are_ignored_but_linux_keys_stay_strict() -> anyhow::Re
     Ok(())
 }
 
+#[test]
+fn a_file_that_reads_is_one_a_save_can_patch() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    let held = Config {
+        engine_executable: "e".into(),
+        model: "m".into(),
+        ..Config::default()
+    };
+    let draft = Config {
+        theme: Theme::Iris,
+        ..held.clone()
+    };
+    // A plain unknown value, then ones that skipping a key accepts but holding it as a value does
+    // not: out of range, a lone surrogate, and invalid UTF-8.
+    for retired in [&b"1"[..], b"1e400", br#""\ud800""#, b"\"\xff\""] {
+        let contents = [
+            br#"{"engine_executable":"e","model":"m","retired":"#,
+            retired,
+            b"}",
+        ];
+        fs::write(&path, contents.concat())?;
+        let read = Config::read(&path).is_ok();
+        let saved = save(&held, &draft, &path).is_ok();
+        assert_eq!(read, saved, "{}", String::from_utf8_lossy(retired));
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn a_save_writes_through_a_linked_settings_file() -> anyhow::Result<()> {
