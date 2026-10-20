@@ -3,7 +3,7 @@
 mod overlay;
 mod publish;
 mod recorder;
-mod retention;
+mod store;
 
 use std::{
     fs,
@@ -18,7 +18,7 @@ pub(crate) use self::{
     overlay::{Canvas, attend as attend_overlay},
     publish::publish,
     recorder::Recorder,
-    retention::attend as attend_retention,
+    store::attend as attend_retention,
 };
 
 /// The demo's keyframes render as a Show records a 2880 × 1800 display, halved to fit
