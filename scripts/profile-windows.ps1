@@ -25,15 +25,47 @@ function Get-GpuMemory([int]$ProcessId) {
     } catch {}
     $usage
 }
+# Raw thread counters are cumulative switch counts. One category read serves every sampled PID and
+# maps each to its threads' counts by thread ID, or returns null where the counters are missing.
+function Get-ThreadSwitches([string[]]$ProcessIds) {
+    $threads = @{}
+    foreach ($processId in $ProcessIds) { $threads[$processId] = @{} }
+    try {
+        $data = [Diagnostics.PerformanceCounterCategory]::new('Thread').ReadCategory()
+        $owners = $data['ID Process']
+        $ids = $data['ID Thread']
+        $switches = $data['Context Switches/sec']
+        foreach ($instance in $owners.Keys) {
+            $owner = [string]$owners[$instance].RawValue
+            if (!$threads.ContainsKey($owner) -or !$ids.Contains($instance) -or !$switches.Contains($instance)) { continue }
+            $thread = [string]$ids[$instance].RawValue
+            $threads[$owner][$thread] = $switches[$instance].RawValue
+        }
+    } catch { return $null }
+    $threads
+}
+# Sums per-thread growth: a thread that exited no longer counts, and one absent from the earlier
+# read started since then, so all of its switches fall inside the interval.
+function Get-SwitchDelta([hashtable]$Earlier, [hashtable]$Later) {
+    $delta = [long]0
+    foreach ($thread in $Later.GetEnumerator()) {
+        $start = if ($Earlier.ContainsKey($thread.Key)) { $Earlier[$thread.Key] } else { 0 }
+        $delta += [Math]::Max([long]0, $thread.Value - $start)
+    }
+    $delta
+}
 $clock = [System.Diagnostics.Stopwatch]::StartNew()
 $logicalCpus = [Environment]::ProcessorCount
 $results = @{}
 $previous = @{}
+$previousSwitches = @{}
 foreach ($processId in ($ProcessIds | Select-Object -Unique)) {
     # JSON objects need string keys; Windows PowerShell refuses to serialize numeric ones.
     $results[[string]$processId] = @{ samples = [System.Collections.Generic.List[object]]::new(); end = $null }
 }
 while ($true) {
+    $threadSwitches = Get-ThreadSwitches @($results.Keys)
+    $threadSwitchesAt = $clock.Elapsed.TotalSeconds
     foreach ($processId in @($results.Keys)) {
         $result = $results[$processId]
         if ($null -ne $result.end) { continue }
@@ -61,7 +93,12 @@ while ($true) {
                 if ($before.identity -ne $sample.identity) { $result.end = 'PID reused'; continue }
                 $sample.cpu_one_core_percent = 100 * ($sample.cpu_seconds - $before.cpu_seconds) / ($elapsed - $before.elapsed_seconds)
                 $sample.cpu_machine_percent = $sample.cpu_one_core_percent / $logicalCpus
+                $earlier = $previousSwitches[$processId]
+                if ($null -ne $earlier -and $null -ne $threadSwitches) {
+                    $sample.context_switches_per_sec = (Get-SwitchDelta $earlier.threads $threadSwitches[$processId]) / ($threadSwitchesAt - $earlier.at)
+                }
             }
+            $previousSwitches[$processId] = if ($null -ne $threadSwitches) { @{ at = $threadSwitchesAt; threads = $threadSwitches[$processId] } }
             $previous[$processId] = $sample
             $result.samples.Add($sample)
         } catch { $result.end = $_.Exception.GetType().Name }
@@ -73,7 +110,7 @@ while ($true) {
 }
 foreach ($result in $results.Values) {
     $summary = @{}
-    foreach ($metric in @('cpu_one_core_percent', 'cpu_machine_percent', 'rss_bytes', 'private_bytes', 'gpu_dedicated_bytes', 'gpu_shared_bytes', 'threads', 'handles')) {
+    foreach ($metric in @('cpu_one_core_percent', 'cpu_machine_percent', 'context_switches_per_sec', 'rss_bytes', 'private_bytes', 'gpu_dedicated_bytes', 'gpu_shared_bytes', 'threads', 'handles')) {
         $values = @($result.samples | Where-Object { $_.ContainsKey($metric) } | ForEach-Object { $_[$metric] } | Sort-Object)
         if ($values.Count -eq 0) { continue }
         $middle = [int][Math]::Floor($values.Count / 2)
