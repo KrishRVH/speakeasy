@@ -22,14 +22,13 @@ const ICON_STYLE: IconStyle = if cfg!(target_os = "macos") {
 const COMMAND_BACKLOG: usize = 16;
 
 pub(crate) struct Tray {
-    _icon: TrayIcon,
     _events: Task<()>,
     _updates: Task<()>,
 }
 
 impl Global for Tray {}
 
-/// Writes tray states into the native icon and the menu items that follow them.
+/// Owns the native icon and the stateful menu items, and writes each tray state into them.
 struct Presenter {
     icon: TrayIcon,
     status: MenuItem,
@@ -113,7 +112,7 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
         }
     });
     let mut presenter = Presenter {
-        icon: icon.clone(),
+        icon,
         status,
         pause,
         toggle,
@@ -127,7 +126,6 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
         }
     });
     cx.set_global(Tray {
-        _icon: icon,
         _events: events,
         _updates: updates,
     });
