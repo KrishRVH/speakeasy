@@ -526,17 +526,21 @@ mod tests {
     async fn setup_names_the_directory_it_cannot_prepare() -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;
         fs::write(directory.path().join("file"), b"")?;
-        let root = directory.path().join("file").join("speakeasy");
+        let beneath_a_file = directory.path().join("file").join("speakeasy");
+        let lock_is_a_directory = directory.path().join("speakeasy");
+        fs::create_dir_all(lock_is_a_directory.join("setup.lock"))?;
         let (progress, _) = watch::channel(Progress::default());
-        let failure = Installation::lock(&root, &progress)
-            .await
-            .err()
-            .context("Setup prepared a directory beneath a file")?
-            .to_string();
-        assert!(
-            failure.starts_with(&format!("Cannot prepare {}: ", root.display())),
-            "{failure}"
-        );
+        for root in [beneath_a_file, lock_is_a_directory] {
+            let failure = Installation::lock(&root, &progress)
+                .await
+                .err()
+                .context("Setup prepared a directory it cannot lock")?
+                .to_string();
+            assert!(
+                failure.starts_with(&format!("Cannot prepare {}: ", root.display())),
+                "{failure}"
+            );
+        }
         Ok(())
     }
 

@@ -250,9 +250,11 @@ mod tests {
             sha256: "unused: the archive is already downloaded",
         };
         let engine = unpack(&Client::new(), &archive, root, &progress, &mut installation).await?;
-        assert_eq!(engine, root.join("engines").join("fixture.tar"));
         assert_eq!(fs::read(engine.join(EXECUTABLE))?, b"engine fixture");
-        assert!(!root.join("engines/fixture.tar.part").exists());
+        let engines = fs::read_dir(root.join("engines"))?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(engines, [engine]);
         assert!(!root.join("downloads/fixture.tar").exists());
         Ok(())
     }
