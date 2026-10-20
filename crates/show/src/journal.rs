@@ -408,10 +408,14 @@ mod tests {
     }
 
     /// A frame of four flat quadrants in `shade`, 70 × 70 when `size` is 2 and 150 × 90 otherwise.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "A quadrant index under 4; debug overflow checks fail the test"
+    )]
     fn quadrants(shade: [u8; 4], size: usize) -> Image {
         let (width, height) = if size == 2 { (70, 70) } else { (150, 90) };
         frame(width, height, move |x, y| {
-            let quadrant = usize::from(x >= 64).wrapping_add(usize::from(y >= 64).wrapping_mul(2));
+            let quadrant = usize::from(x >= 64) + usize::from(y >= 64) * 2;
             let value = *shade.get(quadrant).unwrap();
             [value, value, value, 255]
         })
@@ -420,7 +424,7 @@ mod tests {
     #[test]
     fn a_still_screen_costs_almost_nothing_and_changes_cost_their_tiles() {
         let text = |x: usize, y: usize| {
-            if (x / 3).wrapping_add(y / 5).is_multiple_of(4) {
+            if (x / 3 + y / 5).is_multiple_of(4) {
                 [20, 20, 20, 255]
             } else {
                 [240, 240, 240, 255]
@@ -446,7 +450,7 @@ mod tests {
             }
         };
         journal.record(at(2_200), frame(640, 360, caret));
-        let added = journal.bytes().saturating_sub(first);
+        let added = journal.bytes() - first;
         assert!(added > 0 && added < first / 20, "{added} of {first}");
     }
 
@@ -454,7 +458,7 @@ mod tests {
     fn any_recorded_moment_is_rebuilt_exactly() {
         let gradient = |shift: usize| {
             move |x: usize, y: usize| {
-                let value = u8::try_from(x.wrapping_add(y).wrapping_add(shift) % 256).unwrap();
+                let value = u8::try_from((x + y + shift) % 256).unwrap();
                 [value, value / 2, value.wrapping_neg(), 255]
             }
         };
@@ -463,16 +467,10 @@ mod tests {
             .map(|shift| frame(130, 70, gradient(shift)))
             .to_vec();
         for (index, image) in frames.iter().enumerate() {
-            journal.record(
-                at(u64::try_from(index).unwrap().wrapping_mul(100)),
-                image.clone(),
-            );
+            journal.record(at(u64::try_from(index).unwrap() * 100), image.clone());
         }
         for (index, image) in frames.iter().enumerate() {
-            let moment = at(u64::try_from(index)
-                .unwrap()
-                .wrapping_mul(100)
-                .wrapping_add(50));
+            let moment = at(u64::try_from(index).unwrap() * 100 + 50);
             assert_eq!(
                 journal.frame_at(moment).as_ref(),
                 Some(image),
@@ -495,7 +493,7 @@ mod tests {
         let held = journal.bytes();
         journal.record(at(1_100), resized.clone());
         assert_eq!(
-            journal.bytes().saturating_sub(held),
+            journal.bytes() - held,
             whole,
             "a sealed journal keeps no frame to compare the next against"
         );
@@ -516,7 +514,7 @@ mod tests {
         for arrival in 0_u8..9 {
             if journal.admit() {
                 admitted.push(arrival);
-                let moment = at(u64::from(arrival).wrapping_mul(200));
+                let moment = at(u64::from(arrival) * 200);
                 journal.record(moment, quadrants([arrival; 4], 2));
             }
         }
@@ -524,6 +522,10 @@ mod tests {
     }
 
     proptest! {
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "Moments and indices of at most 24 frames; debug overflow checks fail the test"
+        )]
         #[test]
         fn thinning_keeps_every_other_frame_exact(
             changes in prop::collection::vec((0_u8..4, 0_usize..3), 1..24),
@@ -538,7 +540,7 @@ mod tests {
                     *value = value.wrapping_add(40);
                 }
                 let image = quadrants(shade, size);
-                let moment = at(u64::try_from(index).unwrap().wrapping_mul(100));
+                let moment = at(u64::try_from(index).unwrap() * 100);
                 journal.record(moment, image.clone());
                 recorded.push((moment, image));
             }
@@ -549,7 +551,7 @@ mod tests {
                 recorded = recorded
                     .into_iter()
                     .enumerate()
-                    .filter(|(index, _)| index.is_multiple_of(2) || index.wrapping_add(1) == count)
+                    .filter(|(index, _)| index.is_multiple_of(2) || index + 1 == count)
                     .map(|(_, frame)| frame)
                     .collect();
                 prop_assert!(journal.bytes() <= before);
@@ -599,10 +601,14 @@ mod tests {
             prop_assert_eq!(journal.frame_at(samples.last().unwrap().at), last);
         }
 
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "Noise mixed from coordinates under 150; debug overflow checks fail the test"
+        )]
         #[test]
         fn rebuilding_is_lossless_for_any_size(width in 1_u32..150, height in 1_u32..150, seed in 0_u8..=255) {
             let noise = move |x: usize, y: usize| {
-                let mixed = x.wrapping_mul(31).wrapping_add(y.wrapping_mul(17)).wrapping_add(usize::from(seed));
+                let mixed = x * 31 + y * 17 + usize::from(seed);
                 let value = u8::try_from(mixed % 251).unwrap();
                 [value, value.wrapping_mul(3), seed, 255]
             };

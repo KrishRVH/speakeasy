@@ -93,6 +93,9 @@ undocumented_unsafe_blocks = "deny"
 
 # Production code handles failure explicitly. Tests may assert established
 # invariants through the four clippy.toml `allow-*-in-tests` settings.
+# Arithmetic has no such setting, though clippy skips `#[test]` bodies: fixture
+# helpers and `proptest!` bodies use plain operators under a reasoned expect,
+# and the wraps a fixture relies on stay explicit.
 arithmetic_side_effects = "deny"
 dbg_macro = "deny"
 exit = "deny"

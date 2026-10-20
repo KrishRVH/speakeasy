@@ -25,41 +25,48 @@ fn desktop(width: u32, height: u32, scroll: u32, typed: u32, dialog: bool) -> Im
 
 /// A still desktop whose middle 1280 × 720 pixels play noise drawn from `seed`, as a video
 /// does: every frame changes every tile it covers, and none compresses.
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "Pixel geometry of frames up to 2560 × 1440; debug overflow checks fail the test"
+)]
 fn video(width: u32, height: u32, seed: u32) -> Image {
     const PLAYER: (u32, u32) = (1_280, 720);
     let mut pixels = desktop_pixels(width, height, 0, 0, false);
     let left = width.saturating_sub(PLAYER.0) / 2;
     let top = height.saturating_sub(PLAYER.1) / 2;
     let mut state = seed.wrapping_mul(2_654_435_761) | 1;
-    for y in top..top.wrapping_add(PLAYER.1).min(height) {
-        for x in left..left.wrapping_add(PLAYER.0).min(width) {
+    for y in top..(top + PLAYER.1).min(height) {
+        for x in left..(left + PLAYER.0).min(width) {
             state ^= state << 13;
             state ^= state >> 17;
             state ^= state << 5;
-            let at =
-                usize::try_from(y.wrapping_mul(width).wrapping_add(x).wrapping_mul(4)).unwrap();
-            pixels[at..at.wrapping_add(3)].copy_from_slice(&state.to_le_bytes()[..3]);
+            let at = usize::try_from((y * width + x) * 4).unwrap();
+            pixels[at..at + 3].copy_from_slice(&state.to_le_bytes()[..3]);
         }
     }
     Image::from_bgra(width, height, pixels).unwrap()
 }
 
 /// The BGRA pixels of [`desktop`].
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "Pixel geometry of frames up to 2560 × 1440; debug overflow checks fail the test"
+)]
 fn desktop_pixels(width: u32, height: u32, scroll: u32, typed: u32, dialog: bool) -> Vec<u8> {
     const CELL_WIDTH: u32 = 9;
     const CELL_HEIGHT: u32 = 18;
-    let mut pixels =
-        Vec::with_capacity(usize::try_from(width.wrapping_mul(height).wrapping_mul(4)).unwrap());
+    let mut pixels = Vec::with_capacity(usize::try_from(width * height * 4).unwrap());
     for y in 0..height {
-        let line = y.wrapping_add(scroll) / CELL_HEIGHT;
+        let line = (y + scroll) / CELL_HEIGHT;
         for x in 0..width {
             let column = x / CELL_WIDTH;
             let panel = dialog
-                && (width / 3..width.wrapping_mul(2) / 3).contains(&x)
-                && (height / 3..height.wrapping_mul(2) / 3).contains(&y);
-            let written = column < 60_u32.wrapping_add(if line == 0 { typed } else { 0 })
-                && line.wrapping_mul(2_654_435_761).wrapping_add(column) % 7 != 0;
-            let (inside_x, inside_y) = (x % CELL_WIDTH, y.wrapping_add(scroll) % CELL_HEIGHT);
+                && (width / 3..width * 2 / 3).contains(&x)
+                && (height / 3..height * 2 / 3).contains(&y);
+            let glyphs = if line == 0 { 60 + typed } else { 60 };
+            let written =
+                column < glyphs && line.wrapping_mul(2_654_435_761).wrapping_add(column) % 7 != 0;
+            let (inside_x, inside_y) = (x % CELL_WIDTH, (y + scroll) % CELL_HEIGHT);
             let ink = written
                 && (1..CELL_WIDTH - 2).contains(&inside_x)
                 && (4..CELL_HEIGHT - 4).contains(&inside_y)
@@ -74,15 +81,16 @@ fn desktop_pixels(width: u32, height: u32, scroll: u32, typed: u32, dialog: bool
     pixels
 }
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "Word ends 300 ms after literal starts; debug overflow checks fail the test"
+)]
 fn words(spoken: &[(u64, &str)]) -> Narration {
     Narration::Words(
         spoken
             .iter()
             .map(|&(at, text)| Word {
-                span: Span::new(
-                    Moment::from_millis(at),
-                    Moment::from_millis(at.wrapping_add(300)),
-                ),
+                span: Span::new(Moment::from_millis(at), Moment::from_millis(at + 300)),
                 text: text.into(),
             })
             .collect(),
@@ -140,9 +148,8 @@ fn rehearse(width: u32, height: u32) -> (Footage, Narration) {
     }
     show.pointer(3_000, 0.5, 0.5, false, true);
     show.pointer(3_080, 0.5, 0.5, false, false);
-    for step in 0..=40_u16 {
+    for (step, at) in (0..=40_u16).zip((5_000..).step_by(25)) {
         let turn = f32::from(step) / 40.0 * std::f32::consts::TAU;
-        let at = u64::from(step).wrapping_mul(25).wrapping_add(5_000);
         show.pointer(
             at,
             0.2_f32.mul_add(turn.cos(), 0.5),
@@ -166,7 +173,7 @@ fn rehearse(width: u32, height: u32) -> (Footage, Narration) {
 /// The width and height a PNG's header declares.
 fn png_size(bytes: &[u8]) -> (u32, u32) {
     assert_eq!(bytes.get(..8), Some(&b"\x89PNG\r\n\x1a\n"[..]));
-    let field = |at: usize| u32::from_be_bytes(bytes[at..at.wrapping_add(4)].try_into().unwrap());
+    let field = |at: usize| u32::from_be_bytes(*bytes[at..].first_chunk().unwrap());
     (field(16), field(20))
 }
 
@@ -284,7 +291,7 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     // Publishing a one-minute Show of that size.
     let mut show = Rehearsal::new(width, height);
     for at in (0..60_000_u32).step_by(200) {
-        let scroll = (at / 10_000).wrapping_mul(300);
+        let scroll = at / 10_000 * 300;
         show.frame(
             u64::from(at),
             desktop(width, height, scroll, at / 1_000 % 10, at % 10_000 > 6_000),
