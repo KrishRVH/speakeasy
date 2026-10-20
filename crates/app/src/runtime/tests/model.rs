@@ -1,8 +1,8 @@
 //! Generated sequences of input bursts, clock jumps, audio, footage, and transcripts drive the
 //! production owner through gate-free fakes whose devices take generated time to release. After
-//! every step the owner still runs, never reopens a device before its release, and has released
-//! every device once no session is active; a final drain must bring every session to rest. Gated
-//! windows stay with the scripted scenarios.
+//! every step the owner still runs, never reopens a device before its release, and has retired
+//! every device once no session is active; a final drain must bring every session to rest with
+//! every device released. Gated windows stay with the scripted scenarios.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -409,6 +409,9 @@ impl Model {
             }
             for (device, id) in self.unanswered() {
                 self.complete(device, id)?;
+                // Answers to ended sessions still occupy the owner's four-event Show lane, so the
+                // owner takes each one before the next.
+                settle().await;
                 acted = true;
             }
             tokio::time::advance(PAST_THE_LIMIT).await;
