@@ -1,6 +1,7 @@
 //! Automatic setup installs the NeMo-Speech.cpp build that suits this machine and the Parakeet v3
-//! model. Every download is pinned by URL, size, and SHA-256, resumes after interruption, and is
-//! renamed into place only once verified.
+//! model. `Setup` runs it on an owned thread that cancels and joins on drop, and `Installation`
+//! holds the lock on its directory until its native child is reaped, so one setup installs there at
+//! a time.
 
 mod archive;
 mod download;

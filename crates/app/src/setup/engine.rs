@@ -1,5 +1,5 @@
-//! Engine choice: each platform's pinned NeMo-Speech.cpp builds, and the one setup keeps because its
-//! own `doctor` report shows it runs on this machine.
+//! Engine choice: each platform's pinned NeMo-Speech.cpp builds and the order setup tries them in.
+//! A GPU build is kept only once its own `doctor` report shows it runs on this machine.
 
 use std::{
     fs,
