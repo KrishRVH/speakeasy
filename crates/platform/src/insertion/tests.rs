@@ -1,3 +1,6 @@
+//! Checks the focus and shortcut preflight, clipboard checks, permit revocation, and the insertion
+//! worker against a fake native target; no test touches the clipboard or the focused app.
+
 use std::{panic, time::Duration};
 
 use anyhow::Context;
