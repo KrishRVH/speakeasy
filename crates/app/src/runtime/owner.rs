@@ -298,7 +298,6 @@ impl<P: Ports> Owner<P> {
             },
             CaptureEvent::Finished(_, Err(error)) => {
                 self.conclude_capture();
-                self.end_session();
                 self.fail(error.to_string());
             },
         }
@@ -312,8 +311,10 @@ impl<P: Ports> Owner<P> {
             .filter(|session| session.id == id && session.is_capturing())
     }
 
+    /// Ends capture however it ended, finishing a Show's screen with its narration.
     fn conclude_capture(&mut self) {
         self.microphone.retire();
+        self.screen.finish();
         self.gesture.finish();
     }
 
@@ -526,14 +527,17 @@ impl<P: Ports> Owner<P> {
         self.reap_retired_work().await;
     }
 
-    /// Opens a Show's screen recorder once any previous one has retired.
+    /// Opens a Show's screen recorder once any previous one has retired, even after its narration
+    /// ended, so the Show still gets the screen as it was then.
     fn open_queued_screen(&mut self) {
         if self.permits.is_closed() || !self.screen.is_free() {
             return;
         }
-        let Some(session) = self.session.as_mut().filter(|session| {
-            session.is_capturing() && session.show.as_ref().is_some_and(|show| !show.opened)
-        }) else {
+        let Some(session) = self
+            .session
+            .as_mut()
+            .filter(|session| session.show.as_ref().is_some_and(|show| !show.opened))
+        else {
             return;
         };
         match self
@@ -541,7 +545,7 @@ impl<P: Ports> Owner<P> {
             .show(session.id, session.started, self.show_events.clone())
         {
             Ok(recorder) => {
-                if self.gesture.state() == State::Processing {
+                if !session.is_capturing() || self.gesture.state() == State::Processing {
                     recorder.finish();
                 }
                 self.screen = Device::Open(recorder);

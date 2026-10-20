@@ -173,6 +173,16 @@ impl Services {
         }));
     }
 
+    /// Shows `error` unless a recording is under way, which it must not interrupt; returns whether
+    /// it was shown.
+    pub(crate) fn publish_error_when_idle(&self, error: &anyhow::Error) -> bool {
+        let idle = !self.output.borrow().phase.is_active();
+        if idle {
+            self.publish_error(error);
+        }
+        idle
+    }
+
     pub(crate) fn publish_error(&self, error: &anyhow::Error) {
         self.output.send_modify(|snapshot| {
             snapshot.phase = Phase::Error;

@@ -62,7 +62,7 @@ Linux follows in a later release. A Mac asks for screen recording access on the 
 - The screen is recorded only during a Show you start, and Speakeasy's own windows stay out of it. A
   Show is written to the `shows` folder beside the engine and model, readable only by you, and
   deleted after seven days unless pinned: a file named `.pinned` in its folder keeps it. Cancelling
-  writes nothing.
+  leaves nothing behind.
 - There are no accounts, cloud providers, telemetry, or dictation history.
 
 ## Get started

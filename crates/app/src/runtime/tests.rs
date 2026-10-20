@@ -73,6 +73,7 @@ struct FakePorts {
     stop: Option<Gate<()>>,
     insertion: Option<Gate<InsertPermit>>,
     show_error: Option<&'static str>,
+    screen_retirement: Option<Gate<()>>,
     publication: Option<Gate<()>>,
     captures: Sender<OpenedCapture>,
     shows: Sender<OpenedShow>,
@@ -110,6 +111,7 @@ impl FakePorts {
             stop: None,
             insertion: None,
             show_error: None,
+            screen_retirement: None,
             publication: None,
             captures,
             shows,
@@ -130,7 +132,7 @@ impl FakePorts {
     }
 
     fn cleanup_gates(&self) -> CleanupGates {
-        let releases = [&self.retirement, &self.stop]
+        let releases = [&self.retirement, &self.screen_retirement, &self.stop]
             .into_iter()
             .flatten()
             .map(|gate| gate.release.clone());
@@ -178,7 +180,11 @@ impl Ports for FakePorts {
             bail!(error);
         }
         self.shows.try_send((id, events.clone()))?;
-        Ok(FakeShow { id, events })
+        Ok(FakeShow {
+            id,
+            events,
+            retirement: self.screen_retirement.clone(),
+        })
     }
 
     fn publish(
@@ -281,6 +287,7 @@ impl Recording for FakeRecording {
 struct FakeShow {
     id: SessionId,
     events: Sender<ShowEvent>,
+    retirement: Option<Gate<()>>,
 }
 
 impl Recording for FakeShow {
@@ -290,7 +297,11 @@ impl Recording for FakeShow {
             .expect("show lane has room for fake footage");
     }
 
-    async fn retire(self) {}
+    async fn retire(self) {
+        if let Some(gate) = self.retirement {
+            gate.pass_during_cleanup(()).await;
+        }
+    }
 }
 
 fn footage() -> Footage {
@@ -1327,5 +1338,98 @@ async fn s_outside_a_hold_records_no_screen() -> anyhow::Result<()> {
     tokio::time::advance(Duration::from_secs(1)).await;
     assert!(h.shows.try_recv().is_err());
     assert!(!h.snapshot().show);
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_microphone_failure_ends_the_show_and_frees_the_screen() -> anyhow::Result<()> {
+    let mut h = Harness::paused(|_| {})?;
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    let (id, events) = receive(&h.captures).await?;
+    h.input(Input::Show);
+    receive(&h.shows).await?;
+    events
+        .send(CaptureEvent::Finished(
+            id,
+            Err(anyhow!("Microphone disconnected")),
+        ))
+        .await?;
+    h.phase(Phase::Error).await?;
+    // The screen recorder retired with the session, so the next Show records again.
+    h.input(Input::Release);
+    start_show(&mut h).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_screen_that_stops_recording_explains_why_and_frees_the_microphone() -> anyhow::Result<()>
+{
+    let mut h = Harness::paused(|_| {})?;
+    let (id, events) = start_show(&mut h).await?;
+    events
+        .send(ShowEvent::Finished(
+            id,
+            Err(anyhow!("Screen recording is off")),
+        ))
+        .await?;
+    h.phase(Phase::Error).await?;
+    assert!(h.snapshot().message.contains("Screen recording is off"));
+    h.input(Input::Release);
+    h.input(Input::Press);
+    receive(&h.captures).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn footage_from_an_earlier_show_never_reaches_a_later_one() -> anyhow::Result<()> {
+    let mut h = Harness::paused(|_| {})?;
+    let (earlier, stale) = start_show(&mut h).await?;
+    h.input(Input::Cancel);
+    h.phase(Phase::Cancelled).await?;
+    h.input(Input::Release);
+    start_show(&mut h).await?;
+    let mut late = footage();
+    late.ended = Moment::from_millis(9_999);
+    stale.send(ShowEvent::Finished(earlier, Ok(late))).await?;
+    h.input(Input::Release);
+    h.input(Input::Press);
+    h.transcribe_next_as("this one").await?;
+    let recorded = receive(&h.published).await?;
+    assert_eq!(recorded.recording.duration, footage().ended);
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_show_queued_behind_a_retiring_screen_still_records_it() -> anyhow::Result<()> {
+    let (retirement, retiring) = gate(2);
+    let mut h = Harness::paused(|ports| ports.screen_retirement = Some(retirement))?;
+    start_show(&mut h).await?;
+    h.input(Input::Release);
+    h.input(Input::Press);
+    h.transcribe_next_as("first").await?;
+    receive(&h.published).await?;
+    retiring.reached().await?;
+    // The second Show's narration ends before the first screen recorder lets go.
+    h.input(Input::Release);
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    receive(&h.captures).await?;
+    h.input(Input::Show);
+    h.observe(|snapshot| snapshot.show && snapshot.hands_free)
+        .await?;
+    h.input(Input::Release);
+    h.input(Input::Press);
+    h.transcribe_next_as("second").await?;
+    assert!(still_pending(h.shows.recv()).await);
+    retiring.release().await?;
+    receive(&h.shows).await?;
+    let recorded = receive(&h.published).await?;
+    assert_eq!(
+        recorded.recording.narration,
+        Narration::Text("second".into())
+    );
+    retiring.reached().await?;
+    retiring.release().await?;
     h.close().await
 }

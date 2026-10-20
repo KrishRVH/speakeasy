@@ -3,6 +3,8 @@
 //! Holding Shift alone and moving the pointer draws; clicks keep reaching the apps underneath, so
 //! pressing a button never draws and drawing never clicks.
 
+use std::mem;
+
 use crate::{
     Moment, Point, Span,
     recording::{Action, InkPoint, Size, Stroke},
@@ -22,6 +24,8 @@ const MOST_STROKE_POINTS: usize = 2_400;
 pub struct Tracker {
     surface: Size,
     drawing: Vec<InkPoint>,
+    /// Whether the stroke being drawn has spanned enough to be ink.
+    deliberate: bool,
     press: Option<Press>,
     strokes: Vec<Stroke>,
     actions: Vec<Action>,
@@ -32,6 +36,8 @@ pub struct Tracker {
 struct Press {
     at: Moment,
     from: Point,
+    /// Where the pointer is now.
+    to: Point,
     /// The farthest the pointer has moved from `from`, in pixels.
     reach: f32,
     /// Pressed while drawing, so it belongs to no click.
@@ -45,6 +51,7 @@ impl Tracker {
         Self {
             surface,
             drawing: Vec::new(),
+            deliberate: false,
             press: None,
             strokes: Vec::new(),
             actions: Vec::new(),
@@ -66,11 +73,13 @@ impl Tracker {
                 self.press = Some(Press {
                     at,
                     from: point,
+                    to: point,
                     reach: 0.0,
                     drawing,
                 });
             },
             (Some(press), true) => {
+                press.to = point;
                 press.reach = press.reach.max(pixels(surface, press.from, point));
                 press.drawing |= drawing;
             },
@@ -79,10 +88,11 @@ impl Tracker {
         }
     }
 
-    /// The stroke being drawn, if any.
+    /// The stroke being drawn, once it spans enough to be ink rather than Shift held for a capital
+    /// letter; until then, nothing.
     #[must_use]
     pub fn drawing(&self) -> &[InkPoint] {
-        &self.drawing
+        if self.deliberate { &self.drawing } else { &[] }
     }
 
     /// The strokes finished so far, in drawing order.
@@ -95,13 +105,8 @@ impl Tracker {
     #[must_use]
     pub fn finish(mut self, at: Moment) -> (Vec<Stroke>, Vec<Action>) {
         self.lift();
-        if let Some(press) = self.press.take()
-            && !press.drawing
-        {
-            self.actions.push(Action::Click {
-                at,
-                point: press.from,
-            });
+        if let Some(press) = self.press {
+            self.release(at, press.to);
         }
         (self.strokes, self.actions)
     }
@@ -115,6 +120,10 @@ impl Tracker {
             .last()
             .is_none_or(|last| self.pixels(last.point, ink.point) >= INK_SPACING_PIXELS);
         if spaced {
+            self.deliberate |= self
+                .drawing
+                .first()
+                .is_some_and(|first| self.pixels(first.point, ink.point) >= SHORTEST_STROKE_PIXELS);
             self.drawing.push(ink);
         }
     }
@@ -122,16 +131,9 @@ impl Tracker {
     /// Ends the stroke being drawn, keeping it only if it spans enough to be deliberate.
     fn lift(&mut self) {
         let points = std::mem::take(&mut self.drawing);
-        let Some(stroke) = Stroke::new(points) else {
-            return;
-        };
-        let (first, last) = (stroke.first().point, stroke.last().point);
-        let span = stroke
-            .points()
-            .iter()
-            .map(|ink| self.pixels(first, ink.point))
-            .fold(self.pixels(first, last), f32::max);
-        if span >= SHORTEST_STROKE_PIXELS {
+        if mem::take(&mut self.deliberate)
+            && let Some(stroke) = Stroke::new(points)
+        {
             self.strokes.push(stroke);
         }
     }
@@ -212,6 +214,16 @@ mod tests {
     }
 
     #[test]
+    fn ink_shows_once_it_spans_enough_to_be_deliberate() {
+        let mut tracker = Tracker::new(SURFACE);
+        tracker.observe(Moment::START, Point::new(0.500, 0.5), true, false);
+        tracker.observe(Moment::from_millis(8), Point::new(0.502, 0.5), true, false);
+        assert!(tracker.drawing().is_empty(), "Shift alone shows no ink");
+        tracker.observe(Moment::from_millis(16), Point::new(0.510, 0.5), true, false);
+        assert_eq!(tracker.drawing().len(), 3);
+    }
+
+    #[test]
     fn presses_become_clicks_or_drags_by_how_far_they_moved() {
         let (_, actions) = replay(&[
             (0, 0.50, 0.50, false, true),
@@ -253,8 +265,23 @@ mod tests {
     }
 
     #[test]
-    fn a_press_held_at_the_end_still_counts() {
+    fn a_press_held_at_the_end_still_counts_as_what_it_was() {
         let (_, actions) = replay(&[(0, 0.5, 0.5, false, true), (50, 0.5, 0.5, false, true)]);
-        assert_eq!(actions.len(), 1);
+        assert_eq!(
+            actions,
+            [Action::Click {
+                at: Moment::from_millis(50),
+                point: Point::new(0.5, 0.5)
+            }]
+        );
+        let (_, actions) = replay(&[(0, 0.2, 0.2, false, true), (50, 0.4, 0.2, false, true)]);
+        assert_eq!(
+            actions,
+            [Action::Drag {
+                span: Span::new(Moment::START, Moment::from_millis(50)),
+                from: Point::new(0.2, 0.2),
+                to: Point::new(0.4, 0.2)
+            }]
+        );
     }
 }

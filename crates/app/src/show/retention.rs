@@ -8,6 +8,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use anyhow::Context as _;
 use gpui::App;
 
 use super::utc_stamp;
@@ -22,9 +23,9 @@ const SWEEP_EVERY: Duration = Duration::from_hours(1);
 /// A file of this name inside a Show keeps it.
 const PIN: &str = ".pinned";
 
-/// Deletes expired Shows now and then hourly for the app's life, giving the first failure to
-/// `report`; later failures repeat it and stay quiet.
-pub(crate) fn attend(report: impl Fn(&anyhow::Error, &mut App) + 'static, cx: &App) {
+/// Deletes expired Shows now and then hourly for the app's life. The first failure goes to
+/// `report`, which returns whether it could be shown; once one is, later failures stay quiet.
+pub(crate) fn attend(report: impl Fn(&anyhow::Error, &mut App) -> bool + 'static, cx: &App) {
     cx.spawn(async move |cx| {
         let mut reported = false;
         loop {
@@ -35,9 +36,9 @@ pub(crate) fn attend(report: impl Fn(&anyhow::Error, &mut App) + 'static, cx: &A
             if let Err(error) = swept
                 && !reported
             {
-                reported = true;
-                if cx.update(|cx| report(&error, cx)).is_err() {
-                    return;
+                match cx.update(|cx| report(&error, cx)) {
+                    Ok(shown) => reported = shown,
+                    Err(_) => return,
                 }
             }
             cx.background_executor().timer(SWEEP_EVERY).await;
@@ -51,7 +52,7 @@ pub(crate) fn attend(report: impl Fn(&anyhow::Error, &mut App) + 'static, cx: &A
 fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
     let entries = match fs::read_dir(parent) {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
-        entries => entries?,
+        entries => entries.with_context(|| format!("Cannot read {}", parent.display()))?,
     };
     let cutoff = utc_stamp(now.checked_sub(KEPT_FOR).unwrap_or(SystemTime::UNIX_EPOCH));
     let mut stuck = 0_usize;
@@ -75,7 +76,7 @@ fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
                 })
         } else {
             // Stamps sort in time order, so comparing them compares when Shows were recorded.
-            stamp(name).is_some_and(|stamp| stamp < cutoff.as_str()) && !path.join(PIN).exists()
+            stamp(name).is_some_and(|stamp| stamp < cutoff.as_str()) && !pinned(&path)
         };
         if expired && fs::remove_dir_all(&path).is_err() {
             stuck = stuck.saturating_add(1);
@@ -83,10 +84,20 @@ fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
     }
     anyhow::ensure!(
         stuck == 0,
-        "{stuck} expired Show folders could not be deleted from {}",
+        "Could not delete every expired Show in {}. Close any of their files that are open; \
+         Speakeasy tries again within the hour.",
         parent.display()
     );
     Ok(())
+}
+
+/// Whether the Show at `path` holds a pin. Only a pin known to be absent lets it expire, and a
+/// pin that is itself a link still counts.
+fn pinned(path: &Path) -> bool {
+    !matches!(
+        fs::symlink_metadata(path.join(PIN)),
+        Err(error) if error.kind() == ErrorKind::NotFound
+    )
 }
 
 /// The stamp a Show's directory is named for, such as `20261019T143603Z` in `20261019T143603Z-2`.
@@ -126,6 +137,13 @@ mod tests {
         }
         fs::write(parent.join(&pinned).join(PIN), b"")?;
         fs::write(parent.join(days_ago(9)), b"not a Show")?;
+        // A link named like an expired Show is left alone, and so is what it points to.
+        #[cfg(unix)]
+        let elsewhere = {
+            let elsewhere = tempfile::tempdir()?;
+            std::os::unix::fs::symlink(elsewhere.path(), parent.join(days_ago(10)))?;
+            elsewhere
+        };
         let names = || -> anyhow::Result<Vec<String>> {
             let mut names = fs::read_dir(parent)?
                 .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
@@ -142,6 +160,11 @@ mod tests {
             pinned,
             "notes".into(),
         ];
+        #[cfg(unix)]
+        {
+            kept.push(days_ago(10));
+            assert!(elsewhere.path().exists());
+        }
         kept.sort();
         assert_eq!(names()?, kept);
 

@@ -1,5 +1,6 @@
-//! The three side effects used by the session owner. Tests replace devices and speech at this
-//! boundary; gesture, cancellation, and insertion ordering stay real.
+//! The side effects used by the session owner: recording devices, speech, insertion, and
+//! publishing Shows. Tests replace them at this boundary; gesture, cancellation, and delivery
+//! ordering stay real.
 
 use std::{path::PathBuf, time::Instant};
 
@@ -20,7 +21,7 @@ use crate::{
 pub(crate) const STARTUP_CANCELLED: &str = "Local model startup cancelled";
 
 pub(crate) trait Recording: Send + 'static {
-    /// Requests the end of capture; the recording then reports `CaptureEvent::Finished`.
+    /// Requests the end of capture; the recording then reports its `Finished` event.
     fn finish(&self);
 
     /// Cancels capture; resolves only once the device has been released.

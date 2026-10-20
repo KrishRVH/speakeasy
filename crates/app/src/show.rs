@@ -21,13 +21,12 @@ pub(crate) use self::{
     retention::attend as attend_retention,
 };
 
-/// Frames are fingerprinted this often while a Show records.
-const SAMPLE_INTERVAL: Duration = Duration::from_millis(200);
 /// The demo renders frames this small just to fingerprint them; a fingerprint's 128 × 72 grid
 /// needs no more, and rendering costs grow with every pixel.
 const SAMPLE_SIZE: (u32, u32) = (320, 200);
-/// The demo's keyframes render as a high-density display would capture them.
-const DEMO_SIZE: (u32, u32) = (2_880, 1_800);
+/// The demo's keyframes render as a Show records a 2880 × 1800 display, halved to fit
+/// [`recorder::LONGEST_EDGE`].
+const DEMO_SIZE: (u32, u32) = (1_440, 900);
 
 /// A Show subcommand from the command line.
 #[derive(Debug, PartialEq, Eq)]
@@ -58,12 +57,20 @@ impl Command {
     /// Runs the subcommand, printing the bundle's summary.
     pub(crate) fn run(self) -> anyhow::Result<()> {
         let Self::Demo { out } = self;
+        let out = out.map(std::path::absolute).transpose()?;
+        if let Some(out) = &out {
+            anyhow::ensure!(
+                !out.exists(),
+                "{} already exists; choose a new directory",
+                out.display()
+            );
+        }
         let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;
         let demo = Demo::new(typeface.clone());
         let recording = demo.recording();
         let duration = recording.duration.since(Moment::START);
         let samples = std::iter::successors(Some(Duration::ZERO), |at| {
-            Some(at.saturating_add(SAMPLE_INTERVAL)).filter(|next| *next <= duration)
+            Some(at.saturating_add(recorder::SAMPLE_INTERVAL)).filter(|next| *next <= duration)
         })
         .map(|at| {
             let at = Moment::from(at);
@@ -82,7 +89,7 @@ impl Command {
             .collect::<Result<Vec<_>, _>>()?;
         let bundle = compose(recording, selection, frames, &typeface)?;
         let directory = match out {
-            Some(out) => std::path::absolute(out)?,
+            Some(out) => out,
             None => fresh_directory(&directory(), SystemTime::now())?,
         };
         write(&directory, &bundle.files(&directory)?)?;
@@ -135,7 +142,7 @@ impl Staged {
 fn stage(directory: &Path, files: &[speakeasy_show::File]) -> anyhow::Result<Staged> {
     anyhow::ensure!(
         !directory.exists(),
-        "{} already exists; choose a new directory",
+        "{} already exists, and a Show never replaces one",
         directory.display()
     );
     let parent = directory

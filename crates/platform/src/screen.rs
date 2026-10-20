@@ -23,7 +23,7 @@ use crate::owned_thread::OwnedThread;
 #[cfg(target_os = "windows")]
 use crate::windows::screen as native;
 
-/// How often the pointer is sampled; fast enough that a quick click is never missed.
+/// How often the pointer is sampled: fast enough to catch a deliberate click.
 const POINTER_INTERVAL: Duration = Duration::from_millis(8);
 
 /// One image of the display.

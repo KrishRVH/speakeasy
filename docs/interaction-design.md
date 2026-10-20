@@ -97,10 +97,10 @@ edits.
   passive so a Show can draw with it; any other key during a hold belongs to a different shortcut:
   dictation cancels and waits for release. On Windows, an unassigned mask key keeps the released Win
   key from opening Start.
-- S during a Windows/macOS hold turns the recording into a Show, locked hands-free. The pill
-  replaces the lock with a red screen mark while the screen records, and says **Show copied** once
-  the bundle is written and its summary copied. Shift alone draws ink that holds briefly after the
-  pen lifts, then fades; clicks pass through to the apps underneath.
+- S during a Windows/macOS hold turns the recording into a Show, locked hands-free. From that press
+  until the Show finishes, the pill shows a red screen mark in place of the lock, and it says **Show
+  copied** once the bundle is written and its summary copied. Shift alone draws ink that holds
+  briefly after the pen lifts, then fades; clicks pass through to the apps underneath.
 - Windows/macOS Escape cancels immediately and continues to the focused app. Linux uses a reserved
   Ctrl+Super+Escape chord or an explicit command binding; bare Escape is not globally captured.
   Animation never delays cancellation or owns the microphone lifetime.

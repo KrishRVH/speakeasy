@@ -229,24 +229,27 @@ exit before loading a replacement, while the session owner continues receiving i
 S during a Windows/macOS hold turns the recording into a Show and locks it hands-free; the next
 press finishes it. The microphone keeps recording, so words spoken before S belong to the Show. The
 screen recorder is a second owned device beside the microphone: it opens once its predecessor
-retires, finishes with the gesture, and retires without being awaited when the session is cancelled
-or fails. Linux has no screen adapter yet, so its shortcuts never deliver S.
+retires, even after the narration has ended, finishes whenever capture ends, and retires without
+being awaited when the session is cancelled or fails. A recorder finished before its first frame
+waits up to three seconds for one. Linux has no screen adapter yet, so its shortcuts never deliver
+S.
 
 The recorder runs on an owned thread with its own current-thread runtime. It captures the display
 under the pointer every 200 ms, halving frames until the long edge fits 2,560 pixels, and keeps each
 frame's signature plus a copy in the journal: 64-pixel tiles, Sub-filtered and deflated, storing
-only tiles that changed. Past a 384 MB compressed budget it keeps every second frame, then every
-fourth, so a long, busy Show cannot exhaust memory. The pointer is sampled every 8 ms. The tracker
-turns movement with Shift alone into strokes, dropping strokes shorter than 6 pixels, and button
-presses into clicks or drags at a 12-pixel threshold; a Shift press is never a click. Live strokes
-reach the overlay through a watch channel.
+only tiles that changed. The journal holds at most 384 MB compressed: past it, every second frame is
+dropped, its tiles passing to the next frame, and only every second arrival is kept from then on, so
+a long, busy Show keeps even coverage within the cap. Signatures follow the journal, so selection
+only picks frames it holds. The pointer is sampled every 8 ms. The tracker turns movement with Shift
+alone into strokes once they span 6 pixels, and button presses into clicks or drags at a 12-pixel
+threshold; a Shift press is never a click. Live strokes reach the overlay through a watch channel.
 
 The overlay is a click-through, non-activating GPUI window over the recorded display, opened on the
 first Show. Ink holds for 650 ms after the pen lifts, then fades over 650 ms; a stroke begun after
 the fade starts a clean canvas. Capture leaves out every Speakeasy window, including the overlay and
 pill, for its whole lifetime: macOS filters out the application, and Windows sets display affinity
-on each of the process's top-level windows and restores it at stop. Frames therefore show ink only
-as the bundle redraws it.
+on each of the process's top-level windows, rechecks them with every frame, and restores them at
+stop. Frames therefore show ink only as the bundle redraws it.
 
 Narration carries word timings (`Detail::Words`): Parakeet words, or Whisper tokens joined at their
 leading spaces. `Session::narrate` moves them from the audio's start onto the Show's timeline, which
@@ -254,14 +257,15 @@ begins with the session, adding the microphone's start delay and the quiet trimm
 silent Show publishes with empty narration. `AwaitingFootage` waits for both narration and footage.
 `Publishing` selects keyframes, reads them from the journal, composes the bundle, and stages it in a
 hidden `.partial-*` sibling off the owner's thread. The bundle appears, and its summary is copied,
-only after the session's permit commits, so cancelling a Show at any point leaves no files and no
-clipboard change.
+only once the session's permit commits. A Show cancelled before then leaves no bundle and no
+clipboard change: publication checks the permit before each costly step and deletes anything it
+staged.
 
 Shows live in `<data root>/shows/<UTC stamp>`: mode `0700` on Unix, and inside the user's local
 application data on Windows. The resident app sweeps at launch and hourly, deleting stamp-named
 bundles older than seven days unless they hold a `.pinned` file, and staging older than an hour.
-Other names and links are never touched. The first sweep failure of a launch is reported like any
-other error.
+Other names and links are never touched, and a pin that cannot be read still keeps its Show. The
+first sweep failure is reported once no recording is under way; later ones retry quietly.
 
 ## Insertion and privacy
 

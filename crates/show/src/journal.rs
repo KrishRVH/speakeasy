@@ -4,6 +4,8 @@
 //! before it. A still screen therefore costs almost nothing, and any recorded moment can be
 //! rebuilt exactly, for keyframes now and closer looks later.
 
+use std::mem;
+
 use crate::{Image, Moment, convert};
 
 /// Tile edge in pixels: small enough that a blinking caret stores little, large enough that the
@@ -93,6 +95,42 @@ impl Journal {
         self.bytes
     }
 
+    /// Drops every second frame, keeping the first and the last, so a recorder over its budget
+    /// keeps even coverage of the whole recording. Every kept frame still rebuilds exactly.
+    pub fn thin(&mut self) {
+        let count = self.moments.len();
+        let mut next = 0_usize;
+        let renumbered: Vec<Option<usize>> = (0..count)
+            .map(|index| {
+                let kept = index.is_multiple_of(2) || index.saturating_add(1) == count;
+                kept.then(|| {
+                    let number = next;
+                    next = next.saturating_add(1);
+                    number
+                })
+            })
+            .collect();
+        let ends: Vec<usize> = self
+            .segments
+            .iter()
+            .skip(1)
+            .map(|segment| segment.first)
+            .chain([count])
+            .collect();
+        self.segments = mem::take(&mut self.segments)
+            .into_iter()
+            .zip(ends)
+            .filter_map(|(segment, end)| segment.thinned(&renumbered, end))
+            .collect();
+        self.moments = self
+            .moments
+            .iter()
+            .zip(&renumbered)
+            .filter_map(|(moment, kept)| kept.map(|_| *moment))
+            .collect();
+        self.bytes = self.segments.iter().map(Segment::bytes).sum();
+    }
+
     /// The frame on screen at `at`: the latest recorded at or before it, else the first.
     #[must_use]
     pub fn frame_at(&self, at: Moment) -> Option<Image> {
@@ -132,6 +170,43 @@ impl Segment {
             .flatten()
             .map(|version| version.data.len())
             .sum()
+    }
+
+    /// The segment with only the frames `renumbered` keeps, numbered anew; `end` is the index after
+    /// its last frame. A tile version passes to the first kept frame that shows it, so the frames
+    /// after a dropped one rebuild unchanged. `None` when no frame of the segment is kept.
+    fn thinned(self, renumbered: &[Option<usize>], end: usize) -> Option<Self> {
+        let kept_from = |from: usize, until: usize| {
+            renumbered
+                .get(from..until)?
+                .iter()
+                .find_map(|number| *number)
+        };
+        let first = kept_from(self.first, end)?;
+        let tiles = self
+            .tiles
+            .into_iter()
+            .map(|versions| {
+                let ends: Vec<usize> = versions
+                    .iter()
+                    .skip(1)
+                    .map(|version| version.frame)
+                    .chain([end])
+                    .collect();
+                versions
+                    .into_iter()
+                    .zip(ends)
+                    .filter_map(|(version, until)| {
+                        kept_from(version.frame, until).map(|frame| Version { frame, ..version })
+                    })
+                    .collect()
+            })
+            .collect();
+        Some(Self {
+            first,
+            tiles,
+            ..self
+        })
     }
 
     /// Stores the tiles of `frame` that differ from the latest frame; returns the bytes added.
@@ -333,6 +408,49 @@ mod tests {
     }
 
     proptest! {
+        #[test]
+        fn thinning_keeps_every_other_frame_exact(
+            changes in prop::collection::vec((0_u8..4, 0_usize..3), 1..24),
+            rounds in 1_usize..4,
+        ) {
+            // Each step repaints one quadrant, keeps the screen, or switches between two sizes.
+            let mut journal = Journal::new();
+            let mut recorded = Vec::new();
+            let mut shade = [0_u8; 4];
+            for (index, (quadrant, size)) in changes.into_iter().enumerate() {
+                if let Some(value) = shade.get_mut(usize::from(quadrant)) {
+                    *value = value.wrapping_add(40);
+                }
+                let (width, height) = if size == 2 { (70, 70) } else { (150, 90) };
+                let painted = shade;
+                let image = frame(width, height, move |x, y| {
+                    let quadrant = usize::from(x >= 64).wrapping_add(usize::from(y >= 64).wrapping_mul(2));
+                    let value = *painted.get(quadrant).unwrap();
+                    [value, value, value, 255]
+                });
+                let moment = at(u64::try_from(index).unwrap().wrapping_mul(100));
+                journal.record(moment, image.clone());
+                recorded.push((moment, image));
+            }
+            for _ in 0..rounds {
+                let before = journal.bytes();
+                journal.thin();
+                let count = recorded.len();
+                recorded = recorded
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(index, _)| index.is_multiple_of(2) || index.wrapping_add(1) == count)
+                    .map(|(_, frame)| frame)
+                    .collect();
+                prop_assert!(journal.bytes() <= before);
+            }
+            let moments: Vec<Moment> = recorded.iter().map(|(moment, _)| *moment).collect();
+            prop_assert_eq!(journal.moments(), moments.as_slice());
+            for (moment, image) in &recorded {
+                prop_assert_eq!(journal.frame_at(*moment), Some(image.clone()));
+            }
+        }
+
         #[test]
         fn rebuilding_is_lossless_for_any_size(width in 1_u32..150, height in 1_u32..150, seed in 0_u8..=255) {
             let noise = move |x: usize, y: usize| {

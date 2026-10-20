@@ -35,8 +35,8 @@ impl<R: Recording> Device<R> {
         };
     }
 
-    /// Pends unless retiring; resolves once the device is released, leaving the microphone free.
-    /// Cancel-safe: dropped early, it leaves the microphone retiring.
+    /// Pends unless retiring; resolves once the device is released, leaving it free. Cancel-safe:
+    /// dropped early, it leaves the device retiring.
     pub(super) async fn retired(&mut self) {
         let Self::Retiring(task) = self else {
             return pending().await;

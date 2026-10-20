@@ -17,12 +17,14 @@ use crate::{
 
 /// Frames are sampled this often: fast enough to catch what a click changed, slow enough that a
 /// still screen costs nothing and a busy one stays cheap.
-const SAMPLE_INTERVAL: Duration = Duration::from_millis(200);
+pub(super) const SAMPLE_INTERVAL: Duration = Duration::from_millis(200);
 /// Frames larger than this on the long edge are halved; a reading model gains nothing from more.
-const LONGEST_EDGE: u32 = 2_560;
-/// The journal's compressed size before it starts keeping only every other frame, then every
-/// fourth, and so on, so a long scroll or video cannot exhaust memory.
+pub(super) const LONGEST_EDGE: u32 = 2_560;
+/// The most compressed bytes the journal holds. Past it, every second frame is dropped and only
+/// every second arrival kept from then on, so a long scroll or video keeps even coverage within it.
 const JOURNAL_BUDGET: usize = 384 << 20;
+/// How long a Show finished before its first frame waits for one; a Show needs the screen.
+const FIRST_FRAME_WAIT: Duration = Duration::from_secs(3);
 /// Frames the lanes from capture threads may hold before the newest ones are dropped.
 const FRAME_LANE: usize = 2;
 const POINTER_LANE: usize = 256;
@@ -100,10 +102,10 @@ struct Session<'a> {
     canvas: &'a watch::Sender<Canvas>,
     tracker: Tracker,
     journal: Journal,
+    /// One per journal frame, so selection only picks frames the journal holds.
     samples: Vec<Sample>,
-    /// Every `stride`th frame is kept; it doubles whenever the journal outgrows `allowance`.
+    /// Every `stride`th arrival is kept; it doubles whenever the journal is thinned.
     stride: usize,
-    allowance: usize,
     arrived: usize,
 }
 
@@ -136,9 +138,10 @@ impl<'a> Session<'a> {
             journal: Journal::new(),
             samples: Vec::new(),
             stride: 1,
-            allowance: JOURNAL_BUDGET,
             arrived: 0,
         };
+        // Set once finished: the latest moment to keep waiting for a first frame.
+        let mut finished_by = None;
         let outcome = loop {
             tokio::select! {
                 biased;
@@ -148,10 +151,20 @@ impl<'a> Session<'a> {
                         stop(&capture, &pointer).await;
                         return None;
                     }
-                    break Ok(());
+                    if !session.samples.is_empty() {
+                        break Ok(());
+                    }
+                    finished_by.get_or_insert_with(first_frame_deadline);
                 },
+                () = tokio::time::sleep_until(finished_by.unwrap_or_else(tokio::time::Instant::now)),
+                    if finished_by.is_some() => break Ok(()),
                 event = frames_received.recv() => match event {
-                    Ok(ScreenEvent::Frame(frame)) => session.frame(frame),
+                    Ok(ScreenEvent::Frame(frame)) => {
+                        session.frame(frame);
+                        if finished_by.is_some() && !session.samples.is_empty() {
+                            break Ok(());
+                        }
+                    },
                     Ok(ScreenEvent::Failed(message)) => break Err(anyhow!(message)),
                     Err(_) => break Err(anyhow!("Screen capture stopped unexpectedly. Try again.")),
                 },
@@ -181,10 +194,17 @@ impl<'a> Session<'a> {
             signature: Signature::of(&image),
         });
         self.journal.record(at, image);
-        while self.journal.bytes() > self.allowance {
-            self.stride = self.stride.saturating_mul(2);
-            self.allowance = self.allowance.saturating_add(JOURNAL_BUDGET / 4);
+        if self.journal.bytes() <= JOURNAL_BUDGET {
+            return;
         }
+        // Halving always ends: two frames are far within the budget.
+        while self.journal.bytes() > JOURNAL_BUDGET && self.journal.moments().len() > 2 {
+            self.journal.thin();
+            self.stride = self.stride.saturating_mul(2);
+        }
+        let moments = self.journal.moments();
+        self.samples
+            .retain(|sample| moments.binary_search(&sample.at).is_ok());
     }
 
     fn pointer(&mut self, sample: PointerSample) {
@@ -235,6 +255,11 @@ impl<'a> Session<'a> {
             actions,
         })
     }
+}
+
+fn first_frame_deadline() -> tokio::time::Instant {
+    let now = tokio::time::Instant::now();
+    now.checked_add(FIRST_FRAME_WAIT).unwrap_or(now)
 }
 
 /// Releases the display and pointer before anything is reported, so a new Show cannot overlap
