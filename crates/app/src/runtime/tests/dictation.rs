@@ -6,7 +6,7 @@ use crate::{config::Engine, theme::Theme};
 
 #[tokio::test(start_paused = true)]
 async fn desktop_readiness_blocks_capture_until_native_startup_completes() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|ports| ports.desktop_pending = true)?;
+    let mut h = Harness::with_ports(Config::default(), |ports| ports.desktop_pending = true)?;
     receive(&h.loads).await?;
     h.input(Input::Press);
     h.input(Input::Toggle);
@@ -26,7 +26,7 @@ async fn desktop_readiness_blocks_capture_until_native_startup_completes() -> an
 
 #[tokio::test(start_paused = true)]
 async fn held_shortcut_release_finishes_through_the_owner() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|_| {})?;
+    let mut h = Harness::new()?;
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     tokio::time::advance(Duration::from_millis(250)).await;
@@ -39,7 +39,7 @@ async fn held_shortcut_release_finishes_through_the_owner() -> anyhow::Result<()
 
 #[tokio::test(start_paused = true)]
 async fn locking_a_hold_keeps_the_same_capture_until_the_next_press() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|_| {})?;
+    let mut h = Harness::new()?;
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     let (id, events) = receive(&h.captures).await?;
@@ -58,7 +58,7 @@ async fn locking_a_hold_keeps_the_same_capture_until_the_next_press() -> anyhow:
 
 #[tokio::test(start_paused = true)]
 async fn double_tap_uses_one_capture_and_single_tap_obeys_its_deadline() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|_| {})?;
+    let mut h = Harness::new()?;
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     let (id, events) = receive(&h.captures).await?;
@@ -93,7 +93,7 @@ async fn double_tap_uses_one_capture_and_single_tap_obeys_its_deadline() -> anyh
 
 #[tokio::test(start_paused = true)]
 async fn owner_finishes_capture_at_the_five_minute_deadline() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|_| {})?;
+    let mut h = Harness::new()?;
     h.start().await?;
     let limit = Duration::from_secs(300);
     let deadline = tokio::time::Instant::now() + limit;
@@ -108,7 +108,9 @@ async fn owner_finishes_capture_at_the_five_minute_deadline() -> anyhow::Result<
 
 #[tokio::test(start_paused = true)]
 async fn failed_capture_start_preserves_its_reason_and_allows_shutdown() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|ports| ports.record_error = Some("thread resources exhausted"))?;
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.record_error = Some("thread resources exhausted");
+    })?;
     h.input(Input::Press);
     h.phase(Phase::Error).await?;
     assert!(h.snapshot().message.contains("thread resources exhausted"));
@@ -116,7 +118,7 @@ async fn failed_capture_start_preserves_its_reason_and_allows_shutdown() -> anyh
     h.close().await
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn cancelled_capture_retires_before_retry_and_pause_waits_for_it() -> anyhow::Result<()> {
     let (retirement, retiring) = gate(2);
     let mut h = Harness::with_ports(Config::default(), |ports| {
@@ -129,7 +131,7 @@ async fn cancelled_capture_retires_before_retry_and_pause_waits_for_it() -> anyh
     h.input(Input::Toggle);
     h.phase(Phase::Starting).await?;
     assert!(
-        h.captures.try_recv().is_err(),
+        still_pending(h.captures.recv()).await,
         "Retry overlapped a retiring microphone"
     );
     retiring.release().await?;
@@ -137,13 +139,12 @@ async fn cancelled_capture_retires_before_retry_and_pause_waits_for_it() -> anyh
     receive(&h.captures).await?;
     h.runtime.request_stop();
     retiring.reached().await?;
-    assert!(still_pending(h.runtime.stopped()).await);
+    assert!(still_pending(h.exited()).await);
     retiring.release().await?;
-    timeout(PATIENCE, h.runtime.stopped()).await?;
-    Ok(())
+    h.close().await
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn pause_during_a_queued_capture_never_opens_the_new_device() -> anyhow::Result<()> {
     let (retirement, retiring) = gate(1);
     let mut h = Harness::with_ports(Config::default(), |ports| {
@@ -156,15 +157,15 @@ async fn pause_during_a_queued_capture_never_opens_the_new_device() -> anyhow::R
     h.input(Input::Toggle);
     h.phase(Phase::Starting).await?;
     h.runtime.request_stop();
-    assert!(still_pending(h.runtime.stopped()).await);
+    assert!(still_pending(h.exited()).await);
     retiring.release().await?;
-    timeout(PATIENCE, h.runtime.stopped()).await?;
+    timeout(PATIENCE, h.exited()).await?;
     assert!(h.captures.try_recv().is_err());
     assert!(h.pasted.try_recv().is_err());
-    Ok(())
+    h.close().await
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn completed_audio_does_not_allow_retry_before_device_teardown() -> anyhow::Result<()> {
     let (retirement, retiring) = gate(2);
     let mut h = Harness::with_ports(Config::default(), |ports| {
@@ -177,18 +178,17 @@ async fn completed_audio_does_not_allow_retry_before_device_teardown() -> anyhow
     h.phase(Phase::Done).await?;
     h.input(Input::Toggle);
     h.phase(Phase::Starting).await?;
-    assert!(h.captures.try_recv().is_err());
+    assert!(still_pending(h.captures.recv()).await);
     retiring.release().await?;
     h.phase(Phase::Recording).await?;
     receive(&h.captures).await?;
     h.runtime.request_stop();
     retiring.reached().await?;
     retiring.release().await?;
-    timeout(PATIENCE, h.runtime.stopped()).await?;
-    Ok(())
+    h.close().await
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn pause_starts_capture_and_model_cleanup_together() -> anyhow::Result<()> {
     let (retirement, retiring) = gate(1);
     let (stop, stopping) = gate(1);
@@ -201,14 +201,13 @@ async fn pause_starts_capture_and_model_cleanup_together() -> anyhow::Result<()>
     h.runtime.request_stop();
     retiring.reached().await?;
     stopping.reached().await?;
-    assert!(still_pending(h.runtime.stopped()).await);
+    assert!(still_pending(h.exited()).await);
     retiring.release().await?;
     stopping.release().await?;
-    timeout(PATIENCE, h.runtime.stopped()).await?;
-    Ok(())
+    h.close().await
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn cpu_cancellation_reaps_before_replacement_without_blocking_input() -> anyhow::Result<()> {
     let (stop, stopping) = gate(2);
     let config = Config {
@@ -225,13 +224,13 @@ async fn cpu_cancellation_reaps_before_replacement_without_blocking_input() -> a
     timeout(PATIENCE, old_reply.closed()).await?;
     assert!(answer(old_reply, "stale fixture").is_err());
     assert!(
-        h.loads.try_recv().is_err(),
+        still_pending(h.loads.recv()).await,
         "Replacement started before old worker exit"
     );
     h.start().await?;
     h.input(Input::Toggle);
     h.phase(Phase::Processing).await?;
-    assert!(h.jobs.try_recv().is_err());
+    assert!(still_pending(h.jobs.recv()).await);
     stopping.release().await?;
     receive(&h.loads).await?;
     h.transcribe_next_as("current fixture").await?;
@@ -239,10 +238,10 @@ async fn cpu_cancellation_reaps_before_replacement_without_blocking_input() -> a
     h.phase(Phase::Done).await?;
     // Pre-release the stop gate, so the shutdown stop passes without harness cleanup.
     stopping.release().await?;
-    Ok(())
+    h.close().await
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn preparing_insertion_cancels_without_blocking_a_new_recording() -> anyhow::Result<()> {
     let (insertion, preparing) = gate(2);
     let mut h = Harness::with_ports(Config::default(), |ports| {
@@ -264,10 +263,10 @@ async fn preparing_insertion_cancels_without_blocking_a_new_recording() -> anyho
     assert_eq!(receive(&h.pasted).await?, "new fixture");
     h.phase(Phase::Done).await?;
     assert!(h.pasted.try_recv().is_err());
-    Ok(())
+    h.close().await
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn shutdown_revokes_and_owns_pending_insertion_cleanup() -> anyhow::Result<()> {
     let (insertion, preparing) = gate(1);
     let mut h = Harness::with_ports(Config::default(), |ports| {
@@ -278,14 +277,14 @@ async fn shutdown_revokes_and_owns_pending_insertion_cleanup() -> anyhow::Result
     let permit = preparing.reached().await?;
     h.runtime.request_stop();
     assert!(!permit.active());
-    assert!(still_pending(h.runtime.stopped()).await);
+    assert!(still_pending(h.exited()).await);
     preparing.release().await?;
-    timeout(PATIENCE, h.runtime.stopped()).await?;
+    timeout(PATIENCE, h.exited()).await?;
     assert!(h.pasted.try_recv().is_err());
-    Ok(())
+    h.close().await
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn silence_and_empty_recognition_never_report_submission() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     let (id, events) = h.start().await?;
@@ -299,7 +298,7 @@ async fn silence_and_empty_recognition_never_report_submission() -> anyhow::Resu
         h.phase(Phase::Empty).await?;
         assert!(h.pasted.try_recv().is_err());
     }
-    Ok(())
+    h.close().await
 }
 
 #[tokio::test(start_paused = true)]
@@ -308,7 +307,9 @@ async fn copied_text_is_a_notice_that_carries_its_remedy_until_the_next_paste() 
     const REMEDY: &str = "Text copied. Release your shortcut keys and paste into your editor.";
     let (results, queued) = async_channel::bounded(1);
     results.try_send(Inserted::Copied(REMEDY))?;
-    let mut h = Harness::paused(|ports| ports.insert_results = Some(queued))?;
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.insert_results = Some(queued);
+    })?;
     h.start().await?;
     h.finish_as("fixture").await?;
     h.phase(Phase::Copied).await?;
@@ -322,7 +323,7 @@ async fn copied_text_is_a_notice_that_carries_its_remedy_until_the_next_paste() 
     h.close().await
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn saved_cleanup_opt_out_keeps_words_and_worker() -> anyhow::Result<()> {
     let mut config = Config::default();
     let mut h = Harness::with_ports(config.clone(), |_| {})?;
@@ -352,10 +353,10 @@ async fn saved_cleanup_opt_out_keeps_words_and_worker() -> anyhow::Result<()> {
         h.loads.try_recv().is_err(),
         "Changing cleanup reloaded the model"
     );
-    Ok(())
+    h.close().await
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn dictation_inserts_once_and_request_preferences_keep_the_warm_worker() -> anyhow::Result<()>
 {
     let mut h = Harness::new()?;
@@ -389,10 +390,10 @@ async fn dictation_inserts_once_and_request_preferences_keep_the_warm_worker() -
     h.start().await?;
     h.finish_as("new engine").await?;
     assert_eq!(receive(&h.pasted).await?, "new engine");
-    Ok(())
+    h.close().await
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn cancelled_inference_and_late_audio_cannot_affect_the_next_session() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     receive(&h.loads).await?;
@@ -417,12 +418,12 @@ async fn cancelled_inference_and_late_audio_cannot_affect_the_next_session() -> 
         "Cancelled GPU inference reloaded a healthy model"
     );
     assert!(h.pasted.try_recv().is_err());
-    Ok(())
+    h.close().await
 }
 
 #[tokio::test(start_paused = true)]
 async fn levels_after_a_capture_ends_never_reach_the_meter() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|_| {})?;
+    let mut h = Harness::new()?;
     let (old_id, old_events) = h.start().await?;
     old_events.send(CaptureEvent::Level(old_id, 0.25)).await?;
     h.observe_level(0.25).await?;
@@ -445,7 +446,7 @@ async fn levels_after_a_capture_ends_never_reach_the_meter() -> anyhow::Result<(
     h.close().await
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn failures_recover_the_worker_and_hook_loss_stops_without_inserting() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     receive(&h.loads).await?;
@@ -463,14 +464,14 @@ async fn failures_recover_the_worker_and_hook_loss_stops_without_inserting() -> 
     h.start().await?;
     h.runtime.input.close();
     h.phase(Phase::Error).await?;
-    assert!(!h.runtime.is_running());
+    timeout(PATIENCE, h.exited()).await?;
     assert!(h.pasted.try_recv().is_err());
-    Ok(())
+    h.close().await
 }
 
 #[tokio::test(start_paused = true)]
 async fn monitor_failure_behind_a_queued_press_still_reports_its_remedy() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|_| {})?;
+    let mut h = Harness::new()?;
     receive(&h.loads).await?;
     h.input(Input::Press);
     h.runtime.input.fail("X".into());
@@ -483,7 +484,7 @@ async fn monitor_failure_behind_a_queued_press_still_reports_its_remedy() -> any
 #[tokio::test(start_paused = true)]
 async fn a_lane_closed_behind_a_queued_press_still_reports_monitoring_stopped() -> anyhow::Result<()>
 {
-    let mut h = Harness::paused(|_| {})?;
+    let mut h = Harness::new()?;
     receive(&h.loads).await?;
     h.input(Input::Press);
     h.runtime.input.close();
@@ -492,7 +493,7 @@ async fn a_lane_closed_behind_a_queued_press_still_reports_monitoring_stopped() 
     h.close().await
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn failed_recovery_stops_worker_before_loading_replacement() -> anyhow::Result<()> {
     let (stop, stopping) = gate(2);
     let (recover, recovery) = async_channel::bounded(1);
@@ -510,14 +511,14 @@ async fn failed_recovery_stops_worker_before_loading_replacement() -> anyhow::Re
     recover.send(Err(anyhow!("Recovery failed"))).await?;
     stopping.reached().await?;
     assert!(
-        h.loads.try_recv().is_err(),
+        still_pending(h.loads.recv()).await,
         "Replacement overlapped worker cleanup"
     );
     h.start().await?;
     h.input(Input::Toggle);
     h.phase(Phase::Processing).await?;
     assert!(
-        h.jobs.try_recv().is_err(),
+        still_pending(h.jobs.recv()).await,
         "Inference began before recovery finished"
     );
     stopping.release().await?;
@@ -528,13 +529,13 @@ async fn failed_recovery_stops_worker_before_loading_replacement() -> anyhow::Re
     assert!(h.pasted.try_recv().is_err());
     // Pre-release the stop gate, so the shutdown stop passes without harness cleanup.
     stopping.release().await?;
-    Ok(())
+    h.close().await
 }
 
 #[tokio::test]
 async fn stop_cancels_input_without_waiting_for_native_cleanup() -> anyhow::Result<()> {
     let (stop, stopping) = gate(1);
-    let mut h = Harness::with_ports(Config::default(), |ports| ports.stop = Some(stop))?;
+    let mut h = Harness::on_own_thread(Config::default(), |ports| ports.stop = Some(stop))?;
     h.start().await?;
     h.finish_as("fixture").await?;
     receive(&h.pasted).await?;
@@ -559,7 +560,7 @@ async fn stop_cancels_input_without_waiting_for_native_cleanup() -> anyhow::Resu
 async fn warmup_failure_while_stopping_retains_capture_and_retries_on_demand() -> anyhow::Result<()>
 {
     let (results, loading) = async_channel::bounded(2);
-    let mut h = Harness::paused(|ports| {
+    let mut h = Harness::with_ports(Config::default(), |ports| {
         ports.load_results = Some(loading);
         ports.delayed_finish = true;
     })?;
@@ -598,7 +599,9 @@ async fn warmup_failure_while_stopping_retains_capture_and_retries_on_demand() -
 async fn loading_notice_clears_once_ready_and_applied_settings_are_confirmed() -> anyhow::Result<()>
 {
     let (results, loading) = async_channel::bounded(1);
-    let mut h = Harness::paused(|ports| ports.load_results = Some(loading))?;
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.load_results = Some(loading);
+    })?;
     receive(&h.loads).await?;
     h.observe(|snapshot| snapshot.message == LOADING).await?;
     results.send(Ok(())).await?;
@@ -619,7 +622,9 @@ async fn loading_notice_clears_once_ready_and_applied_settings_are_confirmed() -
 async fn audio_awaiting_an_unavailable_worker_shows_loading_until_it_is_ready() -> anyhow::Result<()>
 {
     let (results, loading) = async_channel::bounded(2);
-    let mut h = Harness::paused(|ports| ports.load_results = Some(loading))?;
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.load_results = Some(loading);
+    })?;
     receive(&h.loads).await?;
     results.send(Err(anyhow!("Initial load failed"))).await?;
     h.phase(Phase::Error).await?;
@@ -641,7 +646,7 @@ async fn audio_awaiting_an_unavailable_worker_shows_loading_until_it_is_ready() 
 #[tokio::test(start_paused = true)]
 async fn configuration_revokes_insertion_authority_before_owner_observation() -> anyhow::Result<()>
 {
-    let mut h = Harness::paused(|_| {})?;
+    let mut h = Harness::new()?;
     h.start().await?;
     assert!(h.runtime.input.active());
     h.runtime.configure(ValidConfig::assume(Config {
@@ -655,7 +660,7 @@ async fn configuration_revokes_insertion_authority_before_owner_observation() ->
 
 #[tokio::test(start_paused = true)]
 async fn presentation_settings_keep_the_active_session() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|_| {})?;
+    let mut h = Harness::new()?;
     h.start().await?;
     h.runtime.configure(ValidConfig::assume(Config {
         theme: Theme::default().next(),
@@ -671,7 +676,7 @@ async fn presentation_settings_keep_the_active_session() -> anyhow::Result<()> {
 
 #[tokio::test(start_paused = true)]
 async fn retired_publisher_cannot_overwrite_shell_lifecycle_notice() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|_| {})?;
+    let mut h = Harness::new()?;
     h.start().await?;
     h.output.send_modify(|snapshot| {
         snapshot.epoch += 1;
@@ -690,7 +695,7 @@ async fn retired_publisher_cannot_overwrite_shell_lifecycle_notice() -> anyhow::
 
 #[tokio::test(start_paused = true)]
 async fn delayed_owner_start_cannot_claim_a_newer_shell_publisher() -> anyhow::Result<()> {
-    let h = Harness::paused(|_| {})?;
+    let h = Harness::new()?;
     h.output.send_modify(|snapshot| {
         snapshot.epoch += 1;
         snapshot.message = "Dictation paused".into();
@@ -706,7 +711,7 @@ const REPORT: &str = "Could not delete every expired Show";
 #[tokio::test(start_paused = true)]
 async fn an_idle_report_survives_model_load_and_desktop_readiness() -> anyhow::Result<()> {
     let (results, loading) = async_channel::bounded(1);
-    let mut h = Harness::paused(|ports| {
+    let mut h = Harness::with_ports(Config::default(), |ports| {
         ports.load_results = Some(loading);
         ports.desktop_pending = true;
     })?;
@@ -731,7 +736,7 @@ async fn an_idle_report_survives_model_load_and_desktop_readiness() -> anyhow::R
 #[tokio::test(start_paused = true)]
 async fn a_report_during_a_held_recording_is_dropped_and_the_text_still_pastes()
 -> anyhow::Result<()> {
-    let mut h = Harness::paused(|_| {})?;
+    let mut h = Harness::new()?;
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     let (id, events) = receive(&h.captures).await?;
@@ -756,7 +761,7 @@ async fn recovery_failure_keeps_a_queued_dictation_until_microphone_retirement()
 -> anyhow::Result<()> {
     let (results, loading) = async_channel::bounded(4);
     let (retirement, retiring) = gate(4);
-    let mut h = Harness::paused(|ports| {
+    let mut h = Harness::with_ports(Config::default(), |ports| {
         ports.load_results = Some(loading);
         ports.retirement = Some(retirement);
     })?;
@@ -795,7 +800,7 @@ async fn recovery_failure_keeps_a_queued_dictation_until_microphone_retirement()
 #[tokio::test]
 #[ignore = "Reports owner reply-to-insertion latency with fake devices"]
 async fn profile_ready_text_latency() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
+    let mut h = Harness::on_own_thread(Config::default(), |_| {})?;
     receive(&h.loads).await?;
     let mut samples = Vec::with_capacity(100);
     for _ in 0..100 {

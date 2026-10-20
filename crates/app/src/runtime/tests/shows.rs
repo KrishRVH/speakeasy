@@ -6,7 +6,7 @@ use speakeasy_show::Narration;
 use super::*;
 
 /// Holds the shortcut and presses S, returning the screen recorder's lane.
-async fn start_show<Owner: Sync>(h: &mut Harness<Owner>) -> anyhow::Result<OpenedShow> {
+async fn start_show(h: &mut Harness) -> anyhow::Result<OpenedShow> {
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     receive(&h.captures).await?;
@@ -18,7 +18,7 @@ async fn start_show<Owner: Sync>(h: &mut Harness<Owner>) -> anyhow::Result<Opene
 
 #[tokio::test(start_paused = true)]
 async fn s_during_a_hold_turns_the_recording_into_a_show_and_publishes_it() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|_| {})?;
+    let mut h = Harness::new()?;
     start_show(&mut h).await?;
     // The Show is locked hands-free: releasing the shortcut keeps recording.
     h.input(Input::Release);
@@ -41,7 +41,7 @@ async fn s_during_a_hold_turns_the_recording_into_a_show_and_publishes_it() -> a
 
 #[tokio::test(start_paused = true)]
 async fn a_silent_show_still_publishes_its_screen() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|ports| ports.delayed_finish = true)?;
+    let mut h = Harness::with_ports(Config::default(), |ports| ports.delayed_finish = true)?;
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     let (id, events) = receive(&h.captures).await?;
@@ -59,7 +59,7 @@ async fn a_silent_show_still_publishes_its_screen() -> anyhow::Result<()> {
 
 #[tokio::test(start_paused = true)]
 async fn cancelling_a_show_publishes_nothing_and_frees_the_screen() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|_| {})?;
+    let mut h = Harness::new()?;
     start_show(&mut h).await?;
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
@@ -71,7 +71,7 @@ async fn cancelling_a_show_publishes_nothing_and_frees_the_screen() -> anyhow::R
     h.close().await
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn cancelling_while_publishing_leaves_no_trace() -> anyhow::Result<()> {
     let (publication, publishing) = gate(1);
     let mut h = Harness::with_ports(Config::default(), |ports| {
@@ -86,12 +86,14 @@ async fn cancelling_while_publishing_leaves_no_trace() -> anyhow::Result<()> {
     h.phase(Phase::Cancelled).await?;
     publishing.release().await?;
     assert!(still_pending(h.published.recv()).await);
-    Ok(())
+    h.close().await
 }
 
 #[tokio::test(start_paused = true)]
 async fn a_show_that_cannot_be_published_explains_why() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|ports| ports.publish_error = Some("disk full"))?;
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.publish_error = Some("disk full");
+    })?;
     start_show(&mut h).await?;
     h.input(Input::Release);
     h.input(Input::Press);
@@ -101,7 +103,7 @@ async fn a_show_that_cannot_be_published_explains_why() -> anyhow::Result<()> {
     h.close().await
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn shutdown_awaits_a_retiring_screen() -> anyhow::Result<()> {
     let (retirement, retiring) = gate(1);
     let mut h = Harness::with_ports(Config::default(), |ports| {
@@ -110,13 +112,12 @@ async fn shutdown_awaits_a_retiring_screen() -> anyhow::Result<()> {
     start_show(&mut h).await?;
     h.runtime.request_stop();
     retiring.reached().await?;
-    assert!(still_pending(h.runtime.stopped()).await);
+    assert!(still_pending(h.exited()).await);
     retiring.release().await?;
-    timeout(PATIENCE, h.runtime.stopped()).await?;
-    Ok(())
+    h.close().await
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn shutdown_revokes_and_owns_pending_publication_cleanup() -> anyhow::Result<()> {
     let (publication, publishing) = gate(1);
     let mut h = Harness::with_ports(Config::default(), |ports| {
@@ -128,19 +129,21 @@ async fn shutdown_revokes_and_owns_pending_publication_cleanup() -> anyhow::Resu
     h.transcribe_next_as("fixture").await?;
     publishing.reached().await?;
     h.runtime.request_stop();
-    assert!(still_pending(h.runtime.stopped()).await);
+    assert!(still_pending(h.exited()).await);
     publishing.release().await?;
-    timeout(PATIENCE, h.runtime.stopped()).await?;
+    timeout(PATIENCE, h.exited()).await?;
     assert!(
         h.published.try_recv().is_err(),
         "A revoked Show was published"
     );
-    Ok(())
+    h.close().await
 }
 
 #[tokio::test(start_paused = true)]
 async fn a_screen_that_cannot_be_recorded_explains_why() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|ports| ports.show_error = Some("screen recording denied"))?;
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.show_error = Some("screen recording denied");
+    })?;
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     h.input(Input::Show);
@@ -151,7 +154,7 @@ async fn a_screen_that_cannot_be_recorded_explains_why() -> anyhow::Result<()> {
 
 #[tokio::test(start_paused = true)]
 async fn s_outside_a_hold_records_no_screen() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|_| {})?;
+    let mut h = Harness::new()?;
     h.input(Input::Show);
     h.start().await?;
     h.input(Input::Show);
@@ -163,7 +166,7 @@ async fn s_outside_a_hold_records_no_screen() -> anyhow::Result<()> {
 
 #[tokio::test(start_paused = true)]
 async fn a_microphone_failure_ends_the_show_and_frees_the_screen() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|_| {})?;
+    let mut h = Harness::new()?;
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     let (id, events) = receive(&h.captures).await?;
@@ -185,7 +188,7 @@ async fn a_microphone_failure_ends_the_show_and_frees_the_screen() -> anyhow::Re
 #[tokio::test(start_paused = true)]
 async fn a_screen_that_stops_recording_explains_why_and_frees_the_microphone() -> anyhow::Result<()>
 {
-    let mut h = Harness::paused(|_| {})?;
+    let mut h = Harness::new()?;
     let (id, events) = start_show(&mut h).await?;
     events
         .send(ShowEvent::Finished(
@@ -203,7 +206,7 @@ async fn a_screen_that_stops_recording_explains_why_and_frees_the_microphone() -
 
 #[tokio::test(start_paused = true)]
 async fn footage_from_an_earlier_show_never_reaches_a_later_one() -> anyhow::Result<()> {
-    let mut h = Harness::paused(|_| {})?;
+    let mut h = Harness::new()?;
     let (earlier, stale) = start_show(&mut h).await?;
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
@@ -223,7 +226,9 @@ async fn footage_from_an_earlier_show_never_reaches_a_later_one() -> anyhow::Res
 #[tokio::test(start_paused = true)]
 async fn a_show_queued_behind_a_retiring_screen_still_records_it() -> anyhow::Result<()> {
     let (retirement, retiring) = gate(2);
-    let mut h = Harness::paused(|ports| ports.screen_retirement = Some(retirement))?;
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.screen_retirement = Some(retirement);
+    })?;
     start_show(&mut h).await?;
     h.input(Input::Release);
     h.input(Input::Press);

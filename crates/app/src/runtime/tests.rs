@@ -1,5 +1,6 @@
-//! Drives the production owner through fake ports, either on its own thread or on the test's paused
-//! clock, where deadlines are exact.
+//! Drives the production owner through fake ports on the test's paused clock, where deadlines are
+//! exact and a pending check proves quiescence. One smoke test and the latency profile host the
+//! owner on its own thread instead, as production does; only the smoke test's check stays a sample.
 
 use std::{path::PathBuf, time::Duration};
 
@@ -381,9 +382,29 @@ impl Drop for CleanupGates {
     }
 }
 
+/// The owner as a task on the test's executor. Its exit lane closes once the loop returns or unwinds,
+/// as `OwnedThread`'s does, so a shutdown check can poll it any number of times; only `close` polls
+/// the task itself.
+struct OwnedTask {
+    /// Never sends; it closes once the owner's loop has finished.
+    exit: Sender<Infallible>,
+    task: JoinHandle<()>,
+}
+
+impl OwnedTask {
+    fn spawn(run: impl Future<Output = ()> + Send + 'static) -> Self {
+        let (exit, alive) = async_channel::bounded(1);
+        let task = tokio::spawn(async move {
+            run.await;
+            drop(alive);
+        });
+        Self { exit, task }
+    }
+}
+
 /// The production controls and owner, plus the test's view of the fakes. Gates close before the
 /// owner is stopped and released.
-struct Harness<Owner = OwnedThread> {
+struct Harness<Owner = OwnedTask> {
     _cleanup: CleanupGates,
     runtime: Runtime<Owner>,
     output: watch::Sender<Snapshot>,
@@ -402,30 +423,38 @@ impl Harness {
         Self::with_ports(Config::default(), |_| {})
     }
 
+    /// Runs the owner on this test's executor, so `tokio::time::advance` drives its deadlines.
     fn with_ports(config: Config, customize: impl FnOnce(&mut FakePorts)) -> anyhow::Result<Self> {
-        Self::host(config, customize, Runtime::start_with)
+        Self::host(config, customize, |config, output, meter, ports| {
+            let (input, inputs) = input_lane();
+            Runtime::host(config, output, meter, ports, input, inputs, |wiring| {
+                Ok(OwnedTask::spawn(owner::run(wiring)))
+            })
+        })
+    }
+
+    /// Resolves once the owner has finished its cleanup and exited.
+    fn exited(&self) -> impl Future<Output = ()> + use<> {
+        let exit = self.runtime.owner.exit.clone();
+        async move { exit.closed().await }
+    }
+
+    /// Stops the owner and joins it, surfacing its panic; a shutdown stuck on a held gate fails
+    /// once the paused clock reaches `PATIENCE`.
+    async fn close(mut self) -> anyhow::Result<()> {
+        self.runtime.request_stop();
+        timeout(PATIENCE, &mut self.runtime.owner.task).await??;
+        Ok(())
     }
 }
 
-impl Harness<JoinHandle<()>> {
-    /// Runs the owner on this test's executor, so `tokio::time::advance` drives its deadlines.
-    fn paused(customize: impl FnOnce(&mut FakePorts)) -> anyhow::Result<Self> {
-        Self::host(
-            Config::default(),
-            customize,
-            |config, output, meter, ports| {
-                let (input, inputs) = input_lane();
-                Runtime::host(config, output, meter, ports, input, inputs, |wiring| {
-                    Ok(tokio::spawn(owner::run(wiring)))
-                })
-            },
-        )
-    }
-
-    async fn close(mut self) -> anyhow::Result<()> {
-        self.runtime.request_stop();
-        (&mut self.runtime.owner).await?;
-        Ok(())
+impl Harness<OwnedThread> {
+    /// Hosts the owner on its own thread through `Runtime::start_with`, as production does.
+    fn on_own_thread(
+        config: Config,
+        customize: impl FnOnce(&mut FakePorts),
+    ) -> anyhow::Result<Self> {
+        Self::host(config, customize, Runtime::start_with)
     }
 }
 
@@ -550,6 +579,8 @@ fn answer(reply: Reply, text: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Whether `future` is still pending once every task has gone idle on the paused clock. On a real
+/// thread, it only samples 30 ms.
 async fn still_pending(future: impl Future) -> bool {
     timeout(Duration::from_millis(30), future).await.is_err()
 }
