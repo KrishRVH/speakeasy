@@ -241,7 +241,7 @@ impl<'a> Session<'a> {
             surface,
             ended,
             samples: self.samples,
-            journal: self.journal,
+            journal: self.journal.sealed(),
             strokes,
             actions,
         })

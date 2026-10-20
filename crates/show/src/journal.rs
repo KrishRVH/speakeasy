@@ -21,6 +21,9 @@ pub struct Journal {
     segments: Vec<Segment>,
     /// Compressed bytes held.
     bytes: usize,
+    /// The last recorded frame, which the next is compared against; absent before the first frame
+    /// and once sealed.
+    latest: Option<Image>,
 }
 
 #[derive(Debug)]
@@ -31,8 +34,6 @@ struct Segment {
     height: usize,
     /// Each tile's versions, in recording order; the first belongs to the segment's first frame.
     tiles: Vec<Vec<Version>>,
-    /// The latest frame, which the next one is compared against.
-    latest: Image,
 }
 
 /// A tile as one frame left it: rows of pixels, each byte replaced by its difference from the
@@ -64,23 +65,28 @@ impl Journal {
         let at = self.moments.last().map_or(at, |last| at.max(*last));
         let index = self.moments.len();
         self.moments.push(at);
-        let size = (
-            convert::count(frame.width()),
-            convert::count(frame.height()),
-        );
-        let continues = self
-            .segments
-            .last()
-            .is_some_and(|segment| (segment.width, segment.height) == size);
-        let added = if continues && let Some(segment) = self.segments.last_mut() {
-            segment.record(index, frame)
+        let added = if let (Some(before), Some(segment)) = (&self.latest, self.segments.last_mut())
+            && before.width() == frame.width()
+            && before.height() == frame.height()
+        {
+            segment.record(index, before, &frame)
         } else {
-            let segment = Segment::new(index, frame);
+            let segment = Segment::new(index, &frame);
             let bytes = segment.bytes();
             self.segments.push(segment);
             bytes
         };
         self.bytes = self.bytes.saturating_add(added);
+        self.latest = Some(frame);
+    }
+
+    /// The journal without the frame it keeps only to compare the next one against, for when
+    /// recording ends. Every recorded moment still rebuilds exactly; a frame recorded later starts
+    /// a new run of frames.
+    #[must_use]
+    pub fn sealed(mut self) -> Self {
+        self.latest = None;
+        self
     }
 
     /// The moments recorded, in time order.
@@ -154,20 +160,19 @@ impl Journal {
 }
 
 impl Segment {
-    fn new(first: usize, frame: Image) -> Self {
+    fn new(first: usize, frame: &Image) -> Self {
         let (width, height) = (
             convert::count(frame.width()),
             convert::count(frame.height()),
         );
         let tiles = tiles(width, height)
-            .map(|tile| vec![Version::of(first, &frame, tile)])
+            .map(|tile| vec![Version::of(first, frame, tile)])
             .collect();
         Self {
             first,
             width,
             height,
             tiles,
-            latest: frame,
         }
     }
 
@@ -216,17 +221,17 @@ impl Segment {
         })
     }
 
-    /// Stores the tiles of `frame` that differ from the latest frame; returns the bytes added.
-    fn record(&mut self, index: usize, frame: Image) -> usize {
+    /// Stores the tiles of `frame` that differ from `before`, the frame recorded just before it;
+    /// returns the bytes added.
+    fn record(&mut self, index: usize, before: &Image, frame: &Image) -> usize {
         let mut added = 0_usize;
         for (tile, versions) in tiles(self.width, self.height).zip(&mut self.tiles) {
-            if changed(&self.latest, &frame, tile) {
-                let version = Version::of(index, &frame, tile);
+            if changed(before, frame, tile) {
+                let version = Version::of(index, frame, tile);
                 added = added.saturating_add(version.data.len());
                 versions.push(version);
             }
         }
-        self.latest = frame;
         added
     }
 
@@ -409,8 +414,15 @@ mod tests {
         // A resolution change starts a new run of frames and leaves the old ones intact.
         let resized = frame(64, 64, gradient(3));
         journal.record(at(1_000), resized.clone());
-        assert_eq!(journal.frame_at(at(1_000)), Some(resized));
+        assert_eq!(journal.frame_at(at(1_000)).as_ref(), Some(&resized));
         assert_eq!(journal.frame_at(at(150)).as_ref(), frames.get(1));
+        // Sealing keeps every moment, and a frame recorded after it is stored whole.
+        let mut journal = journal.sealed();
+        let after = frame(64, 64, gradient(9));
+        journal.record(at(1_200), after.clone());
+        assert_eq!(journal.frame_at(at(1_200)), Some(after));
+        assert_eq!(journal.frame_at(at(1_000)), Some(resized));
+        assert_eq!(journal.frame_at(at(350)).as_ref(), frames.get(3));
         assert_eq!(Journal::new().frame_at(at(0)), None);
     }
 
