@@ -6,7 +6,7 @@ use std::{future::pending, mem};
 
 use tokio::task::JoinHandle;
 
-use super::{ports::Recording, reap};
+use super::{ports::Capturing, reap};
 
 #[derive(Default)]
 pub(super) enum Device<R> {
@@ -16,7 +16,7 @@ pub(super) enum Device<R> {
     Retiring(JoinHandle<()>),
 }
 
-impl<R: Recording> Device<R> {
+impl<R: Capturing> Device<R> {
     pub(super) const fn is_free(&self) -> bool {
         matches!(self, Self::Free)
     }

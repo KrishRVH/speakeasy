@@ -89,10 +89,10 @@ insertion, setup, and saves. A stuck owner leaves Quitting visible while the UI 
 Native forced termination still uses synchronous disposal as a fallback; its responsiveness requires
 native acceptance before changing GPUI termination handling.
 
-`runtime/mod.rs` exposes start, configure, stop, and completion acknowledgement. `owner.rs` receives
+`runtime.rs` exposes start, configure, stop, and a completion acknowledgement. `owner.rs` receives
 one wake, handles it, advances ready work, and publishes a snapshot. Its decisions use owned state;
 snapshots are presentation only. `Session` owns a generation-bound permit and its current stage.
-`Microphone` is `Free`, `Open`, or `Retiring`, so opening cannot replace an unreaped device.
+Each `Device`, microphone or screen, is `Free`, `Open`, or `Retiring`, so opening cannot replace it.
 `Worker` is unavailable, loading (including recovery after a cancelled transcription), ready, or
 transcribing; load and transcription jobs have different result types. Replacement consumes the old
 job and reaps its process before loading another. Stopping capture during a failed warmup retains

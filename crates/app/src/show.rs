@@ -13,7 +13,7 @@ use speakeasy_show::{Demo, Typeface};
 pub(crate) use self::{
     overlay::{Canvas, attend as attend_overlay},
     publish::publish,
-    recorder::Recorder,
+    recorder::ScreenRecorder,
     store::attend as attend_retention,
 };
 

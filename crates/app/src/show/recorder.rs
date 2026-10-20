@@ -13,7 +13,7 @@ use speakeasy_show::{Image, Journal, Moment, Point, SAMPLE_INTERVAL, Size, Track
 use tokio::sync::watch;
 
 use super::overlay::Canvas;
-use crate::runtime::ports::{Footage, Recording, SessionId, ShowEvent};
+use crate::runtime::ports::{Capturing, Footage, SessionId, ShowEvent};
 
 /// Frames larger than this on the long edge are halved; a reading model gains nothing from more.
 pub(super) const LONGEST_EDGE: u32 = 2_560;
@@ -26,13 +26,13 @@ const FRAME_LANE: usize = 2;
 const POINTER_LANE: usize = 256;
 
 /// A Show's screen recording; the session owner finishes or retires it like a microphone.
-pub(crate) struct Recorder {
+pub(crate) struct ScreenRecorder {
     /// Sending finishes the recording; closing it cancels.
     finish: Sender<()>,
     thread: OwnedThread,
 }
 
-impl Recorder {
+impl ScreenRecorder {
     /// Starts recording the display under the pointer for session `id`, whose timeline began at
     /// `started`, reporting the footage to `events` once finished.
     pub(crate) fn start(
@@ -57,7 +57,7 @@ impl Recorder {
     }
 }
 
-impl Recording for Recorder {
+impl Capturing for ScreenRecorder {
     fn finish(&self) {
         #[expect(
             clippy::let_underscore_must_use,
@@ -77,7 +77,7 @@ impl Recording for Recorder {
 }
 
 /// A recorder dropped without retiring cancels before its thread joins.
-impl Drop for Recorder {
+impl Drop for ScreenRecorder {
     fn drop(&mut self) {
         self.finish.close();
     }
@@ -96,18 +96,18 @@ fn record(
         Ok(runtime) => runtime,
         Err(error) => return Some(Err(error.into())),
     };
-    runtime.block_on(Session::run(started, finishing, canvas))
+    runtime.block_on(Take::run(started, finishing, canvas))
 }
 
 /// The thread's state while recording.
-struct Session<'a> {
+struct Take<'a> {
     started: Instant,
     canvas: &'a watch::Sender<Canvas>,
     tracker: Tracker,
     journal: Journal,
 }
 
-impl<'a> Session<'a> {
+impl<'a> Take<'a> {
     async fn run(
         started: Instant,
         finishing: &Receiver<()>,
@@ -126,7 +126,7 @@ impl<'a> Session<'a> {
         };
         canvas.send_replace(Canvas::covering(display));
         let [width, height] = display.size;
-        let mut session = Session {
+        let mut take = Take {
             started,
             canvas,
             tracker: Tracker::new(Size { width, height }),
@@ -143,7 +143,7 @@ impl<'a> Session<'a> {
                         stop(&capture, &pointer).await;
                         return None;
                     }
-                    if !session.journal.is_empty() {
+                    if !take.journal.is_empty() {
                         break Ok(());
                     }
                     finished_by.get_or_insert_with(first_frame_deadline);
@@ -152,19 +152,19 @@ impl<'a> Session<'a> {
                     if finished_by.is_some() => break Ok(()),
                 event = frames_received.recv() => match event {
                     Ok(ScreenEvent::Frame(frame)) => {
-                        session.frame(frame);
-                        if finished_by.is_some() && !session.journal.is_empty() {
+                        take.frame(frame);
+                        if finished_by.is_some() && !take.journal.is_empty() {
                             break Ok(());
                         }
                     },
                     Ok(ScreenEvent::Failed(message)) => break Err(anyhow!(message)),
                     Err(_) => break Err(anyhow!("Screen capture stopped unexpectedly. Try again.")),
                 },
-                Ok(sample) = pointer_received.recv() => session.pointer(sample),
+                Ok(sample) = pointer_received.recv() => take.pointer(sample),
             }
         };
         stop(&capture, &pointer).await;
-        Some(outcome.and_then(|()| session.into_footage(Size { width, height })))
+        Some(outcome.and_then(|()| take.into_footage(Size { width, height })))
     }
 
     fn moment(&self, at: Instant) -> Moment {
@@ -250,7 +250,7 @@ mod tests {
         let (events, finished) = async_channel::bounded(1);
         let (canvas, ink) = watch::channel(Canvas::default());
         let started = Instant::now();
-        let recorder = Recorder::start(SessionId::FIRST, started, events, canvas)?;
+        let recorder = ScreenRecorder::start(SessionId::FIRST, started, events, canvas)?;
         tokio::time::sleep(Duration::from_millis(1_300)).await;
         let display = ink
             .borrow()
@@ -304,7 +304,7 @@ mod tests {
     async fn profile_real_screen_recording() -> anyhow::Result<()> {
         let (events, finished) = async_channel::bounded(1);
         let (canvas, _ink) = watch::channel(Canvas::default());
-        let recorder = Recorder::start(SessionId::FIRST, Instant::now(), events, canvas)?;
+        let recorder = ScreenRecorder::start(SessionId::FIRST, Instant::now(), events, canvas)?;
         tokio::time::sleep(Duration::from_secs(10)).await;
         recorder.finish();
         let ShowEvent::Finished(_, footage) =

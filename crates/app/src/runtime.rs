@@ -21,7 +21,7 @@ use crate::{
     audio::Capture,
     config::{Change, Config, ValidConfig},
     local_speech::LocalSpeech,
-    show::{self, Canvas, Recorder},
+    show::{self, Canvas, ScreenRecorder},
 };
 
 /// The status while a speech worker loads, shared by the owner, Settings, and the tray.
@@ -179,15 +179,15 @@ struct Desktop {
 }
 
 impl Ports for Desktop {
-    type Recording = Capture;
-    type Show = Recorder;
+    type Microphone = Capture;
+    type Screen = ScreenRecorder;
     type Speech = LocalSpeech;
 
     fn prepares_desktop(&self) -> bool {
         true
     }
 
-    fn record(
+    fn record_microphone(
         &self,
         id: SessionId,
         microphone: Option<&str>,
@@ -196,13 +196,13 @@ impl Ports for Desktop {
         Capture::start(id, microphone, events)
     }
 
-    fn show(
+    fn record_screen(
         &self,
         id: SessionId,
         started: Instant,
         events: Sender<ShowEvent>,
-    ) -> anyhow::Result<Recorder> {
-        Recorder::start(id, started, events, self.canvas.clone())
+    ) -> anyhow::Result<ScreenRecorder> {
+        ScreenRecorder::start(id, started, events, self.canvas.clone())
     }
 
     fn publish(

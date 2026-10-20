@@ -66,7 +66,9 @@ pub(crate) struct Sealed {
     pub trimmed: Duration,
 }
 
-pub(crate) trait Recording: Send + 'static {
+/// A recording device the owner opens, finishes, and retires: the microphone or a Show's
+/// screen recorder.
+pub(crate) trait Capturing: Send + 'static {
     /// Requests the end of capture; the recording then reports its `Finished` event.
     fn finish(&self);
 
@@ -120,29 +122,29 @@ pub(crate) enum Published {
 }
 
 pub(crate) trait Ports: Send + 'static {
-    type Recording: Recording;
-    type Show: Recording;
+    type Microphone: Capturing;
+    type Screen: Capturing;
     type Speech: Speech;
 
     /// Whether input must await `DesktopReady` before it can start capture.
     fn prepares_desktop(&self) -> bool;
 
     /// Opens `microphone`, or the system default when it is `None`, reporting to `events` as `id`.
-    fn record(
+    fn record_microphone(
         &self,
         id: SessionId,
         microphone: Option<&str>,
         events: Sender<CaptureEvent>,
-    ) -> anyhow::Result<Self::Recording>;
+    ) -> anyhow::Result<Self::Microphone>;
 
     /// Starts recording the display under the pointer for session `id`, whose timeline began at
     /// `started`, reporting to `events`.
-    fn show(
+    fn record_screen(
         &self,
         id: SessionId,
         started: Instant,
         events: Sender<ShowEvent>,
-    ) -> anyhow::Result<Self::Show>;
+    ) -> anyhow::Result<Self::Screen>;
 
     /// Turns a finished Show's footage and its narration, already on the Show's timeline, into
     /// a bundle; once `permit` commits, writes it and copies its summary.

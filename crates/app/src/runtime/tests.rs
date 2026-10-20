@@ -10,7 +10,7 @@ use speakeasy_show::{Image, Journal, Moment, Narration, Size};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 use super::{
-    ports::{Footage, Published, Recording, Sealed, Speech},
+    ports::{Capturing, Footage, Published, Sealed, Speech},
     *,
 };
 
@@ -150,26 +150,26 @@ impl FakePorts {
 }
 
 impl Ports for FakePorts {
-    type Recording = FakeRecording;
-    type Show = FakeShow;
+    type Microphone = FakeMicrophone;
+    type Screen = FakeScreen;
     type Speech = FakeSpeech;
 
     fn prepares_desktop(&self) -> bool {
         self.desktop_pending
     }
 
-    fn record(
+    fn record_microphone(
         &self,
         id: SessionId,
         _: Option<&str>,
         events: Sender<CaptureEvent>,
-    ) -> anyhow::Result<FakeRecording> {
+    ) -> anyhow::Result<FakeMicrophone> {
         if let Some(error) = self.record_error {
             bail!(error);
         }
         self.captures.try_send((id, events.clone()))?;
         events.try_send(CaptureEvent::Ready(id))?;
-        Ok(FakeRecording {
+        Ok(FakeMicrophone {
             id,
             events,
             delayed_finish: self.delayed_finish,
@@ -177,17 +177,17 @@ impl Ports for FakePorts {
         })
     }
 
-    fn show(
+    fn record_screen(
         &self,
         id: SessionId,
         _: Instant,
         events: Sender<ShowEvent>,
-    ) -> anyhow::Result<FakeShow> {
+    ) -> anyhow::Result<FakeScreen> {
         if let Some(error) = self.show_error {
             bail!(error);
         }
         self.shows.try_send((id, events.clone()))?;
-        Ok(FakeShow {
+        Ok(FakeScreen {
             id,
             events,
             retirement: self.screen_retirement.clone(),
@@ -272,14 +272,14 @@ impl Ports for FakePorts {
     }
 }
 
-struct FakeRecording {
+struct FakeMicrophone {
     id: SessionId,
     events: Sender<CaptureEvent>,
     delayed_finish: bool,
     retirement: Option<Gate<()>>,
 }
 
-impl Recording for FakeRecording {
+impl Capturing for FakeMicrophone {
     fn finish(&self) {
         if self.delayed_finish {
             return;
@@ -304,13 +304,13 @@ impl Recording for FakeRecording {
 }
 
 /// Reports one gray frame as its footage when finished.
-struct FakeShow {
+struct FakeScreen {
     id: SessionId,
     events: Sender<ShowEvent>,
     retirement: Option<Gate<()>>,
 }
 
-impl Recording for FakeShow {
+impl Capturing for FakeScreen {
     fn finish(&self) {
         self.events
             .try_send(ShowEvent::Finished(self.id, Ok(footage())))

@@ -28,7 +28,7 @@ use self::{
     speech::Audibility,
     stream::{CallbackState, build_stream, capture_failure, microphone_error, rate_and_channels},
 };
-use crate::runtime::ports::{CaptureEvent, Recording, Sealed, SessionId};
+use crate::runtime::ports::{CaptureEvent, Capturing, Sealed, SessionId};
 
 const INITIAL_RESERVATION: Duration = Duration::from_secs(10);
 const METER_INTERVAL: Duration = Duration::from_millis(32);
@@ -102,7 +102,7 @@ impl Capture {
     }
 }
 
-impl Recording for Capture {
+impl Capturing for Capture {
     fn finish(&self) {
         self.signal.finish();
     }

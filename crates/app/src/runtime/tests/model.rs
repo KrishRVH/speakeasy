@@ -9,7 +9,7 @@ use std::collections::{HashMap, VecDeque};
 use proptest::prelude::*;
 
 use super::{
-    ports::{Footage, Published, Recording, Sealed, Speech},
+    ports::{Capturing, Footage, Published, Sealed, Speech},
     *,
 };
 
@@ -67,15 +67,15 @@ impl ModelPorts {
 }
 
 impl Ports for ModelPorts {
-    type Recording = ModelDevice;
-    type Show = ModelDevice;
+    type Microphone = ModelDevice;
+    type Screen = ModelDevice;
     type Speech = ModelSpeech;
 
     fn prepares_desktop(&self) -> bool {
         false
     }
 
-    fn record(
+    fn record_microphone(
         &self,
         id: SessionId,
         _: Option<&str>,
@@ -86,7 +86,7 @@ impl Ports for ModelPorts {
         Ok(self.device(Device::Microphone, id))
     }
 
-    fn show(
+    fn record_screen(
         &self,
         id: SessionId,
         _: Instant,
@@ -155,7 +155,7 @@ impl ModelDevice {
     }
 }
 
-impl Recording for ModelDevice {
+impl Capturing for ModelDevice {
     fn finish(&self) {
         self.log(Log::Finished(self.device, self.id));
     }

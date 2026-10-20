@@ -8,7 +8,7 @@ use speakeasy_show::Narration;
 use tokio::time::timeout;
 
 use super::{
-    ports::{Footage, Published, Recording, Sealed},
+    ports::{Capturing, Footage, Published, Sealed},
     *,
 };
 use crate::local_speech::LocalSpeech;
@@ -26,34 +26,34 @@ struct Fixture {
 }
 
 impl Ports for Fixture {
-    type Recording = FixtureRecording;
-    type Show = FixtureRecording;
+    type Microphone = FixtureDevice;
+    type Screen = FixtureDevice;
     type Speech = LocalSpeech;
 
     fn prepares_desktop(&self) -> bool {
         false
     }
 
-    fn record(
+    fn record_microphone(
         &self,
         id: SessionId,
         _: Option<&str>,
         events: Sender<CaptureEvent>,
-    ) -> anyhow::Result<FixtureRecording> {
+    ) -> anyhow::Result<FixtureDevice> {
         events.try_send(CaptureEvent::Ready(id))?;
-        Ok(FixtureRecording {
+        Ok(FixtureDevice {
             id,
             wav: self.wav.clone(),
             events,
         })
     }
 
-    fn show(
+    fn record_screen(
         &self,
         _: SessionId,
         _: Instant,
         _: Sender<ShowEvent>,
-    ) -> anyhow::Result<FixtureRecording> {
+    ) -> anyhow::Result<FixtureDevice> {
         anyhow::bail!("The dictation fixture records no Shows")
     }
 
@@ -106,13 +106,13 @@ impl Ports for Fixture {
 
 /// Replays the fixture audio when finished; a repeated finish reaches a session that is no longer
 /// capturing and is ignored.
-struct FixtureRecording {
+struct FixtureDevice {
     id: SessionId,
     wav: Vec<u8>,
     events: Sender<CaptureEvent>,
 }
 
-impl Recording for FixtureRecording {
+impl Capturing for FixtureDevice {
     fn finish(&self) {
         let finished = CaptureEvent::Finished(
             self.id,

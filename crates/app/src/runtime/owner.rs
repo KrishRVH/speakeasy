@@ -16,7 +16,7 @@ use super::{
     LOADING, Meter, Phase, Snapshot, Wiring,
     device::Device,
     now,
-    ports::{CaptureEvent, PUBLISH_STOPPED, Ports, Published, Recording, SessionId, ShowEvent},
+    ports::{CaptureEvent, Capturing, PUBLISH_STOPPED, Ports, Published, SessionId, ShowEvent},
     reap,
     session::{Delivered, Screen, Session, Stage},
     worker::{Completion, Detail, Transcript, Worker},
@@ -102,8 +102,8 @@ struct Owner<P: Ports> {
     latest_started: Instant,
 
     worker: Worker<P::Speech>,
-    microphone: Device<P::Recording>,
-    screen: Device<P::Show>,
+    microphone: Device<P::Microphone>,
+    screen: Device<P::Screen>,
     /// Abandoned insertions and publications, kept until they finish their own cleanup.
     retiring: Vec<JoinHandle<Delivered>>,
     /// Whether the latest session was a Show, which the pill presents differently.
@@ -558,7 +558,7 @@ impl<P: Ports> Owner<P> {
         };
         match self
             .ports
-            .show(session.id, session.started, self.show_events.clone())
+            .record_screen(session.id, session.started, self.show_events.clone())
         {
             Ok(recorder) => {
                 if !session.is_capturing() || self.gesture.state() == State::Processing {
@@ -600,7 +600,7 @@ impl<P: Ports> Owner<P> {
         let microphone = self.config.microphone.as_deref();
         match self
             .ports
-            .record(session.id, microphone, self.events.clone())
+            .record_microphone(session.id, microphone, self.events.clone())
         {
             Ok(recording) => {
                 if self.gesture.state() == State::Processing {
