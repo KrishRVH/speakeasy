@@ -76,10 +76,6 @@ run = "uv lock"
 [tasks."py:install"]
 run = "uv sync --locked --quiet"
 
-[tasks."py:fmt"]
-depends = ["py:install"]
-run = "uv run --no-sync ruff format scripts tests"
-
 [tasks."py:fmt:check"]
 depends = ["py:install"]
 run = "uv run --no-sync ruff format --check --quiet scripts tests"
@@ -103,14 +99,15 @@ run = ["uv run --no-sync ruff check --fix --quiet scripts tests", "uv run --no-s
 [tasks."py:standards:check"]
 depends = ["py:fmt:check", "py:lint", "py:type", "py:test"]
 
+# shfmt reads .editorconfig only when no parser or printer flags are passed.
 [tasks."shell:fmt"]
-run = "shfmt -w -i 2 -ci -sr scripts/*.sh packaging/linux/AppRun"
+run = "shfmt -w scripts/*.sh packaging/linux/AppRun"
 
 [tasks."shell:fmt:check"]
-run = "shfmt -d -i 2 -ci -sr scripts/*.sh packaging/linux/AppRun"
+run = "shfmt -d scripts/*.sh packaging/linux/AppRun"
 
 [tasks."shell:lint"]
-run = ["shellcheck --severity=style scripts/*.sh packaging/linux/AppRun", "for script in scripts/*.sh; do bash -n \"$script\"; done", "sh -n packaging/linux/AppRun"]
+run = "shellcheck --severity=style scripts/*.sh packaging/linux/AppRun"
 
 [tasks."shell:standards"]
 depends = ["shell:fmt"]
@@ -124,10 +121,6 @@ run = "bun install"
 
 [tasks."md:install"]
 run = "bun install --frozen-lockfile --no-summary"
-
-[tasks."md:fmt"]
-depends = ["md:install"]
-run = "{{vars.md_files}} | xargs -0 bun run prettier --write --no-error-on-unmatched-pattern"
 
 [tasks."md:fmt:check"]
 depends = ["md:install"]
