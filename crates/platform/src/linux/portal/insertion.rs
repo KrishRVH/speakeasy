@@ -12,7 +12,7 @@ use zbus::{
 
 use super::{
     Bound, MAX_TRANSFERS, Notice, Options, PLAIN_TEXT, SELECTION_TIMEOUT, SelectionHandoff,
-    Transfers,
+    Transfers, deadline,
     transfer::{Selection, transfer},
 };
 use crate::{
@@ -25,23 +25,52 @@ use crate::{
     },
 };
 
+/// The X11 clipboard lost the copied text before paste.
+const CLIPBOARD_CHANGED: Inserted =
+    Inserted::Unavailable("Clipboard changed before paste. Dictate again.");
+
 /// The insertion pipeline. A paste request waits for released modifiers unless the user pastes
 /// manually, then copies through the portal or X11 clipboard and confirms ownership; direct text
 /// skips both. Every request checks focus before it pastes or types through libei.
+///
+/// The serving loop borrows `transfers`, `preparing`, and `bound` at once while it waits on them,
+/// so those fields stay visible to it.
 pub(super) struct Insertions<'a> {
     pub(super) transfers: Transfers<'a>,
     pub(super) preparing: Option<Preparing<'a>>,
-    pub(super) pending: Option<(Insertion, Instant)>,
-    pub(super) selection: Option<Selection>,
     pub(super) bound: &'a mut Bound,
-    pub(super) notices: &'a Receiver<Notice>,
-    pub(super) selecting: &'a Sender<SelectionHandoff>,
-    pub(super) worker: &'a x11::ClipboardWorker,
-    pub(super) clipboard: &'a Proxy<'static>,
-    pub(super) options: &'a DesktopOptions,
+    pending: Option<(Insertion, Instant)>,
+    selection: Option<Selection>,
+    notices: &'a Receiver<Notice>,
+    selecting: &'a Sender<SelectionHandoff>,
+    worker: &'a x11::ClipboardWorker,
+    clipboard: &'a Proxy<'static>,
+    options: &'a DesktopOptions,
 }
 
 impl<'a> Insertions<'a> {
+    pub(super) fn new(
+        bound: &'a mut Bound,
+        notices: &'a Receiver<Notice>,
+        selecting: &'a Sender<SelectionHandoff>,
+        worker: &'a x11::ClipboardWorker,
+        clipboard: &'a Proxy<'static>,
+        options: &'a DesktopOptions,
+    ) -> Self {
+        Self {
+            transfers: Transfers::new(),
+            preparing: None,
+            bound,
+            pending: None,
+            selection: None,
+            notices,
+            selecting,
+            worker,
+            clipboard,
+            options,
+        }
+    }
+
     pub(super) fn is_idle(&self) -> bool {
         self.pending.is_none() && self.preparing.is_none()
     }
@@ -67,6 +96,13 @@ impl<'a> Insertions<'a> {
 
     pub(super) fn queue(&mut self, request: Insertion) {
         self.pending = Some((request, Instant::now()));
+    }
+
+    /// When the pending request stops waiting for released modifiers.
+    pub(super) fn modifier_wait(&self) -> Option<tokio::time::Sleep> {
+        self.pending
+            .as_ref()
+            .map(|(_, started)| deadline(*started, MODIFIER_WAIT))
     }
 
     /// Catches up on notices and libei events, then starts the pending request once its wait for
@@ -139,7 +175,7 @@ impl<'a> Insertions<'a> {
             },
             Ok(Prepared::Copied { owner: None }) => {
                 let outcome = if permit.active() {
-                    Inserted::Unavailable("Clipboard changed before paste. Dictate again.")
+                    CLIPBOARD_CHANGED
                 } else {
                     Inserted::Cancelled
                 };
@@ -372,13 +408,13 @@ fn finish_paste(
         return Ok(Inserted::Cancelled);
     }
     if !owned {
-        return Ok(Inserted::Unavailable(
-            if bound.clipboard_session().is_some() {
-                "Clipboard ownership could not be confirmed. Dictate again, or choose Insert: Copy for manual paste in Settings."
-            } else {
-                "Clipboard changed before paste. Dictate again."
-            },
-        ));
+        return Ok(if bound.clipboard_session().is_some() {
+            Inserted::Unavailable(
+                "Clipboard ownership could not be confirmed. Dictate again, or choose Insert: Copy for manual paste in Settings.",
+            )
+        } else {
+            CLIPBOARD_CHANGED
+        });
     }
     if let Some(outcome) = Delivery::Paste.check_focus(external) {
         return Ok(outcome);

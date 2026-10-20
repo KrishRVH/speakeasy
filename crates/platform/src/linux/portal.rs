@@ -26,7 +26,7 @@ use self::insertion::Insertions;
 use super::{APPLICATION_ID, ShortcutLabels, ei, owner_changes, stopping, token::TokenStore, x11};
 use crate::{
     DesktopOptions, Input, InputSender, InsertPermit,
-    insertion::{Insertion, MODIFIER_WAIT, Reply},
+    insertion::{Insertion, Reply},
 };
 
 const DESTINATION: &str = "org.freedesktop.portal.Desktop";
@@ -60,6 +60,8 @@ type Transfers<'a> = FuturesUnordered<LocalBoxFuture<'a, anyhow::Result<()>>>;
 
 struct Portal {
     connection: Connection,
+    /// This connection's unique bus name as it appears in portal object paths.
+    sender: String,
     unanswered: Vec<OwnedObjectPath>,
     sessions: Vec<OwnedObjectPath>,
     nonce: String,
@@ -90,9 +92,15 @@ impl Portal {
                 );
             },
         }
+        let sender = connection
+            .unique_name()
+            .context("D-Bus connection has no name")?
+            .trim_start_matches(':')
+            .replace('.', "_");
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         Ok(Self {
             connection,
+            sender,
             unanswered: Vec::new(),
             sessions: Vec::new(),
             nonce: format!("s{}_{now}", std::process::id()),
@@ -100,21 +108,9 @@ impl Portal {
         })
     }
 
-    fn next_token(&mut self) -> anyhow::Result<String> {
-        self.sequence = self
-            .sequence
-            .checked_add(1)
-            .context("Portal request identifiers exhausted. Pause and resume dictation.")?;
-        Ok(format!("{}_{}", self.nonce, self.sequence))
-    }
-
-    /// The unique bus name as it appears in portal object paths.
-    fn sender_segment(&self) -> anyhow::Result<String> {
-        let name = self
-            .connection
-            .unique_name()
-            .context("D-Bus connection has no name")?;
-        Ok(name.as_str().trim_start_matches(':').replace('.', "_"))
+    fn next_token(&mut self) -> String {
+        self.sequence = self.sequence.wrapping_add(1);
+        format!("{}_{}", self.nonce, self.sequence)
     }
 
     async fn proxy(&self, interface: &'static str) -> anyhow::Result<Proxy<'static>> {
@@ -129,7 +125,7 @@ impl Portal {
         body: &B,
     ) -> anyhow::Result<Results> {
         let path: OwnedObjectPath =
-            format!("{DESKTOP}/request/{}/{token}", self.sender_segment()?).try_into()?;
+            format!("{DESKTOP}/request/{}/{token}", self.sender).try_into()?;
         let request = Proxy::new(&self.connection, DESTINATION, path.clone(), REQUEST).await?;
         let mut responses = request.receive_signal("Response").await?;
         let mut restarts = MessageStream::for_match_rule(
@@ -157,10 +153,10 @@ impl Portal {
     }
 
     async fn create_session(&mut self, interface: &'static str) -> anyhow::Result<OwnedObjectPath> {
-        let handle = self.next_token()?;
-        let session = self.next_token()?;
+        let handle = self.next_token();
+        let session = self.next_token();
         let predicted: OwnedObjectPath =
-            format!("{DESKTOP}/session/{}/{session}", self.sender_segment()?).try_into()?;
+            format!("{DESKTOP}/session/{}/{session}", self.sender).try_into()?;
         self.sessions.push(predicted.clone());
         let options = Options::from([
             ("handle_token", Value::from(handle.clone())),
@@ -503,7 +499,7 @@ async fn bind_shortcuts(
     labels: &mut ShortcutLabels,
 ) -> anyhow::Result<OwnedObjectPath> {
     let session = portal.create_session(SHORTCUTS).await?;
-    let handle = portal.next_token()?;
+    let handle = portal.next_token();
     let shortcuts = vec![
         (
             DICTATE_ID,
@@ -553,7 +549,7 @@ async fn bind_shortcuts(
 async fn start_remote_desktop(portal: &mut Portal) -> anyhow::Result<Remote> {
     let tokens = TokenStore::open();
     let session = portal.create_session(REMOTE).await?;
-    let handle = portal.next_token()?;
+    let handle = portal.next_token();
     let mut devices = Options::from([
         ("handle_token", Value::from(handle.clone())),
         ("types", Value::from(KEYBOARD_DEVICE)),
@@ -575,7 +571,7 @@ async fn start_remote_desktop(portal: &mut Portal) -> anyhow::Result<Remote> {
         .request(REMOTE, "SelectDevices", handle, &(session.clone(), devices))
         .await?;
     let clipboard_requested = request_clipboard(portal, &session).await?;
-    let handle = portal.next_token()?;
+    let handle = portal.next_token();
     let start = Options::from([("handle_token", Value::from(handle.clone()))]);
     let mut result = portal
         .request(REMOTE, "Start", handle, &(session.clone(), "", start))
@@ -680,34 +676,20 @@ async fn serve(
         ready = worker.ready() => ready?,
     }
     input.deliver(bound.labels.clone().into_desktop_ready());
-    let mut insertions = Insertions {
-        transfers: Transfers::new(),
-        preparing: None,
-        pending: None,
-        selection: None,
-        bound: &mut bound,
-        notices: &notices,
-        selecting: &selecting,
-        worker: &worker,
-        clipboard: &clipboard,
-        options,
-    };
+    let mut insertions = Insertions::new(
+        &mut bound, &notices, &selecting, &worker, &clipboard, options,
+    );
     loop {
         insertions.advance_pending()?;
         let accepts_transfers = insertions.accepts_transfers();
         let idle = insertions.is_idle();
+        let modifier_wait = or_pending(insertions.modifier_wait());
         let prepared = or_pending(insertions.preparing.as_mut().map(|work| work.task.as_mut()));
         let readable = or_pending(
             insertions
                 .bound
                 .sender()
                 .map(|sender| sender.readiness().readable()),
-        );
-        let modifier_wait = or_pending(
-            insertions
-                .pending
-                .as_ref()
-                .map(|(_, started)| deadline(*started, MODIFIER_WAIT)),
         );
         tokio::select! {
             biased;
