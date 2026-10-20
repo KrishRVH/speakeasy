@@ -10,33 +10,43 @@ use std::{
 use anyhow::bail;
 use raw_window_handle::Win32WindowHandle;
 use windows::Win32::Graphics::Direct3D11::D3D11_SUBRESOURCE_DATA;
-use windows_sys::Win32::{
-    Graphics::{
-        Dwm::{DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute},
-        Gdi::{
-            BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BeginPaint, CreateSolidBrush, DIB_RGB_COLORS,
-            EndPaint, EnumDisplayMonitors, HBRUSH, HDC, MONITOR_DEFAULTTOPRIMARY, PAINTSTRUCT,
-            SetDIBitsToDevice,
+use windows_sys::{
+    Win32::{
+        Foundation::{HWND, LPARAM, LRESULT, TRUE, WPARAM},
+        Graphics::{
+            Dwm::{DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute},
+            Gdi::{
+                BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BeginPaint, CreateSolidBrush, DIB_RGB_COLORS,
+                EndPaint, EnumDisplayMonitors, HBRUSH, HDC, MONITOR_DEFAULTTOPRIMARY, PAINTSTRUCT,
+                SetDIBitsToDevice,
+            },
+        },
+        System::LibraryLoader::GetModuleHandleW,
+        UI::{
+            HiDpi::{
+                AreDpiAwarenessContextsEqual, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+                GetDpiAwarenessContextForProcess, SetProcessDpiAwarenessContext,
+            },
+            WindowsAndMessaging::{
+                CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GA_ROOT,
+                GWL_EXSTYLE, GetAncestor, GetClassNameW, GetPropW, GetWindowLongPtrW,
+                GetWindowRect, IsWindowVisible, MSG, PM_REMOVE, PeekMessageW, RegisterClassW,
+                SWP_NOZORDER, SetWindowDisplayAffinity, TranslateMessage, UnregisterClassW,
+                WDA_EXCLUDEFROMCAPTURE, WDA_MONITOR, WDA_NONE, WM_DPICHANGED, WM_PAINT, WNDCLASSW,
+                WNDPROC, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+                WS_EX_TRANSPARENT, WS_POPUP, WindowFromPoint,
+            },
         },
     },
-    System::LibraryLoader::GetModuleHandleW,
-    UI::{
-        HiDpi::{
-            AreDpiAwarenessContextsEqual, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
-            GetDpiAwarenessContextForProcess, SetProcessDpiAwarenessContext,
-        },
-        WindowsAndMessaging::{
-            CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GA_ROOT, GWL_EXSTYLE,
-            GetAncestor, GetClassNameW, GetWindowLongPtrW, GetWindowRect, MSG, PM_REMOVE,
-            PeekMessageW, RegisterClassW, SWP_NOZORDER, TranslateMessage, UnregisterClassW,
-            WDA_MONITOR, WM_DPICHANGED, WM_PAINT, WNDCLASSW, WNDPROC, WS_EX_LAYERED,
-            WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
-            WindowFromPoint,
-        },
-    },
+    core::{BOOL, PCWSTR},
+    w,
 };
 
-use super::*;
+use super::{
+    exclusion::{ALWAYS_EXCLUDED, affinity, owned, top_level_windows},
+    readback::{BYTES_PER_PIXEL, created, texture_description},
+    *,
+};
 use crate::ScreenCapture;
 
 const PATTERN_WIDTH: i32 = 640;
