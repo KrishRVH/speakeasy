@@ -1,27 +1,70 @@
-//! The side effects used by the session owner: recording devices, speech, insertion, and
-//! publishing Shows. Tests replace them at this boundary; gesture, cancellation, and delivery
-//! ordering stay real.
+//! The seam between the session owner and its side effects: recording devices, speech, insertion,
+//! and publishing Shows, with the session identity and events that cross it. Tests replace the
+//! side effects at this boundary; gesture, cancellation, and delivery ordering stay real.
 
-use std::{path::PathBuf, time::Instant};
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use async_channel::Sender;
-use speakeasy_platform::{Delivery, InsertPermit, Inserted, Inserter};
+use speakeasy_platform::{Delivery, InsertPermit, Inserted};
 use speakeasy_show::{Action, Journal, Moment, Size, Stroke};
 use tokio::sync::watch;
 
-use crate::{
-    audio::Capture,
-    config::Config,
-    local_speech::LocalSpeech,
-    runtime::{CaptureEvent, SessionId, ShowEvent},
-    show::{self, Canvas, Recorder},
-};
+use crate::config::Config;
 
 /// The error a speech startup reports once cancelled.
 pub(crate) const STARTUP_CANCELLED: &str = "Local model startup cancelled";
 
 /// The failure a Show publication reports when its task ends without a result.
 pub(crate) const PUBLISH_STOPPED: &str = "Publishing the Show stopped unexpectedly. Try again.";
+
+/// Identifies one recording; capture events carry it, so late audio cannot reach a newer session.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SessionId(u64);
+
+impl SessionId {
+    #[cfg(test)]
+    pub(crate) const FIRST: Self = Self(1);
+
+    pub(super) fn next(self) -> Option<Self> {
+        self.0.checked_add(1).map(Self)
+    }
+}
+
+impl From<SessionId> for u64 {
+    fn from(id: SessionId) -> Self {
+        id.0
+    }
+}
+
+/// A capture thread's report about the session that opened it.
+pub(crate) enum CaptureEvent {
+    Ready(SessionId),
+    Level(SessionId, f32),
+    Finished(SessionId, anyhow::Result<Option<Sealed>>),
+}
+
+/// A Show recorder's report about the session that opened it.
+pub(crate) enum ShowEvent {
+    Finished(SessionId, anyhow::Result<Footage>),
+}
+
+impl CaptureEvent {
+    pub(super) const fn session(&self) -> SessionId {
+        match self {
+            Self::Ready(session) | Self::Level(session, _) | Self::Finished(session, _) => *session,
+        }
+    }
+}
+
+/// Speech sealed for recognition: a WAV, and how much leading quiet was trimmed before it, which
+/// places times the recognizer reports back on the recording's clock.
+pub(crate) struct Sealed {
+    pub wav: Vec<u8>,
+    pub trimmed: Duration,
+}
 
 pub(crate) trait Recording: Send + 'static {
     /// Requests the end of capture; the recording then reports its `Finished` event.
@@ -129,64 +172,4 @@ pub(crate) trait Ports: Send + 'static {
         permit: InsertPermit,
         delivery: Delivery,
     ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static;
-}
-
-pub(crate) struct Desktop {
-    pub inserter: Inserter,
-    /// Where a Show's live ink reaches the overlay.
-    pub canvas: watch::Sender<Canvas>,
-}
-
-impl Ports for Desktop {
-    type Recording = Capture;
-    type Show = Recorder;
-    type Speech = LocalSpeech;
-
-    fn prepares_desktop(&self) -> bool {
-        true
-    }
-
-    fn record(
-        &self,
-        id: SessionId,
-        microphone: Option<&str>,
-        events: Sender<CaptureEvent>,
-    ) -> anyhow::Result<Capture> {
-        Capture::start(id, microphone, events)
-    }
-
-    fn show(
-        &self,
-        id: SessionId,
-        started: Instant,
-        events: Sender<ShowEvent>,
-    ) -> anyhow::Result<Recorder> {
-        Recorder::start(id, started, events, self.canvas.clone())
-    }
-
-    fn publish(
-        &self,
-        recorded: Recorded,
-        permit: InsertPermit,
-    ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
-        show::publish(recorded, permit)
-    }
-
-    fn load(
-        &self,
-        config: Config,
-        cancelled: watch::Receiver<bool>,
-    ) -> impl Future<Output = anyhow::Result<LocalSpeech>> + Send + 'static {
-        LocalSpeech::start(config, cancelled)
-    }
-
-    fn insert(
-        &self,
-        text: String,
-        permit: InsertPermit,
-        delivery: Delivery,
-    ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static {
-        let inserter = self.inserter.clone();
-        async move { inserter.insert(text, permit, delivery).await }
-    }
 }

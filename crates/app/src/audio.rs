@@ -21,17 +21,14 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rtrb::{Consumer, RingBuffer};
 use speakeasy_core::gesture::RECORDING_LIMIT;
 
-pub(crate) use self::pcm::{Sealed, silent_wav, wav_sample_rate};
+pub(crate) use self::pcm::{silent_wav, wav_sample_rate};
 use self::{
     control::{Control, Mode},
     pcm::{Pcm16, samples_in},
     speech::Audibility,
     stream::{CallbackState, build_stream, capture_failure, microphone_error, rate_and_channels},
 };
-use crate::{
-    ports::Recording,
-    runtime::{CaptureEvent, SessionId},
-};
+use crate::runtime::ports::{CaptureEvent, Recording, Sealed, SessionId};
 
 const INITIAL_RESERVATION: Duration = Duration::from_secs(10);
 const METER_INTERVAL: Duration = Duration::from_millis(32);

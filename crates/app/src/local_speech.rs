@@ -26,7 +26,7 @@ use crate::{
     child::{hidden_command, kill_and_reap},
     config::{Config, Engine},
     http::client_builder,
-    ports::{STARTUP_CANCELLED, Speech},
+    runtime::ports::{STARTUP_CANCELLED, Speech},
 };
 
 const LOOPBACK: &str = "127.0.0.1";

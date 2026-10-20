@@ -12,10 +12,12 @@ use tokio::{
     time::timeout,
 };
 
-use super::ModelState;
+use super::{
+    ModelState,
+    ports::{Ports, STARTUP_CANCELLED, Speech},
+};
 use crate::{
     config::Config,
-    ports::{Ports, STARTUP_CANCELLED, Speech},
     transcript::{self, Fillers},
 };
 

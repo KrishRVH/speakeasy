@@ -3,21 +3,24 @@
 
 mod device;
 mod owner;
+pub(crate) mod ports;
 mod session;
 mod worker;
 
 use std::{convert::Infallible, io, sync::Arc, time::Instant};
 
 use async_channel::{Receiver, Sender, TrySendError};
-use speakeasy_platform::{Input, InputMonitor, InputSender, OwnedThread};
+use speakeasy_platform::{
+    Delivery, Input, InputMonitor, InputSender, InsertPermit, Inserted, Inserter, OwnedThread,
+};
 use tokio::{sync::watch, task::JoinError};
 
-pub(crate) use self::session::SessionId;
+use self::ports::{CaptureEvent, Ports, Published, Recorded, SessionId, ShowEvent};
 use crate::{
-    audio::Sealed,
+    audio::Capture,
     config::{Change, Config, ValidConfig},
-    ports::{Desktop, Footage, Ports},
-    show::Canvas,
+    local_speech::LocalSpeech,
+    show::{self, Canvas, Recorder},
 };
 
 /// The status while a speech worker loads, shared by the owner, Settings, and the tray.
@@ -105,26 +108,6 @@ pub(crate) struct Meter {
     pub level: f32,
 }
 
-/// A capture thread's report about the session that opened it.
-pub(crate) enum CaptureEvent {
-    Ready(SessionId),
-    Level(SessionId, f32),
-    Finished(SessionId, anyhow::Result<Option<Sealed>>),
-}
-
-/// A Show recorder's report about the session that opened it.
-pub(crate) enum ShowEvent {
-    Finished(SessionId, anyhow::Result<Footage>),
-}
-
-impl CaptureEvent {
-    const fn session(&self) -> SessionId {
-        match self {
-            Self::Ready(session) | Self::Level(session, _) | Self::Finished(session, _) => *session,
-        }
-    }
-}
-
 /// Controls for the dictation owner. `Owner` hosts its loop: a dedicated thread, joined on drop
 /// once stop has been requested, or a task on the test executor for paused-clock tests.
 pub(crate) struct Runtime<Owner = OwnedThread> {
@@ -184,6 +167,67 @@ impl Runtime {
     /// Resolves once the owner has finished its native cleanup and exited.
     pub(crate) fn stopped(&self) -> impl Future<Output = ()> + use<> {
         self.owner.exited()
+    }
+}
+
+/// The production side effects: native devices, local speech, insertion, and Show publishing.
+struct Desktop {
+    inserter: Inserter,
+    /// Where a Show's live ink reaches the overlay.
+    canvas: watch::Sender<Canvas>,
+}
+
+impl Ports for Desktop {
+    type Recording = Capture;
+    type Show = Recorder;
+    type Speech = LocalSpeech;
+
+    fn prepares_desktop(&self) -> bool {
+        true
+    }
+
+    fn record(
+        &self,
+        id: SessionId,
+        microphone: Option<&str>,
+        events: Sender<CaptureEvent>,
+    ) -> anyhow::Result<Capture> {
+        Capture::start(id, microphone, events)
+    }
+
+    fn show(
+        &self,
+        id: SessionId,
+        started: Instant,
+        events: Sender<ShowEvent>,
+    ) -> anyhow::Result<Recorder> {
+        Recorder::start(id, started, events, self.canvas.clone())
+    }
+
+    fn publish(
+        &self,
+        recorded: Recorded,
+        permit: InsertPermit,
+    ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
+        show::publish(recorded, permit)
+    }
+
+    fn load(
+        &self,
+        config: Config,
+        cancelled: watch::Receiver<bool>,
+    ) -> impl Future<Output = anyhow::Result<LocalSpeech>> + Send + 'static {
+        LocalSpeech::start(config, cancelled)
+    }
+
+    fn insert(
+        &self,
+        text: String,
+        permit: InsertPermit,
+        delivery: Delivery,
+    ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static {
+        let inserter = self.inserter.clone();
+        async move { inserter.insert(text, permit, delivery).await }
     }
 }
 

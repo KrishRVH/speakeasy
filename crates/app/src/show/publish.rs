@@ -8,7 +8,7 @@ use speakeasy_platform::InsertPermit;
 use speakeasy_show::{Image, Typeface, compose, select};
 
 use super::store;
-use crate::ports::{PUBLISH_STOPPED, Published, Recorded};
+use crate::runtime::ports::{PUBLISH_STOPPED, Published, Recorded};
 
 /// Composes and writes `recorded` off the caller's thread. The bundle appears and its summary is
 /// copied only once `permit` commits; a publication cancelled before then stops at its next check

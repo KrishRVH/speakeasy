@@ -13,10 +13,7 @@ use speakeasy_show::{Image, Journal, Moment, Point, SAMPLE_INTERVAL, Size, Track
 use tokio::sync::watch;
 
 use super::overlay::Canvas;
-use crate::{
-    ports::{Footage, Recording},
-    runtime::{SessionId, ShowEvent},
-};
+use crate::runtime::ports::{Footage, Recording, SessionId, ShowEvent};
 
 /// Frames larger than this on the long edge are halved; a reading model gains nothing from more.
 pub(super) const LONGEST_EDGE: u32 = 2_560;

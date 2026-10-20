@@ -11,27 +11,10 @@ use speakeasy_platform::{InsertPermit, Inserted};
 use speakeasy_show::Narration;
 use tokio::task::{JoinError, JoinHandle};
 
-use super::Phase;
-use crate::ports::{Footage, Published, Recorded};
-
-/// Identifies one recording; capture events carry it, so late audio cannot reach a newer session.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct SessionId(u64);
-
-impl SessionId {
-    #[cfg(test)]
-    pub(crate) const FIRST: Self = Self(1);
-
-    pub(super) fn next(self) -> Option<Self> {
-        self.0.checked_add(1).map(Self)
-    }
-}
-
-impl From<SessionId> for u64 {
-    fn from(id: SessionId) -> Self {
-        id.0
-    }
-}
+use super::{
+    Phase,
+    ports::{Footage, Published, Recorded, SessionId},
+};
 
 pub(super) type InsertTask = JoinHandle<anyhow::Result<Inserted>>;
 pub(super) type PublishTask = JoinHandle<anyhow::Result<Published>>;

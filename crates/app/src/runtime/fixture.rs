@@ -6,11 +6,11 @@ use std::{path::PathBuf, time::Duration};
 use speakeasy_platform::{Delivery, InsertPermit, Inserted};
 use tokio::time::timeout;
 
-use super::*;
-use crate::{
-    local_speech::LocalSpeech,
-    ports::{Published, Recorded, Recording},
+use super::{
+    ports::{Published, Recorded, Recording, Sealed},
+    *,
 };
+use crate::local_speech::LocalSpeech;
 
 /// Outlasts the worker's own startup bounds, 120 s to serve and 120 s to warm up, by 5 s.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(2 * 120 + 5);

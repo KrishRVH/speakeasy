@@ -6,8 +6,7 @@ use std::{future::pending, mem};
 
 use tokio::task::JoinHandle;
 
-use super::reap;
-use crate::ports::Recording;
+use super::{ports::Recording, reap};
 
 #[derive(Default)]
 pub(super) enum Device<R> {

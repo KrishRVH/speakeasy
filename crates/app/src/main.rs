@@ -13,7 +13,6 @@ mod instance;
 mod local_speech;
 mod paths;
 mod pill;
-mod ports;
 mod runtime;
 mod setup;
 mod shell;

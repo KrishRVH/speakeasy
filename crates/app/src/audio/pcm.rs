@@ -6,6 +6,7 @@ use std::{mem, ops::Range, time::Duration};
 use anyhow::bail;
 
 use super::speech::Audibility;
+use crate::runtime::ports::Sealed;
 
 const WAV_HEADER_BYTES: usize = 44;
 const SAMPLE_RATE_OFFSET: usize = 24;
@@ -13,13 +14,6 @@ pub(super) const SAMPLE_BYTES: usize = 2;
 pub(super) const MAX_SAMPLE_RATE: u32 = 192_000;
 const MINIMUM_RECORDING: Duration = Duration::from_millis(200);
 const RECLAIM_SLACK_BYTES: usize = 8 * 1024 * 1024;
-
-/// Speech sealed for recognition: a WAV, and how much leading quiet was trimmed before it, which
-/// places times the recognizer reports back on the recording's clock.
-pub(crate) struct Sealed {
-    pub wav: Vec<u8>,
-    pub trimmed: Duration,
-}
 
 /// Mono PCM16 behind a reserved WAV header, so encoding never copies the audio. Audio that is not
 /// encoded is zeroed on drop, best effort: copies in the ring, allocator, HTTP client, or engine

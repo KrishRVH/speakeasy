@@ -9,8 +9,10 @@ use speakeasy_platform::{Delivery, InsertPermit, Inserted};
 use speakeasy_show::{Image, Journal, Moment, Size};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
-use super::*;
-use crate::ports::{Footage, Published, Recorded, Recording, Speech};
+use super::{
+    ports::{Footage, Published, Recorded, Recording, Sealed, Speech},
+    *,
+};
 
 const PATIENCE: Duration = Duration::from_secs(2);
 

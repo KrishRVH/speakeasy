@@ -278,7 +278,7 @@ mod tests {
     use tokio::time::timeout;
 
     use super::*;
-    use crate::{local_speech::LocalSpeech, ports::Speech};
+    use crate::{local_speech::LocalSpeech, runtime::ports::Speech};
 
     #[tokio::test]
     async fn cancelled_setup_remains_owned_while_cleanup_is_pending() -> anyhow::Result<()> {

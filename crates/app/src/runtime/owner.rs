@@ -10,16 +10,15 @@ use speakeasy_show::Narration;
 use tokio::{sync::watch, task::JoinError};
 
 use super::{
-    CaptureEvent, LOADING, Meter, Phase, ShowEvent, Snapshot, Wiring,
+    LOADING, Meter, Phase, Snapshot, Wiring,
     device::Device,
-    now, reap,
-    session::{Delivered, InsertTask, PublishTask, Session, SessionId, Show, Stage},
+    now,
+    ports::{CaptureEvent, PUBLISH_STOPPED, Ports, Published, Recording, SessionId, ShowEvent},
+    reap,
+    session::{Delivered, InsertTask, PublishTask, Session, Show, Stage},
     worker::{Completion, Detail, Transcript, Worker},
 };
-use crate::{
-    config::{Change, Config},
-    ports::{PUBLISH_STOPPED, Ports, Published, Recording},
-};
+use crate::config::{Change, Config};
 
 /// What a copied Show tells the user.
 const SHOW_COPIED: &str = "Show copied. Paste it into your coding agent.";
