@@ -32,8 +32,8 @@ enum Log {
     Retired(Source, SessionId),
 }
 
-/// Ports with no gates: devices log and never report on their own, the worker is ready at once,
-/// and transcription waits for the test's answer.
+/// Ports with no gates: devices log and report nothing on their own beyond the microphone's
+/// `Ready`, the worker is ready at once, and transcription waits for the test's answer.
 struct ModelPorts {
     log: Sender<Log>,
     jobs: Sender<Reply>,
@@ -330,16 +330,7 @@ impl Model {
             ..Snapshot::default()
         });
         let (meter, _) = watch::channel(Meter::default());
-        let (input, inputs) = input_lane();
-        let runtime = Runtime::host(
-            Config::default(),
-            output,
-            meter,
-            ports,
-            input,
-            inputs,
-            |wiring| Ok(OwnedTask::spawn(owner::run(wiring))),
-        )?;
+        let runtime = Runtime::on_task(Config::default(), output, meter, ports)?;
         Ok(Self {
             runtime,
             updates,
@@ -449,8 +440,7 @@ impl Model {
     /// Stops the owner at rest and joins it, surfacing any panic or a release of a device that was
     /// not open. The scripted scenarios cover what shutdown releases from a live session.
     async fn close(mut self) -> anyhow::Result<()> {
-        self.runtime.request_stop();
-        timeout(PATIENCE, &mut self.runtime.owner.task).await??;
+        self.runtime.close().await?;
         self.absorb()?;
         Ok(())
     }

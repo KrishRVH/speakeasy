@@ -407,6 +407,29 @@ impl OwnedTask {
     }
 }
 
+impl Runtime<OwnedTask> {
+    /// Hosts the owner on this test's executor, so `tokio::time::advance` drives its deadlines.
+    fn on_task<P: Ports>(
+        config: Config,
+        snapshots: watch::Sender<Snapshot>,
+        meter: watch::Sender<Meter>,
+        ports: P,
+    ) -> anyhow::Result<Self> {
+        let (input, inputs) = input_lane();
+        Self::host(config, snapshots, meter, ports, input, inputs, |wiring| {
+            Ok(OwnedTask::spawn(owner::run(wiring)))
+        })
+    }
+
+    /// Stops the owner and joins it, surfacing its panic; a shutdown still running when the paused
+    /// clock reaches `PATIENCE` fails.
+    async fn close(&mut self) -> anyhow::Result<()> {
+        self.request_stop();
+        timeout(PATIENCE, &mut self.owner.task).await??;
+        Ok(())
+    }
+}
+
 /// The production controls and owner, plus the test's view of the fakes. Gates close before the
 /// owner is stopped and released.
 struct Harness<Owner = OwnedTask> {
@@ -428,14 +451,8 @@ impl Harness {
         Self::with_ports(Config::default(), |_| {})
     }
 
-    /// Runs the owner on this test's executor, so `tokio::time::advance` drives its deadlines.
     fn with_ports(config: Config, customize: impl FnOnce(&mut FakePorts)) -> anyhow::Result<Self> {
-        Self::host(config, customize, |config, output, meter, ports| {
-            let (input, inputs) = input_lane();
-            Runtime::host(config, output, meter, ports, input, inputs, |wiring| {
-                Ok(OwnedTask::spawn(owner::run(wiring)))
-            })
-        })
+        Self::host(config, customize, Runtime::on_task)
     }
 
     /// Resolves once the owner has finished its cleanup and exited.
@@ -444,12 +461,10 @@ impl Harness {
         async move { exit.closed().await }
     }
 
-    /// Stops the owner and joins it, surfacing its panic; a shutdown stuck on a held gate fails
-    /// once the paused clock reaches `PATIENCE`.
+    /// Stops the owner and joins it before the fakes' gates close, so a shutdown stuck on a held
+    /// gate fails at `PATIENCE`.
     async fn close(mut self) -> anyhow::Result<()> {
-        self.runtime.request_stop();
-        timeout(PATIENCE, &mut self.runtime.owner.task).await??;
-        Ok(())
+        self.runtime.close().await
     }
 }
 
