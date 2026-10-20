@@ -264,7 +264,7 @@ therefore show ink only as the bundle redraws it.
 Narration carries word timings (`Detail::Words`): Parakeet words, or Whisper tokens joined at their
 leading spaces. `Session::narrate` moves them from the audio's start onto the Show's timeline, which
 begins with the session, adding the microphone's start delay and the quiet trimmed before speech. A
-silent Show publishes with empty narration. `AwaitingFootage` waits for both narration and footage.
+silent Show publishes with empty narration. `AwaitingFootage` holds the narration, awaiting footage.
 `Publishing` selects keyframes, reads them from the journal, composes the bundle, and stages it in a
 hidden `.partial-*` sibling off the owner's thread. The bundle appears, and its summary is copied,
 only once the session's permit commits. A Show cancelled before then leaves no bundle and no

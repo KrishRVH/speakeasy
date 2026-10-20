@@ -15,7 +15,7 @@ use super::{
     now,
     ports::{CaptureEvent, PUBLISH_STOPPED, Ports, Published, Recording, SessionId, ShowEvent},
     reap,
-    session::{Delivered, InsertTask, PublishTask, Session, Show, Stage},
+    session::{Delivered, InsertTask, PublishTask, Screen, Session, Stage},
     worker::{Completion, Detail, Transcript, Worker},
 };
 use crate::config::{Change, Config};
@@ -308,16 +308,12 @@ impl<P: Ports> Owner<P> {
                 });
             },
             CaptureEvent::Finished(_, Ok(Some(sealed))) => {
-                if let Some(show) = &mut session.show {
-                    show.trimmed = sealed.trimmed;
-                }
-                session.stage = Stage::AwaitingWorker(sealed.wav);
+                session.stage = Stage::AwaitingWorker(sealed);
                 self.conclude_capture();
             },
             // A Show is worth sending without a word said: its ink and clicks still tell.
             CaptureEvent::Finished(_, Ok(None)) if session.show.is_some() => {
-                session.narrate(Narration::default());
-                session.stage = Stage::AwaitingFootage;
+                session.stage = Stage::AwaitingFootage(Narration::default());
                 self.conclude_capture();
             },
             CaptureEvent::Finished(_, Ok(None)) => {
@@ -387,7 +383,7 @@ impl<P: Ports> Owner<P> {
         let Some(session) = self
             .session
             .as_mut()
-            .filter(|session| matches!(session.stage, Stage::Transcribing))
+            .filter(|session| matches!(session.stage, Stage::Transcribing { .. }))
         else {
             return;
         };
@@ -405,13 +401,8 @@ impl<P: Ports> Owner<P> {
 
     /// Only the current Show's narration arrives here, for the same reason as a transcript.
     fn narrate(&mut self, narration: Narration) {
-        if let Some(session) = self
-            .session
-            .as_mut()
-            .filter(|session| matches!(session.stage, Stage::Transcribing))
-        {
+        if let Some(session) = &mut self.session {
             session.narrate(narration);
-            session.stage = Stage::AwaitingFootage;
         }
     }
 
@@ -439,14 +430,14 @@ impl<P: Ports> Owner<P> {
             .session
             .as_mut()
             .filter(|session| held && session.is_capturing() && session.show.is_none())?;
-        session.show = Some(Show::default());
+        session.show = Some(Screen::Queued);
         self.latest_show = true;
         self.gesture.lock()
     }
 
     fn handle_show(&mut self, event: ShowEvent) {
         let ShowEvent::Finished(id, footage) = event;
-        let Some(show) = self
+        let Some(screen) = self
             .session
             .as_mut()
             .filter(|session| session.id == id)
@@ -456,7 +447,7 @@ impl<P: Ports> Owner<P> {
         };
         match footage {
             Ok(footage) => {
-                show.footage = Some(footage);
+                *screen = Screen::Recorded(footage);
                 self.screen.retire();
             },
             Err(error) => self.fail(format!("{error:#}")),
@@ -533,11 +524,11 @@ impl<P: Ports> Owner<P> {
             Stage::Opening | Stage::Recording | Stage::Stopping => self.microphone.retire(),
             Stage::Inserting(task) => self.retiring_insertions.push(task),
             Stage::Publishing(task) => self.retiring_publications.push(task),
-            Stage::AwaitingWorker(mut wav) => wav.fill(0),
-            Stage::Transcribing if self.worker.is_transcribing() => {
+            Stage::AwaitingWorker(mut sealed) => sealed.wav.fill(0),
+            Stage::Transcribing { .. } if self.worker.is_transcribing() => {
                 self.worker.recover(&self.ports, &self.config);
             },
-            Stage::Queued | Stage::Transcribing | Stage::AwaitingFootage => {},
+            Stage::Queued | Stage::Transcribing { .. } | Stage::AwaitingFootage(_) => {},
         }
     }
 
@@ -564,7 +555,7 @@ impl<P: Ports> Owner<P> {
         let Some(session) = self
             .session
             .as_mut()
-            .filter(|session| session.show.as_ref().is_some_and(|show| !show.opened))
+            .filter(|session| matches!(session.show, Some(Screen::Queued)))
         else {
             return;
         };
@@ -577,9 +568,7 @@ impl<P: Ports> Owner<P> {
                     recorder.finish();
                 }
                 self.screen = Device::Open(recorder);
-                if let Some(show) = &mut session.show {
-                    show.opened = true;
-                }
+                session.show = Some(Screen::Recording);
             },
             Err(error) => self.fail(format!("Could not record the screen: {error}")),
         }
@@ -587,11 +576,7 @@ impl<P: Ports> Owner<P> {
 
     /// Publishes a Show once its narration and screen recording are both in.
     fn start_publishing(&mut self) {
-        let Some(session) = self
-            .session
-            .as_mut()
-            .filter(|session| matches!(session.stage, Stage::AwaitingFootage))
-        else {
+        let Some(session) = &mut self.session else {
             return;
         };
         if let Some((footage, narration)) = session.take_publishable() {
@@ -638,15 +623,19 @@ impl<P: Ports> Owner<P> {
         } else {
             Detail::Text
         };
-        let Stage::AwaitingWorker(wav) = &mut session.stage else {
+        let Stage::AwaitingWorker(sealed) = &mut session.stage else {
             return;
         };
         if self.worker.revive(&self.ports, &self.config) {
             self.notice = Some(Notice::LoadingModel);
         }
-        match self.worker.transcribe(mem::take(wav), detail, &self.config) {
-            Ok(()) => session.stage = Stage::Transcribing,
-            Err(unclaimed) => *wav = unclaimed,
+        let trimmed = sealed.trimmed;
+        match self
+            .worker
+            .transcribe(mem::take(&mut sealed.wav), detail, &self.config)
+        {
+            Ok(()) => session.stage = Stage::Transcribing { trimmed },
+            Err(unclaimed) => sealed.wav = unclaimed,
         }
     }
 
