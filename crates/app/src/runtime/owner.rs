@@ -488,8 +488,11 @@ impl<P: Ports> Owner<P> {
     }
 
     fn start_session(&mut self) -> ControlFlow<()> {
+        // A closed lane still holds whatever closed it: the next wake reads a queued
+        // `Unavailable`, the stop lane, or the drained lane's error through `handle_input`.
         let Some(permit) = self.permits.begin() else {
-            return ControlFlow::Break(());
+            self.gesture.cancel();
+            return ControlFlow::Continue(());
         };
         let Some(id) = self.latest_id.next() else {
             return ControlFlow::Break(());

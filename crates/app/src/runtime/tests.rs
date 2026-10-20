@@ -1010,6 +1010,30 @@ async fn failures_recover_the_worker_and_hook_loss_stops_without_inserting() -> 
     Ok(())
 }
 
+#[tokio::test(start_paused = true)]
+async fn monitor_failure_behind_a_queued_press_still_reports_its_remedy() -> anyhow::Result<()> {
+    let mut h = Harness::paused(|_| {})?;
+    receive(&h.loads).await?;
+    h.input(Input::Press);
+    h.runtime.input.fail("X".into());
+    h.observe(|snapshot| snapshot.phase == Phase::Error && snapshot.message == "X")
+        .await?;
+    assert!(h.captures.try_recv().is_err());
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lane_closed_behind_a_queued_press_still_reports_monitoring_stopped() -> anyhow::Result<()>
+{
+    let mut h = Harness::paused(|_| {})?;
+    receive(&h.loads).await?;
+    h.input(Input::Press);
+    h.runtime.input.close();
+    h.phase(Phase::Error).await?;
+    assert!(h.snapshot().message.contains("Shortcut monitoring stopped"));
+    h.close().await
+}
+
 #[tokio::test]
 async fn failed_recovery_stops_worker_before_loading_replacement() -> anyhow::Result<()> {
     let (stop, stopping) = gate(2);
