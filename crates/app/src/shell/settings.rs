@@ -559,7 +559,7 @@ fn show_motion(reduced_motion: bool, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shell::save::valid_config;
+    use crate::config::valid_config;
 
     fn microphones(ids: &[&str]) -> Vec<InputDevice> {
         ids.iter()

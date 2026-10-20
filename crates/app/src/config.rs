@@ -223,5 +223,24 @@ pub(crate) fn default_path() -> PathBuf {
         .join("speakeasy/settings.json")
 }
 
+/// Settings that pass validation: a fake engine and model written into `directory`.
+#[cfg(test)]
+pub(crate) fn valid_config(directory: &Path) -> anyhow::Result<Config> {
+    let engine_executable = directory.join("engine");
+    let model = directory.join("model.gguf");
+    fs::write(&engine_executable, b"fake engine")?;
+    fs::write(&model, b"fake model")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&engine_executable, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(Config {
+        engine_executable,
+        model,
+        ..Config::default()
+    })
+}
+
 #[cfg(test)]
 mod tests;
