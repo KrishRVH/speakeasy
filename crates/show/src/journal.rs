@@ -486,9 +486,22 @@ mod tests {
         assert_eq!(journal.frame_at(at(1_000)).as_ref(), Some(&resized));
         assert_eq!(journal.frame_at(at(150)).as_ref(), frames.get(1));
         // Sealing keeps every moment, and a frame recorded after it is stored whole.
+        let whole = {
+            let mut alone = Journal::new();
+            alone.record(at(0), resized.clone());
+            alone.bytes()
+        };
         let mut journal = journal.sealed();
+        let held = journal.bytes();
+        journal.record(at(1_100), resized.clone());
+        assert_eq!(
+            journal.bytes().saturating_sub(held),
+            whole,
+            "a sealed journal keeps no frame to compare the next against"
+        );
         let after = frame(64, 64, gradient(9));
         journal.record(at(1_200), after.clone());
+        assert_eq!(journal.frame_at(at(1_100)).as_ref(), Some(&resized));
         assert_eq!(journal.frame_at(at(1_200)), Some(after));
         assert_eq!(journal.frame_at(at(1_000)), Some(resized));
         assert_eq!(journal.frame_at(at(350)).as_ref(), frames.get(3));
