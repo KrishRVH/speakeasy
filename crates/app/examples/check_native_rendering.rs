@@ -195,7 +195,7 @@ mod linux {
     use gpui::Timer;
     use x11rb::{
         protocol::xproto::{ConnectionExt as _, ImageFormat},
-        rust_connection::RustConnection,
+        xcb_ffi::XCBConnection,
     };
 
     use super::{POLL_INTERVAL, TIMEOUT};
@@ -205,7 +205,7 @@ mod linux {
         scale: f32,
         draws_path: bool,
     ) -> anyhow::Result<()> {
-        let (connection, _) = x11rb::connect(None)?;
+        let (connection, _) = XCBConnection::connect(None)?;
         let started = Instant::now();
         let deadline = started.checked_add(TIMEOUT).unwrap_or(started);
         loop {
@@ -222,7 +222,7 @@ mod linux {
     }
 
     fn verify_pixels(
-        connection: &RustConnection,
+        connection: &XCBConnection,
         window: u32,
         scale: f32,
         draws_path: bool,

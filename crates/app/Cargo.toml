@@ -38,7 +38,7 @@ gpui = { workspace = true, features = ["x11"] }
 reqwest = { workspace = true, features = ["rustls"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-x11rb = { workspace = true, features = ["shape"] }
+x11rb = { workspace = true, features = ["allow-unsafe-code", "shape"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 # Setup downloads over the operating system's TLS stack and trust store.

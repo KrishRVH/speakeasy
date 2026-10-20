@@ -19,8 +19,8 @@ use x11rb::{
         xproto::{self, Atom, ConnectionExt as _, Window},
         xtest::ConnectionExt as _,
     },
-    rust_connection::RustConnection,
     wrapper::ConnectionExt as _,
+    xcb_ffi::XCBConnection,
 };
 use xkbcommon::xkb::{KEYSYM_CASE_INSENSITIVE, Keysym, keysym_from_name};
 
@@ -45,7 +45,7 @@ struct Keyboard {
 }
 
 impl Keyboard {
-    fn load(connection: &RustConnection) -> anyhow::Result<Self> {
+    fn load(connection: &XCBConnection) -> anyhow::Result<Self> {
         let setup = connection.setup();
         let map = connection
             .get_keyboard_mapping(
@@ -164,7 +164,7 @@ impl Shortcuts {
         Ok(Self { dictate, cancel })
     }
 
-    fn grab(self, connection: &RustConnection, root: Window, lock: u16) -> anyhow::Result<()> {
+    fn grab(self, connection: &XCBConnection, root: Window, lock: u16) -> anyhow::Result<()> {
         // Passive grabs match the exact modifier state, so each Caps and Num Lock combination needs
         // its own grab.
         let caps = u16::from(xproto::ModMask::LOCK);
@@ -189,7 +189,7 @@ impl Shortcuts {
 
 /// Turns grabbed shortcut presses and observed releases into dictation input.
 struct ShortcutTracker<'a> {
-    connection: &'a RustConnection,
+    connection: &'a XCBConnection,
     keyboard: &'a Keyboard,
     shortcuts: Option<Shortcuts>,
     lock: u16,
@@ -449,7 +449,7 @@ trait ClipboardAccess {
 }
 
 struct Clipboard {
-    connection: RustConnection,
+    connection: XCBConnection,
     /// Opened on the first copy, so a worker that only checks focus never touches clipboard
     /// contents.
     native: Option<arboard::Clipboard>,
@@ -458,7 +458,7 @@ struct Clipboard {
 
 impl Clipboard {
     fn open() -> anyhow::Result<Self> {
-        let (connection, _) = x11rb::connect(None)?;
+        let (connection, _) = connect()?;
         let selection = intern(&connection, b"CLIPBOARD")?;
         Ok(Self {
             connection,
@@ -510,7 +510,7 @@ pub(super) async fn run(
     requests: Receiver<Insertion>,
     stop: &Receiver<Infallible>,
 ) -> anyhow::Result<()> {
-    let (connection, screen) = x11rb::connect(None)?;
+    let (connection, screen) = connect()?;
     let root = connection
         .setup()
         .roots
@@ -529,7 +529,7 @@ pub(super) async fn run(
         observe_releases(&connection, root)?;
     }
     connection.flush()?;
-    let duplicate = connection.stream().as_fd().try_clone_to_owned()?;
+    let duplicate = connection.as_fd().try_clone_to_owned()?;
     // SAFETY: the duplicate is owned here and stays open and unchanged until the `AsyncFd` drops
     // it.
     let readiness = unsafe { AsyncFd::register(duplicate) }?;
@@ -557,7 +557,7 @@ pub(super) async fn run(
 }
 
 /// Subscribes `root` to XI2 raw key releases, which arrive without a keyboard grab.
-fn observe_releases(connection: &RustConnection, root: Window) -> anyhow::Result<()> {
+fn observe_releases(connection: &XCBConnection, root: Window) -> anyhow::Result<()> {
     // XI2 events flow only after the client announces its version; the reply carries nothing we
     // need.
     connection.xinput_xi_query_version(2, 2)?.reply()?;
@@ -710,7 +710,7 @@ fn paste_copied(
     Ok(Inserted::Sent)
 }
 
-fn uses_first_layout(connection: &RustConnection) -> anyhow::Result<bool> {
+fn uses_first_layout(connection: &XCBConnection) -> anyhow::Result<bool> {
     ensure!(
         connection.xkb_use_extension(1, 0)?.reply()?.supported,
         "XKB is unavailable"
@@ -797,7 +797,7 @@ fn parse_binding(expression: &str) -> anyhow::Result<(Vec<&'static str>, &str)> 
     Ok((modifiers, key))
 }
 
-fn has_external_target(connection: &RustConnection, host: HostSession) -> anyhow::Result<bool> {
+fn has_external_target(connection: &XCBConnection, host: HostSession) -> anyhow::Result<bool> {
     let pid = intern(connection, b"_NET_WM_PID")?;
     let focused = connection.get_input_focus()?.reply()?.focus;
     focus_is_external(host, focused, std::process::id(), |window| {
@@ -905,16 +905,22 @@ fn change_visibility(handle: RawWindowHandle, visible: bool) -> anyhow::Result<(
     Ok(())
 }
 
-fn connect_to_window(handle: RawWindowHandle) -> anyhow::Result<(RustConnection, Window)> {
+fn connect_to_window(handle: RawWindowHandle) -> anyhow::Result<(XCBConnection, Window)> {
     let window = match handle {
         RawWindowHandle::Xcb(handle) => handle.window.get(),
         RawWindowHandle::Xlib(handle) => u32::try_from(handle.window)?,
         _ => bail!("Linux pill requires X11 or Xwayland"),
     };
-    Ok((x11rb::connect(None)?.0, window))
+    Ok((connect()?.0, window))
 }
 
-fn intern(connection: &RustConnection, name: &[u8]) -> anyhow::Result<Atom> {
+/// GPUI connects through libxcb, so these connections must too: x11rb's pure-Rust connection skips
+/// the abstract socket libxcb tries first and can resolve `DISPLAY` to a different server.
+fn connect() -> anyhow::Result<(XCBConnection, usize)> {
+    Ok(XCBConnection::connect(None)?)
+}
+
+fn intern(connection: &XCBConnection, name: &[u8]) -> anyhow::Result<Atom> {
     Ok(connection.intern_atom(false, name)?.reply()?.atom)
 }
 

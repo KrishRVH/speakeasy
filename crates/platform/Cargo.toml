@@ -16,7 +16,7 @@ arboard.workspace = true
 zbus = { workspace = true, features = ["proxy", "service", "tokio"] }
 futures-util.workspace = true
 libloading.workspace = true
-x11rb = { workspace = true, features = ["shape", "xinput", "xkb", "xtest"] }
+x11rb = { workspace = true, features = ["allow-unsafe-code", "shape", "xinput", "xkb", "xtest"] }
 xkbcommon.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tempfile.workspace = true

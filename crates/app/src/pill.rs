@@ -884,9 +884,12 @@ mod tests {
         use raw_window_handle::{
             HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
         };
-        use x11rb::protocol::{
-            shape::{self, ConnectionExt as _},
-            xproto::{AtomEnum, ConnectionExt as _, ImageFormat, MapState},
+        use x11rb::{
+            protocol::{
+                shape::{self, ConnectionExt as _},
+                xproto::{AtomEnum, ConnectionExt as _, ImageFormat, MapState},
+            },
+            xcb_ffi::XCBConnection,
         };
 
         use super::*;
@@ -950,7 +953,7 @@ mod tests {
                 },
                 _ => bail!("Expected matching X11 window and display handles"),
             };
-            let (connection, _) = x11rb::connect(None)?;
+            let (connection, _) = XCBConnection::connect(None)?;
             let attributes = connection.get_window_attributes(id)?.reply()?;
             ensure!(
                 attributes.map_state == MapState::UNMAPPED,
@@ -1035,7 +1038,7 @@ mod tests {
                     }
                 })?
             })??;
-            let (connection, _) = x11rb::connect(None)?;
+            let (connection, _) = XCBConnection::connect(None)?;
             let geometry = connection.get_geometry(id)?.reply()?;
             let started = Instant::now();
             let deadline = started
