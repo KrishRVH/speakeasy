@@ -6,17 +6,23 @@ param(
     [Parameter(Mandatory)][string]$OutputPath
 )
 $ErrorActionPreference = 'Stop'
-# GPU memory counters exist only where a WDDM driver publishes them; their absence leaves the
-# metrics out rather than failing the run.
+# GPU memory counters exist only where Windows publishes them under these names; their absence
+# leaves the metrics out rather than failing the run. Raw values read at once, where Get-Counter
+# would wait a second for each.
 function Get-GpuMemory([int]$ProcessId) {
     $usage = @{}
-    foreach ($kind in @('Dedicated', 'Shared')) {
-        try {
-            $counter = "\GPU Process Memory(pid_${ProcessId}_*)\$kind Usage"
-            $samples = (Get-Counter -Counter $counter -ErrorAction Stop).CounterSamples
-            $usage[$kind] = ($samples | Measure-Object -Property CookedValue -Sum).Sum
-        } catch {}
-    }
+    try {
+        $category = [Diagnostics.PerformanceCounterCategory]::new('GPU Process Memory')
+        $instances = @($category.GetInstanceNames() | Where-Object { $_ -like "pid_${ProcessId}_*" })
+        foreach ($kind in @('Dedicated', 'Shared')) {
+            $total = [long]0
+            foreach ($instance in $instances) {
+                $counter = [Diagnostics.PerformanceCounter]::new('GPU Process Memory', "$kind Usage", $instance, $true)
+                try { $total += $counter.RawValue } finally { $counter.Dispose() }
+            }
+            $usage[$kind] = $total
+        }
+    } catch {}
     $usage
 }
 $clock = [System.Diagnostics.Stopwatch]::StartNew()

@@ -331,8 +331,17 @@ impl DirectXRenderer {
                     scene.surfaces.len(),))?;
         }
         // A frame without paths frees their full-window targets; a window that drew paths once
-        // need not hold them while it shows none.
-        if scene.paths.is_empty() {
+        // need not hold them while it shows none. The context keeps bound views alive, so the
+        // path texture is unbound first.
+        if scene.paths.is_empty() && self.resources.paths.is_some() {
+            unsafe {
+                self.devices
+                    .device_context
+                    .VSSetShaderResources(0, Some(&[None]));
+                self.devices
+                    .device_context
+                    .PSSetShaderResources(0, Some(&[None]));
+            }
             self.resources.paths = None;
         }
         self.present()

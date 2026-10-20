@@ -342,7 +342,7 @@ mod tests {
         let ShowEvent::Finished(_, footage) =
             timeout(Duration::from_secs(10), finished.recv()).await??;
         let footage = footage?;
-        recorder.retire().await;
+        timeout(Duration::from_secs(5), recorder.retire()).await?;
         eprintln!(
             "show_recording: seconds=10 frames={} journal_mb={:.1}",
             footage.samples.len(),
