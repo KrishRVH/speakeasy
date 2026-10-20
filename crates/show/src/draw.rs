@@ -7,7 +7,6 @@ use tiny_skia::{FillRule, Paint, Path, PathBuilder, PixmapMut, Stroke as Line, T
 use crate::{
     Image, Keyframe, Moment, Point, Rect, Typeface, ink,
     recording::{Action, Recording},
-    select::Reason,
 };
 
 const RIPPLE_FILL: [u8; 4] = [0, 136, 255, 68];
@@ -74,9 +73,7 @@ pub(crate) fn annotate(
     }
     let click = nearest_click(&recording.actions, keyframe.at);
     let focus = keyframe.action.map(Action::point).or(click);
-    if let Some(point) = focus.filter(|point| point.is_finite())
-        && (keyframe.reason == Reason::Click || click.is_some())
-    {
+    if let Some(point) = focus.filter(|point| point.is_finite()) {
         ripple(&mut canvas, point.scaled(width, height), detail);
     }
     let in_top_left = |point: &Point| point.x < BADGE_SIDE && point.y < BADGE_BAND;
