@@ -121,7 +121,7 @@ impl Drop for Clear<'_> {
     }
 }
 
-/// Draws a circle on `display` from one second into the Show, lifting the pen as the circle
+/// Draws a circle on `display` from one second into the recording, lifting the pen as the circle
 /// closes so the ink holds and fades as it does in a real Show. Returns whether the pen lifted.
 fn circle(canvas: &watch::Sender<Canvas>, display: Display, seconds: f32) -> bool {
     const DRAWN_FROM: f32 = 1.0;
