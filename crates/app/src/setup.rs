@@ -406,11 +406,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Owned subprocess fixture for setup cancellation tests"]
+    #[ignore = "Subprocess helper for the setup cancellation tests; does nothing unless fixture_child spawns it"]
     fn setup_child_fixture() -> anyhow::Result<()> {
-        let root = PathBuf::from(
-            std::env::var_os("SPEAKEASY_SETUP_TEST_ROOT").context("Missing fixture root")?,
-        );
+        let Some(root) = std::env::var_os("SPEAKEASY_SETUP_TEST_ROOT").map(PathBuf::from) else {
+            return Ok(());
+        };
         let lock = File::create(root.join("child.lock"))?;
         lock.lock()?;
         fs::write(root.join("child.ready"), b"")?;
