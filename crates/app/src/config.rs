@@ -1,5 +1,12 @@
-//! Typed settings: path resolution, validation, and atomic saves. The JSON shape is a user-edited
-//! contract, so unknown fields are rejected and a default Linux block stays out of saved files.
+//! Typed settings: path resolution, validation, and atomic saves.
+//!
+//! The JSON file is a user-edited contract that outlives releases. Missing keys read as
+//! [`Config::default`], so a new field needs no attribute, and unknown top-level keys are ignored,
+//! so a file from another release still loads; a save drops them. A renamed key keeps its old name
+//! with `#[serde(alias = "old")]`, on the field or on the enum variant that replaces a retired
+//! Engine or Theme, and a retyped key goes through a private wire struct that migrates the old
+//! shape. [`LinuxSettings`] stays strict because only hand edits reach it, so retiring one of its
+//! keys must keep accepting that key. A default Linux block stays out of saved files.
 
 use std::{
     fs,
@@ -31,33 +38,24 @@ impl Engine {
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[serde(default)]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "Each flag persists an independent user preference that can be toggled separately"
 )]
 pub(crate) struct Config {
-    #[serde(default, skip_serializing_if = "LinuxSettings::is_default")]
+    #[serde(skip_serializing_if = "LinuxSettings::is_default")]
     pub linux: LinuxSettings,
-    #[serde(default)]
     pub engine: Engine,
-    #[serde(default)]
     pub microphone: Option<String>,
     pub engine_executable: PathBuf,
     pub model: PathBuf,
-    #[serde(default = "default_language")]
     pub language: String,
-    #[serde(default = "default_enabled")]
     pub remove_fillers: bool,
-    #[serde(default = "default_threads")]
     pub threads: u16,
-    #[serde(default = "default_enabled")]
     pub use_gpu: bool,
-    #[serde(default)]
     pub reduced_motion: bool,
-    #[serde(default)]
     pub preserve_clipboard: bool,
-    #[serde(default)]
     pub theme: Theme,
 }
 
@@ -89,12 +87,7 @@ impl Config {
         serde_json::from_slice(
             &fs::read(path).with_context(|| format!("Cannot read {}", path.display()))?,
         )
-        .with_context(|| {
-            format!(
-                "Invalid settings in {}. Repair this file before saving changes.",
-                path.display()
-            )
-        })
+        .with_context(|| format!("Invalid settings in {}", path.display()))
     }
 
     #[cfg(test)]
@@ -175,10 +168,10 @@ impl Default for Config {
             microphone: None,
             engine_executable: PathBuf::new(),
             model: PathBuf::new(),
-            language: default_language(),
-            remove_fillers: default_enabled(),
-            threads: default_threads(),
-            use_gpu: default_enabled(),
+            language: "en".into(),
+            remove_fillers: true,
+            threads: 4,
+            use_gpu: true,
             reduced_motion: false,
             preserve_clipboard: false,
             theme: Theme::default(),
@@ -228,18 +221,6 @@ pub(crate) fn default_path() -> PathBuf {
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")));
     base.unwrap_or_else(|| PathBuf::from("."))
         .join("speakeasy/settings.json")
-}
-
-fn default_language() -> String {
-    "en".into()
-}
-
-fn default_threads() -> u16 {
-    4
-}
-
-fn default_enabled() -> bool {
-    true
 }
 
 #[cfg(test)]
@@ -299,6 +280,38 @@ mod tests {
             assert_eq!(serde_json::to_value(theme)?, name);
             assert_eq!(serde_json::from_value::<Theme>(name.into())?, theme);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn omitted_keys_read_as_new_install_defaults() -> anyhow::Result<()> {
+        let read = serde_json::from_str::<Config>(r#"{"engine_executable":"","model":""}"#)?;
+        assert!(read == Config::default());
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_top_level_keys_are_ignored_but_linux_keys_stay_strict() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("settings.json");
+        fs::write(
+            &path,
+            r#"{"engine_executable":"e","model":"m","retired":1}"#,
+        )?;
+        let expected = Config {
+            engine_executable: "e".into(),
+            model: "m".into(),
+            ..Config::default()
+        };
+        assert!(Config::read(&path)? == expected);
+        fs::write(
+            &path,
+            r#"{"engine_executable":"e","model":"m","linux":{"shorcut":"X"}}"#,
+        )?;
+        let error = Config::read(&path)
+            .err()
+            .context("A misspelled Linux key was accepted")?;
+        assert!(format!("{error:#}").contains("shorcut"));
         Ok(())
     }
 

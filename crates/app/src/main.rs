@@ -286,14 +286,19 @@ fn load_config(path: &Path, mode: LaunchMode) -> (Config, ConfigState) {
     }
     let mut config = match Config::read(path) {
         Ok(config) => config,
-        Err(error) => return (Config::default(), ConfigState::Invalid(error.to_string())),
+        Err(error) => {
+            return (
+                Config::default(),
+                ConfigState::Invalid(format!("{error:#}")),
+            );
+        },
     };
     if config.engine_executable.as_os_str().is_empty() {
         return (config, ConfigState::Unconfigured);
     }
     let state = match config.validate(path) {
         Ok(()) => ConfigState::Configured,
-        Err(error) => ConfigState::Invalid(error.to_string()),
+        Err(error) => ConfigState::Invalid(format!("{error:#}")),
     };
     (config, state)
 }

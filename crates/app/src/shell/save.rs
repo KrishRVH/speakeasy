@@ -78,7 +78,7 @@ impl SaveQueue {
                 self.saved = Some(saved);
                 None
             },
-            Err(error) => Some(error.to_string()),
+            Err(error) => Some(format!("{error:#}")),
         };
         match self.pending.take() {
             Some(next) => self.start(next),

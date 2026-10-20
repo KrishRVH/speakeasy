@@ -299,7 +299,7 @@ impl Settings {
                 installed.apply_to(&mut self.config);
                 self.save(cx);
             },
-            Some(Err(error)) => self.notice = Some(error.to_string().into()),
+            Some(Err(error)) => self.notice = Some(format!("{error:#}").into()),
             None => self.notice = Some("Setup stopped unexpectedly. Try again.".into()),
         }
         cx.notify();
