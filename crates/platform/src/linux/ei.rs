@@ -638,17 +638,14 @@ struct PasteKeys {
     v: u32,
 }
 
-/// Registers a duplicate of `fd` for readiness polling.
+/// Watches a duplicate of libei's descriptor for readability.
 ///
 /// # Safety
 /// A non-negative `fd` must stay open until this returns.
 unsafe fn register_readiness(fd: RawFd) -> anyhow::Result<AsyncFd<OwnedFd>> {
     ensure!(fd >= 0, "Desktop connection has no valid file descriptor");
-    // SAFETY: the caller keeps fd open; only the duplicate is owned and later closed.
-    let duplicate = unsafe { BorrowedFd::borrow_raw(fd) }.try_clone_to_owned()?;
-    // SAFETY: the duplicate is owned here and stays open and unchanged until the `AsyncFd` drops
-    // it.
-    Ok(unsafe { AsyncFd::register(duplicate) }?)
+    // SAFETY: the caller keeps fd open while it is duplicated; only the duplicate is owned.
+    super::watch_readable(unsafe { BorrowedFd::borrow_raw(fd) })
 }
 
 /// Compiles the XKB keymap libei advertises for `device`.

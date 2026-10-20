@@ -10,7 +10,6 @@ use std::{
 
 use anyhow::{Context, bail, ensure};
 use async_channel::{Receiver, Sender};
-use tokio::io::unix::AsyncFd;
 use x11rb::{
     connection::Connection,
     protocol::{
@@ -28,7 +27,10 @@ use x11rb::{
 };
 use xkbcommon::xkb::{KEYSYM_CASE_INSENSITIVE, Keysym, keysym_from_name};
 
-use super::{COPIED_FOR_MANUAL_PASTE, HostSession, NO_PASTE_BINDING, ShortcutLabels, stopping};
+use super::{
+    COPIED_FOR_MANUAL_PASTE, HostSession, NO_PASTE_BINDING, ShortcutLabels, stopping,
+    watch_readable,
+};
 use crate::{
     Delivery, DesktopOptions, Input, InputSender, InsertPermit, Inserted, OwnedThread,
     insertion::{Insertion, PASTE_AFTER_RELEASE, Reply, wait_for_released_modifiers},
@@ -558,10 +560,7 @@ pub(super) async fn run(
         observe_releases(&connection, root)?;
     }
     connection.flush()?;
-    let duplicate = connection.as_fd().try_clone_to_owned()?;
-    // SAFETY: the duplicate is owned here and stays open and unchanged until the `AsyncFd` drops
-    // it.
-    let readiness = unsafe { AsyncFd::register(duplicate) }?;
+    let readiness = watch_readable(connection.as_fd())?;
     let _worker = InsertionWorker::spawn(input.clone(), options.clone(), requests)?;
     input.deliver(ShortcutLabels::new(options).into_desktop_ready());
     let mut tracker = ShortcutTracker {

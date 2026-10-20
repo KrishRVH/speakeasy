@@ -7,11 +7,15 @@ mod token;
 mod tray;
 mod x11;
 
-use std::convert::Infallible;
+use std::{
+    convert::Infallible,
+    os::fd::{BorrowedFd, OwnedFd},
+};
 
 use anyhow::bail;
 use async_channel::{Receiver, Sender};
 use raw_window_handle::{RawWindowHandle, WindowHandle};
+use tokio::io::{Interest, unix::AsyncFd};
 use zbus::MatchRule;
 
 pub use self::tray::{NativeTray, TrayAction, TrayPresentation};
@@ -151,6 +155,13 @@ async fn stopping(stop: &Receiver<Infallible>, input: &InputSender) {
         _ = stop.recv() => {},
         () = input.closed() => {},
     }
+}
+
+/// Watches a duplicate of `fd` for readability on the current Tokio runtime.
+fn watch_readable(fd: BorrowedFd<'_>) -> anyhow::Result<AsyncFd<OwnedFd>> {
+    let duplicate = fd.try_clone_to_owned()?;
+    // SAFETY: the `AsyncFd` owns the duplicate, which stays open and unchanged until it drops.
+    Ok(unsafe { AsyncFd::register_with_interest(duplicate, Interest::READABLE) }?)
 }
 
 /// Matches the bus announcing that `name` gained, lost, or changed its owner.
