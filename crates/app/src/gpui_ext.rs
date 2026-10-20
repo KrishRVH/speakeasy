@@ -72,8 +72,8 @@ impl AppUpdate for AsyncApp {
     }
 }
 
-/// The native window behind `window`, for calls made once GPUI's borrow of it ends; `name` labels
-/// the error people see.
+/// The native window behind `window`, for platform calls on its UI thread, now or through
+/// [`defer_native`] once GPUI's borrow ends; `name` labels the error people see.
 pub(crate) fn native_window(window: &Window, name: &str) -> anyhow::Result<NativeWindow> {
     let handle = HasWindowHandle::window_handle(window)
         .map_err(|error| anyhow!("Cannot access {name} window: {error}"))?;

@@ -27,7 +27,8 @@ use super::{
 /// Desktop launcher and portal registration identity.
 pub const APPLICATION_ID: &str = "io.github.krvh.speakeasy";
 
-/// The active keyboard layout cannot type the paste shortcut, on X11 or through libei.
+/// The layout paste types through cannot type the paste shortcut: the active one through libei, or
+/// the first on X11, the only one X11 paste drives.
 const NO_PASTE_BINDING: Inserted = Inserted::Copied(
     "Text copied. This keyboard layout has no automatic paste binding; paste manually.",
 );

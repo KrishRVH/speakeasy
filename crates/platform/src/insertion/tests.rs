@@ -1,5 +1,6 @@
-//! Checks the focus and shortcut preflight, clipboard checks, permit revocation, and the insertion
-//! worker against a fake native target; no test touches the clipboard or the focused app.
+//! Drives delivery choices, the pre-commit focus and modifier checks, and the paste and direct
+//! commit protocol through a recording fake adapter, plus UTF-16 chunking and the insertion thread's
+//! stop and panic answers; no test touches the clipboard or sends input.
 
 use std::{panic, time::Duration};
 
