@@ -5,17 +5,22 @@ use std::{path::PathBuf, time::SystemTime};
 
 use anyhow::{Context as _, anyhow};
 use speakeasy_platform::InsertPermit;
-use speakeasy_show::{Image, Typeface, compose, select};
+use speakeasy_show::{Image, Journal, Narration, Recording, Typeface, compose, select};
 
 use super::store;
-use crate::runtime::ports::{PUBLISH_STOPPED, Published, Recorded};
+use crate::runtime::ports::{Footage, PUBLISH_STOPPED, Published};
 
-/// Composes and writes `recorded` off the caller's thread. The bundle appears and its summary is
-/// copied only once `permit` commits; a publication cancelled before then stops at its next check
-/// and deletes anything it staged.
-pub(crate) async fn publish(recorded: Recorded, permit: InsertPermit) -> anyhow::Result<Published> {
+/// Composes and writes a Show from its `footage` and `narration` off the caller's thread. The
+/// bundle appears and its summary is copied only once `permit` commits; a publication cancelled
+/// before then stops at its next check and deletes anything it staged.
+pub(crate) async fn publish(
+    footage: Footage,
+    narration: Narration,
+    permit: InsertPermit,
+) -> anyhow::Result<Published> {
     tokio::task::spawn_blocking(move || {
-        let Some(written) = write_bundle(recorded, &permit, store::private_directory)? else {
+        let Some(written) = write_bundle(footage, narration, &permit, store::private_directory)?
+        else {
             return Ok(Published::Cancelled);
         };
         speakeasy_platform::copy_text(&written.summary).map_err(|error| {
@@ -34,11 +39,12 @@ struct Written {
     summary: String,
 }
 
-/// Writes `recorded` as a new bundle in the folder `parent` prepares, or nothing once `permit` is
+/// Writes a Show as a new bundle in the folder `parent` prepares, or nothing once `permit` is
 /// revoked. `parent` runs only after the last cancellation check, so a cancelled Show never touches
 /// the disk and never fails on a folder it did not need.
 fn write_bundle(
-    recorded: Recorded,
+    footage: Footage,
+    narration: Narration,
     permit: &InsertPermit,
     parent: impl FnOnce() -> anyhow::Result<PathBuf>,
 ) -> anyhow::Result<Option<Written>> {
@@ -46,7 +52,7 @@ fn write_bundle(
     if cancelled() {
         return Ok(None);
     }
-    let Recorded { recording, journal } = recorded;
+    let (recording, journal) = narrated(footage, narration);
     let selection = select(&recording, journal.samples())
         .context("The screen could not be recorded. Try again.")?;
     let frames = journal
@@ -73,6 +79,26 @@ fn write_bundle(
         summary: bundle.summary(&directory),
         directory,
     }))
+}
+
+/// The Show as composition reads it, with `narration` already on its timeline, and the journal
+/// its keyframes come from.
+fn narrated(footage: Footage, narration: Narration) -> (Recording, Journal) {
+    let Footage {
+        surface,
+        ended,
+        journal,
+        strokes,
+        actions,
+    } = footage;
+    let recording = Recording {
+        duration: ended,
+        surface,
+        strokes,
+        actions,
+        narration,
+    };
+    (recording, journal)
 }
 
 #[cfg(test)]

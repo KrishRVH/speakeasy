@@ -594,8 +594,10 @@ impl<P: Ports> Owner<P> {
         else {
             return;
         };
-        if let Some(recorded) = session.take_recorded() {
-            let publication = self.ports.publish(recorded, session.permit.clone());
+        if let Some((footage, narration)) = session.take_publishable() {
+            let publication = self
+                .ports
+                .publish(footage, narration, session.permit.clone());
             session.stage = Stage::Publishing(tokio::spawn(publication));
         }
     }

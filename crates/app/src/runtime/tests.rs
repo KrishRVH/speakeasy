@@ -6,11 +6,11 @@ use std::{path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, bail, ensure};
 use speakeasy_platform::{Delivery, InsertPermit, Inserted};
-use speakeasy_show::{Image, Journal, Moment, Size};
+use speakeasy_show::{Image, Journal, Moment, Narration, Size};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 use super::{
-    ports::{Footage, Published, Recorded, Recording, Sealed, Speech},
+    ports::{Footage, Published, Recording, Sealed, Speech},
     *,
 };
 
@@ -82,7 +82,7 @@ struct FakePorts {
     shows: Sender<OpenedShow>,
     jobs: Sender<TranscriptionJob>,
     pasted: Sender<String>,
-    published: Sender<Recorded>,
+    published: Sender<(Footage, Narration)>,
     loads: Sender<()>,
 }
 
@@ -92,7 +92,7 @@ struct Reports {
     shows: Receiver<OpenedShow>,
     jobs: Receiver<TranscriptionJob>,
     pasted: Receiver<String>,
-    published: Receiver<Recorded>,
+    published: Receiver<(Footage, Narration)>,
     loads: Receiver<()>,
 }
 
@@ -194,7 +194,8 @@ impl Ports for FakePorts {
 
     fn publish(
         &self,
-        recorded: Recorded,
+        footage: Footage,
+        narration: Narration,
         permit: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
         let published = self.published.clone();
@@ -210,7 +211,7 @@ impl Ports for FakePorts {
             if !permit.commit() {
                 return Ok(Published::Cancelled);
             }
-            published.try_send(recorded)?;
+            published.try_send((footage, narration))?;
             Ok(Published::Copied(PathBuf::from("fake show")))
         }
     }
@@ -348,14 +349,8 @@ impl Speech for FakeSpeech {
         result.await?
     }
 
-    async fn transcribe_words(
-        &self,
-        wav: Vec<u8>,
-        language: &str,
-    ) -> anyhow::Result<speakeasy_show::Narration> {
-        self.transcribe(wav, language)
-            .await
-            .map(speakeasy_show::Narration::Text)
+    async fn transcribe_words(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<Narration> {
+        self.transcribe(wav, language).await.map(Narration::Text)
     }
 
     async fn probe_with_silence(&self) -> anyhow::Result<()> {
@@ -416,7 +411,7 @@ struct Harness<Owner = OwnedTask> {
     shows: Receiver<OpenedShow>,
     jobs: Receiver<TranscriptionJob>,
     pasted: Receiver<String>,
-    published: Receiver<Recorded>,
+    published: Receiver<(Footage, Narration)>,
     loads: Receiver<()>,
 }
 

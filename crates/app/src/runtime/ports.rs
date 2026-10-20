@@ -9,7 +9,7 @@ use std::{
 
 use async_channel::Sender;
 use speakeasy_platform::{Delivery, InsertPermit, Inserted};
-use speakeasy_show::{Action, Journal, Moment, Size, Stroke};
+use speakeasy_show::{Action, Journal, Moment, Narration, Size, Stroke};
 use tokio::sync::watch;
 
 use crate::config::Config;
@@ -88,7 +88,7 @@ pub(crate) trait Speech: Send + Sync + 'static {
         &self,
         wav: Vec<u8>,
         language: &str,
-    ) -> impl Future<Output = anyhow::Result<speakeasy_show::Narration>> + Send;
+    ) -> impl Future<Output = anyhow::Result<Narration>> + Send;
 
     /// Transcribes silence and discards the text. Engines serialize requests, so completion proves
     /// that an abandoned inference has drained and the model still responds, which a health check
@@ -108,12 +108,6 @@ pub(crate) struct Footage {
     pub journal: Journal,
     pub strokes: Vec<Stroke>,
     pub actions: Vec<Action>,
-}
-
-/// Everything a finished Show recorded, ready to choose its keyframes from.
-pub(crate) struct Recorded {
-    pub recording: speakeasy_show::Recording,
-    pub journal: Journal,
 }
 
 /// What publishing a Show did.
@@ -150,11 +144,12 @@ pub(crate) trait Ports: Send + 'static {
         events: Sender<ShowEvent>,
     ) -> anyhow::Result<Self::Show>;
 
-    /// Turns a finished Show into a bundle; once `permit` commits, writes it and copies its
-    /// summary.
+    /// Turns a finished Show's footage and its narration, already on the Show's timeline, into
+    /// a bundle; once `permit` commits, writes it and copies its summary.
     fn publish(
         &self,
-        recorded: Recorded,
+        footage: Footage,
+        narration: Narration,
         permit: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static;
 

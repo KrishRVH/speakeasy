@@ -1,8 +1,6 @@
 //! Show scenarios: S during a hold, screen lanes, footage, and publication, against a fake
 //! screen and gated publication.
 
-use speakeasy_show::Narration;
-
 use super::*;
 
 /// Holds the shortcut and presses S, returning the screen recorder's lane.
@@ -27,12 +25,9 @@ async fn s_during_a_hold_turns_the_recording_into_a_show_and_publishes_it() -> a
     h.input(Input::Press);
     let (_, reply) = receive(&h.jobs).await?;
     answer(reply, "look here")?;
-    let recorded = receive(&h.published).await?;
-    assert_eq!(
-        recorded.recording.narration,
-        Narration::Text("look here".into())
-    );
-    assert_eq!(recorded.journal.samples().len(), 1);
+    let (footage, narration) = receive(&h.published).await?;
+    assert_eq!(narration, Narration::Text("look here".into()));
+    assert_eq!(footage.journal.samples().len(), 1);
     h.phase(Phase::Copied).await?;
     assert!(h.snapshot().message.contains("Show copied"));
     assert!(h.pasted.try_recv().is_err(), "A Show never pastes");
@@ -50,8 +45,8 @@ async fn a_silent_show_still_publishes_its_screen() -> anyhow::Result<()> {
     h.input(Input::Release);
     h.input(Input::Press);
     events.send(CaptureEvent::Finished(id, Ok(None))).await?;
-    let recorded = receive(&h.published).await?;
-    assert_eq!(recorded.recording.narration, Narration::default());
+    let (_, narration) = receive(&h.published).await?;
+    assert_eq!(narration, Narration::default());
     assert!(h.jobs.try_recv().is_err(), "Silence is not transcribed");
     h.phase(Phase::Copied).await?;
     h.close().await
@@ -218,8 +213,8 @@ async fn footage_from_an_earlier_show_never_reaches_a_later_one() -> anyhow::Res
     h.input(Input::Release);
     h.input(Input::Press);
     h.transcribe_next_as("this one").await?;
-    let recorded = receive(&h.published).await?;
-    assert_eq!(recorded.recording.duration, footage().ended);
+    let (published, _) = receive(&h.published).await?;
+    assert_eq!(published.ended, footage().ended);
     h.close().await
 }
 
@@ -249,11 +244,8 @@ async fn a_show_queued_behind_a_retiring_screen_still_records_it() -> anyhow::Re
     assert!(still_pending(h.shows.recv()).await);
     retiring.release().await?;
     receive(&h.shows).await?;
-    let recorded = receive(&h.published).await?;
-    assert_eq!(
-        recorded.recording.narration,
-        Narration::Text("second".into())
-    );
+    let (_, narration) = receive(&h.published).await?;
+    assert_eq!(narration, Narration::Text("second".into()));
     retiring.reached().await?;
     retiring.release().await?;
     h.close().await

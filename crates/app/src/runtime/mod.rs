@@ -13,9 +13,10 @@ use async_channel::{Receiver, Sender, TrySendError};
 use speakeasy_platform::{
     Delivery, Input, InputMonitor, InputSender, InsertPermit, Inserted, Inserter, OwnedThread,
 };
+use speakeasy_show::Narration;
 use tokio::{sync::watch, task::JoinError};
 
-use self::ports::{CaptureEvent, Ports, Published, Recorded, SessionId, ShowEvent};
+use self::ports::{CaptureEvent, Footage, Ports, Published, SessionId, ShowEvent};
 use crate::{
     audio::Capture,
     config::{Change, Config, ValidConfig},
@@ -206,10 +207,11 @@ impl Ports for Desktop {
 
     fn publish(
         &self,
-        recorded: Recorded,
+        footage: Footage,
+        narration: Narration,
         permit: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
-        show::publish(recorded, permit)
+        show::publish(footage, narration, permit)
     }
 
     fn load(

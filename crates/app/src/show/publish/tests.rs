@@ -4,9 +4,7 @@
 use std::{fs, time::Instant};
 
 use speakeasy_platform::{InputSender, InsertPermit};
-use speakeasy_show::{
-    Journal, Manifest, Moment, Narration, Point, Recording, Size, Span, Tracker, Word,
-};
+use speakeasy_show::{Manifest, Moment, Point, Size, Span, Tracker, Word};
 
 use super::*;
 
@@ -120,25 +118,22 @@ impl Rehearsal {
             .observe(Moment::from_millis(at), Point::new(x, y), drawing, pressed);
     }
 
-    fn finish(self, ended: u64, narration: Narration) -> Recorded {
-        let duration = Moment::from_millis(ended);
-        let (strokes, actions) = self.tracker.finish(duration);
-        Recorded {
-            recording: Recording {
-                duration,
-                surface: self.surface,
-                strokes,
-                actions,
-                narration,
-            },
+    fn finish(self, ended: u64) -> Footage {
+        let ended = Moment::from_millis(ended);
+        let (strokes, actions) = self.tracker.finish(ended);
+        Footage {
+            surface: self.surface,
+            ended,
             journal: self.journal,
+            strokes,
+            actions,
         }
     }
 }
 
 /// Ten seconds: a click opens a dialog, then a circle of ink is drawn around it while it is
 /// named.
-fn rehearse(width: u32, height: u32) -> Recorded {
+fn rehearse(width: u32, height: u32) -> (Footage, Narration) {
     let mut show = Rehearsal::new(width, height);
     for at in (0..10_000).step_by(200) {
         show.frame(at, desktop(width, height, 0, 0, at >= 3_200));
@@ -157,17 +152,15 @@ fn rehearse(width: u32, height: u32) -> Recorded {
         );
     }
     show.pointer(6_100, 0.7, 0.5, false, false);
-    show.finish(
-        10_000,
-        words(&[
-            (2_800, "click"),
-            (3_100, "here"),
-            (5_200, "this"),
-            (5_500, "dialog"),
-            (5_800, "is"),
-            (6_000, "wrong."),
-        ]),
-    )
+    let narration = words(&[
+        (2_800, "click"),
+        (3_100, "here"),
+        (5_200, "this"),
+        (5_500, "dialog"),
+        (5_800, "is"),
+        (6_000, "wrong."),
+    ]);
+    (show.finish(10_000), narration)
 }
 
 /// The width and height a PNG's header declares.
@@ -180,9 +173,8 @@ fn png_size(bytes: &[u8]) -> (u32, u32) {
 #[test]
 fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
     let (width, height) = (320, 200);
-    let recorded = rehearse(width, height);
-    let narration = recorded.recording.narration.clone();
-    let moments: Vec<Moment> = recorded
+    let (footage, narration) = rehearse(width, height);
+    let moments: Vec<Moment> = footage
         .journal
         .samples()
         .iter()
@@ -190,8 +182,10 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
         .collect();
     let root = tempfile::tempdir()?;
     let (_input, permit) = permit();
-    let written = write_bundle(recorded, &permit, || Ok(root.path().join("shows")))?
-        .context("an active permit publishes")?;
+    let written = write_bundle(footage, narration.clone(), &permit, || {
+        Ok(root.path().join("shows"))
+    })?
+    .context("an active permit publishes")?;
     assert!(!permit.active(), "Publishing spends the permit");
 
     assert_eq!(
@@ -241,7 +235,8 @@ fn a_cancelled_show_never_reaches_the_disk() -> anyhow::Result<()> {
     let (input, permit) = permit();
     input.cancel();
     let unprepared = || anyhow::bail!("a cancelled Show never prepares its folder");
-    assert!(write_bundle(rehearse(32, 20), &permit, unprepared)?.is_none());
+    let (footage, narration) = rehearse(32, 20);
+    assert!(write_bundle(footage, narration, &permit, unprepared)?.is_none());
     Ok(())
 }
 
@@ -300,19 +295,17 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
         show.pointer(at - 100, 0.4, 0.6, false, true);
         show.pointer(at - 20, 0.4, 0.6, false, false);
     }
-    let recorded = show.finish(
-        60_000,
-        words(
-            &(0..60)
-                .map(|second| (second * 1_000, "look"))
-                .collect::<Vec<_>>(),
-        ),
+    let footage = show.finish(60_000);
+    let narration = words(
+        &(0..60)
+            .map(|second| (second * 1_000, "look"))
+            .collect::<Vec<_>>(),
     );
     let started = Instant::now();
-    let selection = select(&recorded.recording, recorded.journal.samples()).context("selected")?;
+    let (recording, journal) = narrated(footage, narration);
+    let selection = select(&recording, journal.samples()).context("selected")?;
     let selected = started.elapsed();
-    let frames = recorded
-        .journal
+    let frames = journal
         .frames_at(&selection.moments())
         .into_iter()
         .map(|frame| frame.context("recorded"))
@@ -320,7 +313,7 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     let decoded = started.elapsed();
     let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;
     let keyframes = selection.keyframes().len();
-    let bundle = compose(recorded.recording, selection, frames, &typeface)?;
+    let bundle = compose(recording, selection, frames, &typeface)?;
     let composed = started.elapsed();
     let root = tempfile::tempdir()?;
     let files = bundle.files(root.path())?;

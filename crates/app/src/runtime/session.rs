@@ -13,7 +13,7 @@ use tokio::task::{JoinError, JoinHandle};
 
 use super::{
     Phase,
-    ports::{Footage, Published, Recorded, SessionId},
+    ports::{Footage, Published, SessionId},
 };
 
 pub(super) type InsertTask = JoinHandle<anyhow::Result<Inserted>>;
@@ -77,23 +77,13 @@ impl Session {
         }
     }
 
-    /// The finished Show, once both its narration and its screen recording are in hand.
-    pub(super) fn take_recorded(&mut self) -> Option<Recorded> {
+    /// The finished Show's footage and narration, once both are in hand.
+    pub(super) fn take_publishable(&mut self) -> Option<(Footage, Narration)> {
         let show = self.show.as_mut()?;
         if show.narration.is_none() || show.footage.is_none() {
             return None;
         }
-        let (narration, footage) = (show.narration.take()?, show.footage.take()?);
-        Some(Recorded {
-            recording: speakeasy_show::Recording {
-                duration: footage.ended,
-                surface: footage.surface,
-                strokes: footage.strokes,
-                actions: footage.actions,
-                narration,
-            },
-            journal: footage.journal,
-        })
+        Some((show.footage.take()?, show.narration.take()?))
     }
 
     pub(super) const fn is_capturing(&self) -> bool {

@@ -4,10 +4,11 @@
 use std::{path::PathBuf, time::Duration};
 
 use speakeasy_platform::{Delivery, InsertPermit, Inserted};
+use speakeasy_show::Narration;
 use tokio::time::timeout;
 
 use super::{
-    ports::{Published, Recorded, Recording, Sealed},
+    ports::{Footage, Published, Recording, Sealed},
     *,
 };
 use crate::local_speech::LocalSpeech;
@@ -58,7 +59,8 @@ impl Ports for Fixture {
 
     fn publish(
         &self,
-        _: Recorded,
+        _: Footage,
+        _: Narration,
         _: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
         std::future::ready(Err(anyhow::anyhow!(
