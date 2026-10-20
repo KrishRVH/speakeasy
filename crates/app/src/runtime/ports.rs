@@ -2,10 +2,7 @@
 //! and publishing Shows, with the session identity and events that cross it. Tests replace the
 //! side effects at this boundary; gesture, cancellation, and delivery ordering stay real.
 
-use std::{
-    path::PathBuf,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use async_channel::Sender;
 use speakeasy_platform::{Delivery, InsertPermit, Inserted};
@@ -113,10 +110,9 @@ pub(crate) struct Footage {
 }
 
 /// What publishing a Show did.
-#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Published {
-    /// The bundle was written here and its summary copied.
-    Copied(PathBuf),
+    /// The bundle was written and its summary copied.
+    Copied,
     /// Cancellation came first; nothing was written or copied.
     Cancelled,
 }

@@ -453,7 +453,7 @@ impl<P: Ports> Owner<P> {
             Ok(Delivered::Inserted(Ok(Inserted::Unavailable(message)))) => {
                 Outcome::Failed(message.into())
             },
-            Ok(Delivered::Published(Ok(Published::Copied(_)))) => Outcome::Copied(SHOW_COPIED),
+            Ok(Delivered::Published(Ok(Published::Copied))) => Outcome::Copied(SHOW_COPIED),
             Ok(Delivered::Published(Err(error))) => Outcome::Failed(format!("{error:#}")),
             Err(_) if show => Outcome::Failed(PUBLISH_STOPPED.into()),
             Ok(Delivered::Inserted(Err(_))) | Err(_) => Outcome::Failed(

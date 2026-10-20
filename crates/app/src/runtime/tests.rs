@@ -2,7 +2,7 @@
 //! exact and a pending check proves quiescence. One smoke test and the latency profile host the
 //! owner on its own thread instead, as production does, where a pending check only samples.
 
-use std::{path::PathBuf, time::Duration};
+use std::time::Duration;
 
 use anyhow::{anyhow, bail, ensure};
 use speakeasy_platform::{Delivery, InsertPermit, Inserted};
@@ -220,7 +220,7 @@ impl Ports for FakePorts {
                 return Ok(Published::Cancelled);
             }
             published.try_send((footage, narration))?;
-            Ok(Published::Copied(PathBuf::from("fake show")))
+            Ok(Published::Copied)
         }
     }
 

@@ -27,9 +27,8 @@ use crate::{
 /// The status while a speech worker loads, shared by the owner, Settings, and the tray.
 pub(crate) const LOADING: &str = "Loading local model…";
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Phase {
-    #[default]
     Idle,
     Starting,
     Recording,
@@ -52,11 +51,10 @@ impl Phase {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ModelState {
     Loading,
     Ready,
-    #[default]
     Unavailable,
 }
 

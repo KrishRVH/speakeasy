@@ -188,20 +188,27 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
         .map(|sample| sample.at)
         .collect();
     let root = tempfile::tempdir()?;
+    let shows = root.path().join("shows");
     let (_input, permit) = permit();
-    let written = write_bundle(footage, narration.clone(), &permit, || {
-        Ok(root.path().join("shows"))
-    })?
-    .context("an active permit publishes")?;
+    let summary = write_bundle(footage, narration.clone(), &permit, || Ok(shows.clone()))?
+        .context("an active permit publishes")?;
     assert!(!permit.active(), "Publishing spends the permit");
+    let mut entries = fs::read_dir(&shows)?;
+    let directory = entries
+        .next()
+        .context("the bundle is in the Shows folder")??
+        .path();
+    assert!(
+        entries.next().is_none(),
+        "the Shows folder holds only the bundle"
+    );
 
     assert_eq!(
-        fs::read_to_string(written.directory.join("summary.md"))?,
-        written.summary,
+        fs::read_to_string(directory.join("summary.md"))?,
+        summary,
         "the summary copied is the one written"
     );
-    let manifest: Manifest =
-        serde_json::from_slice(&fs::read(written.directory.join("show.json"))?)?;
+    let manifest: Manifest = serde_json::from_slice(&fs::read(directory.join("show.json"))?)?;
     assert_eq!(manifest.recording.narration, narration);
     assert_eq!(manifest.recording.strokes.len(), 1, "the circle");
     assert_eq!(manifest.recording.actions.len(), 1, "the click");
@@ -213,25 +220,18 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
             "#{index} shows a recorded frame"
         );
         let file = keyframe.file();
-        let size = png_size(&fs::read(written.directory.join(&file))?);
+        let size = png_size(&fs::read(directory.join(&file))?);
         assert_eq!(size, (width, height), "{file} is full size");
-        assert!(written.summary.contains(&format!("#{index} (")), "#{index}");
+        assert!(summary.contains(&format!("#{index} (")), "#{index}");
     }
-    let sheet = png_size(&fs::read(written.directory.join("contact-sheet.png"))?);
+    let sheet = png_size(&fs::read(directory.join("contact-sheet.png"))?);
     assert!(sheet.0 > 0 && sheet.1 > 0);
-    assert!(
-        written
-            .summary
-            .contains(&written.directory.display().to_string())
-    );
-    assert!(
-        written.summary.contains("dialog"),
-        "narration reaches the agent"
-    );
+    assert!(summary.contains(&directory.display().to_string()));
+    assert!(summary.contains("dialog"), "narration reaches the agent");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        let mode = fs::metadata(&written.directory)?.permissions().mode();
+        let mode = fs::metadata(&directory)?.permissions().mode();
         assert_eq!(mode & 0o777, 0o700);
     }
     Ok(())

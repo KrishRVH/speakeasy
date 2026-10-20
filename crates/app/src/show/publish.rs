@@ -19,36 +19,30 @@ pub(crate) async fn publish(
     permit: InsertPermit,
 ) -> anyhow::Result<Published> {
     tokio::task::spawn_blocking(move || {
-        let Some(written) = write_bundle(footage, narration, &permit, store::private_directory)?
+        let Some(summary) = write_bundle(footage, narration, &permit, store::private_directory)?
         else {
             return Ok(Published::Cancelled);
         };
-        speakeasy_platform::copy_text(&written.summary).map_err(|error| {
+        speakeasy_platform::copy_text(&summary).map_err(|error| {
             anyhow!("The Show was saved, but its summary could not be copied: {error}")
         })?;
-        Ok(Published::Copied(written.directory))
+        Ok(Published::Copied)
     })
     .await
     // A failed join reports a fixed message, since a panic payload could carry private text.
     .unwrap_or_else(|_| Err(anyhow!(PUBLISH_STOPPED)))
 }
 
-/// A bundle in place, and the summary that names its files.
-struct Written {
-    directory: PathBuf,
-    summary: String,
-}
-
-/// Writes a Show as a new bundle in the folder `parent` prepares, or nothing once `permit` is
-/// revoked. A Show cancelled before it is composed never runs `parent`, one cancelled while its
-/// images encode never writes them, and one cancelled while they are staged stops at commit and
-/// deletes them.
+/// Writes a Show as a new bundle in the folder `parent` prepares and returns the summary that
+/// names its files, or nothing once `permit` is revoked. A Show cancelled before it is composed
+/// never runs `parent`, one cancelled while its images encode never writes them, and one cancelled
+/// while they are staged stops at commit and deletes them.
 fn write_bundle(
     footage: Footage,
     narration: Narration,
     permit: &InsertPermit,
     parent: impl FnOnce() -> anyhow::Result<PathBuf>,
-) -> anyhow::Result<Option<Written>> {
+) -> anyhow::Result<Option<String>> {
     let cancelled = || !permit.active();
     if cancelled() {
         return Ok(None);
@@ -80,10 +74,7 @@ fn write_bundle(
         return Ok(None);
     }
     staged.persist()?;
-    Ok(Some(Written {
-        summary: bundle.summary(&directory),
-        directory,
-    }))
+    Ok(Some(bundle.summary(&directory)))
 }
 
 /// The Show as composition reads it, with `narration` already on its timeline, and the journal
