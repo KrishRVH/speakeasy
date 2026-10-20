@@ -187,7 +187,7 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
         .collect();
     let root = tempfile::tempdir()?;
     let (_input, permit) = permit();
-    let written = write_bundle(recorded, &permit, &root.path().join("shows"))?
+    let written = write_bundle(recorded, &permit, || Ok(root.path().join("shows")))?
         .context("an active permit publishes")?;
     assert!(!permit.active(), "Publishing spends the permit");
 
@@ -237,10 +237,8 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
 fn a_cancelled_show_never_reaches_the_disk() -> anyhow::Result<()> {
     let (input, permit) = permit();
     input.cancel();
-    let root = tempfile::tempdir()?;
-    let parent = root.path().join("shows");
-    assert!(write_bundle(rehearse(32, 20), &permit, &parent)?.is_none());
-    assert!(!parent.exists(), "Nothing was staged");
+    let unprepared = || anyhow::bail!("a cancelled Show never prepares its folder");
+    assert!(write_bundle(rehearse(32, 20), &permit, unprepared)?.is_none());
     Ok(())
 }
 

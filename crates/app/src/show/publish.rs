@@ -1,10 +1,7 @@
 //! Publishing a finished Show: choosing and composing its keyframes, writing its bundle, and
 //! copying its summary for the agent.
 
-use std::{
-    path::{Path, PathBuf},
-    time::SystemTime,
-};
+use std::{path::PathBuf, time::SystemTime};
 
 use anyhow::{Context as _, anyhow};
 use speakeasy_platform::InsertPermit;
@@ -18,7 +15,7 @@ use crate::ports::{PUBLISH_STOPPED, Published, Recorded};
 /// and deletes anything it staged.
 pub(crate) async fn publish(recorded: Recorded, permit: InsertPermit) -> anyhow::Result<Published> {
     tokio::task::spawn_blocking(move || {
-        let Some(written) = write_bundle(recorded, &permit, &store::private_directory()?)? else {
+        let Some(written) = write_bundle(recorded, &permit, store::private_directory)? else {
             return Ok(Published::Cancelled);
         };
         speakeasy_platform::copy_text(&written.summary).map_err(|error| {
@@ -37,11 +34,13 @@ struct Written {
     summary: String,
 }
 
-/// Writes `recorded` as a new bundle under `parent`, or nothing once `permit` is revoked.
+/// Writes `recorded` as a new bundle in the folder `parent` prepares, or nothing once `permit` is
+/// revoked. `parent` runs only after the last cancellation check, so a cancelled Show never touches
+/// the disk and never fails on a folder it did not need.
 fn write_bundle(
     recorded: Recorded,
     permit: &InsertPermit,
-    parent: &Path,
+    parent: impl FnOnce() -> anyhow::Result<PathBuf>,
 ) -> anyhow::Result<Option<Written>> {
     let cancelled = || !permit.active();
     if cancelled() {
@@ -64,7 +63,7 @@ fn write_bundle(
     if cancelled() {
         return Ok(None);
     }
-    let directory = store::fresh_directory(parent, SystemTime::now())?;
+    let directory = store::fresh_directory(&parent()?, SystemTime::now())?;
     let staged = store::stage(&directory, &bundle.files(&directory)?)?;
     if !permit.commit() {
         return Ok(None);
