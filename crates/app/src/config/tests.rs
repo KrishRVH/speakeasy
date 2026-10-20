@@ -8,17 +8,22 @@ fn saved(path: &Path) -> anyhow::Result<Value> {
     Ok(serde_json::from_slice(&fs::read(path)?)?)
 }
 
+/// Saves `draft` over a file that holds `held`, as though validation left `draft` unchanged.
+fn save(held: &Config, draft: &Config, path: &Path) -> anyhow::Result<()> {
+    Config::save_changes(&[held], draft, &ValidConfig::assume(draft.clone()), path)
+}
+
 #[test]
 fn a_new_file_skips_default_linux_keys_and_a_change_writes_only_its_key() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let defaults = Config::default();
-    Config::save_changes(&defaults, &defaults, &defaults, &path)?;
+    save(&defaults, &defaults, &path)?;
     assert!(saved(&path)?.get("linux").is_none());
 
     let mut draft = defaults.clone();
     draft.linux.external_shortcut = true;
-    Config::save_changes(&defaults, &draft, &draft, &path)?;
+    save(&defaults, &draft, &path)?;
     assert_eq!(
         saved(&path)?["linux"],
         serde_json::json!({"external_shortcut": true})
@@ -49,7 +54,7 @@ fn a_save_keeps_hand_edits_and_path_spellings() -> anyhow::Result<()> {
         ..base.clone()
     };
     let validated = draft.validated(&path)?;
-    Config::save_changes(&base, &draft, &validated, &path)?;
+    Config::save_changes(&[&base], &draft, &validated, &path)?;
     let saved = saved(&path)?;
     let keys: Vec<_> = saved.as_object().into_iter().flat_map(Map::keys).collect();
     assert_eq!(keys, ["engine_executable", "model", "threads", "theme"]);
@@ -77,7 +82,7 @@ fn released_delivery_keys_read_and_save_unchanged() -> anyhow::Result<()> {
     assert_eq!(base.text_delivery(), TextDelivery::Type);
     let mut config = base.clone();
     config.set_text_delivery(TextDelivery::Paste);
-    Config::save_changes(&base, &config, &config, &path)?;
+    save(&base, &config, &path)?;
     assert_eq!(
         saved(&path)?,
         serde_json::json!({"engine_executable": "e", "model": "m", "preserve_clipboard": false})
@@ -103,7 +108,7 @@ fn released_delivery_keys_read_and_save_unchanged() -> anyhow::Result<()> {
         assert_eq!(base.text_delivery(), TextDelivery::Type);
         let mut config = base.clone();
         config.set_text_delivery(TextDelivery::Copy);
-        Config::save_changes(&base, &config, &config, &path)?;
+        save(&base, &config, &path)?;
         let mut expected = released;
         expected["preserve_clipboard"] = false.into();
         expected["linux"]["manual_paste"] = true.into();
@@ -249,12 +254,12 @@ fn a_save_writes_through_a_linked_settings_file() -> anyhow::Result<()> {
             .is_ok_and(|metadata| metadata.file_type().is_symlink())
     };
     let defaults = Config::default();
-    Config::save_changes(&defaults, &defaults, &defaults, &path)?;
+    save(&defaults, &defaults, &path)?;
     let config = Config {
         theme: Theme::Iris,
         ..Config::default()
     };
-    Config::save_changes(&defaults, &config, &config, &path)?;
+    save(&defaults, &config, &path)?;
     assert!(is_link(Path::new("settings.json")) && is_link(Path::new("linked.json")));
     assert_eq!(Config::read(&real)?.theme, Theme::Iris);
     Ok(())
@@ -271,7 +276,7 @@ fn save_refuses_to_replace_a_file_that_needs_repair() -> anyhow::Result<()> {
         theme: Theme::Iris,
         ..Config::default()
     };
-    assert!(Config::save_changes(&Config::default(), &draft, &draft, &path).is_err());
+    assert!(save(&Config::default(), &draft, &path).is_err());
     assert_eq!(fs::read(&path)?, broken);
     Ok(())
 }

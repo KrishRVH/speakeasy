@@ -290,14 +290,16 @@ impl Config {
         Ok(ValidConfig(config))
     }
 
-    /// Saves what Settings changed from `base`, the settings the file last held, to `draft`,
-    /// writing each changed key's value from `validated`. Every other key stays as the file has it,
-    /// so edits made while Speakeasy runs survive; a key changed both ways takes the Settings
-    /// value. A new file gets every key, and a file the user still has to repair is never replaced.
+    /// Saves what Settings changed in `draft`, writing each changed key's value from `validated`.
+    /// `held` is the settings the file last held, in each spelling a draft may still have, such as
+    /// a submitted draft and the paths validation resolved from it; a key that matches any of them
+    /// is unchanged. Every other key stays as the file has it, so edits made while Speakeasy runs
+    /// survive; a key changed both ways takes the Settings value. A new file gets every key, and a
+    /// file the user still has to repair is never replaced.
     pub(crate) fn save_changes(
-        base: &Self,
+        held: &[&Self],
         draft: &Self,
-        validated: &Self,
+        validated: &ValidConfig,
         path: &Path,
     ) -> anyhow::Result<()> {
         let cannot_save =
@@ -309,12 +311,12 @@ impl Config {
                 // not the map below, keeps the line and column in the error.
                 parse::<Self>(&contents, path)?;
                 let mut file: Map<String, Value> = parse(&contents, path)?;
-                patch(&mut file, base, draft, validated)
+                patch(&mut file, held, draft, validated)
                     .with_context(|| format!("Cannot save settings to {}", path.display()))?;
                 serde_json::to_vec_pretty(&file)?
             },
             Err(error) if error.kind() == ErrorKind::NotFound => {
-                serde_json::to_vec_pretty(validated)?
+                serde_json::to_vec_pretty(&**validated)?
             },
             Err(error) => return Err(cannot_save(error)),
         };
@@ -356,20 +358,24 @@ fn cannot_open(file: &Path, error: &io::Error) -> anyhow::Error {
     }
 }
 
-/// Sets each key whose value differs between `base` and `draft` to its value in `validated`. Linux
+/// Sets each key whose value in `draft` matches none of `held` to its value in `validated`. Linux
 /// keys are compared one by one, because a default Linux block is not serialized at all.
 fn patch(
     file: &mut Map<String, Value>,
-    base: &Config,
+    held: &[&Config],
     draft: &Config,
     validated: &Config,
 ) -> anyhow::Result<()> {
-    for (key, value) in changes(base, draft, validated)? {
+    for (key, value) in changes(held.iter().copied(), draft, validated)? {
         if key != "linux" {
             file.insert(key, value);
         }
     }
-    let linux = changes(&base.linux, &draft.linux, &validated.linux)?;
+    let linux = changes(
+        held.iter().map(|config| &config.linux),
+        &draft.linux,
+        &validated.linux,
+    )?;
     if !linux.is_empty() {
         file.entry("linux")
             .or_insert_with(|| Value::Object(Map::new()))
@@ -380,20 +386,23 @@ fn patch(
     Ok(())
 }
 
-/// The keys of `validated` whose values differ between `base` and `draft`, with their values.
-fn changes<T: Serialize>(
-    base: &T,
+/// The keys of `validated` whose values in `draft` match none of `held`, with their values.
+fn changes<'a, T: Serialize + 'a>(
+    held: impl IntoIterator<Item = &'a T>,
     draft: &T,
     validated: &T,
 ) -> serde_json::Result<Vec<(String, Value)>> {
-    let [base, draft, validated] = [base, draft, validated].map(serde_json::to_value);
-    let (base, draft) = (base?, draft?);
-    let Value::Object(validated) = validated? else {
+    let held = held
+        .into_iter()
+        .map(serde_json::to_value)
+        .collect::<serde_json::Result<Vec<_>>>()?;
+    let draft = serde_json::to_value(draft)?;
+    let Value::Object(validated) = serde_json::to_value(validated)? else {
         return Ok(Vec::new());
     };
     Ok(validated
         .into_iter()
-        .filter(|(key, _)| base.get(key) != draft.get(key))
+        .filter(|(key, _)| held.iter().all(|held| held.get(key) != draft.get(key)))
         .collect())
 }
 

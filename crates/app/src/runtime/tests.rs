@@ -862,7 +862,12 @@ async fn saved_cleanup_opt_out_keeps_words_and_worker() -> anyhow::Result<()> {
     config.remove_fillers = false;
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
-    Config::save_changes(&Config::default(), &config, &config, &path)?;
+    Config::save_changes(
+        &[&Config::default()],
+        &config,
+        &ValidConfig::assume(config.clone()),
+        &path,
+    )?;
     h.runtime
         .configure(ValidConfig::assume(Config::read(&path)?));
     h.input(Input::Cancel);

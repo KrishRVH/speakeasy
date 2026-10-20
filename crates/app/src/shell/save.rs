@@ -33,6 +33,12 @@ impl SavedConfig {
             false
         }
     }
+
+    /// The settings the file holds after this write, as Settings submitted them and as validation
+    /// resolved their paths; a later draft may still have either spelling.
+    fn held(&self) -> [Config; 2] {
+        [self.submitted.clone(), Config::clone(&self.validated)]
+    }
 }
 
 pub(super) enum SaveProgress {
@@ -51,9 +57,9 @@ pub(super) struct SaveQueue {
     writing: Option<SaveWork>,
     pending: Option<SaveRequest>,
     saved: Option<SavedConfig>,
-    /// The settings the file holds as of the last write that succeeded, which the next write
-    /// compares its draft against.
-    durable: Config,
+    /// The settings the file holds as of the last write that succeeded, in each spelling a draft
+    /// may have of them, which the next write compares its draft against.
+    durable: [Config; 2],
     /// The newest request's epoch, which the drained queue reports.
     epoch: ConfigEpoch,
 }
@@ -65,7 +71,7 @@ impl SaveQueue {
             writing: None,
             pending: None,
             saved: None,
-            durable,
+            durable: [durable.clone(), durable],
             epoch: ConfigEpoch::default(),
         }
     }
@@ -89,7 +95,7 @@ impl SaveQueue {
         self.writing = None;
         let error = match result {
             Ok(saved) => {
-                self.durable = Config::clone(&saved.validated);
+                self.durable = saved.held();
                 self.saved = Some(saved);
                 None
             },
@@ -123,7 +129,7 @@ impl SaveQueue {
             drop(thread);
             // The queued write compares against this one, so a revert queued behind it still lands.
             if let Ok(Ok(saved)) = result.try_recv() {
-                self.durable = saved.validated.into_inner();
+                self.durable = saved.held();
             }
         }
         if let Some(pending) = self.pending.take() {
@@ -144,11 +150,11 @@ struct SaveWork {
 }
 
 impl SaveWork {
-    /// Writes what `draft` changed from `base`, the settings the file holds.
-    fn start(base: Config, draft: Config, path: PathBuf) -> anyhow::Result<Self> {
+    /// Writes what `draft` changed from `held`, the settings the file holds.
+    fn start(held: [Config; 2], draft: Config, path: PathBuf) -> anyhow::Result<Self> {
         Self::spawn(move || {
             let validated = draft.validated(&path)?;
-            Config::save_changes(&base, &draft, &validated, &path)?;
+            Config::save_changes(&held.each_ref(), &draft, &validated, &path)?;
             Ok(SavedConfig {
                 submitted: draft,
                 validated,
@@ -291,7 +297,12 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("settings.json");
         let original = valid_config(directory.path())?;
-        Config::save_changes(&original, &original, &original, &path)?;
+        Config::save_changes(
+            &[&original],
+            &original,
+            &ValidConfig::assume(original.clone()),
+            &path,
+        )?;
         let request = |theme| SaveRequest {
             draft: Config {
                 theme,
@@ -311,6 +322,48 @@ mod tests {
         };
         assert!(error.is_none());
         assert_eq!(Config::read(&path)?.theme, original.theme);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_save_queued_behind_a_write_keeps_the_path_spellings_it_did_not_change()
+    -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("settings.json");
+        valid_config(directory.path())?;
+        std::fs::write(
+            &path,
+            r#"{"engine_executable":"engine","model":"model.gguf"}"#,
+        )?;
+        // The draft keeps relative paths, as after a launch whose settings did not validate.
+        let draft = Config::read(&path)?;
+        let request = |theme| SaveRequest {
+            draft: Config {
+                theme,
+                ..draft.clone()
+            },
+            epoch: ConfigEpoch::default(),
+            path: path.clone(),
+        };
+        let mut queue = SaveQueue::new(draft.clone());
+        let first = queue
+            .submit(request(Theme::Iris))
+            .context("The first save was queued")?;
+        assert!(queue.submit(request(Theme::Chrome)).is_none());
+        let queued = queue.finish(write_result(first).await?);
+        let SaveProgress::Finished { error, .. } = queue.finish(write_result(queued).await?) else {
+            bail!("The queued save did not finish");
+        };
+        assert!(error.is_none());
+        let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+        assert_eq!(
+            saved,
+            serde_json::json!({
+                "engine_executable": "engine",
+                "model": "model.gguf",
+                "theme": "chrome",
+            })
+        );
         Ok(())
     }
 
@@ -377,7 +430,12 @@ mod tests {
         let running = SaveWork::spawn(move || {
             entered.send(())?;
             released.recv()?;
-            Config::save_changes(&base, &first, &first, &first_path)?;
+            Config::save_changes(
+                &[&base],
+                &first,
+                &ValidConfig::assume(first.clone()),
+                &first_path,
+            )?;
             Ok(durable(first))
         })?;
         started.recv_timeout(Duration::from_secs(2))?;
