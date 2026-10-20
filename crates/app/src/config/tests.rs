@@ -276,8 +276,13 @@ fn save_refuses_to_replace_a_file_that_needs_repair() -> anyhow::Result<()> {
         theme: Theme::Iris,
         ..Config::default()
     };
-    assert!(save(&Config::default(), &draft, &path).is_err());
+    let error = save(&Config::default(), &draft, &path)
+        .err()
+        .context("A file that needs repair was replaced")?;
     assert_eq!(fs::read(&path)?, broken);
+    // The notice names the file as the user knows it, not a resolved Windows \\?\ path.
+    let notice = format!("Invalid settings in {}:", path.display());
+    assert!(format!("{error:#}").starts_with(&notice));
     Ok(())
 }
 
