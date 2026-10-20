@@ -26,7 +26,10 @@ use self::{
     control::{Control, Mode},
     pcm::{Pcm16, samples_in},
     speech::Audibility,
-    stream::{CallbackState, build_stream, capture_failure, microphone_error, rate_and_channels},
+    stream::{
+        CallbackState, UNSUPPORTED_FORMAT, build_stream, capture_failure, microphone_error,
+        rate_and_channels,
+    },
 };
 use crate::runtime::ports::{CaptureEvent, Capturing, Sealed, SessionId};
 
@@ -226,7 +229,7 @@ impl Recorder {
         checkpoint()?;
         // PCM stays at the device's native rate; the engine resamples.
         let pcm = Pcm16::with_reservation(samples_in(INITIAL_RESERVATION, rate));
-        let speech = Audibility::new(rate).context("Unsupported microphone format")?;
+        let speech = Audibility::new(rate).context(UNSUPPORTED_FORMAT)?;
         checkpoint()?;
         stream.play().map_err(microphone_error)?;
         Ok(Self {

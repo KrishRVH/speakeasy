@@ -1,5 +1,6 @@
-//! Drives the real-time callbacks and stream-error classification over fresh rings, with no
-//! device or driver, and times the callback-to-consumer path in an opt-in release profile.
+//! Drives format validation, the real-time callbacks, and stream-error classification over fresh
+//! rings, with no device or driver, and times the callback-to-consumer path in an opt-in release
+//! profile.
 
 use rtrb::{Consumer, RingBuffer};
 
@@ -75,6 +76,34 @@ fn callback_overflow_is_fatal_but_recording_limit_and_cancellation_do_not_overfl
         control.cancel();
         data(&[1.0]);
         assert!(ring.pop().is_err());
+    }
+    Ok(())
+}
+
+#[test]
+fn formats_beyond_the_capture_bounds_are_refused_with_a_remedy() -> anyhow::Result<()> {
+    let format = |channels, rate| {
+        cpal::SupportedStreamConfig::new(
+            channels,
+            rate,
+            cpal::SupportedBufferSize::Unknown,
+            SampleFormat::F32,
+        )
+    };
+    assert_eq!(rate_and_channels(&format(1, 1))?, (1, NonZeroUsize::MIN));
+    assert_eq!(
+        rate_and_channels(&format(32, MAX_SAMPLE_RATE))?,
+        (MAX_SAMPLE_RATE, NonZeroUsize::new(32).unwrap())
+    );
+    for (channels, rate) in [(0, 48_000), (33, 48_000), (1, 0), (1, MAX_SAMPLE_RATE + 1)] {
+        let error = rate_and_channels(&format(channels, rate))
+            .err()
+            .context("An unsupported format was accepted")?;
+        assert_eq!(
+            error.to_string(),
+            UNSUPPORTED_FORMAT,
+            "{channels} channels at {rate} Hz"
+        );
     }
     Ok(())
 }

@@ -15,6 +15,7 @@ use super::{
 };
 
 const MAX_CHANNELS: usize = 32;
+pub(super) const UNSUPPORTED_FORMAT: &str = "Microphone format is unsupported. Change it in OS sound settings or choose another microphone in Settings.";
 
 /// Everything the stream callbacks own for one capture.
 pub(super) struct CallbackState {
@@ -30,11 +31,10 @@ pub(super) fn rate_and_channels(
     format: &cpal::SupportedStreamConfig,
 ) -> anyhow::Result<(u32, NonZeroUsize)> {
     let rate = format.sample_rate();
-    let channels = NonZeroUsize::new(usize::from(format.channels()))
-        .context("Unsupported microphone format: no input channels")?;
+    let channels = NonZeroUsize::new(usize::from(format.channels())).context(UNSUPPORTED_FORMAT)?;
     ensure!(
         (1..=MAX_SAMPLE_RATE).contains(&rate) && channels.get() <= MAX_CHANNELS,
-        "Unsupported microphone format"
+        UNSUPPORTED_FORMAT
     );
     Ok((rate, channels))
 }
