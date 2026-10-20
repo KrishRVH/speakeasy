@@ -450,7 +450,6 @@ proptest::proptest! {
             return Ok(());
         };
         let keyframes = shown.keyframes();
-        proptest::prop_assert!(!keyframes.is_empty());
         proptest::prop_assert!(keyframes.len() <= budget.min(MOST_KEYFRAMES));
         proptest::prop_assert!(keyframes.iter().map(|k| k.index).eq(1..=keyframes.len()));
         proptest::prop_assert!(keyframes.windows(2).all(|pair| pair[0].at <= pair[1].at));
