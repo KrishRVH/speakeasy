@@ -79,9 +79,8 @@ impl Canvas {
         let drawing: Vec<Point> = drawing.into_iter().collect();
         let was_drawing = !self.drawing.is_empty();
         let inked = !finished.is_empty() || !drawing.is_empty();
-        if inked && !was_drawing && self.faded(now) {
+        if inked && self.faded(now) {
             self.strokes.clear();
-            self.lifted = None;
         }
         let changed = !finished.is_empty() || drawing != self.drawing;
         if drawing.is_empty() && (was_drawing || !finished.is_empty()) {
@@ -437,11 +436,10 @@ mod tests {
         // A pointer that moved too little to add ink changes nothing.
         assert!(!canvas.update([], stroke(2), at(1_300)));
         canvas.update([stroke(2).into()], [], at(1_400));
-        assert_eq!(canvas.lifted, Some(at(1_400)));
+        assert_eq!(canvas.next_frame(at(1_400)), Redraw::After(HOLD));
         // Ink once everything has faded starts a clean canvas.
         assert!(canvas.update([], stroke(3), at(2_800)));
         assert_eq!(canvas.strokes, Vec::<Arc<[Point]>>::new());
-        assert_eq!(canvas.lifted, None);
         assert!(!Canvas::default().update([], [], at(0)));
     }
 }
