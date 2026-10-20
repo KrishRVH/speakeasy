@@ -25,6 +25,7 @@ cpal = "0.18.2"
 embed-resource = "3.0.12"
 fdeflate = "0.3.7"
 futures-util = "0.3.34"
+getrandom = "0.4.3"
 gpui = { version = "=0.2.2", default-features = false }
 # 0.2.190 drops the Linux `ENOATTR` that GPUI 0.2.2 still reaches through xattr 0.2.3.
 libc = "=0.2.189"

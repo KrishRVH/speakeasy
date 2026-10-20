@@ -50,10 +50,11 @@ pub(crate) struct LocalSpeech {
     group: ProcessGroup,
     child: Child,
     endpoint: String,
-    /// The private Whisper route and the `NeMo` API key.
+    /// Parakeet's API key, passed only through its environment, and Whisper's route, which is on
+    /// its argv and so visible to other local users.
     secret: String,
     client: Client,
-    /// Whisper serves this empty directory; its random name is `secret`.
+    /// Whisper serves this empty directory instead of its bundled web UI.
     _directory: tempfile::TempDir,
 }
 
@@ -66,12 +67,7 @@ impl LocalSpeech {
         let listener = TcpListener::bind((LOOPBACK, 0))?;
         let port = listener.local_addr()?.port();
         let directory = tempfile::Builder::new().prefix("speakeasy-").tempdir()?;
-        let secret = directory
-            .path()
-            .file_name()
-            .context("Missing temporary directory name")?
-            .to_string_lossy()
-            .into_owned();
+        let secret = random_token()?;
         let mut command = server_command(&config, port, &secret, directory.path());
         // Release the reserved port just before the engine binds it.
         drop(listener);
@@ -345,6 +341,14 @@ fn joined(tokens: impl Iterator<Item = Token>) -> anyhow::Result<Vec<Word>> {
         }
     }
     Ok(words)
+}
+
+/// 128 bits from the operating system's generator as 32 hex digits. A shared temporary directory
+/// lists its entries' names to every local user, so no name can be the secret.
+fn random_token() -> anyhow::Result<String> {
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes)?;
+    Ok(format!("{:032x}", u128::from_le_bytes(bytes)))
 }
 
 fn server_command(config: &Config, port: u16, secret: &str, served: &Path) -> Command {
@@ -629,6 +633,15 @@ mod tests {
                 "--asr.batching.enabled=false",
             ]
         );
+    }
+
+    #[test]
+    fn engine_secrets_are_unrelated_128_bit_tokens() -> anyhow::Result<()> {
+        let (first, second) = (random_token()?, random_token()?);
+        assert_eq!(first.len(), 32);
+        assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_ne!(first, second);
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
