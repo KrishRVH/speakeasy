@@ -25,6 +25,20 @@ pub(crate) fn reveal(cx: &mut App) {
     }
 }
 
+/// Ends a launch without a tray once its Settings window has closed. Other windows come and go
+/// without ending it, such as the Show overlay, which closes after every Show.
+pub(crate) fn quit_after_settings(cx: &mut App) {
+    // A window is gone before observers of its closing run, so reading fails once Settings closed.
+    let settings_open = cx.has_global::<Services>()
+        && cx
+            .global::<Services>()
+            .settings
+            .is_some_and(|settings| settings.read(cx).is_ok());
+    if !settings_open {
+        super::request_quit(cx);
+    }
+}
+
 fn open(cx: &mut App) -> anyhow::Result<()> {
     // Reading succeeds only while the window is open.
     if let Some(settings) = cx.global::<Services>().settings

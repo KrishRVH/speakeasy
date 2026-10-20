@@ -189,21 +189,39 @@ fn paint(canvas: &Canvas, bounds: Bounds<gpui::Pixels>, opacity: f32, window: &m
     }
 }
 
-/// Opens the overlay the first time a Show needs it; from then on it follows `canvas` for the
-/// rest of the app's life. A platform that records no Shows never opens one.
+/// Opens the overlay whenever a Show needs it and closes it once the Show ends: a full-screen
+/// window holds GPU memory the size of its display, which an idle app has no use for. A platform
+/// that records no Shows never opens one.
 pub(crate) fn attend(mut canvas: watch::Receiver<Canvas>, cx: &App) {
     cx.spawn(async move |cx| {
-        if canvas
-            .wait_for(|canvas| canvas.display.is_some())
-            .await
-            .is_err()
-        {
-            return;
-        }
-        if let Ok(Err(error)) = cx.update(|cx| open(canvas, cx)) {
-            speakeasy_platform::show_error(&format!(
-                "Cannot open the Show overlay; ink will not appear while drawing: {error:#}"
-            ));
+        loop {
+            if canvas
+                .wait_for(|canvas| canvas.display.is_some())
+                .await
+                .is_err()
+            {
+                return;
+            }
+            let overlay = match cx.update(|cx| open(canvas.clone(), cx)) {
+                Ok(Ok(overlay)) => overlay,
+                Ok(Err(error)) => {
+                    speakeasy_platform::show_error(&format!(
+                        "Cannot open the Show overlay; ink will not appear while drawing: {error:#}"
+                    ));
+                    return;
+                },
+                Err(_) => return,
+            };
+            let published = canvas
+                .wait_for(|canvas| canvas.display.is_none())
+                .await
+                .is_ok();
+            let closed = overlay
+                .update(cx, |_, window, _| window.remove_window())
+                .is_ok();
+            if !(published && closed) {
+                return;
+            }
         }
     })
     .detach();

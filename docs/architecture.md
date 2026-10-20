@@ -244,8 +244,9 @@ only picks frames it holds. The pointer is sampled every 8 ms. The tracker turns
 alone into strokes once they span 6 pixels, and button presses into clicks or drags at a 12-pixel
 threshold; a Shift press is never a click. Live strokes reach the overlay through a watch channel.
 
-The overlay is a click-through, non-activating GPUI window over the recorded display, opened on the
-first Show. Ink holds for 650 ms after the pen lifts, then fades over 650 ms; a stroke begun after
+The overlay is a click-through, non-activating GPUI window over the recorded display. It opens for
+each Show and closes when the Show ends, because a full-screen window holds GPU memory the size of
+its display. Ink holds for 650 ms after the pen lifts, then fades over 650 ms; a stroke begun after
 the fade starts a clean canvas. Capture leaves out every Speakeasy window, including the overlay and
 pill, for its whole lifetime: macOS filters out the application, and Windows sets display affinity
 on each of the process's top-level windows, rechecks them with every frame, and restores them at

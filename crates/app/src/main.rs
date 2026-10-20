@@ -240,7 +240,7 @@ fn launch(
             shell::reveal(cx);
         }
         if !mode.is_resident() {
-            cx.on_window_closed(shell::request_quit).detach();
+            cx.on_window_closed(shell::quit_after_settings).detach();
         }
     });
 }

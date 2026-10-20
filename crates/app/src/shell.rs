@@ -12,5 +12,5 @@ mod window;
 pub(crate) use self::{
     services::{LaunchMode, Services, send, toggle_enabled},
     shutdown::request_quit,
-    window::reveal,
+    window::{quit_after_settings, reveal},
 };
