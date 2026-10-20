@@ -50,9 +50,7 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
 fn handle(action: TrayAction, cx: &mut App) {
     match action {
         TrayAction::Available(available) => {
-            if cx.has_global::<Tray>() {
-                cx.global_mut::<Tray>().available = available;
-            }
+            cx.global_mut::<Tray>().available = available;
             if !available {
                 shell::reveal(cx);
             }

@@ -229,11 +229,10 @@ impl Services {
         }
         self.config_epoch = self.config_epoch.next();
         // A dead runtime or changed desktop options need fresh owners: stopping makes the queue
-        // below restart with `config` once the old owners retire.
-        if self.runtime().is_some_and(|runtime| !runtime.is_running()) {
-            self.stop(cx);
-        }
-        if self.runtime().is_some() && self.config.change_to(&config) == Change::Desktop {
+        // below restart with `config` once the current owners retire.
+        if self.runtime().is_some_and(|runtime| {
+            !runtime.is_running() || self.config.change_to(&config) == Change::Desktop
+        }) {
             self.stop(cx);
         }
         if self.lifecycle.queue(Restart::Apply(config.clone())) {
@@ -300,9 +299,6 @@ impl Services {
     }
 
     fn validation_complete(epoch: ConfigEpoch, result: anyhow::Result<ValidConfig>, cx: &mut App) {
-        if !cx.has_global::<Self>() {
-            return;
-        }
         let result = cx.update_global::<Self, _>(|services, cx| {
             if !services.lifecycle.validating(epoch) {
                 return Ok(());

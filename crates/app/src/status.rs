@@ -96,12 +96,8 @@ mod tests {
         Status::new(snapshot, service, Engine::Whisper).indicator
     }
 
-    fn description(
-        snapshot: &Snapshot,
-        service: ServiceState,
-        engine: Engine,
-    ) -> Cow<'static, str> {
-        Status::new(snapshot, service, engine).description
+    fn description(snapshot: &Snapshot, service: ServiceState) -> Cow<'static, str> {
+        Status::new(snapshot, service, Engine::Whisper).description
     }
 
     #[test]
@@ -170,7 +166,7 @@ mod tests {
         };
         assert_eq!(indicator(&snapshot, ServiceState::Running), Indicator::Busy);
         assert_eq!(
-            description(&snapshot, ServiceState::Running, Engine::Parakeet),
+            description(&snapshot, ServiceState::Running),
             "Waiting for desktop access…"
         );
         assert_eq!(
@@ -178,11 +174,11 @@ mod tests {
             Indicator::Paused
         );
         assert_eq!(
-            description(&snapshot, ServiceState::Paused, Engine::Parakeet),
+            description(&snapshot, ServiceState::Paused),
             "Dictation paused"
         );
         assert_eq!(
-            description(&snapshot, ServiceState::Pausing, Engine::Parakeet),
+            description(&snapshot, ServiceState::Pausing),
             "Pausing dictation…"
         );
         snapshot.phase = Phase::Error;
@@ -191,7 +187,7 @@ mod tests {
             Indicator::Attention
         );
         assert_eq!(
-            description(&snapshot, ServiceState::Running, Engine::Parakeet),
+            description(&snapshot, ServiceState::Running),
             "Needs attention · Open Settings"
         );
         snapshot.phase = Phase::Idle;
