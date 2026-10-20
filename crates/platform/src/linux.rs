@@ -27,8 +27,8 @@ use super::{
 /// Desktop launcher and portal registration identity.
 pub const APPLICATION_ID: &str = "io.github.krvh.speakeasy";
 
-/// The layout paste types through cannot type the paste shortcut: the active one through libei, or
-/// the first on X11, the only one X11 paste drives.
+/// The keyboard layout that paste types through has no paste shortcut keys: the active layout
+/// through libei, or on X11 the first layout, the only one XTEST paste drives.
 const NO_PASTE_BINDING: Inserted = Inserted::Copied(
     "Text copied. This keyboard layout has no automatic paste binding; paste manually.",
 );
@@ -202,7 +202,7 @@ impl Window {
         let id = match handle.as_raw() {
             RawWindowHandle::Xcb(handle) => handle.window.get(),
             RawWindowHandle::Xlib(handle) => u32::try_from(handle.window)?,
-            _ => bail!("Linux pill requires X11 or Xwayland"),
+            _ => bail!("Linux windows require X11 or Xwayland"),
         };
         Ok(Self { id })
     }
