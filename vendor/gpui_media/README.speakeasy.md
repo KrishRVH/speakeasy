@@ -12,11 +12,12 @@ Without both changes Cargo cannot resolve the app's current stable
 `core-foundation`: these are incompatible exact requirements in the same semver
 series. No media implementation or generated bindings were changed.
 
-The root Cargo override selects this copy outside the workspace. macOS CI builds
-and tests the complete app, including GPUI and these media bindings. Linux can
-cross-check the app's platform adapters, but cannot run the Xcode-dependent media
-build. Remove this override and directory when a compatible GPUI/media release
-accepts the current Core Foundation version and passes native app checks.
+The root Cargo override selects this copy outside the workspace. The macOS
+release job builds the complete app, including GPUI and these media bindings, but
+runs no tests; macOS checks run locally on a Mac. Linux can cross-check the app's
+platform adapters, but cannot run the Xcode-dependent media build. Remove this
+override and directory when a compatible GPUI/media release accepts the current
+Core Foundation version and passes native app checks.
 
 Upstream constraints also retain incompatible transitive versions of packages
 such as libloading, sha2, x11rb, and xkbcommon alongside current direct versions.

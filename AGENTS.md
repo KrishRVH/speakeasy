@@ -87,7 +87,8 @@ own build directory.
 
 Before handoff, run `mise run standards:check` and relevant native checks. Report the checked
 revision, behavior proved, results, unavailable native verification, and unresolved findings. Push
-verified changes directly to `main`.
+verified changes directly to `main`. A root `Cargo.toml` change publishes a release: bump
+`[workspace.package].version`, run `mise run rust:lock`, and rewrite `docs/release-notes.md` in it.
 
 ## Current repository
 

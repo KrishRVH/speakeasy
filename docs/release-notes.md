@@ -28,4 +28,5 @@ or uploads.
 Windows x64 and Apple silicon macOS zip packages, plus experimental Linux x86_64 AppImage and
 bundled tar packages, are attached with SHA-256 checksums. Verification runs locally. Live
 microphone, keyboard-hook, screen capture, clipboard/editor, and compositor acceptance remain
-separate; see [architecture](architecture.md) and [performance](performance.md).
+separate; see [architecture](https://github.com/KrishRVH/speakeasy/blob/main/docs/architecture.md)
+and [performance](https://github.com/KrishRVH/speakeasy/blob/main/docs/performance.md).
