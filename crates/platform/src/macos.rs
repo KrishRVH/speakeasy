@@ -401,28 +401,16 @@ impl Window {
 
 /// The modifier keys held now, as the session's combined input state reports them.
 pub(super) fn modifiers() -> Modifiers {
-    CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
-        .and_then(CGEvent::new)
-        // An unreadable modifier state counts as held, so insertion waits rather than pasting early.
-        .map_or(
-            Modifiers {
-                shift: false,
-                shortcut: true,
-                function: false,
-            },
-            |event| {
-                let flags = event.get_flags();
-                Modifiers {
-                    shift: flags.contains(CGEventFlags::CGEventFlagShift),
-                    shortcut: flags.intersects(
-                        CGEventFlags::CGEventFlagControl
-                            | CGEventFlags::CGEventFlagAlternate
-                            | CGEventFlags::CGEventFlagCommand,
-                    ),
-                    function: flags.contains(CGEventFlags::CGEventFlagSecondaryFn),
-                }
-            },
-        )
+    use objc2_core_graphics::{CGEventFlags, CGEventSource, CGEventSourceStateID};
+
+    let flags = CGEventSource::flags_state(CGEventSourceStateID::CombinedSessionState);
+    Modifiers {
+        shift: flags.contains(CGEventFlags::MaskShift),
+        shortcut: flags.intersects(
+            CGEventFlags::MaskControl | CGEventFlags::MaskAlternate | CGEventFlags::MaskCommand,
+        ),
+        function: flags.contains(CGEventFlags::MaskSecondaryFn),
+    }
 }
 
 pub(super) fn copy_text(text: &str) -> anyhow::Result<()> {

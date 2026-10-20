@@ -23,9 +23,9 @@ use objc2_app_kit::{
     NSStatusWindowLevel, NSWindowCollectionBehavior, NSWindowSharingType, NSWindowStyleMask,
 };
 use objc2_core_graphics::{
-    CGDirectDisplayID, CGDisplayBounds, CGError, CGEvent, CGEventFlags, CGEventSource,
-    CGEventSourceStateID, CGGetDisplaysWithPoint, CGMainDisplayID, CGMouseButton,
-    kCGColorSpaceSRGB, kCGNullDirectDisplay,
+    CGDirectDisplayID, CGDisplayBounds, CGError, CGEvent, CGEventSource, CGEventSourceStateID,
+    CGGetDisplaysWithPoint, CGMainDisplayID, CGMouseButton, kCGColorSpaceSRGB,
+    kCGNullDirectDisplay,
 };
 use objc2_core_media::CMSampleBuffer;
 use objc2_core_video::{
@@ -43,7 +43,6 @@ use tokio::{runtime, time};
 
 use crate::{
     NativeWindow,
-    keyboard::Modifiers,
     screen::{
         self, Frame, PointerSample, ScreenEvent,
         geometry::{Bounds, fit, narrow, pack_rows, pixels},
@@ -369,21 +368,15 @@ fn refused(error: &NSError) -> bool {
 pub(crate) fn pointer(display: Display) -> Option<PointerSample> {
     let at = Instant::now();
     let [x, y] = display.bounds.normalize(pointer_location()?)?;
-    let state = CGEventSourceStateID::CombinedSessionState;
-    let flags = CGEventSource::flags_state(state);
-    let modifiers = Modifiers {
-        shift: flags.contains(CGEventFlags::MaskShift),
-        shortcut: flags.intersects(
-            CGEventFlags::MaskControl | CGEventFlags::MaskAlternate | CGEventFlags::MaskCommand,
-        ),
-        function: flags.contains(CGEventFlags::MaskSecondaryFn),
-    };
     Some(PointerSample {
         at,
         x,
         y,
-        drawing: modifiers.draws(),
-        pressed: CGEventSource::button_state(state, CGMouseButton::Left),
+        drawing: super::modifiers().draws(),
+        pressed: CGEventSource::button_state(
+            CGEventSourceStateID::CombinedSessionState,
+            CGMouseButton::Left,
+        ),
     })
 }
 
