@@ -24,23 +24,27 @@ Open Font License, and the line is “Say the word.” App icons are rendered fr
 
 The GPUI view in `crates/app/src/pill.rs` and `pill/` draws a door slot inside a capsule with a fine
 edge, a hairline lamp inlay, and a tight shadow. A lid with a keystone handle covers the slot until
-capture starts, slides open while the microphone is live, closes to 62% while processing, and shuts
+capture starts, slides open while the microphone is live, partly closes while processing, and shuts
 for completion. Inside, a symmetric grille shows the measured envelope with the newest level at its
 center, in the theme's live color. Errors use the attention color and text. The pill is
 non-activating and click-through.
 
-| State            | Size in DIP    | Content                                                                                |
-| ---------------- | -------------- | -------------------------------------------------------------------------------------- |
-| Starting         | 172 × 38       | Closed lid with a microphone symbol and “Opening mic…”.                                |
-| Recording        | 152 × 38       | Open slot, live rim, and measured grille.                                              |
-| Hands-free       | 228 × 38       | Grille, lock symbol, and elapsed timer beside the slot.                                |
-| Final 30 seconds | 262 × 38       | Remaining time in the attention color; the recording limit stays in the session owner. |
-| Stopping         | Recording size | The lid stays open until capture stops; the grille settles.                            |
-| Processing       | 104 × 32       | The lid half closes; a lamp highlight sweeps the opening after 250 ms.                 |
-| Submitted        | 76 × 34        | Closed lid with a lamp check for 350 ms, then collapse and fade.                       |
-| No speech        | 182 × 36       | “No speech detected” on the closed lid for 1.2 seconds.                                |
-| Cancelled        | Collapsing     | Quiet dismissal without a completion mark.                                             |
-| Error            | 360 × 64       | Up to two message lines and a Settings reminder, visible for eight seconds.            |
+| State            | Content                                                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Starting         | Closed lid with a microphone symbol and “Opening mic…”.                                                            |
+| Recording        | Open slot, live rim, and measured grille.                                                                          |
+| Hands-free       | Grille, lock symbol, and elapsed timer beside the slot.                                                            |
+| Show recording   | The hands-free layout with a red screen mark in place of the lock, while capture is open.                          |
+| Final 30 seconds | Remaining time in the attention color; the recording limit stays in the session owner.                             |
+| Stopping         | The lid stays open until capture stops; the grille settles.                                                        |
+| Processing       | The lid partly closes; a lamp highlight sweeps the opening after 250 ms.                                           |
+| Submitted        | Closed lid with a lamp check for 350 ms, then collapse and fade.                                                   |
+| Show copied      | Closed lid with a lamp check and “Show copied” for 1.6 seconds, once the bundle is written and its summary copied. |
+| Text copied      | A muted notice of up to two lines saying how to paste the copied text, for six seconds.                            |
+| No speech        | “No speech detected” on the closed lid for 1.2 seconds.                                                            |
+| Cancelled        | Quiet dismissal without a completion mark.                                                                         |
+| Error            | Up to two message lines and a Settings reminder, visible for eight seconds.                                        |
+| Tray hint        | One line saying Speakeasy is in the tray or menu bar, for three seconds, only while the pill is otherwise hidden.  |
 
 Windows places the pill at the bottom center of the foreground window's monitor work area. macOS
 uses the screen under the pointer. Both place the capsule about 28 DIP above the work area's bottom
@@ -48,22 +52,21 @@ edge when shown. Position stays fixed while the pill remains visible; it does no
 Linux uses GPUI's display placement and passive X11 hints; native monitor/fullscreen acceptance is
 pending.
 
-Width, height, opacity, vertical entry, lid, and meter values use analytic critically damped
-springs. Changing the target preserves velocity. Geometry uses a response of 28/s, opacity 40/s,
-entry 32/s, lid 24/s, and audio attack/release 48/s and 20/s. A new session interrupts the current
-transition. Once hidden, invisible geometry snaps to rest so idle time cannot be integrated into the
-next entrance. Presentation never imposes a minimum time on capture, inference, or insertion, and
-its timers belong to the view: they cannot change a recording or dismiss a later session.
+Width, height, opacity, vertical entry, waveform presence, lid, and meter values use analytic
+critically damped springs. Changing the target preserves velocity, and meter bars rise faster than
+they fall. A new session interrupts the current transition. Once hidden, invisible geometry snaps to
+rest so idle time cannot be integrated into the next entrance. Presentation never imposes a minimum
+time on capture, inference, or insertion, and its timers belong to the view: they cannot change a
+recording or dismiss a later session.
 
 The audio envelope keeps 24 recent levels and paints the grille in one canvas, mirrored outward from
 the newest level; bars near the slot's rounded ends stay inside its curve. Capture supplies RMS
 summaries; the UI animates between them. Pill animation follows native display frames within the
-[frame budget](performance.md#implementation-constraints). Meter updates share the pending frame;
-session changes redraw immediately. Delayed frames skip expired deadlines, and springs advance by
-the actual elapsed time. Silence settles to short bars. Demo mode alone supplies simulated levels.
-Reduced motion, from Settings or the OS, snaps transitions, the lid, and level changes, uses one
-level bar, and keeps the processing highlight still. Settled hidden views request no animation
-frames; capture uses a timer for its clock and recording-limit cue.
+[frame budget](performance.md#implementation-constraints). Delayed frames skip expired deadlines,
+and springs advance by the actual elapsed time. Silence settles to short bars. Demo mode alone
+supplies simulated levels. Reduced motion, from Settings or the OS, snaps transitions, the lid, and
+level changes, uses one level bar, and keeps the processing highlight still. Capture uses a timer
+for its clock and recording-limit cue.
 
 ## Tray and Settings
 
@@ -73,9 +76,9 @@ pauses and later resumes, and completion enables dictation. The manual engine co
 while setup runs. Linux opens Settings at startup to expose desktop permissions and tray state.
 
 Close hides the existing window, preserving edits; Windows minimize also hides it. macOS minimize
-retains normal Dock behavior. Relaunch and the tray's Settings action reveal the same window. A
-brief first-hide hint explains the tray/menu bar when the pill is idle. On Linux, closing Settings
-without a tray host quits; the launcher reopens it.
+retains normal Dock behavior. Relaunch and the tray's Settings action reveal the same window. The
+first hide shows the tray hint (see the pill table). On Linux, closing Settings without a tray host
+quits; the launcher reopens it.
 
 The tray shows the Grille mark with its slot lit in the theme's lamp color and its bars cut through.
 Recording turns the slot red; busy, paused, and attention add a cut-jewel badge. macOS renders a
@@ -97,10 +100,9 @@ edits.
   passive so a Show can draw with it; any other key during a hold belongs to a different shortcut:
   dictation cancels and waits for release. On Windows, an unassigned mask key keeps the released Win
   key from opening Start.
-- S during a Windows/macOS hold turns the recording into a Show, locked hands-free. From that press
-  until the Show finishes, the pill shows a red screen mark in place of the lock, and it says **Show
-  copied** once the bundle is written and its summary copied. Shift alone draws ink that holds
-  briefly after the pen lifts, then fades; clicks pass through to the apps underneath.
+- S during a Windows/macOS hold turns the recording into a Show, locked hands-free; the pill table
+  shows what the pill presents. Shift alone draws ink that holds briefly after the pen lifts, then
+  fades; clicks pass through to the apps underneath.
 - Windows/macOS Escape cancels immediately and continues to the focused app. Linux uses a reserved
   Ctrl+Super+Escape chord or an explicit command binding; bare Escape is not globally captured.
   Animation never delays cancellation or owns the microphone lifetime.
@@ -109,8 +111,8 @@ edits.
 - Insertion does not steal focus. OS submission is the observable result; success in every editor
   cannot be inferred from submitting keystrokes.
 - Settings exposes automatic setup, manual engine/model selection, microphone selection, language
-  where applicable, GPU preference, clipboard preservation, reduced motion, and theme. Errors remain
-  visible there after the pill notice ends.
+  where applicable, GPU preference, text delivery, English filler removal, reduced motion, and
+  theme. Errors remain visible there after the pill notice ends.
 
 ## Acceptance
 
