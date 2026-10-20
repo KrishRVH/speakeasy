@@ -54,8 +54,8 @@ const OWN_INPUT: i64 = 0x5350_4541;
 /// this many UTF-16 units.
 const TEXT_EVENT_UNITS: usize = 16;
 
-/// Owns the desktop observation thread until explicit stop and acknowledged cleanup.
-pub struct InputMonitor {
+/// Owns the event tap's thread until explicit stop and acknowledged cleanup.
+pub(super) struct HookMonitor {
     // Declared first so dropping joins the thread before the lifecycle observers are removed.
     thread: OwnedThread,
     // Shared with the run-loop thread, which publishes its run loop for the owner to stop.
@@ -63,7 +63,7 @@ pub struct InputMonitor {
     _observers: Vec<Observer>,
 }
 
-impl InputMonitor {
+impl HookMonitor {
     pub(super) fn start(input: InputSender) -> anyhow::Result<Self> {
         let observers = lifecycle_observers(&input);
         let control = Arc::new(MonitorControl::default());
@@ -79,18 +79,18 @@ impl InputMonitor {
     }
 
     /// Requests native observation shutdown without joining its thread.
-    pub fn request_stop(&self) {
+    pub(super) fn request_stop(&self) {
         self.control.request_stop(CFRunLoop::stop);
     }
 
     /// Resolves once native resources have retired; await it before replacing or dropping the
     /// monitor.
-    pub fn stopped(&self) -> impl Future<Output = ()> + use<> {
+    pub(super) fn stopped(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
         self.thread.exited()
     }
 }
 
-impl Drop for InputMonitor {
+impl Drop for HookMonitor {
     fn drop(&mut self) {
         self.request_stop();
     }

@@ -50,8 +50,8 @@ usable state.
 Every insertion owns a generation-bound commit permit. Its task belongs to the session until
 completion or retirement. Cancellation or a later recording cannot authorize an obsolete paste or
 accept its result. The session owner continues receiving input while native preparation waits.
-Windows/macOS serialize native insertion calls on a blocking executor; their gesture hooks retain
-passive Escape.
+Windows/macOS serve native insertion calls one at a time on an owned insertion thread; their gesture
+hooks retain passive Escape.
 
 Automatic paste requires released modifiers. X11 queries physical key state; Wayland requires actual
 EI modifier feedback and a paste key from the advertised layout. Shortcut deactivation alone is

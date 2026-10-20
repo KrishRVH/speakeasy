@@ -62,8 +62,8 @@ thread_local! {
     static HOOK: RefCell<Option<HookState>> = const { RefCell::new(None) };
 }
 
-/// Owns the desktop observation thread until explicit stop and acknowledged cleanup.
-pub struct InputMonitor {
+/// Owns the keyboard hook thread until explicit stop and acknowledged cleanup.
+pub(crate) struct HookMonitor {
     thread: OwnedThread,
     // Shared with the hook thread, which cannot receive owner messages while it waits natively.
     control: Arc<MonitorControl<()>>,
@@ -71,7 +71,7 @@ pub struct InputMonitor {
     wake: Arc<OwnedHandle>,
 }
 
-impl InputMonitor {
+impl HookMonitor {
     pub(crate) fn start(input: InputSender) -> anyhow::Result<Self> {
         let control = Arc::new(MonitorControl::default());
         let wake = Arc::new(manual_reset_event()?);
@@ -88,7 +88,7 @@ impl InputMonitor {
     }
 
     /// Requests native observation shutdown without joining its thread.
-    pub fn request_stop(&self) {
+    pub(crate) fn request_stop(&self) {
         self.control.request_stop(|()| {
             // SAFETY: the shared owning handle stays open through native exit; setting a
             // manual-reset event wakes a running or future wait.
@@ -100,12 +100,12 @@ impl InputMonitor {
 
     /// Resolves once native resources have retired; await it before replacing or dropping the
     /// monitor.
-    pub fn stopped(&self) -> impl Future<Output = ()> + use<> {
+    pub(crate) fn stopped(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
         self.thread.exited()
     }
 }
 
-impl Drop for InputMonitor {
+impl Drop for HookMonitor {
     fn drop(&mut self) {
         self.request_stop();
     }

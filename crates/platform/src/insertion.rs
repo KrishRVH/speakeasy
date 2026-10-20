@@ -1,17 +1,168 @@
-//! Delivery choices, the pre-commit checks every native adapter shares, and the commit protocol
-//! Windows and macOS insertion follow.
+//! The insertion lane every platform shares, delivery choices, the pre-commit checks every native
+//! adapter shares, and the commit protocol Windows and macOS insertion follow.
 
 use std::{
     thread,
     time::{Duration, Instant},
 };
 
+use anyhow::{anyhow, bail};
+use async_channel::{Receiver, Sender};
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use super::{InputSender, OwnedThread, native};
 use super::{InsertPermit, Inserted};
 
 /// How long insertion waits for the user to let go of shortcut modifiers.
 pub(crate) const MODIFIER_WAIT: Duration = Duration::from_millis(800);
 /// How often insertion rechecks held modifiers while it waits.
 const MODIFIER_POLL: Duration = Duration::from_millis(2);
+
+/// Sends insertion requests to the thread that owns native clipboard and input access.
+///
+/// That thread performs one insertion at a time, and each keeps its turn through its native work
+/// even if the caller stops waiting, so a cancelled request never races a newer clipboard write.
+#[derive(Clone)]
+pub struct Inserter {
+    requests: Sender<Insertion>,
+}
+
+impl Inserter {
+    /// An inserter and the end its requests arrive on.
+    pub(crate) fn lane() -> (Self, Receiver<Insertion>) {
+        let (requests, incoming) = async_channel::bounded(1);
+        (Self { requests }, incoming)
+    }
+
+    /// Submits text under the recording permit through the chosen delivery.
+    ///
+    /// # Errors
+    /// Returns native insertion failures, or a fixed message once the request lane has closed or
+    /// its thread ended without answering.
+    pub async fn insert(
+        &self,
+        text: String,
+        permit: InsertPermit,
+        delivery: Delivery,
+    ) -> anyhow::Result<Inserted> {
+        if !permit.active() {
+            return Ok(Inserted::Cancelled);
+        }
+        let (reply, answer) = Reply::channel();
+        let request = Insertion {
+            text,
+            permit,
+            delivery,
+            reply,
+        };
+        if self.requests.send(request).await.is_err() {
+            bail!("Desktop input is unavailable");
+        }
+        // A thread that ended without answering reports a fixed message, never its panic payload,
+        // which could quote the text.
+        answer
+            .recv()
+            .await
+            .unwrap_or_else(|_| Err(anyhow!("Text insertion stopped unexpectedly")))
+    }
+}
+
+/// One request on an [`Inserter`]'s lane.
+pub(crate) struct Insertion {
+    pub(crate) text: String,
+    pub(crate) permit: InsertPermit,
+    pub(crate) delivery: Delivery,
+    pub(crate) reply: Reply<anyhow::Result<Inserted>>,
+}
+
+/// The single answer to one request.
+pub(crate) struct Reply<T>(Sender<T>);
+
+impl<T> Reply<T> {
+    pub(crate) fn channel() -> (Self, Receiver<T>) {
+        let (sender, receiver) = async_channel::bounded(1);
+        (Self(sender), receiver)
+    }
+
+    pub(crate) fn send(self, answer: T) {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "A requester that stopped waiting dropped its receiver; native work already checked its recording permit"
+        )]
+        let _ = self.0.try_send(answer);
+    }
+}
+
+/// The Windows and macOS insertion thread, which serves an [`Inserter`]'s requests in order.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub(crate) struct Worker {
+    thread: OwnedThread,
+    /// The thread's end of the lane. Closing it ends the thread once queued requests finish, while
+    /// the session owner may still hold `Inserter` clones.
+    requests: Receiver<Insertion>,
+    input: InputSender,
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+impl Worker {
+    /// Starts the insertion thread for recordings that `input` authorizes.
+    pub(crate) fn start(input: InputSender) -> std::io::Result<(Self, Inserter)> {
+        let (inserter, requests) = Inserter::lane();
+        let thread = OwnedThread::spawn("insertion", {
+            let requests = requests.clone();
+            move || serve(&requests)
+        })?;
+        let worker = Self {
+            thread,
+            requests,
+            input,
+        };
+        Ok((worker, inserter))
+    }
+
+    /// Revokes the current recording, so a pending insertion ends without input, and closes the
+    /// lane without joining the thread.
+    pub(crate) fn request_stop(&self) {
+        self.input.cancel();
+        self.requests.close();
+    }
+
+    /// Resolves once the thread has finished its last request.
+    pub(crate) fn stopped(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
+        self.thread.exited()
+    }
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+impl Drop for Worker {
+    fn drop(&mut self) {
+        self.request_stop();
+    }
+}
+
+/// Serves requests one at a time until the lane closes and drains.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn serve(requests: &Receiver<Insertion>) {
+    while let Ok(request) = requests.recv_blocking() {
+        // The thread lives as long as the monitor, so each request drains what AppKit autoreleases.
+        #[cfg(target_os = "macos")]
+        let outcome = objc2::rc::autoreleasepool(|_| serve_one(&request));
+        #[cfg(target_os = "windows")]
+        let outcome = serve_one(&request);
+        request.reply.send(outcome);
+    }
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn serve_one(request: &Insertion) -> anyhow::Result<Inserted> {
+    wait_for_released_modifiers(&request.permit, || Ok(native::modifiers_down()))?;
+    insert(
+        &mut native::Insert::new(),
+        &request.text,
+        &request.permit,
+        request.delivery,
+    )
+}
 
 /// How dictated text reaches the focused editor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -30,26 +30,25 @@ use async_channel::Sender;
 
 #[cfg(target_os = "linux")]
 pub use self::linux::{
-    APPLICATION_ID, InputMonitor, Inserter, NativeTray, TrayAction, TrayPresentation,
-    configure_pill, copy_text, prepare, reduced_motion, set_pill_visible, set_settings_visible,
-    show_startup_error,
+    APPLICATION_ID, InputMonitor, NativeTray, TrayAction, TrayPresentation, configure_pill,
+    copy_text, prepare, reduced_motion, set_pill_visible, set_settings_visible, show_startup_error,
 };
 #[cfg(target_os = "macos")]
 use self::macos as native;
 #[cfg(target_os = "macos")]
 pub use self::macos::{
-    InputMonitor, configure_pill, copy_text, reduced_motion, set_pill_visible,
-    set_settings_visible, show_startup_error,
+    configure_pill, copy_text, reduced_motion, set_pill_visible, set_settings_visible,
+    show_startup_error,
 };
 #[cfg(target_os = "windows")]
 use self::windows as native;
 #[cfg(target_os = "windows")]
 pub use self::windows::{
-    InputMonitor, attach_console, choose_file, configure_pill, copy_text, minimize_to_tray,
-    reduced_motion, set_pill_visible, set_settings_visible, show_startup_error,
+    attach_console, choose_file, configure_pill, copy_text, minimize_to_tray, reduced_motion,
+    set_pill_visible, set_settings_visible, show_startup_error,
 };
 pub use self::{
-    insertion::Delivery,
+    insertion::{Delivery, Inserter},
     owned_thread::OwnedThread,
     process::ProcessGroup,
     screen::{
@@ -353,60 +352,49 @@ impl Default for DesktopOptions {
     }
 }
 
-/// Serializes native clipboard and input operations without blocking the session owner.
-///
-/// Requests wait for their turn without occupying a blocking thread, and each keeps its turn until
-/// its native work ends, even if the caller stops waiting, so a cancelled request never races a
-/// newer clipboard write.
+/// Owns desktop observation and the insertion thread until explicit stop and acknowledged cleanup.
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-#[derive(Clone)]
-pub struct Inserter {
-    #[expect(
-        clippy::disallowed_types,
-        reason = "Serialize irreversible clipboard preparation on blocking native workers; cancellation remains on the independent generation gate"
-    )]
-    serial: Arc<tokio::sync::Mutex<()>>,
+pub struct InputMonitor {
+    hook: native::HookMonitor,
+    insertion: insertion::Worker,
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-impl Inserter {
-    /// Submits authorized text through the chosen delivery.
-    ///
-    /// # Errors
-    /// Returns native input failures or a failed blocking worker.
-    pub async fn insert(
-        &self,
-        text: String,
-        permit: InsertPermit,
-        delivery: Delivery,
-    ) -> anyhow::Result<Inserted> {
-        let turn = Arc::clone(&self.serial).lock_owned().await;
-        if !permit.active() {
-            return Ok(Inserted::Cancelled);
+impl InputMonitor {
+    /// Requests native observation and insertion shutdown without joining their threads.
+    pub fn request_stop(&self) {
+        self.hook.request_stop();
+        self.insertion.request_stop();
+    }
+
+    /// Resolves once both threads have retired their native resources; await it before replacing
+    /// or dropping the monitor.
+    pub fn stopped(&self) -> impl Future<Output = ()> + use<> {
+        let hook = self.hook.stopped();
+        let insertion = self.insertion.stopped();
+        async move {
+            hook.await;
+            insertion.await;
         }
-        tokio::task::spawn_blocking(move || {
-            insertion::wait_for_released_modifiers(&permit, || Ok(native::modifiers_down()))?;
-            let inserted = insertion::insert(&mut native::Insert::new(), &text, &permit, delivery);
-            // Moving the turn in holds it through native work even if the caller stops awaiting.
-            drop(turn);
-            inserted
-        })
-        .await?
     }
 }
 
-/// Starts desktop observation and creates its matching insertion adapter.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+impl Drop for InputMonitor {
+    fn drop(&mut self) {
+        self.request_stop();
+    }
+}
+
+/// Starts desktop observation and the insertion thread that serves its matching [`Inserter`].
 ///
 /// # Errors
 /// Returns thread startup or native desktop initialization failures.
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 pub fn prepare(input: InputSender, _: DesktopOptions) -> anyhow::Result<(InputMonitor, Inserter)> {
-    Ok((
-        InputMonitor::start(input)?,
-        Inserter {
-            serial: Arc::default(),
-        },
-    ))
+    let (insertion, inserter) = insertion::Worker::start(input.clone())?;
+    let hook = native::HookMonitor::start(input)?;
+    Ok((InputMonitor { hook, insertion }, inserter))
 }
 
 #[cfg(test)]

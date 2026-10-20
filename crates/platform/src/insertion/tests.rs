@@ -321,3 +321,23 @@ fn utf16_chunks_count_code_units_and_keep_surrogate_pairs_whole() {
     );
     assert_eq!(utf16_chunks("", 16).count(), 0);
 }
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[tokio::test]
+async fn a_stopped_worker_exits_while_inserters_outlive_it() -> anyhow::Result<()> {
+    let (events, _receiver) = async_channel::bounded(1);
+    let input = InputSender::new(events);
+    let (worker, inserter) = super::Worker::start(input.clone())?;
+    worker.request_stop();
+    tokio::time::timeout(std::time::Duration::from_secs(5), worker.stopped())
+        .await
+        .context("The insertion thread waited for every Inserter to drop")?;
+    let permit = input.begin().context("Recording")?;
+    let refused = inserter
+        .insert("text".into(), permit, Delivery::Paste)
+        .await
+        .err()
+        .context("A stopped worker accepted a request")?;
+    assert_eq!(refused.to_string(), "Desktop input is unavailable");
+    Ok(())
+}

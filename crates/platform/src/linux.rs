@@ -9,13 +9,15 @@ mod x11;
 
 use std::convert::Infallible;
 
-use anyhow::Context;
 use async_channel::{Receiver, Sender};
 use raw_window_handle::RawWindowHandle;
 use zbus::MatchRule;
 
 pub use self::tray::{NativeTray, TrayAction, TrayPresentation};
-use super::{Delivery, DesktopOptions, Input, InputSender, InsertPermit, Inserted, OwnedThread};
+use super::{
+    Delivery, DesktopOptions, Input, InputSender, InsertPermit, Inserted, Inserter, OwnedThread,
+    insertion::{Insertion, Reply},
+};
 
 /// Desktop launcher and portal registration identity.
 pub const APPLICATION_ID: &str = "io.github.krvh.speakeasy";
@@ -41,65 +43,6 @@ impl InputMonitor {
 impl Drop for InputMonitor {
     fn drop(&mut self) {
         self.request_stop();
-    }
-}
-
-/// Sends insertion requests to the thread that owns the Linux desktop resources.
-#[derive(Clone)]
-pub struct Inserter {
-    requests: Sender<Insertion>,
-}
-
-impl Inserter {
-    /// Submits text under the recording permit through the chosen delivery.
-    ///
-    /// # Errors
-    /// Returns native insertion failures or closure of the desktop request lane.
-    pub async fn insert(
-        &self,
-        text: String,
-        permit: InsertPermit,
-        delivery: Delivery,
-    ) -> anyhow::Result<Inserted> {
-        if !permit.active() {
-            return Ok(Inserted::Cancelled);
-        }
-        let (reply, answer) = Reply::channel();
-        self.requests
-            .send(Insertion {
-                text,
-                permit,
-                delivery,
-                reply,
-            })
-            .await
-            .context("Desktop input is unavailable")?;
-        answer.recv().await.context("Desktop insertion stopped")?
-    }
-}
-
-struct Insertion {
-    text: String,
-    permit: InsertPermit,
-    delivery: Delivery,
-    reply: Reply<anyhow::Result<Inserted>>,
-}
-
-/// The single answer to one request.
-struct Reply<T>(Sender<T>);
-
-impl<T> Reply<T> {
-    fn channel() -> (Self, Receiver<T>) {
-        let (sender, receiver) = async_channel::bounded(1);
-        (Self(sender), receiver)
-    }
-
-    fn send(self, answer: T) {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "A requester that stopped waiting dropped its receiver; native work already checked its recording permit"
-        )]
-        let _ = self.0.try_send(answer);
     }
 }
 
@@ -159,7 +102,7 @@ pub fn prepare(
     input: InputSender,
     options: DesktopOptions,
 ) -> anyhow::Result<(InputMonitor, Inserter)> {
-    let (requests, incoming) = async_channel::bounded(1);
+    let (inserter, incoming) = Inserter::lane();
     let (stop, stop_requests) = async_channel::bounded(1);
     let thread = OwnedThread::spawn("desktop-access", move || {
         match serve_desktop(&input, &options, incoming, &stop_requests) {
@@ -169,7 +112,7 @@ pub fn prepare(
             _ => input.close(),
         }
     })?;
-    Ok((InputMonitor { stop, thread }, Inserter { requests }))
+    Ok((InputMonitor { stop, thread }, inserter))
 }
 
 fn serve_desktop(

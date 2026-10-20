@@ -36,13 +36,12 @@ use windows_sys::{
     w,
 };
 
-pub(crate) use self::insertion::Insert;
 pub use self::{
     dialog::choose_file,
-    input::InputMonitor,
     insertion::copy_text,
     presentation::{configure_pill, minimize_to_tray, set_pill_visible, set_settings_visible},
 };
+pub(crate) use self::{input::HookMonitor, insertion::Insert};
 
 /// Tags input Speakeasy synthesizes, so its own keyboard hook ignores it.
 const OWN_INPUT: usize = 0x5350_4541;
