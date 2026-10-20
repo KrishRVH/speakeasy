@@ -34,8 +34,13 @@ run = "cargo fmt --all"
 [tasks."rust:fmt:check"]
 run = "cargo fmt --all --check"
 
+# The cross-target run type-checks the native adapters, which need no SDK; the app's Windows
+# resource build and macOS GPUI build do, so they stay with native checks.
 [tasks."rust:lint"]
-run = "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings"
+run = [
+  "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
+  "cargo clippy -p speakeasy-platform --all-targets --all-features --locked --target x86_64-pc-windows-msvc --target aarch64-apple-darwin -- -D warnings",
+]
 
 [tasks."rust:doc"]
 wait_for = ["rust:lint"]
