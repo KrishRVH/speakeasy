@@ -10,8 +10,8 @@ use std::{
 use anyhow::{Context as _, anyhow};
 use gpui::{
     AnyWindowHandle, App, AppContext, Bounds, FillOptions, FillRule, PathBuilder, PathStyle,
-    Render, Rgba, Task, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind,
-    WindowOptions, canvas, div, point, prelude::*, px,
+    Render, Rgba, Task, Timer, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle,
+    WindowKind, WindowOptions, canvas, div, point, prelude::*, px,
 };
 use raw_window_handle::RawWindowHandle;
 use speakeasy_platform::Display;
@@ -19,7 +19,7 @@ use speakeasy_show::{Point, ink};
 use tokio::sync::watch;
 
 use crate::{
-    gpui_ext::raw_handle,
+    gpui_ext::{EntityUpdate, raw_handle},
     runtime::{Phase, Snapshot},
 };
 
@@ -109,6 +109,26 @@ impl Canvas {
     fn faded(&self, now: Instant) -> bool {
         self.opacity(now) <= 0.0
     }
+
+    /// When the overlay next needs a frame at `now`, if the canvas does not change first.
+    fn next_frame(&self, now: Instant) -> Redraw {
+        match self.since_lift(now) {
+            Some(since) if since < HOLD => Redraw::After(HOLD.saturating_sub(since)),
+            Some(_) if self.opacity(now) > 0.0 => Redraw::Animate,
+            _ => Redraw::OnChange,
+        }
+    }
+}
+
+/// When the overlay draws again, beyond the frame every canvas change brings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Redraw {
+    /// Only on a change: the pen is drawing, has not lifted, or its ink has faded.
+    OnChange,
+    /// Once, after this long, when the hold ends and the fade begins.
+    After(Duration),
+    /// Every frame while the ink fades.
+    Animate,
 }
 
 struct Overlay {
@@ -116,6 +136,8 @@ struct Overlay {
     window: AnyWindowHandle,
     display: Option<Display>,
     visibility: Option<Task<()>>,
+    /// Redraws once the hold ends, so held ink costs no frames.
+    wake: Option<Task<()>>,
     _updates: Task<()>,
 }
 
@@ -127,6 +149,7 @@ impl Overlay {
             window: window.window_handle(),
             display: None,
             visibility: None,
+            wake: None,
         }
     }
 
@@ -176,17 +199,28 @@ fn place(raw: RawWindowHandle, display: Option<Display>) {
 }
 
 impl Render for Overlay {
-    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = Instant::now();
         let ink = self.canvas.borrow().clone();
         let opacity = ink.opacity(now);
-        if opacity > 0.0 && ink.since_lift(now).is_some() {
-            window.request_animation_frame();
-        }
+        self.wake = match ink.next_frame(now) {
+            Redraw::OnChange => None,
+            // A wake that fires early renders once and schedules the rest of the hold.
+            Redraw::After(delay) => Some(cx.spawn(async move |this, cx| {
+                Timer::after(delay).await;
+                this.update_if_alive(cx, |_, cx| cx.notify());
+            })),
+            Redraw::Animate => {
+                window.request_animation_frame();
+                None
+            },
+        };
         div().size_full().child(
             canvas(
                 |_, _, _| {},
                 move |bounds, (), window, _| {
+                    // The first frame after the fade paints no path, which lets the renderer free
+                    // its full-window path targets.
                     if opacity > 0.0 {
                         paint(&ink, bounds, opacity, window);
                     }
@@ -368,6 +402,19 @@ mod tests {
         // Drawing again keeps every mark whole for as long as the stroke takes.
         assert!(canvas.update([], stroke(4), at(600)));
         assert!(whole(&canvas, at(5_000)));
+    }
+
+    #[test]
+    fn held_ink_draws_no_frames_until_it_fades() {
+        let at = clock();
+        let mut canvas = Canvas::default();
+        canvas.update([], stroke(3), at(0));
+        assert_eq!(canvas.next_frame(at(0)), Redraw::OnChange);
+        canvas.update([stroke(3).into()], [], at(0));
+        let left = Duration::from_millis(50);
+        assert_eq!(canvas.next_frame(at(600)), Redraw::After(left));
+        assert_eq!(canvas.next_frame(at(975)), Redraw::Animate);
+        assert_eq!(canvas.next_frame(at(1_300)), Redraw::OnChange);
     }
 
     #[test]
