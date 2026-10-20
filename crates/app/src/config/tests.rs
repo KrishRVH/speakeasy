@@ -153,7 +153,7 @@ fn filler_cleanup_follows_engine_language_and_switch() -> anyhow::Result<()> {
             );
         }
     }
-    // A file saved before the switch existed still removes them.
+    // A file without the switch removes them.
     let saved: Config = serde_json::from_str(
         r#"{"engine":"parakeet","engine_executable":"","model":"","language":"de"}"#,
     )?;
