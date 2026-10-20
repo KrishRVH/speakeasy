@@ -1,9 +1,9 @@
-//! Every frame a Show samples, kept losslessly in little memory beside its signature.
+//! The frames a Show samples, kept losslessly beside their signatures within a memory budget.
 //!
 //! Frames are cut into tiles, and each frame stores only the tiles that changed since the frame
-//! before it. A still screen therefore costs almost nothing, and any recorded moment rebuilds
-//! exactly. Each frame's [`Sample`] is kept and dropped with its tiles, so selection only picks
-//! frames the journal holds.
+//! before it. A still screen therefore costs almost nothing, and every frame held rebuilds exactly.
+//! A journal over its budget thins evenly, and each frame's [`Sample`] is dropped with its tiles,
+//! so selection only picks frames the journal holds.
 
 use std::{mem, time::Duration};
 
@@ -134,8 +134,8 @@ impl Journal {
     }
 
     /// The journal without the frame it keeps only to compare the next one against, for when
-    /// recording ends. Every recorded moment still rebuilds exactly; a frame recorded later starts
-    /// a new run of frames.
+    /// recording ends. Every frame held still rebuilds exactly; a frame recorded later starts a new
+    /// run of frames.
     #[must_use]
     pub fn sealed(mut self) -> Self {
         self.latest = None;

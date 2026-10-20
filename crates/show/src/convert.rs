@@ -1,5 +1,5 @@
-//! The crate's only lossy numeric conversions: layout coordinates to pixel counts and indices, and
-//! pixel dimensions to index bounds.
+//! The crate's float-to-integer conversions, from channel values to bytes and from layout
+//! coordinates to pixel counts and indices, and the widening of pixel dimensions to index bounds.
 //!
 //! Float-to-integer `as` casts saturate at the target's bounds and map NaN to zero, which is the
 //! intended behavior for every caller: geometry that strays outside an image clamps to its edge.

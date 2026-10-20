@@ -51,13 +51,13 @@ impl Point {
         self.x.mul_add(other.x, self.y * other.y)
     }
 
-    /// The vector turned a quarter clockwise in screen coordinates.
+    /// The vector turned a quarter counterclockwise on screen.
     #[must_use]
     pub(crate) const fn perpendicular(self) -> Self {
         Self::new(self.y, -self.x)
     }
 
-    /// The point turned `angle` radians about `center`.
+    /// The point turned `angle` radians about `center`; a positive angle turns clockwise on screen.
     #[must_use]
     pub(crate) fn rotated(self, center: Self, angle: f32) -> Self {
         let (sin, cos) = angle.sin_cos();
