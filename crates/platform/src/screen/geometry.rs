@@ -22,6 +22,7 @@ impl Bounds {
 
     /// The same rectangle measured from the opposite edge of a space `extent` tall, turning
     /// top-left coordinates into bottom-left ones and back.
+    #[cfg(any(target_os = "macos", test))]
     pub(crate) fn flipped(self, extent: f64) -> Self {
         let [x, y] = self.origin;
         let [_, height] = self.size;
@@ -34,6 +35,7 @@ impl Bounds {
 
 /// `points` at `scale` pixels per point, rounded to whole pixels; `None` unless each axis comes to
 /// at least one pixel within `u32` range.
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn pixels(points: [f64; 2], scale: f64) -> Option<[u32; 2]> {
     let [width, height] = points.map(|extent| whole(extent * scale));
     Some([width?, height?])
@@ -81,6 +83,7 @@ pub(crate) fn narrow(value: f64) -> f32 {
 }
 
 /// Rounds a pixel measure to a count of at least one.
+#[cfg(any(target_os = "macos", test))]
 #[expect(
     clippy::cast_possible_truncation,
     reason = "The rounded value is checked to lie within u32 range first"
