@@ -44,12 +44,29 @@ const SWEEP_PERIOD: Duration = Duration::from_millis(1200);
 
 const RESTING_SIZE: Size<f32> = size(60.0, 30.0);
 const RECORDING_WIDTH: f32 = 152.0;
+/// The widest capsule, which shows a message or the tray hint.
 const MESSAGE_WIDTH: f32 = 360.0;
+/// The tallest capsule: a two-line message above an optional footer.
+const MESSAGE_SIZE: Size<f32> = size(MESSAGE_WIDTH, 64.0);
 const HIDDEN_LIFT: f32 = 6.0;
 const SHADOW_OFFSET: f32 = 4.0;
 const SHADOW_BLUR: f32 = 16.0;
 /// Room under the shown capsule for its drop shadow and for the `HIDDEN_LIFT` it sinks while hiding.
 const SHADOW_ROOM: f32 = SHADOW_OFFSET + SHADOW_BLUR + HIDDEN_LIFT;
+/// The fixed native window holds the widest capsule with its shadow's blur on both sides, and the
+/// tallest with `SHADOW_ROOM` beneath it.
+const _: () = assert!(
+    MESSAGE_WIDTH + 2.0 * SHADOW_BLUR <= PILL_WIDTH as f32
+        && MESSAGE_SIZE.height + SHADOW_ROOM <= PILL_HEIGHT as f32,
+    "The capsule must fit the native pill window"
+);
+/// The slot row's horizontal padding.
+const ROW_PADDING: f32 = 7.0;
+/// The slot's horizontal inset inside the capsule: `ROW_PADDING` plus the capsule's one-pixel
+/// border on each side.
+const SLOT_SIDE_INSET: f32 = 2.0 * (ROW_PADDING + 1.0);
+/// The slot's total vertical inset inside the capsule.
+const SLOT_VERTICAL_INSET: f32 = 16.0;
 /// The window's clearance above the display's bottom edge. Windows and macOS move the pill onto
 /// their work area; GPUI's X11 display has none, so on Linux this keeps it above a bottom panel.
 const BOTTOM_CLEARANCE: f32 = 50.0;
@@ -57,6 +74,8 @@ const BOTTOM_CLEARANCE: f32 = 50.0;
 const LID_OPEN: f32 = 0.0;
 const LID_AJAR: f32 = 0.62;
 const LID_CLOSED: f32 = 1.0;
+/// The lid position from which a closed slot's label fades in.
+const LABEL_FADE_FROM: f32 = 0.6;
 
 const TRAY_HINT: &str = if cfg!(target_os = "macos") {
     "In the menu bar · Use Speakeasy’s menu to quit"
@@ -331,7 +350,7 @@ impl Pill {
     fn render_capsule(&self, scene: Scene) -> Div {
         let palette = self.theme.palette();
         let height = self.capsule.height.value();
-        let inlaid = scene.has_slot() && height > 22.0;
+        let inlaid = scene.has_slot();
         div()
             .size_full()
             .flex()
@@ -427,12 +446,13 @@ impl Pill {
     fn render_slot(&self, scene: Scene, palette: &'static Palette) -> Div {
         let (width, height) = (self.capsule.width.value(), self.capsule.height.value());
         let shows_clock = scene.shows_clock();
-        let clock_width = if shows_clock {
-            (width - RECORDING_WIDTH).max(0.0)
+        // The clock takes any width beyond a recording capsule's.
+        let slot_width = if shows_clock {
+            width.min(RECORDING_WIDTH)
         } else {
-            0.0
-        };
-        let slot_height = (height - 16.0).max(4.0);
+            width
+        } - SLOT_SIDE_INSET;
+        let slot_height = (height - SLOT_VERTICAL_INSET).max(4.0);
         let grille = Grille {
             lid: self.capsule.lid.value().clamp(0.0, 1.0),
             waveform: self.capsule.waveform.value().clamp(0.0, 1.0),
@@ -443,7 +463,7 @@ impl Pill {
         };
         div()
             .w_full()
-            .px(px(7.0))
+            .px(px(ROW_PADDING))
             .flex()
             .items_center()
             .gap(px(11.0))
@@ -451,7 +471,7 @@ impl Pill {
                 div()
                     .relative()
                     .flex_none()
-                    .w(px((width - 16.0 - clock_width).max(6.0)))
+                    .w(px(slot_width.max(6.0)))
                     .h(px(slot_height))
                     .rounded(px(slot_height / 2.0))
                     .bg(alpha(0x00_00_00, 0.5))
@@ -479,7 +499,11 @@ impl Pill {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .opacity(((grille.lid - 0.6) / 0.4).clamp(0.0, 1.0))
+                                .opacity(
+                                    ((grille.lid - LABEL_FADE_FROM)
+                                        / (LID_CLOSED - LABEL_FADE_FROM))
+                                        .clamp(0.0, 1.0),
+                                )
                                 .child(label),
                         )
                     }),
@@ -639,7 +663,7 @@ impl Scene {
             Phase::Done => size(76.0, 34.0),
             Phase::Copied if self.show => size(150.0, 34.0),
             Phase::Empty => size(182.0, 36.0),
-            Phase::Copied | Phase::Error => size(MESSAGE_WIDTH, 64.0),
+            Phase::Copied | Phase::Error => MESSAGE_SIZE,
             Phase::Idle | Phase::Cancelled => RESTING_SIZE,
         }
     }
