@@ -69,8 +69,12 @@ Linux follows in a later release. A Mac asks for screen recording access on the 
 
 Download the Windows or Mac zip from the
 [latest release](https://github.com/KrishRVH/speakeasy/releases/latest), unzip it, and open
-Speakeasy. On a Mac, allow Microphone and Accessibility access when asked. Linux's experimental
-AppImage and tar packages are described below.
+Speakeasy. Linux's experimental AppImage and tar packages are described below.
+
+On a Mac, allow Microphone and Accessibility access when asked, and Screen & System Audio Recording
+for Shows. If macOS says it cannot verify Speakeasy, open System Settings → Privacy & Security and
+choose **Open Anyway**. After each update, macOS forgets the Accessibility and Screen & System Audio
+Recording grants: remove Speakeasy from those lists with − and add it again.
 
 The first launch sets everything up. Speakeasy checks the machine, downloads the matching
 [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) build and NVIDIA's Parakeet v3 model,

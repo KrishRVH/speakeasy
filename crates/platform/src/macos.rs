@@ -254,7 +254,7 @@ fn shortcut_tap(input: &InputSender) -> anyhow::Result<CGEventTap<'static>> {
     )
     .map_err(|()| {
         anyhow!(
-            "Allow Speakeasy in System Settings → Privacy & Security → Accessibility, then pause and resume dictation."
+            "Allow Speakeasy in System Settings → Privacy & Security → Accessibility. If it is already on, remove it with − and add it again, then pause and resume dictation."
         )
     })
 }

@@ -52,7 +52,7 @@ use crate::screen::{
 /// Show reports that capture stopped.
 const PATIENCE: Duration = Duration::from_secs(5);
 
-const PERMISSION: &str = "Allow Screen & System Audio Recording for Speakeasy in System Settings › Privacy & Security, then try again.";
+const PERMISSION: &str = "Allow Screen & System Audio Recording for Speakeasy in System Settings › Privacy & Security. If it is already on, remove it with − and add it again, then try again.";
 const STALLED: &str = "Screen capture stopped responding. Start the Show again.";
 const UNSTARTED: &str = "Screen capture could not start. Start the Show again.";
 const DISPLAY_GONE: &str = "The display being shown is no longer available. Start the Show again.";
