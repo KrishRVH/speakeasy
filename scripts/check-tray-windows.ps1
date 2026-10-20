@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$Executable, [switch]$MeasureIdle)
+param([Parameter(Mandatory=$true)][string]$Executable)
 $ErrorActionPreference = 'Stop'
 # Own simulated windows only. No microphone, hook, clipboard or global input.
 Add-Type -TypeDefinition @'
@@ -75,16 +75,6 @@ try {
         Wait-For { [TrayWindows]::IsWindowVisible($original) } 'Relaunch did not restore the original Settings window'
     }
     if ([IO.File]::ReadAllText($config) -ne 'demo preserves this file') { throw 'Demo changed configuration' }
-    if ($MeasureIdle) {
-        $null = [TrayWindows]::PostMessage($original, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
-        Wait-For { ![TrayWindows]::IsWindowVisible($original) } 'Settings did not hide for idle measurement'
-        if ($script:app.WaitForExit(25000)) { throw 'Demo exited before idle measurement' }
-        $script:app.Refresh()
-        $before = $script:app.TotalProcessorTime.TotalMilliseconds
-        if ($script:app.WaitForExit(3000)) { throw 'Demo exited during idle measurement' }
-        $script:app.Refresh()
-        Write-Host ('Idle tray demo CPU over 3 seconds: {0:N2} ms; working set: {1:N1} MiB' -f ($script:app.TotalProcessorTime.TotalMilliseconds-$before), ($script:app.WorkingSet64/1MB))
-    }
     # Use the same WM_QUIT signal as GPUI, targeted only at this owned UI thread.
     [uint32]$owner = 0
     $thread = [TrayWindows]::GetWindowThreadProcessId($original, [ref]$owner)
