@@ -4,6 +4,8 @@
 //! the keyboard mapping.
 
 mod clipboard;
+#[cfg(test)]
+mod native_tests;
 mod paste;
 
 use std::{convert::Infallible, os::fd::AsFd};

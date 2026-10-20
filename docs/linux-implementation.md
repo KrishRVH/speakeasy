@@ -80,10 +80,13 @@ presentation. The pill uses notification hints, override-redirect, no keyboard f
 input shape before mapping. These hints still need native acceptance for stacking, fullscreen, mixed
 scaling, and focus.
 
-Private-Xvfb checks exercise actual Settings rendering, pill startup visibility, input shape, and
-simulated show/hide without microphone, shortcuts, or clipboard access. They cover queued XCB
-startup events, which must be drained even when checked requests leave no unread bytes in the
-socket. Virtual-desktop checks do not establish compositor, desktop input, or editor compatibility.
+Private-Xvfb presentation checks exercise actual Settings rendering, pill startup visibility, input
+shape, and simulated show/hide without microphone, shortcuts, or clipboard access. They cover queued
+XCB startup events, which must be drained even when checked requests leave no unread bytes in the
+socket. Opt-in X11 input tests start their own Xvfb display, then check there that shortcuts survive
+a keyboard switch, which X announces as a mapping change, that an actual remap stops them, and that
+a first copy owns the clipboard. Virtual-desktop checks do not establish compositor, desktop input,
+or editor compatibility.
 
 The StatusNotifier/DBusMenu adapter reuses shared tray states and menu policy, with subscriptions
 limited to relevant host changes. Without a tray host, Settings remains discoverable and closing it
