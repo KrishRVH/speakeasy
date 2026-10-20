@@ -119,7 +119,7 @@ pub fn prepare(
     let thread = OwnedThread::spawn("desktop-access", move || {
         match serve_desktop(&input, &options, incoming, &stop_requests) {
             Err(error) if !input.is_closed() => input.fail(format!(
-                "Linux desktop access stopped: {error}. Check desktop permissions, or choose Shortcuts: Desktop bindings or Insert: Copy for manual paste in Settings, then resume."
+                "Linux desktop access stopped: {error}. Check desktop permissions, or choose Shortcuts: Desktop bindings, Insert: Copy for manual paste, or both in Settings, then resume."
             )),
             _ => input.close(),
         }
