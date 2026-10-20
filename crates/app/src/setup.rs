@@ -75,8 +75,8 @@ pub(crate) struct Setup {
 
 impl Setup {
     pub(crate) fn start() -> anyhow::Result<Self> {
-        Self::spawn(|progress, cancelled| {
-            let root = crate::paths::data_root();
+        let root = crate::paths::data_root()?;
+        Self::spawn(move |progress, cancelled| {
             match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()

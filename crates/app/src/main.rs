@@ -44,7 +44,8 @@ const BRAND_FONT_FILE: &[u8] = include_bytes!("../assets/JosefinSans-SemiBold.tt
 struct Cli {
     mode: LaunchMode,
     command: Option<Request>,
-    path: PathBuf,
+    /// The settings file `--config` names; otherwise the default, found only when the app runs.
+    path: Option<PathBuf>,
 }
 
 /// What the command line asks for.
@@ -69,7 +70,7 @@ impl Cli {
         let mut cli = Self {
             mode: LaunchMode::Live,
             command: None,
-            path: paths::settings_file(),
+            path: None,
         };
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -79,7 +80,9 @@ impl Cli {
                     }
                 },
                 "--demo-tray" => cli.mode = LaunchMode::DemoTray,
-                "--config" => cli.path = args.next().context("--config needs a path")?.into(),
+                "--config" => {
+                    cli.path = Some(args.next().context("--config needs a path")?.into());
+                },
                 "--toggle" => cli.command = Some(Request::Toggle),
                 "--cancel" => cli.command = Some(Request::Cancel),
                 "--help" | "-h" => return Ok(None),
@@ -128,7 +131,7 @@ fn run(
         path,
     }: Cli,
 ) -> anyhow::Result<()> {
-    let path = std::path::absolute(path)?;
+    let path = std::path::absolute(path.map_or_else(paths::settings_file, Ok)?)?;
     if let Some(command) = command {
         ensure!(
             !mode.is_demo(),

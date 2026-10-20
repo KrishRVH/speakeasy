@@ -17,7 +17,7 @@ use crate::ports::{PUBLISH_STOPPED, Published, Recorded};
 /// and deletes anything it staged.
 pub(crate) async fn publish(recorded: Recorded, permit: InsertPermit) -> anyhow::Result<Published> {
     tokio::task::spawn_blocking(move || {
-        let Some(written) = write_bundle(recorded, &permit, &super::directory())? else {
+        let Some(written) = write_bundle(recorded, &permit, &super::directory()?)? else {
             return Ok(Published::Cancelled);
         };
         speakeasy_platform::copy_text(&written.summary).map_err(|error| {

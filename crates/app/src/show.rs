@@ -90,7 +90,7 @@ impl Command {
         let bundle = compose(recording, selection, frames, &typeface)?;
         let directory = match out {
             Some(out) => out,
-            None => fresh_directory(&directory(), SystemTime::now())?,
+            None => fresh_directory(&directory()?, SystemTime::now())?,
         };
         write(&directory, &bundle.files(&directory)?)?;
         print!("{}", bundle.summary(&directory));
@@ -99,8 +99,8 @@ impl Command {
 }
 
 /// Where Shows live: machine-local, beside the engines and models.
-fn directory() -> PathBuf {
-    crate::paths::data_root().join("shows")
+fn directory() -> anyhow::Result<PathBuf> {
+    Ok(crate::paths::data_root()?.join("shows"))
 }
 
 /// An unused directory under `parent` named for `now` in UTC, such as `20261019T143603Z`.

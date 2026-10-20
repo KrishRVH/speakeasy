@@ -26,11 +26,16 @@ const PIN: &str = ".pinned";
 /// Deletes expired Shows now and then hourly for the app's life, giving each failure to `report`;
 /// a failure that persists is reported again at every sweep.
 pub(crate) fn attend(report: impl Fn(&anyhow::Error, &mut App) + 'static, cx: &App) {
+    // Without a data folder no Show can be published, so none can expire.
+    let Ok(parent) = super::directory() else {
+        return;
+    };
     cx.spawn(async move |cx| {
         loop {
+            let parent = parent.clone();
             let swept = cx
                 .background_executor()
-                .spawn(async { sweep(&super::directory(), SystemTime::now()) })
+                .spawn(async move { sweep(&parent, SystemTime::now()) })
                 .await;
             if let Err(error) = swept
                 && cx.update(|cx| report(&error, cx)).is_err()
