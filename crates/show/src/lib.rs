@@ -21,6 +21,7 @@ pub mod ink;
 mod journal;
 mod marks;
 mod moment;
+mod parallel;
 mod recording;
 mod select;
 mod serde_range;

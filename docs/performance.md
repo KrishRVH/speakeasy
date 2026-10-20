@@ -25,6 +25,9 @@ when the full interaction remains correct.
   classify at stop. [Architecture](architecture.md#session-ownership) owns trimming and sealed
   audio/teardown ordering. WAV preparation reuses the PCM allocation, checks lengths, and rejects
   unsupported input.
+- A Show's recorder keeps per-frame work to a few milliseconds and its journal under a fixed cap.
+  Publishing rebuilds, resamples, and encodes keyframes on up to one thread per core. Hot pixel
+  loops use plain multiply-add: `mul_add` is a software call on x86-64's baseline.
 - Do not add an always-on microphone, worker pool, cache, resampler, or background service without a
   measured user benefit and explicit resource ownership.
 
@@ -41,8 +44,11 @@ real session owner with public audio or fake devices; the README lists the fixtu
 synthetic `profile_audio_pipeline` probe reports callback/downmix/consumer work and sealing of a
 five-minute recording whose speech windows were classified while recording. Sealing includes the
 remaining window, range selection, trimming, capacity reclamation, and WAV encoding; it excludes
-microphone teardown, inference, and insertion. Use ordinary native profilers rather than a permanent
-benchmark suite.
+microphone teardown, inference, and insertion. The synthetic `profile_show_pipeline` probe reports
+the recorder's per-frame fingerprint and journal cost on 2560 × 1440 desktops that stay still, type,
+scroll, or open a dialog, and each stage of publishing a one-minute Show: selection, keyframe
+rebuilding, composition, PNG encoding, and the private write. Use ordinary native profilers rather
+than a permanent benchmark suite.
 
 ## Native process sampling
 

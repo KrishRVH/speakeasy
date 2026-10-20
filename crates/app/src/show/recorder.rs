@@ -269,3 +269,63 @@ async fn stop(capture: &ScreenCapture, pointer: &PointerMonitor) {
     pointer.stop();
     tokio::join!(capture.exited(), pointer.exited());
 }
+
+/// Linux records no Shows yet.
+#[cfg(all(test, any(target_os = "windows", target_os = "macos")))]
+mod tests {
+    use anyhow::Context as _;
+    use tokio::time::timeout;
+
+    use super::*;
+
+    /// Records the real screen briefly and checks only the footage's shape: no pixel is compared,
+    /// written, or printed.
+    #[tokio::test]
+    #[ignore = "Records the real screen for about a second and keeps no pixels; native opt-in"]
+    async fn a_real_screen_records_footage_on_one_timeline() -> anyhow::Result<()> {
+        let (events, finished) = async_channel::bounded(1);
+        let (canvas, ink) = watch::channel(Canvas::default());
+        let started = Instant::now();
+        let recorder = Recorder::start(SessionId::FIRST, started, events, canvas)?;
+        tokio::time::sleep(Duration::from_millis(1_300)).await;
+        let display = ink
+            .borrow()
+            .display
+            .context("The overlay was given a display")?;
+        recorder.finish();
+        let ShowEvent::Finished(id, footage) =
+            timeout(Duration::from_secs(10), finished.recv()).await??;
+        assert_eq!(id, SessionId::FIRST);
+        let footage = footage?;
+        timeout(Duration::from_secs(5), recorder.retire()).await?;
+        assert!(ink.borrow().display.is_none(), "The overlay was released");
+
+        let [width, height] = display.size;
+        assert_eq!(footage.surface, Size { width, height });
+        let moments: Vec<Moment> = footage.samples.iter().map(|sample| sample.at).collect();
+        assert!(
+            (4..=8).contains(&moments.len()),
+            "{} frames in 1.3 s at one per 200 ms",
+            moments.len()
+        );
+        assert_eq!(footage.journal.moments(), moments.as_slice());
+        assert!(
+            moments.windows(2).all(|pair| pair[0] < pair[1]),
+            "{moments:?}"
+        );
+        let ended = footage.ended.since(Moment::START);
+        assert!(
+            (Duration::from_millis(1_200)..Duration::from_secs(5)).contains(&ended),
+            "{ended:?}"
+        );
+        assert!(moments.last().is_some_and(|last| *last <= footage.ended));
+        let frame = footage
+            .journal
+            .frame_at(Moment::START)
+            .context("A first frame")?;
+        assert!(frame.width().max(frame.height()) <= LONGEST_EDGE);
+        let (aspect, surface) = (frame.aspect(), width / height);
+        assert!((aspect - surface).abs() < 0.02, "{aspect} vs {surface}");
+        Ok(())
+    }
+}

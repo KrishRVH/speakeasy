@@ -131,6 +131,13 @@ impl Journal {
         self.bytes = self.segments.iter().map(Segment::bytes).sum();
     }
 
+    /// The frames on screen at each of `moments`, as [`Journal::frame_at`] finds them, rebuilt on
+    /// up to one thread per core.
+    #[must_use]
+    pub fn frames_at(&self, moments: &[Moment]) -> Vec<Option<Image>> {
+        crate::parallel::map(moments, |at| self.frame_at(*at))
+    }
+
     /// The frame on screen at `at`: the latest recorded at or before it, else the first.
     #[must_use]
     pub fn frame_at(&self, at: Moment) -> Option<Image> {

@@ -1,12 +1,13 @@
 //! The finished Show: annotated keyframes, the contact sheet, the summary, and the manifest.
 
-use std::{fmt, num::NonZero, ops::Range, path::Path};
+use std::{fmt, ops::Range, path::Path};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     Error, Image, Keyframe, Mark, Point, Recording, Rect, Selection, Typeface,
     draw::{self, Corner},
+    parallel,
     select::{Reason, Verb},
     sheet,
 };
@@ -210,27 +211,14 @@ impl Bundle {
                     .zip(&self.frames),
             )
             .collect();
-        let threads = std::thread::available_parallelism().map_or(1, NonZero::get);
-        let per_thread = images.len().div_ceil(threads).max(1);
-        let encoded: Vec<Result<File, Error>> = std::thread::scope(|scope| {
-            #[expect(
-                clippy::needless_collect,
-                reason = "Every encoder starts before the first join, or encoding runs serially"
-            )]
-            let workers: Vec<_> = images
-                .chunks(per_thread)
-                .map(|chunk| scope.spawn(move || encode(chunk)))
-                .collect();
-            workers
-                .into_iter()
-                .flat_map(|worker| {
-                    worker
-                        .join()
-                        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-                })
-                .collect()
-        });
-        let mut files = encoded.into_iter().collect::<Result<Vec<_>, _>>()?;
+        let mut files = parallel::map(&images, |(name, image)| {
+            image.encode_png().map(|contents| File {
+                name: name.clone(),
+                contents,
+            })
+        })
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
         files.push(File {
             name: SUMMARY.to_owned(),
             contents: self.summary(directory).into_bytes(),
@@ -241,18 +229,6 @@ impl Bundle {
         });
         Ok(files)
     }
-}
-
-fn encode(images: &[(String, &Image)]) -> Vec<Result<File, Error>> {
-    images
-        .iter()
-        .map(|(name, image)| {
-            image.encode_png().map(|contents| File {
-                name: name.clone(),
-                contents,
-            })
-        })
-        .collect()
 }
 
 /// What a keyframe shows happening beside the words said over it: the click or drag whose result

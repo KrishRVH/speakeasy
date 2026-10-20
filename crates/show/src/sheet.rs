@@ -7,6 +7,7 @@ use tiny_skia::{PixmapPaint, Transform};
 use crate::{
     Error, Image, Keyframe, Point, Rect, Typeface, convert,
     draw::{self, Corner},
+    parallel,
 };
 
 const PADDING: u32 = 6;
@@ -72,10 +73,20 @@ pub(crate) fn render(
         .min(smallest.0 / 120.0)
         .min(smallest.1 / 72.0)
         .max(0.5);
+    let fits: Vec<(&Image, (u32, u32))> = frames
+        .iter()
+        .zip(&cells)
+        .map(|((image, _), cell)| (image, fitted(image, *cell)))
+        .collect();
+    let scaled = parallel::map(&fits, |(image, (width, height))| {
+        image.resized(*width, *height)
+    });
     let mut canvas = sheet.as_mut();
-    for ((keyframe, (image, corner)), cell) in keyframes.iter().zip(frames).zip(&cells) {
-        let (width, height) = fitted(image, *cell);
-        if let Some(scaled) = image.resized(width, height) {
+    for (((keyframe, (_, corner)), cell), scaled) in
+        keyframes.iter().zip(frames).zip(&cells).zip(scaled)
+    {
+        if let Some(scaled) = scaled {
+            let (width, height) = (scaled.width(), scaled.height());
             let left = cell
                 .left
                 .saturating_add(cell.width.saturating_sub(width) / 2);
