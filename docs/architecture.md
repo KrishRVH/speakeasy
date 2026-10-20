@@ -125,19 +125,20 @@ module unless a test file is named.
 - **Dependency patches**: the root Cargo patch selects a narrowly patched GPUI 0.2.2;
   [vendor/gpui](../vendor/gpui/README.speakeasy.md) and
   [vendor/gpui_media](../vendor/gpui_media/README.speakeasy.md) record each patched contract, and
-  [platform/tests/](../crates/platform/tests) checks them.
+  [platform/tests/](../crates/platform/tests) checks the GPUI patches.
 
 ## Cross-module invariants
 
 No single module owns these rules; a change to any party keeps them.
 
-- **Revoke before cleanup.** Escape, the Linux cancel chord, a settings change, Pause, and Quit
-  revoke the recording's insertion permit before any cleanup is awaited, even while a clipboard call
-  is blocked. `commit()` runs immediately before the irreversible effect, and an obsolete permit
-  never authorizes newer work.
-- **One identity-and-stage lookup.** Capture, screen, and worker events carry a typed `SessionId`,
-  applied only after one lookup matches identity and stage, so a late callback cannot stop a newer
-  recording, overwrite its state, or deliver stale text.
+- **Revoke before cleanup.** Escape, the Linux cancel chord, a settings change the session reads,
+  Pause, and Quit revoke the recording's insertion permit before any cleanup is awaited, even while
+  a clipboard call is blocked. `commit()` runs immediately before the irreversible effect, and an
+  obsolete permit never authorizes newer work.
+- **Stale results cannot reach a newer session.** A capture event applies only after one lookup
+  matches its `SessionId` and a capturing stage, and footage only to its own session. Abandoning a
+  session first moves its transcription or delivery out of observation, so a late callback cannot
+  stop a newer recording, overwrite its state, or deliver stale text.
 - **Retire before reopening.** A microphone, screen recorder, worker, insertion thread, or desktop
   service acknowledges native teardown before its replacement opens. Retiring work stays owned until
   then, and abandoning a session never waits for it.
@@ -193,9 +194,8 @@ stateDiagram-v2
 
 ## Local recognition and privacy
 
-There are no accounts, cloud providers, dictation history, or telemetry. The microphone opens only
-when dictation is triggered, and the screen only for a Show. Remote microphone routing belongs to
-the OS and the user's audio bridge; see [remote dictation](remote-dictation.md).
+Remote microphone routing belongs to the OS and the user's audio bridge; see
+[remote dictation](remote-dictation.md).
 
 The speech worker listens on loopback only. On Linux and Windows, readiness and every request first
 check that the worker's own process group holds its listener; macOS does not check yet. Each worker
