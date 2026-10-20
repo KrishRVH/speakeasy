@@ -64,6 +64,9 @@ struct Portal {
     sender_segment: String,
     unanswered: Vec<OwnedObjectPath>,
     sessions: Vec<OwnedObjectPath>,
+    /// Prefixes every request and session token. org.freedesktop.portal.Request asks for tokens
+    /// that are unique and not guessable: the bus name and `sequence` keep them unique, and this
+    /// process ID and connection time keep them hard to guess.
     nonce: String,
     sequence: u64,
 }
@@ -195,8 +198,8 @@ impl Portal {
     }
 }
 
-/// What the portal granted: a shortcut session, a remote desktop for keyboard input, and the
-/// bindings Settings shows.
+/// What binding established: the shortcut session and the remote desktop for keyboard input that
+/// the portal granted, and the shortcut labels Settings shows.
 struct Bound {
     shortcut_session: Option<OwnedObjectPath>,
     remote: Option<Remote>,

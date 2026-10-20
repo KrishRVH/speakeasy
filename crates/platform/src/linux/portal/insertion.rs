@@ -258,8 +258,8 @@ pub(super) struct Preparing<'a> {
 pub(super) enum Prepared {
     /// The portal clipboard offers the text; this session's ownership awaits confirmation.
     SelectionSet,
-    /// The X11 clipboard holds the text under the `owner` window, or `None` when the clipboard
-    /// changed or the permit lapsed first.
+    /// The X11 clipboard holds the text under the `owner` window, or `None` when the X11 clipboard
+    /// changed or the permit lapsed before either clipboard was set.
     Copied { owner: Option<u32> },
     /// Whether this session still owns the clipboard selection it set.
     Ownership { owned: bool },

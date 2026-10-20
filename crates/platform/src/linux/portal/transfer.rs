@@ -18,7 +18,8 @@ use crate::InsertPermit;
 
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// The text a portal clipboard selection serves until a newer selection replaces it.
+/// The text a portal clipboard selection serves until it is replaced or this session loses the
+/// selection.
 pub(super) struct Selection {
     text: Arc<str>,
     permit: InsertPermit,
@@ -63,8 +64,8 @@ pub(super) struct TransferPayload {
 }
 
 /// Answers one `SelectionTransfer`: writes `payload` to the descriptor `write` yields unless its
-/// selection drops first, then reports through `done` whether the editor received it. A missing
-/// payload reports failure. Each step is bounded by [`TRANSFER_TIMEOUT`].
+/// selection drops first, then reports through `done` whether the whole payload reached the pipe.
+/// A missing payload reports failure. Each step is bounded by [`TRANSFER_TIMEOUT`].
 pub(super) async fn transfer<D: Future<Output = anyhow::Result<()>>>(
     write: impl Future<Output = anyhow::Result<OwnedFd>>,
     done: impl FnOnce(bool) -> D,
