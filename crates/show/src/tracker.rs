@@ -112,20 +112,25 @@ impl Tracker {
     }
 
     fn draw(&mut self, ink: InkPoint) {
-        if self.drawing.len() >= MOST_STROKE_POINTS {
-            self.lift();
-        }
         let spaced = self
             .drawing
             .last()
             .is_none_or(|last| self.pixels(last.point, ink.point) >= INK_SPACING_PIXELS);
-        if spaced {
-            self.deliberate |= self
-                .drawing
-                .first()
-                .is_some_and(|first| self.pixels(first.point, ink.point) >= SHORTEST_STROKE_PIXELS);
-            self.drawing.push(ink);
+        if !spaced {
+            return;
         }
+        if self.drawing.len() >= MOST_STROKE_POINTS {
+            // A cut is no pen lift: the next stroke starts where this one ended, as deliberate.
+            let (joint, deliberate) = (self.drawing.last().copied(), self.deliberate);
+            self.lift();
+            self.drawing.extend(joint);
+            self.deliberate = deliberate;
+        }
+        self.deliberate |= self
+            .drawing
+            .first()
+            .is_some_and(|first| self.pixels(first.point, ink.point) >= SHORTEST_STROKE_PIXELS);
+        self.drawing.push(ink);
     }
 
     /// Ends the stroke being drawn, keeping it only if it spans enough to be deliberate.
@@ -221,6 +226,27 @@ mod tests {
         assert!(tracker.drawing().is_empty(), "Shift alone shows no ink");
         tracker.observe(Moment::from_millis(16), Point::new(0.510, 0.5), true, false);
         assert_eq!(tracker.drawing().len(), 3);
+    }
+
+    #[test]
+    fn a_stroke_cut_for_length_keeps_drawing_one_joined_line() {
+        let mut tracker = Tracker::new(SURFACE);
+        // Laps of a circle 200 pixels in radius, sampled every 2 pixels.
+        let draw = |tracker: &mut Tracker, index: u16| {
+            let turn = f32::from(index) / 100.0;
+            let point = Point::new(0.5 + 0.2 * turn.cos(), 0.5 + 0.4 * turn.sin());
+            tracker.observe(Moment::from_millis(index.into()), point, true, false);
+        };
+        let cut = u16::try_from(MOST_STROKE_POINTS).unwrap();
+        for index in 0..=cut {
+            draw(&mut tracker, index);
+        }
+        let ended = tracker.strokes()[0].points().last().copied();
+        assert_eq!(tracker.drawing().first().copied(), ended);
+        draw(&mut tracker, cut + 1);
+        let (strokes, _) = tracker.finish(Moment::from_millis(2_402));
+        assert_eq!(strokes.len(), 2);
+        assert_eq!(strokes[0].points().last(), strokes[1].points().first());
     }
 
     #[test]
