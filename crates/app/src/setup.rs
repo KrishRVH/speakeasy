@@ -14,6 +14,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::anyhow;
 use reqwest::Client;
 use speakeasy_platform::OwnedThread;
 use tokio::{
@@ -195,13 +196,16 @@ impl Installation {
     }
 
     async fn lock(root: &Path, progress: &watch::Sender<Progress>) -> anyhow::Result<File> {
-        fs::create_dir_all(root)?;
+        let cannot_prepare =
+            |error: std::io::Error| anyhow!("Cannot prepare {}: {error}", root.display());
+        fs::create_dir_all(root).map_err(cannot_prepare)?;
         let lock = OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
-            .open(root.join("setup.lock"))?;
+            .open(root.join("setup.lock"))
+            .map_err(cannot_prepare)?;
         loop {
             match lock.try_lock() {
                 Ok(()) => {
@@ -215,7 +219,7 @@ impl Installation {
                     });
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 },
-                Err(error) => return Err(error.into()),
+                Err(fs::TryLockError::Error(error)) => return Err(cannot_prepare(error)),
             }
         }
     }
@@ -514,6 +518,24 @@ mod tests {
             contender.try_lock(),
             Err(fs::TryLockError::WouldBlock)
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn setup_names_the_directory_it_cannot_prepare() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        fs::write(directory.path().join("file"), b"")?;
+        let root = directory.path().join("file").join("speakeasy");
+        let (progress, _) = watch::channel(Progress::default());
+        let failure = Installation::lock(&root, &progress)
+            .await
+            .err()
+            .context("Setup prepared a directory beneath a file")?
+            .to_string();
+        assert!(
+            failure.starts_with(&format!("Cannot prepare {}: ", root.display())),
+            "{failure}"
+        );
         Ok(())
     }
 
