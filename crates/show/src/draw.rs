@@ -43,11 +43,8 @@ pub(crate) fn annotate(
     strokes_of_marks: &[std::ops::Range<usize>],
 ) -> Corner {
     let (width, height) = (image.width() as f32, image.height() as f32);
-    let short = width.min(height);
-    let detail = (short / 800.0)
-        .max(width.max(height) / 1280.0)
-        .clamp(1.0, 2.0);
-    let pen = (short * 0.0065).clamp(4.2, 6.0) * detail;
+    let detail = ink::detail(width, height);
+    let pen = ink::pen(width, height);
     let shown = |index: usize| strokes_of_marks.iter().any(|range| range.contains(&index));
     let mut ink_points: Vec<Point> = Vec::new();
     let mut canvas = image.as_mut();

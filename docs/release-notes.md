@@ -15,7 +15,7 @@ coding agent can read.
 - New installs set up NeMo-Speech.cpp 0.2.0, which recognizes speech as 0.1.0 did. Existing installs
   keep their engine.
 - Shift no longer cancels dictation when pressed during a Windows hold.
-- `--demo` previews a Show in the pill.
+- `--demo` and the Settings preview show a Show, with ink drawn and fading on screen.
 - Dependencies and tools are updated to their latest stable releases.
 
 Dictation, existing settings, models, filler removal, and gestures are otherwise unchanged.

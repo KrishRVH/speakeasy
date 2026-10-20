@@ -54,6 +54,17 @@ pub struct Display {
     pub size: [f32; 2],
 }
 
+impl Display {
+    /// The display under the pointer now.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the platform cannot record its screen or no display is under the pointer.
+    pub fn under_pointer() -> anyhow::Result<Self> {
+        native::display_under_pointer()
+    }
+}
+
 /// Where the pointer was and what it was doing.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PointerSample {
@@ -94,7 +105,7 @@ impl ScreenCapture {
         longest_edge: u32,
         events: Sender<ScreenEvent>,
     ) -> anyhow::Result<Self> {
-        let display = native::display_under_pointer()?;
+        let display = Display::under_pointer()?;
         let (stop, stopping) = async_channel::bounded::<Infallible>(1);
         let thread = OwnedThread::spawn("screen-capture", move || {
             native::capture(display, interval, longest_edge, &events, &stopping);

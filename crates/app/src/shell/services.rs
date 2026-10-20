@@ -84,7 +84,7 @@ pub(crate) struct Services {
     pub(super) config_epoch: ConfigEpoch,
     pub output: watch::Sender<Snapshot>,
     /// Where a Show's live ink reaches the overlay.
-    canvas: watch::Sender<Canvas>,
+    pub(super) canvas: watch::Sender<Canvas>,
     pub(super) pill: WindowHandle<Pill>,
     pub(super) settings: Option<WindowHandle<Settings>>,
     pub mode: LaunchMode,

@@ -6,9 +6,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use gpui::{
-    AnyWindowHandle, App, AppContext, Bounds, PathBuilder, Render, Rgba, Task, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind, WindowOptions, canvas, div,
-    point, prelude::*, px,
+    AnyWindowHandle, App, AppContext, Bounds, FillOptions, FillRule, PathBuilder, PathStyle,
+    Render, Rgba, Task, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind,
+    WindowOptions, canvas, div, point, prelude::*, px,
 };
 use raw_window_handle::RawWindowHandle;
 use speakeasy_platform::Display;
@@ -153,7 +153,7 @@ impl Render for Overlay {
 /// Paints every stroke as the pen outline the bundle draws, at a width that reads on screen.
 fn paint(canvas: &Canvas, bounds: Bounds<gpui::Pixels>, opacity: f32, window: &mut Window) {
     let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
-    let pen = (width.min(height) * 0.0065).clamp(4.2, 6.0);
+    let pen = ink::pen(width, height);
     let color = Rgba { a: opacity, ..INK };
     for stroke in canvas
         .strokes
@@ -165,7 +165,10 @@ fn paint(canvas: &Canvas, bounds: Bounds<gpui::Pixels>, opacity: f32, window: &m
             .map(|point| point.scaled(width, height))
             .collect();
         let outline = ink::outline(&pixels, pen);
-        let mut path = PathBuilder::fill();
+        // Winding, as the bundle fills it: where a stroke crosses itself the ink stays solid.
+        let mut path = PathBuilder::fill().with_style(PathStyle::Fill(
+            FillOptions::default().with_fill_rule(FillRule::NonZero),
+        ));
         let mut corners = outline.iter().map(|corner| {
             point(
                 bounds.origin.x + px(corner.x),

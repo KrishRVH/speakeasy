@@ -26,6 +26,21 @@ struct Node {
     run: f32,
 }
 
+/// The pen width for ink on a surface `width × height` pixels, alike on the overlay and in a
+/// bundle's frames.
+#[must_use]
+pub fn pen(width: f32, height: f32) -> f32 {
+    (width.min(height) * 0.0065).clamp(4.2, 6.0) * detail(width, height)
+}
+
+/// How much a surface `width × height` pixels scales marks up from a laptop screen's, so they keep
+/// their weight on large displays.
+pub(crate) fn detail(width: f32, height: f32) -> f32 {
+    (width.min(height) / 800.0)
+        .max(width.max(height) / 1280.0)
+        .clamp(1.0, 2.0)
+}
+
 /// The closed outline, in the coordinates of `points`, of a stroke drawn through them with a pen
 /// `size` wide, narrowing where it moved fast and rounded at its ends and sharp turns.
 ///

@@ -238,8 +238,9 @@ impl Settings {
     }
 
     pub(super) fn play(&mut self, cx: &Context<Self>) {
-        let output = cx.global::<Services>().output.clone();
-        self.preview = Some(cx.spawn(async move |_, _| demo::play(output).await));
+        let services = cx.global::<Services>();
+        let (output, canvas) = (services.output.clone(), services.canvas.clone());
+        self.preview = Some(cx.spawn(async move |_, _| demo::play(output, canvas).await));
     }
 
     fn toggle_setup(&mut self, cx: &Context<Self>) {
