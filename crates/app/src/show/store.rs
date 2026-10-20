@@ -285,8 +285,8 @@ mod tests {
         let parent = root.path();
         let now = SystemTime::now();
         let days_ago = |days: u64| utc_stamp(now - Duration::from_hours(days * 24));
-        // Two Shows named by the writer for the same second; the second carries a `-2` suffix and
-        // expires.
+        // Three Shows the writer named in one second. The bare `<stamp>` and `<stamp>-2` expire, so
+        // the sweep must read both name forms; the pinned `<stamp>-3` stays.
         let written = || -> anyhow::Result<String> {
             let show = fresh_directory(parent, now - Duration::from_hours(8 * 24))?;
             fs::create_dir(&show)?;
@@ -296,8 +296,9 @@ mod tests {
                 .to_string_lossy()
                 .into_owned())
         };
-        let pinned = written()?;
         written()?;
+        written()?;
+        let pinned = written()?;
         let staging = format!("{STAGING_PREFIX}1");
         for name in [days_ago(6), "notes".into(), staging.clone()] {
             fs::create_dir(parent.join(name))?;
