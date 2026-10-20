@@ -6,25 +6,23 @@ compositor or editor compatibility.
 
 ## Shared behavior and desktop adapters
 
-The three platforms share pure gestures and motion in `core`, plus audio, speech, session ownership,
-Settings, the pill, and tray policy in `app`. Native mechanics belong to `platform`;
-[architecture](architecture.md) describes the module boundaries.
+Linux shares everything but its native adapters with Windows and macOS: audio, speech, session
+ownership, Settings, the pill, and tray policy. [Architecture](architecture.md) maps the modules and
+the invariants they share.
 
 Linux selects its input adapter from the host session. An available `DISPLAY` can belong to Xwayland
 and does not establish desktop-wide X11 input access. Rendering and input use separate connections
 and can use different protocols.
 
-| Desktop path             | Shortcut handling                                            | Insertion                                                         |
-| ------------------------ | ------------------------------------------------------------ | ----------------------------------------------------------------- |
-| X11                      | Passive chord grabs, XI2 release observation                 | Clipboard ownership checks and XTest paste                        |
-| Wayland                  | GlobalShortcuts portal with accepted bindings                | Keyboard-only RemoteDesktop, optional Clipboard portal, and libei |
-| Desktop command bindings | Fixed `speakeasy --toggle` and `speakeasy --cancel` commands | Explicit automatic or manual-paste preference                     |
+| Desktop path             | Shortcut handling                                                     | Insertion                                                         |
+| ------------------------ | --------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| X11                      | Passive chord grabs, XI2 release observation                          | Clipboard ownership checks and XTest paste                        |
+| Wayland                  | GlobalShortcuts portal with accepted bindings                         | Keyboard-only RemoteDesktop, optional Clipboard portal, and libei |
+| Desktop command bindings | `speakeasy --toggle` and `speakeasy --cancel`, as Settings shows them | Explicit automatic or manual-paste preference                     |
 
-The default dictate chord is **Ctrl+Super+Space**. Hold/release finishes a recording; double-tap
-enables hands-free, and another press finishes it. **Ctrl+Super+Escape** is the reserved cancel
-chord. Bare Escape is not globally captured on Linux. Desktop command bindings start/finish
-hands-free; they do not provide hold/release. The five-minute limit and gesture timings remain
-shared.
+Gestures, the default **Ctrl+Super+Space** and reserved **Ctrl+Super+Escape** chords, and command
+bindings follow the [interaction contracts](interaction-design.md#interaction-contracts); command
+bindings give hands-free only, never hold/release.
 
 Settings shows the actual accepted dictate and cancel bindings. X11 releases its active keyboard
 grab immediately after a trigger, returning unrelated keys to the focused editor. Portal activations
@@ -47,11 +45,13 @@ credentials are single-use, private 0600 files under the XDG state directory. Th
 settings and diagnostics. Frontend restart, session closure, device pause, and disconnect invalidate
 usable state.
 
-Every insertion owns a generation-bound commit permit. Its task belongs to the session until
-completion or retirement. Cancellation or a later recording cannot authorize an obsolete paste or
-accept its result. The session owner continues receiving input while native preparation waits.
-Windows/macOS serve native insertion calls one at a time on an owned insertion thread; their gesture
-hooks retain passive Escape.
+Insertion follows the shared commit permit and cancellation rules in
+[architecture](architecture.md#insertion-and-privacy). Immediately before submitting input, both
+paths follow X11/Xwayland focus ancestors to the first window that publishes `_NET_WM_PID`; when
+Speakeasy's own windows or a failed lookup hold focus, nothing is submitted and pasted text is left
+for manual paste. Under Wayland, X focus None means a native Wayland editor took focus, while
+PointerRoot stays refused. The portal path queries focus on the owned X clipboard worker, which
+keeps cancellation responsive and opens the clipboard only for a copy.
 
 Automatic paste requires released modifiers. X11 queries physical key state; Wayland requires actual
 EI modifier feedback and a paste key from the advertised layout. Shortcut deactivation alone is
@@ -65,10 +65,11 @@ receiving input and cancellation; clipboard calls through Xwayland run on a seri
 worker. A committed clipboard selection remains available until ownership changes or the service
 retires.
 
-**Copy for manual paste** is an explicit option. **Keep clipboard** requires advertised EI text
-support on Wayland; X11 reports direct insertion as unavailable. Terminal users can select
-**Ctrl+Shift+V**. There is no application-name guessing, transcript history, automatic provider
-switch, or repeated ambiguous paste.
+Settings' **Insert** control offers **Paste (Ctrl+V)**, **Paste (Ctrl+Shift+V)** for terminals,
+**Type (Keep clipboard)**, and **Copy for manual paste**. In the settings file, `manual_paste` takes
+precedence over `preserve_clipboard`, which takes precedence over `terminal_paste`. Typing requires
+advertised EI text support on Wayland; X11 reports it as unavailable. There is no application-name
+guessing, transcript history, automatic provider switch, or repeated ambiguous paste.
 
 ## Presentation and lifecycle
 
@@ -153,13 +154,10 @@ The owning contracts are the
 and [XKB state interpretation](https://xkbcommon.org/doc/current/group__state.html).
 
 The dynamic adapter follows the
-[libei C header](https://libinput.pages.freedesktop.org/libei/api/libei_8h_source.html).
-`ei_setup_backend_fd` transfers FD ownership; the polling FD is borrowed. Drain and unref events,
-retain device/seat references explicitly, and keep the loaded library alive until all objects are
-released. Seat capability binding is variadic with a null terminator. Optional text symbols do not
-prove compositor or editor support:
-[EI text](https://libinput.pages.freedesktop.org/libei/interfaces/ei_text/index.html) allows at most
-254 UTF-8 bytes per request and one request per frame. Follow
+[libei C header](https://libinput.pages.freedesktop.org/libei/api/libei_8h_source.html), and its
+code states the ownership and lifetime rules it relies on. Optional text symbols do not prove
+compositor or editor support. See
+[EI text](https://libinput.pages.freedesktop.org/libei/interfaces/ei_text/index.html),
 [seat binding](https://libinput.pages.freedesktop.org/libei/api/group__libei-seat.html),
 [device keymaps](https://libinput.pages.freedesktop.org/libei/api/group__libei-device.html), and
 [sender lifetime](https://libinput.pages.freedesktop.org/libei/api/group__libei-sender.html).
@@ -189,17 +187,16 @@ does not establish inference compatibility. Preserve the
 
 ## Native acceptance still required
 
-| Environment                      | Required checks                                                                         | Status  |
-| -------------------------------- | --------------------------------------------------------------------------------------- | ------- |
-| X11 desktop                      | Hold/double-tap, keymaps, clipboard-manager races, focus and click-through              | Pending |
-| GNOME Wayland                    | Accepted bindings, EI modifier/text support, portal denial/revocation, no-tray behavior | Pending |
-| KDE Wayland                      | Accepted bindings, EI state, permission recovery, tray and fullscreen behavior          | Pending |
-| Desktop without suitable portals | Command bindings, manual paste, launcher reopening                                      | Pending |
-| Baseline distro and CPU          | Public-fixture inference, host driver requirements, engine instruction set              | Pending |
+| Environment                      | Required checks                                                                                                                | Status  |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| X11 desktop                      | Hold/double-tap, keymaps, clipboard-manager races, focus and click-through                                                     | Pending |
+| GNOME Wayland                    | Accepted bindings, EI modifier/text support, portal denial/revocation, no-tray behavior, focus loss to a native Wayland editor | Pending |
+| KDE Wayland                      | Accepted bindings, EI state, permission recovery, tray and fullscreen behavior, focus loss to a native Wayland editor          | Pending |
+| Desktop without suitable portals | Command bindings, manual paste, launcher reopening                                                                             | Pending |
+| Baseline distro and CPU          | Public-fixture inference, host driver requirements, engine instruction set                                                     | Pending |
 
 Also verify mixed-DPI placement, display removal, cancellation cleanup, native Wayland and X11
 editors, terminals, and memory/resource return after Pause and Quit. Measure startup, idle, capture,
-inference, and displayed frame pacing under competing load. Windows/macOS insertion also requires
-native acceptance.
+inference, and displayed frame pacing under competing load.
 
 WSL checks do not establish desktop routing or native audio quality.
