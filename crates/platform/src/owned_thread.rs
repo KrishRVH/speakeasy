@@ -1,4 +1,5 @@
-//! Named OS threads whose exit an async owner can await and whose drop joins them.
+//! Named OS threads whose exit an async owner can await and whose drop joins them, asking a
+//! stoppable one to stop first.
 
 use std::{convert::Infallible, io, thread};
 
@@ -34,6 +35,20 @@ impl OwnedThread {
         })
     }
 
+    /// Runs `body` on a new thread called `name`, handing it a lane that never carries a value and
+    /// closes once the returned thread is asked to stop or dropped.
+    ///
+    /// # Errors
+    /// Returns the operating system's refusal to create the thread.
+    pub fn spawn_stoppable(
+        name: &str,
+        body: impl FnOnce(async_channel::Receiver<Infallible>) + Send + 'static,
+    ) -> io::Result<StoppableThread> {
+        let (stop, stopping) = async_channel::bounded(1);
+        let thread = Self::spawn(name, move || body(stopping))?;
+        Ok(StoppableThread { stop, thread })
+    }
+
     /// Resolves once the body has returned or unwound.
     pub fn exited(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
         let exit = self.exit.clone();
@@ -56,6 +71,40 @@ impl Drop for OwnedThread {
             )]
             let _ = handle.join();
         }
+    }
+}
+
+/// An [`OwnedThread`] whose body watches a stop lane.
+///
+/// Dropping it closes the lane before joining, so the body is asked to stop before the drop waits
+/// for it, however the containing value orders its fields.
+pub struct StoppableThread {
+    /// Never sends; closing it asks the body to stop.
+    stop: async_channel::Sender<Infallible>,
+    thread: OwnedThread,
+}
+
+impl StoppableThread {
+    /// Asks the body to stop, without joining it.
+    pub fn request_stop(&self) {
+        self.stop.close();
+    }
+
+    /// Resolves once the body has returned or unwound.
+    pub fn stopped(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
+        self.thread.exited()
+    }
+
+    /// Whether the body has returned or unwound.
+    #[must_use]
+    pub fn is_finished(&self) -> bool {
+        self.thread.is_finished()
+    }
+}
+
+impl Drop for StoppableThread {
+    fn drop(&mut self) {
+        self.request_stop();
     }
 }
 
@@ -98,6 +147,27 @@ mod tests {
         })?;
         drop(thread);
         assert_eq!(observed.try_recv(), Ok(()));
+        Ok(())
+    }
+
+    #[test]
+    fn dropping_a_stoppable_thread_stops_its_body_before_joining() -> anyhow::Result<()> {
+        // The lane never carries a value, so receiving returns only once it closes.
+        let stoppable = OwnedThread::spawn_stoppable("stops", |stop| {
+            let Err(_closed) = stop.recv_blocking();
+        })?;
+        let (dropped, observed) = mpsc::channel();
+        // A drop that joined without closing the lane would block forever, so it runs off the test
+        // thread.
+        thread::spawn(move || {
+            drop(stoppable);
+            dropped.send(()).unwrap();
+        });
+        assert_eq!(
+            observed.recv_timeout(PATIENCE),
+            Ok(()),
+            "Dropping the thread did not return"
+        );
         Ok(())
     }
 }

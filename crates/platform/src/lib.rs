@@ -39,7 +39,7 @@ pub use self::{
     desktop::{InputMonitor, NativeWindow, copy_text, prepare, reduced_motion, show_startup_error},
     input::{Input, InputSender, InsertPermit},
     insertion::{Delivery, Inserter},
-    owned_thread::OwnedThread,
+    owned_thread::{OwnedThread, StoppableThread},
     process::ProcessGroup,
     screen::{Display, Frame, PointerMonitor, PointerSample, ScreenCapture, ScreenEvent},
 };
