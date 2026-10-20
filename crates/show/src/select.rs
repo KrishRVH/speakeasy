@@ -211,11 +211,11 @@ fn select_within(recording: &Recording, samples: &[Sample], budget: usize) -> Op
         .map(|(position, (candidate, said))| Keyframe {
             index: position.saturating_add(1),
             at: frames.at(candidate.frame),
-            reason: candidate.reason,
-            event: candidate.event,
+            reason: candidate.basis.reason(),
+            event: event(&candidate.basis, &marks),
             said,
-            marks: candidate.marks,
-            action: candidate.action,
+            marks: candidate.basis.marks(),
+            action: candidate.basis.action(),
         })
         .collect();
     (!keyframes.is_empty()).then_some(Selection { marks, keyframes })
@@ -318,15 +318,7 @@ impl<'a> Frames<'a> {
             frame: self.nearest(span.end()),
             span,
             score: 100.0,
-            reason: Reason::Mark,
-            snapped: false,
-            event: members
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("; "),
-            marks: group,
-            action: None,
+            basis: Basis::Mark(group),
         })
     }
 
@@ -341,11 +333,7 @@ impl<'a> Frames<'a> {
             frame: after,
             span,
             score: 30.0f32.mul_add(change, 60.0),
-            reason: Reason::Click,
-            snapped: false,
-            event: Described(action).to_string(),
-            marks: 0..0,
-            action: Some(action),
+            basis: Basis::Click(action),
         }
     }
 
@@ -359,27 +347,21 @@ impl<'a> Frames<'a> {
                 start.saturating_add(CUE_LEAD) >= said && start <= said.saturating_add(CUE_REACH)
             })
             .min_by_key(|transition| transition.span.start().distance(said));
-        let (frame, score, event) = match snapped {
+        let (frame, score) = match snapped {
             Some(transition) => (
                 transition.frame,
                 transition.score().max(cue.score) + if cue.deliberate { 6.0 } else { 1.0 },
-                format!("said “{}” as the screen changed", cue.word),
             ),
-            None => (
-                self.nearest(said.saturating_add(CUE_LOOK)),
-                cue.score,
-                format!("said “{}”", cue.word),
-            ),
+            None => (self.nearest(said.saturating_add(CUE_LOOK)), cue.score),
         };
         Some(Candidate {
             frame,
             span: Span::at(said),
             score,
-            reason: Reason::Cue,
-            snapped: snapped.is_some(),
-            event,
-            marks: 0..0,
-            action: None,
+            basis: Basis::Cue {
+                word: cue.word,
+                snapped: snapped.is_some(),
+            },
         })
     }
 
@@ -389,11 +371,7 @@ impl<'a> Frames<'a> {
             frame,
             span: Span::at(self.at(frame)),
             score: 0.0,
-            reason: Reason::Middle,
-            snapped: false,
-            event: "the screen midway through".to_owned(),
-            marks: 0..0,
-            action: None,
+            basis: Basis::Middle,
         }
     }
 }
@@ -416,11 +394,7 @@ impl Transition {
             frame: self.frame,
             span: self.span,
             score: self.score(),
-            reason: Reason::SceneChange,
-            snapped: false,
-            event: "scene changed".to_owned(),
-            marks: 0..0,
-            action: None,
+            basis: Basis::SceneChange,
         }
     }
 }
@@ -466,12 +440,72 @@ struct Candidate {
     frame: usize,
     span: Span,
     score: f32,
-    reason: Reason,
-    /// A spoken cue that found the transition it pointed at.
-    snapped: bool,
-    event: String,
-    marks: Range<usize>,
-    action: Option<Action>,
+    basis: Basis,
+}
+
+/// What a candidate frame shows, which decides how it ranks and what its keyframe says.
+#[derive(Clone, Debug)]
+pub(crate) enum Basis {
+    /// The selection's marks in this range, drawn on one screen.
+    Mark(Range<usize>),
+    /// The result of a click or drag.
+    Click(Action),
+    /// The view the screen settled on after changing.
+    SceneChange,
+    /// A spoken cue, and whether it found the transition it pointed at.
+    Cue { word: &'static str, snapped: bool },
+    /// The screen midway through, when nothing else stood out.
+    Middle,
+}
+
+impl Basis {
+    const fn reason(&self) -> Reason {
+        match self {
+            Self::Mark(_) => Reason::Mark,
+            Self::Click(_) => Reason::Click,
+            Self::SceneChange => Reason::SceneChange,
+            Self::Cue { .. } => Reason::Cue,
+            Self::Middle => Reason::Middle,
+        }
+    }
+
+    fn marks(&self) -> Range<usize> {
+        match self {
+            Self::Mark(group) => group.clone(),
+            Self::Click(_) | Self::SceneChange | Self::Cue { .. } | Self::Middle => 0..0,
+        }
+    }
+
+    const fn action(&self) -> Option<Action> {
+        match *self {
+            Self::Click(action) => Some(action),
+            Self::Mark(_) | Self::SceneChange | Self::Cue { .. } | Self::Middle => None,
+        }
+    }
+}
+
+/// What a keyframe chosen for `basis` shows, for a reader; `marks` are the selection's.
+fn event(basis: &Basis, marks: &[Mark]) -> String {
+    match basis {
+        Basis::Mark(group) => marks
+            .get(group.clone())
+            .unwrap_or_default()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; "),
+        Basis::Click(action) => Described(*action).to_string(),
+        Basis::SceneChange => "scene changed".to_owned(),
+        Basis::Cue {
+            word,
+            snapped: true,
+        } => format!("said “{word}” as the screen changed"),
+        Basis::Cue {
+            word,
+            snapped: false,
+        } => format!("said “{word}”"),
+        Basis::Middle => "the screen midway through".to_owned(),
+    }
 }
 
 /// Orders candidates: marks first, cues that found no transition last, then by score and time.
@@ -495,8 +529,8 @@ impl Rank {
 impl Candidate {
     fn rank(&self, frames: &Frames<'_>) -> Rank {
         Rank {
-            ordinary: self.marks.is_empty(),
-            unsnapped_cue: self.reason == Reason::Cue && !self.snapped,
+            ordinary: !matches!(self.basis, Basis::Mark(_)),
+            unsnapped_cue: matches!(self.basis, Basis::Cue { snapped: false, .. }),
             score: self.score,
             at: frames.at(self.frame),
         }
@@ -519,18 +553,19 @@ struct Chooser<'a> {
 impl Chooser<'_> {
     /// Whether `candidate` adds something the chosen keyframes do not already show.
     fn admits(&self, candidate: &Candidate) -> bool {
-        if !candidate.marks.is_empty() {
+        if matches!(candidate.basis, Basis::Mark(_)) {
             return true;
         }
         let at = self.frames.at(candidate.frame);
         let crowded = self.chosen.iter().any(|other| {
             self.frames.at(other.frame).distance(at) < FRAME_GAP
-                || (other.marks.len() > 1 && other.span.contains(at))
+                || (matches!(&other.basis, Basis::Mark(group) if group.len() > 1)
+                    && other.span.contains(at))
         });
         if crowded {
             return false;
         }
-        !matches!(candidate.reason, Reason::Cue | Reason::SceneChange)
+        !matches!(candidate.basis, Basis::Cue { .. } | Basis::SceneChange)
             || self
                 .chosen
                 .iter()
@@ -550,7 +585,10 @@ impl Chooser<'_> {
 
     fn choose_marks(&mut self) {
         for slot in &mut self.pending {
-            if self.chosen.len() >= self.budget || slot.as_ref().is_none_or(|c| c.marks.is_empty())
+            if self.chosen.len() >= self.budget
+                || slot
+                    .as_ref()
+                    .is_none_or(|c| !matches!(c.basis, Basis::Mark(_)))
             {
                 break;
             }
@@ -587,13 +625,13 @@ impl Chooser<'_> {
         let shown: Vec<usize> = self
             .chosen
             .iter()
-            .filter(|candidate| candidate.reason != Reason::Cue)
+            .filter(|candidate| !matches!(candidate.basis, Basis::Cue { .. }))
             .map(|candidate| candidate.frame)
             .collect();
         if self.chosen.len() > 1 && !shown.is_empty() {
             let frames = self.frames;
             self.chosen.retain(|candidate| {
-                candidate.reason != Reason::Cue
+                !matches!(candidate.basis, Basis::Cue { .. })
                     || shown.iter().all(|&other| {
                         frames
                             .signature(other)
