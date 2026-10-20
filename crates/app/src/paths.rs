@@ -42,12 +42,10 @@ fn user_folder(
         (absolute(name), name)
     };
     #[cfg(target_os = "macos")]
-    let (base, required) = match folder {
-        UserFolder::Settings | UserFolder::Data => (
-            absolute("HOME").map(|home| home.join("Library/Application Support")),
-            "HOME",
-        ),
-    };
+    let (base, required) = (
+        absolute("HOME").map(|home| home.join("Library/Application Support")),
+        "HOME",
+    );
     #[cfg(target_os = "linux")]
     let (base, required) = {
         let (xdg, fallback) = match folder {
