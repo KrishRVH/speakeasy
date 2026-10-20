@@ -25,7 +25,7 @@ pub(crate) use self::pcm::{Sealed, silent_wav, wav_sample_rate};
 use self::{
     control::{Control, Mode},
     pcm::{Pcm16, samples_in},
-    speech::Speech,
+    speech::Audibility,
     stream::{CallbackState, build_stream, capture_failure, microphone_error, rate_and_channels},
 };
 use crate::{
@@ -63,7 +63,7 @@ impl Capture {
     fn spawn<D: 'static>(
         id: SessionId,
         events: Sender<CaptureEvent>,
-        work: impl FnOnce(&Sender<CaptureEvent>, &Arc<Control>) -> anyhow::Result<Recorded<D>>
+        work: impl FnOnce(&Sender<CaptureEvent>, &Arc<Control>) -> anyhow::Result<Captured<D>>
         + Send
         + 'static,
     ) -> anyhow::Result<Self> {
@@ -78,7 +78,7 @@ impl Capture {
                         Err(anyhow!("Microphone stopped unexpectedly. Try recording again."))
                     });
                 let (outcome, device) = match result {
-                    Ok(Recorded { outcome, device }) => (outcome, Some(device)),
+                    Ok(Captured { outcome, device }) => (outcome, Some(device)),
                     Err(error) => (Err(error), None),
                 };
                 #[expect(
@@ -164,7 +164,7 @@ impl<E: Into<anyhow::Error>> From<E> for Startup {
 
 /// The sealed outcome and resources retained until it has been reported. The generic device is
 /// an internal seam for testing blocked teardown without opening a microphone.
-struct Recorded<D> {
+struct Captured<D> {
     outcome: anyhow::Result<Option<Sealed>>,
     device: D,
 }
@@ -179,7 +179,7 @@ struct LiveStream {
 /// A playing stream and the audio it has delivered so far. Unsealed PCM is erased on drop.
 struct Recorder {
     pcm: Pcm16,
-    speech: Speech,
+    speech: Audibility,
     device: LiveStream,
     ring: Consumer<f32>,
     errors: Receiver<cpal::Error>,
@@ -229,7 +229,7 @@ impl Recorder {
         checkpoint()?;
         // PCM stays at the device's native rate; the engine resamples.
         let pcm = Pcm16::with_reservation(samples_in(INITIAL_RESERVATION, rate));
-        let speech = Speech::new(rate).context("Unsupported microphone format")?;
+        let speech = Audibility::new(rate).context("Unsupported microphone format")?;
         checkpoint()?;
         stream.play().map_err(microphone_error)?;
         Ok(Self {
@@ -253,7 +253,7 @@ impl Recorder {
         id: SessionId,
         events: &Sender<CaptureEvent>,
         control: &Control,
-    ) -> Recorded<LiveStream> {
+    ) -> Captured<LiveStream> {
         let drained = self.drain(id, events, control);
         control.finish();
         control.quiesce();
@@ -273,7 +273,7 @@ impl Recorder {
             capture_failure(control, &errors)?;
             pcm.seal(speech, rate)
         });
-        Recorded { outcome, device }
+        Captured { outcome, device }
     }
 
     fn drain(
@@ -366,16 +366,16 @@ fn record(
     microphone: Option<&str>,
     events: &Sender<CaptureEvent>,
     control: &Arc<Control>,
-) -> anyhow::Result<Recorded<Option<LiveStream>>> {
+) -> anyhow::Result<Captured<Option<LiveStream>>> {
     match Recorder::open(microphone, events, control) {
         Ok(recorder) => {
-            let Recorded { outcome, device } = recorder.record(id, events, control);
-            Ok(Recorded {
+            let Captured { outcome, device } = recorder.record(id, events, control);
+            Ok(Captured {
                 outcome,
                 device: Some(device),
             })
         },
-        Err(Startup::Stopped) => Ok(Recorded {
+        Err(Startup::Stopped) => Ok(Captured {
             outcome: Ok(None),
             device: None,
         }),
@@ -530,7 +530,7 @@ mod tests {
         let (entered, teardown) = async_channel::bounded(1);
         let (release, waiting) = async_channel::bounded(1);
         let capture = Capture::spawn(SessionId::FIRST, events, move |_, _| {
-            Ok(Recorded {
+            Ok(Captured {
                 outcome: Ok(Some(Sealed {
                     wav: vec![1, 2],
                     trimmed: Duration::ZERO,
@@ -565,7 +565,7 @@ mod tests {
         let capture = Capture::spawn(SessionId::FIRST, events, move |_, control| {
             started.send_blocking(control.clone())?;
             waiting.recv_blocking()?;
-            Ok(Recorded {
+            Ok(Captured {
                 outcome: Ok(None),
                 device: (),
             })
@@ -633,7 +633,7 @@ mod tests {
             while control.mode() == Mode::Recording {
                 thread::park_timeout(Duration::from_secs(5));
             }
-            Ok(Recorded {
+            Ok(Captured {
                 outcome: Ok(None),
                 device: (),
             })
@@ -678,7 +678,7 @@ mod tests {
         let (events, audio) = async_channel::bounded(1);
         events.try_send(CaptureEvent::Ready(SessionId::FIRST))?;
         let capture = Capture::spawn(SessionId::FIRST, events, |_, _| {
-            Ok(Recorded {
+            Ok(Captured {
                 outcome: Ok(None),
                 device: (),
             })
@@ -701,7 +701,7 @@ mod tests {
         let capture = Capture::spawn(
             SessionId::FIRST,
             events,
-            |_, _| -> anyhow::Result<Recorded<()>> {
+            |_, _| -> anyhow::Result<Captured<()>> {
                 panic::resume_unwind(Box::new(()));
             },
         )?;

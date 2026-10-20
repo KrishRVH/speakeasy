@@ -14,7 +14,7 @@ const PADDING: Duration = Duration::from_millis(500);
 const AUDIBLE_RMS: f64 = 0.003;
 
 /// Audibility of the windows classified so far. Offsets count bytes of PCM16 audio.
-pub(super) struct Speech {
+pub(super) struct Audibility {
     window: usize,
     quiet_edge: usize,
     padding: usize,
@@ -27,7 +27,7 @@ pub(super) struct Speech {
     audible_samples: usize,
 }
 
-impl Speech {
+impl Audibility {
     /// A classifier for `rate` Hz, or `None` outside 1 Hz–192 kHz.
     pub(super) fn new(rate: u32) -> Option<Self> {
         (1..=MAX_SAMPLE_RATE).contains(&rate).then(|| Self {
@@ -136,9 +136,9 @@ mod tests {
             }));
             shaped.push((bytes_in(samples_in(Duration::from_millis(trailing_ms), rate)), 0));
             let recording = audio(&shaped);
-            let mut batch = Speech::new(rate).unwrap();
+            let mut batch = Audibility::new(rate).unwrap();
             batch.complete(&recording);
-            let mut incremental = Speech::new(rate).unwrap();
+            let mut incremental = Audibility::new(rate).unwrap();
             for length in (bytes_in(packet_samples)..recording.len()).step_by(bytes_in(packet_samples)) {
                 incremental.extend(&recording[..length]);
             }
@@ -159,7 +159,7 @@ mod tests {
         ]);
         // Includes splits inside and on either side of the classifier's 20 ms windows.
         for packet in [2, 14, 38, 638, 640, 642, 882, recording.len()] {
-            let mut speech = Speech::new(RATE).unwrap();
+            let mut speech = Audibility::new(RATE).unwrap();
             for length in (packet..recording.len()).step_by(packet) {
                 speech.extend(&recording[..length]);
             }
@@ -180,7 +180,7 @@ mod tests {
             (SECOND, SECOND, SECOND / 2, SECOND * 5 / 2),
         ] {
             let recording = audio(&[(leading, 0), (SECOND, 3000), (trailing, 0)]);
-            let mut speech = Speech::new(RATE).unwrap();
+            let mut speech = Audibility::new(RATE).unwrap();
             speech.complete(&recording);
             assert_eq!(speech.retained(recording.len()), Some(start..end));
         }
@@ -188,13 +188,13 @@ mod tests {
 
     #[test]
     fn final_partial_window_counts_towards_the_speech_gate() {
-        let mut speech = Speech::new(RATE).unwrap();
+        let mut speech = Audibility::new(RATE).unwrap();
         let too_short = audio(&[(SECOND * 99 / 1000, 3000)]);
         speech.complete(&too_short);
         assert_eq!(speech.retained(too_short.len()), None);
 
         let recording = audio(&[(SECOND * 101 / 1000, 3000)]);
-        let mut speech = Speech::new(RATE).unwrap();
+        let mut speech = Audibility::new(RATE).unwrap();
         speech.extend(&recording);
         assert_eq!(speech.scanned, SECOND / 10);
         speech.complete(&recording);
@@ -210,7 +210,7 @@ mod tests {
             audio(&[(SECOND, 0)]),
             audio(&[(SECOND / 20, 3000), (SECOND * 2, 0)]),
         ] {
-            let mut speech = Speech::new(RATE).unwrap();
+            let mut speech = Audibility::new(RATE).unwrap();
             speech.extend(&recording);
             speech.complete(&recording);
             assert_eq!(speech.retained(recording.len()), None);

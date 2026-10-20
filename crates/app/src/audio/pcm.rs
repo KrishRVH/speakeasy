@@ -5,7 +5,7 @@ use std::{mem, ops::Range, time::Duration};
 
 use anyhow::bail;
 
-use super::speech::Speech;
+use super::speech::Audibility;
 
 const WAV_HEADER_BYTES: usize = 44;
 const SAMPLE_RATE_OFFSET: usize = 24;
@@ -63,7 +63,11 @@ impl Pcm16 {
 
     /// Seals a completed recording with its accumulated speech windows. Short recordings and
     /// insufficient speech produce no WAV; retained audio keeps padding and checked encoding.
-    pub(super) fn seal(mut self, mut speech: Speech, rate: u32) -> anyhow::Result<Option<Sealed>> {
+    pub(super) fn seal(
+        mut self,
+        mut speech: Audibility,
+        rate: u32,
+    ) -> anyhow::Result<Option<Sealed>> {
         if self.samples() < samples_in(MINIMUM_RECORDING, rate) {
             return Ok(None);
         }
@@ -268,7 +272,10 @@ mod tests {
         let expected = pcm.audio()[rate * 3..rate * 15].to_vec();
         let click = pcm_from(&[(rate / 20, 3000), (rate * 2 - rate / 20, 0)]);
         let rate = u32::try_from(rate).unwrap();
-        let sealed = pcm.seal(Speech::new(rate).unwrap(), rate).unwrap().unwrap();
+        let sealed = pcm
+            .seal(Audibility::new(rate).unwrap(), rate)
+            .unwrap()
+            .unwrap();
         assert_eq!(&sealed.wav[WAV_HEADER_BYTES..], expected);
         assert_eq!(wav_sample_rate(&sealed.wav), Some(rate));
         // Two quiet seconds lead the speech; half a second of padding is kept before it.
@@ -276,7 +283,7 @@ mod tests {
 
         assert!(
             click
-                .seal(Speech::new(rate).unwrap(), rate)
+                .seal(Audibility::new(rate).unwrap(), rate)
                 .unwrap()
                 .is_none()
         );
@@ -288,7 +295,7 @@ mod tests {
             for millis in [199, 200] {
                 let samples = samples_in(Duration::from_millis(millis), rate);
                 let pcm = pcm_from(&[(samples, 3000)]);
-                let mut speech = Speech::new(rate).unwrap();
+                let mut speech = Audibility::new(rate).unwrap();
                 speech.extend(pcm.audio());
                 let sealed = pcm.seal(speech, rate).unwrap();
                 assert_eq!(sealed.is_some(), millis == 200);
@@ -312,7 +319,10 @@ mod tests {
         }
         let expected = pcm.audio()[rate * 79..rate * 101].to_vec();
         let rate = u32::try_from(rate).unwrap();
-        let sealed = pcm.seal(Speech::new(rate).unwrap(), rate).unwrap().unwrap();
+        let sealed = pcm
+            .seal(Audibility::new(rate).unwrap(), rate)
+            .unwrap()
+            .unwrap();
         assert_eq!(&sealed.wav[WAV_HEADER_BYTES..], expected);
         assert_eq!(sealed.wav.capacity(), sealed.wav.len());
         assert_eq!(sealed.trimmed, Duration::from_millis(39_500));
@@ -349,7 +359,7 @@ mod tests {
             let pcm = Pcm16 {
                 bytes: fixture.bytes.clone(),
             };
-            let mut speech = Speech::new(48_000).unwrap();
+            let mut speech = Audibility::new(48_000).unwrap();
             // Classification runs on the consumer during recording, outside the stop span.
             for length in (480 * SAMPLE_BYTES..pcm.audio().len()).step_by(480 * SAMPLE_BYTES) {
                 speech.extend(black_box(&pcm.audio()[..length]));
