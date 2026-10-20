@@ -17,6 +17,13 @@ coding agent can read.
 - New installs set up NeMo-Speech.cpp 0.2.0, which recognizes speech as 0.1.0 did. Existing installs
   keep their engine.
 - Text left on the clipboard for you to paste is a notice that says how, no longer an error.
+- Settings files from other releases load. Saving writes only what you changed, so hand edits stay,
+  and a theme or reduced-motion change no longer stops a recording.
+- On Linux, Settings' **Insert** control chooses how text arrives, and Settings shows the exact
+  desktop command to bind.
+- On Windows and Mac, the tray's **Start dictation** waits until desktop input is ready.
+- Windows no longer needs the Visual C++ Redistributable, and the Linux app is smaller.
+- Mac permission errors explain how to restore access that already looks granted.
 - Shift no longer cancels dictation when pressed during a Windows hold.
 - `--demo` previews a Show, with ink drawn and fading on screen on Windows and Mac.
 - Dependencies and tools are updated to their latest stable releases, except libloading, tiny-skia,
