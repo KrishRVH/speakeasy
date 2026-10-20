@@ -12,6 +12,8 @@ coding agent can read.
   in their folder keeps them. Cancelling leaves nothing behind.
 - Shows record on Windows, and experimentally on Mac, which asks for screen recording access on the
   first Show. Linux records Shows in a later release.
+- A finished Show is copied within a fraction of a second. Recording costs a few percent of one CPU
+  core, ink holds GPU memory only while it shows, and an idle Speakeasy uses what it did before.
 - New installs set up NeMo-Speech.cpp 0.2.0, which recognizes speech as 0.1.0 did. Existing installs
   keep their engine.
 - Shift no longer cancels dictation when pressed during a Windows hold.
