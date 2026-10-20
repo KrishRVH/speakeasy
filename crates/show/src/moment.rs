@@ -47,12 +47,6 @@ impl Moment {
     pub fn saturating_add(self, duration: Duration) -> Self {
         Self(self.0.saturating_add(millis(duration)))
     }
-
-    /// The moment `duration` earlier, or the start.
-    #[must_use]
-    pub fn saturating_sub(self, duration: Duration) -> Self {
-        Self(self.0.saturating_sub(millis(duration)))
-    }
 }
 
 fn millis(duration: Duration) -> u64 {
@@ -168,7 +162,6 @@ mod tests {
     #[test]
     fn arithmetic_saturates_at_the_timeline_ends() {
         let early = Moment::from_millis(100);
-        assert_eq!(early.saturating_sub(Duration::from_secs(1)), Moment::START);
         assert_eq!(Moment::START.since(early), Duration::ZERO);
         assert_eq!(early.distance(Moment::START), Duration::from_millis(100));
         assert_eq!(
