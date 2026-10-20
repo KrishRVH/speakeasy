@@ -6,7 +6,8 @@ lockfile = true
 idiomatic_version_file_enable_tools = ["rust"]
 
 [vars]
-md_files = '''git ls-files -z --cached --others --exclude-standard -- '*.md' ':(exclude)vendor/' '''
+# Without pipefail a git failure hands the markdown tool an empty list, and it passes.
+md_files = '''set -o pipefail; git ls-files -z --cached --others --exclude-standard -- '*.md' ':(exclude)vendor/' '''
 
 [env]
 UV_PYTHON_PREFERENCE = "only-system"
