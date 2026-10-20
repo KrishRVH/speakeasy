@@ -10,7 +10,7 @@ trim_trailing_whitespace = true
 [*.rs]
 indent_size = 4
 
-[*.{toml,json,xml,plist,yml}]
+[*.{toml,json,jsonc,manifest,plist,yml}]
 indent_size = 2
 
 # A slash in a section glob anchors the whole pattern to this directory, so name AppRun bare.
@@ -19,7 +19,7 @@ indent_size = 2
 switch_case_indent = true
 space_redirects = true
 
-[*.{ps1,cmd}]
+[*.ps1]
 end_of_line = crlf
 indent_size = 4
 

@@ -15,7 +15,6 @@ line-length = 100
 required-version = ">=0.17.1"
 target-version = "py315"
 unsafe-fixes = false
-extend-exclude = ["vendor"]
 
 [tool.ruff.per-file-target-version]
 # Owned GUI checks also run with Ubuntu 24.04's Python inside the private display container.
