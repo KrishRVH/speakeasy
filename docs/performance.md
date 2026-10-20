@@ -61,11 +61,11 @@ pages, threads and descriptors. It detects process exit and PID reuse. Linux con
 describe the main thread, not all threads. Fixture tests cover numeric parsing, unknown optional
 data, identity changes, counter regression, CPU denominators, and nearest-rank percentiles.
 
-`profile-windows.ps1` samples process CPU, context switches summed over all threads, working set,
-private committed memory, dedicated and shared GPU memory where the driver publishes them, threads
-and handles. Windows private committed memory and Linux private resident pages are different
-metrics; compare each on the same OS. The Windows script requires a native Windows host; Linux
-fixture tests do not verify its runtime behavior.
+`profile-windows.ps1` samples process CPU, context switches summed over the threads alive at each
+read, working set, private committed memory, dedicated and shared GPU memory where the driver
+publishes them, threads and handles. Windows private committed memory and Linux private resident
+pages are different metrics; compare each on the same OS. The Windows script requires a native
+Windows host; Linux fixture tests do not verify its runtime behavior.
 
 Pass explicit app and worker PIDs, reported separately. For example:
 

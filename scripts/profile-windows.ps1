@@ -25,8 +25,10 @@ function Get-GpuMemory([int]$ProcessId) {
     } catch {}
     $usage
 }
-# Raw thread counters are cumulative switch counts. One category read serves every sampled PID and
-# maps each to its threads' counts by thread ID, or returns null where the counters are missing.
+# Raw thread counters are cumulative switch counts. One category read serves every sampled PID: it
+# maps each to its threads' counts by thread ID, or is null where the counters are missing. Rates
+# divide by the read's own QPC capture stamp, this counter type's time base; a clock read after the
+# call lags capture by tens of milliseconds that vary per read.
 function Get-ThreadSwitches([string[]]$ProcessIds) {
     $threads = @{}
     foreach ($processId in $ProcessIds) { $threads[$processId] = @{} }
@@ -35,6 +37,9 @@ function Get-ThreadSwitches([string[]]$ProcessIds) {
         $owners = $data['ID Process']
         $ids = $data['ID Thread']
         $switches = $data['Context Switches/sec']
+        if ($null -eq $owners -or $null -eq $ids -or $null -eq $switches) { return $null }
+        $stamp = ($switches.Values | Select-Object -First 1).Sample
+        $at = $stamp.TimeStamp / $stamp.SystemFrequency
         foreach ($instance in $owners.Keys) {
             $owner = [string]$owners[$instance].RawValue
             if (!$threads.ContainsKey($owner) -or !$ids.Contains($instance) -or !$switches.Contains($instance)) { continue }
@@ -42,10 +47,11 @@ function Get-ThreadSwitches([string[]]$ProcessIds) {
             $threads[$owner][$thread] = $switches[$instance].RawValue
         }
     } catch { return $null }
-    $threads
+    @{ at = $at; threads = $threads }
 }
-# Sums per-thread growth: a thread that exited no longer counts, and one absent from the earlier
-# read started since then, so all of its switches fall inside the interval.
+# Sums growth over the threads alive at the later read. One absent from the earlier read started
+# since then, so all of its switches fall inside the interval; a thread that exits before a read
+# takes its switches since the previous read with it.
 function Get-SwitchDelta([hashtable]$Earlier, [hashtable]$Later) {
     $delta = [long]0
     foreach ($thread in $Later.GetEnumerator()) {
@@ -58,14 +64,13 @@ $clock = [System.Diagnostics.Stopwatch]::StartNew()
 $logicalCpus = [Environment]::ProcessorCount
 $results = @{}
 $previous = @{}
-$previousSwitches = @{}
+$previousThreadSwitches = $null
 foreach ($processId in ($ProcessIds | Select-Object -Unique)) {
     # JSON objects need string keys; Windows PowerShell refuses to serialize numeric ones.
     $results[[string]$processId] = @{ samples = [System.Collections.Generic.List[object]]::new(); end = $null }
 }
 while ($true) {
     $threadSwitches = Get-ThreadSwitches @($results.Keys)
-    $threadSwitchesAt = $clock.Elapsed.TotalSeconds
     foreach ($processId in @($results.Keys)) {
         $result = $results[$processId]
         if ($null -ne $result.end) { continue }
@@ -93,17 +98,17 @@ while ($true) {
                 if ($before.identity -ne $sample.identity) { $result.end = 'PID reused'; continue }
                 $sample.cpu_one_core_percent = 100 * ($sample.cpu_seconds - $before.cpu_seconds) / ($elapsed - $before.elapsed_seconds)
                 $sample.cpu_machine_percent = $sample.cpu_one_core_percent / $logicalCpus
-                $earlier = $previousSwitches[$processId]
-                if ($null -ne $earlier -and $null -ne $threadSwitches) {
-                    $sample.context_switches_per_sec = (Get-SwitchDelta $earlier.threads $threadSwitches[$processId]) / ($threadSwitchesAt - $earlier.at)
+                if ($null -ne $previousThreadSwitches -and $null -ne $threadSwitches) {
+                    $switches = Get-SwitchDelta $previousThreadSwitches.threads[$processId] $threadSwitches.threads[$processId]
+                    $sample.context_switches_per_sec = $switches / ($threadSwitches.at - $previousThreadSwitches.at)
                 }
             }
-            $previousSwitches[$processId] = if ($null -ne $threadSwitches) { @{ at = $threadSwitchesAt; threads = $threadSwitches[$processId] } }
             $previous[$processId] = $sample
             $result.samples.Add($sample)
         } catch { $result.end = $_.Exception.GetType().Name }
         finally { if ($null -ne $process) { $process.Dispose() } }
     }
+    $previousThreadSwitches = $threadSwitches
     $remainingMs = $Seconds * 1000 - $clock.Elapsed.TotalMilliseconds
     if ($remainingMs -le 0 -or @($results.Values | Where-Object { $null -eq $_.end }).Count -eq 0) { break }
     Start-Sleep -Milliseconds ([int][Math]::Min($IntervalMs, $remainingMs))
