@@ -32,6 +32,8 @@ enum Outcome {
     Copied(&'static str),
     Empty,
     Cancelled,
+    /// The pill and Settings show this message as is, so it never includes an error source that
+    /// could carry private text, such as a panic payload or engine output.
     Failed(String),
 }
 
@@ -571,7 +573,7 @@ impl<P: Ports> Owner<P> {
                     show.opened = true;
                 }
             },
-            Err(error) => self.fail(format!("Could not record the screen: {error:#}")),
+            Err(error) => self.fail(format!("Could not record the screen: {error}")),
         }
     }
 

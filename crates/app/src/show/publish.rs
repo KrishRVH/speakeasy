@@ -20,8 +20,9 @@ pub(crate) async fn publish(recorded: Recorded, permit: InsertPermit) -> anyhow:
         let Some(written) = write_bundle(recorded, &permit, &super::directory())? else {
             return Ok(Published::Cancelled);
         };
-        speakeasy_platform::copy_text(&written.summary)
-            .context("The Show was saved, but its summary could not be copied")?;
+        speakeasy_platform::copy_text(&written.summary).map_err(|error| {
+            anyhow!("The Show was saved, but its summary could not be copied: {error}")
+        })?;
         Ok(Published::Copied(written.directory))
     })
     .await
