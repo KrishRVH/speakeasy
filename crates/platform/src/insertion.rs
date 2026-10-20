@@ -1,6 +1,8 @@
 //! The insertion lane every platform shares, delivery choices, the pre-commit checks every native
 //! adapter shares, and the commit protocol Windows and macOS insertion follow.
 
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+use std::panic::{self, AssertUnwindSafe};
 use std::{
     thread,
     time::{Duration, Instant},
@@ -10,13 +12,18 @@ use anyhow::{anyhow, bail};
 use async_channel::{Receiver, Sender};
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-use super::{InputSender, OwnedThread, native};
+use super::native;
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+use super::{InputSender, OwnedThread};
 use super::{InsertPermit, Inserted};
 
 /// How long insertion waits for the user to let go of shortcut modifiers.
 pub(crate) const MODIFIER_WAIT: Duration = Duration::from_millis(800);
 /// How often insertion rechecks held modifiers while it waits.
 const MODIFIER_POLL: Duration = Duration::from_millis(2);
+/// The answer to a request whose insertion ended without an outcome; never the panic payload,
+/// which could quote the text.
+const INSERTION_STOPPED: &str = "Text insertion stopped unexpectedly";
 
 /// Sends insertion requests to the thread that owns native clipboard and input access.
 ///
@@ -58,12 +65,10 @@ impl Inserter {
         if self.requests.send(request).await.is_err() {
             bail!("Desktop input is unavailable");
         }
-        // A thread that ended without answering reports a fixed message, never its panic payload,
-        // which could quote the text.
         answer
             .recv()
             .await
-            .unwrap_or_else(|_| Err(anyhow!("Text insertion stopped unexpectedly")))
+            .unwrap_or_else(|_| Err(anyhow!(INSERTION_STOPPED)))
     }
 }
 
@@ -94,7 +99,7 @@ impl<T> Reply<T> {
 }
 
 /// The Windows and macOS insertion thread, which serves an [`Inserter`]'s requests in order.
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
 pub(crate) struct Worker {
     thread: OwnedThread,
     /// The thread's end of the lane. Closing it ends the thread once queued requests finish, while
@@ -103,14 +108,26 @@ pub(crate) struct Worker {
     input: InputSender,
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
 impl Worker {
     /// Starts the insertion thread for recordings that `input` authorizes.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub(crate) fn start(input: InputSender) -> std::io::Result<(Self, Inserter)> {
+        // The thread lives as long as the monitor, so each request drains what AppKit autoreleases.
+        #[cfg(target_os = "macos")]
+        let deliver = |request: &Insertion| objc2::rc::autoreleasepool(|_| deliver(request));
+        Self::serving(input, deliver)
+    }
+
+    /// Starts a thread that answers each request with `serve_one`.
+    fn serving(
+        input: InputSender,
+        serve_one: impl Fn(&Insertion) -> anyhow::Result<Inserted> + Send + 'static,
+    ) -> std::io::Result<(Self, Inserter)> {
         let (inserter, requests) = Inserter::lane();
         let thread = OwnedThread::spawn("insertion", {
             let requests = requests.clone();
-            move || serve(&requests)
+            move || serve(&requests, serve_one)
         })?;
         let worker = Self {
             thread,
@@ -133,7 +150,7 @@ impl Worker {
     }
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
 impl Drop for Worker {
     fn drop(&mut self) {
         self.request_stop();
@@ -141,20 +158,25 @@ impl Drop for Worker {
 }
 
 /// Serves requests one at a time until the lane closes and drains.
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-fn serve(requests: &Receiver<Insertion>) {
+///
+/// A request whose work panics answers [`INSERTION_STOPPED`], and the thread serves on: each
+/// request builds its native state afresh, while an ended thread would strand later requests on
+/// the lane the [`Worker`] holds open.
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+fn serve(
+    requests: &Receiver<Insertion>,
+    serve_one: impl Fn(&Insertion) -> anyhow::Result<Inserted>,
+) {
     while let Ok(request) = requests.recv_blocking() {
-        // The thread lives as long as the monitor, so each request drains what AppKit autoreleases.
-        #[cfg(target_os = "macos")]
-        let outcome = objc2::rc::autoreleasepool(|_| serve_one(&request));
-        #[cfg(target_os = "windows")]
-        let outcome = serve_one(&request);
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| serve_one(&request)))
+            .unwrap_or_else(|_| Err(anyhow!(INSERTION_STOPPED)));
         request.reply.send(outcome);
     }
 }
 
+/// Waits for the shortcut's release, then inserts through the native adapter.
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-fn serve_one(request: &Insertion) -> anyhow::Result<Inserted> {
+fn deliver(request: &Insertion) -> anyhow::Result<Inserted> {
     wait_for_released_modifiers(&request.permit, || Ok(native::modifiers().any()))?;
     insert(
         &mut native::Insert::new(),

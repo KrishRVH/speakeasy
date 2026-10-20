@@ -1,10 +1,15 @@
+use std::{panic, time::Duration};
+
 use anyhow::Context;
 
 use super::{
-    CLIPBOARD_CHANGED, CLIPBOARD_CHANGED_BEFORE_PASTE, Delivery, Inserted, NativeInsert, insert,
-    utf16_chunks, wait_for_released_modifiers,
+    CLIPBOARD_CHANGED, CLIPBOARD_CHANGED_BEFORE_PASTE, Delivery, INSERTION_STOPPED, Inserted,
+    NativeInsert, Worker, insert, utf16_chunks, wait_for_released_modifiers,
 };
 use crate::{InputSender, InsertPermit};
+
+/// How long a test waits for the insertion thread before calling it stuck.
+const PATIENCE: Duration = Duration::from_secs(5);
 
 const DELIVERIES: [Delivery; 2] = [Delivery::Paste, Delivery::Direct];
 const OWN_FOCUS: bool = false;
@@ -322,14 +327,13 @@ fn utf16_chunks_count_code_units_and_keep_surrogate_pairs_whole() {
     assert_eq!(utf16_chunks("", 16).count(), 0);
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
 #[tokio::test]
 async fn a_stopped_worker_exits_while_inserters_outlive_it() -> anyhow::Result<()> {
     let (events, _receiver) = async_channel::bounded(1);
     let input = InputSender::new(events);
-    let (worker, inserter) = super::Worker::start(input.clone())?;
+    let (worker, inserter) = Worker::serving(input.clone(), |_| Ok(Inserted::Sent))?;
     worker.request_stop();
-    tokio::time::timeout(std::time::Duration::from_secs(5), worker.stopped())
+    tokio::time::timeout(PATIENCE, worker.stopped())
         .await
         .context("The insertion thread waited for every Inserter to drop")?;
     let permit = input.begin().context("Recording")?;
@@ -339,5 +343,31 @@ async fn a_stopped_worker_exits_while_inserters_outlive_it() -> anyhow::Result<(
         .err()
         .context("A stopped worker accepted a request")?;
     assert_eq!(refused.to_string(), "Desktop input is unavailable");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_panic_answers_a_fixed_message_and_the_next_request_is_served() -> anyhow::Result<()> {
+    let (events, _receiver) = async_channel::bounded(1);
+    let (_worker, inserter) = Worker::serving(InputSender::new(events), |request| {
+        if request.text == "panics" {
+            // Unwinds without the panic hook, so the payload never reaches test output.
+            panic::resume_unwind(Box::new("private payload"));
+        }
+        Ok(Inserted::Sent)
+    })?;
+    let failed = inserter
+        .insert("panics".into(), permit()?, Delivery::Paste)
+        .await
+        .err()
+        .context("A panicking insertion reported an outcome")?;
+    assert_eq!(format!("{failed:#}"), INSERTION_STOPPED);
+    let next = tokio::time::timeout(
+        PATIENCE,
+        inserter.insert("text".into(), permit()?, Delivery::Paste),
+    )
+    .await
+    .context("The request after a panic was never answered")??;
+    assert_eq!(next, Inserted::Sent);
     Ok(())
 }
