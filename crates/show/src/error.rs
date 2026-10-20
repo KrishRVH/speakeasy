@@ -59,7 +59,7 @@ impl fmt::Display for Error {
                 )
             },
             Kind::Unsampled => f.write_str("no frames were sampled to choose keyframes from"),
-            Kind::Manifest(_) => f.write_str("the manifest could not be written"),
+            Kind::Manifest(_) => f.write_str("the manifest could not be encoded"),
             Kind::Png(_) => f.write_str("the PNG could not be encoded"),
             Kind::Typeface => f.write_str("the badge typeface could not be read"),
         }

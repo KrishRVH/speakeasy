@@ -15,10 +15,9 @@ const TAP: Duration = Duration::from_millis(220);
 const DOUBLE_TAP: Duration = Duration::from_millis(300);
 
 /// Logical dictation mode, independent of the physical shortcut state.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
     /// No recording or recognition is active.
-    #[default]
     Idle,
     /// Recording while the shortcut is held.
     Held,

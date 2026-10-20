@@ -84,7 +84,7 @@ impl Image {
         self.width() as f32 / self.height() as f32
     }
 
-    /// Decodes an 8-bit RGB or RGBA PNG, as [`Image::encode_png`] writes.
+    /// Decodes an RGBA PNG as [`Image::encode_png`] writes it.
     #[cfg(test)]
     pub(crate) fn decode_png(bytes: &[u8]) -> Self {
         let mut reader = png::Decoder::new(std::io::Cursor::new(bytes))
@@ -93,14 +93,6 @@ impl Image {
         let mut data = vec![0; reader.output_buffer_size().unwrap()];
         let info = reader.next_frame(&mut data).unwrap();
         data.truncate(info.buffer_size());
-        if info.color_type == png::ColorType::Rgb {
-            data = data
-                .as_chunks::<3>()
-                .0
-                .iter()
-                .flat_map(|&[red, green, blue]| [red, green, blue, u8::MAX])
-                .collect();
-        }
         Self::from_rgba(info.width, info.height, data).unwrap()
     }
 
