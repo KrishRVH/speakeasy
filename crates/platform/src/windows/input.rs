@@ -291,8 +291,7 @@ fn create_message_queue() {
     }
 }
 
-/// Runs the message loop until stop, `WM_QUIT`, or the wake event; stop wins even under continuous
-/// input.
+/// Runs the message loop until a stop or `WM_QUIT`; a stop wins even under continuous input.
 fn pump_messages(wake: &OwnedHandle) -> io::Result<()> {
     let handles = [wake.as_raw_handle()];
     while dispatch_queued_messages(wake).is_continue() && !stop_requested(wake) {

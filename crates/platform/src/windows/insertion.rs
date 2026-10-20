@@ -138,8 +138,8 @@ fn windows_line_endings(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\n', "\r\n")
 }
 
-/// Opens the clipboard, retrying for a short wall-clock budget because clipboard listeners can hold
-/// it right after a change. Runs on the insertion worker, never the UI thread.
+/// Opens the clipboard, retrying for up to 50 ms because clipboard listeners can hold it right
+/// after a change. Callers run off the UI thread: the insertion worker, or a Show's publication.
 fn open_clipboard() -> anyhow::Result<clipboard_win::Clipboard> {
     let started = Instant::now();
     let until = started
