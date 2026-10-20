@@ -16,7 +16,7 @@ use std::{
 };
 
 use anyhow::anyhow;
-use speakeasy_platform::OwnedThread;
+use speakeasy_platform::{OwnedThread, StoppableThread};
 use tokio::{
     io::AsyncReadExt,
     process::{Child, Command},
@@ -67,10 +67,9 @@ impl Installed {
 /// A setup running on its own thread. Dropping it cancels the setup and joins the thread;
 /// cancellation keeps partial downloads for the next run.
 pub(crate) struct Setup {
-    thread: OwnedThread,
+    thread: StoppableThread,
     updates: watch::Receiver<Progress>,
     result: async_channel::Receiver<anyhow::Result<Installed>>,
-    cancel: async_channel::Sender<Infallible>,
 }
 
 impl Setup {
@@ -102,8 +101,7 @@ impl Setup {
     ) -> anyhow::Result<Self> {
         let (progress, updates) = watch::channel(Progress::default());
         let (finish, result) = async_channel::bounded(1);
-        let (cancel, cancelled) = async_channel::bounded(1);
-        let thread = OwnedThread::spawn("setup", move || {
+        let thread = OwnedThread::spawn_stoppable("setup", move |cancelled| {
             if let Some(result) = work(progress, cancelled) {
                 #[expect(
                     clippy::let_underscore_must_use,
@@ -116,7 +114,6 @@ impl Setup {
             thread,
             updates,
             result,
-            cancel,
         })
     }
 
@@ -143,7 +140,7 @@ impl Setup {
     }
 
     pub(crate) fn stopped(&self) -> impl Future<Output = ()> + use<> {
-        self.thread.exited()
+        self.thread.stopped()
     }
 
     pub(crate) fn is_finished(&self) -> bool {
@@ -151,13 +148,7 @@ impl Setup {
     }
 
     pub(crate) fn request_stop(&self) {
-        self.cancel.close();
-    }
-}
-
-impl Drop for Setup {
-    fn drop(&mut self) {
-        self.request_stop();
+        self.thread.request_stop();
     }
 }
 

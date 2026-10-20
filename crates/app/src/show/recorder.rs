@@ -225,9 +225,9 @@ fn first_frame_deadline() -> tokio::time::Instant {
 /// Releases the display and pointer before anything is reported, so a new Show cannot overlap
 /// them.
 async fn stop(capture: &ScreenCapture, pointer: &PointerMonitor) {
-    capture.stop();
-    pointer.stop();
-    tokio::join!(capture.exited(), pointer.exited());
+    capture.request_stop();
+    pointer.request_stop();
+    tokio::join!(capture.stopped(), pointer.stopped());
 }
 
 /// Linux records no Shows yet.

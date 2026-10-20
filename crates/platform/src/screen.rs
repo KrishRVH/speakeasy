@@ -7,7 +7,6 @@
 pub(crate) mod geometry;
 
 use std::{
-    convert::Infallible,
     thread,
     time::{Duration, Instant},
 };
@@ -20,7 +19,10 @@ use self::unsupported as native;
 use crate::macos::screen as native;
 #[cfg(target_os = "windows")]
 use crate::windows::screen as native;
-use crate::{NativeWindow, owned_thread::OwnedThread};
+use crate::{
+    NativeWindow,
+    owned_thread::{OwnedThread, StoppableThread},
+};
 
 /// How often the pointer is sampled: fast enough to catch a deliberate click.
 const POINTER_INTERVAL: Duration = Duration::from_millis(8);
@@ -82,9 +84,7 @@ pub struct PointerSample {
 /// Captures the display under the pointer on an owned thread until stopped.
 pub struct ScreenCapture {
     display: Display,
-    /// Never sends; closing it asks the thread to stop.
-    stop: Sender<Infallible>,
-    thread: OwnedThread,
+    thread: StoppableThread,
 }
 
 impl ScreenCapture {
@@ -105,15 +105,10 @@ impl ScreenCapture {
         events: Sender<ScreenEvent>,
     ) -> anyhow::Result<Self> {
         let display = Display::under_pointer()?;
-        let (stop, stopping) = async_channel::bounded::<Infallible>(1);
-        let thread = OwnedThread::spawn("screen-capture", move || {
+        let thread = OwnedThread::spawn_stoppable("screen-capture", move |stopping| {
             native::capture(display, interval, longest_edge, &events, &stopping);
         })?;
-        Ok(Self {
-            display,
-            stop,
-            thread,
-        })
+        Ok(Self { display, thread })
     }
 
     /// The display being captured.
@@ -122,27 +117,21 @@ impl ScreenCapture {
         self.display
     }
 
-    /// Asks the capture to stop; it releases the display before [`exited`](Self::exited) resolves.
-    pub fn stop(&self) {
-        self.stop.close();
+    /// Asks the capture to stop; it releases the display before [`stopped`](Self::stopped)
+    /// resolves.
+    pub fn request_stop(&self) {
+        self.thread.request_stop();
     }
 
     /// Resolves once the capture has released the display.
-    pub fn exited(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
-        self.thread.exited()
-    }
-}
-
-impl Drop for ScreenCapture {
-    fn drop(&mut self) {
-        self.stop();
+    pub fn stopped(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
+        self.thread.stopped()
     }
 }
 
 /// Samples the pointer over a display on an owned thread until stopped.
 pub struct PointerMonitor {
-    stop: Sender<Infallible>,
-    thread: OwnedThread,
+    thread: StoppableThread,
 }
 
 impl PointerMonitor {
@@ -154,8 +143,7 @@ impl PointerMonitor {
     ///
     /// Fails when the thread cannot start.
     pub fn start(display: Display, samples: Sender<PointerSample>) -> anyhow::Result<Self> {
-        let (stop, stopping) = async_channel::bounded::<Infallible>(1);
-        let thread = OwnedThread::spawn("pointer", move || {
+        let thread = OwnedThread::spawn_stoppable("pointer", move |stopping| {
             let mut last: Option<PointerSample> = None;
             while !stopping.is_closed() && !samples.is_closed() {
                 if let Some(sample) = native::pointer(display.native)
@@ -167,23 +155,17 @@ impl PointerMonitor {
                 thread::sleep(POINTER_INTERVAL);
             }
         })?;
-        Ok(Self { stop, thread })
+        Ok(Self { thread })
     }
 
     /// Asks the monitor to stop.
-    pub fn stop(&self) {
-        self.stop.close();
+    pub fn request_stop(&self) {
+        self.thread.request_stop();
     }
 
     /// Resolves once the monitor has stopped.
-    pub fn exited(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
-        self.thread.exited()
-    }
-}
-
-impl Drop for PointerMonitor {
-    fn drop(&mut self) {
-        self.stop();
+    pub fn stopped(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
+        self.thread.stopped()
     }
 }
 

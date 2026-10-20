@@ -13,7 +13,7 @@ use zbus::{
 };
 
 use super::owner_changes;
-use crate::{Activity, OwnedThread, ServiceState};
+use crate::{Activity, OwnedThread, ServiceState, StoppableThread};
 
 const WATCHER: &str = "org.kde.StatusNotifierWatcher";
 const WATCHER_PATH: &str = "/StatusNotifierWatcher";
@@ -59,11 +59,11 @@ pub struct TrayPresentation {
     pub desktop_ready: bool,
 }
 
-/// Owns the D-Bus tray thread and closes its channels before joining.
+/// Owns the D-Bus tray thread, which is asked to stop before it joins; its update lane closes once
+/// the thread ends.
 pub struct NativeTray {
-    _thread: OwnedThread,
+    _thread: StoppableThread,
     updates: Sender<TrayPresentation>,
-    stop: Sender<Infallible>,
 }
 
 impl NativeTray {
@@ -74,8 +74,7 @@ impl NativeTray {
     pub fn start() -> anyhow::Result<(Self, Receiver<TrayAction>)> {
         let (updates, incoming) = async_channel::bounded(1);
         let (actions, received) = async_channel::bounded(ACTION_BACKLOG);
-        let (stop, stop_requests) = async_channel::bounded(1);
-        let thread = OwnedThread::spawn("tray-service", move || {
+        let thread = OwnedThread::spawn_stoppable("tray-service", move |stop_requests| {
             if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -92,7 +91,6 @@ impl NativeTray {
             Self {
                 _thread: thread,
                 updates,
-                stop,
             },
             received,
         ))
@@ -102,13 +100,6 @@ impl NativeTray {
     #[must_use]
     pub fn updater(&self) -> Sender<TrayPresentation> {
         self.updates.clone()
-    }
-}
-
-impl Drop for NativeTray {
-    fn drop(&mut self) {
-        self.stop.close();
-        self.updates.close();
     }
 }
 
