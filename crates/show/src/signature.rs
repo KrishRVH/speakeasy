@@ -176,10 +176,7 @@ fn mean_luma(
             .iter()
             .step_by(column_step)
         {
-            sum += 0.0722f32.mul_add(
-                f32::from(blue),
-                0.2126f32.mul_add(f32::from(red), 0.7152 * f32::from(green)),
-            );
+            sum += 0.2126 * f32::from(red) + 0.7152 * f32::from(green) + 0.0722 * f32::from(blue);
             count += 1.0;
         }
     }

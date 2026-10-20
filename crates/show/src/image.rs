@@ -235,8 +235,6 @@ fn footprints(source: u32, target: u32) -> Vec<Footprint> {
 
 fn accumulate(sum: &mut [f32; 4], pixel: &[f32; 4], weight: f32) {
     for (total, channel) in sum.iter_mut().zip(pixel) {
-        // Not `mul_add`: x86-64's baseline has no fused multiply-add, so it would become a
-        // software call per channel, several times slower than resampling needs.
         *total += channel * weight;
     }
 }
