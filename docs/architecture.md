@@ -198,7 +198,7 @@ Remote microphone routing belongs to the OS and the user's audio bridge; see
 [remote dictation](remote-dictation.md).
 
 The speech worker listens on loopback only. On Linux and Windows, readiness and every request first
-check that the worker's own process group holds its listener; macOS does not check yet. Each worker
+check that the worker's own process group holds its listener; macOS has no such check. Each worker
 gets a fresh random key. Parakeet receives it in its owner-only environment, but whisper-server
 accepts its route only on the command line, so on Linux other local accounts can read it through
 `/proc` unless `/proc` is mounted with `hidepid`. That route is the only guard on Whisper's

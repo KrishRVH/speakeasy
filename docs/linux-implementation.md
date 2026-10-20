@@ -168,8 +168,7 @@ compositor or editor support. See
 
 GPUI's Wayland constructor assigns an xdg-toplevel role before returning. A post-creation native
 adapter cannot turn that surface into layer-shell because the role lasts for its lifetime. A native
-Wayland pill needs a pre-role construction boundary; Linux currently uses X11/Xwayland presentation.
-See
+Wayland pill needs a pre-role construction boundary, so Linux presents through X11/Xwayland. See
 [GPUI's constructor](https://docs.rs/crate/gpui/0.2.2/source/src/platform/linux/wayland/window.rs),
 [Wayland roles](https://wayland.freedesktop.org/docs/html/apa.html#protocol-spec-wl_surface), and
 [layer-shell](https://raw.githubusercontent.com/swaywm/wlr-protocols/master/unstable/wlr-layer-shell-unstable-v1.xml).

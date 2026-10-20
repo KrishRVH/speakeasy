@@ -56,6 +56,7 @@ tokio = "1.54.0"
 tray-icon = { version = "0.26.1", default-features = false }
 ttf-parser = { version = "0.25.1", default-features = false, features = ["std"] }
 windows = "0.62.2"
+# The release whose async types windows returns; move it with windows.
 windows-future = "0.3.2"
 windows-sys = "0.61.2"
 x11rb = "0.13.2"

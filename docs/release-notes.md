@@ -28,8 +28,8 @@ coding agent can read.
 - Mac permission errors explain how to restore access that already looks granted.
 - Shift no longer cancels dictation when pressed during a Windows hold.
 - `--demo` previews a Show, with ink drawn and fading on screen on Windows and Mac.
-- Dependencies and tools are updated to their latest stable releases, except libloading, tiny-skia,
-  x11rb, and zbus, which match the versions GPUI uses.
+- Dependencies and tools are updated to their latest compatible stable releases, except libc,
+  libloading, tiny-skia, x11rb, and zbus, which match the versions GPUI uses.
 
 Dictation, existing settings, models, filler removal, and gestures are otherwise unchanged.
 Recordings retain the five-minute limit. Audio and recognition stay local, with no dictation history
