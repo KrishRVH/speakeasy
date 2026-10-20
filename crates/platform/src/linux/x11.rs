@@ -1,7 +1,12 @@
 //! X11 and Xwayland access: reserved-shortcut grabs, focus checks, clipboard ownership, and XTEST
 //! paste. Blocking X calls run on owned worker threads, never on the desktop service's loop.
 
-use std::{convert::Infallible, ops::ControlFlow, os::fd::AsFd};
+use std::{
+    convert::Infallible,
+    ops::ControlFlow,
+    os::fd::AsFd,
+    panic::{self, AssertUnwindSafe},
+};
 
 use anyhow::{Context, bail, ensure};
 use async_channel::{Receiver, Sender};
@@ -246,6 +251,11 @@ impl ShortcutTracker<'_> {
 /// Serializes X11 insertion on its own thread. Dropping it revokes the current permit and closes its
 /// queue, then joins the thread; the desktop thread closes the input lane after reporting why it
 /// stopped.
+///
+/// Every request shares one X connection, so a failed setup or a panic ends the thread instead of
+/// serving on with a connection in an unknown state. It reports why, then closes the lane and drops
+/// each queued request, which answers its caller: the worker's own end of the lane would otherwise
+/// keep those requests waiting with no reader.
 struct InsertionWorker {
     _thread: OwnedThread,
     input: InputSender,
@@ -258,13 +268,33 @@ impl InsertionWorker {
         options: DesktopOptions,
         requests: Receiver<Insertion>,
     ) -> anyhow::Result<Self> {
+        Self::spawn_with(input, requests, move |requests| {
+            serve_insertions(requests, &options)
+        })
+    }
+
+    fn spawn_with(
+        input: InputSender,
+        requests: Receiver<Insertion>,
+        serve: impl FnOnce(&Receiver<Insertion>) -> anyhow::Result<()> + Send + 'static,
+    ) -> anyhow::Result<Self> {
         let thread = OwnedThread::spawn("x11-insertion", {
             let (input, requests) = (input.clone(), requests.clone());
             move || {
-                if let Err(error) = serve_insertions(&requests, &options) {
-                    input.fail(format!(
+                // Unwinding drops the request in hand, which answers its caller.
+                match panic::catch_unwind(AssertUnwindSafe(|| serve(&requests))) {
+                    Ok(Ok(())) => {},
+                    Ok(Err(error)) => input.fail(format!(
                         "X11 input is unavailable: {error}. Check your desktop connection, then resume."
-                    ));
+                    )),
+                    // Never the panic payload, which could quote the text.
+                    Err(_) => input.fail(
+                        "X11 input stopped unexpectedly. Resume dictation to reconnect.".into(),
+                    ),
+                }
+                requests.close();
+                while let Ok(request) = requests.try_recv() {
+                    drop(request);
                 }
             }
         })?;
@@ -1208,6 +1238,60 @@ mod tests {
         assert!(
             !input.is_closed(),
             "Clipboard retirement closed input before the desktop thread could report why"
+        );
+        Ok(())
+    }
+
+    /// Runs an insertion thread that takes one request, waits until a second queues behind it,
+    /// then fails or panics. Returns the reason it reported once both requests were answered.
+    async fn stop_insertion_thread(panics: bool) -> anyhow::Result<String> {
+        let (events, received) = async_channel::bounded(4);
+        let input = InputSender::new(events);
+        let (inserter, requests) = crate::Inserter::lane();
+        let (taken, holding) = async_channel::bounded(1);
+        let (release, released) = mpsc::channel();
+        let _worker = InsertionWorker::spawn_with(input.clone(), requests, move |requests| {
+            let _in_hand = requests.recv_blocking()?;
+            taken.try_send(())?;
+            released.recv_timeout(Duration::from_secs(2))?;
+            if panics {
+                // Unwinds without the panic hook, so the payload never reaches test output.
+                panic::resume_unwind(Box::new("private payload"));
+            }
+            bail!("Synthetic setup failure")
+        })?;
+        let permit = input.begin().context("Recording")?;
+        let mut in_hand =
+            Box::pin(inserter.insert("fixture".into(), permit.clone(), Delivery::Paste));
+        assert!(in_hand.as_mut().now_or_never().is_none());
+        tokio::time::timeout(Duration::from_secs(1), holding.recv()).await??;
+        let mut queued = Box::pin(inserter.insert("fixture".into(), permit, Delivery::Paste));
+        assert!(queued.as_mut().now_or_never().is_none());
+        release.send(())?;
+        for answer in [in_hand, queued] {
+            let answer = tokio::time::timeout(Duration::from_secs(2), answer)
+                .await
+                .context("An insertion request was left waiting")?;
+            assert!(answer.is_err());
+        }
+        match received.try_recv() {
+            Ok(Input::Unavailable(reason)) => Ok(reason),
+            _ => bail!("The stopped insertion thread did not report why"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_stopped_insertion_thread_answers_the_request_in_hand_and_every_queued_one()
+    -> anyhow::Result<()> {
+        assert!(
+            stop_insertion_thread(false)
+                .await?
+                .starts_with("X11 input is unavailable: Synthetic setup failure.")
+        );
+        assert!(
+            !stop_insertion_thread(true)
+                .await?
+                .contains("private payload")
         );
         Ok(())
     }
