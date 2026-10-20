@@ -532,7 +532,9 @@ unsafe fn register_readiness(fd: RawFd) -> anyhow::Result<AsyncFd<OwnedFd>> {
     ensure!(fd >= 0, "Desktop connection has no valid file descriptor");
     // SAFETY: the caller keeps fd open; only the duplicate is owned and later closed.
     let duplicate = unsafe { BorrowedFd::borrow_raw(fd) }.try_clone_to_owned()?;
-    Ok(AsyncFd::new(duplicate)?)
+    // SAFETY: the duplicate is owned here and stays open and unchanged until the `AsyncFd` drops
+    // it.
+    Ok(unsafe { AsyncFd::register(duplicate) }?)
 }
 
 /// Compiles the XKB keymap libei advertises for `device`.

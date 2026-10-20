@@ -529,7 +529,10 @@ pub(super) async fn run(
         observe_releases(&connection, root)?;
     }
     connection.flush()?;
-    let readiness = AsyncFd::new(connection.stream().as_fd().try_clone_to_owned()?)?;
+    let duplicate = connection.stream().as_fd().try_clone_to_owned()?;
+    // SAFETY: the duplicate is owned here and stays open and unchanged until the `AsyncFd` drops
+    // it.
+    let readiness = unsafe { AsyncFd::register(duplicate) }?;
     let _worker = InsertionWorker::spawn(input.clone(), options.clone(), requests)?;
     input.deliver(ShortcutLabels::new(options).into_desktop_ready());
     let mut tracker = ShortcutTracker {

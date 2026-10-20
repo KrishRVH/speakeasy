@@ -10,15 +10,15 @@ UV_PYTHON_DOWNLOADS = "never"
 
 [tools]
 "github:bnjbvr/cargo-machete" = "0.9.2"
-"github:nextest-rs/nextest" = { version = "0.9.146", version_prefix = "cargo-nextest-" }
-python = "3.14.7"
-uv = "0.12.19"
-bun = "1.4.2"
+"github:nextest-rs/nextest" = { version = "0.9.148", version_prefix = "cargo-nextest-" }
+python = "3.15.0"
+uv = "0.13.3"
+bun = "1.4.3"
 shellcheck = "0.11.0"
-shfmt = "3.14.0"
+shfmt = "3.14.1"
 # Static Linux build keeps the local gate usable on glibc 2.35.
 lychee = { version = "0.24.2", libc = "musl" }
-typos = "1.48.0"
+typos = "1.51.1"
 actionlint = "1.7.12"
 
 [tasks."rust:lock"]
