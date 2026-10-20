@@ -19,18 +19,18 @@ cpal.workspace = true
 getrandom.workspace = true
 gpui = { workspace = true, features = ["font-kit"] }
 raw-window-handle.workspace = true
-reqwest = { workspace = true, features = ["json", "multipart"] }
+reqwest = { workspace = true, features = ["multipart"] }
 rtrb.workspace = true
 serde = { workspace = true, features = ["derive"] }
 # Saves patch the user's file in place, so its keys keep their order.
 serde_json = { workspace = true, features = ["preserve_order"] }
 sha2.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "process", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }
 
 [dev-dependencies]
 proptest.workspace = true
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["net", "test-util"] }
 
 [build-dependencies]
 embed-resource.workspace = true
