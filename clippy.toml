@@ -49,6 +49,10 @@ disallowed-methods = [
     { path = "std::process::abort", reason = "no unwind, no destructors, no message; return an error from main or use the panic path the doctrine already forbids you to reach (AGENTS.md ownership and interfaces)" },
     { path = "std::boxed::Box::leak", reason = "a deliberate leak is ambient 'static state; give the value one owner or justify the leak at the use site (AGENTS.md ownership and interfaces)" },
     { path = "std::mem::ManuallyDrop::new", reason = "suppressing Drop is a leak or an ownership dodge; restructure ownership instead (AGENTS.md ownership and interfaces)" },
+    { path = "reqwest::Client::new", reason = "build clients through http::client_builder; Linux reqwest has no built-in rustls provider and panics in build()" },
+    { path = "reqwest::Client::builder", reason = "build clients through http::client_builder; Linux reqwest has no built-in rustls provider and panics in build()" },
+    { path = "reqwest::ClientBuilder::new", reason = "build clients through http::client_builder; Linux reqwest has no built-in rustls provider and panics in build()" },
+    { path = "reqwest::get", reason = "build clients through http::client_builder; Linux reqwest has no built-in rustls provider and panics in build()" },
 ]
 
 # Accepted identifiers for documentation prose checked by doc_markdown.

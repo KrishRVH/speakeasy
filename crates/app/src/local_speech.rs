@@ -25,6 +25,7 @@ use crate::{
     audio,
     child::{hidden_command, kill_and_reap},
     config::{Config, Engine},
+    http::client_builder,
     ports::{STARTUP_CANCELLED, Speech},
 };
 
@@ -72,7 +73,7 @@ impl LocalSpeech {
         let mut command = server_command(&config, port, &secret, directory.path());
         // Release the reserved port just before the engine binds it.
         drop(listener);
-        let client = Client::builder()
+        let client = client_builder()?
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)

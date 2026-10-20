@@ -16,7 +16,6 @@ use std::{
 };
 
 use anyhow::anyhow;
-use reqwest::Client;
 use speakeasy_platform::OwnedThread;
 use tokio::{
     io::AsyncReadExt,
@@ -31,6 +30,7 @@ use self::{
 use crate::{
     child::kill_and_reap,
     config::{Config, Engine},
+    http::client_builder,
 };
 
 const MODEL: Download = Download {
@@ -254,7 +254,7 @@ async fn install(
     progress: &watch::Sender<Progress>,
     installation: &mut Installation,
 ) -> anyhow::Result<Installed> {
-    let client = Client::builder()
+    let client = client_builder()?
         .connect_timeout(Duration::from_secs(15))
         .read_timeout(Duration::from_secs(30))
         .build()?;

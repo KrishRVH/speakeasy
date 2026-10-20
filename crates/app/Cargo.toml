@@ -37,7 +37,10 @@ embed-resource.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gpui = { workspace = true, features = ["x11"] }
-reqwest = { workspace = true, features = ["rustls"] }
+# Setup downloads over rustls on ring with the system trust store; http.rs supplies the provider.
+reqwest = { workspace = true, features = ["rustls-no-provider"] }
+rustls.workspace = true
+rustls-platform-verifier.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 x11rb = { workspace = true, features = ["allow-unsafe-code", "shape"] }

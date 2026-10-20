@@ -154,7 +154,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::setup::Installation;
+    use crate::{http::client_builder, setup::Installation};
 
     const BODY: &[u8] = b"Say the word. The door opens, and what is said stays inside.";
 
@@ -232,7 +232,7 @@ mod tests {
         fs::write(&partial, BODY)?;
         let (progress, _) = watch::channel(Progress::default());
         let path = fetch(
-            &Client::new(),
+            &client_builder()?.build()?,
             &download,
             directory.path(),
             "fixture",
@@ -265,7 +265,7 @@ mod tests {
         )?;
         let (progress, _) = watch::channel(Progress::default());
         let path = fetch(
-            &Client::new(),
+            &client_builder()?.build()?,
             &download,
             directory.path(),
             "fixture",
@@ -304,7 +304,7 @@ mod tests {
         };
         let work = Installation::run(directory.path(), &progress, &cancelled, async |_| {
             fetch(
-                &Client::new(),
+                &client_builder()?.build()?,
                 &download,
                 directory.path(),
                 "fixture",
@@ -337,7 +337,7 @@ mod tests {
         fs::write(directory.path().join("model.gguf.part"), &BODY[..20])?;
         let (progress, _) = watch::channel(Progress::default());
         let path = fetch(
-            &Client::new(),
+            &client_builder()?.build()?,
             &download,
             directory.path(),
             "fixture",
@@ -364,7 +364,7 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let (progress, _) = watch::channel(Progress::default());
         let result = fetch(
-            &Client::new(),
+            &client_builder()?.build()?,
             &download,
             directory.path(),
             "fixture",

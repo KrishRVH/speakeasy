@@ -7,6 +7,7 @@ mod audio;
 mod child;
 mod config;
 mod gpui_ext;
+mod http;
 mod icons;
 mod instance;
 mod local_speech;

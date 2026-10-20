@@ -282,7 +282,7 @@ async fn audio_never_reaches_a_program_that_took_a_ready_engines_port() -> anyho
         child,
         port: squatter.local_addr()?.port(),
         secret: random_token()?,
-        client: Client::new(),
+        client: client_builder()?.build()?,
         _directory: tempfile::tempdir()?,
     };
     let wav = audio::silent_wav(16_000, Duration::from_secs(1))?;
