@@ -194,14 +194,17 @@ struct ShortcutTracker<'a> {
     shortcuts: Option<Shortcuts>,
     lock: u16,
     input: &'a InputSender,
-    held: bool,
+    /// The dictation chord while it is held.
+    held: Option<KeyBinding>,
 }
 
 impl ShortcutTracker<'_> {
     fn observe(&mut self, event: Event) -> anyhow::Result<()> {
         match event {
             Event::KeyPress(key) => self.press(&key),
-            Event::XinputRawKeyRelease(_) | Event::KeyRelease(_) if self.held => self.release(),
+            Event::XinputRawKeyRelease(_) | Event::KeyRelease(_) => {
+                self.held.map_or(Ok(()), |dictate| self.release(dictate))
+            },
             Event::MappingNotify(_) => self.check_mapping(),
             _ => Ok(()),
         }
@@ -226,8 +229,8 @@ impl ShortcutTracker<'_> {
         if let Some(shortcuts) = self.shortcuts {
             if shortcuts.cancel == pressed {
                 self.input.deliver(Input::Cancel);
-            } else if shortcuts.dictate == pressed && !self.held {
-                self.held = true;
+            } else if shortcuts.dictate == pressed && self.held.is_none() {
+                self.held = Some(shortcuts.dictate);
                 self.input.deliver(Input::Press);
             }
         }
@@ -238,15 +241,12 @@ impl ShortcutTracker<'_> {
         Ok(())
     }
 
-    fn release(&mut self) -> anyhow::Result<()> {
-        let Some(Shortcuts { dictate, .. }) = self.shortcuts else {
-            return Ok(());
-        };
+    fn release(&mut self, dictate: KeyBinding) -> anyhow::Result<()> {
         let keys = self.connection.query_keymap()?.reply()?.keys;
         if !is_key_down(&keys, dictate.key)
             || self.keyboard.held_modifiers(&keys) & dictate.modifiers != dictate.modifiers
         {
-            self.held = false;
+            self.held = None;
             self.input.deliver(Input::Release);
         }
         Ok(())
@@ -287,7 +287,7 @@ pub(super) async fn run(
         shortcuts,
         lock,
         input,
-        held: false,
+        held: None,
     };
     loop {
         while let Some(event) = connection.poll_for_event()? {
