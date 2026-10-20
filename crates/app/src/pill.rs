@@ -484,7 +484,7 @@ impl Pill {
                     .child(
                         canvas(
                             |_, _, _| (),
-                            move |bounds, (), window, _| grille.paint(bounds, window),
+                            move |bounds, (), window, cx| grille.paint(bounds, window, cx),
                         )
                         .size_full(),
                     )

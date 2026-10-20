@@ -2,17 +2,24 @@
 //! one canvas, so bar geometry never touches layout or hit testing as the level moves.
 
 use gpui::{
-    Bounds, BoxShadow, ContentMask, Corners, PathBuilder, Pixels, Rgba, Window, fill,
+    App, Bounds, BoxShadow, ContentMask, Corners, Pixels, Rgba, TransformationMatrix, Window, fill,
     linear_color_stop, linear_gradient, point, px, rgb, size,
 };
 
 use super::METER_BARS;
-use crate::theme::{Palette, alpha, mix};
+use crate::{
+    icons,
+    theme::{Palette, alpha, mix},
+};
 
 const OLDEST_AGE: usize = METER_BARS - 1;
 const BAR_WIDTH: f32 = 2.0;
 /// The distance from one grille bar's left edge to the next.
 const BAR_PITCH: f32 = 4.0;
+/// The distance from the lid keystone's center to each of its points. GPUI rasterizes an SVG tile at
+/// twice its device size and rounds it up to whole pixels; a five-pixel keystone stays an exact tile
+/// at whole scales and at 175%, where it is never resampled.
+const KEYSTONE_RADIUS: f32 = 2.5;
 
 #[derive(Clone, Copy)]
 pub(super) struct Grille {
@@ -33,7 +40,7 @@ impl Grille {
         self.waveform > 0.01
     }
 
-    pub(super) fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window) {
+    pub(super) fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window, cx: &App) {
         let slot = Slot::new(bounds);
         let open = slot.width * (1.0 - self.lid);
         if self.shows_waveform() {
@@ -54,7 +61,7 @@ impl Grille {
         {
             self.paint_sweep(slot, open, position, window);
         }
-        self.paint_lid(slot, open, window);
+        self.paint_lid(slot, open, window, cx);
     }
 
     fn paint_backlight(&self, slot: Slot, window: &mut Window) {
@@ -132,7 +139,7 @@ impl Grille {
         window.paint_quad(fill(glow, alpha(self.palette.lamp, 0.85)).corner_radii(corners));
     }
 
-    fn paint_lid(&self, slot: Slot, open: f32, window: &mut Window) {
+    fn paint_lid(&self, slot: Slot, open: f32, window: &mut Window, cx: &App) {
         let cover = slot.width - open;
         if cover < 1.0 {
             return;
@@ -168,11 +175,21 @@ impl Grille {
             window.paint_quad(fill(rect(left, top, 1.0, height), alpha(palette.ink, 0.2)));
         }
         if cover > 20.0 && slot.height > 12.0 {
-            keystone(
-                left + 7.0,
-                slot.y + radius,
-                alpha(palette.lamp, 0.8),
-                window,
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "An embedded tile that fails to rasterize leaves the keystone undrawn; the lid still reads as closed"
+            )]
+            let _ = window.paint_svg(
+                rect(
+                    left + 7.0 - KEYSTONE_RADIUS,
+                    slot.y + radius - KEYSTONE_RADIUS,
+                    2.0 * KEYSTONE_RADIUS,
+                    2.0 * KEYSTONE_RADIUS,
+                ),
+                icons::KEYSTONE.into(),
+                TransformationMatrix::unit(),
+                alpha(palette.lamp, 0.8).into(),
+                cx,
             );
         }
     }
@@ -231,19 +248,6 @@ fn mirrored_age(index: usize, count: usize) -> usize {
 /// The length of a chord `offset` away from the center of a circle.
 fn chord(radius: f32, offset: f32) -> f32 {
     2.0 * offset.mul_add(-offset, radius * radius).max(0.0).sqrt()
-}
-
-fn keystone(x: f32, y: f32, color: Rgba, window: &mut Window) {
-    const RADIUS: f32 = 2.4;
-    let mut path = PathBuilder::fill();
-    path.move_to(point(px(x), px(y - RADIUS)));
-    path.line_to(point(px(x + RADIUS), px(y)));
-    path.line_to(point(px(x), px(y + RADIUS)));
-    path.line_to(point(px(x - RADIUS), px(y)));
-    path.close();
-    if let Ok(path) = path.build() {
-        window.paint_path(path, color);
-    }
 }
 
 #[cfg(test)]

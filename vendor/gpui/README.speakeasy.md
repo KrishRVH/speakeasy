@@ -48,9 +48,8 @@ The source patches cover native windows, frame scheduling, and path resources:
   fades. Resize and format changes invalidate those resources;
   existing GPU ownership, synchronization, and sample counts are preserved.
   DirectX also clears bound shader-resource references during resize.
-  Speakeasy's static Settings diamonds use an embedded SVG atlas tile, so
-  Settings does not require full-window path scratch textures. The pill
-  retains its existing path rendering.
+  Settings and the pill draw their diamonds and symbols from embedded SVG
+  atlas tiles, so only the Show overlay realizes path scratch textures.
 
 - `src/taffy.rs` gives grid fractions explicit `f32` literals for the pinned
   nightly's stricter float fallback diagnostics. `platform/linux/platform.rs`
