@@ -63,7 +63,7 @@ impl Command {
             Some(out) => out,
             None => store::fresh_directory(&store::directory()?, SystemTime::now())?,
         };
-        store::write(&directory, &bundle.files(&directory)?)?;
+        store::stage(&directory, &bundle.files(&directory)?)?.persist()?;
         print!("{}", bundle.summary(&directory));
         Ok(())
     }

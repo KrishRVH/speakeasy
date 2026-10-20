@@ -19,6 +19,9 @@ const ABANDONED_AFTER: Duration = Duration::from_hours(1);
 const SWEEP_EVERY: Duration = Duration::from_hours(1);
 /// A file of this name inside a Show keeps it.
 const PIN: &str = ".pinned";
+/// Begins the name of the hidden directory a bundle is staged in, which the sweep deletes once
+/// abandoned.
+const STAGING_PREFIX: &str = ".partial-";
 
 /// Where Shows live: machine-local, beside the engines and models.
 pub(super) fn directory() -> anyhow::Result<PathBuf> {
@@ -35,11 +38,6 @@ pub(super) fn fresh_directory(parent: &Path, now: SystemTime) -> anyhow::Result<
         })
         .find(|candidate| !candidate.exists())
         .context("Too many Shows were written this second")
-}
-
-/// Writes `files` into `directory`, which must not exist, all at once.
-pub(super) fn write(directory: &Path, files: &[speakeasy_show::File]) -> anyhow::Result<()> {
-    stage(directory, files)?.persist()
 }
 
 /// A bundle written to a hidden sibling of its directory. It appears there only once persisted,
@@ -72,7 +70,7 @@ pub(super) fn stage(directory: &Path, files: &[speakeasy_show::File]) -> anyhow:
         .context("A Show's directory needs a parent")?;
     fs::create_dir_all(parent).with_context(|| format!("Cannot create {}", parent.display()))?;
     let mut builder = tempfile::Builder::new();
-    builder.prefix(".partial-");
+    builder.prefix(STAGING_PREFIX);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -140,7 +138,7 @@ fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
             continue;
         };
         let path = entry.path();
-        let expired = if name.starts_with(".partial-") {
+        let expired = if name.starts_with(STAGING_PREFIX) {
             entry
                 .metadata()
                 .and_then(|metadata| metadata.modified())
@@ -254,14 +252,21 @@ mod tests {
         let parent = root.path();
         let now = SystemTime::now();
         let days_ago = |days: u64| utc_stamp(now - Duration::from_hours(days * 24));
-        let pinned = format!("{}-2", days_ago(8));
-        for name in [
-            days_ago(8),
-            pinned.clone(),
-            days_ago(6),
-            "notes".into(),
-            ".partial-1".into(),
-        ] {
+        // Two Shows named by the writer for the same second; the second carries a `-2` suffix and
+        // expires.
+        let written = || -> anyhow::Result<String> {
+            let show = fresh_directory(parent, now - Duration::from_hours(8 * 24))?;
+            fs::create_dir(&show)?;
+            Ok(show
+                .file_name()
+                .context("A Show has a name")?
+                .to_string_lossy()
+                .into_owned())
+        };
+        let pinned = written()?;
+        written()?;
+        let staging = format!("{STAGING_PREFIX}1");
+        for name in [days_ago(6), "notes".into(), staging.clone()] {
             fs::create_dir(parent.join(name))?;
         }
         fs::write(parent.join(&pinned).join(PIN), b"")?;
@@ -283,7 +288,7 @@ mod tests {
 
         sweep(parent, now)?;
         let mut kept = vec![
-            ".partial-1".to_owned(),
+            staging.clone(),
             days_ago(9),
             days_ago(6),
             pinned,
@@ -298,7 +303,7 @@ mod tests {
         assert_eq!(names()?, kept);
 
         sweep(parent, now + 2 * ABANDONED_AFTER)?;
-        kept.retain(|name| name != ".partial-1");
+        kept.retain(|name| *name != staging);
         assert_eq!(names()?, kept);
 
         sweep(&parent.join("missing"), now)
@@ -343,10 +348,10 @@ mod tests {
                 contents: vec![1, 2],
             },
         ];
-        write(&first, &files)?;
+        stage(&first, &files)?.persist()?;
         assert_eq!(fs::read(first.join("frames/frame-01.png"))?, [1, 2]);
         assert!(
-            write(&first, &files).is_err(),
+            stage(&first, &files).is_err(),
             "an existing bundle is never replaced"
         );
         #[cfg(unix)]
