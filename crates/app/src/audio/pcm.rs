@@ -1,5 +1,5 @@
 //! Mono PCM16 behind a reserved WAV header: audio is encoded in place, and unsealed audio is
-//! zeroed on drop.
+//! zeroed on drop, best effort.
 
 use std::{mem, ops::Range, time::Duration};
 
