@@ -119,8 +119,8 @@ cast_precision_loss = "allow"
 # `pub(crate)` satisfies unreachable_pub but triggers this nursery lint.
 redundant_pub_crate = "allow"
 
-# `mul_add` lowers to a libm call on the x86-64 baseline (no FMA); per-pixel
-# loops use plain arithmetic.
+# `mul_add` lowers to a libm call on the x86-64 baseline (no FMA); per-frame
+# pixel loops use plain arithmetic.
 suboptimal_flops = "allow"
 
 # Deliberately relaxed style lints: size and repetition counts are poor
