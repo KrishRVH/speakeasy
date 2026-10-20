@@ -1,22 +1,25 @@
-//! Typed settings: startup classification, path resolution, validation, and atomic saves.
+//! Typed settings: startup classification, path resolution, validation, and saves that patch the
+//! file.
 //!
 //! The JSON file is a user-edited contract that outlives releases. Missing keys read as
 //! [`Config::default`], so a new field needs no attribute, and unknown top-level keys are ignored,
-//! so a file from another release still loads; a save drops them. A renamed key keeps its old name
-//! with `#[serde(alias = "old")]`, on the field or on the enum variant that replaces a retired
-//! Engine or Theme, and a retyped key goes through a private wire struct that migrates the old
-//! shape. [`LinuxSettings`] stays strict because only hand edits reach it, so retiring one of its
-//! keys must keep accepting that key. A default Linux block stays out of saved files.
+//! so a file from another release still loads. A renamed key keeps its old name with
+//! `#[serde(alias = "old")]`, on the field or on the enum variant that replaces a retired Engine or
+//! Theme, and a retyped key goes through a private wire struct that migrates the old shape.
+//! [`LinuxSettings`] stays strict because only hand edits reach it, so retiring one of its keys must
+//! keep accepting that key. A save writes only the keys Settings changed, so unknown keys, hand
+//! edits, path spellings and unchanged Linux defaults stay as the file has them.
 
 use std::{
     fs,
-    io::Write,
+    io::{self, ErrorKind, Write},
     ops::Deref,
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, ensure};
+use anyhow::{Context, anyhow, ensure};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use speakeasy_platform::{Delivery, DesktopOptions};
 
 use crate::theme::Theme;
@@ -151,14 +154,20 @@ impl Config {
     }
 
     pub(crate) fn read(path: &Path) -> anyhow::Result<Self> {
-        serde_json::from_slice(
+        Self::parse(
             &fs::read(path).with_context(|| format!("Cannot read {}", path.display()))?,
+            path,
         )
-        .with_context(|| format!("Invalid settings in {}", path.display()))
+    }
+
+    fn parse(contents: &[u8], path: &Path) -> anyhow::Result<Self> {
+        serde_json::from_slice(contents)
+            .with_context(|| format!("Invalid settings in {}", path.display()))
     }
 
     /// Reads the settings at `path` for launch: the draft Settings edits, and how it stands. A file
-    /// that cannot be read yields defaults, so [`Config::save`] keeps refusing to replace it.
+    /// that cannot be read yields defaults, so [`Config::save_changes`] keeps refusing to replace
+    /// it.
     pub(crate) fn load(path: &Path) -> (Self, Startup) {
         if !path.exists() {
             return (Self::default(), Startup::Unconfigured);
@@ -246,14 +255,18 @@ impl Config {
             }
             *file = file
                 .canonicalize()
-                .with_context(|| format!("File not found: {}", file.display()))?;
+                .map_err(|error| cannot_open(file, &error))?;
             ensure!(file.is_file(), "Expected a file: {}", file.display());
         }
         #[cfg(target_os = "linux")]
         {
             use std::os::unix::fs::PermissionsExt;
+            let engine = &config.engine_executable;
+            let metadata = engine
+                .metadata()
+                .map_err(|error| cannot_open(engine, &error))?;
             ensure!(
-                config.engine_executable.metadata()?.permissions().mode() & 0o111 != 0,
+                metadata.permissions().mode() & 0o111 != 0,
                 "Speech executable is not executable. Choose an installed engine or enable its executable permission."
             );
         }
@@ -268,28 +281,102 @@ impl Config {
         Ok(ValidConfig(config))
     }
 
-    pub(crate) fn save(&self, path: &Path) -> anyhow::Result<()> {
+    /// Saves what Settings changed from `base`, the settings the file last held, to `draft`,
+    /// writing each changed key's value from `validated`. Every other key stays as the file has it,
+    /// so edits made while Speakeasy runs survive; a key changed both ways takes the Settings
+    /// value. A new file gets every key, and a file the user still has to repair is never replaced.
+    pub(crate) fn save_changes(
+        base: &Self,
+        draft: &Self,
+        validated: &Self,
+        path: &Path,
+    ) -> anyhow::Result<()> {
+        let cannot_save =
+            |error: io::Error| anyhow!("Cannot save settings to {}: {error}", path.display());
         // Writing where a link points keeps a settings file that a dotfile manager links in.
         let target = if path.exists() {
-            fs::canonicalize(path)?
+            fs::canonicalize(path).map_err(cannot_save)?
         } else {
             path.to_owned()
         };
-        let directory = target
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        fs::create_dir_all(directory)?;
-        // Never replace a file the user still has to repair.
-        if target.exists() {
-            Self::read(&target)?;
-        }
-        let mut file = tempfile::NamedTempFile::new_in(directory)?;
-        file.write_all(&serde_json::to_vec_pretty(self)?)?;
-        file.as_file().sync_all()?;
-        file.persist(&target).map_err(|error| error.error)?;
-        Ok(())
+        let contents = if target.exists() {
+            let contents = fs::read(&target).map_err(cannot_save)?;
+            // Never replace a file the user still has to repair.
+            Self::parse(&contents, &target)?;
+            let mut file: Map<String, Value> = serde_json::from_slice(&contents)
+                .with_context(|| format!("Invalid settings in {}", target.display()))?;
+            patch(&mut file, base, draft, validated)
+                .with_context(|| format!("Cannot save settings to {}", path.display()))?;
+            serde_json::to_vec_pretty(&file)?
+        } else {
+            serde_json::to_vec_pretty(validated)?
+        };
+        replace(&target, &contents).map_err(cannot_save)
     }
+}
+
+fn cannot_open(file: &Path, error: &io::Error) -> anyhow::Error {
+    if error.kind() == ErrorKind::NotFound {
+        anyhow!("File not found: {}", file.display())
+    } else {
+        anyhow!("Cannot open {}: {error}", file.display())
+    }
+}
+
+/// Sets each key whose value differs between `base` and `draft` to its value in `validated`. Linux
+/// keys are compared one by one, because a default Linux block is not serialized at all.
+fn patch(
+    file: &mut Map<String, Value>,
+    base: &Config,
+    draft: &Config,
+    validated: &Config,
+) -> anyhow::Result<()> {
+    for (key, value) in changes(base, draft, validated)? {
+        if key != "linux" {
+            file.insert(key, value);
+        }
+    }
+    let linux = changes(&base.linux, &draft.linux, &validated.linux)?;
+    if !linux.is_empty() {
+        file.entry("linux")
+            .or_insert_with(|| Value::Object(Map::new()))
+            .as_object_mut()
+            .context("The linux settings must be an object")?
+            .extend(linux);
+    }
+    Ok(())
+}
+
+/// The keys of `validated` whose values differ between `base` and `draft`, with their values.
+fn changes<T: Serialize>(
+    base: &T,
+    draft: &T,
+    validated: &T,
+) -> serde_json::Result<Vec<(String, Value)>> {
+    let [base, draft, validated] = [base, draft, validated].map(serde_json::to_value);
+    let (base, draft) = (base?, draft?);
+    let Value::Object(validated) = validated? else {
+        return Ok(Vec::new());
+    };
+    Ok(validated
+        .into_iter()
+        .filter(|(key, _)| base.get(key) != draft.get(key))
+        .collect())
+}
+
+/// Replaces `target` with `contents` all at once from a temporary file beside it, so a failure
+/// never leaves half a file and the rename stays on one filesystem.
+fn replace(target: &Path, contents: &[u8]) -> io::Result<()> {
+    let directory = target
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(directory)?;
+    let mut file = tempfile::NamedTempFile::new_in(directory)?;
+    file.write_all(contents)?;
+    file.as_file().sync_all()?;
+    file.persist(target).map_err(|error| error.error)?;
+    Ok(())
 }
 
 /// How far a settings change reaches, ordered by disruption; each tier's action covers the tiers

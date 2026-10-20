@@ -21,7 +21,8 @@ raw-window-handle.workspace = true
 reqwest = { workspace = true, features = ["json", "multipart"] }
 rtrb.workspace = true
 serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
+# Saves patch the user's file in place, so its keys keep their order.
+serde_json = { workspace = true, features = ["preserve_order"] }
 sha2.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "process", "rt", "sync", "time"] }

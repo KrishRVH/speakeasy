@@ -4,78 +4,110 @@ use anyhow::bail;
 
 use super::*;
 
+fn saved(path: &Path) -> anyhow::Result<Value> {
+    Ok(serde_json::from_slice(&fs::read(path)?)?)
+}
+
 #[test]
-fn saved_settings_preserve_linux_bindings_and_skip_defaults() -> anyhow::Result<()> {
+fn a_new_file_skips_default_linux_keys_and_a_change_writes_only_its_key() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
-    let mut config = Config::default();
-    config.save(&path)?;
-    let defaults: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
-    assert!(defaults.get("linux").is_none());
-    assert!(Config::read(&path)?.linux.is_default());
+    let defaults = Config::default();
+    Config::save_changes(&defaults, &defaults, &defaults, &path)?;
+    assert!(saved(&path)?.get("linux").is_none());
 
-    config.linux = LinuxSettings {
-        shortcut: "CTRL+ALT+d".into(),
-        cancel: "CTRL+ALT+Escape".into(),
-        terminal_paste: true,
-        manual_paste: true,
-        external_shortcut: true,
+    let mut draft = defaults.clone();
+    draft.linux.external_shortcut = true;
+    Config::save_changes(&defaults, &draft, &draft, &path)?;
+    assert_eq!(
+        saved(&path)?["linux"],
+        serde_json::json!({"external_shortcut": true})
+    );
+    assert_eq!(Config::read(&path)?.linux, draft.linux);
+    Ok(())
+}
+
+#[test]
+fn a_save_keeps_hand_edits_and_path_spellings() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    valid_config(directory.path())?;
+    fs::write(
+        &path,
+        r#"{"engine_executable":"engine","model":"model.gguf","threads":4}"#,
+    )?;
+    let (base, Startup::Configured(_)) = Config::load(&path) else {
+        bail!("The settings did not validate");
     };
-    config.save(&path)?;
-    assert_eq!(Config::read(&path)?.linux, config.linux);
+    // Edited by hand while Speakeasy runs.
+    fs::write(
+        &path,
+        r#"{"engine_executable":"engine","model":"model.gguf","threads":8}"#,
+    )?;
+    let draft = Config {
+        theme: Theme::Iris,
+        ..base.clone()
+    };
+    let validated = draft.validated(&path)?;
+    Config::save_changes(&base, &draft, &validated, &path)?;
+    let saved = saved(&path)?;
+    let keys: Vec<_> = saved.as_object().into_iter().flat_map(Map::keys).collect();
+    assert_eq!(keys, ["engine_executable", "model", "threads", "theme"]);
+    assert_eq!(
+        saved,
+        serde_json::json!({
+            "engine_executable": "engine",
+            "model": "model.gguf",
+            "threads": 8,
+            "theme": "iris",
+        })
+    );
     Ok(())
 }
 
 #[test]
 fn released_delivery_keys_read_and_save_unchanged() -> anyhow::Result<()> {
-    const EXAMPLE: &str = include_str!("../../../../settings.example.json");
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     fs::write(
         &path,
         r#"{"engine_executable":"e","model":"m","preserve_clipboard":true}"#,
     )?;
-    let mut config = Config::read(&path)?;
-    assert_eq!(config.text_delivery(), TextDelivery::Type);
+    let base = Config::read(&path)?;
+    assert_eq!(base.text_delivery(), TextDelivery::Type);
+    let mut config = base.clone();
     config.set_text_delivery(TextDelivery::Paste);
-    config.save(&path)?;
-    let saved: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
-    let example: serde_json::Value = serde_json::from_str(EXAMPLE)?;
-    let keys = |value: &serde_json::Value| {
-        value.as_object().map(|object| {
-            object
-                .keys()
-                .cloned()
-                .collect::<std::collections::BTreeSet<_>>()
-        })
-    };
-    assert_eq!(keys(&saved), keys(&example));
+    Config::save_changes(&base, &config, &config, &path)?;
+    assert_eq!(
+        saved(&path)?,
+        serde_json::json!({"engine_executable": "e", "model": "m", "preserve_clipboard": false})
+    );
     assert_eq!(Config::read(&path)?.text_delivery(), TextDelivery::Paste);
 
     #[cfg(target_os = "linux")]
     {
-        let linux = serde_json::json!({
-            "shortcut": "CTRL+ALT+d",
-            "cancel": "CTRL+ALT+Escape",
-            "terminal_paste": true,
-            "manual_paste": false,
-            "external_shortcut": false,
-        });
         let released = serde_json::json!({
             "engine_executable": "e",
             "model": "m",
             "preserve_clipboard": true,
-            "linux": linux,
+            "linux": {
+                "shortcut": "CTRL+ALT+d",
+                "cancel": "CTRL+ALT+Escape",
+                "terminal_paste": true,
+                "manual_paste": false,
+                "external_shortcut": false,
+            },
         });
         fs::write(&path, released.to_string())?;
-        let mut config = Config::read(&path)?;
-        assert_eq!(config.text_delivery(), TextDelivery::Type);
+        let base = Config::read(&path)?;
+        assert_eq!(base.text_delivery(), TextDelivery::Type);
+        let mut config = base.clone();
         config.set_text_delivery(TextDelivery::Copy);
-        config.save(&path)?;
-        let saved: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
-        assert_eq!(saved["preserve_clipboard"], false);
-        assert_eq!(keys(&saved["linux"]), keys(&linux));
-        assert_eq!(saved["linux"]["manual_paste"], true);
+        Config::save_changes(&base, &config, &config, &path)?;
+        let mut expected = released;
+        expected["preserve_clipboard"] = false.into();
+        expected["linux"]["manual_paste"] = true.into();
+        assert_eq!(saved(&path)?, expected);
         let mut config = Config::read(&path)?;
         assert_eq!(config.text_delivery(), TextDelivery::Copy);
         config.set_text_delivery(TextDelivery::Type);
@@ -170,13 +202,14 @@ fn a_save_writes_through_a_linked_settings_file() -> anyhow::Result<()> {
     fs::create_dir(&dotfiles)?;
     let real = dotfiles.join("settings.json");
     let path = directory.path().join("settings.json");
-    Config::default().save(&real)?;
+    let defaults = Config::default();
+    Config::save_changes(&defaults, &defaults, &defaults, &real)?;
     std::os::unix::fs::symlink(&real, &path)?;
     let config = Config {
         theme: Theme::Iris,
         ..Config::default()
     };
-    config.save(&path)?;
+    Config::save_changes(&defaults, &config, &config, &path)?;
     assert!(fs::symlink_metadata(&path)?.file_type().is_symlink());
     assert_eq!(Config::read(&real)?.theme, Theme::Iris);
     Ok(())
@@ -189,7 +222,11 @@ fn save_refuses_to_replace_a_file_that_needs_repair() -> anyhow::Result<()> {
     // A type error, not an unknown key, so the case holds whatever unknown keys are allowed.
     let broken = br#"{"engine_executable":"","model":"","threads":"four"}"#;
     fs::write(&path, broken)?;
-    assert!(Config::default().save(&path).is_err());
+    let draft = Config {
+        theme: Theme::Iris,
+        ..Config::default()
+    };
+    assert!(Config::save_changes(&Config::default(), &draft, &draft, &path).is_err());
     assert_eq!(fs::read(&path)?, broken);
     Ok(())
 }

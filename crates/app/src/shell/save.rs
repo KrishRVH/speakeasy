@@ -1,5 +1,6 @@
 //! Durable settings writes. A short-lived worker thread owns each write; the queue keeps only the
-//! latest request behind it and the last durable result until it drains.
+//! latest request behind it and the last durable result until it drains. Writes run one at a time,
+//! so each patches exactly the keys its draft changed since the last write that succeeded.
 
 use std::path::PathBuf;
 
@@ -46,16 +47,29 @@ pub(super) enum SaveProgress {
     },
 }
 
-#[derive(Default)]
 pub(super) struct SaveQueue {
     writing: Option<SaveWork>,
     pending: Option<SaveRequest>,
     saved: Option<SavedConfig>,
+    /// The settings the file holds as of the last write that succeeded, which the next write
+    /// compares its draft against.
+    durable: Config,
     /// The newest request's epoch, which the drained queue reports.
     epoch: ConfigEpoch,
 }
 
 impl SaveQueue {
+    /// A queue for settings that the file holds as `durable`.
+    pub(super) fn new(durable: Config) -> Self {
+        Self {
+            writing: None,
+            pending: None,
+            saved: None,
+            durable,
+            epoch: ConfigEpoch::default(),
+        }
+    }
+
     /// Starts writing `request`, or returns `None` after queuing it behind the running write in
     /// place of any request queued before.
     pub(super) fn submit(&mut self, request: SaveRequest) -> Option<SaveProgress> {
@@ -75,6 +89,7 @@ impl SaveQueue {
         self.writing = None;
         let error = match result {
             Ok(saved) => {
+                self.durable = Config::clone(&saved.validated);
                 self.saved = Some(saved);
                 None
             },
@@ -91,7 +106,7 @@ impl SaveQueue {
     }
 
     fn start(&mut self, request: SaveRequest) -> SaveProgress {
-        match SaveWork::start(request.draft, request.path) {
+        match SaveWork::start(self.durable.clone(), request.draft, request.path) {
             Ok(work) => SaveProgress::Writing(self.writing.insert(work).result.clone()),
             Err(error) => self.finish(Err(error)),
         }
@@ -104,25 +119,36 @@ impl SaveQueue {
     /// Blocks until the running write finishes, then writes the latest queued request and waits for
     /// that write too.
     pub(super) fn flush(&mut self) {
-        self.writing = None;
+        if let Some(SaveWork { thread, result }) = self.writing.take() {
+            drop(thread);
+            // The queued write compares against this one, so a revert queued behind it still lands.
+            if let Ok(Ok(saved)) = result.try_recv() {
+                self.durable = saved.validated.into_inner();
+            }
+        }
         if let Some(pending) = self.pending.take() {
             // Dropping the work joins its thread; nothing remains to report a failed start to.
-            drop(SaveWork::start(pending.draft, pending.path));
+            drop(SaveWork::start(
+                self.durable.clone(),
+                pending.draft,
+                pending.path,
+            ));
         }
     }
 }
 
 /// Validates and writes settings on its own thread; dropping it joins that thread.
 struct SaveWork {
-    _thread: OwnedThread,
+    thread: OwnedThread,
     result: Receiver<anyhow::Result<SavedConfig>>,
 }
 
 impl SaveWork {
-    fn start(draft: Config, path: PathBuf) -> anyhow::Result<Self> {
+    /// Writes what `draft` changed from `base`, the settings the file holds.
+    fn start(base: Config, draft: Config, path: PathBuf) -> anyhow::Result<Self> {
         Self::spawn(move || {
             let validated = draft.validated(&path)?;
-            validated.save(&path)?;
+            Config::save_changes(&base, &draft, &validated, &path)?;
             Ok(SavedConfig {
                 submitted: draft,
                 validated,
@@ -141,10 +167,7 @@ impl SaveWork {
             )]
             let _ = complete.try_send(write());
         })?;
-        Ok(Self {
-            _thread: thread,
-            result,
-        })
+        Ok(Self { thread, result })
     }
 }
 
@@ -156,7 +179,7 @@ mod tests {
     use tokio::time::timeout;
 
     use super::*;
-    use crate::config::valid_config;
+    use crate::{config::valid_config, theme::Theme};
 
     fn durable(config: Config) -> SavedConfig {
         SavedConfig {
@@ -187,7 +210,7 @@ mod tests {
             epoch,
             path: path.clone(),
         };
-        let mut queue = SaveQueue::default();
+        let mut queue = SaveQueue::new(config.clone());
         let first = queue
             .submit(request(4))
             .context("The first save was queued")?;
@@ -225,7 +248,7 @@ mod tests {
         let path = directory.path().join("settings.json");
         let first_epoch = ConfigEpoch::default();
         let queued_epoch = first_epoch.next();
-        let mut queue = SaveQueue::default();
+        let mut queue = SaveQueue::new(Config::default());
         let first = queue
             .submit(SaveRequest {
                 draft: Config {
@@ -260,6 +283,34 @@ mod tests {
         );
         assert!(queue.is_idle());
         assert!(queue.saved.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_revert_queued_behind_a_write_reaches_the_file() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("settings.json");
+        let original = valid_config(directory.path())?;
+        Config::save_changes(&original, &original, &original, &path)?;
+        let request = |theme| SaveRequest {
+            draft: Config {
+                theme,
+                ..original.clone()
+            },
+            epoch: ConfigEpoch::default(),
+            path: path.clone(),
+        };
+        let mut queue = SaveQueue::new(original.clone());
+        let first = queue
+            .submit(request(Theme::Iris))
+            .context("The first save was queued")?;
+        assert!(queue.submit(request(original.theme)).is_none());
+        let revert = queue.finish(write_result(first).await?);
+        let SaveProgress::Finished { error, .. } = queue.finish(write_result(revert).await?) else {
+            bail!("The revert did not finish");
+        };
+        assert!(error.is_none());
+        assert_eq!(Config::read(&path)?.theme, original.theme);
         Ok(())
     }
 
@@ -312,33 +363,32 @@ mod tests {
     }
 
     #[test]
-    fn flush_finishes_the_running_write_before_the_latest_queued_save() -> anyhow::Result<()> {
+    fn flush_finishes_the_running_write_before_a_revert_queued_behind_it() -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("settings.json");
+        let original = valid_config(directory.path())?;
         let first = Config {
-            threads: 4,
-            ..valid_config(directory.path())?
+            theme: Theme::Iris,
+            ..original.clone()
         };
-        let mut latest = first.clone();
-        latest.threads = 8;
         let (entered, started) = mpsc::channel();
         let (release, released) = mpsc::channel();
-        let first_path = path.clone();
+        let (base, first_path) = (original.clone(), path.clone());
         let running = SaveWork::spawn(move || {
             entered.send(())?;
             released.recv()?;
-            first.save(&first_path)?;
+            Config::save_changes(&base, &first, &first, &first_path)?;
             Ok(durable(first))
         })?;
         started.recv_timeout(Duration::from_secs(2))?;
         let mut queue = SaveQueue {
             writing: Some(running),
             pending: Some(SaveRequest {
-                draft: latest,
+                draft: original.clone(),
                 epoch: ConfigEpoch::default(),
                 path: path.clone(),
             }),
-            ..SaveQueue::default()
+            ..SaveQueue::new(original.clone())
         };
         let cleanup = std::thread::spawn(move || queue.flush());
         std::thread::sleep(Duration::from_millis(50));
@@ -348,7 +398,7 @@ mod tests {
         );
         release.send(())?;
         cleanup.join().unwrap();
-        assert_eq!(Config::read(&path)?.threads, 8);
+        assert_eq!(Config::read(&path)?.theme, original.theme);
         Ok(())
     }
 }

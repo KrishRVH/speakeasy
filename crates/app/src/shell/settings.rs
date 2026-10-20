@@ -64,6 +64,7 @@ impl Settings {
                 }
             }
         });
+        let saves = SaveQueue::new(config.clone());
         let mut view = Self {
             config,
             presentation,
@@ -75,7 +76,7 @@ impl Settings {
             setup: None,
             retiring_setups: Vec::new(),
             saving: None,
-            saves: SaveQueue::default(),
+            saves,
             _updates: follow_updates,
             #[cfg(target_os = "windows")]
             minimize_to_tray: None,
@@ -584,7 +585,7 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("settings.json");
         let config = valid_config(directory.path())?;
-        let mut saves = SaveQueue::default();
+        let mut saves = SaveQueue::new(config.clone());
         let mut submit = |threads| {
             saves.submit(SaveRequest {
                 draft: Config {
