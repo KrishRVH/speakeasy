@@ -508,6 +508,9 @@ impl Clock {
     }
 }
 
+/// Opens the pill, hidden and centered above the primary display's bottom edge, to present
+/// `updates` and `levels`. Fails without a display or when the window cannot be made nonactivating
+/// and click-through.
 pub(crate) fn open(
     updates: watch::Receiver<Snapshot>,
     levels: watch::Receiver<Meter>,
