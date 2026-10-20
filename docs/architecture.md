@@ -53,8 +53,8 @@ flowchart LR
 | `crates/app/src/show.rs` and `show/`                             | Show recording on an owned thread, the ink overlay, publishing, seven-day retention, private all-at-once bundle writes, and the `show` subcommand.                                                                                    |
 
 Core, show, and app forbid unsafe code. Platform contains native FFI with local safety explanations.
-Application tests live beside their modules; dependency regression fixtures under `crates/app/tests`
-include the patched helpers directly.
+Application tests live beside their modules; dependency regression fixtures under
+`crates/platform/tests` include the patched helpers directly.
 
 The root Cargo patch selects a narrowly patched GPUI 0.2.2 source under `vendor/gpui`, outside the
 workspace. Its native handle, visibility, queued-event, timing, frame-source lifetime, and

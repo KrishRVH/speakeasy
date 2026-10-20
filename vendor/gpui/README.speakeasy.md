@@ -28,7 +28,7 @@ The source patches cover native windows, frame scheduling, and path resources:
   fractions without truncating the frequency, and reject invalid intervals
   through the existing 60 Hz fallback. Valid reduced refresh ratios must not
   divide by zero or terminate the redraw thread. The portable integration
-  test in `crates/app/tests/gpui_timing.rs` exercises this production helper
+  test in `crates/platform/tests/gpui_timing.rs` exercises this production helper
   on every host.
 - `src/platform/mac/display_link.rs` and `mac/window.rs` backport
   [zed commit 96ce8f2a05f8912851e5d20d808fe21f4134bd45](https://github.com/zed-industries/zed/commit/96ce8f2a05f8912851e5d20d808fe21f4134bd45)
@@ -40,7 +40,7 @@ The source patches cover native windows, frame scheduling, and path resources:
   the process lifetime avoids a CoreVideo release race. `Cargo.toml` adds the
   pinned dispatch2 RAII dependency with only its `std` feature. Portable
   production-registry tests use `display_link_test_support.rs` and
-  `crates/app/tests/gpui_macos_lifecycle.rs`; they call no native API.
+  `crates/platform/tests/gpui_macos_lifecycle.rs`; they call no native API.
 - `src/platform/mac/metal_renderer.rs`, `windows/directx_renderer.rs`, and
   `blade/blade_renderer.rs` realize path resolve/MSAA textures only for a
   nonempty path scene. Metal and DirectX release them again after a frame
