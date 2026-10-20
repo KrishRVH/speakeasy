@@ -837,8 +837,10 @@ pub fn attach_console() {
     }
 }
 
-/// Presents an error that prevents or ends startup, blocking until the user dismisses it. Never
-/// called once a session can run. Callers never include audio, transcripts, or credentials.
+/// Presents an error that prevents or ends a launch, blocking until the user dismisses it.
+///
+/// The app reports runtime failures in its own windows instead. Callers never include audio,
+/// transcripts, or credentials.
 pub fn show_startup_error(message: &str) {
     let text = to_wide(message);
     // SAFETY: both NUL-terminated strings outlive this synchronous dialog.

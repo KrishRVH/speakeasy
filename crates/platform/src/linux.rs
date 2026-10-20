@@ -247,8 +247,10 @@ pub fn copy_text(_: &str) -> anyhow::Result<()> {
     anyhow::bail!("Shows are not available on Linux yet")
 }
 
-/// Writes an error that prevents or ends startup to stderr. Never called once a session can run.
-/// Callers never include audio, transcripts, or credentials.
+/// Writes an error that prevents or ends a launch to stderr.
+///
+/// The app reports runtime failures in its own windows instead. Callers never include audio,
+/// transcripts, or credentials.
 pub fn show_startup_error(message: &str) {
     eprintln!("Speakeasy: {message}");
 }

@@ -190,7 +190,8 @@ impl<Owner> Runtime<Owner> {
     ) -> anyhow::Result<Self> {
         let epoch = snapshots.borrow().epoch;
         let (configuration, changes) = watch::channel(config);
-        // One report waits for the owner's next wake; the retention sweep repeats a dropped one.
+        // One report waits for the owner's next wake, and one arriving meanwhile is dropped. The
+        // retention sweep repeats its own; a Settings or overlay failure is not repeated.
         let (reports, reported) = async_channel::bounded(1);
         let (stop, stopping) = async_channel::bounded(1);
         let owner = run(Wiring {

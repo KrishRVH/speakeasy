@@ -522,8 +522,10 @@ pub fn reduced_motion() -> bool {
     NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
 }
 
-/// Presents an error that prevents or ends startup, blocking until the user dismisses it. Never
-/// called once a session can run. Callers never include audio, transcripts, or credentials.
+/// Presents an error that prevents or ends a launch, blocking until the user dismisses it.
+///
+/// The app reports runtime failures in its own windows instead. Callers never include audio,
+/// transcripts, or credentials.
 pub fn show_startup_error(message: &str) {
     if let Some(main) = MainThreadMarker::new() {
         let alert = NSAlert::new(main);
