@@ -330,6 +330,11 @@ impl DirectXRenderer {
                     scene.polychrome_sprites.len(),
                     scene.surfaces.len(),))?;
         }
+        // A frame without paths frees their full-window targets; a window that drew paths once
+        // need not hold them while it shows none.
+        if scene.paths.is_empty() {
+            self.resources.paths = None;
+        }
         self.present()
     }
 

@@ -328,4 +328,26 @@ mod tests {
         assert!((aspect - surface).abs() < 0.02, "{aspect} vs {surface}");
         Ok(())
     }
+
+    /// Records the real screen for ten seconds so a process sampler can measure what recording
+    /// costs; it reports only the footage's shape.
+    #[tokio::test]
+    #[ignore = "Records the real screen for ten seconds and keeps no pixels; native opt-in profiling"]
+    async fn profile_real_screen_recording() -> anyhow::Result<()> {
+        let (events, finished) = async_channel::bounded(1);
+        let (canvas, _ink) = watch::channel(Canvas::default());
+        let recorder = Recorder::start(SessionId::FIRST, Instant::now(), events, canvas)?;
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        recorder.finish();
+        let ShowEvent::Finished(_, footage) =
+            timeout(Duration::from_secs(10), finished.recv()).await??;
+        let footage = footage?;
+        recorder.retire().await;
+        eprintln!(
+            "show_recording: seconds=10 frames={} journal_mb={:.1}",
+            footage.samples.len(),
+            footage.journal.bytes() as f64 / 1e6
+        );
+        Ok(())
+    }
 }

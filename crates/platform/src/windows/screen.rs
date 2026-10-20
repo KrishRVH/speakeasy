@@ -95,8 +95,9 @@ use crate::screen::{
 
 /// How often the capture thread drains the frame pool and checks for a stop.
 const POLL: Duration = Duration::from_millis(10);
-/// Pool buffers: one frame may wait for its turn to be sent while Windows fills the others.
-const BUFFERS: i32 = 3;
+/// Pool buffers, each a full-resolution frame of GPU memory: one may wait for its turn to be sent
+/// while Windows fills the other. Draining the pool replaces the waiting frame, so two never stall.
+const BUFFERS: i32 = 2;
 /// How long the request for border-free capture may hold back the first frame.
 const ACCESS_WAIT: Duration = Duration::from_millis(250);
 const POOL_FORMAT: DirectXPixelFormat = DirectXPixelFormat::B8G8R8A8UIntNormalized;

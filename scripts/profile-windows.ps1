@@ -6,12 +6,26 @@ param(
     [Parameter(Mandatory)][string]$OutputPath
 )
 $ErrorActionPreference = 'Stop'
+# GPU memory counters exist only where a WDDM driver publishes them; their absence leaves the
+# metrics out rather than failing the run.
+function Get-GpuMemory([int]$ProcessId) {
+    $usage = @{}
+    foreach ($kind in @('Dedicated', 'Shared')) {
+        try {
+            $counter = "\GPU Process Memory(pid_${ProcessId}_*)\$kind Usage"
+            $samples = (Get-Counter -Counter $counter -ErrorAction Stop).CounterSamples
+            $usage[$kind] = ($samples | Measure-Object -Property CookedValue -Sum).Sum
+        } catch {}
+    }
+    $usage
+}
 $clock = [System.Diagnostics.Stopwatch]::StartNew()
 $logicalCpus = [Environment]::ProcessorCount
 $results = @{}
 $previous = @{}
 foreach ($processId in ($ProcessIds | Select-Object -Unique)) {
-    $results[$processId] = @{ samples = [System.Collections.Generic.List[object]]::new(); end = $null }
+    # JSON objects need string keys; Windows PowerShell refuses to serialize numeric ones.
+    $results[[string]$processId] = @{ samples = [System.Collections.Generic.List[object]]::new(); end = $null }
 }
 while ($true) {
     foreach ($processId in @($results.Keys)) {
@@ -19,7 +33,7 @@ while ($true) {
         if ($null -ne $result.end) { continue }
         $process = $null
         try {
-            $process = Get-Process -Id $processId
+            $process = Get-Process -Id ([int]$processId)
             $process.Refresh()
             $elapsed = $clock.Elapsed.TotalSeconds
             $sample = @{
@@ -33,6 +47,9 @@ while ($true) {
                 threads = $process.Threads.Count
                 handles = $process.HandleCount
             }
+            $gpu = Get-GpuMemory ([int]$processId)
+            if ($gpu.ContainsKey('Dedicated')) { $sample.gpu_dedicated_bytes = $gpu.Dedicated }
+            if ($gpu.ContainsKey('Shared')) { $sample.gpu_shared_bytes = $gpu.Shared }
             $before = $previous[$processId]
             if ($null -ne $before) {
                 if ($before.identity -ne $sample.identity) { $result.end = 'PID reused'; continue }
@@ -50,7 +67,7 @@ while ($true) {
 }
 foreach ($result in $results.Values) {
     $summary = @{}
-    foreach ($metric in @('cpu_one_core_percent', 'cpu_machine_percent', 'rss_bytes', 'private_bytes', 'threads', 'handles')) {
+    foreach ($metric in @('cpu_one_core_percent', 'cpu_machine_percent', 'rss_bytes', 'private_bytes', 'gpu_dedicated_bytes', 'gpu_shared_bytes', 'threads', 'handles')) {
         $values = @($result.samples | Where-Object { $_.ContainsKey($metric) } | ForEach-Object { $_[$metric] } | Sort-Object)
         if ($values.Count -eq 0) { continue }
         $middle = [int][Math]::Floor($values.Count / 2)

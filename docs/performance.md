@@ -26,8 +26,10 @@ when the full interaction remains correct.
   audio/teardown ordering. WAV preparation reuses the PCM allocation, checks lengths, and rejects
   unsupported input.
 - A Show's recorder keeps per-frame work to a few milliseconds and its journal under a fixed cap.
-  Publishing rebuilds, resamples, and encodes keyframes on up to one thread per core. Hot pixel
-  loops use plain multiply-add: `mul_add` is a software call on x86-64's baseline.
+  Its overlay holds full-window path targets only while ink shows; GPUI frees them after a frame
+  without paths, and the window closes when the Show ends. Publishing rebuilds, resamples, and
+  encodes keyframes on up to one thread per core. Hot pixel loops use plain multiply-add: `mul_add`
+  is a software call on x86-64's baseline.
 - Do not add an always-on microphone, worker pool, cache, resampler, or background service without a
   measured user benefit and explicit resource ownership.
 
@@ -47,8 +49,10 @@ remaining window, range selection, trimming, capacity reclamation, and WAV encod
 microphone teardown, inference, and insertion. The synthetic `profile_show_pipeline` probe reports
 the recorder's per-frame fingerprint and journal cost on 2560 × 1440 desktops that stay still, type,
 scroll, or open a dialog, and each stage of publishing a one-minute Show: selection, keyframe
-rebuilding, composition, PNG encoding, and the private write. Use ordinary native profilers rather
-than a permanent benchmark suite.
+rebuilding, composition, PNG encoding, and the private write. On Windows and Mac,
+`profile_real_screen_recording` records the real screen for ten seconds, keeping no pixels, while
+`profile-windows.ps1` samples its process. Use ordinary native profilers rather than a permanent
+benchmark suite.
 
 ## Native process sampling
 
@@ -57,10 +61,11 @@ pages, threads and descriptors. It detects process exit and PID reuse. Linux con
 describe the main thread, not all threads. Fixture tests cover numeric parsing, unknown optional
 data, identity changes, counter regression, CPU denominators, and nearest-rank percentiles.
 
-`profile-windows.ps1` samples process CPU, working set, private committed memory, threads and
-handles. Windows private committed memory and Linux private resident pages are different metrics;
-compare each on the same OS. The Windows script requires a native Windows host; Linux fixture tests
-do not verify its runtime behavior.
+`profile-windows.ps1` samples process CPU, working set, private committed memory, dedicated and
+shared GPU memory where the driver publishes them, threads and handles. Windows private committed
+memory and Linux private resident pages are different metrics; compare each on the same OS. The
+Windows script requires a native Windows host; Linux fixture tests do not verify its runtime
+behavior.
 
 Pass explicit app and worker PIDs, reported separately. For example:
 

@@ -358,6 +358,11 @@ impl MetalRenderer {
         );
         if !scene.paths.is_empty() && self.path_intermediate_texture.is_none() {
             self.update_path_intermediate_textures(viewport_size);
+        } else if scene.paths.is_empty() {
+            // A frame without paths frees their full-window targets; command buffers in flight
+            // retain what they still use.
+            self.path_intermediate_texture = None;
+            self.path_intermediate_msaa_texture = None;
         }
         let drawable = if let Some(drawable) = layer.next_drawable() {
             drawable

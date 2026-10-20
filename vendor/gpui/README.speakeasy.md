@@ -43,7 +43,9 @@ The source patches cover native windows, frame scheduling, and path resources:
   `crates/app/tests/gpui_macos_lifecycle.rs`; they call no native API.
 - `src/platform/mac/metal_renderer.rs`, `windows/directx_renderer.rs`, and
   `blade/blade_renderer.rs` realize path resolve/MSAA textures only for a
-  nonempty path scene. Resize and format changes invalidate those resources;
+  nonempty path scene. Metal and DirectX release them again after a frame
+  without paths, so the Show overlay returns that GPU memory once its ink
+  fades. Resize and format changes invalidate those resources;
   existing GPU ownership, synchronization, and sample counts are preserved.
   DirectX also clears bound shader-resource references during resize.
   Speakeasy's static Settings diamonds use an embedded SVG atlas tile, so
