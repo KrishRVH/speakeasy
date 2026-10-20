@@ -88,6 +88,26 @@ fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {
         attributes.override_redirect,
         "Pill is managed as an ordinary window"
     );
+    let atom = |name: &[u8]| -> anyhow::Result<u32> {
+        Ok(connection.intern_atom(false, name)?.reply()?.atom)
+    };
+    let window_types: Vec<_> = connection
+        .get_property(
+            false,
+            id,
+            atom(b"_NET_WM_WINDOW_TYPE")?,
+            AtomEnum::ATOM,
+            0,
+            8,
+        )?
+        .reply()?
+        .value32()
+        .context("Invalid _NET_WM_WINDOW_TYPE format")?
+        .collect();
+    ensure!(
+        window_types == [atom(b"_NET_WM_WINDOW_TYPE_NOTIFICATION")?],
+        "Pill is not a notification window"
+    );
     let hints = connection
         .get_property(false, id, AtomEnum::WM_HINTS, AtomEnum::WM_HINTS, 0, 9)?
         .reply()?;

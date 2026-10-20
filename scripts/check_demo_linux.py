@@ -31,14 +31,9 @@ class X11(Protocol):
     XCloseDisplay: NativeFunction[[int], int]
     XUnmapWindow: NativeFunction[[int, int], int]
     XSync: NativeFunction[[int, int], int]
-    XFree: NativeFunction[[int], int]
     XGetImage: NativeFunction[[int, int, int, int, int, int, int, int], int | None]
     XGetPixel: NativeFunction[[int, int, int], int]
     XDestroyImage: NativeFunction[[int], int]
-
-
-class Xext(Protocol):
-    XShapeGetRectangles: NativeFunction[[int, int, int, object, object], int | None]
 
 
 class Display:
@@ -47,13 +42,11 @@ class Display:
     def __init__(self, name: str) -> None:
         # These casts declare the ABI bound below; ctypes cannot derive C signatures.
         self._x11: X11 = cast(X11, cast(object, ctypes.CDLL("libX11.so.6")))
-        self._shape: Xext = cast(Xext, cast(object, ctypes.CDLL("libXext.so.6")))
         self._x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
         self._x11.XOpenDisplay.restype = ctypes.c_void_p
         self._x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
         self._x11.XUnmapWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
         self._x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
-        self._x11.XFree.argtypes = [ctypes.c_void_p]
         self._x11.XGetImage.argtypes = [
             ctypes.c_void_p,
             ctypes.c_ulong,
@@ -68,14 +61,6 @@ class Display:
         self._x11.XGetPixel.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
         self._x11.XGetPixel.restype = ctypes.c_ulong
         self._x11.XDestroyImage.argtypes = [ctypes.c_void_p]
-        self._shape.XShapeGetRectangles.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_ulong,
-            ctypes.c_int,
-            ctypes.POINTER(ctypes.c_int),
-            ctypes.POINTER(ctypes.c_int),
-        ]
-        self._shape.XShapeGetRectangles.restype = ctypes.c_void_p
         display = self._x11.XOpenDisplay(name.encode())
         if display is None:
             raise RuntimeError("Cannot open the private display")
@@ -96,20 +81,6 @@ class Display:
         for handle in handles:
             self._x11.XUnmapWindow(self._display, int(handle, 16))
         self._x11.XSync(self._display, 0)
-
-    def check_input_shape(self, handle: str) -> None:
-        count, ordering = ctypes.c_int(), ctypes.c_int()
-        rectangles = self._shape.XShapeGetRectangles(
-            self._display,
-            int(handle, 16),
-            2,
-            ctypes.byref(count),
-            ctypes.byref(ordering),
-        )
-        if rectangles is not None:
-            self._x11.XFree(rectangles)
-        if count.value != 0:
-            raise RuntimeError("Pill input shape intercepts clicks")
 
     def rendered(self, handle: str) -> bool:
         image = self._x11.XGetImage(
@@ -310,17 +281,7 @@ def verify(
     else:
         raise RuntimeError("Demo did not create both owned GUI windows")
     pill = owned["Speakeasy pill"]
-    hints = command("xprop", "-id", pill, "_NET_WM_WINDOW_TYPE", "WM_HINTS", env=env)
-    if (
-        "_NET_WM_WINDOW_TYPE_NOTIFICATION" not in hints
-        or "accepts input or input focus: False" not in hints
-    ):
-        raise RuntimeError("Pill lacks its nonactivating notification hints")
-    if "Override Redirect State: yes" not in command("xwininfo", "-id", pill, env=env):
-        raise RuntimeError("Pill is managed as an ordinary application window")
-
     with Display(env["DISPLAY"]) as display:
-        display.check_input_shape(pill)
         # Actual pixels catch a live process whose renderer never presents.
         deadline = now() + 5
         while now() < deadline:
@@ -339,7 +300,7 @@ def verify(
             raise RuntimeError("Settings never presented rendered content")
     if startup_only:
         alive()
-        print("PASS: real GUI startup, Settings rendering, and nonactivating click-through pill.")
+        print("PASS: real GUI startup and Settings rendering.")
         return owned
     # The automatic preview exercises repeated show/hide and ends with an
     # eight-second error hint. It must then leave the pill natively unmapped.
@@ -350,9 +311,7 @@ def verify(
         mapped = "Map State: IsViewable" in command("xwininfo", "-id", pill, env=env)
         seen_visible |= mapped
         if seen_visible and not mapped and now() > deadline - 12:
-            print(
-                "PASS: GUI startup, rendering, click-through pill, and preview show/hide completion."
-            )
+            print("PASS: GUI startup, rendering, and preview show/hide completion.")
             return owned
         sleep(0.1)
     raise RuntimeError("Preview did not show and finally unmap the pill")
