@@ -370,13 +370,11 @@ impl Chooser<'_> {
             .map(|candidate| candidate.frame)
             .collect();
         if self.chosen.len() > 1 && !shown.is_empty() {
-            // A copy of the shared reference, since `retain` borrows `self.chosen` mutably.
-            let frames = self.frames;
             self.chosen.retain(|candidate| {
                 !matches!(candidate.basis, Basis::Cue { .. })
                     || shown
                         .iter()
-                        .all(|&other| frames.novel(other, candidate.frame))
+                        .all(|&other| self.frames.novel(other, candidate.frame))
             });
         }
     }
