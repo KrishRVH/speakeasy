@@ -28,6 +28,8 @@ const METER_BARS: usize = 24;
 const FRAME_INTERVAL: Duration = Duration::from_millis(5);
 
 const SUBMITTED_FOR: Duration = Duration::from_millis(350);
+/// Long enough to read **Show copied**, which tells the user to paste.
+const COPIED_FOR: Duration = Duration::from_millis(1600);
 const EMPTY_FOR: Duration = Duration::from_millis(1200);
 const ERROR_FOR: Duration = Duration::from_secs(8);
 const TRAY_HINT_FOR: Duration = Duration::from_secs(3);
@@ -184,7 +186,12 @@ impl Pill {
         if state_changed
             && !self.visible
             && (snapshot.phase.is_active()
-                || feedback_remaining(snapshot.phase, now.duration_since(self.phase_at)).is_some())
+                || feedback_remaining(
+                    snapshot.phase,
+                    snapshot.show,
+                    now.duration_since(self.phase_at),
+                )
+                .is_some())
         {
             self.set_visible(true, cx);
         }
@@ -201,7 +208,7 @@ impl Pill {
         Scene {
             phase,
             since_phase,
-            feedback: feedback_remaining(phase, since_phase),
+            feedback: feedback_remaining(phase, self.snapshot.show, since_phase),
             hint: self
                 .hint_until
                 .and_then(|until| until.checked_duration_since(now)),
@@ -695,8 +702,9 @@ fn apply_native_visibility(pill: AnyWindowHandle, visible: bool, cx: &App) -> Ta
     })
 }
 
-fn feedback_remaining(phase: Phase, since_phase: Duration) -> Option<Duration> {
+fn feedback_remaining(phase: Phase, show: bool, since_phase: Duration) -> Option<Duration> {
     let duration = match phase {
+        Phase::Done if show => COPIED_FOR,
         Phase::Done => SUBMITTED_FOR,
         Phase::Empty => EMPTY_FOR,
         Phase::Error => ERROR_FOR,
@@ -800,14 +808,28 @@ mod tests {
     #[test]
     fn feedback_deadlines_expire_and_never_apply_to_recording_or_cancellation() {
         assert_eq!(
-            feedback_remaining(Phase::Done, Duration::ZERO),
+            feedback_remaining(Phase::Done, false, Duration::ZERO),
             Some(SUBMITTED_FOR)
         );
-        assert_eq!(feedback_remaining(Phase::Done, SUBMITTED_FOR), None);
-        assert_eq!(feedback_remaining(Phase::Recording, Duration::ZERO), None);
-        assert_eq!(feedback_remaining(Phase::Recording, SUBMITTED_FOR), None);
-        assert_eq!(feedback_remaining(Phase::Cancelled, Duration::ZERO), None);
-        assert_eq!(feedback_remaining(Phase::Error, ERROR_FOR), None);
+        assert_eq!(feedback_remaining(Phase::Done, false, SUBMITTED_FOR), None);
+        assert!(
+            feedback_remaining(Phase::Done, true, SUBMITTED_FOR).is_some(),
+            "A copied Show stays long enough to read"
+        );
+        assert_eq!(feedback_remaining(Phase::Done, true, COPIED_FOR), None);
+        assert_eq!(
+            feedback_remaining(Phase::Recording, false, Duration::ZERO),
+            None
+        );
+        assert_eq!(
+            feedback_remaining(Phase::Recording, true, SUBMITTED_FOR),
+            None
+        );
+        assert_eq!(
+            feedback_remaining(Phase::Cancelled, false, Duration::ZERO),
+            None
+        );
+        assert_eq!(feedback_remaining(Phase::Error, false, ERROR_FOR), None);
     }
 
     #[test]

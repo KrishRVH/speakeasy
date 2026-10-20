@@ -110,12 +110,13 @@ cargo run --locked -p speakeasy -- show demo  # a scripted Show bundle
 ```
 
 `--demo` uses simulated audio without the microphone, global shortcut, model, or clipboard. It
-previews hands-free, the countdown, submission, interrupted dismissal, cancellation, silence, and an
-error. On Windows and macOS, `--demo-tray` adds the tray and the Settings hide-and-reopen behavior
-with dictation disabled. `show demo` writes a scripted Show, a narrated screen recording for a
-coding agent, as a bundle of keyframes, contact sheet, `summary.md`, and `show.json`, and prints the
-summary. Linux has experimental desktop support; see the Linux instructions below. GPUI's X11 build
-needs ALSA, fontconfig, X11/XCB, xkbcommon, and Vulkan development packages.
+previews hands-free, the countdown, submission, a Show, interrupted dismissal, cancellation,
+silence, and an error. On Windows and macOS, `--demo-tray` adds the tray and the Settings
+hide-and-reopen behavior with dictation disabled. `show demo` writes a scripted Show, a narrated
+screen recording for a coding agent, as a bundle of keyframes, contact sheet, `summary.md`, and
+`show.json`, and prints the summary. Linux has experimental desktop support; see the Linux
+instructions below. GPUI's X11 build needs ALSA, fontconfig, X11/XCB, xkbcommon, and Vulkan
+development packages.
 
 </details>
 
