@@ -97,6 +97,6 @@ and state each policy once.
 
 Keep task notes in ignored `.scratch/` and run output in `artifacts/`. Do not commit plans,
 handoffs, research, reports, or dated audits. Prefer native toolchain guarantees over duplicate
-evidence scaffolding. Read with targeted `rg` searches; avoid opening build output, large models, or
-lockfiles wholesale for orientation. Use plain present-tense prose and concise Conventional Commit
-subjects.
+evidence scaffolding. Read with targeted `rg` searches; `.ignore` hides `vendor/`, so search the
+GPUI patch with `rg PATTERN vendor`. Avoid opening build output, large models, or lockfiles
+wholesale for orientation. Use plain present-tense prose and concise Conventional Commit subjects.
