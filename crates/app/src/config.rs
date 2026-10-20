@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use speakeasy_platform::{Delivery, DesktopOptions};
 
-use crate::theme::Theme;
+use crate::{theme::Theme, transcript::Fillers};
 
 #[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -127,6 +127,20 @@ impl Config {
                 TextDelivery::TerminalPaste => self.linux.terminal_paste = true,
                 TextDelivery::Type | TextDelivery::Copy => {},
             }
+        }
+    }
+
+    /// Whether a request removes English hesitations. Parakeet detects the language without
+    /// reporting it, so the user's switch decides. Whisper removes them only for an explicit English
+    /// request, because "um" is a word in languages such as German and Portuguese, and `auto`
+    /// names no language to check.
+    pub(crate) fn fillers(&self) -> Fillers {
+        if self.remove_fillers
+            && (self.engine == Engine::Parakeet || self.language.eq_ignore_ascii_case("en"))
+        {
+            Fillers::Remove
+        } else {
+            Fillers::Preserve
         }
     }
 

@@ -14,7 +14,7 @@ use tokio::{
 
 use super::ModelState;
 use crate::{
-    config::{Config, Engine},
+    config::Config,
     ports::{Ports, STARTUP_CANCELLED, Speech},
     transcript::{self, Fillers},
 };
@@ -122,15 +122,7 @@ impl<W: Speech> Worker<W> {
             },
         };
         let language = config.language.clone();
-        // Parakeet auto-detects without returning its language, so its user-selected English
-        // cleanup preference is authoritative. Whisper's explicit non-English/auto choice wins.
-        let fillers = if config.remove_fillers
-            && (config.engine == Engine::Parakeet || language.eq_ignore_ascii_case("en"))
-        {
-            Fillers::Remove
-        } else {
-            Fillers::Preserve
-        };
+        let fillers = config.fillers();
         *self = Self::Transcribing(Job::spawn(|mut cancelled| async move {
             let transcript = tokio::select! {
                 biased;

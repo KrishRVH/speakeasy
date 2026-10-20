@@ -117,6 +117,45 @@ fn released_delivery_keys_read_and_save_unchanged() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn filler_cleanup_follows_engine_language_and_switch() -> anyhow::Result<()> {
+    for (engine, language, english) in [
+        (Engine::Whisper, "en", true),
+        (Engine::Whisper, "EN", true),
+        (Engine::Whisper, "de", false),
+        (Engine::Whisper, "auto", false),
+        (Engine::Parakeet, "en", true),
+        (Engine::Parakeet, "EN", true),
+        (Engine::Parakeet, "de", true),
+        (Engine::Parakeet, "auto", true),
+    ] {
+        for remove_fillers in [true, false] {
+            let config = Config {
+                engine,
+                language: language.into(),
+                remove_fillers,
+                ..Config::default()
+            };
+            let expected = if english && remove_fillers {
+                Fillers::Remove
+            } else {
+                Fillers::Preserve
+            };
+            assert!(
+                config.fillers() == expected,
+                "{} with {language}, switch {remove_fillers}",
+                engine.label()
+            );
+        }
+    }
+    // A file saved before the switch existed still removes them.
+    let saved: Config = serde_json::from_str(
+        r#"{"engine":"parakeet","engine_executable":"","model":"","language":"de"}"#,
+    )?;
+    assert!(saved.fillers() == Fillers::Remove);
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn manual_paste_wins_over_keep_clipboard() {
