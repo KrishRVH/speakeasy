@@ -42,7 +42,6 @@ pub(crate) const SCROLL_LINES: f32 = 3.0;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
-pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 const FILE_PICKER_PORTAL_MISSING: &str =
@@ -504,70 +503,17 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| common.auto_hide_scrollbars)
     }
 
-    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
-        let url = url.to_string();
-        let username = username.to_string();
-        let password = password.to_vec();
-        self.background_executor().spawn(async move {
-            let keyring = oo7::Keyring::new().await?;
-            keyring.unlock().await?;
-            keyring
-                .create_item(
-                    KEYRING_LABEL,
-                    &vec![("url", &url), ("username", &username)],
-                    password,
-                    true,
-                )
-                .await?;
-            Ok(())
-        })
+    // Speakeasy stores no credentials, so it links no keyring client.
+    fn write_credentials(&self, _: &str, _: &str, _: &[u8]) -> Task<Result<()>> {
+        Task::ready(Err(anyhow!("Speakeasy stores no credentials")))
     }
 
-    fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
-        let url = url.to_string();
-        self.background_executor().spawn(async move {
-            let keyring = oo7::Keyring::new().await?;
-            keyring.unlock().await?;
-
-            let items = keyring.search_items(&vec![("url", &url)]).await?;
-
-            for item in items.into_iter() {
-                if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
-                    let attributes = item.attributes().await?;
-                    let username = attributes
-                        .get("username")
-                        .context("Cannot find username in stored credentials")?;
-                    item.unlock().await?;
-                    let secret = item.secret().await?;
-
-                    // we lose the zeroizing capabilities at this boundary,
-                    // a current limitation GPUI's credentials api
-                    return Ok(Some((username.to_string(), secret.to_vec())));
-                } else {
-                    continue;
-                }
-            }
-            Ok(None)
-        })
+    fn read_credentials(&self, _: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
+        Task::ready(Ok(None))
     }
 
-    fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
-        let url = url.to_string();
-        self.background_executor().spawn(async move {
-            let keyring = oo7::Keyring::new().await?;
-            keyring.unlock().await?;
-
-            let items = keyring.search_items(&vec![("url", &url)]).await?;
-
-            for item in items.into_iter() {
-                if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
-                    item.delete().await?;
-                    return Ok(());
-                }
-            }
-
-            Ok(())
-        })
+    fn delete_credentials(&self, _: &str) -> Task<Result<()>> {
+        Task::ready(Ok(()))
     }
 
     fn window_appearance(&self) -> WindowAppearance {

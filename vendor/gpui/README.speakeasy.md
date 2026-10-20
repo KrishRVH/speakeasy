@@ -61,6 +61,9 @@ The source patches cover native windows, frame scheduling, and path resources:
   [media compatibility patch](../gpui_media/README.speakeasy.md). It also
   builds `image` with only the formats GPUI's `ImageFormat` names, which drops
   the AVIF encoder; Speakeasy renders no raster images.
+- `src/platform/linux/platform.rs` stubs the credential methods: writes fail,
+  reads find nothing, and deletes succeed. Speakeasy stores no credentials, so
+  `Cargo.toml` drops the oo7 keyring client and the crypto crates it brought.
 
 The Linux native pill tests and `scripts/check_demo_linux.py` exercise real
 windows in a private X server without microphone, shortcut, or clipboard access.
@@ -75,8 +78,8 @@ workspace. Remove the override and this directory when a compatible published
 GPUI release covers these native-handle, visibility, event-draining, timing,
 frame-source lifetime, and path-resource contracts and passes the regression
 checks. Remove the portable dependency integration tests along with the override.
-The `image` trim is a footprint saving, not a contract: removing the override
-may bring back GPUI's default codecs.
+The `image` trim and the credential stub are footprint savings, not contracts:
+removing the override may bring back GPUI's default codecs and Linux keyring.
 
 The app's forced-exit fallback retains its instance lock in the future returned
 from `on_app_quit`. Re-check `App::shutdown` ordering on GPUI updates: observers

@@ -509,14 +509,6 @@ features = ["source-fontconfig-dlopen"]
 optional = true
 package = "zed-font-kit"
 
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.oo7]
-version = "0.5.0"
-features = [
-    "async-std",
-    "native_crypto",
-]
-default-features = false
-
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.open]
 version = "5.2.0"
 optional = true
