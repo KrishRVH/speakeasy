@@ -103,6 +103,7 @@ impl Settings {
             Action::Refresh => self.refresh_microphones(cx),
             Action::Microphone => self.cycle_microphone(),
             Action::Language => self.toggle_language(),
+            Action::Delivery => self.cycle_delivery(),
             Action::Toggle(setting) => self.toggle(setting, cx),
             Action::Theme => self.cycle_theme(cx),
             Action::Save if is_demo(cx) => {
@@ -148,6 +149,12 @@ impl Settings {
             "en"
         }
         .into();
+        self.mark_unsaved();
+    }
+
+    fn cycle_delivery(&mut self) {
+        let next = self.config.text_delivery().next();
+        self.config.set_text_delivery(next);
         self.mark_unsaved();
     }
 
@@ -443,6 +450,7 @@ enum Action {
     Microphone,
     Refresh,
     Language,
+    Delivery,
     Toggle(Setting),
     Theme,
     Save,
@@ -462,12 +470,10 @@ impl Action {
             Self::Microphone => "microphone",
             Self::Refresh => "refresh",
             Self::Language => "language",
+            Self::Delivery => "delivery",
             Self::Toggle(Setting::PreferGpu) => "prefer-gpu",
-            Self::Toggle(Setting::KeepClipboard) => "keep-clipboard",
             Self::Toggle(Setting::ReduceMotion) => "reduce-motion",
             Self::Toggle(Setting::RemoveFillers) => "remove-fillers",
-            Self::Toggle(Setting::ManualPaste) => "manual-paste",
-            Self::Toggle(Setting::TerminalPaste) => "terminal-paste",
             Self::Toggle(Setting::DesktopBindings) => "desktop-bindings",
             Self::Theme => "theme",
             Self::Save => "save",
@@ -487,11 +493,8 @@ enum EngineFile {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Setting {
     PreferGpu,
-    KeepClipboard,
     ReduceMotion,
     RemoveFillers,
-    ManualPaste,
-    TerminalPaste,
     DesktopBindings,
 }
 
@@ -499,11 +502,8 @@ impl Setting {
     fn flag(self, config: &mut Config) -> &mut bool {
         match self {
             Self::PreferGpu => &mut config.use_gpu,
-            Self::KeepClipboard => &mut config.preserve_clipboard,
             Self::ReduceMotion => &mut config.reduced_motion,
             Self::RemoveFillers => &mut config.remove_fillers,
-            Self::ManualPaste => &mut config.linux.manual_paste,
-            Self::TerminalPaste => &mut config.linux.terminal_paste,
             Self::DesktopBindings => &mut config.linux.external_shortcut,
         }
     }
@@ -511,11 +511,8 @@ impl Setting {
     fn is_on(self, config: &Config) -> bool {
         match self {
             Self::PreferGpu => config.use_gpu,
-            Self::KeepClipboard => config.preserve_clipboard,
             Self::ReduceMotion => config.reduced_motion,
             Self::RemoveFillers => config.remove_fillers,
-            Self::ManualPaste => config.linux.manual_paste,
-            Self::TerminalPaste => config.linux.terminal_paste,
             Self::DesktopBindings => config.linux.external_shortcut,
         }
     }

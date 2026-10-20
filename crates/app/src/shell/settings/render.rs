@@ -11,7 +11,7 @@ use gpui::{
 use super::{Action, EngineFile, Setting, Settings, is_demo};
 use crate::{
     WORDMARK_FONT,
-    config::Engine,
+    config::{Engine, TextDelivery},
     icons::KEYSTONE,
     setup::Progress,
     shell::Services,
@@ -169,17 +169,6 @@ impl Settings {
             .child(div().text_size(px(12.0)).child(
                 "Desktop bindings: assign speakeasy --toggle and speakeasy --cancel in your desktop's shortcut settings.",
             ))
-            .child(self.switch("Copy for manual paste", Setting::ManualPaste, palette, cx))
-            .child(button(
-                if linux.terminal_paste {
-                    "Paste shortcut: Ctrl+Shift+V"
-                } else {
-                    "Paste shortcut: Ctrl+V"
-                },
-                Action::Toggle(Setting::TerminalPaste),
-                palette,
-                cx,
-            ))
     }
 
     fn microphone_section(
@@ -235,7 +224,7 @@ impl Settings {
                 div()
                     .flex()
                     .gap(px(8.0))
-                    .child(self.switch("Keep clipboard", Setting::KeepClipboard, palette, cx))
+                    .child(self.delivery_control(palette, cx))
                     .child(self.switch("Reduce motion", Setting::ReduceMotion, palette, cx)),
             )
             .child(
@@ -285,6 +274,26 @@ impl Settings {
             palette,
             cx,
         )
+    }
+
+    /// How dictated text reaches the editor. Windows and macOS offer paste or typing as a switch;
+    /// Linux adds its terminal paste keys and copying without keyboard control.
+    fn delivery_control(&self, palette: &'static Palette, cx: &Context<Self>) -> impl IntoElement {
+        let label = match self.config.text_delivery() {
+            #[cfg(not(target_os = "linux"))]
+            TextDelivery::Paste => "Keep clipboard: Off",
+            #[cfg(not(target_os = "linux"))]
+            TextDelivery::Type => "Keep clipboard: On",
+            #[cfg(target_os = "linux")]
+            TextDelivery::Paste => "Insert: Paste (Ctrl+V)",
+            #[cfg(target_os = "linux")]
+            TextDelivery::TerminalPaste => "Insert: Paste (Ctrl+Shift+V)",
+            #[cfg(target_os = "linux")]
+            TextDelivery::Type => "Insert: Type, keep clipboard",
+            #[cfg(target_os = "linux")]
+            TextDelivery::Copy => "Insert: Copy only",
+        };
+        button(label, Action::Delivery, palette, cx)
     }
 
     fn language_control(&self, palette: &'static Palette, cx: &Context<Self>) -> AnyElement {

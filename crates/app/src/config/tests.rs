@@ -22,13 +22,83 @@ fn saved_settings_preserve_linux_bindings_and_skip_defaults() -> anyhow::Result<
         external_shortcut: true,
     };
     config.save(&path)?;
-    let restored = Config::read(&path)?;
-    assert_eq!(restored.linux, config.linux);
-    let options = restored.desktop_options();
-    assert_eq!(options.shortcut, "CTRL+ALT+d");
-    assert_eq!(options.cancel, "CTRL+ALT+Escape");
-    assert!(options.terminal_paste && options.manual_paste && options.external_shortcut);
+    assert_eq!(Config::read(&path)?.linux, config.linux);
     Ok(())
+}
+
+#[test]
+fn released_delivery_keys_read_and_save_unchanged() -> anyhow::Result<()> {
+    const EXAMPLE: &str = include_str!("../../../../settings.example.json");
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    fs::write(
+        &path,
+        r#"{"engine_executable":"e","model":"m","preserve_clipboard":true}"#,
+    )?;
+    let mut config = Config::read(&path)?;
+    assert_eq!(config.text_delivery(), TextDelivery::Type);
+    config.set_text_delivery(TextDelivery::Paste);
+    config.save(&path)?;
+    let saved: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+    let example: serde_json::Value = serde_json::from_str(EXAMPLE)?;
+    let keys = |value: &serde_json::Value| {
+        value.as_object().map(|object| {
+            object
+                .keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>()
+        })
+    };
+    assert_eq!(keys(&saved), keys(&example));
+    assert_eq!(Config::read(&path)?.text_delivery(), TextDelivery::Paste);
+
+    #[cfg(target_os = "linux")]
+    {
+        let linux = serde_json::json!({
+            "shortcut": "CTRL+ALT+d",
+            "cancel": "CTRL+ALT+Escape",
+            "terminal_paste": true,
+            "manual_paste": false,
+            "external_shortcut": false,
+        });
+        let released = serde_json::json!({
+            "engine_executable": "e",
+            "model": "m",
+            "preserve_clipboard": true,
+            "linux": linux,
+        });
+        fs::write(&path, released.to_string())?;
+        let mut config = Config::read(&path)?;
+        assert_eq!(config.text_delivery(), TextDelivery::Type);
+        config.set_text_delivery(TextDelivery::Copy);
+        config.save(&path)?;
+        let saved: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+        assert_eq!(saved["preserve_clipboard"], false);
+        assert_eq!(keys(&saved["linux"]), keys(&linux));
+        assert_eq!(saved["linux"]["manual_paste"], true);
+        let mut config = Config::read(&path)?;
+        assert_eq!(config.text_delivery(), TextDelivery::Copy);
+        config.set_text_delivery(TextDelivery::Type);
+        assert!(config.linux.terminal_paste, "Typing forgot the paste keys");
+        assert_eq!(config.text_delivery(), TextDelivery::Type);
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn manual_paste_wins_over_keep_clipboard() {
+    let config = Config {
+        preserve_clipboard: true,
+        linux: LinuxSettings {
+            manual_paste: true,
+            ..LinuxSettings::default()
+        },
+        ..Config::default()
+    };
+    assert_eq!(config.text_delivery(), TextDelivery::Copy);
+    assert_eq!(config.delivery(), Delivery::Paste);
+    assert!(config.desktop_options().manual_paste);
 }
 
 #[test]

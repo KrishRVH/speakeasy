@@ -60,9 +60,75 @@ pub(crate) struct Config {
     pub theme: Theme,
 }
 
+/// How dictated text reaches the focused app. The file keeps it as `preserve_clipboard` and the
+/// Linux `manual_paste` and `terminal_paste` flags, which every release reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TextDelivery {
+    /// Copies the text and sends Ctrl+V.
+    Paste,
+    /// Copies the text and sends Ctrl+Shift+V, which terminals expect.
+    #[cfg(target_os = "linux")]
+    TerminalPaste,
+    /// Types the text as key input, leaving the clipboard untouched.
+    Type,
+    /// Copies the text for the user to paste, so Speakeasy needs no keyboard control.
+    #[cfg(target_os = "linux")]
+    Copy,
+}
+
+impl TextDelivery {
+    /// The next choice this platform offers, wrapping around.
+    pub(crate) const fn next(self) -> Self {
+        #[cfg(target_os = "linux")]
+        match self {
+            Self::Paste => Self::TerminalPaste,
+            Self::TerminalPaste => Self::Type,
+            Self::Type => Self::Copy,
+            Self::Copy => Self::Paste,
+        }
+        #[cfg(not(target_os = "linux"))]
+        match self {
+            Self::Paste => Self::Type,
+            Self::Type => Self::Paste,
+        }
+    }
+}
+
 impl Config {
-    pub(crate) const fn delivery(&self) -> Delivery {
+    /// The one place that decides how the stored flags combine.
+    pub(crate) const fn text_delivery(&self) -> TextDelivery {
+        // Typing needs the keyboard control that manual paste declines, so manual paste wins.
+        #[cfg(target_os = "linux")]
+        if self.linux.manual_paste {
+            return TextDelivery::Copy;
+        }
         if self.preserve_clipboard {
+            return TextDelivery::Type;
+        }
+        #[cfg(target_os = "linux")]
+        if self.linux.terminal_paste {
+            return TextDelivery::TerminalPaste;
+        }
+        TextDelivery::Paste
+    }
+
+    /// Stores `delivery` as the flags that read back as it. Typing and copying keep the chosen
+    /// paste keys for a later return to paste.
+    pub(crate) fn set_text_delivery(&mut self, delivery: TextDelivery) {
+        self.preserve_clipboard = delivery == TextDelivery::Type;
+        #[cfg(target_os = "linux")]
+        {
+            self.linux.manual_paste = delivery == TextDelivery::Copy;
+            match delivery {
+                TextDelivery::Paste => self.linux.terminal_paste = false,
+                TextDelivery::TerminalPaste => self.linux.terminal_paste = true,
+                TextDelivery::Type | TextDelivery::Copy => {},
+            }
+        }
+    }
+
+    pub(crate) fn delivery(&self) -> Delivery {
+        if self.text_delivery() == TextDelivery::Type {
             Delivery::Direct
         } else {
             Delivery::Paste
