@@ -9,13 +9,15 @@ mod x11;
 
 use std::convert::Infallible;
 
+use anyhow::bail;
 use async_channel::{Receiver, Sender};
-use raw_window_handle::RawWindowHandle;
+use raw_window_handle::{RawWindowHandle, WindowHandle};
 use zbus::MatchRule;
 
 pub use self::tray::{NativeTray, TrayAction, TrayPresentation};
 use super::{
-    Delivery, DesktopOptions, Input, InputSender, InsertPermit, Inserted, Inserter, OwnedThread,
+    Delivery, DesktopOptions, Input, InputSender, InsertPermit, Inserted, Inserter, NativeWindow,
+    OwnedThread,
     insertion::{Insertion, Reply},
 };
 
@@ -156,22 +158,40 @@ fn owner_changes(name: &'static str) -> zbus::Result<MatchRule<'static>> {
         .build()
 }
 
-/// Configures an owned UI-thread window for nonactivating, click-through presentation.
-///
-/// # Errors
-/// Returns an error for the wrong window kind or failed native configuration.
-pub fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
-    x11::configure_pill(handle)
+/// An X11 or Xwayland window; each call opens its own connection to the server.
+pub(crate) struct Window {
+    id: u32,
 }
 
-/// Shows or hides the owned pill without activating it; call on its UI thread.
-pub fn set_pill_visible(handle: RawWindowHandle, visible: bool) {
-    x11::set_visible(handle, visible);
+impl Window {
+    pub(crate) fn new(handle: WindowHandle<'_>) -> anyhow::Result<Self> {
+        let id = match handle.as_raw() {
+            RawWindowHandle::Xcb(handle) => handle.window.get(),
+            RawWindowHandle::Xlib(handle) => u32::try_from(handle.window)?,
+            _ => bail!("Linux pill requires X11 or Xwayland"),
+        };
+        Ok(Self { id })
+    }
 }
 
-/// Shows or hides the owned Settings window; call on its UI thread.
-pub fn set_settings_visible(handle: RawWindowHandle, visible: bool) {
-    x11::set_visible(handle, visible);
+impl NativeWindow {
+    /// Configures the pill for nonactivating, click-through presentation.
+    ///
+    /// # Errors
+    /// Returns failed native configuration.
+    pub fn configure_pill(&self) -> anyhow::Result<()> {
+        x11::configure_pill(self.native.id)
+    }
+
+    /// Shows or hides the pill without activating it.
+    pub fn set_pill_visible(&self, visible: bool) {
+        x11::set_visible(self.native.id, visible);
+    }
+
+    /// Shows or hides the Settings window.
+    pub fn set_settings_visible(&self, visible: bool) {
+        x11::set_visible(self.native.id, visible);
+    }
 }
 
 /// Whether the desktop asks for reduced motion. Speakeasy reads no Linux desktop motion

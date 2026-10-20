@@ -21,40 +21,37 @@ mod screen;
 #[cfg(target_os = "windows")]
 mod windows;
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    marker::PhantomData,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use async_channel::Sender;
+use raw_window_handle::WindowHandle;
 
 #[cfg(target_os = "linux")]
+use self::linux as native;
+#[cfg(target_os = "linux")]
 pub use self::linux::{
-    APPLICATION_ID, InputMonitor, NativeTray, TrayAction, TrayPresentation, configure_pill,
-    copy_text, prepare, reduced_motion, set_pill_visible, set_settings_visible, show_startup_error,
+    APPLICATION_ID, InputMonitor, NativeTray, TrayAction, TrayPresentation, copy_text, prepare,
+    reduced_motion, show_startup_error,
 };
 #[cfg(target_os = "macos")]
 use self::macos as native;
 #[cfg(target_os = "macos")]
-pub use self::macos::{
-    configure_pill, copy_text, reduced_motion, set_pill_visible, set_settings_visible,
-    show_startup_error,
-};
+pub use self::macos::{copy_text, reduced_motion, show_startup_error};
 #[cfg(target_os = "windows")]
 use self::windows as native;
 #[cfg(target_os = "windows")]
-pub use self::windows::{
-    attach_console, choose_file, configure_pill, copy_text, minimize_to_tray, reduced_motion,
-    set_pill_visible, set_settings_visible, show_startup_error,
-};
+pub use self::windows::{attach_console, copy_text, reduced_motion, show_startup_error};
 pub use self::{
     insertion::{Delivery, Inserter},
     owned_thread::OwnedThread,
     process::ProcessGroup,
-    screen::{
-        Display, Frame, PointerMonitor, PointerSample, ScreenCapture, ScreenEvent,
-        configure_overlay, set_overlay_visible,
-    },
+    screen::{Display, Frame, PointerMonitor, PointerSample, ScreenCapture, ScreenEvent},
 };
 
 /// The pill window's width in device-independent pixels.
@@ -80,6 +77,34 @@ pub const CANCEL_SHORTCUT: &str = "Escape";
 /// The shortcut that discards a recording, as people see it.
 #[cfg(target_os = "linux")]
 pub const CANCEL_SHORTCUT: &str = "Ctrl + Super + Escape";
+
+/// A live window of this process, for the native presentation GPUI does not offer.
+///
+/// Build it from the handle GPUI lends for an open window and use it before that window closes.
+/// It is not `Send` on any platform, so it stays on the UI thread that owns the window: Windows
+/// refuses a window another thread owns, and macOS requires the main thread. Showing, hiding, and
+/// resizing can call back into GPUI synchronously, so call those methods with GPUI's borrows
+/// released.
+pub struct NativeWindow {
+    native: native::Window,
+    /// Not `Send` even where the native window would be, so code checked on one host keeps the
+    /// thread rule every platform needs.
+    _ui_thread: PhantomData<*const ()>,
+}
+
+impl NativeWindow {
+    /// The window behind `handle`, a window of this process.
+    ///
+    /// # Errors
+    /// Fails for a handle of another windowing system, or one this thread may not use: on Windows a
+    /// window another thread owns, on macOS any thread but the main one.
+    pub fn new(handle: WindowHandle<'_>) -> anyhow::Result<Self> {
+        Ok(Self {
+            native: native::Window::new(handle)?,
+            _ui_thread: PhantomData,
+        })
+    }
+}
 
 /// Whether dictation runs, as the tray and Settings present it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

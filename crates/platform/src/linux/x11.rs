@@ -5,7 +5,6 @@ use std::{convert::Infallible, ops::ControlFlow, os::fd::AsFd};
 
 use anyhow::{Context, bail, ensure};
 use async_channel::{Receiver, Sender};
-use raw_window_handle::RawWindowHandle;
 use tokio::io::unix::AsyncFd;
 use x11rb::{
     connection::Connection,
@@ -842,8 +841,8 @@ fn focus_is_external(
     Ok(false)
 }
 
-pub(super) fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
-    let (connection, window) = connect_to_window(handle)?;
+pub(super) fn configure_pill(window: Window) -> anyhow::Result<()> {
+    let (connection, _) = connect()?;
     let window_type = intern(&connection, b"_NET_WM_WINDOW_TYPE")?;
     let notification = intern(&connection, b"_NET_WM_WINDOW_TYPE_NOTIFICATION")?;
     connection
@@ -886,32 +885,22 @@ pub(super) fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn set_visible(handle: RawWindowHandle, visible: bool) {
+pub(super) fn set_visible(window: Window, visible: bool) {
+    let change = || -> anyhow::Result<()> {
+        let (connection, _) = connect()?;
+        if visible {
+            connection.map_window(window)?.check()?;
+        } else {
+            connection.unmap_window(window)?.check()?;
+        }
+        connection.flush()?;
+        Ok(())
+    };
     #[expect(
         clippy::let_underscore_must_use,
         reason = "The owned window may already be destroyed or its display disconnected during presentation teardown"
     )]
-    let _ = change_visibility(handle, visible);
-}
-
-fn change_visibility(handle: RawWindowHandle, visible: bool) -> anyhow::Result<()> {
-    let (connection, window) = connect_to_window(handle)?;
-    if visible {
-        connection.map_window(window)?.check()?;
-    } else {
-        connection.unmap_window(window)?.check()?;
-    }
-    connection.flush()?;
-    Ok(())
-}
-
-fn connect_to_window(handle: RawWindowHandle) -> anyhow::Result<(XCBConnection, Window)> {
-    let window = match handle {
-        RawWindowHandle::Xcb(handle) => handle.window.get(),
-        RawWindowHandle::Xlib(handle) => u32::try_from(handle.window)?,
-        _ => bail!("Linux pill requires X11 or Xwayland"),
-    };
-    Ok((connect()?.0, window))
+    let _ = change();
 }
 
 /// GPUI connects through libxcb, so these connections must too: x11rb's pure-Rust connection skips

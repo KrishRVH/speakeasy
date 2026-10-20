@@ -1,4 +1,4 @@
-//! Opening, showing, and hiding the Settings window, and its file picker. Native handles are
+//! Opening, showing, and hiding the Settings window, and its file picker. Native windows are
 //! resolved only when used, in tasks that run after GPUI releases the window borrow.
 
 use std::path::PathBuf;
@@ -12,7 +12,7 @@ use gpui::{
 };
 
 use super::{Services, settings::Settings};
-use crate::gpui_ext::{AppUpdate, WindowUpdate, raw_handle};
+use crate::gpui_ext::{AppUpdate, WindowUpdate, native_window};
 
 /// Names the Settings window in errors about its native handle.
 const WINDOW_NAME: &str = "Settings";
@@ -100,9 +100,9 @@ fn window_options(cx: &App) -> WindowOptions {
 
 fn set_visible(settings: WindowHandle<Settings>, visible: bool, cx: &mut App) {
     let task = cx.spawn(async move |cx| {
-        let resolved = settings.update(cx, |_, window, _| raw_handle(window, WINDOW_NAME));
-        if let Ok(Ok(raw)) = resolved {
-            speakeasy_platform::set_settings_visible(raw, visible);
+        let resolved = settings.update(cx, |_, window, _| native_window(window, WINDOW_NAME));
+        if let Ok(Ok(native)) = resolved {
+            native.set_settings_visible(visible);
             if visible {
                 cx.update_if_running(|cx| cx.activate(true));
             } else {
@@ -163,7 +163,7 @@ fn show_tray_hint(cx: &mut App) {
 #[cfg(target_os = "windows")]
 fn minimize_to_tray(window: &Window, cx: &App) -> anyhow::Result<gpui::Task<()>> {
     let (hide, hidden) = async_channel::bounded(1);
-    speakeasy_platform::minimize_to_tray(raw_handle(window, WINDOW_NAME)?, hide)?;
+    native_window(window, WINDOW_NAME)?.minimize_to_tray(hide)?;
     Ok(cx.spawn(async move |cx| {
         while hidden.recv().await.is_ok() {
             if cx.update(hide_to_tray).is_err() {
@@ -184,8 +184,7 @@ pub(super) fn choose_file(
     filter: [&'static str; 2],
     _: &App,
 ) -> impl Future<Output = anyhow::Result<Option<PathBuf>>> + use<> {
-    let picker = raw_handle(window, WINDOW_NAME)
-        .map(|owner| speakeasy_platform::choose_file(owner, title, filter));
+    let picker = native_window(window, WINDOW_NAME).map(|owner| owner.choose_file(title, filter));
     async move { picker?.await }
 }
 

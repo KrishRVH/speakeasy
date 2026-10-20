@@ -104,16 +104,20 @@ async fn exercise(cx: &AsyncApp) -> anyhow::Result<()> {
         },
         |_, cx| cx.new(|_| Scene::default()),
     )?;
-    let (raw, scale) = cx.update(|cx| {
+    let (native, raw, scale) = cx.update(|cx| {
         window.update(cx, |_, window, _| {
-            HasWindowHandle::window_handle(window)
-                .map(|handle| (handle.as_raw(), window.scale_factor()))
-                .map_err(|error| anyhow::anyhow!("Native window handle: {error}"))
+            let handle = HasWindowHandle::window_handle(window)
+                .map_err(|error| anyhow::anyhow!("Native window handle: {error}"))?;
+            anyhow::Ok((
+                speakeasy_platform::NativeWindow::new(handle)?,
+                handle.as_raw(),
+                window.scale_factor(),
+            ))
         })?
     })??;
     #[cfg(not(target_os = "linux"))]
-    let _ = scale;
-    speakeasy_platform::configure_pill(raw)?;
+    let _ = (raw, scale);
+    native.configure_pill()?;
     #[cfg(target_os = "linux")]
     let xcb = match raw {
         raw_window_handle::RawWindowHandle::Xcb(handle) => handle.window.get(),
@@ -123,7 +127,7 @@ async fn exercise(cx: &AsyncApp) -> anyhow::Result<()> {
         // A pathless first cycle makes a later one exercise the renderer's lazy path targets.
         let draws_path = iteration != 0;
         cx.update(|cx| window.update(cx, |scene, _, _| scene.draws_path = draws_path))??;
-        speakeasy_platform::set_pill_visible(raw, true);
+        native.set_pill_visible(true);
         let preceding = window.read_with(cx, |scene, _| scene.renders)?;
         let width = if iteration % 2 == 0 { 64.0 } else { 96.0 };
         cx.update(|cx| {
@@ -135,7 +139,7 @@ async fn exercise(cx: &AsyncApp) -> anyhow::Result<()> {
         wait_for_render(window, preceding, cx).await?;
         #[cfg(target_os = "linux")]
         linux::wait_for_pixels(xcb, scale, draws_path).await?;
-        speakeasy_platform::set_pill_visible(raw, false);
+        native.set_pill_visible(false);
         Timer::after(PRESENT_SETTLE).await;
     }
     if cfg!(target_os = "linux") {

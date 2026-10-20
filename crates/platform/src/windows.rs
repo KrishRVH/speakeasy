@@ -1,8 +1,8 @@
 //! Windows adapter: the Ctrl+Win keyboard hook, session-change cancellation, GPUI window
 //! presentation, the file dialog, and clipboard or direct text insertion.
 //!
-//! This module keeps what its children share: synthetic input tagged so the hook ignores it,
-//! and handle and string conversions.
+//! This module keeps what its children share: synthetic input tagged so the hook ignores it, the
+//! thread-checked window behind `NativeWindow`, and handle and string conversions.
 
 mod dialog;
 mod input;
@@ -16,19 +16,23 @@ use std::{
     ptr::null_mut,
 };
 
-use anyhow::{Context as _, bail};
-use raw_window_handle::RawWindowHandle;
+use anyhow::{Context as _, bail, ensure};
+use raw_window_handle::{RawWindowHandle, WindowHandle};
 use windows_sys::{
     Win32::{
         Foundation::{FALSE, HANDLE, HWND, TRUE},
-        System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE},
+        System::{
+            Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE},
+            Threading::GetCurrentThreadId,
+        },
         UI::{
             Input::KeyboardAndMouse::{
                 GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
                 SendInput, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
             },
             WindowsAndMessaging::{
-                MB_ICONERROR, MB_OK, MessageBoxW, SPI_GETCLIENTAREAANIMATION, SystemParametersInfoW,
+                GetWindowThreadProcessId, MB_ICONERROR, MB_OK, MessageBoxW,
+                SPI_GETCLIENTAREAANIMATION, SystemParametersInfoW,
             },
         },
     },
@@ -36,12 +40,10 @@ use windows_sys::{
     w,
 };
 
-pub use self::{
-    dialog::choose_file,
-    insertion::copy_text,
-    presentation::{configure_pill, minimize_to_tray, set_pill_visible, set_settings_visible},
-};
+pub use self::insertion::copy_text;
 pub(crate) use self::{input::HookMonitor, insertion::Insert};
+#[cfg(test)]
+use crate::NativeWindow;
 
 /// Tags input Speakeasy synthesizes, so its own keyboard hook ignores it.
 const OWN_INPUT: usize = 0x5350_4541;
@@ -145,13 +147,106 @@ pub(crate) fn ok_or_last_error(result: BOOL) -> io::Result<()> {
     Ok(())
 }
 
-fn hwnd_of(handle: RawWindowHandle) -> anyhow::Result<HWND> {
-    match handle {
-        RawWindowHandle::Win32(window) => Ok(window.hwnd.get() as HWND),
-        _ => bail!("Expected a Windows window"),
+/// A window this thread owns. Subclasses, which the pill, Settings, and the overlay install, work
+/// only on the owning thread, and checking once here keeps every later call on it.
+pub(crate) struct Window {
+    hwnd: HWND,
+}
+
+impl Window {
+    pub(crate) fn new(handle: WindowHandle<'_>) -> anyhow::Result<Self> {
+        let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+            bail!("Expected a Windows window");
+        };
+        let hwnd = handle.hwnd.get() as HWND;
+        // SAFETY: the borrowed handle names a live window, and a null out-parameter skips the
+        // process id.
+        let (owner, current) = unsafe {
+            (
+                GetWindowThreadProcessId(hwnd, null_mut()),
+                GetCurrentThreadId(),
+            )
+        };
+        ensure!(owner != 0, "The window no longer exists");
+        ensure!(owner == current, "Another thread owns this window");
+        Ok(Self { hwnd })
     }
+}
+
+/// The token for a window a test created.
+///
+/// # Safety
+/// `hwnd` must name a live window.
+#[cfg(test)]
+unsafe fn native_window(hwnd: HWND) -> anyhow::Result<NativeWindow> {
+    let raw = std::num::NonZeroIsize::new(hwnd as isize).context("Missing window")?;
+    let raw = RawWindowHandle::Win32(raw_window_handle::Win32WindowHandle::new(raw));
+    // SAFETY: the caller passes a live window, which outlives this borrow.
+    NativeWindow::new(unsafe { WindowHandle::borrow_raw(raw) })
 }
 
 fn to_wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain([0]).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{ptr::null, sync::mpsc, thread};
+
+    use windows_sys::Win32::{
+        System::LibraryLoader::GetModuleHandleW,
+        UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, HWND_MESSAGE},
+    };
+
+    use super::*;
+
+    #[test]
+    #[ignore = "Creates an owned native window; no microphone, hook, clipboard, or injected input"]
+    fn a_window_another_thread_owns_is_refused() -> anyhow::Result<()> {
+        let (created, window) = mpsc::channel();
+        let (release, released) = mpsc::channel::<()>();
+        let owner = thread::spawn(move || -> anyhow::Result<()> {
+            // SAFETY: STATIC is a system class, every pointer argument is static or null, and this
+            // thread destroys the message-only window below.
+            let hwnd = unsafe {
+                CreateWindowExW(
+                    0,
+                    w!("STATIC"),
+                    null(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    HWND_MESSAGE,
+                    null_mut(),
+                    GetModuleHandleW(null()),
+                    null(),
+                )
+            };
+            ensure!(!hwnd.is_null(), "Cannot create the test window");
+            // SAFETY: the window stays live until this thread destroys it below.
+            let accepted_here = unsafe { native_window(hwnd) }.is_ok();
+            created.send((hwnd as isize, accepted_here))?;
+            // An error means the test thread is gone, so the window can go too.
+            let _released = released.recv();
+            // SAFETY: this thread created the window and destroys it once.
+            unsafe { DestroyWindow(hwnd) };
+            Ok(())
+        });
+        let (hwnd, accepted_on_owner) = window.recv()?;
+        // SAFETY: the owner thread keeps the window live until it is released below.
+        let accepted_elsewhere = unsafe { native_window(hwnd as HWND) }.is_ok();
+        release.send(())?;
+        owner.join().expect("The window's owner thread panicked")?;
+        assert!(
+            accepted_on_owner,
+            "The owning thread could not use its own window"
+        );
+        assert!(
+            !accepted_elsewhere,
+            "A window another thread owns was accepted"
+        );
+        Ok(())
+    }
 }

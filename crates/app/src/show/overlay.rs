@@ -13,13 +13,12 @@ use gpui::{
     Render, Rgba, Task, Timer, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle,
     WindowKind, WindowOptions, canvas, div, point, prelude::*, px,
 };
-use raw_window_handle::RawWindowHandle;
-use speakeasy_platform::Display;
+use speakeasy_platform::{Display, NativeWindow};
 use speakeasy_show::{Point, ink};
 use tokio::sync::watch;
 
 use crate::{
-    gpui_ext::{EntityUpdate, raw_handle},
+    gpui_ext::{EntityUpdate, native_window},
     runtime::{Phase, Snapshot},
 };
 
@@ -180,10 +179,10 @@ impl Overlay {
             self.display = display;
             let window = self.window;
             self.visibility = Some(cx.spawn(async move |_, cx| {
-                if let Ok(Ok(raw)) =
-                    cx.update_window(window, |_, window, _| raw_handle(window, "overlay"))
+                if let Ok(Ok(native)) =
+                    cx.update_window(window, |_, window, _| native_window(window, "overlay"))
                 {
-                    place(raw, display);
+                    place(&native, display);
                 }
             }));
         }
@@ -193,10 +192,9 @@ impl Overlay {
 
 /// Covers `display` and shows the overlay, or hides it. An overlay that cannot cover the display
 /// stays hidden rather than misplaced.
-fn place(raw: RawWindowHandle, display: Option<Display>) {
-    let covered =
-        display.is_some_and(|display| speakeasy_platform::configure_overlay(raw, display).is_ok());
-    speakeasy_platform::set_overlay_visible(raw, covered);
+fn place(native: &NativeWindow, display: Option<Display>) {
+    let covered = display.is_some_and(|display| native.configure_overlay(display).is_ok());
+    native.set_overlay_visible(covered);
 }
 
 impl Render for Overlay {

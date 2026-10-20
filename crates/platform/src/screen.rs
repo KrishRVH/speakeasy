@@ -13,15 +13,14 @@ use std::{
 };
 
 use async_channel::Sender;
-use raw_window_handle::RawWindowHandle;
 
 #[cfg(target_os = "linux")]
 use self::unsupported as native;
 #[cfg(target_os = "macos")]
 use crate::macos::screen as native;
-use crate::owned_thread::OwnedThread;
 #[cfg(target_os = "windows")]
 use crate::windows::screen as native;
+use crate::{NativeWindow, owned_thread::OwnedThread};
 
 /// How often the pointer is sampled: fast enough to catch a deliberate click.
 const POINTER_INTERVAL: Duration = Duration::from_millis(8);
@@ -195,19 +194,21 @@ impl PointerSample {
     }
 }
 
-/// Covers `display` with an overlay window that never takes input or focus, stays above other
-/// windows, and is left out of screen capture. Call on the window's UI thread.
-///
-/// # Errors
-///
-/// Fails when the handle is not a native window of this platform.
-pub fn configure_overlay(handle: RawWindowHandle, display: Display) -> anyhow::Result<()> {
-    native::configure_overlay(handle, display.native)
-}
+impl NativeWindow {
+    /// Makes this window an overlay over `display` that never takes input or focus, stays above
+    /// other windows, and is left out of screen capture.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the platform cannot keep the window out of screen capture or place it.
+    pub fn configure_overlay(&self, display: Display) -> anyhow::Result<()> {
+        native::configure_overlay(self, display.native)
+    }
 
-/// Shows or hides the overlay without activating it; call on its UI thread.
-pub fn set_overlay_visible(handle: RawWindowHandle, visible: bool) {
-    native::set_overlay_visible(handle, visible);
+    /// Shows or hides the overlay without activating it.
+    pub fn set_overlay_visible(&self, visible: bool) {
+        native::set_overlay_visible(self, visible);
+    }
 }
 
 /// Linux records Shows in a later release.
@@ -217,9 +218,9 @@ mod unsupported {
 
     use anyhow::bail;
     use async_channel::{Receiver, Sender};
-    use raw_window_handle::RawWindowHandle;
 
     use super::{PointerSample, ScreenEvent};
+    use crate::NativeWindow;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(crate) struct Display;
@@ -241,9 +242,9 @@ mod unsupported {
         None
     }
 
-    pub(super) fn configure_overlay(_: RawWindowHandle, _: Display) -> anyhow::Result<()> {
+    pub(super) fn configure_overlay(_: &NativeWindow, _: Display) -> anyhow::Result<()> {
         bail!("Shows are not available on Linux yet")
     }
 
-    pub(super) const fn set_overlay_visible(_: RawWindowHandle, _: bool) {}
+    pub(super) const fn set_overlay_visible(_: &NativeWindow, _: bool) {}
 }

@@ -3,7 +3,6 @@
 
 use anyhow::bail;
 use async_channel::Sender;
-use raw_window_handle::RawWindowHandle;
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
     Graphics::{
@@ -30,68 +29,81 @@ use windows_sys::Win32::{
     },
 };
 
-use super::{BASE_DPI, hwnd_of, ok_or_last_error};
-use crate::{PILL_HEIGHT, PILL_MARGIN, PILL_WIDTH};
+use super::{BASE_DPI, ok_or_last_error};
+use crate::{NativeWindow, PILL_HEIGHT, PILL_MARGIN, PILL_WIDTH};
 
 /// The byte size of the 32-bit values the pill's DWM attributes take.
 const DWM_VALUE_SIZE: u32 = 4;
 
-/// Configures an owned UI-thread window for nonactivating, click-through presentation.
-///
-/// # Errors
-/// Returns an error for the wrong window kind or failed native configuration.
-pub fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
-    let hwnd = hwnd_of(handle)?;
-    let border = DWMWA_COLOR_NONE;
-    let corners = DWMWCP_DONOTROUND;
-    // SAFETY: the caller holds a live GPUI window on its owning UI thread, and both DWM values
-    // outlive their synchronous calls. The window owns its subclass until WM_NCDESTROY on this same
-    // thread.
-    unsafe {
-        // Windows 11 outlines and shadows GPUI's overlapped frame around the whole transparent
-        // surface, so the pill becomes a plain popup; the DWM decoration hints are best effort.
-        let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
-        SetWindowLongPtrW(
-            hwnd,
-            GWL_STYLE,
-            (style & !(WS_OVERLAPPEDWINDOW.cast_signed() as isize))
-                | WS_POPUP.cast_signed() as isize,
-        );
-        DwmSetWindowAttribute(
-            hwnd,
-            DWMWA_BORDER_COLOR.cast_unsigned(),
-            (&raw const border).cast(),
-            DWM_VALUE_SIZE,
-        );
-        DwmSetWindowAttribute(
-            hwnd,
-            DWMWA_WINDOW_CORNER_PREFERENCE.cast_unsigned(),
-            (&raw const corners).cast(),
-            DWM_VALUE_SIZE,
-        );
-        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        SetWindowLongPtrW(
-            hwnd,
-            GWL_EXSTYLE,
-            style
-                | (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_LAYERED)
-                    .cast_signed() as isize,
-        );
-        // WS_EX_TRANSPARENT alone only changes paint order; layering makes the whole pill pass
-        // mouse hit testing.
-        ok_or_last_error(SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA))?;
-        ok_or_last_error(SetWindowPos(
-            hwnd,
-            HWND_TOPMOST,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
-        ))?;
-        ok_or_last_error(SetWindowSubclass(hwnd, Some(pill_window), 1, 0))?;
+impl NativeWindow {
+    /// Configures the pill for nonactivating, click-through presentation.
+    ///
+    /// # Errors
+    /// Returns failed native configuration.
+    pub fn configure_pill(&self) -> anyhow::Result<()> {
+        let hwnd = self.native.hwnd;
+        let border = DWMWA_COLOR_NONE;
+        let corners = DWMWCP_DONOTROUND;
+        // SAFETY: this thread owns the window, and both DWM values outlive their synchronous calls.
+        // The window owns its subclass until WM_NCDESTROY on this same thread.
+        unsafe {
+            // Windows 11 outlines and shadows GPUI's overlapped frame around the whole transparent
+            // surface, so the pill becomes a plain popup; the DWM decoration hints are best effort.
+            let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+            SetWindowLongPtrW(
+                hwnd,
+                GWL_STYLE,
+                (style & !(WS_OVERLAPPEDWINDOW.cast_signed() as isize))
+                    | WS_POPUP.cast_signed() as isize,
+            );
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_BORDER_COLOR.cast_unsigned(),
+                (&raw const border).cast(),
+                DWM_VALUE_SIZE,
+            );
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_WINDOW_CORNER_PREFERENCE.cast_unsigned(),
+                (&raw const corners).cast(),
+                DWM_VALUE_SIZE,
+            );
+            let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            SetWindowLongPtrW(
+                hwnd,
+                GWL_EXSTYLE,
+                style
+                    | (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_LAYERED)
+                        .cast_signed() as isize,
+            );
+            // WS_EX_TRANSPARENT alone only changes paint order; layering makes the whole pill pass
+            // mouse hit testing.
+            ok_or_last_error(SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA))?;
+            ok_or_last_error(SetWindowPos(
+                hwnd,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            ))?;
+            ok_or_last_error(SetWindowSubclass(hwnd, Some(pill_window), 1, 0))?;
+        }
+        Ok(())
     }
-    Ok(())
+
+    /// Shows or hides the pill without activating it.
+    pub fn set_pill_visible(&self, visible: bool) {
+        let hwnd = self.native.hwnd;
+        if visible {
+            place_pill(hwnd);
+        }
+        // SAFETY: this thread owns the window.
+        unsafe {
+            ShowWindow(hwnd, if visible { SW_SHOWNOACTIVATE } else { SW_HIDE });
+        }
+    }
 }
 
 unsafe extern "system" fn pill_window(
@@ -116,20 +128,6 @@ unsafe extern "system" fn pill_window(
             return 0;
         }
         DefSubclassProc(hwnd, message, wparam, lparam)
-    }
-}
-
-/// Shows or hides the owned pill without activating it; call on its UI thread.
-pub fn set_pill_visible(handle: RawWindowHandle, visible: bool) {
-    let Ok(hwnd) = hwnd_of(handle) else {
-        return;
-    };
-    if visible {
-        place_pill(hwnd);
-    }
-    // SAFETY: called with a live window handle on its UI thread.
-    unsafe {
-        ShowWindow(hwnd, if visible { SW_SHOWNOACTIVATE } else { SW_HIDE });
     }
 }
 
@@ -188,25 +186,39 @@ fn centered_left(area: RECT, width: i32) -> i32 {
     i32::try_from(left).unwrap_or(if left < 0 { i32::MIN } else { i32::MAX })
 }
 
-/// Makes minimizing the Settings window hide it to the tray; install once per window.
-///
-/// The window owns the callback context until `WM_NCDESTROY`; callbacks only enqueue work, avoiding
-/// reentrant GPUI updates.
-///
-/// # Errors
-/// Returns an error if the window is invalid or callback installation fails.
-pub fn minimize_to_tray(handle: RawWindowHandle, hide: Sender<()>) -> anyhow::Result<()> {
-    let hwnd = hwnd_of(handle)?;
-    let context = Box::into_raw(Box::new(hide));
-    // SAFETY: the live window belongs to this UI thread. Ownership transfers to settings_window on
-    // success, or is reclaimed immediately on failure.
-    unsafe {
-        if SetWindowSubclass(hwnd, Some(settings_window), 1, context as usize) == 0 {
-            drop(Box::from_raw(context));
-            bail!("Cannot enable minimize to tray. Restart Speakeasy.");
+impl NativeWindow {
+    /// Makes minimizing the Settings window hide it to the tray; install once per window.
+    ///
+    /// The window owns the callback context until `WM_NCDESTROY`; callbacks only enqueue work,
+    /// avoiding reentrant GPUI updates.
+    ///
+    /// # Errors
+    /// Returns an error if callback installation fails.
+    pub fn minimize_to_tray(&self, hide: Sender<()>) -> anyhow::Result<()> {
+        let hwnd = self.native.hwnd;
+        let context = Box::into_raw(Box::new(hide));
+        // SAFETY: this thread owns the window. Ownership of the sender transfers to settings_window
+        // on success, or is reclaimed immediately on failure.
+        unsafe {
+            if SetWindowSubclass(hwnd, Some(settings_window), 1, context as usize) == 0 {
+                drop(Box::from_raw(context));
+                bail!("Cannot enable minimize to tray. Restart Speakeasy.");
+            }
+        }
+        Ok(())
+    }
+
+    /// Shows the Settings window in front, or hides it.
+    pub fn set_settings_visible(&self, visible: bool) {
+        let hwnd = self.native.hwnd;
+        // SAFETY: this thread owns the window.
+        unsafe {
+            ShowWindow(hwnd, if visible { SW_RESTORE } else { SW_HIDE });
+            if visible {
+                SetForegroundWindow(hwnd);
+            }
         }
     }
-    Ok(())
 }
 
 unsafe extern "system" fn settings_window(
@@ -250,31 +262,15 @@ unsafe fn request_hide(context: usize) {
     let _ = hide.try_send(());
 }
 
-/// Shows or hides the owned Settings window; call on its UI thread with GPUI's borrows released,
-/// because `ShowWindow` sends messages that reach GPUI.
-pub fn set_settings_visible(handle: RawWindowHandle, visible: bool) {
-    let Ok(hwnd) = hwnd_of(handle) else {
-        return;
-    };
-    // SAFETY: the caller passes a live Settings window on its owning UI thread.
-    unsafe {
-        ShowWindow(hwnd, if visible { SW_RESTORE } else { SW_HIDE });
-        if visible {
-            SetForegroundWindow(hwnd);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
         cell::Cell,
         io,
-        num::NonZeroIsize,
         ptr::{null, null_mut},
     };
 
-    use anyhow::Context as _;
+    use anyhow::ensure;
     use windows_sys::{
         Win32::{
             Graphics::Gdi::{GetUpdateRect, InvalidateRect, ValidateRect},
@@ -288,7 +284,7 @@ mod tests {
         w,
     };
 
-    use super::*;
+    use super::{super::native_window, *};
 
     const PAINT_TEST_CLASS: PCWSTR = w!("SpeakeasyPaintTest");
 
@@ -362,10 +358,9 @@ mod tests {
             )
         };
         let window = Window(hwnd);
-        let raw = NonZeroIsize::new(hwnd as isize).context("Cannot create paint test window")?;
-        configure_pill(RawWindowHandle::Win32(
-            raw_window_handle::Win32WindowHandle::new(raw),
-        ))?;
+        ensure!(!hwnd.is_null(), "Cannot create paint test window");
+        // SAFETY: this thread owns the live window until `window` drops.
+        unsafe { native_window(hwnd) }?.configure_pill()?;
         PAINTS.set(0);
         // SAFETY: synchronous messages target this thread's owned window; showing uses no
         // activation and no input or clipboard operations.

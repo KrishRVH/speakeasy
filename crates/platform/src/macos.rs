@@ -13,7 +13,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context as _, anyhow, bail};
+use anyhow::{Context as _, anyhow, bail, ensure};
 use block2::RcBlock;
 use core_foundation::{
     base::{TCFType, kCFAllocatorDefault},
@@ -39,11 +39,11 @@ use objc2_foundation::{
     NSDistributedNotificationCenter, NSNotification, NSNotificationCenter, NSObjectProtocol,
     NSPoint, NSString,
 };
-use raw_window_handle::{AppKitWindowHandle, RawWindowHandle};
+use raw_window_handle::{RawWindowHandle, WindowHandle};
 
 use super::{
-    CANCEL_SHORTCUT, Input, InputSender, Inserted, OwnedThread, PILL_MARGIN, PILL_WIDTH, SHORTCUT,
-    insertion,
+    CANCEL_SHORTCUT, Input, InputSender, Inserted, NativeWindow, OwnedThread, PILL_MARGIN,
+    PILL_WIDTH, SHORTCUT, insertion,
     keyboard::{self, MacEvent},
     monitor::MonitorControl,
 };
@@ -315,65 +315,49 @@ fn observe(
     }
 }
 
-/// Configures an owned UI-thread window for nonactivating, click-through presentation.
-///
-/// # Errors
-/// Returns an error for the wrong window kind or failed native configuration.
-pub fn configure_pill(handle: RawWindowHandle) -> anyhow::Result<()> {
-    let RawWindowHandle::AppKit(view) = handle else {
-        bail!("Expected an AppKit window");
-    };
-    // SAFETY: GPUI supplies its live NSView on the main thread.
-    let Some(window) = (unsafe { appkit_window(view) }) else {
-        bail!("The pill has no native window");
-    };
-    window.setIgnoresMouseEvents(true);
-    // A titled panel highlights its top edge in dark mode and shadows the whole transparent window;
-    // the capsule draws its own shadow. The view already fills the frame, so its size holds.
-    window.setStyleMask(NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel);
-    window.setHasShadow(false);
-    window.setLevel(NSFloatingWindowLevel);
-    window.setCollectionBehavior(
-        NSWindowCollectionBehavior::CanJoinAllSpaces
-            | NSWindowCollectionBehavior::FullScreenAuxiliary,
-    );
-    Ok(())
-}
-
-/// Shows or hides the owned Settings window; call on its UI thread with GPUI's borrows released,
-/// because `AppKit` can call back into GPUI.
-pub fn set_settings_visible(handle: RawWindowHandle, visible: bool) {
-    let RawWindowHandle::AppKit(view) = handle else {
-        return;
-    };
-    // SAFETY: GPUI supplies its live NSView on the main thread.
-    let Some(window) = (unsafe { appkit_window(view) }) else {
-        return;
-    };
-    if visible {
-        window.deminiaturize(None);
-        window.makeKeyAndOrderFront(None);
-    } else {
-        window.orderOut(None);
+impl NativeWindow {
+    /// Configures the pill for nonactivating, click-through presentation.
+    ///
+    /// # Errors
+    /// `AppKit` configuration cannot fail; the `Result` matches the other platforms.
+    pub fn configure_pill(&self) -> anyhow::Result<()> {
+        let window = &self.native.ns_window;
+        window.setIgnoresMouseEvents(true);
+        // A titled panel highlights its top edge in dark mode and shadows the whole transparent
+        // window; the capsule draws its own shadow. The view already fills the frame, so its size
+        // holds.
+        window.setStyleMask(NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel);
+        window.setHasShadow(false);
+        window.setLevel(NSFloatingWindowLevel);
+        window.setCollectionBehavior(
+            NSWindowCollectionBehavior::CanJoinAllSpaces
+                | NSWindowCollectionBehavior::FullScreenAuxiliary,
+        );
+        Ok(())
     }
-}
 
-/// Shows or hides the owned pill without activating it; call on its UI thread.
-pub fn set_pill_visible(handle: RawWindowHandle, visible: bool) {
-    let RawWindowHandle::AppKit(view) = handle else {
-        return;
-    };
-    // SAFETY: GPUI supplies its live NSView on the main thread.
-    let Some(window) = (unsafe { appkit_window(view) }) else {
-        return;
-    };
-    if visible {
-        if let Some(origin) = pill_origin_under_pointer() {
-            window.setFrameOrigin(origin);
+    /// Shows the Settings window in front, or hides it.
+    pub fn set_settings_visible(&self, visible: bool) {
+        let window = &self.native.ns_window;
+        if visible {
+            window.deminiaturize(None);
+            window.makeKeyAndOrderFront(None);
+        } else {
+            window.orderOut(None);
         }
-        window.orderFrontRegardless();
-    } else {
-        window.orderOut(None);
+    }
+
+    /// Shows or hides the pill without activating it.
+    pub fn set_pill_visible(&self, visible: bool) {
+        let window = &self.native.ns_window;
+        if visible {
+            if let Some(origin) = pill_origin_under_pointer() {
+                window.setFrameOrigin(origin);
+            }
+            window.orderFrontRegardless();
+        } else {
+            window.orderOut(None);
+        }
     }
 }
 
@@ -395,13 +379,27 @@ fn pill_origin_under_pointer() -> Option<NSPoint> {
     ))
 }
 
-/// The window hosting `view`, if it has one.
-///
-/// # Safety
-/// `view` must name a live `NSView`, used on the main thread.
-unsafe fn appkit_window(view: AppKitWindowHandle) -> Option<Retained<NSWindow>> {
-    // SAFETY: the caller passes a live NSView on the main thread, which AppKit requires of it.
-    unsafe { view.ns_view.cast::<NSView>().as_ref() }.window()
+/// A GPUI window's `NSWindow`, retained so it stays valid. `NSWindow` is main-thread-only, so
+/// neither it nor this is `Send`.
+pub(super) struct Window {
+    ns_window: Retained<NSWindow>,
+}
+
+impl Window {
+    pub(super) fn new(handle: WindowHandle<'_>) -> anyhow::Result<Self> {
+        ensure!(
+            MainThreadMarker::new().is_some(),
+            "AppKit windows are configured on the main thread"
+        );
+        let RawWindowHandle::AppKit(view) = handle.as_raw() else {
+            bail!("Expected an AppKit window");
+        };
+        // SAFETY: the borrowed handle keeps its NSView live, and the marker proves this is the main
+        // thread AppKit requires.
+        let view = unsafe { view.ns_view.cast::<NSView>().as_ref() };
+        let ns_window = view.window().context("The view has no window")?;
+        Ok(Self { ns_window })
+    }
 }
 
 pub(super) fn modifiers_down() -> bool {

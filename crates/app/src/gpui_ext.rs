@@ -1,11 +1,13 @@
 //! GPUI conveniences: updates whose only failure is that their target no longer exists, and native
-//! handles for platform calls.
+//! windows for platform calls.
 //!
 //! Each update closure returns `()`, so these helpers can never discard an error the closure itself
 //! produced.
 
+use anyhow::{Context as _, anyhow};
 use gpui::{App, AppContext, AsyncApp, Context, Flatten, Render, WeakEntity, Window, WindowHandle};
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use raw_window_handle::HasWindowHandle;
+use speakeasy_platform::NativeWindow;
 
 pub(crate) trait EntityUpdate<T> {
     /// The `Flatten` bound mirrors `WeakEntity::update`, so both `App` and `AsyncApp` qualify.
@@ -65,9 +67,10 @@ impl AppUpdate for AsyncApp {
     }
 }
 
-/// The native handle of `window`; `name` labels the error people see.
-pub(crate) fn raw_handle(window: &Window, name: &str) -> anyhow::Result<RawWindowHandle> {
-    HasWindowHandle::window_handle(window)
-        .map(|handle| handle.as_raw())
-        .map_err(|error| anyhow::anyhow!("Cannot access {name} window: {error}"))
+/// The native window behind `window`, for calls made once GPUI's borrow of it ends; `name` labels
+/// the error people see.
+pub(crate) fn native_window(window: &Window, name: &str) -> anyhow::Result<NativeWindow> {
+    let handle = HasWindowHandle::window_handle(window)
+        .map_err(|error| anyhow!("Cannot access {name} window: {error}"))?;
+    NativeWindow::new(handle).with_context(|| format!("Cannot access {name} window"))
 }

@@ -22,7 +22,6 @@ use std::{
 
 use anyhow::{Context as _, ensure};
 use async_channel::{Receiver, Sender};
-use raw_window_handle::RawWindowHandle;
 use windows::{
     Foundation::{TimeSpan, TypedEventHandler},
     Graphics::{
@@ -73,8 +72,11 @@ use self::{
     exclusion::{Exclusions, exclude_always, exclusion_supported},
     readback::{Readback, device_for},
 };
-use super::{BASE_DPI, configure_pill, hwnd_of, is_key_down, ok_or_last_error};
-use crate::screen::{Frame, PointerSample, ScreenEvent, geometry::Bounds};
+use super::{BASE_DPI, is_key_down, ok_or_last_error};
+use crate::{
+    NativeWindow,
+    screen::{Frame, PointerSample, ScreenEvent, geometry::Bounds},
+};
 
 /// How often the capture thread drains the frame pool and checks for a stop.
 const POLL: Duration = Duration::from_millis(10);
@@ -565,16 +567,16 @@ impl fmt::Display for Failure {
 
 impl error::Error for Failure {}
 
-pub(crate) fn configure_overlay(handle: RawWindowHandle, display: Display) -> anyhow::Result<()> {
-    let hwnd = hwnd_of(handle)?;
+pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyhow::Result<()> {
+    let hwnd = window.native.hwnd;
     // First, so a build that cannot exclude the overlay leaves the window untouched.
     exclude_always(hwnd)?;
     // The overlay is the pill's click-through popup, stretched over the display.
-    configure_pill(handle)?;
+    window.configure_pill()?;
     let [left, top, ..] = display.bounds;
     let [width, height] = display.extent();
     let place = || {
-        // SAFETY: the caller passes a live window on its UI thread.
+        // SAFETY: this thread owns the window.
         ok_or_last_error(unsafe {
             SetWindowPos(hwnd, HWND_TOPMOST, left, top, width, height, SWP_NOACTIVATE)
         })
@@ -591,11 +593,9 @@ pub(crate) fn configure_overlay(handle: RawWindowHandle, display: Display) -> an
     Ok(())
 }
 
-pub(crate) fn set_overlay_visible(handle: RawWindowHandle, visible: bool) {
-    let Ok(hwnd) = hwnd_of(handle) else {
-        return;
-    };
-    // SAFETY: the caller passes a live window on its UI thread.
+pub(crate) fn set_overlay_visible(window: &NativeWindow, visible: bool) {
+    let hwnd = window.native.hwnd;
+    // SAFETY: this thread owns the window.
     unsafe {
         ShowWindow(hwnd, if visible { SW_SHOWNOACTIVATE } else { SW_HIDE });
         if visible {

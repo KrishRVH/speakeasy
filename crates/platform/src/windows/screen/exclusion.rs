@@ -117,7 +117,7 @@ pub(super) fn exclude_always(hwnd: HWND) -> anyhow::Result<()> {
         exclusion_supported(),
         "Shows need Windows 10 version 2004 or later"
     );
-    // SAFETY: the caller passes a live window this process owns on its UI thread. The subclass
+    // SAFETY: the caller passes a window this thread owns. The subclass
     // removes the mark before the window is destroyed, as properties require.
     unsafe {
         ok_or_last_error(SetPropW(hwnd, ALWAYS_EXCLUDED, hwnd.cast()))?;

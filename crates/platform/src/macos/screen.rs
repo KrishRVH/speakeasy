@@ -39,13 +39,14 @@ use objc2_screen_capture_kit::{
     SCContentFilter, SCScreenshotManager, SCShareableContent, SCStreamConfiguration,
     SCStreamErrorCode, SCStreamErrorDomain,
 };
-use raw_window_handle::RawWindowHandle;
 use tokio::{runtime, time};
 
-use super::appkit_window;
-use crate::screen::{
-    self, Frame, PointerSample, ScreenEvent,
-    geometry::{Bounds, fit, narrow, pack_rows, pixels},
+use crate::{
+    NativeWindow,
+    screen::{
+        self, Frame, PointerSample, ScreenEvent,
+        geometry::{Bounds, fit, narrow, pack_rows, pixels},
+    },
 };
 
 /// How long `ScreenCaptureKit` may take to answer, and capture may go without a frame, before the
@@ -398,15 +399,12 @@ fn display_bounds(id: CGDirectDisplayID) -> Bounds {
     }
 }
 
-/// Resizing calls back into GPUI, so call with GPUI's borrows released.
-pub(crate) fn configure_overlay(handle: RawWindowHandle, display: Display) -> anyhow::Result<()> {
-    let RawWindowHandle::AppKit(view) = handle else {
-        bail!("Expected an AppKit window");
-    };
-    // SAFETY: GPUI supplies its live NSView on the main thread.
-    let Some(window) = (unsafe { appkit_window(view) }) else {
-        bail!("The overlay has no native window");
-    };
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "Overlay configuration can fail on Windows and Linux, and the facade returns one type"
+)]
+pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyhow::Result<()> {
+    let window = &window.native.ns_window;
     window.setIgnoresMouseEvents(true);
     window.setStyleMask(NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel);
     window.setHasShadow(false);
@@ -435,14 +433,8 @@ pub(crate) fn configure_overlay(handle: RawWindowHandle, display: Display) -> an
     Ok(())
 }
 
-pub(crate) fn set_overlay_visible(handle: RawWindowHandle, visible: bool) {
-    let RawWindowHandle::AppKit(view) = handle else {
-        return;
-    };
-    // SAFETY: GPUI supplies its live NSView on the main thread.
-    let Some(window) = (unsafe { appkit_window(view) }) else {
-        return;
-    };
+pub(crate) fn set_overlay_visible(window: &NativeWindow, visible: bool) {
+    let window = &window.native.ns_window;
     if visible {
         window.orderFrontRegardless();
     } else {

@@ -19,7 +19,7 @@ use tokio::sync::watch;
 
 use self::{grille::Grille, symbol::Symbol};
 use crate::{
-    gpui_ext::{EntityUpdate, raw_handle},
+    gpui_ext::{EntityUpdate, native_window},
     runtime::{Phase, Snapshot},
     theme::{Palette, Theme, alpha},
 };
@@ -710,7 +710,7 @@ pub(crate) fn open(
             // The pill lives as long as the app; a close request from outside, such as a tool
             // closing the process's main window, is refused.
             window.on_window_should_close(cx, |_, _| false);
-            configured = raw_handle(window, "pill").and_then(speakeasy_platform::configure_pill);
+            configured = native_window(window, "pill").and_then(|native| native.configure_pill());
             cx.new(|cx| Pill::new(updates, reduced_motion, theme, window, cx))
         },
     )?;
@@ -722,8 +722,9 @@ pub(crate) fn open(
 /// after the current window borrow ends. Replacing the task drops, and so cancels, an older one.
 fn apply_native_visibility(pill: AnyWindowHandle, visible: bool, cx: &App) -> Task<()> {
     cx.spawn(async move |cx| {
-        if let Ok(Ok(raw)) = cx.update_window(pill, |_, window, _| raw_handle(window, "pill")) {
-            speakeasy_platform::set_pill_visible(raw, visible);
+        if let Ok(Ok(native)) = cx.update_window(pill, |_, window, _| native_window(window, "pill"))
+        {
+            native.set_pill_visible(visible);
         }
     })
 }
@@ -926,8 +927,9 @@ mod tests {
         fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {
             let (_publisher, updates) = watch::channel(Snapshot::default());
             let pill = open(updates, true, Theme::default(), cx)?;
-            let (raw, display) = pill.update(cx, |_, window, _| {
+            let (native, raw, display) = pill.update(cx, |_, window, _| {
                 Ok::<_, anyhow::Error>((
+                    native_window(window, "pill")?,
                     HasWindowHandle::window_handle(window)
                         .map_err(|error| anyhow!("Window handle: {error}"))?
                         .as_raw(),
@@ -983,12 +985,12 @@ mod tests {
                 "Pill input region intercepts the pointer"
             );
 
-            speakeasy_platform::set_pill_visible(raw, true);
+            native.set_pill_visible(true);
             ensure!(
                 connection.get_window_attributes(id)?.reply()?.map_state == MapState::VIEWABLE,
                 "Pill did not become viewable"
             );
-            speakeasy_platform::set_pill_visible(raw, false);
+            native.set_pill_visible(false);
             ensure!(
                 connection.get_window_attributes(id)?.reply()?.map_state == MapState::UNMAPPED,
                 "Pill did not become unmapped"

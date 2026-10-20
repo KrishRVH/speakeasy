@@ -3,7 +3,6 @@
 use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::PathBuf, ptr::null, thread};
 
 use anyhow::bail;
-use raw_window_handle::RawWindowHandle;
 use windows_sys::Win32::{
     Foundation::HWND,
     System::Com::{
@@ -15,45 +14,47 @@ use windows_sys::Win32::{
     },
 };
 
-use super::{hwnd_of, to_wide};
+use super::to_wide;
+use crate::NativeWindow;
 
 /// The extended-length path limit: 32,767 UTF-16 units plus NUL.
 const LONGEST_PATH: usize = 32_768;
 
-/// Asks for one existing file, offering `filter` (a name and pattern) before all files, without
-/// blocking the UI owner.
-///
-/// The dialog runs its own message loop on a dedicated thread; shown from GPUI's UI thread, it
-/// stays unpainted while GPUI is idle.
-///
-/// # Errors
-/// Returns native dialog or worker failures; cancellation returns no path.
-pub fn choose_file(
-    owner: RawWindowHandle,
-    title: &str,
-    filter: [&str; 2],
-) -> impl Future<Output = anyhow::Result<Option<PathBuf>>> + Send + use<> {
-    // A raw HWND is not Send, so the dialog thread receives its value.
-    let owner = hwnd_of(owner).map(|owner| owner as isize);
-    let title = to_wide(title);
-    let [name, pattern] = filter;
-    // The empty entry and to_wide's NUL end the list with the double NUL lpstrFilter requires.
-    let filter = to_wide(&[name, pattern, "All files", "*.*", ""].join("\0"));
-    async move {
-        let owner = owner?;
-        let (reply, selection) = async_channel::bounded(1);
-        // Detached: the modal dialog cannot be cancelled, so dropping the future must not join it;
-        // process exit reclaims the thread.
-        thread::Builder::new()
-            .name("file-dialog".into())
-            .spawn(move || {
-                #[expect(
-                    clippy::let_underscore_must_use,
-                    reason = "A closed completion lane means the settings owner no longer needs the dialog result"
-                )]
-                let _ = reply.send_blocking(open_file(owner as HWND, &title, &filter));
-            })?;
-        selection.recv().await?
+impl NativeWindow {
+    /// Asks for one existing file in a dialog this window owns, offering `filter` (a name and
+    /// pattern) before all files, without blocking the UI owner.
+    ///
+    /// The dialog runs its own message loop on a dedicated thread; shown from GPUI's UI thread, it
+    /// stays unpainted while GPUI is idle.
+    ///
+    /// # Errors
+    /// Returns native dialog or worker failures; cancellation returns no path.
+    pub fn choose_file(
+        &self,
+        title: &str,
+        filter: [&str; 2],
+    ) -> impl Future<Output = anyhow::Result<Option<PathBuf>>> + Send + use<> {
+        // A raw HWND is not Send, so the dialog thread receives its value.
+        let owner = self.native.hwnd as isize;
+        let title = to_wide(title);
+        let [name, pattern] = filter;
+        // The empty entry and to_wide's NUL end the list with the double NUL lpstrFilter requires.
+        let filter = to_wide(&[name, pattern, "All files", "*.*", ""].join("\0"));
+        async move {
+            let (reply, selection) = async_channel::bounded(1);
+            // Detached: the modal dialog cannot be cancelled, so dropping the future must not join
+            // it; process exit reclaims the thread.
+            thread::Builder::new()
+                .name("file-dialog".into())
+                .spawn(move || {
+                    #[expect(
+                        clippy::let_underscore_must_use,
+                        reason = "A closed completion lane means the settings owner no longer needs the dialog result"
+                    )]
+                    let _ = reply.send_blocking(open_file(owner as HWND, &title, &filter));
+                })?;
+            selection.recv().await?
+        }
     }
 }
 

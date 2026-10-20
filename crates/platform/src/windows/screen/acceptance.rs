@@ -2,13 +2,9 @@
 //! for a few seconds and tallies captured pixels only after proving, before and after each
 //! capture, that no other window covers them; it prints nothing but counts and timings.
 
-use std::{
-    num::NonZeroIsize,
-    ptr::{null, null_mut},
-};
+use std::ptr::{null, null_mut};
 
 use anyhow::bail;
-use raw_window_handle::Win32WindowHandle;
 use windows::Win32::Graphics::Direct3D11::D3D11_SUBRESOURCE_DATA;
 use windows_sys::{
     Win32::{
@@ -47,7 +43,7 @@ use super::{
     readback::{BYTES_PER_PIXEL, created, texture_description},
     *,
 };
-use crate::ScreenCapture;
+use crate::{ScreenCapture, windows::native_window};
 
 const PATTERN_WIDTH: i32 = 640;
 const PATTERN_HEIGHT: i32 = 400;
@@ -285,7 +281,8 @@ fn overlay_covers_its_display_after_crossing_scales() -> anyhow::Result<()> {
     )?;
     // SAFETY: reads this thread's own live window.
     let dpi = unsafe { GetDpiForWindow(window.0) };
-    configure_overlay(raw_handle(window.0)?, to.native)?;
+    // SAFETY: this thread owns the live window until `window` drops.
+    configure_overlay(&unsafe { native_window(window.0) }?, to.native)?;
     let mut bounds = RECT::default();
     // SAFETY: reads this thread's own live window into a live local.
     let (moved_dpi, measured) = unsafe {
@@ -382,11 +379,6 @@ fn set_affinity(window: HWND, affinity: u32) -> anyhow::Result<()> {
     Ok(ok_or_last_error(unsafe {
         SetWindowDisplayAffinity(window, affinity)
     })?)
-}
-
-fn raw_handle(window: HWND) -> anyhow::Result<RawWindowHandle> {
-    let window = NonZeroIsize::new(window as isize).context("Missing window")?;
-    Ok(RawWindowHandle::Win32(Win32WindowHandle::new(window)))
 }
 
 /// The first frame of `display` from a capture that, unlike `ScreenCapture`, leaves no
@@ -769,9 +761,10 @@ fn paint_scene(
         WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         [0, 0, 1, 1],
     )?;
-    let handle = raw_handle(overlay_window.0)?;
-    configure_overlay(handle, overlay)?;
-    set_overlay_visible(handle, true);
+    // SAFETY: this thread owns the live window until `overlay_window` drops.
+    let handle = unsafe { native_window(overlay_window.0) }?;
+    configure_overlay(&handle, overlay)?;
+    set_overlay_visible(&handle, true);
     replies.try_send(Ok(overlay_window.0 as isize))?;
     let mut pattern = None;
     let deadline = Instant::now().checked_add(ON_SCREEN).unwrap();
@@ -783,7 +776,7 @@ fn paint_scene(
             let window = Window::create(PATTERN_CLASS, topmost, bounds)?;
             window.show();
             // Back above the pattern, as the overlay stays above everything it inks.
-            set_overlay_visible(handle, true);
+            set_overlay_visible(&handle, true);
             replies.try_send(Ok(window.0 as isize))?;
             pattern = Some(window);
         }
