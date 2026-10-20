@@ -15,7 +15,7 @@ use tokio::{sync::watch, task::JoinError};
 pub(crate) use self::session::SessionId;
 use crate::{
     audio::Sealed,
-    config::{Config, ValidConfig},
+    config::{Change, Config, ValidConfig},
     ports::{Desktop, Footage, Ports},
     show::Canvas,
 };
@@ -223,6 +223,10 @@ impl<Owner> Runtime<Owner> {
     }
 
     pub(crate) fn configure(&self, config: ValidConfig) {
+        // The owner never reads presentation settings, so they cannot disturb a session.
+        if self.configuration.borrow().change_to(&config) < Change::Session {
+            return;
+        }
         // Revoke now, so a preparing insertion cannot commit before the owner applies the change.
         self.input.cancel();
         self.configuration.send_replace(config.into_inner());

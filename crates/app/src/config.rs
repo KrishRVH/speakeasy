@@ -181,13 +181,53 @@ impl Config {
         self.engine_executable.as_os_str().is_empty()
     }
 
-    /// Whether `next` needs a different engine process.
-    pub(crate) fn speech_changed(&self, next: &Self) -> bool {
-        self.engine != next.engine
-            || self.engine_executable != next.engine_executable
-            || self.model != next.model
-            || self.threads != next.threads
-            || self.use_gpu != next.use_gpu
+    /// How far moving to `next` reaches: the highest tier among the fields that differ. Every field
+    /// is named, so a new one cannot compile until it is classified.
+    pub(crate) fn change_to(&self, next: &Self) -> Change {
+        let Self {
+            linux,
+            engine,
+            microphone,
+            engine_executable,
+            model,
+            language,
+            remove_fillers,
+            threads,
+            use_gpu,
+            reduced_motion,
+            preserve_clipboard,
+            theme,
+        } = next;
+        [
+            (
+                cfg!(target_os = "linux") && self.linux != *linux,
+                Change::Desktop,
+            ),
+            (
+                self.engine != *engine
+                    || self.engine_executable != *engine_executable
+                    || self.model != *model
+                    || self.threads != *threads
+                    || self.use_gpu != *use_gpu,
+                Change::Engine,
+            ),
+            // Every request sends its language, so the engine's launch language is only a default.
+            (self.language != *language, Change::Session),
+            (
+                self.microphone != *microphone
+                    || self.remove_fillers != *remove_fillers
+                    || self.preserve_clipboard != *preserve_clipboard,
+                Change::Session,
+            ),
+            (
+                self.theme != *theme || self.reduced_motion != *reduced_motion,
+                Change::Presentation,
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(changed, tier)| changed.then_some(tier))
+        .max()
+        .unwrap_or(Change::Unchanged)
     }
 
     /// Resolves the engine and model of a copy against the settings directory and canonicalizes
@@ -244,6 +284,21 @@ impl Config {
         file.persist(path).map_err(|error| error.error)?;
         Ok(())
     }
+}
+
+/// How far a settings change reaches, ordered by disruption; each tier's action covers the tiers
+/// below it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Change {
+    Unchanged,
+    /// Only the shell, the pill and the tray read these, so a session continues.
+    Presentation,
+    /// The owner reads these for each session or request, so a session in progress ends.
+    Session,
+    /// These start the engine process, so the worker reloads.
+    Engine,
+    /// Linux binds its desktop options when the owners start, so they restart.
+    Desktop,
 }
 
 /// How saved settings stand at launch.

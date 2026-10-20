@@ -14,7 +14,7 @@ use super::{
     window::{self, reveal},
 };
 use crate::{
-    config::{Config, ValidConfig},
+    config::{Change, Config, ValidConfig},
     gpui_ext::AppUpdate,
     instance::{Instance, Request},
     pill::Pill,
@@ -220,13 +220,12 @@ impl Services {
             return Ok(());
         }
         self.config_epoch = self.config_epoch.next();
-        // A dead runtime or changed Linux desktop options need fresh owners: stopping makes the
-        // queue below restart with `config` once the old owners retire.
+        // A dead runtime or changed desktop options need fresh owners: stopping makes the queue
+        // below restart with `config` once the old owners retire.
         if self.runtime().is_some_and(|runtime| !runtime.is_running()) {
             self.stop(cx);
         }
-        #[cfg(target_os = "linux")]
-        if self.runtime().is_some() && self.config.linux != config.linux {
+        if self.runtime().is_some() && self.config.change_to(&config) == Change::Desktop {
             self.stop(cx);
         }
         if self.lifecycle.queue(Restart::Apply(config.clone())) {

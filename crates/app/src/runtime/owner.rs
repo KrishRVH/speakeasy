@@ -17,7 +17,7 @@ use super::{
     worker::{Completion, Detail, Transcript, Worker},
 };
 use crate::{
-    config::Config,
+    config::{Change, Config},
     ports::{PUBLISH_STOPPED, Ports, Published, Recording},
 };
 
@@ -272,7 +272,7 @@ impl<P: Ports> Owner<P> {
 
     fn configure(&mut self) {
         let next = self.changes.borrow_and_update().clone();
-        let reload = self.config.speech_changed(&next);
+        let reload = self.config.change_to(&next) >= Change::Engine;
         self.config = next;
         self.gesture.cancel();
         if reload {

@@ -12,6 +12,7 @@ use super::*;
 use crate::{
     config::Engine,
     ports::{Footage, Published, Recorded, Recording, Speech},
+    theme::Theme,
 };
 
 const PATIENCE: Duration = Duration::from_secs(2);
@@ -1154,7 +1155,10 @@ async fn loading_notice_clears_once_ready_and_applied_settings_are_confirmed() -
     h.observe(|snapshot| snapshot.model == ModelState::Ready)
         .await?;
     assert_eq!(h.snapshot().message, "");
-    h.runtime.configure(ValidConfig::assume(Config::default()));
+    h.runtime.configure(ValidConfig::assume(Config {
+        remove_fillers: false,
+        ..Config::default()
+    }));
     h.observe(|snapshot| snapshot.message == "Settings applied")
         .await?;
     assert_eq!(h.snapshot().phase, Phase::Idle);
@@ -1190,9 +1194,28 @@ async fn configuration_revokes_insertion_authority_before_owner_observation() ->
     let mut h = Harness::paused(|_| {})?;
     h.start().await?;
     assert!(h.runtime.input.active());
-    h.runtime.configure(ValidConfig::assume(Config::default()));
+    h.runtime.configure(ValidConfig::assume(Config {
+        remove_fillers: false,
+        ..Config::default()
+    }));
     assert!(!h.runtime.input.active());
     h.phase(Phase::Idle).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn presentation_settings_keep_the_active_session() -> anyhow::Result<()> {
+    let mut h = Harness::paused(|_| {})?;
+    h.start().await?;
+    h.runtime.configure(ValidConfig::assume(Config {
+        theme: Theme::default().next(),
+        reduced_motion: true,
+        ..Config::default()
+    }));
+    assert!(h.runtime.input.active());
+    h.finish_as("fixture").await?;
+    assert_eq!(receive(&h.pasted).await?, "fixture");
+    h.phase(Phase::Done).await?;
     h.close().await
 }
 
