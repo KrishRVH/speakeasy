@@ -28,6 +28,7 @@ Desktop.ini
 /artifacts/
 
 # Tool output
+/.claude/worktrees/
 node_modules/
 /.cache/
 /.gstack/
