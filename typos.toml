@@ -8,4 +8,4 @@ locale = "en-us"
 EIS = "EIS"
 
 [files]
-extend-exclude = ["vendor", "target", "artifacts", ".scratch", ".venv", "node_modules", "Cargo.lock", "bun.lock", "uv.lock", ".config/mise/mise.lock"]
+extend-exclude = ["vendor", "Cargo.lock", "bun.lock", "uv.lock", ".config/mise/mise.lock"]
