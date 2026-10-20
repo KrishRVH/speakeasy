@@ -448,7 +448,11 @@ impl<Owner: Sync> Harness<Owner> {
         let (mut ports, reports) = FakePorts::new();
         customize(&mut ports);
         let cleanup = ports.cleanup_gates();
-        let (output, updates) = watch::channel(Snapshot::default());
+        // A restarted shell's epoch, so a level tagged with the default epoch fails `observe_level`.
+        let (output, updates) = watch::channel(Snapshot {
+            epoch: 1,
+            ..Snapshot::default()
+        });
         let (meter, levels) = watch::channel(Meter::default());
         let runtime = start(config, output.clone(), meter, ports)?;
         Ok(Self {
@@ -476,14 +480,21 @@ impl<Owner: Sync> Harness<Owner> {
     }
 
     /// Waits until the meter shows exactly `level`, which proves the owner handled every input
-    /// that outranked the level report.
+    /// that outranked the level report, then checks that the level names the epoch and session
+    /// the pill matches it against.
     async fn observe_level(&mut self, level: f32) -> anyhow::Result<()> {
-        timeout(
+        let meter = *timeout(
             PATIENCE,
             self.levels
                 .wait_for(|meter| meter.level.to_bits() == level.to_bits()),
         )
         .await??;
+        let snapshot = self.snapshot();
+        assert_eq!(
+            (meter.epoch, meter.session),
+            (snapshot.epoch, snapshot.id),
+            "The level is not tagged with the recording it measured"
+        );
         Ok(())
     }
 
