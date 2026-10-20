@@ -3,7 +3,7 @@
 
 use std::{ops::Range, time::Duration};
 
-use super::{MAX_SAMPLE_RATE, SAMPLE_BYTES, bytes_in, samples_in};
+use super::pcm::{MAX_SAMPLE_RATE, SAMPLE_BYTES, bytes_in, samples_in};
 
 const WINDOW: Duration = Duration::from_millis(20);
 const MINIMUM_AUDIBLE: Duration = Duration::from_millis(100);
