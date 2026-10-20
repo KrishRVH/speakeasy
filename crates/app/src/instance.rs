@@ -146,7 +146,8 @@ impl Endpoint {
         File::open(port_file)
             .context(NOT_RUNNING)?
             .take(MAX_PORT_FILE_BYTES)
-            .read_to_string(&mut text)?;
+            .read_to_string(&mut text)
+            .context(OUTDATED)?;
         text.trim()
             .split_once(' ')
             .and_then(|(port, nonce)| {
