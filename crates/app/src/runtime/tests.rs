@@ -1,6 +1,6 @@
 //! Drives the production owner through fake ports on the test's paused clock, where deadlines are
 //! exact and a pending check proves quiescence. One smoke test and the latency profile host the
-//! owner on its own thread instead, as production does; only the smoke test's check stays a sample.
+//! owner on its own thread instead, as production does, where a pending check only samples.
 
 use std::{path::PathBuf, time::Duration};
 
@@ -10,7 +10,7 @@ use speakeasy_show::{Image, Journal, Moment, Narration, Size};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 use super::{
-    ports::{Capturing, Footage, Published, Sealed, Speech},
+    ports::{Capturing, Sealed, Speech},
     *,
 };
 
@@ -61,8 +61,8 @@ impl<T> GateControl<T> {
     }
 }
 
-/// Fake devices, speech, and insertion. Each optional gate or result lane pauses or steers one side
-/// effect.
+/// Fake devices, speech, insertion, and publishing. Each optional gate or result lane pauses or
+/// steers one side effect.
 struct FakePorts {
     desktop_pending: bool,
     record_error: Option<&'static str>,
@@ -139,13 +139,17 @@ impl FakePorts {
     }
 
     fn cleanup_gates(&self) -> CleanupGates {
-        let releases = [&self.retirement, &self.screen_retirement, &self.stop]
-            .into_iter()
-            .flatten()
-            .map(|gate| gate.release.clone());
+        let releases = [
+            &self.retirement,
+            &self.screen_retirement,
+            &self.stop,
+            &self.publication,
+        ]
+        .into_iter()
+        .flatten()
+        .map(|gate| gate.release.clone());
         let insertion = self.insertion.iter().map(|gate| gate.release.clone());
-        let publication = self.publication.iter().map(|gate| gate.release.clone());
-        CleanupGates(releases.chain(insertion).chain(publication).collect())
+        CleanupGates(releases.chain(insertion).collect())
     }
 }
 

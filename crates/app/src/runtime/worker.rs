@@ -142,7 +142,7 @@ impl<W: Speech> Worker<W> {
         Ok(())
     }
 
-    pub(super) fn request_stop(&self) {
+    fn request_stop(&self) {
         match self {
             Self::Loading(job) => job.cancel(),
             Self::Transcribing(job) => job.cancel(),

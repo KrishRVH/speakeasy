@@ -8,7 +8,7 @@ use speakeasy_show::Narration;
 use tokio::time::timeout;
 
 use super::{
-    ports::{Capturing, Footage, Published, Sealed},
+    ports::{Capturing, Sealed},
     *,
 };
 use crate::local_speech::LocalSpeech;
