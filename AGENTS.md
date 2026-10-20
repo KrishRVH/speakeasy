@@ -8,12 +8,10 @@ usable offline with local speech engines. Before changing behavior, find its row
 ## Workflows
 
 Use `mise run` for project workflows; run `mise tasks` and read the task you use. `Cargo.toml`,
-`clippy.toml`, and `rustfmt.toml` own Rust policy. The pinned `rust-toolchain.toml` selects the
-compiler for mise, rustup, and editors.
+`clippy.toml`, and `rustfmt.toml` own Rust policy, and `rust-toolchain.toml` pins the compiler.
 
 - `mise install` installs the pinned tools and may use the network.
-- `mise run rust:lint` and `mise run rust:test` verify Rust changes.
-- `mise run rust:doc` checks changed public interfaces.
+- `mise run rust:lint`, `rust:test`, and `rust:doc` verify Rust changes and public interfaces.
 - `mise run rust:lock` refreshes Cargo.lock through Cargo after dependency changes.
 - `mise run standards` applies safe formatters and autofixes.
 - `mise run standards:check` is the final local gate. CI builds and publishes release packages.
@@ -81,9 +79,8 @@ from mocked checks. Screen checks compare only owned-window pixels and never wri
 Owned-window rendering checks run on private or native displays without microphone or input access.
 
 Get an independent read-only agent review for nontrivial behavior or architecture changes. Verify
-findings with source evidence or a regression test. One writer owns one worktree; reviewers stay
-read-only. Serialize lockfiles, shared config, formatters, and integration. Each worktree has its
-own build directory.
+findings with source evidence or a regression test. One writer owns one worktree. Serialize
+lockfiles, shared config, formatters, and integration. Each worktree has its own build directory.
 
 Before handoff, run `mise run standards:check` and relevant native checks. Report the checked
 revision, behavior proved, results, unavailable native verification, and unresolved findings. Push
