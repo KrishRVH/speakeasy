@@ -4,7 +4,7 @@
 
 use std::time::{Duration, Instant};
 
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 use gpui::{
     AnyWindowHandle, App, AppContext, Bounds, FillOptions, FillRule, PathBuilder, PathStyle,
     Render, Rgba, Task, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind,
@@ -15,7 +15,10 @@ use speakeasy_platform::Display;
 use speakeasy_show::{Point, ink};
 use tokio::sync::watch;
 
-use crate::gpui_ext::raw_handle;
+use crate::{
+    gpui_ext::raw_handle,
+    runtime::{Phase, Snapshot},
+};
 
 /// Ink holds this long after the pen last lifts, then fades over [`FADE`], so a circle and the
 /// arrow drawn right after it stay and leave together.
@@ -192,7 +195,16 @@ fn paint(canvas: &Canvas, bounds: Bounds<gpui::Pixels>, opacity: f32, window: &m
 /// Opens the overlay whenever a Show needs it and closes it once the Show ends: a full-screen
 /// window holds GPU memory the size of its display, which an idle app has no use for. A platform
 /// that records no Shows never opens one.
-pub(crate) fn attend(mut canvas: watch::Receiver<Canvas>, cx: &App) {
+///
+/// The first overlay that cannot open goes to `report` once its Show is copied, which the
+/// failure would otherwise leave looking complete. A Show that fails or is cancelled says so
+/// itself, so a later Show reports instead.
+pub(crate) fn attend(
+    mut canvas: watch::Receiver<Canvas>,
+    mut snapshots: watch::Receiver<Snapshot>,
+    report: impl Fn(&anyhow::Error, &mut App) + 'static,
+    cx: &App,
+) {
     cx.spawn(async move |cx| {
         let mut reported = false;
         loop {
@@ -203,17 +215,10 @@ pub(crate) fn attend(mut canvas: watch::Receiver<Canvas>, cx: &App) {
             {
                 return;
             }
-            let overlay = match cx.update(|cx| open(canvas.clone(), cx)) {
-                Ok(Ok(overlay)) => Some(overlay),
-                // One dialog a launch; each later Show tries again without one.
-                Ok(Err(error)) if !reported => {
-                    reported = true;
-                    speakeasy_platform::show_error(&format!(
-                        "Cannot open the Show overlay; ink will not appear while drawing: {error:#}"
-                    ));
-                    None
-                },
-                Ok(Err(_)) => None,
+            let show = snapshots.borrow().id;
+            let (overlay, failure) = match cx.update(|cx| open(canvas.clone(), cx)) {
+                Ok(Ok(overlay)) => (Some(overlay), None),
+                Ok(Err(error)) => (None, (!reported).then_some(error)),
                 Err(_) => return,
             };
             let published = canvas
@@ -229,6 +234,27 @@ pub(crate) fn attend(mut canvas: watch::Receiver<Canvas>, cx: &App) {
             }
             if !published {
                 return;
+            }
+            let Some(error) = failure else {
+                continue;
+            };
+            // The next session cannot start until this one leaves the active phases, so waiting
+            // here never delays the next Show's overlay. A new id means pause, quit or a newer
+            // session took the snapshot first.
+            let Ok(ended) = snapshots
+                .wait_for(|snapshot| snapshot.id != show || !snapshot.phase.is_active())
+                .await
+                .map(|snapshot| snapshot.id == show && snapshot.phase == Phase::Copied)
+            else {
+                return;
+            };
+            if ended {
+                reported = true;
+                let error =
+                    anyhow!("Show copied, but its ink could not appear on screen: {error:#}");
+                if cx.update(|cx| report(&error, cx)).is_err() {
+                    return;
+                }
             }
         }
     })

@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 
+use anyhow::anyhow;
 #[cfg(not(target_os = "windows"))]
 use gpui::PathPromptOptions;
 use gpui::{
@@ -21,7 +22,8 @@ pub(crate) fn reveal(cx: &mut App) {
         return;
     }
     if let Err(error) = open(cx) {
-        speakeasy_platform::show_error(&format!("{error:#}"));
+        cx.global::<Services>()
+            .report(&anyhow!("Cannot open Settings: {error:#}"));
     }
 }
 
@@ -39,7 +41,7 @@ pub(crate) fn quit_after_settings(cx: &mut App) {
     }
 }
 
-fn open(cx: &mut App) -> anyhow::Result<()> {
+pub(super) fn open(cx: &mut App) -> anyhow::Result<()> {
     // Reading succeeds only while the window is open.
     if let Some(settings) = cx.global::<Services>().settings
         && settings.read(cx).is_ok()

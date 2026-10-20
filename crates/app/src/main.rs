@@ -200,7 +200,12 @@ fn launch(
             },
         };
         let (canvas, ink) = watch::channel(show::Canvas::default());
-        show::attend_overlay(ink, cx);
+        show::attend_overlay(
+            ink,
+            output.subscribe(),
+            |error, cx| cx.global::<Services>().report(error),
+            cx,
+        );
         cx.set_global(Services::new(
             path,
             config.clone(),

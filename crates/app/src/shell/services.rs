@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 
+use anyhow::anyhow;
 use gpui::{App, BorrowAppContext, Global, Task, WindowHandle};
 use speakeasy_platform::{Input, InputMonitor, ServiceState};
 use tokio::sync::watch;
@@ -10,7 +11,7 @@ use tokio::sync::watch;
 use super::{
     lifecycle::{ConfigEpoch, Lifecycle},
     settings::Settings,
-    window::reveal,
+    window::{self, reveal},
 };
 use crate::{
     config::Config,
@@ -301,8 +302,15 @@ impl Services {
             result.and_then(|config| services.apply(config, cx))
         });
         if let Err(error) = result {
+            // Settings shows the reason; if it cannot open, the pill shows both.
+            let error = match window::open(cx) {
+                Ok(()) => error,
+                Err(open_error) => anyhow!(
+                    "{}. Settings could not open: {open_error:#}",
+                    error.to_string().trim_end_matches('.')
+                ),
+            };
             cx.global::<Self>().publish_error(&error);
-            reveal(cx);
         }
     }
 
