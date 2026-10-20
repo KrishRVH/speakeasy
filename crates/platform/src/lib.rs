@@ -69,26 +69,24 @@ pub const CANCEL_SHORTCUT: &str = "Escape";
 #[cfg(target_os = "linux")]
 pub const CANCEL_SHORTCUT: &str = "Ctrl + Super + Escape";
 
-/// Whether dictation runs, as the tray and Settings present it.
+/// One dictation entry of the tray menu.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ServiceState {
-    /// Dictation resources are live.
-    Running,
-    /// Dictation resources are being released.
-    Pausing,
-    /// Dictation is off.
-    Paused,
+pub struct TrayItem {
+    /// The text the entry shows.
+    pub label: &'static str,
+    /// Whether choosing the entry sends its command.
+    pub enabled: bool,
 }
 
-/// What dictation is doing, as the tray presents it.
+/// The tray menu's dictation entries, already resolved by the app; native trays show them as given.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Activity {
-    /// No recording is in progress.
-    Idle,
-    /// Capture is starting or recording.
-    Dictating,
-    /// Capture is ending or speech is being transcribed.
-    Finishing,
+pub struct TrayMenu {
+    /// Pauses or resumes dictation.
+    pub pause: TrayItem,
+    /// Starts or finishes hands-free capture.
+    pub toggle: TrayItem,
+    /// Discards the active recording or recognition.
+    pub cancel: TrayItem,
 }
 
 /// Submission outcome; native input cannot prove that the target accepted text.

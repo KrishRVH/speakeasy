@@ -2,12 +2,21 @@
 
 use std::borrow::Cow;
 
-use speakeasy_platform::ServiceState;
-
 use crate::{
     config::Engine,
     runtime::{LOADING, ModelState, Phase, Snapshot},
 };
+
+/// Whether dictation runs, as the tray and Settings present it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ServiceState {
+    /// Dictation resources are live.
+    Running,
+    /// Dictation resources are being released.
+    Pausing,
+    /// Dictation is off.
+    Paused,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Indicator {

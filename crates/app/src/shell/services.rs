@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use anyhow::anyhow;
 use gpui::{App, BorrowAppContext, Global, Task, WindowHandle};
-use speakeasy_platform::{Input, InputMonitor, ServiceState};
+use speakeasy_platform::{Input, InputMonitor};
 use tokio::sync::watch;
 
 use super::{
@@ -20,7 +20,7 @@ use crate::{
     pill::Pill,
     runtime::{self, Meter, Phase, Runtime, Snapshot},
     show::Canvas,
-    status::Status,
+    status::{ServiceState, Status},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

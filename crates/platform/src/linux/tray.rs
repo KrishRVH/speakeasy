@@ -13,7 +13,7 @@ use zbus::{
 };
 
 use super::owner_changes;
-use crate::{Activity, OwnedThread, ServiceState, StoppableThread};
+use crate::{OwnedThread, StoppableThread, TrayItem, TrayMenu};
 
 const WATCHER: &str = "org.kde.StatusNotifierWatcher";
 const WATCHER_PATH: &str = "/StatusNotifierWatcher";
@@ -49,14 +49,8 @@ pub struct TrayPresentation {
     pub rgba: Vec<u8>,
     /// Accessible description of the current dictation phase.
     pub description: String,
-    /// Whether dictation is running, pausing, or paused.
-    pub service: ServiceState,
-    /// What dictation is doing.
-    pub activity: Activity,
-    /// Whether the pause, dictation, and cancel entries may act.
-    pub interactive: bool,
-    /// Whether desktop input is ready, so capture can start immediately.
-    pub desktop_ready: bool,
+    /// The dictation entries, shown between the status line and Settings.
+    pub menu: TrayMenu,
 }
 
 /// Owns the D-Bus tray thread, which is asked to stop before it joins; its update lane closes once
@@ -385,22 +379,12 @@ impl Menu {
 
 fn menu_items(presentation: TrayPresentation) -> Vec<MenuItem> {
     let TrayPresentation {
-        description,
-        service,
-        activity,
-        interactive,
-        desktop_ready,
-        ..
+        description, menu, ..
     } = presentation;
-    let running = service == ServiceState::Running;
-    let pause = match service {
-        ServiceState::Running => "Pause dictation",
-        ServiceState::Pausing => "Pausing…",
-        ServiceState::Paused => "Resume dictation",
-    };
-    let toggle = match activity {
-        Activity::Dictating => "Finish dictation",
-        Activity::Idle | Activity::Finishing => "Start dictation",
+    let item = |entry, TrayItem { label, enabled }| MenuItem {
+        entry,
+        label: label.into(),
+        enabled,
     };
     vec![
         MenuItem {
@@ -408,21 +392,9 @@ fn menu_items(presentation: TrayPresentation) -> Vec<MenuItem> {
             label: description,
             enabled: false,
         },
-        MenuItem {
-            entry: MenuEntry::Pause,
-            label: pause.into(),
-            enabled: service != ServiceState::Pausing && interactive,
-        },
-        MenuItem {
-            entry: MenuEntry::Toggle,
-            label: toggle.into(),
-            enabled: running && activity != Activity::Finishing && interactive && desktop_ready,
-        },
-        MenuItem {
-            entry: MenuEntry::Cancel,
-            label: "Cancel dictation".into(),
-            enabled: running && activity != Activity::Idle && interactive,
-        },
+        item(MenuEntry::Pause, menu.pause),
+        item(MenuEntry::Toggle, menu.toggle),
+        item(MenuEntry::Cancel, menu.cancel),
         MenuItem {
             entry: MenuEntry::Settings,
             label: "Settings…".into(),

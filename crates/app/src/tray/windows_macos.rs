@@ -2,7 +2,7 @@
 //! thread runs them and presents each tray state.
 
 use gpui::{App, Global, Task};
-use speakeasy_platform::{Activity, ServiceState};
+use speakeasy_platform::{TrayItem, TrayMenu};
 use tray_icon::{
     BadIcon, Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent,
     menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
@@ -48,26 +48,19 @@ impl Presenter {
             state.status.description,
             speakeasy_platform::SHORTCUT
         ))));
-        let running = state.service == ServiceState::Running;
-        let can_pause = state.interactive && state.service != ServiceState::Pausing;
-        // The owner ignores Toggle until desktop input is ready.
-        let can_toggle = state.interactive
-            && running
-            && state.desktop_ready
-            && state.activity != Activity::Finishing;
-        let can_cancel = state.interactive && running && state.activity != Activity::Idle;
-        self.pause.set_text(match state.service {
-            ServiceState::Running => "Pause dictation",
-            ServiceState::Pausing => "Pausing…",
-            ServiceState::Paused => "Resume dictation",
-        });
-        self.pause.set_enabled(can_pause);
-        self.toggle.set_text(match state.activity {
-            Activity::Dictating => "Finish dictation",
-            Activity::Idle | Activity::Finishing => "Start dictation",
-        });
-        self.toggle.set_enabled(can_toggle);
-        self.cancel.set_enabled(can_cancel);
+        let TrayMenu {
+            pause,
+            toggle,
+            cancel,
+        } = state.menu();
+        for (entry, TrayItem { label, enabled }) in [
+            (&self.pause, pause),
+            (&self.toggle, toggle),
+            (&self.cancel, cancel),
+        ] {
+            entry.set_text(label);
+            entry.set_enabled(enabled);
+        }
     }
 
     fn redraw_icon(&mut self, indicator: Indicator, theme: Theme) {
