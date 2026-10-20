@@ -8,11 +8,11 @@ mod retention;
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::{Duration, SystemTime},
+    time::SystemTime,
 };
 
 use anyhow::Context as _;
-use speakeasy_show::{Demo, Moment, Sample, Signature, Typeface, compose, select};
+use speakeasy_show::{Demo, Typeface};
 
 pub(crate) use self::{
     overlay::{Canvas, attend as attend_overlay},
@@ -21,9 +21,6 @@ pub(crate) use self::{
     retention::attend as attend_retention,
 };
 
-/// The demo renders frames this small just to fingerprint them; a fingerprint's 128 × 72 grid
-/// needs no more, and rendering costs grow with every pixel.
-const SAMPLE_SIZE: (u32, u32) = (320, 200);
 /// The demo's keyframes render as a Show records a 2880 × 1800 display, halved to fit
 /// [`recorder::LONGEST_EDGE`].
 const DEMO_SIZE: (u32, u32) = (1_440, 900);
@@ -65,29 +62,7 @@ impl Command {
                 out.display()
             );
         }
-        let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;
-        let demo = Demo::new(typeface.clone());
-        let recording = demo.recording();
-        let duration = recording.duration.since(Moment::START);
-        let samples = std::iter::successors(Some(Duration::ZERO), |at| {
-            Some(at.saturating_add(recorder::SAMPLE_INTERVAL)).filter(|next| *next <= duration)
-        })
-        .map(|at| {
-            let at = Moment::from(at);
-            let frame = demo.frame(at, SAMPLE_SIZE.0, SAMPLE_SIZE.1)?;
-            Ok(Sample {
-                at,
-                signature: Signature::of(&frame),
-            })
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-        let selection = select(&recording, &samples);
-        let frames = selection
-            .keyframes()
-            .iter()
-            .map(|keyframe| demo.frame(keyframe.at, DEMO_SIZE.0, DEMO_SIZE.1))
-            .collect::<Result<Vec<_>, _>>()?;
-        let bundle = compose(recording, selection, frames, &typeface)?;
+        let bundle = Demo::new(Typeface::parse(crate::BRAND_FONT_FILE)?).bundle(DEMO_SIZE)?;
         let directory = match out {
             Some(out) => out,
             None => fresh_directory(&directory()?, SystemTime::now())?,
@@ -225,6 +200,8 @@ fn civil_date(days: u64) -> (u64, u64, u64) {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     fn at(seconds: u64) -> SystemTime {

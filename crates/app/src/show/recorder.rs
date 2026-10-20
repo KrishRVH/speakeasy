@@ -9,7 +9,7 @@ use std::{
 use anyhow::anyhow;
 use async_channel::{Receiver, Sender};
 use speakeasy_platform::{OwnedThread, PointerMonitor, PointerSample, ScreenCapture, ScreenEvent};
-use speakeasy_show::{Image, Journal, Moment, Point, Size, Tracker};
+use speakeasy_show::{Image, Journal, Moment, Point, SAMPLE_INTERVAL, Size, Tracker};
 use tokio::sync::watch;
 
 use super::overlay::Canvas;
@@ -18,9 +18,6 @@ use crate::{
     runtime::{SessionId, ShowEvent},
 };
 
-/// Frames are sampled this often: fast enough to catch what a click changed, slow enough that a
-/// still screen costs nothing and a busy one stays cheap.
-pub(super) const SAMPLE_INTERVAL: Duration = Duration::from_millis(200);
 /// Frames larger than this on the long edge are halved; a reading model gains nothing from more.
 pub(super) const LONGEST_EDGE: u32 = 2_560;
 /// The most compressed bytes a Show's journal holds; see [`Journal::with_budget`].

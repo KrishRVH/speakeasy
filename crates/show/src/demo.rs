@@ -5,12 +5,17 @@ use std::time::Duration;
 use tiny_skia::{FillRule, LinearGradient, Paint, Path, PixmapMut, SpreadMode, Transform};
 
 use crate::{
-    Action, Error, Image, InkPoint, Moment, Narration, Point, Recording, Size, Span, Stroke,
-    Typeface, Word,
+    Action, Bundle, Error, Image, InkPoint, Moment, Narration, Point, Recording, SAMPLE_INTERVAL,
+    Size, Span, Stroke, Typeface, Word, compose,
     draw::{paint, rounded},
     geometry::Rect,
+    select,
+    signature::{Sample, Signature},
 };
 
+/// The demo renders frames this small just to fingerprint them; a fingerprint's 128 × 72 grid
+/// needs no more, and rendering costs grow with every pixel.
+const SAMPLE_SIZE: (u32, u32) = (320, 200);
 /// The scene's design size in logical pixels; frames scale it to any resolution.
 const SCENE: Size = Size {
     width: 1440.0,
@@ -109,6 +114,34 @@ impl Demo {
         };
         scene.draw(at.as_millis());
         Ok(image)
+    }
+
+    /// The scripted Show as a bundle, sampled every [`SAMPLE_INTERVAL`] as a recorded Show is,
+    /// with keyframes rendered at `keyframe` pixels.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a keyframe dimension is zero or too large to allocate.
+    pub fn bundle(&self, keyframe: (u32, u32)) -> Result<Bundle, Error> {
+        let recording = self.recording();
+        let samples = std::iter::successors(Some(Moment::START), |at| {
+            Some(at.saturating_add(SAMPLE_INTERVAL)).filter(|next| *next <= recording.duration)
+        })
+        .map(|at| {
+            let frame = self.frame(at, SAMPLE_SIZE.0, SAMPLE_SIZE.1)?;
+            Ok(Sample {
+                at,
+                signature: Signature::of(&frame),
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+        let selection = select(&recording, &samples);
+        let frames = selection
+            .moments()
+            .into_iter()
+            .map(|at| self.frame(at, keyframe.0, keyframe.1))
+            .collect::<Result<Vec<_>, _>>()?;
+        compose(recording, selection, frames, &self.typeface)
     }
 }
 
@@ -438,30 +471,11 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::{Sample, Signature, compose, select, typeface::tests::typeface};
+    use crate::typeface::tests::typeface;
 
     #[test]
     fn the_demo_tells_its_story_in_four_keyframes() {
-        let demo = Demo::new(typeface());
-        let recording = demo.recording();
-        let samples: Vec<Sample> = (0..=END)
-            .step_by(250)
-            .map(|at| {
-                let at = Moment::from_millis(at);
-                let frame = demo.frame(at, 320, 200).unwrap();
-                Sample {
-                    at,
-                    signature: Signature::of(&frame),
-                }
-            })
-            .collect();
-        let selection = select(&recording, &samples);
-        let frames = selection
-            .keyframes
-            .iter()
-            .map(|keyframe| demo.frame(keyframe.at, 720, 450).unwrap())
-            .collect();
-        let bundle = compose(recording, selection, frames, &typeface()).unwrap();
+        let bundle = Demo::new(typeface()).bundle((720, 450)).unwrap();
         let directory = Path::new("shows").join("demo");
         assert_eq!(
             bundle.summary(&directory),

@@ -40,7 +40,7 @@ pub use crate::{
     marks::{Mark, Shape},
     moment::{Moment, Span},
     recording::{Action, EmptyStroke, InkPoint, Narration, Recording, Size, Stroke, Word},
-    select::{Keyframe, Reason, Selection, select},
+    select::{Keyframe, Reason, SAMPLE_INTERVAL, Selection, select},
     signature::{Sample, Signature},
     tracker::Tracker,
     typeface::Typeface,

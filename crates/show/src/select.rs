@@ -11,6 +11,11 @@ use crate::{
     signature::{Sample, Signature},
 };
 
+/// Frames are sampled this often: fast enough to catch what a click changed, slow enough that a
+/// still screen costs nothing and a busy one stays cheap.
+///
+/// How long a click's result settles and how far apart keyframes keep are tuned against it.
+pub const SAMPLE_INTERVAL: Duration = Duration::from_millis(200);
 /// A click's keyframe shows the screen this long after release, once the app has responded.
 const SETTLE: Duration = Duration::from_millis(250);
 /// Keyframes other than marks keep at least this far apart.
