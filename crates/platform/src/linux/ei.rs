@@ -135,9 +135,9 @@ impl Sender {
         }
     }
 
-    /// What stops automatic paste right now, if anything.
-    pub(super) fn paste_blocked(&self) -> Option<PasteBlocked> {
-        self.paste_target().err()
+    /// Whether automatic paste can run right now.
+    pub(super) fn can_paste(&self) -> bool {
+        self.paste_target().is_ok()
     }
 
     /// Prepares a paste through the resumed keyboard once libei has reported every paste-blocking

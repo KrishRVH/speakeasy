@@ -19,15 +19,11 @@ use crate::{
     Delivery, DesktopOptions, InsertPermit, Inserted,
     insertion::{Insertion, MODIFIER_WAIT, Reply},
     linux::{
-        COPIED_FOR_MANUAL_PASTE, NO_PASTE_BINDING,
+        CLIPBOARD_CHANGED, COPIED_FOR_MANUAL_PASTE, NO_PASTE_BINDING,
         ei::{self, PasteBlocked, TextBlocked},
         x11,
     },
 };
-
-/// The X11 clipboard lost the copied text before paste.
-const CLIPBOARD_CHANGED: Inserted =
-    Inserted::Unavailable("Clipboard changed before paste. Dictate again.");
 
 /// The insertion pipeline. A paste request waits for released modifiers unless the user pastes
 /// manually, then copies through the portal or X11 clipboard and confirms ownership; direct text
@@ -114,10 +110,7 @@ impl<'a> Insertions<'a> {
             !request.permit.active()
                 || self.options.manual_paste
                 || request.delivery == Delivery::Direct
-                || self
-                    .bound
-                    .sender()
-                    .is_some_and(|sender| sender.paste_blocked().is_none())
+                || self.bound.sender().is_some_and(ei::Sender::can_paste)
                 || started.elapsed() >= MODIFIER_WAIT
         }) else {
             return Ok(());

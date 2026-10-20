@@ -61,7 +61,7 @@ type Transfers<'a> = FuturesUnordered<LocalBoxFuture<'a, anyhow::Result<()>>>;
 struct Portal {
     connection: Connection,
     /// This connection's unique bus name as it appears in portal object paths.
-    sender: String,
+    sender_segment: String,
     unanswered: Vec<OwnedObjectPath>,
     sessions: Vec<OwnedObjectPath>,
     nonce: String,
@@ -91,7 +91,7 @@ impl Portal {
                 );
             },
         }
-        let sender = connection
+        let sender_segment = connection
             .unique_name()
             .context("D-Bus connection has no name")?
             .trim_start_matches(':')
@@ -99,7 +99,7 @@ impl Portal {
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         Ok(Self {
             connection,
-            sender,
+            sender_segment,
             unanswered: Vec::new(),
             sessions: Vec::new(),
             nonce: format!("s{}_{now}", std::process::id()),
@@ -124,7 +124,7 @@ impl Portal {
         body: &B,
     ) -> anyhow::Result<Results> {
         let path: OwnedObjectPath =
-            format!("{DESKTOP}/request/{}/{token}", self.sender).try_into()?;
+            format!("{DESKTOP}/request/{}/{token}", self.sender_segment).try_into()?;
         let request = Proxy::new(&self.connection, DESTINATION, path.clone(), REQUEST).await?;
         let mut responses = request.receive_signal("Response").await?;
         let mut restarts = MessageStream::for_match_rule(
@@ -155,7 +155,7 @@ impl Portal {
         let handle = self.next_token();
         let session = self.next_token();
         let predicted: OwnedObjectPath =
-            format!("{DESKTOP}/session/{}/{session}", self.sender).try_into()?;
+            format!("{DESKTOP}/session/{}/{session}", self.sender_segment).try_into()?;
         self.sessions.push(predicted.clone());
         let options = Options::from([
             ("handle_token", Value::from(handle.clone())),
@@ -616,9 +616,7 @@ async fn start_remote_desktop(portal: &mut Portal) -> anyhow::Result<Remote> {
 }
 
 async fn request_clipboard(portal: &Portal, session: &OwnedObjectPath) -> anyhow::Result<bool> {
-    let Ok(clipboard) = portal.proxy(CLIPBOARD).await else {
-        return Ok(false);
-    };
+    let clipboard = portal.proxy(CLIPBOARD).await?;
     // Creating a proxy does not contact the portal; reading `version` proves the interface exists.
     if clipboard.get_property::<u32>("version").await.is_err() {
         return Ok(false);

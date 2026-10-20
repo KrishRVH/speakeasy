@@ -27,7 +27,7 @@ use super::{
 use crate::{
     Delivery, DesktopOptions, InputSender, Inserted, OwnedThread,
     insertion::{Insertion, PASTE_AFTER_RELEASE, abandon_queued, wait_for_released_modifiers},
-    linux::{COPIED_FOR_MANUAL_PASTE, HostSession, NO_PASTE_BINDING},
+    linux::{CLIPBOARD_CHANGED, COPIED_FOR_MANUAL_PASTE, HostSession, NO_PASTE_BINDING},
 };
 
 /// Serializes X11 insertion on its own thread. Dropping it revokes the current permit and closes its
@@ -150,7 +150,7 @@ fn copy_after_release(
     }
     let Some(owner) = clipboard.set_text(&request.text)? else {
         return Ok(ControlFlow::Break(if request.permit.active() {
-            Inserted::Unavailable("Clipboard changed before paste. Dictate again.")
+            CLIPBOARD_CHANGED
         } else {
             Inserted::Cancelled
         }));
