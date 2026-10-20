@@ -2,7 +2,8 @@
 
 use std::fmt;
 
-/// A failure to build or encode an image or manifest, or to load the badge typeface.
+/// A failure to build or encode an image or manifest, to choose keyframes without frames, or to
+/// load the badge typeface.
 #[derive(Debug)]
 pub struct Error(Kind);
 
@@ -12,7 +13,7 @@ enum Kind {
     Frames { keyframes: usize, frames: usize },
     Unsampled,
     Manifest(serde_json::Error),
-    Png(Box<dyn std::error::Error + Send + Sync>),
+    Png(png::EncodingError),
     Typeface,
 }
 
@@ -33,8 +34,8 @@ impl Error {
         Self(Kind::Manifest(error))
     }
 
-    pub(crate) fn png(error: impl std::error::Error + Send + Sync + 'static) -> Self {
-        Self(Kind::Png(Box::new(error)))
+    pub(crate) const fn png(error: png::EncodingError) -> Self {
+        Self(Kind::Png(error))
     }
 
     pub(crate) const fn typeface() -> Self {
@@ -59,7 +60,7 @@ impl fmt::Display for Error {
             },
             Kind::Unsampled => f.write_str("no frames were sampled to choose keyframes from"),
             Kind::Manifest(_) => f.write_str("the manifest could not be written"),
-            Kind::Png(_) => f.write_str("the PNG could not be processed"),
+            Kind::Png(_) => f.write_str("the PNG could not be encoded"),
             Kind::Typeface => f.write_str("the badge typeface could not be read"),
         }
     }
@@ -69,7 +70,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match &self.0 {
             Kind::Manifest(error) => Some(error),
-            Kind::Png(error) => Some(error.as_ref()),
+            Kind::Png(error) => Some(error),
             Kind::Dimensions { .. } | Kind::Frames { .. } | Kind::Unsampled | Kind::Typeface => {
                 None
             },

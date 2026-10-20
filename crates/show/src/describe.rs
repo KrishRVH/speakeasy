@@ -47,19 +47,19 @@ impl fmt::Display for Mark {
             0 | 1 => String::new(),
             count => format!(" ({count} strokes)"),
         };
+        let verb = self.shape.verb();
         match self.shape {
-            Shape::Circle => write!(f, "circled region {region}{strokes}"),
+            Shape::Circle | Shape::Scribble => write!(f, "{verb} region {region}{strokes}"),
             Shape::Underline => write!(
                 f,
-                "underlined x {left:.2}–{right:.2} at y {:.2}{strokes}",
+                "{verb} x {left:.2}–{right:.2} at y {:.2}{strokes}",
                 top.midpoint(bottom)
             ),
-            Shape::Line { from, to } => write!(f, "drew a line from {} to {}", At(from), At(to)),
+            Shape::Line { from, to } => write!(f, "{verb} from {} to {}", At(from), At(to)),
             Shape::Arrow { from, to } => {
-                write!(f, "drew an arrow from {} pointing to {}", At(from), At(to))
+                write!(f, "{verb} from {} pointing to {}", At(from), At(to))
             },
-            Shape::Tap => write!(f, "tapped {}{strokes}", At(self.bounds.center())),
-            Shape::Scribble => write!(f, "marked region {region}{strokes}"),
+            Shape::Tap => write!(f, "{verb} {}{strokes}", At(self.bounds.center())),
         }
     }
 }

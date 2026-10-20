@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use crate::{
-    Moment,
+    Moment, Span,
     recording::{Narration, Word},
 };
 
@@ -58,8 +58,8 @@ pub(crate) fn align(anchors: &[Moment], narration: &Narration) -> Vec<Option<Str
 }
 
 /// Spans of words that read as one clause.
-fn clauses(words: &[&Word]) -> Vec<(Moment, Moment)> {
-    let mut clauses: Vec<(Moment, Moment)> = Vec::new();
+fn clauses(words: &[&Word]) -> Vec<Span> {
+    let mut clauses: Vec<Span> = Vec::new();
     let mut clause_words = 0;
     let mut previous: Option<&Word> = None;
     for word in words {
@@ -67,17 +67,15 @@ fn clauses(words: &[&Word]) -> Vec<(Moment, Moment)> {
             !ends_clause(&previous.text, clause_words)
                 && word.span.start().since(previous.span.start()) < PAUSE
         });
-        let end = word
-            .span
-            .end()
-            .min(word.span.start().saturating_add(WORD_REACH));
+        let start = word.span.start();
+        let reach = Span::new(start, word.span.end().min(start.saturating_add(WORD_REACH)));
         match clauses.last_mut() {
             Some(clause) if continues => {
-                clause.1 = clause.1.max(end);
+                *clause = clause.union(reach);
                 clause_words = clause_words.saturating_add(usize::from(word.is_spoken()));
             },
             _ => {
-                clauses.push((word.span.start(), end));
+                clauses.push(reach);
                 clause_words = usize::from(word.is_spoken());
             },
         }
@@ -88,13 +86,13 @@ fn clauses(words: &[&Word]) -> Vec<(Moment, Moment)> {
 
 /// Where each keyframe's text starts: the start of the clause holding its anchor. When two
 /// keyframes fall in one clause, the later one takes the words from its own moment.
-fn text_starts(anchors: &[Moment], clauses: &[(Moment, Moment)]) -> Vec<Moment> {
+fn text_starts(anchors: &[Moment], clauses: &[Span]) -> Vec<Moment> {
     let mut starts: Vec<Moment> = Vec::with_capacity(anchors.len());
     for &anchor in anchors {
         let mut start = clauses
             .iter()
-            .find(|(start, end)| *start <= anchor && anchor <= *end)
-            .map_or(anchor, |clause| clause.0);
+            .find(|clause| clause.contains(anchor))
+            .map_or(anchor, |clause| clause.start());
         if let Some(&previous) = starts.last()
             && start <= previous
         {
@@ -124,7 +122,6 @@ fn append(text: &mut String, word: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Span;
 
     fn narration(words: &[(u64, &str)]) -> Narration {
         Narration::Words(
@@ -247,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn untimed_text_and_silence() {
+    fn untimed_text_belongs_to_the_first_keyframe_and_silence_to_none() {
         let text = Narration::Text(" All of it. ".into());
         assert_eq!(texts(&[0, 900], &text), ["All of it.", ""]);
         assert_eq!(texts(&[0], &Narration::default()), [""]);

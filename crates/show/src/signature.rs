@@ -188,7 +188,7 @@ pub(crate) mod tests {
     use super::*;
 
     /// A uniformly gray frame.
-    pub(crate) fn gray(level: u8, width: u32, height: u32) -> Image {
+    fn gray(level: u8, width: u32, height: u32) -> Image {
         Image::filled(width, height, [level; 3]).unwrap()
     }
 
