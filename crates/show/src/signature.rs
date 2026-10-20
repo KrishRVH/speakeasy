@@ -44,7 +44,7 @@ impl std::fmt::Debug for Signature {
 impl Signature {
     /// Fingerprints `image`; cost is bounded by the grid, not by the image's resolution.
     #[must_use]
-    pub fn of(image: &Image) -> Self {
+    pub(crate) fn of(image: &Image) -> Self {
         let pixels: Vec<&[[u8; 4]]> = image.rows().map(|row| row.as_chunks::<4>().0).collect();
         let columns = spans(convert::count(image.width()), COLUMNS);
         let mut cells = Box::new([0; CELLS]);

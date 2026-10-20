@@ -73,38 +73,9 @@ impl Demo {
         Self { typeface }
     }
 
-    /// Everything the scripted Show captured except its frames.
-    #[must_use]
-    pub fn recording(&self) -> Recording {
-        Recording {
-            duration: Moment::from_millis(END),
-            surface: SCENE,
-            strokes: strokes(),
-            actions: vec![
-                Action::Click {
-                    at: Moment::from_millis(OPEN_APPEARANCE),
-                    point: normalized(270.0, section_center(3)),
-                },
-                Action::Click {
-                    at: Moment::from_millis(TOGGLE_CLICK),
-                    point: normalized(1_206.0, row_center(1)),
-                },
-                Action::Drag {
-                    span: Span::new(Moment::from_millis(DRAG.0), Moment::from_millis(DRAG.1)),
-                    from: normalized(slider_x(0.35), slider_y()),
-                    to: normalized(slider_x(0.7), slider_y()),
-                },
-            ],
-            narration: narration(),
-        }
-    }
-
-    /// The screen at `at`, rendered at `width × height` pixels.
-    ///
-    /// # Errors
-    ///
-    /// Fails when a dimension is zero or too large to allocate.
-    pub fn frame(&self, at: Moment, width: u32, height: u32) -> Result<Image, Error> {
+    /// The screen at `at`, rendered at `width × height` pixels; fails when a dimension is zero or
+    /// too large to allocate.
+    fn frame(&self, at: Moment, width: u32, height: u32) -> Result<Image, Error> {
         let mut image = Image::filled(width, height, [20, 22, 28])?;
         let scale = Transform::from_scale(width as f32 / SCENE.width, height as f32 / SCENE.height);
         let mut scene = Scene {
@@ -124,7 +95,7 @@ impl Demo {
     /// Fails when a keyframe dimension is zero or too large to allocate, or the script records no
     /// frames.
     pub fn bundle(&self, keyframe: (u32, u32)) -> Result<Bundle, Error> {
-        let recording = self.recording();
+        let recording = recording();
         let samples = std::iter::successors(Some(Moment::START), |at| {
             Some(at.saturating_add(SAMPLE_INTERVAL)).filter(|next| *next <= recording.duration)
         })
@@ -393,6 +364,31 @@ fn slider_value(at: u64) -> f32 {
 
 fn normalized(x: f32, y: f32) -> Point {
     Point::new(x / SCENE.width, y / SCENE.height)
+}
+
+/// Everything the scripted Show captured except its frames.
+fn recording() -> Recording {
+    Recording {
+        duration: Moment::from_millis(END),
+        surface: SCENE,
+        strokes: strokes(),
+        actions: vec![
+            Action::Click {
+                at: Moment::from_millis(OPEN_APPEARANCE),
+                point: normalized(270.0, section_center(3)),
+            },
+            Action::Click {
+                at: Moment::from_millis(TOGGLE_CLICK),
+                point: normalized(1_206.0, row_center(1)),
+            },
+            Action::Drag {
+                span: Span::new(Moment::from_millis(DRAG.0), Moment::from_millis(DRAG.1)),
+                from: normalized(slider_x(0.35), slider_y()),
+                to: normalized(slider_x(0.7), slider_y()),
+            },
+        ],
+        narration: narration(),
+    }
 }
 
 /// A circle around the theme menu, then an arrow, in three strokes, at the label under the button.
