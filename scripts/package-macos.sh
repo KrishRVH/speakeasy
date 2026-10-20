@@ -31,8 +31,9 @@ cp settings.example.json "$bundle/Contents/Resources/"
 cp crates/app/assets/JosefinSans-OFL.txt "$bundle/Contents/Resources/"
 cp crates/show/NOTICE.md "$bundle/Contents/Resources/"
 # An ad-hoc signature's designated requirement is the binary's cdhash, so every build drops the
-# Accessibility and Screen Recording grants; a stable bundle identifier does not prevent this.
-# Only a persistent signing identity keeps grants, and Gatekeeper also wants notarization.
+# Accessibility and Screen Recording grants. A stable bundle identifier is necessary but not
+# sufficient: only a persistent signing identity keeps grants, and its requirement includes the
+# identifier, so never rename CFBundleIdentifier. Gatekeeper also wants notarization.
 codesign --force --sign - "$bundle"
 ditto -c -k --keepParent "$bundle" artifacts/speakeasy-macos.zip
 echo "Built $bundle"
