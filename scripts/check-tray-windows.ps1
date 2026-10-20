@@ -1,4 +1,5 @@
-# Debug and measure builds load shaders at runtime, so pass the repository as -WorkingDirectory.
+# A build with debug assertions made under WSL compiles GPUI's shaders from a Linux path with no
+# drive, which Windows resolves against the working directory, so pass the repository there.
 param([Parameter(Mandatory=$true)][string]$Executable, [string]$WorkingDirectory)
 $ErrorActionPreference = 'Stop'
 # Own simulated windows only. No microphone, hook, clipboard or global input.

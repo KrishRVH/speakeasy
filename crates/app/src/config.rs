@@ -388,7 +388,7 @@ fn patch(
         file.entry("linux")
             .or_insert_with(|| Value::Object(Map::new()))
             .as_object_mut()
-            .context("The linux settings must be an object")?
+            .context("parse admits only a linux object")?
             .extend(linux);
     }
     Ok(())
