@@ -508,6 +508,21 @@ mod tests {
         assert_eq!(Journal::new().frame_at(at(0)), None);
     }
 
+    #[test]
+    fn each_thinning_halves_how_often_arrivals_are_admitted() {
+        // With no room past two frames, every third frame recorded thins the journal.
+        let mut journal = Journal::with_budget(0);
+        let mut admitted = Vec::new();
+        for arrival in 0_u8..9 {
+            if journal.admit() {
+                admitted.push(arrival);
+                let moment = at(u64::from(arrival).wrapping_mul(200));
+                journal.record(moment, quadrants([arrival; 4], 2));
+            }
+        }
+        assert_eq!(admitted, [0, 1, 2, 4, 8]);
+    }
+
     proptest! {
         #[test]
         fn thinning_keeps_every_other_frame_exact(
