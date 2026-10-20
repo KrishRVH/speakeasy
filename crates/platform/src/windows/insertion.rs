@@ -15,7 +15,7 @@ use windows_sys::Win32::{
 };
 
 use super::{modifiers_down, send_input, synthetic_key};
-use crate::{Delivery, InsertPermit, Inserted};
+use crate::{Inserted, insertion::NativeInsert};
 
 /// Places `text` on the clipboard, with Windows line endings.
 ///
@@ -23,111 +23,124 @@ use crate::{Delivery, InsertPermit, Inserted};
 ///
 /// Fails when another application holds the clipboard or refuses the text.
 pub fn copy_text(text: &str) -> anyhow::Result<()> {
-    let text = text.replace("\r\n", "\n").replace('\n', "\r\n");
+    let text = windows_line_endings(text);
     let _clipboard = open_clipboard()?;
     clipboard_win::raw::set_string(&text)?;
     Ok(())
 }
 
-pub(crate) fn insert(
-    text: &str,
-    permit: &InsertPermit,
-    delivery: Delivery,
-) -> anyhow::Result<Inserted> {
-    if !permit.active() {
-        return Ok(Inserted::Cancelled);
-    }
-    match delivery {
-        Delivery::Paste => paste(text, permit),
-        Delivery::Direct => insert_direct(text, permit),
+/// The native steps of one insertion, which [`crate::insertion::insert`] puts in order.
+pub(crate) struct Insert;
+
+impl Insert {
+    pub(crate) const fn new() -> Self {
+        Self
     }
 }
 
-fn paste(text: &str, permit: &InsertPermit) -> anyhow::Result<Inserted> {
-    let text = text.replace("\r\n", "\n").replace('\n', "\r\n");
-    {
+/// Keyboard input built in full, submitted only after the recording commits.
+pub(crate) enum Keys {
+    /// Ctrl+V.
+    Paste([INPUT; 4]),
+    /// A press and release for each UTF-16 unit of the text.
+    Text(Vec<INPUT>),
+}
+
+impl NativeInsert for Insert {
+    type Keys = Keys;
+    type Lease = clipboard_win::Clipboard;
+    /// The clipboard sequence number, which every change advances.
+    type Mark = Option<NonZeroU32>;
+
+    fn acquire(&mut self) -> anyhow::Result<clipboard_win::Clipboard> {
+        open_clipboard()
+    }
+
+    fn write(&mut self, lease: clipboard_win::Clipboard, text: &str) -> anyhow::Result<()> {
+        clipboard_win::raw::set_string(&windows_line_endings(text))?;
+        drop(lease);
+        Ok(())
+    }
+
+    fn mark(&mut self) -> Option<NonZeroU32> {
+        clipboard_win::raw::seq_num()
+    }
+
+    fn holds(&mut self, text: &str, mark: &Option<NonZeroU32>) -> anyhow::Result<bool> {
         let _clipboard = open_clipboard()?;
-        if !permit.active() {
-            return Ok(Inserted::Cancelled);
+        let mut current = Vec::new();
+        clipboard_win::raw::get_string(&mut current)?;
+        Ok(current == windows_line_endings(text).as_bytes()
+            && *mark == clipboard_win::raw::seq_num())
+    }
+
+    fn paste_keys(&mut self) -> anyhow::Result<Keys> {
+        let press = |key| synthetic_key(key, 0, 0);
+        let release = |key| synthetic_key(key, 0, KEYEVENTF_KEYUP);
+        Ok(Keys::Paste([
+            press(VK_CONTROL),
+            press(VK_V),
+            release(VK_V),
+            release(VK_CONTROL),
+        ]))
+    }
+
+    fn text_keys(&mut self, text: &str) -> anyhow::Result<Keys> {
+        Ok(Keys::Text(
+            text.replace("\r\n", "\n")
+                .encode_utf16()
+                .flat_map(|unit| {
+                    [
+                        synthetic_key(0, unit, KEYEVENTF_UNICODE),
+                        synthetic_key(0, unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP),
+                    ]
+                })
+                .collect(),
+        ))
+    }
+
+    fn external_focus(&mut self) -> bool {
+        has_external_target()
+    }
+
+    fn shortcut_released(&mut self) -> bool {
+        !modifiers_down()
+    }
+
+    fn send(&mut self, keys: Keys) -> anyhow::Result<Inserted> {
+        match keys {
+            Keys::Paste(shortcut) => {
+                let sent = send_input(&shortcut)?;
+                if sent == shortcut.len() {
+                    return Ok(Inserted::Sent);
+                }
+                if sent > 0 {
+                    let release = |key| synthetic_key(key, 0, KEYEVENTF_KEYUP);
+                    #[expect(
+                        clippy::let_underscore_must_use,
+                        reason = "Release stuck synthetic modifiers after partial input even if the target also blocks cleanup"
+                    )]
+                    let _ = send_input(&[release(VK_V), release(VK_CONTROL)]);
+                }
+                Ok(Inserted::Copied(
+                    "Copied. This app blocked paste; press Ctrl+V.",
+                ))
+            },
+            Keys::Text(input) => {
+                let sent = send_input(&input)?;
+                if sent != input.len() {
+                    return Ok(Inserted::Unavailable(
+                        "Direct input was blocked or only partly sent. Clipboard preserved.",
+                    ));
+                }
+                Ok(Inserted::Sent)
+            },
         }
-        clipboard_win::raw::set_string(&text)?;
     }
-    let sequence = clipboard_win::raw::seq_num();
-    if !clipboard_holds(&text, sequence)? {
-        return Ok(Inserted::Unavailable(
-            "Clipboard changed. New contents were preserved; paste was not sent.",
-        ));
-    }
-    if let Some(outcome) = Delivery::Paste.preflight(has_external_target(), !modifiers_down()) {
-        return Ok(outcome);
-    }
-    if sequence != clipboard_win::raw::seq_num() {
-        return Ok(Inserted::Unavailable(
-            "Clipboard changed before paste. New contents were preserved.",
-        ));
-    }
-    if !permit.commit() {
-        return Ok(Inserted::Cancelled);
-    }
-    send_paste_shortcut()
 }
 
-fn clipboard_holds(text: &str, sequence: Option<NonZeroU32>) -> anyhow::Result<bool> {
-    let _clipboard = open_clipboard()?;
-    let mut current = Vec::new();
-    clipboard_win::raw::get_string(&mut current)?;
-    Ok(current == text.as_bytes() && sequence == clipboard_win::raw::seq_num())
-}
-
-fn send_paste_shortcut() -> anyhow::Result<Inserted> {
-    let press = |key| synthetic_key(key, 0, 0);
-    let release = |key| synthetic_key(key, 0, KEYEVENTF_KEYUP);
-    let shortcut = [
-        press(VK_CONTROL),
-        press(VK_V),
-        release(VK_V),
-        release(VK_CONTROL),
-    ];
-    let sent = send_input(&shortcut)?;
-    if sent == shortcut.len() {
-        return Ok(Inserted::Sent);
-    }
-    if sent > 0 {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "Release stuck synthetic modifiers after partial input even if the target also blocks cleanup"
-        )]
-        let _ = send_input(&[release(VK_V), release(VK_CONTROL)]);
-    }
-    Ok(Inserted::Copied(
-        "Copied. This app blocked paste; press Ctrl+V.",
-    ))
-}
-
-fn insert_direct(text: &str, permit: &InsertPermit) -> anyhow::Result<Inserted> {
-    let input: Vec<INPUT> = text
-        .replace("\r\n", "\n")
-        .encode_utf16()
-        .flat_map(|unit| {
-            [
-                synthetic_key(0, unit, KEYEVENTF_UNICODE),
-                synthetic_key(0, unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP),
-            ]
-        })
-        .collect();
-    if let Some(outcome) = Delivery::Direct.preflight(has_external_target(), !modifiers_down()) {
-        return Ok(outcome);
-    }
-    if !permit.commit() {
-        return Ok(Inserted::Cancelled);
-    }
-    let sent = send_input(&input)?;
-    if sent != input.len() {
-        return Ok(Inserted::Unavailable(
-            "Direct input was blocked or only partly sent. Clipboard preserved.",
-        ));
-    }
-    Ok(Inserted::Sent)
+fn windows_line_endings(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\n', "\r\n")
 }
 
 /// Opens the clipboard, retrying for a short wall-clock budget because clipboard listeners can hold

@@ -386,7 +386,7 @@ impl Inserter {
         }
         tokio::task::spawn_blocking(move || {
             insertion::wait_for_released_modifiers(&permit, || Ok(native::modifiers_down()))?;
-            let inserted = native::insert(&text, &permit, delivery);
+            let inserted = insertion::insert(&mut native::Insert::new(), &text, &permit, delivery);
             // Moving the turn in holds it through native work even if the caller stops awaiting.
             drop(turn);
             inserted

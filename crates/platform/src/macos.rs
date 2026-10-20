@@ -13,7 +13,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, bail};
+use anyhow::{Context as _, anyhow, bail};
 use block2::RcBlock;
 use core_foundation::{
     base::{TCFType, kCFAllocatorDefault},
@@ -42,8 +42,8 @@ use objc2_foundation::{
 use raw_window_handle::{AppKitWindowHandle, RawWindowHandle};
 
 use super::{
-    CANCEL_SHORTCUT, Delivery, Input, InputSender, InsertPermit, Inserted, OwnedThread,
-    PILL_MARGIN, PILL_WIDTH, SHORTCUT, insertion,
+    CANCEL_SHORTCUT, Input, InputSender, Inserted, OwnedThread, PILL_MARGIN, PILL_WIDTH, SHORTCUT,
+    insertion,
     keyboard::{self, MacEvent},
     monitor::MonitorControl,
 };
@@ -419,20 +419,6 @@ pub(super) fn modifiers_down() -> bool {
         })
 }
 
-pub(super) fn insert(
-    text: &str,
-    permit: &InsertPermit,
-    delivery: Delivery,
-) -> anyhow::Result<Inserted> {
-    if !permit.active() {
-        return Ok(Inserted::Cancelled);
-    }
-    match delivery {
-        Delivery::Paste => paste(text, permit),
-        Delivery::Direct => insert_direct(text, permit),
-    }
-}
-
 /// Places `text` on the general pasteboard.
 ///
 /// # Errors
@@ -443,68 +429,91 @@ pub fn copy_text(text: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn paste(text: &str, permit: &InsertPermit) -> anyhow::Result<Inserted> {
-    let mut clipboard = arboard::Clipboard::new()?;
-    if !permit.active() {
-        return Ok(Inserted::Cancelled);
-    }
-    clipboard.set_text(text)?;
-    let sequence = clipboard_sequence();
-    if clipboard.get_text()? != text || clipboard_sequence() != sequence {
-        return Ok(Inserted::Unavailable(
-            "Clipboard changed. New contents were preserved; paste was not sent.",
-        ));
-    }
-    let source = private_event_source()?;
-    let mut events = Vec::with_capacity(2);
-    for down in [true, false] {
-        let event = CGEvent::new_keyboard_event(source.clone(), KeyCode::ANSI_V, down)
-            .map_err(|()| anyhow!("Cannot create paste event"))?;
-        event.set_flags(CGEventFlags::CGEventFlagCommand);
-        event.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, OWN_INPUT);
-        events.push(event);
-    }
-    if let Some(outcome) = Delivery::Paste.preflight(has_external_target(), !modifiers_down()) {
-        return Ok(outcome);
-    }
-    if clipboard_sequence() != sequence {
-        return Ok(Inserted::Unavailable(
-            "Clipboard changed before paste. New contents were preserved.",
-        ));
-    }
-    Ok(commit_and_post(events, permit))
+/// The native steps of one insertion, which [`insertion::insert`] puts in order.
+pub(super) struct Insert {
+    /// The pasteboard written, kept to read back what it holds.
+    clipboard: Option<arboard::Clipboard>,
 }
 
-fn insert_direct(text: &str, permit: &InsertPermit) -> anyhow::Result<Inserted> {
-    let source = private_event_source()?;
-    let mut events = Vec::new();
-    for chunk in insertion::utf16_chunks(text, TEXT_EVENT_UNITS) {
-        let press = CGEvent::new_keyboard_event(source.clone(), 0, true)
-            .map_err(|()| anyhow!("Cannot create text event"))?;
-        press.set_string(chunk);
-        let release = CGEvent::new_keyboard_event(source.clone(), 0, false)
-            .map_err(|()| anyhow!("Cannot create text release"))?;
-        for event in [press, release] {
+impl Insert {
+    pub(super) const fn new() -> Self {
+        Self { clipboard: None }
+    }
+}
+
+impl insertion::NativeInsert for Insert {
+    /// Every event is created before commit, so a failed creation cannot leave partial input.
+    type Keys = Vec<CGEvent>;
+    type Lease = arboard::Clipboard;
+    /// The pasteboard change count, which every change advances.
+    type Mark = isize;
+
+    fn acquire(&mut self) -> anyhow::Result<arboard::Clipboard> {
+        Ok(arboard::Clipboard::new()?)
+    }
+
+    fn write(&mut self, mut lease: arboard::Clipboard, text: &str) -> anyhow::Result<()> {
+        lease.set_text(text)?;
+        self.clipboard = Some(lease);
+        Ok(())
+    }
+
+    fn mark(&mut self) -> isize {
+        clipboard_sequence()
+    }
+
+    fn holds(&mut self, text: &str, mark: &isize) -> anyhow::Result<bool> {
+        let clipboard = self
+            .clipboard
+            .as_mut()
+            .context("Insertion read back a pasteboard it never wrote")?;
+        Ok(clipboard.get_text()? == text && clipboard_sequence() == *mark)
+    }
+
+    fn paste_keys(&mut self) -> anyhow::Result<Vec<CGEvent>> {
+        let source = private_event_source()?;
+        let mut events = Vec::with_capacity(2);
+        for down in [true, false] {
+            let event = CGEvent::new_keyboard_event(source.clone(), KeyCode::ANSI_V, down)
+                .map_err(|()| anyhow!("Cannot create paste event"))?;
+            event.set_flags(CGEventFlags::CGEventFlagCommand);
             event.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, OWN_INPUT);
             events.push(event);
         }
+        Ok(events)
     }
-    if let Some(outcome) = Delivery::Direct.preflight(has_external_target(), !modifiers_down()) {
-        return Ok(outcome);
-    }
-    Ok(commit_and_post(events, permit))
-}
 
-/// Posts `events` only if `permit` commits. Callers create every event first, so a failed creation
-/// cannot leave partial input posted.
-fn commit_and_post(events: Vec<CGEvent>, permit: &InsertPermit) -> Inserted {
-    if !permit.commit() {
-        return Inserted::Cancelled;
+    fn text_keys(&mut self, text: &str) -> anyhow::Result<Vec<CGEvent>> {
+        let source = private_event_source()?;
+        let mut events = Vec::new();
+        for chunk in insertion::utf16_chunks(text, TEXT_EVENT_UNITS) {
+            let press = CGEvent::new_keyboard_event(source.clone(), 0, true)
+                .map_err(|()| anyhow!("Cannot create text event"))?;
+            press.set_string(chunk);
+            let release = CGEvent::new_keyboard_event(source.clone(), 0, false)
+                .map_err(|()| anyhow!("Cannot create text release"))?;
+            for event in [press, release] {
+                event.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, OWN_INPUT);
+                events.push(event);
+            }
+        }
+        Ok(events)
     }
-    for event in events {
-        event.post(CGEventTapLocation::HID);
+
+    fn external_focus(&mut self) -> bool {
+        has_external_target()
     }
-    Inserted::Sent
+
+    fn shortcut_released(&mut self) -> bool {
+        !modifiers_down()
+    }
+
+    fn send(&mut self, keys: Vec<CGEvent>) -> anyhow::Result<Inserted> {
+        for event in keys {
+            event.post(CGEventTapLocation::HID);
+        }
+        Ok(Inserted::Sent)
+    }
 }
 
 fn private_event_source() -> anyhow::Result<CGEventSource> {

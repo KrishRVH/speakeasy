@@ -36,7 +36,7 @@ use windows_sys::{
     w,
 };
 
-pub(crate) use self::insertion::insert;
+pub(crate) use self::insertion::Insert;
 pub use self::{
     dialog::choose_file,
     input::InputMonitor,
