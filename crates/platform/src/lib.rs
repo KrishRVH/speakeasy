@@ -1,4 +1,4 @@
-//! Native desktop input, presentation, and child-process ownership.
+//! Native desktop input, screen capture, presentation, and child-process ownership.
 //!
 //! Callbacks deliver events to the session owner. Insertion permits authorize one recording and can
 //! be revoked while a native clipboard call is blocked.
