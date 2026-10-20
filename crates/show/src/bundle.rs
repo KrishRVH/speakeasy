@@ -157,22 +157,19 @@ impl Bundle {
             "Contact sheet: {}",
             directory.join(CONTACT_SHEET).display()
         ));
-        lines.extend(keyframes.iter().map(|keyframe| {
-            let said = keyframe
-                .said
-                .as_deref()
-                .map(str::trim)
-                .filter(|said| !said.is_empty());
-            match said {
-                Some(said) => format!(
-                    "- #{} ({}){} “{said}”",
-                    keyframe.index,
-                    keyframe.at,
-                    Marker(keyframe, shown(marks, keyframe))
-                ),
-                None => format!("- #{} ({}) {}", keyframe.index, keyframe.at, keyframe.event),
-            }
-        }));
+        lines.extend(
+            keyframes
+                .iter()
+                .map(|keyframe| match keyframe.said.as_deref() {
+                    Some(said) => format!(
+                        "- #{} ({}){} “{said}”",
+                        keyframe.index,
+                        keyframe.at,
+                        Marker(keyframe, shown(marks, keyframe))
+                    ),
+                    None => format!("- #{} ({}) {}", keyframe.index, keyframe.at, keyframe.event),
+                }),
+        );
         match keyframes.as_slice() {
             [] => {},
             [only] => lines.push(format!(

@@ -24,7 +24,8 @@ const COMMA_CLAUSE_WORDS: usize = 3;
 ///
 /// Each keyframe's text runs from the start of the clause in progress at its anchor until the
 /// next keyframe's text starts, so the narration is partitioned in order with nothing repeated or
-/// dropped. Narration before the first keyframe belongs to it.
+/// dropped. Narration before the first keyframe belongs to it. Each text is trimmed, and a
+/// keyframe with nothing said gets `None`.
 pub(crate) fn align(anchors: &[Moment], narration: &Narration) -> Vec<Option<String>> {
     let mut said = vec![String::new(); anchors.len()];
     match narration {
@@ -246,8 +247,12 @@ mod tests {
     #[test]
     fn untimed_text_belongs_to_the_first_keyframe_and_silence_to_none() {
         let text = Narration::Text(" All of it. ".into());
-        assert_eq!(texts(&[0, 900], &text), ["All of it.", ""]);
-        assert_eq!(texts(&[0], &Narration::default()), [""]);
-        assert_eq!(texts(&[], &text), Vec::<String>::new());
+        assert_eq!(
+            align(&at(&[0, 900]), &text),
+            [Some("All of it.".to_owned()), None]
+        );
+        assert_eq!(align(&at(&[0]), &Narration::default()), [None]);
+        assert_eq!(align(&at(&[0]), &narration(&[(0, "  ")])), [None]);
+        assert_eq!(align(&[], &text), Vec::<Option<String>>::new());
     }
 }
