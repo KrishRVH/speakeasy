@@ -107,9 +107,6 @@ impl Settings {
             Action::Delivery => self.cycle_delivery(),
             Action::Toggle(setting) => self.toggle(setting, cx),
             Action::Theme => self.cycle_theme(cx),
-            Action::Save if is_demo(cx) => {
-                self.notice = Some("Preview only. Run without --demo to enable dictation.".into());
-            },
             Action::Save => self.save(cx),
             Action::Pause => {
                 cx.update_global::<Services, _>(|services, cx| services.stop(cx));
@@ -321,7 +318,8 @@ impl Settings {
 
     fn save(&mut self, cx: &mut Context<Self>) {
         let services = cx.global::<Services>();
-        if services.quitting() {
+        // A demo is simulated yet keeps the real settings path, so it must never write there.
+        if services.quitting() || services.mode.is_demo() {
             return;
         }
         let request = SaveRequest {
