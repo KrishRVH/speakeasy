@@ -51,7 +51,7 @@ and arrows that fade as you go, and click through as usual. Press the shortcut a
 Speakeasy picks the keyframes your ink, clicks, and words point at, annotates them, and writes a
 bundle of keyframes, a contact sheet, `summary.md`, and `show.json`. The pill says **Show copied**:
 paste the summary into your agent and it opens the frames itself. Shows record on Windows, and
-experimentally on Mac; Linux follows in a later release.
+experimentally on Mac, but not on Linux.
 
 ## What's said here stays here
 
@@ -117,10 +117,9 @@ cargo run --locked -p speakeasy -- show demo  # a scripted Show bundle
 previews hands-free, the countdown, submission, a Show with its ink on Windows and Mac, interrupted
 dismissal, cancellation, silence, and an error. On Windows and macOS, `--demo-tray` adds the tray
 and the Settings hide-and-reopen behavior with dictation disabled. `show demo` writes a scripted
-Show, a narrated screen recording for a coding agent, as a bundle of keyframes, contact sheet,
-`summary.md`, and `show.json`, and prints the summary. Linux has experimental desktop support; see
-the Linux instructions below. GPUI's X11 build needs ALSA, fontconfig, X11/XCB, xkbcommon, and
-Vulkan development packages.
+Show bundle and prints its summary. Linux has experimental desktop support; see the Linux
+instructions below. GPUI's X11 build needs ALSA, fontconfig, X11/XCB, xkbcommon, and Vulkan
+development packages.
 
 </details>
 
@@ -207,10 +206,10 @@ engine and model paths resolve beside the settings file.
 Settings live in `%APPDATA%\speakeasy\settings.json` on Windows and
 `~/Library/Application Support/speakeasy/settings.json` on Mac. Start from `settings.example.json`
 and pass `--config <path>` to use another file. Speakeasy reads settings files from other releases,
-and saving writes only the settings you changed, so edits you make to the file by hand stay.
-Configured launches go straight to the tray or menu bar. Closing Settings hides it and keeps unsaved
-edits; Windows minimize also hides it. Reopening Speakeasy or choosing **Settings…** in the tray
-brings it back.
+and saving writes only the settings you changed, so edits you make to the file by hand stay. On
+Windows and Mac, configured launches go straight to the tray or menu bar; Linux opens Settings at
+startup. Closing Settings hides it and keeps unsaved edits; Windows minimize also hides it.
+Reopening Speakeasy or choosing **Settings…** in the tray brings it back.
 
 The tray icon shows loading, ready, recording, processing, paused, and attention states. Its menu
 pauses or resumes dictation, starts or finishes a recording, cancels, opens Settings, and quits.

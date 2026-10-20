@@ -1,10 +1,11 @@
 # Architecture
 
-Speakeasy is a Rust desktop app for Windows, macOS, and Linux. GPUI renders Settings and one
-non-activating dictation pill. A session owner coordinates native input, CPAL capture, a local
-speech worker, and insertion into the focused application; a Show adds a screen recorder and
-publishes a bundle instead of inserting. Linux support is experimental;
-[Linux implementation](linux-implementation.md) records its limits and remaining checks.
+Speakeasy is a Rust desktop app for Windows, macOS, and Linux. GPUI renders Settings, one
+non-activating dictation pill, and a Show's click-through ink overlay. A session owner coordinates
+native input, CPAL capture, a local speech worker, and insertion into the focused application; a
+Show adds a screen recorder and publishes a bundle instead of inserting. Linux support is
+experimental; [Linux implementation](linux-implementation.md) records its limits and remaining
+checks.
 
 ```mermaid
 flowchart LR
