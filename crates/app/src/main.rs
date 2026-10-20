@@ -294,6 +294,8 @@ fn load_wordmark_font(cx: &App) {
         .add_fonts(vec![Cow::Borrowed(BRAND_FONT_FILE)]);
 }
 
+/// Drops the tray before Services, since its tasks reach Services, and releases the instance lock
+/// last.
 fn release_services(cx: &mut App) -> impl Future<Output = ()> + use<> {
     if cx.has_global::<tray::Tray>() {
         drop(cx.remove_global::<tray::Tray>());

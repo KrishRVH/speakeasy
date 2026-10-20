@@ -9,9 +9,10 @@ pub(crate) enum Fillers {
     Remove,
 }
 
-/// Joins engine segment whitespace and optionally removes standalone `um` / `uh`, ignoring ASCII
-/// case. Compounds, identifiers, and individually quoted tokens stay literal. Work is linear in the
-/// input length, with at most one output allocation and no token collections or per-word allocations.
+/// Joins engine segments with single spaces, never line breaks, and optionally removes standalone
+/// `um` / `uh`, ignoring ASCII case. Compounds, identifiers, and individually quoted tokens stay
+/// literal. Work is linear in the input length, with at most one output allocation and no token
+/// collections or per-word allocations.
 pub(crate) fn for_insertion(text: &str, fillers: Fillers) -> String {
     let mut output = String::with_capacity(text.len());
     for token in text.split_whitespace() {

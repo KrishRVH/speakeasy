@@ -138,6 +138,8 @@ fn hide_to_tray(cx: &mut App) {
     }
 }
 
+/// Shows the first-hide hint once. A marker file beside the settings remembers it, so the user's
+/// settings file is never rewritten for it.
 fn show_tray_hint(cx: &mut App) {
     let services = cx.global::<Services>();
     let marker = services.path.with_file_name("tray-hint-seen");
