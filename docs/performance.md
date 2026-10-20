@@ -48,11 +48,11 @@ times sealing a five-minute recording, classified for speech while recording. Se
 remaining window, range selection, trimming, capacity reclamation, and WAV encoding; it excludes
 microphone teardown, inference, and insertion. The synthetic `profile_show_pipeline` probe reports
 the recorder's per-frame fingerprint and journal cost on 2560 × 1440 desktops that stay still, type,
-scroll, or open a dialog, and each stage of publishing a one-minute Show: selection, keyframe
-rebuilding, composition, PNG encoding, and the private write. `profile_real_screen_recording`
-records the real screen for ten seconds on Windows or Mac, keeping no pixels; on Windows, run the
-test binary directly and sample its process, not Cargo's, with `profile-windows.ps1`. Use ordinary
-native profilers rather than a permanent benchmark suite.
+scroll, open a dialog, or play video, with journal megabytes per frame, and each stage of publishing
+a one-minute Show: selection, keyframe rebuilding, composition, PNG encoding, and the private write.
+`profile_real_screen_recording` records the real screen for ten seconds on Windows or Mac, keeping
+no pixels; on Windows, run the test binary directly and sample its process, not Cargo's, with
+`profile-windows.ps1`. Use ordinary native profilers rather than a permanent benchmark suite.
 
 ## Native process sampling
 

@@ -110,6 +110,33 @@ mod tests {
     /// pixels, with `typed` extra glyphs at the end of the first line and, when `dialog`, a
     /// panel over its middle.
     fn desktop(width: u32, height: u32, scroll: u32, typed: u32, dialog: bool) -> Image {
+        let pixels = desktop_pixels(width, height, scroll, typed, dialog);
+        Image::from_bgra(width, height, pixels).unwrap()
+    }
+
+    /// A still desktop whose middle 1280 × 720 pixels play noise drawn from `seed`, as a video
+    /// does: every frame changes every tile it covers, and none compresses.
+    fn video(width: u32, height: u32, seed: u32) -> Image {
+        const PLAYER: (u32, u32) = (1_280, 720);
+        let mut pixels = desktop_pixels(width, height, 0, 0, false);
+        let left = width.saturating_sub(PLAYER.0) / 2;
+        let top = height.saturating_sub(PLAYER.1) / 2;
+        let mut state = seed.wrapping_mul(2_654_435_761) | 1;
+        for y in top..top.wrapping_add(PLAYER.1).min(height) {
+            for x in left..left.wrapping_add(PLAYER.0).min(width) {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                let at =
+                    usize::try_from(y.wrapping_mul(width).wrapping_add(x).wrapping_mul(4)).unwrap();
+                pixels[at..at.wrapping_add(3)].copy_from_slice(&state.to_le_bytes()[..3]);
+            }
+        }
+        Image::from_bgra(width, height, pixels).unwrap()
+    }
+
+    /// The BGRA pixels of [`desktop`].
+    fn desktop_pixels(width: u32, height: u32, scroll: u32, typed: u32, dialog: bool) -> Vec<u8> {
         const CELL_WIDTH: u32 = 9;
         const CELL_HEIGHT: u32 = 18;
         let mut pixels = Vec::with_capacity(
@@ -136,7 +163,7 @@ mod tests {
                 });
             }
         }
-        Image::from_bgra(width, height, pixels).unwrap()
+        pixels
     }
 
     fn words(spoken: &[(u64, &str)]) -> Narration {
@@ -323,22 +350,20 @@ mod tests {
         use std::hint::black_box;
         let (width, height) = (2_560, 1_440);
         // What the recorder does with each kept frame, for screens that change in different ways.
-        for (scene, frames) in [
-            ("still", (0..30).map(|_| (0, 0, false)).collect::<Vec<_>>()),
-            ("typing", (0..30).map(|frame| (0, frame, false)).collect()),
-            (
-                "scrolling",
-                (0..30).map(|frame| (frame * 40, 0, false)).collect(),
-            ),
-            (
-                "dialog",
-                (0..30).map(|frame| (0, 0, frame % 2 == 1)).collect(),
-            ),
-        ] {
-            let images: Vec<Image> = frames
-                .into_iter()
-                .map(|(scroll, typed, dialog)| desktop(width, height, scroll, typed, dialog))
-                .collect();
+        let scenes: [(&str, &dyn Fn(u32) -> Image); 5] = [
+            ("still", &|_| desktop(width, height, 0, 0, false)),
+            ("typing", &|frame| desktop(width, height, 0, frame, false)),
+            ("scrolling", &|frame| {
+                desktop(width, height, frame * 40, 0, false)
+            }),
+            ("dialog", &|frame| {
+                desktop(width, height, 0, 0, frame % 2 == 1)
+            }),
+            ("video", &|frame| video(width, height, frame)),
+        ];
+        for (scene, paint) in scenes {
+            let images: Vec<Image> = (0..30).map(paint).collect();
+            let frames = images.len();
             let mut journal = Journal::new();
             let mut timings = Vec::new();
             for (index, image) in images.into_iter().enumerate() {
@@ -348,10 +373,11 @@ mod tests {
                 timings.push(started.elapsed().as_secs_f64() * 1000.0);
                 black_box(signature);
             }
+            let journal_mb = journal.bytes() as f64 / 1e6;
             eprintln!(
-                "show_record: scene={scene} size={width}x{height} median_ms={:.2} journal_mb={:.1} frames=30",
+                "show_record: scene={scene} size={width}x{height} median_ms={:.2} journal_mb={journal_mb:.1} mb_per_frame={:.2} frames={frames}",
                 median_ms(timings),
-                journal.bytes() as f64 / 1e6
+                journal_mb / frames as f64,
             );
         }
         // Publishing a one-minute Show of that size.
