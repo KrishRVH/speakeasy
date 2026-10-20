@@ -1,12 +1,12 @@
 //! Choosing the frames that tell a Show's story.
 
-use std::{fmt, ops::Range, time::Duration};
+use std::{ops::Range, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Moment, Point, Rect, Span, align,
-    marks::{self, At, Mark},
+    Moment, Rect, Span, align, describe,
+    marks::{self, Mark},
     recording::{Action, Recording, Word},
     signature::{Sample, Signature},
 };
@@ -212,7 +212,7 @@ fn select_within(recording: &Recording, samples: &[Sample], budget: usize) -> Op
             index: position.saturating_add(1),
             at: frames.at(candidate.frame),
             reason: candidate.basis.reason(),
-            event: event(&candidate.basis, &marks),
+            event: describe::event(&candidate.basis, &marks),
             said,
             marks: candidate.basis.marks(),
             action: candidate.basis.action(),
@@ -481,30 +481,6 @@ impl Basis {
             Self::Click(action) => Some(action),
             Self::Mark(_) | Self::SceneChange | Self::Cue { .. } | Self::Middle => None,
         }
-    }
-}
-
-/// What a keyframe chosen for `basis` shows, for a reader; `marks` are the selection's.
-fn event(basis: &Basis, marks: &[Mark]) -> String {
-    match basis {
-        Basis::Mark(group) => marks
-            .get(group.clone())
-            .unwrap_or_default()
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join("; "),
-        Basis::Click(action) => Described(*action).to_string(),
-        Basis::SceneChange => "scene changed".to_owned(),
-        Basis::Cue {
-            word,
-            snapped: true,
-        } => format!("said “{word}” as the screen changed"),
-        Basis::Cue {
-            word,
-            snapped: false,
-        } => format!("said “{word}”"),
-        Basis::Middle => "the screen midway through".to_owned(),
     }
 }
 
@@ -954,54 +930,10 @@ fn settle(actions: &[Action]) -> Vec<Action> {
     settled
 }
 
-/// What an action did, in a word or two, such as "clicked" or "dragged right".
-pub(crate) struct Verb(pub(crate) Action);
-
-impl fmt::Display for Verb {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            Action::Click { .. } => f.write_str("clicked"),
-            Action::Drag { from, to, .. } => write!(f, "dragged {}", Direction(to - from)),
-        }
-    }
-}
-
-/// An action described for a reader, with where it happened.
-struct Described(Action);
-
-impl fmt::Display for Described {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let verb = Verb(self.0);
-        match self.0 {
-            Action::Click { point, .. } => write!(f, "{verb} ({})", At(point)),
-            Action::Drag { from, to, .. } => write!(f, "{verb} ({} → {})", At(from), At(to)),
-        }
-    }
-}
-
-/// The main direction of a movement, or "a little" when it barely moved.
-struct Direction(Point);
-
-impl fmt::Display for Direction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        const MOVED: f32 = 0.04;
-        let Point { x, y } = self.0;
-        let horizontal = (x.abs() > MOVED).then_some(if x > 0.0 { "right" } else { "left" });
-        let vertical = (y.abs() > MOVED).then_some(if y > 0.0 { "down" } else { "up" });
-        match (vertical, horizontal) {
-            (_, Some(horizontal)) if x.abs() > 2.0 * y.abs() => f.write_str(horizontal),
-            (Some(vertical), _) if y.abs() > 2.0 * x.abs() => f.write_str(vertical),
-            (Some(vertical), Some(horizontal)) => write!(f, "{vertical} and {horizontal}"),
-            (Some(only), None) | (None, Some(only)) => f.write_str(only),
-            (None, None) => f.write_str("a little"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{InkPoint, Narration, Stroke, recording::Size, signature::tests::signature};
+    use crate::{InkPoint, Narration, Point, Stroke, recording::Size, signature::tests::signature};
 
     fn sample(at: u64, level: u8) -> Sample {
         Sample {
@@ -1467,29 +1399,5 @@ mod tests {
             expected.sort_unstable();
             proptest::prop_assert_eq!(said, expected);
         }
-    }
-
-    #[test]
-    fn drags_describe_their_direction() {
-        let drag = |to: [f32; 2]| {
-            Described(Action::Drag {
-                span: Span::at(Moment::START),
-                from: Point::new(0.5, 0.5),
-                to: to.into(),
-            })
-            .to_string()
-        };
-        assert_eq!(
-            drag([0.5, 0.9]),
-            "dragged down (x 0.50, y 0.50 → x 0.50, y 0.90)"
-        );
-        assert_eq!(
-            drag([0.2, 0.2]),
-            "dragged up and left (x 0.50, y 0.50 → x 0.20, y 0.20)"
-        );
-        assert_eq!(
-            drag([0.51, 0.5]),
-            "dragged a little (x 0.50, y 0.50 → x 0.51, y 0.50)"
-        );
     }
 }

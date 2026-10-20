@@ -1,15 +1,14 @@
 //! The finished Show: annotated keyframes, the contact sheet, the summary, and the manifest.
 
-use std::{fmt, ops::Range, path::Path};
+use std::{ops::Range, path::Path};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     Error, Image, Keyframe, Mark, Point, Recording, Rect, Selection, Typeface,
+    describe::{Count, Marker},
     draw::{self, Corner},
-    parallel,
-    select::{Reason, Verb},
-    sheet,
+    parallel, sheet,
 };
 
 const CONTACT_SHEET: &str = "contact-sheet.png";
@@ -226,46 +225,12 @@ impl Bundle {
     }
 }
 
-/// What a keyframe shows happening beside the words said over it: the click or drag whose result
-/// it shows, or what its ink does.
-struct Marker<'a>(&'a Keyframe, &'a [Mark]);
-
-impl fmt::Display for Marker<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self(keyframe, marks) = self;
-        match (keyframe.reason, keyframe.action) {
-            (Reason::Click, Some(action)) => write!(f, " [{}]", Verb(action)),
-            (Reason::Mark, _) if !marks.is_empty() => {
-                let mut verbs: Vec<&str> = Vec::with_capacity(marks.len());
-                for verb in marks.iter().map(|mark| mark.shape.verb()) {
-                    if !verbs.contains(&verb) {
-                        verbs.push(verb);
-                    }
-                }
-                write!(f, " [{}]", verbs.join(", "))
-            },
-            _ => Ok(()),
-        }
-    }
-}
-
-/// A count and its noun, plural unless the count is one.
-struct Count(usize, &'static str);
-
-impl fmt::Display for Count {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self(count, noun) = *self;
-        let plural = if count == 1 { "" } else { "s" };
-        write!(f, "{count} {noun}{plural}")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::{Action, InkPoint, Moment, Narration, Shape, Size, Span, Stroke, Word};
+    use crate::{Action, InkPoint, Moment, Narration, Reason, Shape, Size, Span, Stroke, Word};
 
     fn at(millis: u64) -> Moment {
         Moment::from_millis(millis)

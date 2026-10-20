@@ -13,6 +13,7 @@ mod align;
 mod bundle;
 mod convert;
 mod demo;
+mod describe;
 mod draw;
 mod error;
 mod geometry;

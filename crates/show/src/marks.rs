@@ -1,6 +1,6 @@
 //! Strokes drawn together, and what they look like.
 
-use std::{fmt, ops::Range, time::Duration};
+use std::{ops::Range, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
@@ -82,46 +82,6 @@ impl Mark {
     #[must_use]
     pub fn stroke_count(&self) -> usize {
         self.strokes.len()
-    }
-}
-
-/// Describes the mark for a reader, with positions as fractions of the surface.
-impl fmt::Display for Mark {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Rect {
-            left,
-            top,
-            right,
-            bottom,
-        } = self.bounds;
-        let region = format!("x {left:.2}–{right:.2}, y {top:.2}–{bottom:.2}");
-        let strokes = match self.stroke_count() {
-            0 | 1 => String::new(),
-            count => format!(" ({count} strokes)"),
-        };
-        match self.shape {
-            Shape::Circle => write!(f, "circled region {region}{strokes}"),
-            Shape::Underline => write!(
-                f,
-                "underlined x {left:.2}–{right:.2} at y {:.2}{strokes}",
-                top.midpoint(bottom)
-            ),
-            Shape::Line { from, to } => write!(f, "drew a line from {} to {}", At(from), At(to)),
-            Shape::Arrow { from, to } => {
-                write!(f, "drew an arrow from {} pointing to {}", At(from), At(to))
-            },
-            Shape::Tap => write!(f, "tapped {}{strokes}", At(self.bounds.center())),
-            Shape::Scribble => write!(f, "marked region {region}{strokes}"),
-        }
-    }
-}
-
-/// A normalized position, written for a reader.
-pub(crate) struct At(pub(crate) Point);
-
-impl fmt::Display for At {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "x {:.2}, y {:.2}", self.0.x, self.0.y)
     }
 }
 
@@ -227,18 +187,6 @@ fn arrow(main: &Measured<'_>, rest: &[Measured<'_>], surface: Size) -> Option<Sh
 }
 
 impl Shape {
-    /// What drawing the shape did, in a few words.
-    pub(crate) const fn verb(self) -> &'static str {
-        match self {
-            Self::Tap => "tapped",
-            Self::Circle => "circled",
-            Self::Underline => "underlined",
-            Self::Line { .. } => "drew a line",
-            Self::Arrow { .. } => "drew an arrow",
-            Self::Scribble => "marked",
-        }
-    }
-
     fn same_kind(self, other: Self) -> bool {
         std::mem::discriminant(&self) == std::mem::discriminant(&other)
     }
