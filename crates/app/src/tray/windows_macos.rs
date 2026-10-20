@@ -50,7 +50,11 @@ impl Presenter {
         ))));
         let running = state.service == ServiceState::Running;
         let can_pause = state.interactive && state.service != ServiceState::Pausing;
-        let can_toggle = state.interactive && running && state.activity != Activity::Finishing;
+        // The owner ignores Toggle until desktop input is ready.
+        let can_toggle = state.interactive
+            && running
+            && state.desktop_ready
+            && state.activity != Activity::Finishing;
         let can_cancel = state.interactive && running && state.activity != Activity::Idle;
         self.pause.set_text(match state.service {
             ServiceState::Running => "Pause dictation",
