@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 
 use anyhow::{anyhow, bail, ensure};
-use gpui::AsyncApp;
+use gpui::{AsyncApp, div, rgb};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use x11rb::{
     protocol::{
