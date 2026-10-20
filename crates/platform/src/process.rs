@@ -78,6 +78,10 @@ impl ProcessGroup {
         }
     }
 
+    /// Records that the caller reaped the group leader. A job names its members by handle, not by
+    /// process identifier, so it keeps terminating any surviving children; nothing changes.
+    pub fn leader_reaped(&mut self) {}
+
     /// Reports whether at least one IPv4 listener exists on 127.0.0.1:`port` and every one belongs
     /// to a process in this job.
     ///
@@ -200,8 +204,9 @@ impl ProcessGroup {
         }
     }
 
-    /// Releases termination authority once the group leader has been reaped.
-    pub fn disarm(&mut self) {
+    /// Records that the caller reaped the group leader. The leader's identifier may now name an
+    /// unrelated process group, so this group is never signaled again.
+    pub fn leader_reaped(&mut self) {
         self.0 = None;
     }
 }
@@ -209,7 +214,7 @@ impl ProcessGroup {
 #[cfg(target_os = "linux")]
 impl ProcessGroup {
     /// Reports whether at least one IPv4 listener exists on 127.0.0.1:`port` and every one is held
-    /// by a process in this group. A terminated or disarmed group holds none.
+    /// by a process in this group. A group that was terminated or whose leader was reaped holds none.
     ///
     /// # Errors
     /// Returns an error if the system's socket table cannot be read.
@@ -310,9 +315,10 @@ mod tests {
     fn invalid_process_ids_never_acquire_group_termination_authority() {
         for pid in [0, 1, u32::MAX] {
             let mut attached = ProcessGroup::attach(pid);
-            // Disarm before dropping so even a regression cannot signal the test runner's group.
+            // Release authority before dropping so even a regression cannot signal the test
+            // runner's group.
             if let Ok(group) = &mut attached {
-                group.disarm();
+                group.leader_reaped();
             }
             assert!(attached.is_err(), "Accepted invalid child identifier {pid}");
         }

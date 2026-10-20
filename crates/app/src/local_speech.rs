@@ -130,9 +130,7 @@ impl LocalSpeech {
         });
         loop {
             if let Some(status) = self.child.try_wait()? {
-                // The reaped leader's process ID may be reused, so its group is never signaled.
-                #[cfg(unix)]
-                self.group.disarm();
+                self.group.leader_reaped();
                 bail!(startup_exit(status));
             }
             if let Ok(response) = self
