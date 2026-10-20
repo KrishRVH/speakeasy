@@ -34,9 +34,8 @@ run = "cargo fmt --all"
 [tasks."rust:fmt:check"]
 run = "cargo fmt --all --check"
 
-# Forbidding the allow lints on the command line keeps source from `#[expect]`-ing them away.
 [tasks."rust:lint"]
-run = "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -F clippy::allow_attributes -F clippy::allow_attributes_without_reason"
+run = "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings"
 
 [tasks."rust:doc"]
 wait_for = ["rust:lint"]
@@ -64,11 +63,7 @@ run = '''python -c "import subprocess; subprocess.run(['cargo', 'metadata', '--a
 depends = ["rust:fmt"]
 
 [tasks."rust:standards:check"]
-depends = ["rust:fmt:check", "rust:lint", "rust:doc", "rust:test", "rust:machete", "rust:policy"]
-
-[tasks."rust:policy"]
-description = "Probe the compiler's ownership and lint-exception enforcement"
-run = "python scripts/check_rust_policy.py"
+depends = ["rust:fmt:check", "rust:lint", "rust:doc", "rust:test", "rust:machete"]
 
 [tasks."py:lock"]
 run = "uv lock"

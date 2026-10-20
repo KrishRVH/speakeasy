@@ -2,7 +2,8 @@
 """Check the tree as it would be committed: tracked and new, non-ignored files.
 
 Paths are relative to the project root. Vendored files are excluded; maintained
-paths are checked for leftover names and references to nonexistent mise tasks.
+paths are checked for leftover names and references to nonexistent mise tasks,
+and every Cargo workspace member must inherit the workspace lint policy.
 """
 
 import json
@@ -11,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 from typing import NotRequired, TypedDict, cast
@@ -78,7 +80,7 @@ def main(environment: Mapping[str, str]) -> int:
         return 0
     entries = committed_entries(environment)
     known = known_tasks(environment)
-    findings = name_findings(entries)
+    findings = name_findings(entries) + workspace_lint_findings()
     print_inventory(entries)
     for path, regular in entries.items():
         if regular and is_reference_file(path):
@@ -318,6 +320,49 @@ def task_reference_findings(path: str, known: tuple[set[str], set[str]]) -> list
             if not known_name:
                 findings.add(f"{path}: unknown mise task `{name}`")
     return sorted(findings)
+
+
+class Workspace(TypedDict):
+    members: list[str]
+
+
+class RootManifest(TypedDict):
+    workspace: Workspace
+
+
+class Lints(TypedDict, total=False):
+    workspace: bool
+
+
+class MemberManifest(TypedDict, total=False):
+    lints: Lints
+
+
+def toml_file(path: Path) -> object:
+    return tomllib.loads(path.read_text(encoding="utf-8"))
+
+
+def workspace_lint_findings() -> list[str]:
+    """Cargo lets a workspace member skip the workspace lint policy; this repository does not."""
+    # Cargo owns the manifest schema; a malformed root manifest fails Cargo first.
+    root = cast(RootManifest, toml_file(Path("Cargo.toml")))
+    findings: list[str] = []
+    for pattern in root["workspace"]["members"]:
+        directories = sorted(Path().glob(pattern))
+        if not directories:
+            findings.append(f"Cargo.toml: workspace member `{pattern}` matches no directory")
+        for directory in directories:
+            manifest = directory / "Cargo.toml"
+            if not manifest.is_file():
+                findings.append(f"{manifest}: workspace member has no manifest")
+                continue
+            member = cast(MemberManifest, toml_file(manifest))
+            lints = member.get("lints")
+            if lints is None or lints.get("workspace") is not True:
+                findings.append(
+                    f"{manifest}: workspace members must declare [lints] workspace = true"
+                )
+    return findings
 
 
 if __name__ == "__main__":

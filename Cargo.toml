@@ -62,7 +62,7 @@ future_incompatible = { level = "deny", priority = -1 }
 missing_docs = "deny"
 unexpected_cfgs = "deny"
 unreachable_pub = "deny"
-# Native FFI lives in platform; core and the application forbid unsafe locally.
+# Native FFI lives in platform; core, show, and the app forbid unsafe locally.
 unsafe_op_in_unsafe_fn = "deny"
 unfulfilled_lint_expectations = "deny"
 
@@ -76,9 +76,10 @@ all = { level = "deny", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 
-# Exceptions use a reasoned `#[expect]`, never `#[allow]`.
-allow_attributes = "deny"
-allow_attributes_without_reason = "deny"
+# Exceptions use a reasoned `#[expect]`, never `#[allow]`. Forbid, not deny, so
+# no source attribute can expect these two away.
+allow_attributes = "forbid"
+allow_attributes_without_reason = "forbid"
 
 # Every unsafe block states why it is sound.
 undocumented_unsafe_blocks = "deny"
