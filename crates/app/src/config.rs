@@ -69,7 +69,7 @@ pub(crate) struct Config {
 /// Linux `manual_paste` and `terminal_paste` flags, which every release reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TextDelivery {
-    /// Copies the text and sends Ctrl+V.
+    /// Copies the text and sends the paste shortcut: Command+V on macOS, Ctrl+V elsewhere.
     Paste,
     /// Copies the text and sends Ctrl+Shift+V, which terminals expect.
     #[cfg(target_os = "linux")]
