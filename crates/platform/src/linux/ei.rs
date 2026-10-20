@@ -97,13 +97,10 @@ api! {
 }
 
 pub(super) struct Sender {
-    keyboard: Option<Device>,
+    keyboard: Option<Keyboard>,
     text: Option<Device>,
     context: EiContext,
     api: Api,
-    keymap: Option<KeyboardMap>,
-    keys: Option<PasteKeys>,
-    modifiers: Modifiers,
     sequence: u32,
     readiness: AsyncFd<OwnedFd>,
 }
@@ -122,9 +119,6 @@ impl Sender {
             text: None,
             context,
             api,
-            keymap: None,
-            keys: None,
-            modifiers: Modifiers::Unknown,
             sequence: 0,
             readiness,
         })
@@ -136,7 +130,9 @@ impl Sender {
 
     /// Treats modifiers as unknown until libei reports them again.
     pub(super) fn forget_modifiers(&mut self) {
-        self.modifiers = Modifiers::Unknown;
+        if let Some(keyboard) = &mut self.keyboard {
+            keyboard.state = PasteState::Unknown;
+        }
     }
 
     pub(super) fn can_paste(&self) -> bool {
@@ -149,11 +145,14 @@ impl Sender {
 
     /// The resumed keyboard and its paste keys, once its modifiers are known to be released.
     fn paste_target(&self) -> Option<(Pointer, PasteKeys)> {
-        if self.modifiers != Modifiers::Released {
-            return None;
+        let keyboard = self
+            .keyboard
+            .as_ref()
+            .filter(|keyboard| keyboard.device.resumed)?;
+        match keyboard.state {
+            PasteState::Ready(keys) => Some((keyboard.device.as_ptr(), keys)),
+            PasteState::Unknown | PasteState::Blocked | PasteState::NoKeys => None,
         }
-        let keyboard = self.keyboard.as_ref().filter(|keyboard| keyboard.resumed)?;
-        Some((keyboard.as_ptr(), self.keys?))
     }
 
     /// The UTF-8 entry point and the resumed text device it writes to.
@@ -170,11 +169,17 @@ impl Sender {
                 EVENT_DISCONNECT => bail!("Wayland input permission was disconnected"),
                 EVENT_SEAT_ADDED => self.bind_seat(&event),
                 EVENT_DEVICE_ADDED => self.add_device(&event),
-                EVENT_DEVICE_REMOVED | EVENT_DEVICE_PAUSED => self.set_resumed(event.device, false),
-                EVENT_DEVICE_RESUMED => self.set_resumed(event.device, true),
-                EVENT_KEYBOARD_MODIFIERS if self.is_keyboard(event.device) => {
-                    self.update_modifiers(&event);
+                EVENT_DEVICE_REMOVED => {
+                    // Our references drop here; the event still holds its own until it drops.
+                    drop(
+                        self.keyboard
+                            .take_if(|keyboard| keyboard.device.is(event.device)),
+                    );
+                    drop(self.text.take_if(|text| text.is(event.device)));
                 },
+                EVENT_DEVICE_PAUSED => self.set_resumed(event.device, false),
+                EVENT_DEVICE_RESUMED => self.set_resumed(event.device, true),
+                EVENT_KEYBOARD_MODIFIERS => self.update_modifiers(&event),
                 _ => {},
             }
         }
@@ -228,10 +233,11 @@ impl Sender {
         // keymap read.
         unsafe {
             if (self.api.ei_device_has_capability)(device.as_ptr(), CAPABILITY_KEYBOARD) {
-                self.keyboard = Some(Device::acquire(&self.api, device));
-                self.modifiers = Modifiers::Unknown;
-                self.keymap = device_keymap(&self.api, device.as_ptr()).ok();
-                self.keys = None;
+                self.keyboard = Some(Keyboard {
+                    device: Device::acquire(&self.api, device),
+                    layouts: device_keymap(&self.api, device.as_ptr()).ok(),
+                    state: PasteState::Unknown,
+                });
             }
             if (self.api.ei_device_has_capability)(device.as_ptr(), CAPABILITY_TEXT) {
                 self.text = Some(Device::acquire(&self.api, device));
@@ -239,20 +245,14 @@ impl Sender {
         }
     }
 
-    fn is_keyboard(&self, device: Option<NonNull<c_void>>) -> bool {
-        self.keyboard
-            .as_ref()
-            .is_some_and(|keyboard| keyboard.is(device))
-    }
-
     fn set_resumed(&mut self, device: Option<NonNull<c_void>>, resumed: bool) {
         if let Some(keyboard) = self
             .keyboard
             .as_mut()
-            .filter(|keyboard| keyboard.is(device))
+            .filter(|keyboard| keyboard.device.is(device))
         {
-            keyboard.resumed = resumed;
-            self.modifiers = Modifiers::Unknown;
+            keyboard.device.resumed = resumed;
+            keyboard.state = PasteState::Unknown;
         }
         if let Some(text) = self.text.as_mut().filter(|text| text.is(device)) {
             text.resumed = resumed;
@@ -260,7 +260,14 @@ impl Sender {
     }
 
     fn update_modifiers(&mut self, event: &Event) {
-        let Some(keymap) = &self.keymap else {
+        let Some(keyboard) = self
+            .keyboard
+            .as_mut()
+            .filter(|keyboard| keyboard.device.is(event.device))
+        else {
+            return;
+        };
+        let Some(layouts) = &keyboard.layouts else {
             return;
         };
         let raw = event.raw.as_ptr();
@@ -273,11 +280,12 @@ impl Sender {
                     | (self.api.ei_event_keyboard_get_xkb_mods_locked)(raw),
             )
         };
-        self.keys = keymap.paste_keys(group);
-        self.modifiers = if active_mask & keymap.paste_blockers == 0 {
-            Modifiers::Released
+        keyboard.state = if active_mask & layouts.blockers == 0 {
+            layouts
+                .keys(group)
+                .map_or(PasteState::NoKeys, PasteState::Ready)
         } else {
-            Modifiers::Held
+            PasteState::Blocked
         };
     }
 
@@ -330,12 +338,27 @@ impl Sender {
     }
 }
 
-/// Whether a paste-blocking modifier is held, as libei last reported.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Modifiers {
+/// The sender's keyboard device and what paste needs to know about it. Adding a keyboard replaces
+/// the whole value, so nothing learned about an earlier device survives.
+struct Keyboard {
+    device: Device,
+    /// None when the device's keymap could not be read; its modifiers then stay unknown.
+    layouts: Option<PasteLayouts>,
+    state: PasteState,
+}
+
+/// Whether libei last reported every paste-blocking modifier released, with the active layout's
+/// paste keys.
+#[derive(Clone, Copy)]
+enum PasteState {
+    /// Not reported since the device arrived, paused, or resumed, or since the shortcut was
+    /// pressed.
     Unknown,
-    Held,
-    Released,
+    /// A paste-blocking modifier is held.
+    Blocked,
+    /// Modifiers are released, but the active layout cannot type the paste shortcut.
+    NoKeys,
+    Ready(PasteKeys),
 }
 
 impl Drop for Sender {
@@ -432,57 +455,70 @@ impl Drop for Event {
     }
 }
 
-struct KeyboardMap {
-    keymap: xkb::Keymap,
-    paste_blockers: u32,
+/// What paste needs from a keyboard's keymap, read once when libei advertises it.
+struct PasteLayouts {
+    /// The modifier mask that changes what the paste shortcut means.
+    blockers: u32,
+    /// Each layout's paste keys, indexed by XKB group.
+    keys: Vec<Option<PasteKeys>>,
 }
 
-impl KeyboardMap {
-    fn new(keymap: xkb::Keymap) -> anyhow::Result<Self> {
+impl PasteLayouts {
+    fn new(keymap: &xkb::Keymap) -> anyhow::Result<Self> {
         // Omits Lock (Caps) and Mod2 (Num Lock): locked modifiers count as active, yet they do not
         // change Ctrl+V, so blocking on them would disable paste while either lock is on.
-        let mut paste_blockers = 0;
+        let mut blockers = 0;
         for name in ["Shift", "Control", "Mod1", "Mod3", "Mod4", "Mod5"] {
             let index = keymap.mod_get_index(name);
             if index < u32::BITS {
-                paste_blockers |= 1 << index;
+                blockers |= 1 << index;
             }
         }
-        ensure!(paste_blockers != 0, "Missing paste modifier mapping");
+        ensure!(blockers != 0, "Missing paste modifier mapping");
         Ok(Self {
-            keymap,
-            paste_blockers,
+            blockers,
+            keys: (0..keymap.num_layouts())
+                .map(|group| paste_keys(keymap, group))
+                .collect(),
         })
     }
 
-    fn paste_keys(&self, group: u32) -> Option<PasteKeys> {
-        let mut control = None;
-        let mut shift = None;
-        let mut v = None;
-        self.keymap.key_for_each(|keymap, key| {
-            let Some(layout) = group.checked_rem(keymap.num_layouts_for_key(key)) else {
-                return;
-            };
-            let symbols = keymap.key_get_syms_by_level(key, layout, 0);
-            let Some(code) = key.raw().checked_sub(XKB_KEYCODE_OFFSET) else {
-                return;
-            };
-            if symbols.contains(&Keysym::Control_L) {
-                control = Some(code);
-            }
-            if symbols.contains(&Keysym::Shift_L) {
-                shift = Some(code);
-            }
-            if symbols.contains(&Keysym::v) {
-                v = Some(code);
-            }
-        });
-        Some(PasteKeys {
-            control: control?,
-            shift: shift?,
-            v: v?,
-        })
+    /// The paste keys of layout `group`; none for a group past the last layout, which never
+    /// wraps to another layout's keys.
+    fn keys(&self, group: u32) -> Option<PasteKeys> {
+        *self.keys.get(usize::try_from(group).ok()?)?
     }
+}
+
+/// The keys that type the paste shortcuts in layout `group`. A key with fewer layouts than the
+/// keymap wraps the group, as XKB does.
+fn paste_keys(keymap: &xkb::Keymap, group: u32) -> Option<PasteKeys> {
+    let mut control = None;
+    let mut shift = None;
+    let mut v = None;
+    keymap.key_for_each(|keymap, key| {
+        let Some(layout) = group.checked_rem(keymap.num_layouts_for_key(key)) else {
+            return;
+        };
+        let symbols = keymap.key_get_syms_by_level(key, layout, 0);
+        let Some(code) = key.raw().checked_sub(XKB_KEYCODE_OFFSET) else {
+            return;
+        };
+        if symbols.contains(&Keysym::Control_L) {
+            control = Some(code);
+        }
+        if symbols.contains(&Keysym::Shift_L) {
+            shift = Some(code);
+        }
+        if symbols.contains(&Keysym::v) {
+            v = Some(code);
+        }
+    });
+    Some(PasteKeys {
+        control: control?,
+        shift: shift?,
+        v: v?,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -509,7 +545,7 @@ unsafe fn register_readiness(fd: RawFd) -> anyhow::Result<AsyncFd<OwnedFd>> {
 ///
 /// # Safety
 /// `device` must be a live keyboard-capable libei device.
-unsafe fn device_keymap(api: &Api, device: Pointer) -> anyhow::Result<KeyboardMap> {
+unsafe fn device_keymap(api: &Api, device: Pointer) -> anyhow::Result<PasteLayouts> {
     // SAFETY: the caller keeps the device live, so its borrowed keymap and descriptor are too.
     let (fd, size) = unsafe {
         let keymap = (api.ei_device_keyboard_get_keymap)(device);
@@ -540,7 +576,7 @@ unsafe fn device_keymap(api: &Api, device: Pointer) -> anyhow::Result<KeyboardMa
         xkb::KEYMAP_COMPILE_NO_FLAGS,
     )
     .context("Invalid XKB keymap")?;
-    KeyboardMap::new(keymap)
+    PasteLayouts::new(&keymap)
 }
 
 fn utf8_chunks(mut text: &str) -> impl Iterator<Item = &str> {
@@ -576,9 +612,10 @@ mod tests {
                 xkb::KEYMAP_COMPILE_NO_FLAGS,
             )
             .context("Fixture keymap")?;
-            let map = KeyboardMap::new(keymap)?;
-            let keys = map.paste_keys(group).context("Fixture paste binding")?;
+            let layouts = PasteLayouts::new(&keymap)?;
+            let keys = layouts.keys(group).context("Fixture paste binding")?;
             assert_eq!((keys.control, keys.shift, keys.v), (29, 42, expected));
+            assert!(layouts.keys(keymap.num_layouts()).is_none());
         }
         Ok(())
     }
