@@ -1,7 +1,10 @@
 //! Records a Show's screen side on an owned thread: frames into a journal with their signatures,
 //! and the pointer's ink and actions, publishing live ink to the overlay as it is drawn.
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::anyhow;
 use async_channel::{Receiver, Sender};
@@ -126,10 +129,7 @@ impl<'a> Session<'a> {
             Ok(pointer) => pointer,
             Err(error) => return Some(Err(error)),
         };
-        canvas.send_replace(Canvas {
-            display: Some(display),
-            ..Canvas::default()
-        });
+        canvas.send_replace(Canvas::covering(display));
         let [width, height] = display.size;
         let mut session = Session {
             started,
@@ -210,33 +210,24 @@ impl<'a> Session<'a> {
     fn pointer(&mut self, sample: PointerSample) {
         let at = self.moment(sample.at);
         let strokes = self.tracker.strokes().len();
-        let was_drawing = !self.tracker.drawing().is_empty();
         self.tracker.observe(
             at,
             Point::new(sample.x, sample.y),
             sample.drawing,
             sample.pressed,
         );
+        let finished: Vec<Arc<[Point]>> = self
+            .tracker
+            .strokes()
+            .get(strokes..)
+            .unwrap_or_default()
+            .iter()
+            .map(|stroke| stroke.points().iter().map(|ink| ink.point).collect())
+            .collect();
         let drawing: Vec<Point> = self.tracker.drawing().iter().map(|ink| ink.point).collect();
-        let finished = self.tracker.strokes().get(strokes..).unwrap_or_default();
-        if drawing.is_empty() && !was_drawing && finished.is_empty() {
-            return;
-        }
         let now = Instant::now();
-        self.canvas.send_modify(|canvas| {
-            if !was_drawing && !drawing.is_empty() && canvas.faded(now) {
-                canvas.strokes.clear();
-            }
-            canvas.strokes.extend(
-                finished
-                    .iter()
-                    .map(|stroke| stroke.points().iter().map(|ink| ink.point).collect()),
-            );
-            if was_drawing && drawing.is_empty() {
-                canvas.lifted = Some(now);
-            }
-            canvas.drawing = drawing;
-        });
+        self.canvas
+            .send_if_modified(|canvas| canvas.update(finished, drawing, now));
     }
 
     fn into_footage(self, surface: Size) -> anyhow::Result<Footage> {
@@ -290,7 +281,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(1_300)).await;
         let display = ink
             .borrow()
-            .display
+            .display()
             .context("The overlay was given a display")?;
         recorder.finish();
         let ShowEvent::Finished(id, footage) =
@@ -298,7 +289,7 @@ mod tests {
         assert_eq!(id, SessionId::FIRST);
         let footage = footage?;
         timeout(Duration::from_secs(5), recorder.retire()).await?;
-        assert!(ink.borrow().display.is_none(), "The overlay was released");
+        assert!(ink.borrow().display().is_none(), "The overlay was released");
 
         let [width, height] = display.size;
         assert_eq!(footage.surface, Size { width, height });

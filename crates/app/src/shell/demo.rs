@@ -2,7 +2,10 @@
 //! reaches the runtime, a microphone, or text insertion; its Show draws on the overlay and records
 //! nothing.
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use gpui::Timer;
 use speakeasy_core::gesture::RECORDING_LIMIT;
@@ -66,15 +69,22 @@ async fn play_show(
     present(output, &snapshot, Duration::from_millis(250)).await;
     snapshot.phase = Phase::Recording;
     let start = Instant::now();
+    let mut lifted = false;
     while start.elapsed() < Duration::from_secs(3) {
         let seconds = start.elapsed().as_secs_f32();
-        snapshot.show = seconds > 0.8;
-        snapshot.hands_free = snapshot.show;
+        let show = seconds > 0.8;
+        if let Some(display) = display.filter(|_| show) {
+            if !snapshot.show {
+                canvas.send_replace(Canvas::covering(display));
+            }
+            if !lifted {
+                lifted = circle(canvas, display, seconds);
+            }
+        }
+        snapshot.show = show;
+        snapshot.hands_free = show;
         snapshot.meter_tick = snapshot.meter_tick.wrapping_add(1);
         snapshot.level = (seconds * 5.0).sin().mul_add(0.3, 0.3).max(0.0);
-        if let Some(display) = display.filter(|_| snapshot.show) {
-            circle(canvas, display, seconds);
-        }
         present(output, &snapshot, Duration::from_millis(32)).await;
     }
     drop(clear);
@@ -108,9 +118,9 @@ impl Drop for Clear<'_> {
     }
 }
 
-/// Covers `display` from the Show's start, then draws a circle from one second in, lifting the pen
-/// as the circle closes so the ink holds and fades as it does in a real Show.
-fn circle(canvas: &watch::Sender<Canvas>, display: Display, seconds: f32) {
+/// Draws a circle on `display` from one second into the Show, lifting the pen as the circle
+/// closes so the ink holds and fades as it does in a real Show. Returns whether the pen lifted.
+fn circle(canvas: &watch::Sender<Canvas>, display: Display, seconds: f32) -> bool {
     const DRAWN_FROM: f32 = 1.0;
     const LIFTED_AT: f32 = 1.8;
     const RADIUS: f32 = 0.1;
@@ -129,20 +139,15 @@ fn circle(canvas: &watch::Sender<Canvas>, display: Display, seconds: f32) {
             )
         })
         .collect();
+    let (lifted, now) = (progress >= 1.0, Instant::now());
     canvas.send_if_modified(|canvas| {
-        if canvas.lifted.is_some() {
-            return false;
-        }
-        canvas.display = Some(display);
-        if progress >= 1.0 {
-            canvas.strokes.push(points);
-            canvas.drawing.clear();
-            canvas.lifted = Some(Instant::now());
+        if lifted {
+            canvas.update([Arc::from(points)], [], now)
         } else {
-            canvas.drawing = points;
+            canvas.update([], points, now)
         }
-        true
     });
+    lifted
 }
 
 /// Each recording cuts off the previous ending, and a cancel is followed at once by the next

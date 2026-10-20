@@ -2,7 +2,10 @@
 //! is drawn and fades soon after the pen lifts. It never takes input or focus, and it is left out
 //! of every frame, so the bundle redraws the same ink cleanly.
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context as _, anyhow};
 use gpui::{
@@ -36,33 +39,74 @@ const INK: Rgba = Rgba {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Canvas {
     /// The display to cover; `None` hides the overlay.
-    pub display: Option<Display>,
-    /// Finished strokes, normalized to the display.
-    pub strokes: Vec<Vec<Point>>,
+    display: Option<Display>,
+    /// Finished strokes, normalized to the display. Each is an immutable snapshot, so a render's
+    /// copy of the canvas copies only the stroke being drawn.
+    strokes: Vec<Arc<[Point]>>,
     /// The stroke being drawn.
-    pub drawing: Vec<Point>,
+    drawing: Vec<Point>,
     /// When the pen last lifted.
-    pub lifted: Option<Instant>,
+    lifted: Option<Instant>,
 }
 
 impl Canvas {
-    /// How opaque the ink is at `now`: whole while drawing and through [`HOLD`], then easing out.
-    pub(crate) fn opacity(&self, now: Instant) -> f32 {
-        match self.lifted {
-            Some(lifted) if self.drawing.is_empty() => {
-                let fading = now
-                    .saturating_duration_since(lifted)
-                    .saturating_sub(HOLD)
-                    .div_duration_f32(FADE)
-                    .min(1.0);
-                (1.0 - fading).powi(2)
-            },
-            _ => 1.0,
+    /// A clean canvas over `display`.
+    pub(crate) fn covering(display: Display) -> Self {
+        Self {
+            display: Some(display),
+            ..Self::default()
         }
     }
 
-    /// Whether every stroke has faded away, so the next one can start a clean canvas.
-    pub(crate) fn faded(&self, now: Instant) -> bool {
+    /// The display to cover; `None` hides the overlay.
+    pub(crate) const fn display(&self) -> Option<Display> {
+        self.display
+    }
+
+    /// Keeps the `finished` strokes and shows `drawing` as the stroke in progress, both normalized
+    /// to the display, at `now`. Ink arriving after earlier ink has faded starts a clean canvas,
+    /// and ink no longer being drawn starts the hold and fade; a stroke cut for length while the
+    /// pen keeps drawing does neither. Returns whether anything visible changed.
+    pub(crate) fn update(
+        &mut self,
+        finished: impl IntoIterator<Item = Arc<[Point]>>,
+        drawing: impl IntoIterator<Item = Point>,
+        now: Instant,
+    ) -> bool {
+        let finished: Vec<Arc<[Point]>> = finished.into_iter().collect();
+        let drawing: Vec<Point> = drawing.into_iter().collect();
+        let was_drawing = !self.drawing.is_empty();
+        let inked = !finished.is_empty() || !drawing.is_empty();
+        if inked && !was_drawing && self.faded(now) {
+            self.strokes.clear();
+            self.lifted = None;
+        }
+        let changed = !finished.is_empty() || drawing != self.drawing;
+        if drawing.is_empty() && (was_drawing || !finished.is_empty()) {
+            self.lifted = Some(now);
+        }
+        self.strokes.extend(finished);
+        self.drawing = drawing;
+        changed
+    }
+
+    /// How long ago the pen lifted, while no stroke is being drawn.
+    fn since_lift(&self, now: Instant) -> Option<Duration> {
+        self.lifted
+            .filter(|_| self.drawing.is_empty())
+            .map(|lifted| now.saturating_duration_since(lifted))
+    }
+
+    /// How opaque the ink is at `now`: whole while drawing and through [`HOLD`], then easing out.
+    fn opacity(&self, now: Instant) -> f32 {
+        self.since_lift(now).map_or(1.0, |since| {
+            let fading = since.saturating_sub(HOLD).div_duration_f32(FADE).min(1.0);
+            (1.0 - fading).powi(2)
+        })
+    }
+
+    /// Whether every stroke has faded away.
+    fn faded(&self, now: Instant) -> bool {
         self.opacity(now) <= 0.0
     }
 }
@@ -94,7 +138,7 @@ impl Overlay {
     ) -> Task<()> {
         cx.spawn_in(window, async move |this, cx| {
             while canvas.changed().await.is_ok() {
-                let display = canvas.borrow_and_update().display;
+                let display = canvas.borrow_and_update().display();
                 if this
                     .update_in(cx, |overlay, _, cx| overlay.cover(display, cx))
                     .is_err()
@@ -136,7 +180,7 @@ impl Render for Overlay {
         let now = Instant::now();
         let ink = self.canvas.borrow().clone();
         let opacity = ink.opacity(now);
-        if opacity > 0.0 && ink.lifted.is_some() && ink.drawing.is_empty() {
+        if opacity > 0.0 && ink.since_lift(now).is_some() {
             window.request_animation_frame();
         }
         div().size_full().child(
@@ -161,7 +205,8 @@ fn paint(canvas: &Canvas, bounds: Bounds<gpui::Pixels>, opacity: f32, window: &m
     for stroke in canvas
         .strokes
         .iter()
-        .chain(std::iter::once(&canvas.drawing))
+        .map(Arc::as_ref)
+        .chain(std::iter::once(canvas.drawing.as_slice()))
     {
         let pixels: Vec<Point> = stroke
             .iter()
@@ -293,19 +338,61 @@ fn open(
 mod tests {
     use super::*;
 
+    /// A distinct stroke of `points` points across the display.
+    fn stroke(points: u8) -> Vec<Point> {
+        (0..points)
+            .map(|point| Point::new(f32::from(point) / 100.0, 0.5))
+            .collect()
+    }
+
+    /// A clock reading `millis` after a moment fixed per test.
+    fn clock() -> impl Fn(u64) -> Instant {
+        let start = Instant::now();
+        move |millis| start.checked_add(Duration::from_millis(millis)).unwrap()
+    }
+
+    fn whole(canvas: &Canvas, now: Instant) -> bool {
+        (canvas.opacity(now) - 1.0).abs() < f32::EPSILON
+    }
+
     #[test]
     fn ink_holds_while_drawing_then_fades_out_after_the_pen_lifts() {
-        let lifted = Instant::now();
-        let mut canvas = Canvas {
-            lifted: Some(lifted),
-            ..Canvas::default()
-        };
-        let at = |millis| lifted.checked_add(Duration::from_millis(millis)).unwrap();
-        assert!((canvas.opacity(at(600)) - 1.0).abs() < f32::EPSILON);
+        let at = clock();
+        let mut canvas = Canvas::default();
+        assert!(canvas.update([], stroke(3), at(0)));
+        assert!(canvas.update([stroke(3).into()], [], at(0)));
+        assert!(whole(&canvas, at(600)));
         let midway = canvas.opacity(at(975));
         assert!(midway > 0.2 && midway < 0.3, "{midway}");
         assert!(canvas.faded(at(1_300)));
-        canvas.drawing.push(Point::default());
-        assert!((canvas.opacity(at(5_000)) - 1.0).abs() < f32::EPSILON);
+        // Drawing again keeps every mark whole for as long as the stroke takes.
+        assert!(canvas.update([], stroke(4), at(600)));
+        assert!(whole(&canvas, at(5_000)));
+    }
+
+    #[test]
+    fn marks_drawn_before_the_fade_ends_stay_and_later_ink_starts_clean() {
+        let at = clock();
+        let mut canvas = Canvas::default();
+        canvas.update([], stroke(3), at(0));
+        canvas.update([stroke(3).into()], [], at(100));
+        // An arrow drawn while the circle fades keeps it.
+        canvas.update([], stroke(4), at(1_000));
+        canvas.update([stroke(4).into()], [], at(1_100));
+        assert_eq!(canvas.strokes.len(), 2);
+        // A stroke cut for length while the pen keeps drawing stays whole.
+        canvas.update([], stroke(5), at(1_150));
+        assert!(canvas.update([stroke(5).into()], stroke(2), at(1_200)));
+        assert!(whole(&canvas, at(9_000)));
+        assert_eq!(canvas.strokes.len(), 3);
+        // A pointer that moved too little to add ink changes nothing.
+        assert!(!canvas.update([], stroke(2), at(1_300)));
+        canvas.update([stroke(2).into()], [], at(1_400));
+        assert_eq!(canvas.lifted, Some(at(1_400)));
+        // Ink once everything has faded starts a clean canvas.
+        assert!(canvas.update([], stroke(3), at(2_800)));
+        assert_eq!(canvas.strokes, Vec::<Arc<[Point]>>::new());
+        assert_eq!(canvas.lifted, None);
+        assert!(!Canvas::default().update([], [], at(0)));
     }
 }
