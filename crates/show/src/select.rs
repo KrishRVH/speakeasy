@@ -85,12 +85,6 @@ pub struct Selection {
 }
 
 impl Selection {
-    /// Ink grouped into gestures, in drawing order.
-    #[must_use]
-    pub fn marks(&self) -> &[Mark] {
-        &self.marks
-    }
-
     /// The chosen frames, in time order.
     #[must_use]
     pub fn keyframes(&self) -> &[Keyframe] {
@@ -369,14 +363,12 @@ impl Chooser<'_> {
             .filter(|candidate| !matches!(candidate.basis, Basis::Cue { .. }))
             .map(|candidate| candidate.frame)
             .collect();
-        if self.chosen.len() > 1 && !shown.is_empty() {
-            self.chosen.retain(|candidate| {
-                !matches!(candidate.basis, Basis::Cue { .. })
-                    || shown
-                        .iter()
-                        .all(|&other| self.frames.novel(other, candidate.frame))
-            });
-        }
+        self.chosen.retain(|candidate| {
+            !matches!(candidate.basis, Basis::Cue { .. })
+                || shown
+                    .iter()
+                    .all(|&other| self.frames.novel(other, candidate.frame))
+        });
     }
 }
 

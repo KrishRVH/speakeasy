@@ -43,7 +43,7 @@ impl fmt::Display for Mark {
             bottom,
         } = self.bounds;
         let region = format!("x {left:.2}–{right:.2}, y {top:.2}–{bottom:.2}");
-        let strokes = match self.stroke_count() {
+        let strokes = match self.strokes.len() {
             0 | 1 => String::new(),
             count => format!(" ({count} strokes)"),
         };

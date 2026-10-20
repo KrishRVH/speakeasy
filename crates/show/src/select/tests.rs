@@ -454,7 +454,7 @@ proptest::proptest! {
         proptest::prop_assert!(keyframes.iter().map(|k| k.index).eq(1..=keyframes.len()));
         proptest::prop_assert!(keyframes.windows(2).all(|pair| pair[0].at <= pair[1].at));
         let covered: Vec<usize> = keyframes.iter().flat_map(|k| k.marks.clone()).collect();
-        proptest::prop_assert_eq!(covered, (0..shown.marks().len()).collect::<Vec<_>>());
+        proptest::prop_assert_eq!(covered, (0..shown.marks.len()).collect::<Vec<_>>());
         let mut said: Vec<&str> = keyframes
             .iter()
             .filter_map(|k| k.said.as_deref())

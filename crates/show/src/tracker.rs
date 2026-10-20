@@ -115,7 +115,7 @@ impl Tracker {
         let spaced = self
             .drawing
             .last()
-            .is_none_or(|last| self.pixels(last.point, ink.point) >= INK_SPACING_PIXELS);
+            .is_none_or(|last| pixels(self.surface, last.point, ink.point) >= INK_SPACING_PIXELS);
         if !spaced {
             return;
         }
@@ -126,16 +126,15 @@ impl Tracker {
             self.drawing.extend(joint);
             self.deliberate = deliberate;
         }
-        self.deliberate |= self
-            .drawing
-            .first()
-            .is_some_and(|first| self.pixels(first.point, ink.point) >= SHORTEST_STROKE_PIXELS);
+        self.deliberate |= self.drawing.first().is_some_and(|first| {
+            pixels(self.surface, first.point, ink.point) >= SHORTEST_STROKE_PIXELS
+        });
         self.drawing.push(ink);
     }
 
     /// Ends the stroke being drawn, keeping it only if it spans enough to be deliberate.
     fn lift(&mut self) {
-        let points = std::mem::take(&mut self.drawing);
+        let points = mem::take(&mut self.drawing);
         if mem::take(&mut self.deliberate)
             && let Some(stroke) = Stroke::new(points)
         {
@@ -150,7 +149,7 @@ impl Tracker {
         if press.drawing {
             return;
         }
-        let reach = press.reach.max(self.pixels(press.from, point));
+        let reach = press.reach.max(pixels(self.surface, press.from, point));
         self.actions.push(if reach < DRAG_PIXELS {
             Action::Click {
                 at,
@@ -163,10 +162,6 @@ impl Tracker {
                 to: point,
             }
         });
-    }
-
-    fn pixels(&self, one: Point, other: Point) -> f32 {
-        pixels(self.surface, one, other)
     }
 }
 

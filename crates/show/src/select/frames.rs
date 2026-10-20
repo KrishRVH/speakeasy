@@ -70,7 +70,7 @@ impl<'a> Frames<'a> {
         {
             after
         } else {
-            before.min(self.last())
+            before
         }
     }
 
@@ -92,10 +92,8 @@ impl<'a> Frames<'a> {
     pub(super) fn transitions(&self) -> Vec<Transition> {
         let mut found = Vec::new();
         let mut open: Option<Transition> = None;
-        for (frame, pair) in self.samples.windows(2).enumerate() {
-            let (Some(one), Some(next)) = (pair.first(), pair.last()) else {
-                continue;
-            };
+        let pairs = self.samples.iter().zip(self.samples.iter().skip(1));
+        for (frame, (one, next)) in pairs.enumerate() {
             let strength = one.signature.transition(&next.signature);
             let settled = frame.saturating_add(1);
             if strength > SCENE {

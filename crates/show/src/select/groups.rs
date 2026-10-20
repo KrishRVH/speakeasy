@@ -31,7 +31,7 @@ pub(super) fn group_marks(
             .get(group.clone())
             .unwrap_or_default()
             .iter()
-            .map(Mark::stroke_count)
+            .map(|mark| mark.strokes.len())
             .sum()
     };
     // How far the screen around the ink, as each mark of `group` was drawn, is from the screen
@@ -68,7 +68,7 @@ pub(super) fn group_marks(
                 return false;
             };
             mark.span.end().since(first.span.start()) <= GROUP_SPAN
-                && ink(group).saturating_add(mark.stroke_count()) <= GROUP_STROKES
+                && ink(group).saturating_add(mark.strokes.len()) <= GROUP_STROKES
                 && !acted_between(previous.span.end(), mark.span.start())
                 && spread(group.clone(), index) < SAME_SCREEN
         });

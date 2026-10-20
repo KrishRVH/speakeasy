@@ -21,9 +21,8 @@ const BADGE_BAND: f32 = 0.18;
 const BADGE_SIDE: f32 = 0.30;
 
 /// The top corner a keyframe's badge sits in.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Corner {
-    #[default]
     Left,
     Right,
 }
@@ -134,7 +133,6 @@ pub(crate) fn badge(
     corner: Corner,
     typeface: &Typeface,
 ) {
-    let scale = scale.max(0.45);
     let number = format!("#{}", keyframe.index);
     let time = keyframe.at.to_string();
     let (number_size, time_size) = (15.5 * scale, 12.5 * scale);
@@ -183,16 +181,20 @@ pub(crate) fn badge(
         cap.left + (cap_width - number_width) / 2.0,
         center_line + typeface.cap_height(number_size) / 2.0,
     );
-    if let Some(text) = typeface.path(&number, number_size, number_origin) {
-        fill(canvas, Some(text), [14, 15, 18, 255]);
-    }
+    fill(
+        canvas,
+        typeface.path(&number, number_size, number_origin),
+        [14, 15, 18, 255],
+    );
     let time_origin = Point::new(
         7.0f32.mul_add(scale, cap.right),
         center_line + typeface.cap_height(time_size) / 2.0,
     );
-    if let Some(text) = typeface.path(&time, time_size, time_origin) {
-        fill(canvas, Some(text), [236, 238, 244, 255]);
-    }
+    fill(
+        canvas,
+        typeface.path(&time, time_size, time_origin),
+        [236, 238, 244, 255],
+    );
 }
 
 /// How large a badge reads well on a frame of this size.
@@ -207,7 +209,7 @@ pub(crate) fn paint(color: [u8; 4]) -> Paint<'static> {
     paint
 }
 
-pub(crate) fn fill(canvas: &mut PixmapMut<'_>, path: Option<Path>, color: [u8; 4]) {
+fn fill(canvas: &mut PixmapMut<'_>, path: Option<Path>, color: [u8; 4]) {
     if let Some(path) = path {
         canvas.fill_path(
             &path,

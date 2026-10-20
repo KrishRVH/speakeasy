@@ -18,7 +18,7 @@ impl Chooser<'_> {
     /// added there must split the lead-in evenly too, so it lands mid-gap rather than beside the
     /// first keyframe.
     pub(super) fn cover_long_stretches(&mut self, words: &[Word]) {
-        let coverage = Coverage::new(words, self.end());
+        let coverage = Coverage::new(words, self.frames.at(self.frames.last()));
         if self.chosen.is_empty() {
             // The best-ranked candidate goes first, as it would without coverage.
             if let Some(first) = self.pending.iter().position(Option::is_some) {
@@ -38,10 +38,6 @@ impl Chooser<'_> {
             };
             self.take(pick);
         }
-    }
-
-    fn end(&self) -> Moment {
-        self.frames.at(self.frames.last())
     }
 
     fn split_longest(
@@ -148,8 +144,9 @@ impl Coverage {
             .chain([self.end])
             .collect();
         bounds
-            .windows(2)
-            .filter_map(|pair| Some(Span::new(*pair.first()?, *pair.last()?)))
+            .iter()
+            .zip(bounds.iter().skip(1))
+            .map(|(&start, &end)| Span::new(start, end))
             .collect()
     }
 

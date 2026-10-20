@@ -77,14 +77,6 @@ pub struct Mark {
     pub bounds: Rect,
 }
 
-impl Mark {
-    /// How many strokes the mark holds.
-    #[must_use]
-    pub fn stroke_count(&self) -> usize {
-        self.strokes.len()
-    }
-}
-
 /// Groups strokes drawn within [`MARK_GAP`] of each other, up to [`MARK_STROKES`] apiece, and
 /// reads each group's shape in the pixels of `surface`.
 pub(crate) fn group(strokes: &[Stroke], surface: Size) -> Vec<Mark> {
@@ -206,7 +198,11 @@ fn stroke_shape(stroke: &Stroke, surface: Size) -> Shape {
     };
     let (width, height) = (bounds.width(), bounds.height());
     let (longest, shortest) = (width.max(height), width.min(height));
-    let length: f32 = path.windows(2).map(pair_distance).sum();
+    let length: f32 = path
+        .iter()
+        .zip(path.iter().skip(1))
+        .map(|(one, next)| one.distance(*next))
+        .sum();
     let chord = first.distance(last);
     // Shoelace formula over the stroke closed by its chord.
     let doubled_area = path
@@ -234,13 +230,6 @@ fn stroke_shape(stroke: &Stroke, surface: Size) -> Shape {
         }
     } else {
         Shape::Scribble
-    }
-}
-
-fn pair_distance(pair: &[Point]) -> f32 {
-    match pair {
-        [one, other] => one.distance(*other),
-        _ => 0.0,
     }
 }
 
