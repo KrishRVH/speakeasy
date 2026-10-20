@@ -587,4 +587,5 @@ async fn still_pending(future: impl Future) -> bool {
 }
 
 mod dictation;
+mod model;
 mod shows;
