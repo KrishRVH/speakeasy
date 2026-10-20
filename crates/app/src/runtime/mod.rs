@@ -32,6 +32,8 @@ pub(crate) enum Phase {
     Stopping,
     Processing,
     Done,
+    /// Text or a Show summary is on the clipboard for the user to paste; `message` says how.
+    Copied,
     Empty,
     Cancelled,
     Error,

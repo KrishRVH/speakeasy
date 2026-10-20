@@ -58,7 +58,7 @@ impl Status {
                 },
                 (
                     ServiceState::Running,
-                    Phase::Idle | Phase::Done | Phase::Empty | Phase::Cancelled,
+                    Phase::Idle | Phase::Done | Phase::Copied | Phase::Empty | Phase::Cancelled,
                     true,
                 ) => match snapshot.model {
                     ModelState::Loading => (Indicator::Busy, LOADING.into()),
@@ -134,6 +134,22 @@ mod tests {
             indicator(&snapshot, ServiceState::Paused),
             Indicator::Attention
         );
+    }
+
+    #[test]
+    fn copied_deliveries_follow_the_model_instead_of_needing_attention() {
+        let mut snapshot = Snapshot {
+            phase: Phase::Copied,
+            model: ModelState::Ready,
+            message: "Text copied. Paste manually.".into(),
+            ..Snapshot::default()
+        };
+        assert_eq!(
+            indicator(&snapshot, ServiceState::Running),
+            Indicator::Ready
+        );
+        snapshot.model = ModelState::Loading;
+        assert_eq!(indicator(&snapshot, ServiceState::Running), Indicator::Busy);
     }
 
     #[test]

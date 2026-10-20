@@ -83,7 +83,7 @@ async fn play_show(
     for (phase, duration) in [
         (Phase::Stopping, Duration::from_millis(150)),
         (Phase::Processing, Duration::from_millis(1200)),
-        (Phase::Done, Duration::from_millis(1600)),
+        (Phase::Copied, Duration::from_millis(1600)),
     ] {
         snapshot.phase = phase;
         present(output, &snapshot, duration).await;
@@ -148,17 +148,19 @@ fn circle(canvas: &watch::Sender<Canvas>, display: Display, seconds: f32) {
 /// Each recording cuts off the previous ending, and a cancel is followed at once by the next
 /// recording.
 async fn play_interruptions(output: &watch::Sender<Snapshot>, mut id: u64) {
-    for ending in [Phase::Cancelled, Phase::Empty, Phase::Error] {
+    for ending in [Phase::Cancelled, Phase::Empty, Phase::Copied, Phase::Error] {
         id = id.wrapping_add(1);
         let mut snapshot = starting(id);
         present(output, &snapshot, Duration::from_millis(180)).await;
         snapshot.phase = Phase::Recording;
         present(output, &snapshot, Duration::from_millis(700)).await;
         snapshot.phase = ending;
-        if ending == Phase::Error {
-            snapshot.message =
-                "Microphone disconnected. Choose an available microphone in Settings.".into();
+        snapshot.message = match ending {
+            Phase::Copied => "Text copied. Release your shortcut keys and paste into your editor.",
+            Phase::Error => "Microphone disconnected. Choose an available microphone in Settings.",
+            _ => "",
         }
+        .into();
         let held = if ending == Phase::Cancelled {
             Duration::from_millis(60)
         } else {

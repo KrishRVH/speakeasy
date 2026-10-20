@@ -72,6 +72,8 @@ struct FakePorts {
     retirement: Option<Gate<()>>,
     stop: Option<Gate<()>>,
     insertion: Option<Gate<InsertPermit>>,
+    /// Each insertion takes the next queued result once it commits, or reports `Sent`.
+    insert_results: Option<Receiver<Inserted>>,
     show_error: Option<&'static str>,
     screen_retirement: Option<Gate<()>>,
     publication: Option<Gate<()>>,
@@ -110,6 +112,7 @@ impl FakePorts {
             retirement: None,
             stop: None,
             insertion: None,
+            insert_results: None,
             show_error: None,
             screen_retirement: None,
             publication: None,
@@ -239,6 +242,7 @@ impl Ports for FakePorts {
     ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static {
         let pasted = self.pasted.clone();
         let insertion = self.insertion.clone();
+        let results = self.insert_results.clone();
         async move {
             if let Some(gate) = insertion {
                 gate.pass(permit.clone()).await?;
@@ -246,8 +250,13 @@ impl Ports for FakePorts {
             if !permit.commit() {
                 return Ok(Inserted::Cancelled);
             }
-            pasted.try_send(text)?;
-            Ok(Inserted::Sent)
+            let result = results
+                .and_then(|results| results.try_recv().ok())
+                .unwrap_or(Inserted::Sent);
+            if result == Inserted::Sent {
+                pasted.try_send(text)?;
+            }
+            Ok(result)
         }
     }
 }
@@ -814,6 +823,26 @@ async fn silence_and_empty_recognition_never_report_submission() -> anyhow::Resu
     Ok(())
 }
 
+#[tokio::test(start_paused = true)]
+async fn copied_text_is_a_notice_that_carries_its_remedy_until_the_next_paste() -> anyhow::Result<()>
+{
+    const REMEDY: &str = "Text copied. Release your shortcut keys and paste into your editor.";
+    let (results, queued) = async_channel::bounded(1);
+    results.try_send(Inserted::Copied(REMEDY))?;
+    let mut h = Harness::paused(|ports| ports.insert_results = Some(queued))?;
+    h.start().await?;
+    h.finish_as("fixture").await?;
+    h.phase(Phase::Copied).await?;
+    assert_eq!(h.snapshot().message, REMEDY);
+    assert!(h.pasted.try_recv().is_err());
+    h.start().await?;
+    h.finish_as("pasted fixture").await?;
+    assert_eq!(receive(&h.pasted).await?, "pasted fixture");
+    h.phase(Phase::Done).await?;
+    assert_eq!(h.snapshot().message, "");
+    h.close().await
+}
+
 #[tokio::test]
 async fn both_engines_clean_fillers_before_native_insertion() -> anyhow::Result<()> {
     for (engine, language) in [
@@ -1262,7 +1291,7 @@ async fn s_during_a_hold_turns_the_recording_into_a_show_and_publishes_it() -> a
         Narration::Text("look here".into())
     );
     assert_eq!(recorded.samples.len(), 1);
-    h.phase(Phase::Done).await?;
+    h.phase(Phase::Copied).await?;
     assert!(h.snapshot().message.contains("Show copied"));
     assert!(h.pasted.try_recv().is_err(), "A Show never pastes");
     h.close().await
@@ -1282,7 +1311,7 @@ async fn a_silent_show_still_publishes_its_screen() -> anyhow::Result<()> {
     let recorded = receive(&h.published).await?;
     assert_eq!(recorded.recording.narration, Narration::default());
     assert!(h.jobs.try_recv().is_err(), "Silence is not transcribed");
-    h.phase(Phase::Done).await?;
+    h.phase(Phase::Copied).await?;
     h.close().await
 }
 

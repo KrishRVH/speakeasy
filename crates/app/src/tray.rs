@@ -107,8 +107,11 @@ fn activity(phase: Phase) -> Activity {
     match phase {
         Phase::Starting | Phase::Recording => Activity::Dictating,
         Phase::Stopping | Phase::Processing => Activity::Finishing,
-        Phase::Idle | Phase::Done | Phase::Empty | Phase::Cancelled | Phase::Error => {
-            Activity::Idle
-        },
+        Phase::Idle
+        | Phase::Done
+        | Phase::Copied
+        | Phase::Empty
+        | Phase::Cancelled
+        | Phase::Error => Activity::Idle,
     }
 }

@@ -21,12 +21,15 @@ use crate::{
     ports::{Ports, Published, Recording},
 };
 
+/// What a copied Show tells the user.
+const SHOW_COPIED: &str = "Show copied. Paste it into your coding agent.";
+
 /// What the status shows while no session is active: the latest result or failure.
 enum Outcome {
     Idle,
     Done,
-    /// A Show's bundle was written and its summary copied.
-    Shown,
+    /// The delivery is on the clipboard; the message says how to paste it.
+    Copied(&'static str),
     Empty,
     Cancelled,
     Failed(String),
@@ -36,7 +39,8 @@ impl Outcome {
     const fn phase(&self) -> Phase {
         match self {
             Self::Idle => Phase::Idle,
-            Self::Done | Self::Shown => Phase::Done,
+            Self::Done => Phase::Done,
+            Self::Copied(_) => Phase::Copied,
             Self::Empty => Phase::Empty,
             Self::Cancelled => Phase::Cancelled,
             Self::Failed(_) => Phase::Error,
@@ -390,10 +394,9 @@ impl<P: Ports> Owner<P> {
         self.end_session();
         self.outcome = match result {
             Ok(Ok(Inserted::Sent)) => Outcome::Done,
+            Ok(Ok(Inserted::Copied(message))) => Outcome::Copied(message),
             Ok(Ok(Inserted::Cancelled)) => Outcome::Cancelled,
-            Ok(Ok(Inserted::Unavailable(message) | Inserted::Copied(message))) => {
-                Outcome::Failed(message.into())
-            },
+            Ok(Ok(Inserted::Unavailable(message))) => Outcome::Failed(message.into()),
             Ok(Err(_)) | Err(_) => Outcome::Failed(
                 "Could not submit text. Check desktop permissions and clipboard access, then try again."
                     .into(),
@@ -438,7 +441,7 @@ impl<P: Ports> Owner<P> {
         // `wait` already joined this publication, so the session holds no work left to retire.
         self.end_session();
         self.outcome = match result {
-            Ok(Ok(Published::Copied(_))) => Outcome::Shown,
+            Ok(Ok(Published::Copied(_))) => Outcome::Copied(SHOW_COPIED),
             Ok(Ok(Published::Cancelled)) => Outcome::Cancelled,
             Ok(Err(error)) => Outcome::Failed(format!("{error:#}")),
             Err(_) => {
@@ -638,7 +641,7 @@ impl<P: Ports> Owner<P> {
     fn message(&self) -> &str {
         match &self.outcome {
             Outcome::Failed(message) => message,
-            Outcome::Shown => "Show copied. Paste it into your coding agent.",
+            Outcome::Copied(message) => message,
             Outcome::Idle | Outcome::Done | Outcome::Empty | Outcome::Cancelled => {
                 self.notice.as_ref().map_or("", Notice::text)
             },

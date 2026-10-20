@@ -30,6 +30,8 @@ const FRAME_INTERVAL: Duration = Duration::from_millis(5);
 const SUBMITTED_FOR: Duration = Duration::from_millis(350);
 /// Long enough to read **Show copied**, which tells the user to paste.
 const COPIED_FOR: Duration = Duration::from_millis(1600);
+/// Long enough to read a two-line remedy for pasting copied text by hand.
+const NOTICE_FOR: Duration = Duration::from_secs(6);
 const EMPTY_FOR: Duration = Duration::from_millis(1200);
 const ERROR_FOR: Duration = Duration::from_secs(8);
 const TRAY_HINT_FOR: Duration = Duration::from_secs(3);
@@ -350,7 +352,17 @@ impl Pill {
                 .child(TRAY_HINT)
                 .into_any_element()
         } else if scene.phase == Phase::Error {
-            self.render_error(palette).into_any_element()
+            self.render_message(
+                Symbol::Attention,
+                palette.warn,
+                Some("Details in Settings"),
+                palette,
+            )
+            .into_any_element()
+        } else if scene.is_notice() {
+            // Neither a success nor a warning: the text reached the clipboard, not the focused app.
+            self.render_message(Symbol::Attention, palette.muted, None, palette)
+                .into_any_element()
         } else if scene.has_slot() {
             self.render_slot(scene, palette).into_any_element()
         } else {
@@ -358,14 +370,21 @@ impl Pill {
         }
     }
 
-    fn render_error(&self, palette: &Palette) -> Div {
+    /// The snapshot's message beside `symbol`, clipped to two lines above an optional `footer`.
+    fn render_message(
+        &self,
+        symbol: Symbol,
+        color: u32,
+        footer: Option<&'static str>,
+        palette: &Palette,
+    ) -> Div {
         div()
             .w_full()
             .px(px(14.0))
             .flex()
             .items_center()
             .gap(px(10.0))
-            .child(Symbol::Attention.element(palette.warn))
+            .child(symbol.element(color))
             .child(
                 div()
                     .flex_1()
@@ -378,11 +397,9 @@ impl Pill {
                             .overflow_hidden()
                             .child(self.snapshot.message.clone()),
                     )
-                    .child(
-                        div()
-                            .text_color(rgb(palette.muted))
-                            .child("Details in Settings"),
-                    ),
+                    .when_some(footer, |message, footer| {
+                        message.child(div().text_color(rgb(palette.muted)).child(footer))
+                    }),
             )
     }
 
@@ -564,15 +581,21 @@ impl Scene {
 
     fn has_slot(&self) -> bool {
         self.hint.is_none()
-            && matches!(
-                self.phase,
+            && match self.phase {
                 Phase::Starting
-                    | Phase::Recording
-                    | Phase::Stopping
-                    | Phase::Processing
-                    | Phase::Done
-                    | Phase::Empty
-            )
+                | Phase::Recording
+                | Phase::Stopping
+                | Phase::Processing
+                | Phase::Done
+                | Phase::Empty => true,
+                Phase::Copied => self.show,
+                Phase::Idle | Phase::Cancelled | Phase::Error => false,
+            }
+    }
+
+    /// Copied dictation, whose message says how to paste it; a copied Show keeps its compact slot.
+    fn is_notice(&self) -> bool {
+        self.phase == Phase::Copied && !self.show
     }
 
     fn shows_clock(&self) -> bool {
@@ -592,10 +615,10 @@ impl Scene {
             Phase::Recording | Phase::Stopping if self.shows_clock() => size(228.0, 38.0),
             Phase::Recording | Phase::Stopping => size(RECORDING_WIDTH, 38.0),
             Phase::Processing => size(104.0, 32.0),
-            Phase::Done if self.show => size(150.0, 34.0),
             Phase::Done => size(76.0, 34.0),
+            Phase::Copied if self.show => size(150.0, 34.0),
             Phase::Empty => size(182.0, 36.0),
-            Phase::Error => size(MESSAGE_WIDTH, 64.0),
+            Phase::Copied | Phase::Error => size(MESSAGE_WIDTH, 64.0),
             Phase::Idle | Phase::Cancelled => RESTING_SIZE,
         }
     }
@@ -707,8 +730,9 @@ fn apply_native_visibility(pill: AnyWindowHandle, visible: bool, cx: &App) -> Ta
 
 fn feedback_remaining(phase: Phase, show: bool, since_phase: Duration) -> Option<Duration> {
     let duration = match phase {
-        Phase::Done if show => COPIED_FOR,
         Phase::Done => SUBMITTED_FOR,
+        Phase::Copied if show => COPIED_FOR,
+        Phase::Copied => NOTICE_FOR,
         Phase::Empty => EMPTY_FOR,
         Phase::Error => ERROR_FOR,
         _ => return None,
@@ -751,7 +775,7 @@ fn slot_label(scene: &Scene, palette: &Palette) -> Option<AnyElement> {
                 .child("No speech detected")
                 .into_any_element(),
         ),
-        Phase::Done if scene.show => Some(
+        Phase::Copied if scene.show => Some(
             div()
                 .flex()
                 .items_center()
@@ -816,10 +840,15 @@ mod tests {
         );
         assert_eq!(feedback_remaining(Phase::Done, false, SUBMITTED_FOR), None);
         assert!(
-            feedback_remaining(Phase::Done, true, SUBMITTED_FOR).is_some(),
+            feedback_remaining(Phase::Copied, true, SUBMITTED_FOR).is_some(),
             "A copied Show stays long enough to read"
         );
-        assert_eq!(feedback_remaining(Phase::Done, true, COPIED_FOR), None);
+        assert_eq!(feedback_remaining(Phase::Copied, true, COPIED_FOR), None);
+        assert!(
+            feedback_remaining(Phase::Copied, false, COPIED_FOR).is_some(),
+            "A paste remedy stays longer than the Show's two words"
+        );
+        assert_eq!(feedback_remaining(Phase::Copied, false, NOTICE_FOR), None);
         assert_eq!(
             feedback_remaining(Phase::Recording, false, Duration::ZERO),
             None
