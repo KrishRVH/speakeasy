@@ -1,8 +1,8 @@
 # Speakeasy agent guide
 
 Speakeasy is a native Rust dictation app for Windows, macOS, and Linux. Keep it fast, small, and
-usable offline with local speech engines. Before changing behavior, find its row in the
-[change and test map](docs/architecture.md#change-and-test-map); README's
+usable offline with local speech engines. Before changing behavior or a module interface, find its
+row in the [change and test map](docs/architecture.md#change-and-test-map); README's
 [Build and verify](README.md#build-and-verify) section lists packaging and native checks.
 
 ## Workflows
@@ -11,7 +11,7 @@ Use `mise run` for project workflows; run `mise tasks` and read the task you use
 `clippy.toml`, and `rustfmt.toml` own Rust policy, and `rust-toolchain.toml` pins the compiler.
 
 - `mise install` installs the pinned tools and may use the network.
-- `mise run rust:lint`, `rust:test`, and `rust:doc` verify Rust changes and public interfaces.
+- `mise run rust:lint`, `mise run rust:test`, and `mise run rust:doc` verify Rust changes.
 - `mise run rust:lock` refreshes Cargo.lock through Cargo after dependency changes.
 - `mise run standards` applies safe formatters and autofixes.
 - `mise run standards:check` is the final local gate. CI builds and publishes release packages.
@@ -39,8 +39,7 @@ are outside this project's profile.
   acknowledges before opening replacements. Keep UI and callbacks responsive; measure before
   introducing caches or background services.
 - Build deep modules with small interfaces and explicit inputs. Put behavior, state, and tests
-  together; a test module over about 250 lines, or longer than its code, lives with its opt-in
-  checks in a child `tests.rs` behind `#[cfg(test)] mod tests;`. Add abstractions for actual
+  together; a test module over about 250 lines lives in a child file. Add abstractions for actual
   duplication or a useful side-effect seam; remove forwarding wrappers and obsolete re-exports.
 - Carry invariants in types, use enums for meaningful alternatives, and make always-present values
   non-optional. Keep internals private and document public contracts, failure modes, and required
@@ -84,8 +83,9 @@ lockfiles, shared config, formatters, and integration. Each worktree has its own
 
 Before handoff, run `mise run standards:check` and relevant native checks. Report the checked
 revision, behavior proved, results, unavailable native verification, and unresolved findings. Push
-verified changes directly to `main`. A root `Cargo.toml` change publishes a release: bump
-`[workspace.package].version`, run `mise run rust:lock`, and rewrite `docs/release-notes.md` in it.
+verified changes directly to `main`. A push that changes the root `Cargo.toml` publishes
+`[workspace.package].version` with `docs/release-notes.md` as its notes; if that version is already
+released, bump it, run `mise run rust:lock`, and rewrite the notes in the same push.
 
 ## Current repository
 
