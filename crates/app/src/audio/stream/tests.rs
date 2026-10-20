@@ -99,10 +99,9 @@ fn formats_beyond_the_capture_bounds_are_refused_with_a_remedy() -> anyhow::Resu
         let error = rate_and_channels(&format(channels, rate))
             .err()
             .context("An unsupported format was accepted")?;
-        assert_eq!(
-            error.to_string(),
-            UNSUPPORTED_FORMAT,
-            "{channels} channels at {rate} Hz"
+        assert!(
+            error.to_string().contains("another microphone in Settings"),
+            "{channels} channels at {rate} Hz has no remedy"
         );
     }
     Ok(())

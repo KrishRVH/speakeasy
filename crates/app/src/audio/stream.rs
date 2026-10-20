@@ -1,5 +1,5 @@
-//! CPAL input streams and their real-time callbacks, which never allocate or block. Stream errors
-//! are classified here for the capture thread.
+//! Validates the microphone's format and builds CPAL input streams with real-time callbacks that
+//! never allocate or block. Stream errors are classified here for the capture thread.
 
 use std::{num::NonZeroUsize, sync::Arc, time::Instant};
 
@@ -31,7 +31,8 @@ pub(super) fn rate_and_channels(
     format: &cpal::SupportedStreamConfig,
 ) -> anyhow::Result<(u32, NonZeroUsize)> {
     let rate = format.sample_rate();
-    let channels = NonZeroUsize::new(usize::from(format.channels())).context(UNSUPPORTED_FORMAT)?;
+    let channels = NonZeroUsize::new(usize::from(format.channels()))
+        .context("Microphone has no input channels. Choose another microphone in Settings.")?;
     ensure!(
         (1..=MAX_SAMPLE_RATE).contains(&rate) && channels.get() <= MAX_CHANNELS,
         UNSUPPORTED_FORMAT
