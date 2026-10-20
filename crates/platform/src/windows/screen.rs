@@ -3,14 +3,15 @@
 //! Frames come from Windows.Graphics.Capture on a Direct3D 11 device of the adapter that drives the
 //! display. The capture thread polls the frame pool itself, so no frame callback shares its state;
 //! the one notice that arrives from another thread, the display going away, only closes a channel.
+//! While a capture runs it leaves every Speakeasy window out of capture, and afterwards shows them
+//! to capture again, so they still appear in the user's own screen sharing.
 //!
 //! Every position is in physical pixels: the manifest makes Speakeasy per-monitor DPI aware, so the
 //! cursor, monitor bounds, and window placement share one coordinate space.
 
 use std::{
     convert::Infallible,
-    ffi::c_void,
-    fmt,
+    error, fmt,
     ptr::null_mut,
     slice, thread,
     time::{Duration, Instant},
@@ -27,13 +28,12 @@ use windows::{
             GraphicsCaptureAccessKind, GraphicsCaptureItem, GraphicsCaptureSession,
         },
         DirectX::{Direct3D11::IDirect3DDevice, DirectXPixelFormat},
-        SizeInt32,
     },
     Security::Authorization::AppCapabilityAccess::AppCapabilityAccessStatus,
     Win32::{
         Foundation::{E_UNEXPECTED, HMODULE},
         Graphics::{
-            Direct3D::D3D_DRIVER_TYPE_UNKNOWN,
+            Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_UNKNOWN},
             Direct3D11::{
                 D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_BOX,
                 D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_MAP_READ,
@@ -60,35 +60,43 @@ use windows_future::{AsyncStatus, IAsyncOperation};
 use windows_sys::{
     Wdk::System::SystemServices::RtlGetVersion,
     Win32::{
-        Foundation::{FALSE, HWND, POINT, RECT},
+        Foundation::{FALSE, HWND, LPARAM, LRESULT, POINT, RECT, TRUE, WPARAM},
         Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint},
         System::{
             Com::CoIncrementMTAUsage,
             Performance::{QueryPerformanceCounter, QueryPerformanceFrequency},
             SystemInformation::OSVERSIONINFOW,
+            Threading::GetCurrentProcessId,
         },
         UI::{
             HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI},
             Input::KeyboardAndMouse::{
                 VK_CONTROL, VK_LBUTTON, VK_LWIN, VK_MENU, VK_RBUTTON, VK_RWIN, VK_SHIFT,
             },
+            Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
             WindowsAndMessaging::{
-                GetCursorPos, GetSystemMetrics, HWND_TOPMOST, SM_SWAPBUTTON, SW_HIDE,
-                SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-                SetWindowDisplayAffinity, SetWindowPos, ShowWindow, WDA_EXCLUDEFROMCAPTURE,
-                WDA_NONE,
+                EnumWindows, GetCursorPos, GetPropW, GetSystemMetrics, GetWindowDisplayAffinity,
+                GetWindowThreadProcessId, HWND_TOPMOST, IsWindowVisible, RemovePropW,
+                SM_SWAPBUTTON, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+                SetPropW, SetWindowDisplayAffinity, SetWindowPos, ShowWindow,
+                WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WM_NCDESTROY,
             },
         },
     },
+    core::{BOOL, PCWSTR},
+    w,
 };
 
 use super::{BASE_DPI, configure_pill, hwnd_of, is_key_down, ok_or_last_error};
-use crate::screen::{Frame, PointerSample, ScreenEvent};
+use crate::screen::{
+    Frame, PointerSample, ScreenEvent,
+    geometry::{Bounds, fit, pack_rows},
+};
 
-/// How often the capture thread drains the frame pool, well inside the 50 ms a stop may wait.
+/// How often the capture thread drains the frame pool and checks for a stop.
 const POLL: Duration = Duration::from_millis(10);
-/// Pool buffers: one frame may wait for its turn to be sent while Windows fills the other.
-const BUFFERS: i32 = 2;
+/// Pool buffers: one frame may wait for its turn to be sent while Windows fills the others.
+const BUFFERS: i32 = 3;
 /// How long the request for border-free capture may hold back the first frame.
 const ACCESS_WAIT: Duration = Duration::from_millis(250);
 const POOL_FORMAT: DirectXPixelFormat = DirectXPixelFormat::B8G8R8A8UIntNormalized;
@@ -97,6 +105,9 @@ const BYTES_PER_PIXEL: usize = 4;
 const TICKS_PER_SECOND: i128 = 10_000_000;
 /// The first build that leaves excluded windows out of capture; earlier builds black them out.
 const EXCLUSION_BUILD: u32 = 19_041;
+/// Marks a window `configure_overlay` left out of all screen capture, so that a capture ending
+/// never shows it to capture again.
+const ALWAYS_EXCLUDED: PCWSTR = w!("SpeakeasyAlwaysExcluded");
 
 /// A monitor and where it sits on the desktop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,13 +120,21 @@ pub(crate) struct Display {
 
 impl Display {
     fn handle(self) -> HMONITOR {
-        HMONITOR(self.monitor as *mut c_void)
+        HMONITOR(self.monitor as *mut _)
     }
 
     /// Width and height in physical pixels.
     fn extent(self) -> [i32; 2] {
         let [left, top, right, bottom] = self.bounds;
         [right.saturating_sub(left), bottom.saturating_sub(top)]
+    }
+
+    fn area(self) -> Bounds {
+        let [left, top, right, bottom] = self.bounds.map(f64::from);
+        Bounds {
+            origin: [left, top],
+            size: [right - left, bottom - top],
+        }
     }
 }
 
@@ -168,7 +187,8 @@ fn describe(
 
 pub(crate) fn pointer(display: Display) -> Option<PointerSample> {
     let at = Instant::now();
-    let [x, y] = normalize(display.bounds, cursor()?)?;
+    let POINT { x, y } = cursor()?;
+    let [x, y] = display.area().normalize([x, y].map(f64::from))?;
     Some(PointerSample {
         at,
         x,
@@ -182,17 +202,6 @@ fn cursor() -> Option<POINT> {
     let mut point = POINT::default();
     // SAFETY: GetCursorPos writes only this live local.
     (unsafe { GetCursorPos(&raw mut point) } != FALSE).then_some(point)
-}
-
-/// Where `point` lies on a display with edges `bounds`, with `0.0..=1.0` spanning it on each
-/// axis. A pointer on another display falls outside that range rather than onto an edge.
-fn normalize([left, top, right, bottom]: [i32; 4], point: POINT) -> Option<[f32; 2]> {
-    let along = |position: i32, start: i32, end: i32| {
-        let span = i64::from(end).saturating_sub(i64::from(start));
-        (span > 0)
-            .then(|| i64::from(position).saturating_sub(i64::from(start)) as f32 / span as f32)
-    };
-    Some([along(point.x, left, right)?, along(point.y, top, bottom)?])
 }
 
 /// Shift held without Ctrl, Alt, or Windows, so Shift shortcuts never draw.
@@ -237,24 +246,29 @@ fn record(
     stopping: &Receiver<Infallible>,
 ) -> Result<(), Failure> {
     join_lasting_apartment()?;
+    if windows_build().is_none_or(|build| build < EXCLUSION_BUILD) {
+        return Err(Failure::OldWindows);
+    }
+    let mut exclusions = Exclusions::default();
+    exclusions.refresh()?;
+    // Frames composed before a Speakeasy window was left out may show it.
+    let mut clean_from = Instant::now();
     let mut capture = Capture::start(display, interval, longest_edge, stopping)?;
     let mut pacer = Pacer::new(interval);
-    // Windows delivers a frame only when the screen changes, so the newest unsent frame is what
-    // the screen shows now. A full lane leaves it waiting rather than reading back a frame to drop.
-    let mut newest = None;
     while !stopping.is_closed() && !events.is_closed() {
-        if let Some(frame) = capture.newest_frame()? {
-            newest = Some(frame);
+        // A window opened since the last check is in the first frame Windows composes with it.
+        if capture.poll(clean_from)? && exclusions.refresh()? {
+            clean_from = Instant::now();
+            capture.forget();
         }
         let now = Instant::now();
+        // A full lane leaves the pending frame waiting rather than reading back one to drop.
         if pacer.due(now)
             && !events.is_full()
-            && let Some(frame) = newest.take()
+            && let Some(frame) = capture.read_pending()?
+            && events.try_send(ScreenEvent::Frame(frame)).is_ok()
         {
-            let frame = capture.read(&frame)?;
-            if events.try_send(ScreenEvent::Frame(frame)).is_ok() {
-                pacer.sent(now);
-            }
+            pacer.sent(now);
         }
         thread::sleep(POLL);
     }
@@ -285,6 +299,86 @@ impl Pacer {
     }
 }
 
+/// The Speakeasy windows one capture has left out, shown to capture again when it ends.
+#[derive(Default)]
+struct Exclusions {
+    changed: Vec<HWND>,
+}
+
+impl Exclusions {
+    /// Leaves out every window of this process that capture would still show, hidden ones too so
+    /// they stay out once shown. Reports whether a visible one was among them, because frames
+    /// composed before now may show it.
+    fn refresh(&mut self) -> Result<bool, Failure> {
+        let mut revealed = false;
+        let own = top_level_windows()?
+            .into_iter()
+            .filter(|&window| owned(window));
+        for window in own.filter(|&window| affinity(window) == Some(WDA_NONE)) {
+            // SAFETY: both calls take a window of this process by value.
+            let (excluded, visible) = unsafe {
+                (
+                    SetWindowDisplayAffinity(window, WDA_EXCLUDEFROMCAPTURE) != FALSE,
+                    IsWindowVisible(window) != FALSE,
+                )
+            };
+            if excluded {
+                self.changed.push(window);
+                revealed |= visible;
+            } else if visible {
+                return Err(Failure::Exposed);
+            }
+        }
+        Ok(revealed)
+    }
+}
+
+impl Drop for Exclusions {
+    fn drop(&mut self) {
+        let restorable = |window: HWND| {
+            // SAFETY: reads a property by handle; a destroyed window has none.
+            let marked = !unsafe { GetPropW(window, ALWAYS_EXCLUDED) }.is_null();
+            !marked && affinity(window) == Some(WDA_EXCLUDEFROMCAPTURE)
+        };
+        for &window in self.changed.iter().filter(|&&window| restorable(window)) {
+            // SAFETY: takes values only; a window since destroyed, or reused by another process,
+            // fails the call.
+            unsafe { SetWindowDisplayAffinity(window, WDA_NONE) };
+        }
+    }
+}
+
+/// Every top-level window on the desktop, front to back.
+fn top_level_windows() -> windows::core::Result<Vec<HWND>> {
+    unsafe extern "system" fn collect(window: HWND, windows: LPARAM) -> BOOL {
+        // SAFETY: `top_level_windows` passes its live vector for the length of the enumeration.
+        unsafe { (*(windows as *mut Vec<HWND>)).push(window) };
+        TRUE
+    }
+    let mut windows = Vec::new();
+    // SAFETY: the callback only pushes into the vector, which outlives the enumeration.
+    let enumerated = unsafe { EnumWindows(Some(collect), (&raw mut windows) as LPARAM) };
+    if enumerated == FALSE {
+        return Err(windows::core::Error::from_thread());
+    }
+    Ok(windows)
+}
+
+fn owned(window: HWND) -> bool {
+    let mut process = 0;
+    // SAFETY: writes only the live local; neither call retains anything.
+    unsafe {
+        GetWindowThreadProcessId(window, &raw mut process);
+        process == GetCurrentProcessId()
+    }
+}
+
+fn affinity(window: HWND) -> Option<u32> {
+    let mut affinity = 0;
+    // SAFETY: writes only the live local.
+    (unsafe { GetWindowDisplayAffinity(window, &raw mut affinity) } != FALSE).then_some(affinity)
+}
+
 /// A capture of one display, polled on the capture thread.
 struct Capture {
     device: ID3D11Device,
@@ -297,10 +391,11 @@ struct Capture {
     /// Closes once Windows closes the item, when the display goes away.
     item_closed: Receiver<Infallible>,
     closed_handler: i64,
-    /// The size Windows delivers frames at.
-    size: SizeInt32,
     longest_edge: u32,
+    /// Reads frames of the size Windows delivers.
     readback: Readback,
+    /// The newest frame not yet read, and when it was on screen.
+    pending: Option<(Direct3D11CaptureFrame, Instant)>,
 }
 
 impl Capture {
@@ -351,15 +446,15 @@ impl Capture {
             session,
             item_closed,
             closed_handler,
-            size,
             longest_edge,
             readback,
+            pending: None,
         })
     }
 
-    /// The newest frame Windows delivered since the last call; fails once the display or the
-    /// graphics device is gone.
-    fn newest_frame(&mut self) -> Result<Option<Direct3D11CaptureFrame>, Failure> {
+    /// Takes the newest frame Windows composed since `clean_from` as the pending one, reporting
+    /// whether there was one; fails once the display or the graphics device is gone.
+    fn poll(&mut self, clean_from: Instant) -> Result<bool, Failure> {
         if self.item_closed.is_closed() {
             return Err(Failure::DisplayLost);
         }
@@ -372,18 +467,24 @@ impl Capture {
             newest = Some(frame);
         }
         let Some(frame) = newest else {
-            return Ok(None);
+            return Ok(false);
         };
-        let size = frame.ContentSize()?;
-        if size == self.size {
-            return Ok(Some(frame));
+        let content = frame.ContentSize()?;
+        if pixels(content) != self.readback.source {
+            // The display changed resolution or rotation: this frame fills only part of its
+            // surface, and the pending one belongs to the pool being replaced.
+            self.pending = None;
+            self.pool
+                .Recreate(&self.direct3d, POOL_FORMAT, BUFFERS, content)?;
+            self.readback = Readback::new(&self.device, pixels(content), self.longest_edge)?;
+            return Ok(false);
         }
-        // The display changed resolution or rotation; this frame only fills part of its surface.
-        self.pool
-            .Recreate(&self.direct3d, POOL_FORMAT, BUFFERS, size)?;
-        self.readback = Readback::new(&self.device, pixels(size), self.longest_edge)?;
-        self.size = size;
-        Ok(None)
+        let captured = composed_at(frame.SystemRelativeTime()?);
+        if captured < clean_from {
+            return Ok(false);
+        }
+        self.pending = Some((frame, captured));
+        Ok(true)
     }
 
     fn next_frame(&self) -> Result<Option<Direct3D11CaptureFrame>, Failure> {
@@ -395,8 +496,15 @@ impl Capture {
         }
     }
 
-    fn read(&self, frame: &Direct3D11CaptureFrame) -> Result<Frame, Failure> {
-        let captured = composed_at(frame.SystemRelativeTime()?);
+    fn forget(&mut self) {
+        self.pending = None;
+    }
+
+    /// Reads the pending frame back to memory, leaving none pending.
+    fn read_pending(&mut self) -> Result<Option<Frame>, Failure> {
+        let Some((frame, captured)) = self.pending.take() else {
+            return Ok(None);
+        };
         // SAFETY: the frame's surface is a live texture on this capture's device.
         let texture: ID3D11Texture2D = unsafe {
             frame
@@ -406,12 +514,12 @@ impl Capture {
         };
         let bgra = self.readback.read(&self.context, &texture)?;
         let [width, height] = self.readback.size;
-        Ok(Frame {
+        Ok(Some(Frame {
             captured,
             width,
             height,
             bgra,
-        })
+        }))
     }
 }
 
@@ -424,8 +532,9 @@ impl Drop for Capture {
     }
 }
 
-/// A Direct3D 11 device on the adapter that drives `monitor`; capture fails on any other.
-fn device_for(monitor: HMONITOR) -> Result<(ID3D11Device, ID3D11DeviceContext), Failure> {
+/// A Direct3D 11 device on the adapter that drives `monitor`, so frames need no copy between
+/// adapters; the default adapter serves a display that no adapter reports.
+fn device_for(monitor: HMONITOR) -> windows::core::Result<(ID3D11Device, ID3D11DeviceContext)> {
     // SAFETY: enumeration only reads descriptions through the live interfaces DXGI returns.
     let adapter = unsafe {
         let factory: IDXGIFactory1 = CreateDXGIFactory1()?;
@@ -440,14 +549,18 @@ fn device_for(monitor: HMONITOR) -> Result<(ID3D11Device, ID3D11DeviceContext), 
                             .is_ok_and(|description| description.Monitor == monitor)
                     })
             })
-    }
-    .ok_or(Failure::NoAdapter)?;
+    };
+    let driver = if adapter.is_some() {
+        D3D_DRIVER_TYPE_UNKNOWN
+    } else {
+        D3D_DRIVER_TYPE_HARDWARE
+    };
     let (mut device, mut context) = (None, None);
-    // SAFETY: the adapter is live and both out-parameters are live locals.
+    // SAFETY: any adapter is live, and both out-parameters are live locals.
     unsafe {
         D3D11CreateDevice(
-            Some(&adapter),
-            D3D_DRIVER_TYPE_UNKNOWN,
+            adapter.as_ref(),
+            driver,
             HMODULE::default(),
             D3D11_CREATE_DEVICE_BGRA_SUPPORT,
             None,
@@ -484,8 +597,8 @@ impl Readback {
         source: [u32; 2],
         longest_edge: u32,
     ) -> windows::core::Result<Self> {
-        let level = mip_level(source, longest_edge);
-        let size = mip_size(source, level);
+        let size = fit(source, longest_edge);
+        let level = halvings(source, size);
         let mips = if level == 0 {
             None
         } else {
@@ -508,7 +621,8 @@ impl Readback {
         })
     }
 
-    /// Copies `frame` to memory as tightly packed BGRA rows of the delivered size.
+    /// Copies `frame`, which must be of the source size, to memory as tightly packed BGRA rows of
+    /// the delivered size.
     fn read(
         &self,
         context: &ID3D11DeviceContext,
@@ -526,7 +640,7 @@ impl Readback {
             .as_ref()
             .map_or(&self.staging, |mips| &mips.texture);
         // SAFETY: every texture belongs to this context's device and shares the frame's format,
-        // and the region lies within the frame.
+        // and the region spans the frame, whose size is the source size.
         unsafe {
             context.CopySubresourceRegion(first, 0, 0, 0, 0, frame, 0, Some(&raw const region));
             if let Some(mips) = &self.mips {
@@ -556,7 +670,7 @@ impl Readback {
         // SAFETY: Direct3D maps `height` rows starting `pitch` bytes apart, valid until the caller
         // unmaps them, and `length` ends with the last row's pixels.
         let bytes = unsafe { slice::from_raw_parts(mapped.pData.cast::<u8>(), length) };
-        pack_rows(bytes, pitch, row, height).ok_or_else(|| E_UNEXPECTED.into())
+        pack_rows(bytes, pitch, width, height).ok_or_else(|| E_UNEXPECTED.into())
     }
 }
 
@@ -613,18 +727,12 @@ fn created<T>(value: Option<T>) -> windows::core::Result<T> {
     value.ok_or_else(|| E_UNEXPECTED.into())
 }
 
-/// The first mip level whose long edge fits `longest_edge`. Level 0 is the frame itself, and each
-/// level halves the one before, down to a single pixel.
-fn mip_level([width, height]: [u32; 2], longest_edge: u32) -> u32 {
-    let longest = width.max(height);
-    let last = longest.checked_ilog2().unwrap_or(0);
-    (0..last)
-        .find(|&level| longest >> level <= longest_edge)
-        .unwrap_or(last)
-}
-
-fn mip_size(size: [u32; 2], level: u32) -> [u32; 2] {
-    size.map(|edge| (edge >> level).max(1))
+/// How many times `fit` halved `source` to reach `fitted`, which is the mip level holding it.
+fn halvings([width, _]: [u32; 2], [fitted, _]: [u32; 2]) -> u32 {
+    width
+        .checked_div(fitted)
+        .and_then(u32::checked_ilog2)
+        .unwrap_or(0)
 }
 
 /// The bytes a mapping of `rows` rows must hold: every row but the last spans the full pitch.
@@ -632,17 +740,7 @@ fn mapped_len(pitch: usize, row: usize, rows: usize) -> Option<usize> {
     pitch.checked_mul(rows.checked_sub(1)?)?.checked_add(row)
 }
 
-/// Packs `rows` rows of `row` bytes from `mapped`, where each row starts `pitch` bytes after the
-/// last; `None` when `mapped` ends early.
-fn pack_rows(mapped: &[u8], pitch: usize, row: usize, rows: usize) -> Option<Vec<u8>> {
-    let lines = (0..rows).map(|index| {
-        let start = index.checked_mul(pitch)?;
-        mapped.get(start..start.checked_add(row)?)
-    });
-    Some(lines.collect::<Option<Vec<_>>>()?.concat())
-}
-
-fn pixels(size: SizeInt32) -> [u32; 2] {
+fn pixels(size: windows::Graphics::SizeInt32) -> [u32; 2] {
     // A negative size cannot occur; zero makes texture creation report the problem.
     [size.Width, size.Height].map(|edge| u32::try_from(edge).unwrap_or_default())
 }
@@ -709,8 +807,8 @@ fn best_effort<T>(result: windows::core::Result<T>) {
 }
 
 /// Makes the capture thread a member of a multithreaded apartment that lasts as long as the
-/// process. Windows' capture internals outlive the objects that start them, and tearing the
-/// apartment down after a capture crashes the process.
+/// process. The `windows` crate caches activation factories process-wide, and they would dangle
+/// once the last apartment closed, so a capture after the first would crash.
 fn join_lasting_apartment() -> windows::core::Result<()> {
     let mut cookie = null_mut();
     // SAFETY: writes only the live local. The cookie is never handed back, by design.
@@ -720,10 +818,12 @@ fn join_lasting_apartment() -> windows::core::Result<()> {
 /// Why a capture ended early, worded for the person recording.
 #[derive(Debug)]
 enum Failure {
+    /// Windows predates leaving windows out of capture.
+    OldWindows,
+    /// A Speakeasy window could not be left out of capture.
+    Exposed,
     /// The display was disconnected or turned off.
     DisplayLost,
-    /// No graphics adapter claims the display.
-    NoAdapter,
     /// The graphics driver restarted or the adapter went away.
     DeviceLost,
     /// Windows refused a capture step.
@@ -745,12 +845,13 @@ impl From<windows::core::Error> for Failure {
 impl fmt::Display for Failure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::OldWindows => formatter.write_str("Shows need Windows 10 version 2004 or later."),
+            Self::Exposed => formatter.write_str(
+                "Windows would not keep Speakeasy out of the recording. Start the Show again.",
+            ),
             Self::DisplayLost => {
                 formatter.write_str("The recorded display was disconnected. Start the Show again.")
             },
-            Self::NoAdapter => formatter.write_str(
-                "Windows cannot capture this display. Start the Show on another display.",
-            ),
             Self::DeviceLost => {
                 formatter.write_str("The graphics driver restarted. Start the Show again.")
             },
@@ -763,10 +864,12 @@ impl fmt::Display for Failure {
     }
 }
 
+impl error::Error for Failure {}
+
 pub(crate) fn configure_overlay(handle: RawWindowHandle, display: Display) -> anyhow::Result<()> {
     let hwnd = hwnd_of(handle)?;
     // First, so a build that cannot exclude the overlay leaves the window untouched.
-    exclude_from_capture(hwnd, true)?;
+    exclude_always(hwnd)?;
     // The overlay is the pill's click-through popup, stretched over the display.
     configure_pill(handle)?;
     let [left, top, ..] = display.bounds;
@@ -787,6 +890,41 @@ pub(crate) fn configure_overlay(handle: RawWindowHandle, display: Display) -> an
         place()?;
     }
     Ok(())
+}
+
+/// Leaves `hwnd` out of all screen capture for good, marked so no capture ending restores it.
+fn exclude_always(hwnd: HWND) -> anyhow::Result<()> {
+    ensure!(
+        windows_build().is_some_and(|build| build >= EXCLUSION_BUILD),
+        "Shows need Windows 10 version 2004 or later"
+    );
+    // SAFETY: the caller passes a live window this process owns on its UI thread. The subclass
+    // removes the mark before the window is destroyed, as properties require.
+    unsafe {
+        ok_or_last_error(SetPropW(hwnd, ALWAYS_EXCLUDED, hwnd.cast()))?;
+        ok_or_last_error(SetWindowSubclass(hwnd, Some(always_excluded), 1, 0))?;
+        ok_or_last_error(SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE))
+            .context("Cannot keep the Show overlay out of screen capture")
+    }
+}
+
+unsafe extern "system" fn always_excluded(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    id: usize,
+    _: usize,
+) -> LRESULT {
+    // SAFETY: this window-owned subclass runs on the window's thread and is removed, with the
+    // mark, at destruction.
+    unsafe {
+        if message == WM_NCDESTROY {
+            RemovePropW(hwnd, ALWAYS_EXCLUDED);
+            RemoveWindowSubclass(hwnd, Some(always_excluded), id);
+        }
+        DefSubclassProc(hwnd, message, wparam, lparam)
+    }
 }
 
 pub(crate) fn set_overlay_visible(handle: RawWindowHandle, visible: bool) {
@@ -811,32 +949,16 @@ pub(crate) fn set_overlay_visible(handle: RawWindowHandle, visible: bool) {
     }
 }
 
-fn exclude_from_capture(hwnd: HWND, excluded: bool) -> anyhow::Result<()> {
-    let affinity = if excluded {
-        ensure!(
-            windows_build()? >= EXCLUSION_BUILD,
-            "Shows need Windows 10 version 2004 or later"
-        );
-        WDA_EXCLUDEFROMCAPTURE
-    } else {
-        WDA_NONE
-    };
-    // SAFETY: the caller passes a live window this process owns.
-    ok_or_last_error(unsafe { SetWindowDisplayAffinity(hwnd, affinity) })
-        .context("Cannot keep Speakeasy out of screen capture")
-}
-
 /// The running Windows build, read from the kernel: the documented version APIs report Windows 8
 /// to executables whose manifests list no newer version.
-fn windows_build() -> anyhow::Result<u32> {
+fn windows_build() -> Option<u32> {
     let mut version = OSVERSIONINFOW {
-        dwOSVersionInfoSize: u32::try_from(size_of::<OSVERSIONINFOW>())?,
+        dwOSVersionInfoSize: u32::try_from(size_of::<OSVERSIONINFOW>()).ok()?,
         ..Default::default()
     };
     // SAFETY: RtlGetVersion fills this live structure, whose size field it checks.
     let status = unsafe { RtlGetVersion(&raw mut version) };
-    ensure!(status >= 0, "Cannot read the Windows version");
-    Ok(version.dwBuildNumber)
+    (status >= 0).then_some(version.dwBuildNumber)
 }
 
 #[cfg(test)]
@@ -846,56 +968,64 @@ mod tests {
     #[test]
     fn pointer_positions_normalize_to_their_display() {
         // A display left of and above the primary one, as desktop coordinates allow.
-        let display = [-3840, -794, 0, 1366];
-        let at = |x, y| normalize(display, POINT { x, y });
-        assert_eq!(at(-3840, -794), Some([0.0, 0.0]));
+        let display = Display {
+            monitor: 0,
+            bounds: [-3840, -794, 0, 1366],
+        };
+        let at = |x: i32, y: i32| display.area().normalize([x, y].map(f64::from));
         assert_eq!(at(-1920, 286), Some([0.5, 0.5]));
         assert_eq!(
             at(960, 1366),
             Some([1.25, 1.0]),
             "A pointer on the next display must not clamp onto this one's edge"
         );
-        assert_eq!(normalize([0, 0, 0, 1080], POINT { x: 0, y: 0 }), None);
-        let desktop = [i32::MIN, i32::MIN, i32::MAX, i32::MAX];
+        let desktop = Display {
+            monitor: 0,
+            bounds: [i32::MIN, i32::MIN, i32::MAX, i32::MAX],
+        };
         assert_eq!(
-            normalize(
-                desktop,
-                POINT {
-                    x: i32::MAX,
-                    y: i32::MIN
-                }
-            ),
+            desktop
+                .area()
+                .normalize([i32::MAX, i32::MIN].map(f64::from)),
             Some([1.0, 0.0]),
             "Spans across the whole coordinate range must not overflow"
         );
     }
 
     #[test]
-    fn frames_halve_until_their_long_edge_fits() {
-        assert_eq!(mip_level([1920, 1080], 1920), 0);
-        assert_eq!(mip_level([3840, 2160], 2560), 1);
-        assert_eq!(mip_level([3840, 2160], 960), 2);
-        assert_eq!(
-            mip_level([1080, 1920], 960),
-            1,
-            "Portrait frames fit by height"
-        );
-        assert_eq!(mip_level([5120, 1440], 1000), 3);
-        assert_eq!(mip_size([5120, 1440], 3), [640, 180]);
-        assert_eq!(mip_level([1920, 1080], 0), 10, "Halving stops at one pixel");
-        assert_eq!(mip_size([1920, 1080], 10), [1, 1]);
+    fn fitted_frames_are_the_mip_level_their_halvings_name() {
+        for (source, longest_edge, level) in [
+            ([1920, 1080], 1920, 0),
+            ([3840, 2160], 2560, 1),
+            ([3840, 2160], 960, 2),
+            ([1921, 1081], 960, 1),
+            ([1080, 1920], 960, 1),
+            ([4096, 3], 16, 1),
+        ] {
+            let fitted = fit(source, longest_edge);
+            assert_eq!(
+                halvings(source, fitted),
+                level,
+                "{source:?} fitted to {fitted:?}"
+            );
+            assert_eq!(
+                fitted,
+                source.map(|edge| edge >> level),
+                "The staging texture must match mip level {level} of {source:?}"
+            );
+        }
     }
 
     #[test]
-    fn readback_drops_row_padding() {
+    fn a_mapping_ends_with_its_last_row_of_pixels() {
         // Two rows of two pixels, each starting 12 bytes after the last; the last row is unpadded.
         let mapped = [1, 1, 1, 1, 2, 2, 2, 2, 9, 9, 9, 9, 3, 3, 3, 3, 4, 4, 4, 4];
         assert_eq!(mapped_len(12, 8, 2), Some(mapped.len()));
         assert_eq!(
-            pack_rows(&mapped, 12, 8, 2),
+            pack_rows(&mapped, 12, 2, 2),
             Some(vec![1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4])
         );
-        assert_eq!(pack_rows(&mapped[..19], 12, 8, 2), None);
+        assert_eq!(mapped_len(12, 8, 0), None, "An empty image maps nothing");
     }
 
     #[test]
@@ -917,8 +1047,8 @@ mod tests {
     }
 
     /// Checks on this machine's GPU and display. The capture check shows Speakeasy's own windows
-    /// for a few seconds and inspects only pixels proven to be theirs; nothing is written, logged,
-    /// or printed but counts and timings.
+    /// for a few seconds and tallies captured pixels only after proving, before and after each
+    /// capture, that no other window covers them; it prints nothing but counts and timings.
     mod native {
         use std::{
             num::NonZeroIsize,
@@ -928,36 +1058,30 @@ mod tests {
         use anyhow::bail;
         use raw_window_handle::Win32WindowHandle;
         use windows::Win32::Graphics::Direct3D11::D3D11_SUBRESOURCE_DATA;
-        use windows_sys::{
-            Win32::{
-                Foundation::{LPARAM, LRESULT, TRUE, WPARAM},
-                Graphics::{
-                    Dwm::{DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute},
-                    Gdi::{
-                        BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BeginPaint, CreateSolidBrush,
-                        DIB_RGB_COLORS, EndPaint, EnumDisplayMonitors, HDC,
-                        MONITOR_DEFAULTTOPRIMARY, PAINTSTRUCT, SetDIBitsToDevice,
-                    },
-                },
-                System::LibraryLoader::GetModuleHandleW,
-                UI::{
-                    HiDpi::{
-                        AreDpiAwarenessContextsEqual, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
-                        GetDpiAwarenessContextForProcess, SetProcessDpiAwarenessContext,
-                    },
-                    WindowsAndMessaging::{
-                        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GA_ROOT,
-                        GW_HWNDPREV, GWL_EXSTYLE, GetAncestor, GetClassNameW, GetWindow,
-                        GetWindowDisplayAffinity, GetWindowLongPtrW, GetWindowRect,
-                        IsWindowVisible, MSG, PM_REMOVE, PeekMessageW, RegisterClassW,
-                        SWP_NOZORDER, TranslateMessage, UnregisterClassW, WM_DPICHANGED, WM_PAINT,
-                        WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-                        WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WindowFromPoint,
-                    },
+        use windows_sys::Win32::{
+            Graphics::{
+                Dwm::{DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute},
+                Gdi::{
+                    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BeginPaint, CreateSolidBrush,
+                    DIB_RGB_COLORS, EndPaint, EnumDisplayMonitors, HBRUSH, HDC,
+                    MONITOR_DEFAULTTOPRIMARY, PAINTSTRUCT, SetDIBitsToDevice,
                 },
             },
-            core::{BOOL, PCWSTR},
-            w,
+            System::LibraryLoader::GetModuleHandleW,
+            UI::{
+                HiDpi::{
+                    AreDpiAwarenessContextsEqual, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+                    GetDpiAwarenessContextForProcess, SetProcessDpiAwarenessContext,
+                },
+                WindowsAndMessaging::{
+                    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GA_ROOT,
+                    GWL_EXSTYLE, GetAncestor, GetClassNameW, GetWindowLongPtrW, GetWindowRect, MSG,
+                    PM_REMOVE, PeekMessageW, RegisterClassW, SWP_NOZORDER, TranslateMessage,
+                    UnregisterClassW, WDA_MONITOR, WM_DPICHANGED, WM_PAINT, WNDCLASSW, WNDPROC,
+                    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+                    WS_EX_TRANSPARENT, WS_POPUP, WindowFromPoint,
+                },
+            },
         };
 
         use super::*;
@@ -965,21 +1089,28 @@ mod tests {
 
         const PATTERN_WIDTH: i32 = 640;
         const PATTERN_HEIGHT: i32 = 400;
-        /// The excluded overlay's place on the pattern: left, top, right, bottom.
+        /// The backdrop's border around the pattern; even, so halved frames keep its edges.
+        const MARGIN: i32 = 32;
+        /// The overlay's place on the pattern: left, top, right, bottom.
         const OVERLAY: [i32; 4] = [200, 120, 440, 280];
+        const BLACK: [u8; 3] = [0; 3];
         const MAGENTA: [u8; 3] = [255, 0, 255];
         /// How far a captured channel may stray from the painted one.
         const TOLERANCE: u8 = 6;
         /// The longest the windows stay on screen, whatever happens to the test.
-        const ON_SCREEN: Duration = Duration::from_secs(5);
+        const ON_SCREEN: Duration = Duration::from_secs(6);
         /// Lets DWM compose a change before it is captured.
         const COMPOSED: Duration = Duration::from_millis(300);
         const PATIENCE: Duration = Duration::from_secs(3);
+        const INTERVAL: Duration = Duration::from_millis(100);
+        /// How long frames are watched after a window opens mid-capture.
+        const WATCH: Duration = Duration::from_secs(1);
         #[expect(clippy::cast_possible_truncation, reason = "The header is 40 bytes")]
         const HEADER_SIZE: u32 = size_of::<BITMAPINFOHEADER>() as u32;
         /// The shell's pen handwriting canvas spans the primary display above every app, but stays
         /// transparent unless a pen writes into a text box; ink there would fail the pixel check.
         const HANDWRITING_CANVAS: &str = "ShellHandwritingCanvas";
+        const BACKDROP_CLASS: PCWSTR = w!("SpeakeasyCaptureBackdrop");
         const PATTERN_CLASS: PCWSTR = w!("SpeakeasyCapturePattern");
         const OVERLAY_CLASS: PCWSTR = w!("SpeakeasyCaptureOverlay");
         const RESCALING_CLASS: PCWSTR = w!("SpeakeasyRescalingOverlay");
@@ -991,7 +1122,7 @@ mod tests {
                 return if ((x >> 3) ^ (y >> 3)) & 1 == 0 {
                     [255; 3]
                 } else {
-                    [0; 3]
+                    BLACK
                 };
             }
             match (x < PATTERN_WIDTH / 2, y < 160) {
@@ -1002,37 +1133,97 @@ mod tests {
             }
         }
 
-        #[tokio::test]
-        #[ignore = "Shows owned windows briefly; inspects only captured pixels proven theirs"]
-        async fn capture_shows_own_pattern_but_not_the_excluded_overlay() -> anyhow::Result<()> {
+        /// Which of the scene's windows a capture includes.
+        #[derive(Clone, Copy)]
+        struct Shown {
+            pattern: bool,
+            overlay: bool,
+        }
+
+        /// What capture shows at `[x, y]` of the backdrop: black, as Windows shows the backdrop to
+        /// capture, beneath whichever of the pattern and the overlay it includes.
+        fn captured_color(x: i32, y: i32, shown: Shown) -> [u8; 3] {
+            let [x, y] = [x.saturating_sub(MARGIN), y.saturating_sub(MARGIN)];
+            let [left, top, right, bottom] = OVERLAY;
+            if shown.overlay && (left..right).contains(&x) && (top..bottom).contains(&y) {
+                MAGENTA
+            } else if shown.pattern
+                && (0..PATTERN_WIDTH).contains(&x)
+                && (0..PATTERN_HEIGHT).contains(&y)
+            {
+                pattern(x, y)
+            } else {
+                BLACK
+            }
+        }
+
+        #[test]
+        #[ignore = "Shows owned windows briefly; tallies captured pixels only where proven theirs"]
+        fn capture_leaves_out_every_speakeasy_window_until_it_stops() -> anyhow::Result<()> {
             per_monitor_aware()?;
             let display = display_under_pointer()?;
-            let scene = Scene::open(display.native)?;
+            let mut scene = Scene::open(display.native)?;
             thread::sleep(COMPOSED);
             scene.check_overlay()?;
-            let full = scene.capture(display, u32::MAX).await?;
+
+            // Shown to capture, the overlay proves it is in place, and the backdrop proves Windows
+            // blacks it out, so a capture leaving out the other windows shows nothing behind them.
+            set_affinity(scene.overlay, WDA_NONE)?;
+            thread::sleep(COMPOSED);
+            let before = scene.unfiltered(display.native, u32::MAX)?;
+            let shown =
+                |pattern, overlay| move |x, y| captured_color(x, y, Shown { pattern, overlay });
+            assert_eq!(
+                before.mismatches(shown(false, true)),
+                0,
+                "Unfiltered, before"
+            );
+
+            let (during, opened) = scene.record_opening_pattern(display)?;
+            let pattern = scene.pattern.context("Missing pattern window")?;
+            assert!(
+                during.iter().any(|crop| crop.captured > opened),
+                "No frame arrived after the pattern opened"
+            );
+            for crop in &during {
+                assert_eq!(
+                    crop.mismatches(shown(false, false)),
+                    0,
+                    "During the capture"
+                );
+            }
+            assert_eq!(
+                affinity(pattern),
+                Some(WDA_NONE),
+                "Restored after the capture"
+            );
+            assert_eq!(
+                affinity(scene.overlay),
+                Some(WDA_EXCLUDEFROMCAPTURE),
+                "configure_overlay's exclusion must outlast the capture"
+            );
+
+            thread::sleep(COMPOSED);
+            let after = scene.unfiltered(display.native, u32::MAX)?;
+            assert_eq!(after.mismatches(shown(true, false)), 0, "Unfiltered, after");
             let [width, height] = display.native.extent();
             let half = width.max(height).cast_unsigned() / 2;
-            let halved = scene.capture(display, half).await?;
-            exclude_from_capture(hwnd_of(scene.overlay_handle()?)?, false)?;
-            thread::sleep(COMPOSED);
-            let included = scene.capture(display, u32::MAX).await?;
-            drop(scene);
+            let halved = scene.unfiltered(display.native, half)?;
+            assert_eq!(halved.scale, 2);
+            assert_eq!(halved.mismatches(shown(true, false)), 0, "Halved, after");
 
-            let area = (PATTERN_WIDTH * PATTERN_HEIGHT).cast_unsigned() as usize;
-            let [left, top, right, bottom] = OVERLAY;
-            let overlay = ((right - left) * (bottom - top)).cast_unsigned() as usize;
-            assert_eq!(full.tally(), Tally::exact(area), "Full-size frame");
-            assert_eq!(halved.tally(), Tally::exact(area / 4), "Halved frame");
-            assert_eq!(
-                included.tally(),
-                Tally {
-                    pattern: area - overlay,
-                    magenta: overlay,
-                    other: 0
-                },
-                "The overlay must appear once exclusion is lifted, proving it was in place"
-            );
+            let windows = top_level_windows()?
+                .into_iter()
+                .filter(|&window| owned(window));
+            let own = windows.count();
+            let mut exclusions = Exclusions::default();
+            exclusions.refresh()?;
+            let started = Instant::now();
+            for _ in 0..100 {
+                exclusions.refresh()?;
+            }
+            let each = started.elapsed().as_secs_f64() * 1e4;
+            println!("Re-checking {own} own windows: {each:.1} µs");
             Ok(())
         }
 
@@ -1042,8 +1233,7 @@ mod tests {
             // SAFETY: takes a point by value and returns the primary monitor.
             let primary =
                 unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) };
-            let (device, context) =
-                device_for(HMONITOR(primary)).map_err(|failure| anyhow::anyhow!("{failure}"))?;
+            let (device, context) = device_for(HMONITOR(primary))?;
             for source in [[1920, 1080], [3840, 2160]] {
                 let frame = synthetic_frame(&device, source)?;
                 for longest_edge in [u32::MAX, 2560, 960] {
@@ -1081,6 +1271,37 @@ mod tests {
             Ok([costs[15], costs[29]].map(|cost| cost.as_secs_f64() * 1e3))
         }
 
+        /// Synthetic frames are constant across 4×4 blocks, so the first two halvings are exact.
+        fn block_color(x: u32, y: u32) -> [u8; 4] {
+            let [x, y] = [x >> 2, y >> 2].map(|block| block.to_le_bytes()[0]);
+            [x, y, x ^ y, 255]
+        }
+
+        fn synthetic_frame(
+            device: &ID3D11Device,
+            [width, height]: [u32; 2],
+        ) -> anyhow::Result<ID3D11Texture2D> {
+            let bgra: Vec<u8> = (0..height)
+                .flat_map(|y| (0..width).map(move |x| block_color(x, y)))
+                .flatten()
+                .collect();
+            let data = D3D11_SUBRESOURCE_DATA {
+                pSysMem: bgra.as_ptr().cast(),
+                SysMemPitch: width.checked_mul(4).unwrap(),
+                SysMemSlicePitch: 0,
+            };
+            let mut texture = None;
+            // SAFETY: the pixels match the description and outlive the synchronous call.
+            unsafe {
+                device.CreateTexture2D(
+                    &texture_description([width, height], 1),
+                    Some(&raw const data),
+                    Some(&raw mut texture),
+                )?;
+            }
+            Ok(created(texture)?)
+        }
+
         #[test]
         #[ignore = "Moves a hidden owned window across display scales; captures nothing"]
         fn overlay_covers_its_display_after_crossing_scales() -> anyhow::Result<()> {
@@ -1106,13 +1327,19 @@ mod tests {
                 WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
                 [left, top, 100, 100],
             )?;
-            let handle = RawWindowHandle::Win32(Win32WindowHandle::new(
-                NonZeroIsize::new(window.0 as isize).context("Missing window")?,
-            ));
-            configure_overlay(handle, to.native)?;
+            // SAFETY: reads this thread's own live window.
+            let dpi = unsafe { GetDpiForWindow(window.0) };
+            configure_overlay(raw_handle(window.0)?, to.native)?;
             let mut bounds = RECT::default();
             // SAFETY: reads this thread's own live window into a live local.
-            ok_or_last_error(unsafe { GetWindowRect(window.0, &raw mut bounds) })?;
+            let (moved_dpi, measured) = unsafe {
+                (
+                    GetDpiForWindow(window.0),
+                    GetWindowRect(window.0, &raw mut bounds),
+                )
+            };
+            ok_or_last_error(measured)?;
+            assert_ne!(dpi, moved_dpi, "The window must arrive at another scale");
             let RECT {
                 left,
                 top,
@@ -1132,8 +1359,7 @@ mod tests {
                 monitors: LPARAM,
             ) -> BOOL {
                 // SAFETY: `displays` passes its live vector for the length of the enumeration.
-                let monitors = unsafe { &mut *(monitors as *mut Vec<isize>) };
-                monitors.push(monitor as isize);
+                unsafe { (*(monitors as *mut Vec<isize>)).push(monitor as isize) };
                 TRUE
             }
             let mut monitors: Vec<isize> = Vec::new();
@@ -1180,37 +1406,6 @@ mod tests {
             unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
         }
 
-        /// Synthetic frames are constant across 4×4 blocks, so the first two halvings are exact.
-        fn block_color(x: u32, y: u32) -> [u8; 4] {
-            let [x, y] = [x >> 2, y >> 2].map(|block| block.to_le_bytes()[0]);
-            [x, y, x ^ y, 255]
-        }
-
-        fn synthetic_frame(
-            device: &ID3D11Device,
-            [width, height]: [u32; 2],
-        ) -> anyhow::Result<ID3D11Texture2D> {
-            let bgra: Vec<u8> = (0..height)
-                .flat_map(|y| (0..width).map(move |x| block_color(x, y)))
-                .flatten()
-                .collect();
-            let data = D3D11_SUBRESOURCE_DATA {
-                pSysMem: bgra.as_ptr().cast(),
-                SysMemPitch: width.checked_mul(4).unwrap(),
-                SysMemSlicePitch: 0,
-            };
-            let mut texture = None;
-            // SAFETY: the pixels match the description and outlive the synchronous call.
-            unsafe {
-                device.CreateTexture2D(
-                    &texture_description([width, height], 1),
-                    Some(&raw const data),
-                    Some(&raw mut texture),
-                )?;
-            }
-            Ok(created(texture)?)
-        }
-
         /// Makes this process per-monitor DPI aware, as the manifest makes Speakeasy, or fails:
         /// without it, window and capture coordinates disagree and a crop could leave the scene.
         fn per_monitor_aware() -> anyhow::Result<()> {
@@ -1226,61 +1421,71 @@ mod tests {
             Ok(())
         }
 
-        /// What a crop of the pattern window holds, pixel by pixel.
-        #[derive(Debug, PartialEq, Eq)]
-        struct Tally {
-            pattern: usize,
-            magenta: usize,
-            other: usize,
+        fn set_affinity(window: HWND, affinity: u32) -> anyhow::Result<()> {
+            // SAFETY: takes a window of this process by value.
+            Ok(ok_or_last_error(unsafe {
+                SetWindowDisplayAffinity(window, affinity)
+            })?)
         }
 
-        impl Tally {
-            const fn exact(pixels: usize) -> Self {
-                Self {
-                    pattern: pixels,
-                    magenta: 0,
-                    other: 0,
+        fn raw_handle(window: HWND) -> anyhow::Result<RawWindowHandle> {
+            let window = NonZeroIsize::new(window as isize).context("Missing window")?;
+            Ok(RawWindowHandle::Win32(Win32WindowHandle::new(window)))
+        }
+
+        /// The first frame of `display` from a capture that, unlike `ScreenCapture`, leaves no
+        /// window out.
+        fn unfiltered_frame(display: Display, longest_edge: u32) -> anyhow::Result<Frame> {
+            join_lasting_apartment()?;
+            let (_stop, stopping) = async_channel::bounded::<Infallible>(1);
+            let started = Instant::now();
+            let mut capture = Capture::start(display, INTERVAL, longest_edge, &stopping)?;
+            let deadline = started.checked_add(PATIENCE).unwrap();
+            while Instant::now() < deadline {
+                if capture.poll(started)?
+                    && let Some(frame) = capture.read_pending()?
+                {
+                    return Ok(frame);
                 }
+                thread::sleep(POLL);
+            }
+            bail!("No frame arrived")
+        }
+
+        /// The next event to arrive before `until`.
+        fn next_event(events: &Receiver<ScreenEvent>, until: Instant) -> Option<ScreenEvent> {
+            while Instant::now() < until {
+                if let Ok(event) = events.try_recv() {
+                    return Some(event);
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+            None
+        }
+
+        fn frame_of(event: ScreenEvent) -> anyhow::Result<Frame> {
+            match event {
+                ScreenEvent::Frame(frame) => Ok(frame),
+                ScreenEvent::Failed(message) => bail!(message),
             }
         }
 
-        #[derive(Clone, Copy, PartialEq, Eq)]
-        enum Shade {
-            Pattern,
-            Magenta,
-            Other,
-        }
-
-        /// How a captured BGRA pixel compares with the RGB color painted beneath it.
-        fn shade([blue, green, red, _]: [u8; 4], painted: [u8; 3]) -> Shade {
-            let near = |[r, g, b]: [u8; 3]| {
-                [red.abs_diff(r), green.abs_diff(g), blue.abs_diff(b)]
-                    .into_iter()
-                    .all(|difference| difference <= TOLERANCE)
-            };
-            if near(painted) {
-                Shade::Pattern
-            } else if near(MAGENTA) {
-                Shade::Magenta
-            } else {
-                Shade::Other
-            }
-        }
-
-        /// The pattern window's pixels from one captured frame, `scale` physical pixels apiece.
+        /// The pixels of the scene's backdrop from one captured frame, `scale` physical pixels
+        /// apiece.
         struct Crop {
             scale: usize,
             width: usize,
+            captured: Instant,
             bgra: Vec<[u8; 4]>,
         }
 
         impl Crop {
-            /// Keeps only the part of `frame` showing `pattern`, then drops the frame.
+            /// Keeps only the part of `frame` showing `area`, then drops the frame.
             #[expect(
                 clippy::arithmetic_side_effects,
                 reason = "Offsets within one captured display, bounded by indexing"
             )]
-            fn of(frame: Frame, display: Display, pattern: RECT) -> anyhow::Result<Self> {
+            fn of(frame: Frame, display: Display, area: RECT) -> anyhow::Result<Self> {
                 let [left, top, ..] = display.bounds;
                 let [width, height] = display.extent();
                 let scale = width / frame.width.cast_signed();
@@ -1289,10 +1494,10 @@ mod tests {
                     "The frame does not match the display"
                 );
                 let frame_pixels = |physical: i32| (physical / scale).cast_unsigned() as usize;
-                let column = frame_pixels(pattern.left - left);
-                let row = frame_pixels(pattern.top - top);
-                let crop_width = frame_pixels(pattern.right - pattern.left);
-                let crop_height = frame_pixels(pattern.bottom - pattern.top);
+                let column = frame_pixels(area.left - left);
+                let row = frame_pixels(area.top - top);
+                let crop_width = frame_pixels(area.right - area.left);
+                let crop_height = frame_pixels(area.bottom - area.top);
                 let bgra = frame
                     .bgra
                     .chunks_exact(frame.width as usize * BYTES_PER_PIXEL)
@@ -1309,38 +1514,45 @@ mod tests {
                 Ok(Self {
                     scale: scale.cast_unsigned() as usize,
                     width: crop_width,
+                    captured: frame.captured,
                     bgra,
                 })
             }
 
-            fn tally(&self) -> Tally {
+            /// How many pixels stray from what `expected` says capture shows at each physical
+            /// offset into the crop.
+            fn mismatches(&self, expected: impl Fn(i32, i32) -> [u8; 3]) -> usize {
                 let positions = || (0..).step_by(self.scale);
-                let shades: Vec<Shade> = self
-                    .bgra
+                self.bgra
                     .chunks_exact(self.width)
                     .zip(positions())
-                    .flat_map(|(line, y)| {
+                    .map(|(line, y)| {
                         line.iter()
                             .zip(positions())
-                            .map(move |(&pixel, x)| shade(pixel, pattern(x, y)))
+                            .filter(|&(&pixel, x)| !near(pixel, expected(x, y)))
+                            .count()
                     })
-                    .collect();
-                let count = |wanted| shades.iter().filter(|&&shade| shade == wanted).count();
-                Tally {
-                    pattern: count(Shade::Pattern),
-                    magenta: count(Shade::Magenta),
-                    other: count(Shade::Other),
-                }
+                    .sum()
             }
         }
 
-        /// Speakeasy's own windows: a topmost test pattern and, over part of it, a magenta overlay
-        /// configured as the Show's. A painter thread owns them and destroys them when the scene
+        fn near([blue, green, red, _]: [u8; 4], [r, g, b]: [u8; 3]) -> bool {
+            [red.abs_diff(r), green.abs_diff(g), blue.abs_diff(b)]
+                .into_iter()
+                .all(|difference| difference <= TOLERANCE)
+        }
+
+        /// Speakeasy's own windows: a backdrop that Windows shows to capture as black, a magenta
+        /// overlay configured as the Show's, and later a test pattern between them that no
+        /// exclusion call ever names. A painter thread owns them and destroys them when the scene
         /// drops, or after `ON_SCREEN` whatever the test does.
         struct Scene {
-            pattern: isize,
-            overlay: isize,
+            backdrop: HWND,
+            overlay: HWND,
             overlay_bounds: [i32; 4],
+            pattern: Option<HWND>,
+            requests: Sender<()>,
+            replies: Receiver<anyhow::Result<isize>>,
             close: Sender<Infallible>,
             painter: Option<thread::JoinHandle<()>>,
         }
@@ -1352,52 +1564,67 @@ mod tests {
             )]
             fn open(display: Display) -> anyhow::Result<Self> {
                 let [left, top, right, bottom] = display.bounds;
-                // Even offsets from the display's origin keep every pattern edge in halved frames.
-                let x = left + (((right - left - PATTERN_WIDTH) / 2) & !1);
-                let y = top + (((bottom - top - PATTERN_HEIGHT) / 2) & !1);
-                let pattern = [x, y, PATTERN_WIDTH, PATTERN_HEIGHT];
+                let [width, height] = [PATTERN_WIDTH + 2 * MARGIN, PATTERN_HEIGHT + 2 * MARGIN];
+                // Even offsets from the display's origin keep every edge in halved frames.
+                let x = left + (((right - left - width) / 2) & !1);
+                let y = top + (((bottom - top - height) / 2) & !1);
                 let [overlay_left, overlay_top, overlay_right, overlay_bottom] = OVERLAY;
+                let [pattern_x, pattern_y] = [x + MARGIN, y + MARGIN];
                 let overlay = Display {
                     monitor: display.monitor,
                     bounds: [
-                        x + overlay_left,
-                        y + overlay_top,
-                        x + overlay_right,
-                        y + overlay_bottom,
+                        pattern_x + overlay_left,
+                        pattern_y + overlay_top,
+                        pattern_x + overlay_right,
+                        pattern_y + overlay_bottom,
                     ],
                 };
-                let (opened, windows) = async_channel::bounded(1);
+                let (requests, requested) = async_channel::bounded(1);
+                let (replying, replies) = async_channel::bounded(3);
                 let (close, closing) = async_channel::bounded::<Infallible>(1);
-                let painter = thread::spawn(move || paint(pattern, overlay, &opened, &closing));
-                let [pattern, overlay_window] = windows.recv_blocking()??;
+                let layout = [x, y, width, height];
+                let painter =
+                    thread::spawn(move || paint(layout, overlay, &replying, &requested, &closing));
+                let backdrop = replies.recv_blocking()??;
+                let overlay_window = replies.recv_blocking()??;
                 Ok(Self {
-                    pattern,
-                    overlay: overlay_window,
+                    backdrop: backdrop as HWND,
+                    overlay: overlay_window as HWND,
                     overlay_bounds: overlay.bounds,
+                    pattern: None,
+                    requests,
+                    replies,
                     close,
                     painter: Some(painter),
                 })
             }
 
-            fn overlay_handle(&self) -> anyhow::Result<RawWindowHandle> {
-                let hwnd = NonZeroIsize::new(self.overlay).context("Missing overlay window")?;
-                Ok(RawWindowHandle::Win32(Win32WindowHandle::new(hwnd)))
+            /// Has the painter open the pattern window, and waits until it shows.
+            fn open_pattern(&mut self) -> anyhow::Result<HWND> {
+                self.requests.try_send(())?;
+                let pattern = self.replies.recv_blocking()?? as HWND;
+                self.pattern = Some(pattern);
+                Ok(pattern)
             }
 
-            /// Confirms `configure_overlay` placed and styled the overlay as a Show needs.
+            fn is_ours(&self, window: HWND) -> bool {
+                window == self.backdrop || window == self.overlay || Some(window) == self.pattern
+            }
+
+            /// Confirms `configure_overlay` placed, styled, and excluded the overlay for good.
             fn check_overlay(&self) -> anyhow::Result<()> {
-                let overlay = self.overlay as HWND;
                 let mut bounds = RECT::default();
-                let mut affinity = 0;
-                // SAFETY: the painter keeps the window alive; each call writes a live local.
-                let (styles, visible) = unsafe {
-                    ok_or_last_error(GetWindowRect(overlay, &raw mut bounds))?;
-                    ok_or_last_error(GetWindowDisplayAffinity(overlay, &raw mut affinity))?;
+                // SAFETY: each call reads a window by handle into a live local; a window the
+                // painter has destroyed fails it.
+                let (measured, styles, visible, marked) = unsafe {
                     (
-                        GetWindowLongPtrW(overlay, GWL_EXSTYLE),
-                        IsWindowVisible(overlay) != FALSE,
+                        GetWindowRect(self.overlay, &raw mut bounds),
+                        GetWindowLongPtrW(self.overlay, GWL_EXSTYLE),
+                        IsWindowVisible(self.overlay) != FALSE,
+                        !GetPropW(self.overlay, ALWAYS_EXCLUDED).is_null(),
                     )
                 };
+                ok_or_last_error(measured)?;
                 let RECT {
                     left,
                     top,
@@ -1405,115 +1632,104 @@ mod tests {
                     bottom,
                 } = bounds;
                 assert_eq!([left, top, right, bottom], self.overlay_bounds);
-                assert_eq!(affinity, WDA_EXCLUDEFROMCAPTURE);
+                assert_eq!(affinity(self.overlay), Some(WDA_EXCLUDEFROMCAPTURE));
                 let wanted = WS_EX_LAYERED
                     | WS_EX_TRANSPARENT
                     | WS_EX_NOACTIVATE
                     | WS_EX_TOOLWINDOW
                     | WS_EX_TOPMOST;
                 assert_eq!(u32::try_from(styles)? & wanted, wanted);
-                assert!(visible);
+                assert!(visible && marked);
                 Ok(())
             }
 
-            /// Captures one frame of `display` and keeps only the pattern window's pixels, after
-            /// proving before and after that nothing else covers them.
-            async fn capture(
-                &self,
+            /// One frame from a capture that leaves no window out, kept only where it shows the
+            /// backdrop, after proving before and after that nothing else covers it.
+            fn unfiltered(&self, display: Display, longest_edge: u32) -> anyhow::Result<Crop> {
+                let area = self.area()?;
+                self.check_owned(area)?;
+                let crop = Crop::of(unfiltered_frame(display, longest_edge)?, display, area)?;
+                self.check_owned(area)?;
+                Ok(crop)
+            }
+
+            /// Every frame of a `ScreenCapture` that opens the pattern after its first frame,
+            /// kept only where they show the backdrop, with when the pattern opened.
+            fn record_opening_pattern(
+                &mut self,
                 display: crate::screen::Display,
-                longest_edge: u32,
-            ) -> anyhow::Result<Crop> {
-                let pattern = self.pattern_bounds()?;
-                self.check_owned(pattern)?;
-                let (events, frames) = async_channel::bounded(1);
+            ) -> anyhow::Result<(Vec<Crop>, Instant)> {
+                let area = self.area()?;
+                self.check_owned(area)?;
+                let (events, frames) = async_channel::bounded(4);
                 let started = Instant::now();
-                let capture =
-                    ScreenCapture::start(Duration::from_millis(100), longest_edge, events)?;
+                let capture = ScreenCapture::start(INTERVAL, u32::MAX, events)?;
                 ensure!(
                     capture.display() == display,
                     "The pointer moved to another display; nothing was inspected"
                 );
-                let frame = match tokio::time::timeout(PATIENCE, frames.recv()).await?? {
-                    ScreenEvent::Frame(frame) => frame,
-                    ScreenEvent::Failed(message) => bail!(message),
-                };
-                println!(
-                    "First {}×{} frame {:.1} ms after start",
-                    frame.width,
-                    frame.height,
-                    started.elapsed().as_secs_f64() * 1e3
+                let patience = started.checked_add(PATIENCE).unwrap();
+                let first = next_event(&frames, patience).context("No frame arrived")?;
+                let latency = started.elapsed().as_secs_f64() * 1e3;
+                println!("First frame {latency:.1} ms after start");
+                let mut crops = vec![Crop::of(frame_of(first)?, display.native, area)?];
+                let opened = Instant::now();
+                let pattern = self.open_pattern()?;
+                let watched = opened.checked_add(WATCH).unwrap();
+                while let Some(event) = next_event(&frames, watched) {
+                    crops.push(Crop::of(frame_of(event)?, display.native, area)?);
+                }
+                ensure!(
+                    affinity(pattern) == Some(WDA_EXCLUDEFROMCAPTURE),
+                    "The capture did not leave out a window opened while it ran"
                 );
                 drop(capture);
-                let crop = Crop::of(frame, display.native, pattern)?;
-                self.check_owned(pattern)?;
-                Ok(crop)
+                self.check_owned(area)?;
+                Ok((crops, opened))
             }
 
-            fn pattern_bounds(&self) -> anyhow::Result<RECT> {
+            fn area(&self) -> anyhow::Result<RECT> {
                 let mut bounds = RECT::default();
-                // SAFETY: the painter keeps the window alive, and the out-parameter is a live
-                // RECT of the size passed.
+                // SAFETY: reads a window by handle into a live RECT of the size passed; a window
+                // the painter has destroyed fails the call.
                 let read = unsafe {
                     DwmGetWindowAttribute(
-                        self.pattern as HWND,
+                        self.backdrop,
                         DWMWA_EXTENDED_FRAME_BOUNDS.cast_unsigned(),
                         (&raw mut bounds).cast(),
                         u32::try_from(size_of::<RECT>())?,
                     )
                 };
-                ensure!(read >= 0, "Cannot locate the test pattern");
+                ensure!(read >= 0, "Cannot locate the test scene");
                 Ok(bounds)
             }
 
             /// Proves only the scene shows within `area`: a probe every 16 pixels and along the
-            /// far edges finds the pattern, and no visible window above it overlaps the area,
-            /// including click-through windows the probe passes over.
+            /// far edges finds one of its windows, and no visible window above the backdrop
+            /// overlaps the area, including click-through windows the probe passes over.
             fn check_owned(&self, area: RECT) -> anyhow::Result<()> {
-                let ours = [self.pattern, self.overlay];
                 let xs = (area.left..area.right)
                     .step_by(16)
                     .chain([area.right.saturating_sub(1)]);
                 let ys = (area.top..area.bottom)
                     .step_by(16)
                     .chain([area.bottom.saturating_sub(1)]);
-                for point in ys.flat_map(|y| xs.clone().map(move |x| POINT { x, y })) {
-                    // SAFETY: both calls take values and retain nothing.
-                    let root = unsafe { GetAncestor(WindowFromPoint(point), GA_ROOT) };
-                    ensure!(
-                        ours.contains(&(root as isize)),
-                        "A {} window shows at ({}, {}) over the test pattern",
-                        class_of(root),
-                        point.x,
-                        point.y
-                    );
-                }
-                let above = std::iter::successors(next_above(self.pattern as HWND), |&window| {
-                    next_above(window)
-                });
-                for window in above.filter(|&window| !ours.contains(&(window as isize))) {
-                    let class = class_of(window);
-                    ensure!(
-                        class.starts_with(HANDWRITING_CANVAS) || !shows_over(window, area),
-                        "A {class} window above the test pattern overlaps it"
-                    );
-                }
+                let probed = ys
+                    .flat_map(|y| xs.clone().map(move |x| POINT { x, y }))
+                    .all(|point| {
+                        // SAFETY: both calls take values and retain nothing.
+                        self.is_ours(unsafe { GetAncestor(WindowFromPoint(point), GA_ROOT) })
+                    });
+                let mut covering = top_level_windows()?
+                    .into_iter()
+                    .take_while(|&window| window != self.backdrop)
+                    .filter(|&window| !self.is_ours(window) && shows_over(window, area));
+                ensure!(
+                    probed && covering.next().is_none(),
+                    "Another window covers the test scene"
+                );
                 Ok(())
             }
-        }
-
-        /// The window just above `window` in z-order, if any.
-        fn next_above(window: HWND) -> Option<HWND> {
-            // SAFETY: takes a handle by value and retains nothing.
-            let above = unsafe { GetWindow(window, GW_HWNDPREV) };
-            (!above.is_null()).then_some(above)
-        }
-
-        /// A window's class name, which names its kind without revealing what it shows.
-        fn class_of(window: HWND) -> String {
-            let mut name = [0_u16; 256];
-            // SAFETY: writes at most the buffer's length into this live local.
-            let length = unsafe { GetClassNameW(window, name.as_mut_ptr(), 256) };
-            String::from_utf16_lossy(&name[..usize::try_from(length).unwrap_or(0)])
         }
 
         impl Drop for Scene {
@@ -1527,72 +1743,97 @@ mod tests {
             }
         }
 
-        /// Whether `window` is visible on this virtual desktop and overlaps `area`.
+        /// Whether `window` is visible on this virtual desktop over `area`, other than the
+        /// handwriting canvas.
         fn shows_over(window: HWND, area: RECT) -> bool {
             let mut cloaked = 0_u32;
             let mut bounds = RECT::default();
+            let mut class = [0_u16; 64];
             // SAFETY: each call reads a window by handle into a live local of the size passed.
-            unsafe {
-                IsWindowVisible(window) != FALSE
-                    && (DwmGetWindowAttribute(
+            let (visible, cloak_read, measured, length) = unsafe {
+                (
+                    IsWindowVisible(window) != FALSE,
+                    DwmGetWindowAttribute(
                         window,
                         DWMWA_CLOAKED.cast_unsigned(),
                         (&raw mut cloaked).cast(),
                         4,
-                    ) < 0
-                        || cloaked == 0)
-                    && GetWindowRect(window, &raw mut bounds) != FALSE
-                    && bounds.left < area.right
-                    && area.left < bounds.right
-                    && bounds.top < area.bottom
-                    && area.top < bounds.bottom
-            }
+                    ),
+                    GetWindowRect(window, &raw mut bounds) != FALSE,
+                    GetClassNameW(window, class.as_mut_ptr(), 64),
+                )
+            };
+            let class = String::from_utf16_lossy(&class[..usize::try_from(length).unwrap_or(0)]);
+            visible
+                && (cloak_read < 0 || cloaked == 0)
+                && measured
+                && !class.starts_with(HANDWRITING_CANVAS)
+                && bounds.left < area.right
+                && area.left < bounds.right
+                && bounds.top < area.bottom
+                && area.top < bounds.bottom
         }
 
-        /// Owns the scene's windows on their own thread until `closing` closes or time runs out.
+        /// Runs the scene's windows on this thread, replying with each as it opens, or with what
+        /// stopped them.
         fn paint(
-            [x, y, width, height]: [i32; 4],
+            layout: [i32; 4],
             overlay: Display,
-            opened: &Sender<anyhow::Result<[isize; 2]>>,
+            replies: &Sender<anyhow::Result<isize>>,
+            requests: &Receiver<()>,
             closing: &Receiver<Infallible>,
         ) {
-            let windows = (|| {
-                let _pattern_class =
-                    Class::register(PATTERN_CLASS, Some(paint_pattern), null_mut())?;
-                // SAFETY: the brush becomes the class's, which Windows deletes on unregistering.
-                let magenta = unsafe { CreateSolidBrush(0x00FF_00FF) };
-                let _overlay_class = Class::register(OVERLAY_CLASS, Some(DefWindowProcW), magenta)?;
-                let pattern = Window::create(
-                    PATTERN_CLASS,
-                    WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-                    [x, y, width, height],
-                )?;
-                let overlay_window = Window::create(
-                    OVERLAY_CLASS,
-                    WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-                    [0, 0, 1, 1],
-                )?;
-                // SAFETY: shows this thread's own window without activating it.
-                unsafe { ShowWindow(pattern.0, SW_SHOWNOACTIVATE) };
-                let handle = RawWindowHandle::Win32(Win32WindowHandle::new(
-                    NonZeroIsize::new(overlay_window.0 as isize).context("Missing overlay")?,
-                ));
-                configure_overlay(handle, overlay)?;
-                set_overlay_visible(handle, true);
-                opened.try_send(Ok([pattern.0 as isize, overlay_window.0 as isize]))?;
-                pump(closing);
-                anyhow::Ok(())
-            })();
-            if let Err(error) = windows {
+            if let Err(error) = paint_scene(layout, overlay, replies, requests, closing) {
                 // A closed lane means the test has already given up on the scene.
-                drop(opened.try_send(Err(error)));
+                drop(replies.try_send(Err(error)));
             }
         }
 
-        fn pump(closing: &Receiver<Infallible>) {
+        /// Opens the scene's windows, and the pattern when asked, then keeps them painted until
+        /// `closing` closes or time runs out.
+        fn paint_scene(
+            [x, y, width, height]: [i32; 4],
+            overlay: Display,
+            replies: &Sender<anyhow::Result<isize>>,
+            requests: &Receiver<()>,
+            closing: &Receiver<Infallible>,
+        ) -> anyhow::Result<()> {
+            // SAFETY: each brush becomes its class's, which Windows deletes on unregistering.
+            let [gray, magenta] =
+                [0x0060_6060, 0x00FF_00FF].map(|color| unsafe { CreateSolidBrush(color) });
+            let _classes = [
+                Class::register(BACKDROP_CLASS, Some(DefWindowProcW), gray)?,
+                Class::register(OVERLAY_CLASS, Some(DefWindowProcW), magenta)?,
+                Class::register(PATTERN_CLASS, Some(paint_pattern), null_mut())?,
+            ];
+            let topmost = WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+            let backdrop = Window::create(BACKDROP_CLASS, topmost, [x, y, width, height])?;
+            set_affinity(backdrop.0, WDA_MONITOR)?;
+            backdrop.show();
+            replies.try_send(Ok(backdrop.0 as isize))?;
+            let overlay_window = Window::create(
+                OVERLAY_CLASS,
+                WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                [0, 0, 1, 1],
+            )?;
+            let handle = raw_handle(overlay_window.0)?;
+            configure_overlay(handle, overlay)?;
+            set_overlay_visible(handle, true);
+            replies.try_send(Ok(overlay_window.0 as isize))?;
+            let mut pattern = None;
             let deadline = Instant::now().checked_add(ON_SCREEN).unwrap();
             let mut message = MSG::default();
             while !closing.is_closed() && Instant::now() < deadline {
+                if pattern.is_none() && requests.try_recv().is_ok() {
+                    let [pattern_x, pattern_y] = [x, y].map(|edge| edge.saturating_add(MARGIN));
+                    let bounds = [pattern_x, pattern_y, PATTERN_WIDTH, PATTERN_HEIGHT];
+                    let window = Window::create(PATTERN_CLASS, topmost, bounds)?;
+                    window.show();
+                    // Back above the pattern, as the overlay stays above everything it inks.
+                    set_overlay_visible(handle, true);
+                    replies.try_send(Ok(window.0 as isize))?;
+                    pattern = Some(window);
+                }
                 // SAFETY: messages come from this thread's queue and reach only its windows.
                 unsafe {
                     while PeekMessageW(&raw mut message, null_mut(), 0, 0, PM_REMOVE) != FALSE {
@@ -1602,6 +1843,7 @@ mod tests {
                 }
                 thread::sleep(Duration::from_millis(5));
             }
+            Ok(())
         }
 
         struct Class(PCWSTR);
@@ -1609,8 +1851,8 @@ mod tests {
         impl Class {
             fn register(
                 name: PCWSTR,
-                procedure: windows_sys::Win32::UI::WindowsAndMessaging::WNDPROC,
-                background: windows_sys::Win32::Graphics::Gdi::HBRUSH,
+                procedure: WNDPROC,
+                background: HBRUSH,
             ) -> anyhow::Result<Self> {
                 let class = WNDCLASSW {
                     lpfnWndProc: procedure,
@@ -1664,6 +1906,11 @@ mod tests {
                 ensure!(!hwnd.is_null(), "Cannot create a test window");
                 Ok(Self(hwnd))
             }
+
+            fn show(&self) {
+                // SAFETY: shows this thread's own window without activating it.
+                unsafe { ShowWindow(self.0, SW_SHOWNOACTIVATE) };
+            }
         }
 
         impl Drop for Window {
@@ -1676,9 +1923,9 @@ mod tests {
         unsafe extern "system" fn paint_pattern(
             hwnd: HWND,
             message: u32,
-            wparam: usize,
-            lparam: isize,
-        ) -> isize {
+            wparam: WPARAM,
+            lparam: LPARAM,
+        ) -> LRESULT {
             if message != WM_PAINT {
                 // SAFETY: forwards unchanged arguments for this thread's own window.
                 return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
