@@ -15,7 +15,7 @@ use tokio::{sync::watch, task::JoinError};
 pub(crate) use self::session::SessionId;
 use crate::{
     audio::Sealed,
-    config::Config,
+    config::{Config, ValidConfig},
     ports::{Desktop, Footage, Ports},
     show::Canvas,
 };
@@ -132,7 +132,7 @@ pub(crate) struct Runtime<Owner = OwnedThread> {
 
 impl Runtime {
     pub(crate) fn start(
-        config: Config,
+        config: ValidConfig,
         snapshots: watch::Sender<Snapshot>,
         canvas: watch::Sender<Canvas>,
     ) -> anyhow::Result<(Self, InputMonitor)> {
@@ -141,7 +141,7 @@ impl Runtime {
             speakeasy_platform::prepare(input.clone(), config.desktop_options())?;
         let ports = Desktop { inserter, canvas };
         let runtime = Self::host(
-            config,
+            config.into_inner(),
             snapshots,
             ports,
             input,
@@ -222,10 +222,10 @@ impl<Owner> Runtime<Owner> {
         }
     }
 
-    pub(crate) fn configure(&self, config: Config) {
+    pub(crate) fn configure(&self, config: ValidConfig) {
         // Revoke now, so a preparing insertion cannot commit before the owner applies the change.
         self.input.cancel();
-        self.configuration.send_replace(config);
+        self.configuration.send_replace(config.into_inner());
     }
 
     /// Wakes the owner on its stop lane before closing input, so a normal pause never reports a

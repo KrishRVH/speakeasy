@@ -7,7 +7,7 @@ use async_channel::Receiver;
 use speakeasy_platform::OwnedThread;
 
 use super::lifecycle::ConfigEpoch;
-use crate::config::Config;
+use crate::config::{Config, ValidConfig};
 
 pub(super) struct SaveRequest {
     pub(super) draft: Config,
@@ -18,7 +18,7 @@ pub(super) struct SaveRequest {
 /// A durable write: the draft as submitted and the settings validation resolved from it.
 pub(super) struct SavedConfig {
     submitted: Config,
-    pub(super) validated: Config,
+    pub(super) validated: ValidConfig,
 }
 
 impl SavedConfig {
@@ -26,7 +26,7 @@ impl SavedConfig {
     /// it was.
     pub(super) fn update_draft(&self, draft: &mut Config) -> bool {
         if *draft == self.submitted {
-            *draft = self.validated.clone();
+            *draft = Config::clone(&self.validated);
             true
         } else {
             false
@@ -121,8 +121,7 @@ struct SaveWork {
 impl SaveWork {
     fn start(draft: Config, path: PathBuf) -> anyhow::Result<Self> {
         Self::spawn(move || {
-            let mut validated = draft.clone();
-            validated.validate(&path)?;
+            let validated = draft.validated(&path)?;
             validated.save(&path)?;
             Ok(SavedConfig {
                 submitted: draft,
@@ -162,7 +161,7 @@ mod tests {
     fn durable(config: Config) -> SavedConfig {
         SavedConfig {
             submitted: config.clone(),
-            validated: config,
+            validated: ValidConfig::assume(config),
         }
     }
 
@@ -275,7 +274,7 @@ mod tests {
         validated.model = PathBuf::from("/resolved/model.gguf");
         let saved = SavedConfig {
             submitted,
-            validated,
+            validated: ValidConfig::assume(validated),
         };
         draft.threads = 8;
         assert!(!saved.update_draft(&mut draft));
@@ -283,7 +282,7 @@ mod tests {
         assert!(draft.model.as_os_str().is_empty());
         draft = saved.submitted.clone();
         assert!(saved.update_draft(&mut draft));
-        assert!(draft == saved.validated);
+        assert!(draft == *saved.validated);
     }
 
     #[test]

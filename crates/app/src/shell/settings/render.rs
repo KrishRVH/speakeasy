@@ -22,7 +22,7 @@ use crate::{
 impl Render for Settings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = self.config.theme.palette();
-        let unconfigured = !is_demo(cx) && self.config.engine_executable.as_os_str().is_empty();
+        let unconfigured = !is_demo(cx) && self.config.needs_engine();
         div()
             .id("settings")
             .on_key_down(cycle_focus)

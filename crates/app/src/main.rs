@@ -21,11 +21,7 @@ mod theme;
 mod transcript;
 mod tray;
 
-use std::{
-    borrow::Cow,
-    path::{Path, PathBuf},
-    process::ExitCode,
-};
+use std::{borrow::Cow, path::PathBuf, process::ExitCode};
 
 use anyhow::{Context as _, bail, ensure};
 use gpui::{App, Application, BorrowAppContext};
@@ -33,7 +29,7 @@ use speakeasy_platform::{CANCEL_SHORTCUT, SHORTCUT};
 use tokio::sync::watch;
 
 use crate::{
-    config::Config,
+    config::{Config, Startup, ValidConfig},
     instance::{Instance, Request},
     runtime::{Phase, Snapshot},
     shell::{LaunchMode, Services},
@@ -90,29 +86,6 @@ impl Cli {
             }
         }
         Ok(Some(cli))
-    }
-}
-
-enum ConfigState {
-    Unconfigured,
-    Configured,
-    Invalid(String),
-}
-
-impl ConfigState {
-    fn into_snapshot(self) -> Snapshot {
-        match self {
-            Self::Invalid(message) => Snapshot {
-                message,
-                phase: Phase::Error,
-                ..Snapshot::default()
-            },
-            // Applying a configured app's settings replaces this placeholder before it shows.
-            Self::Unconfigured | Self::Configured => Snapshot {
-                message: "Speakeasy is not set up yet.".into(),
-                ..Snapshot::default()
-            },
-        }
     }
 }
 
@@ -184,9 +157,15 @@ fn launch(
     acquired: Option<(Instance, async_channel::Receiver<Request>)>,
 ) {
     let (instance, requests) = acquired.unzip();
-    let (config, state) = load_config(&path, mode);
-    let configured = matches!(state, ConfigState::Configured);
-    let (output, updates) = watch::channel(state.into_snapshot());
+    // A demo is simulated, so it never reads the user's settings.
+    let (config, startup) = if mode.is_demo() {
+        (Config::default(), Startup::Unconfigured)
+    } else {
+        Config::load(&path)
+    };
+    let (valid, snapshot) = split_startup(startup);
+    let configured = valid.is_some();
+    let (output, updates) = watch::channel(snapshot);
     let application = Application::new().with_assets(icons::Icons);
     application.on_reopen(shell::reveal);
     application.run(move |cx| {
@@ -207,13 +186,7 @@ fn launch(
             cx,
         );
         cx.set_global(Services::new(
-            path,
-            config.clone(),
-            output,
-            canvas,
-            pill,
-            instance,
-            mode,
+            path, config, output, canvas, pill, instance, mode,
         ));
         if let Some(requests) = requests {
             cx.update_global::<Services, _>(|services, cx| {
@@ -224,9 +197,9 @@ fn launch(
         if mode.is_resident() {
             show::attend_retention(|error, cx| cx.global::<Services>().report(error), cx);
         }
-        if configured
+        if let Some(valid) = valid
             && let Err(error) =
-                cx.update_global::<Services, _>(|services, cx| services.apply(config, cx))
+                cx.update_global::<Services, _>(|services, cx| services.apply(valid, cx))
         {
             cx.global::<Services>().publish_error(&error);
         }
@@ -278,29 +251,25 @@ fn print_help() {
     );
 }
 
-/// Demos and first launches start unconfigured from defaults; saved settings must parse and
-/// validate.
-fn load_config(path: &Path, mode: LaunchMode) -> (Config, ConfigState) {
-    if mode.is_demo() || !path.exists() {
-        return (Config::default(), ConfigState::Unconfigured);
-    }
-    let mut config = match Config::read(path) {
-        Ok(config) => config,
-        Err(error) => {
-            return (
-                Config::default(),
-                ConfigState::Invalid(format!("{error:#}")),
-            );
-        },
+/// Splits the launch state into the settings to apply, if any, and the first snapshot.
+fn split_startup(startup: Startup) -> (Option<ValidConfig>, Snapshot) {
+    // Applying a configured app's settings replaces this placeholder before it shows.
+    let placeholder = || Snapshot {
+        message: "Speakeasy is not set up yet.".into(),
+        ..Snapshot::default()
     };
-    if config.engine_executable.as_os_str().is_empty() {
-        return (config, ConfigState::Unconfigured);
+    match startup {
+        Startup::Invalid(message) => (
+            None,
+            Snapshot {
+                message,
+                phase: Phase::Error,
+                ..Snapshot::default()
+            },
+        ),
+        Startup::Unconfigured => (None, placeholder()),
+        Startup::Configured(valid) => (Some(valid), placeholder()),
     }
-    let state = match config.validate(path) {
-        Ok(()) => ConfigState::Configured,
-        Err(error) => ConfigState::Invalid(format!("{error:#}")),
-    };
-    (config, state)
 }
 
 fn load_wordmark_font(cx: &App) {

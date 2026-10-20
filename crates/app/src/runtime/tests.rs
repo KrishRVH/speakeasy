@@ -891,7 +891,8 @@ async fn saved_cleanup_opt_out_keeps_words_and_worker() -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("settings.json");
         config.save(&path)?;
-        h.runtime.configure(Config::read(&path)?);
+        h.runtime
+            .configure(ValidConfig::assume(Config::read(&path)?));
         h.input(Input::Cancel);
         h.phase(Phase::Idle).await?;
         h.start().await?;
@@ -944,7 +945,7 @@ async fn dictation_inserts_once_and_request_preferences_keep_the_warm_worker() -
         language: "auto".into(),
         ..Config::default()
     };
-    h.runtime.configure(config);
+    h.runtime.configure(ValidConfig::assume(config));
     h.phase(Phase::Idle).await?;
     h.start().await?;
     h.finish_as("fixture two").await?;
@@ -957,7 +958,7 @@ async fn dictation_inserts_once_and_request_preferences_keep_the_warm_worker() -
     assert!(h.pasted.try_recv().is_err(), "A result was submitted twice");
     let mut config = h.runtime.configuration.borrow().clone();
     config.engine = Engine::Parakeet;
-    h.runtime.configure(config);
+    h.runtime.configure(ValidConfig::assume(config));
     receive(&h.loads).await?;
     h.start().await?;
     h.finish_as("new engine").await?;
@@ -1153,7 +1154,7 @@ async fn loading_notice_clears_once_ready_and_applied_settings_are_confirmed() -
     h.observe(|snapshot| snapshot.model == ModelState::Ready)
         .await?;
     assert_eq!(h.snapshot().message, "");
-    h.runtime.configure(Config::default());
+    h.runtime.configure(ValidConfig::assume(Config::default()));
     h.observe(|snapshot| snapshot.message == "Settings applied")
         .await?;
     assert_eq!(h.snapshot().phase, Phase::Idle);
@@ -1189,7 +1190,7 @@ async fn configuration_revokes_insertion_authority_before_owner_observation() ->
     let mut h = Harness::paused(|_| {})?;
     h.start().await?;
     assert!(h.runtime.input.active());
-    h.runtime.configure(Config::default());
+    h.runtime.configure(ValidConfig::assume(Config::default()));
     assert!(!h.runtime.input.active());
     h.phase(Phase::Idle).await?;
     h.close().await

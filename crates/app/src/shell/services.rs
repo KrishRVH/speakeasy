@@ -14,7 +14,7 @@ use super::{
     window::{self, reveal},
 };
 use crate::{
-    config::Config,
+    config::{Config, ValidConfig},
     gpui_ext::AppUpdate,
     instance::{Instance, Request},
     pill::Pill,
@@ -44,7 +44,7 @@ impl LaunchMode {
 /// What starts the service again once retiring owners acknowledge.
 enum Restart {
     /// Settings a save made durable.
-    Apply(Config),
+    Apply(ValidConfig),
     /// A resume, which validates the saved settings first.
     Validate,
 }
@@ -215,7 +215,7 @@ impl Services {
 
     /// Applies `config`: reconfigures live owners, queues behind retiring ones, or starts new ones.
     /// Does nothing once Quit has begun.
-    pub(crate) fn apply(&mut self, config: Config, cx: &App) -> anyhow::Result<()> {
+    pub(crate) fn apply(&mut self, config: ValidConfig, cx: &App) -> anyhow::Result<()> {
         if self.quitting() {
             return Ok(());
         }
@@ -230,7 +230,7 @@ impl Services {
             self.stop(cx);
         }
         if self.lifecycle.queue(Restart::Apply(config.clone())) {
-            self.config = config;
+            self.config = config.into_inner();
             return Ok(());
         }
         if let Some(runtime) = self.runtime() {
@@ -241,7 +241,7 @@ impl Services {
                 Runtime::start(config.clone(), self.output.clone(), self.canvas.clone())?;
             self.lifecycle = Lifecycle::Running(Owners { runtime, monitor });
         }
-        self.config = config;
+        self.config = config.into_inner();
         Ok(())
     }
 
@@ -249,7 +249,7 @@ impl Services {
     /// allows; otherwise the settings persist and show while dictation stays off.
     pub(super) fn adopt_saved(
         &mut self,
-        config: Config,
+        config: ValidConfig,
         saved_at: ConfigEpoch,
         cx: &App,
     ) -> anyhow::Result<()> {
@@ -257,7 +257,7 @@ impl Services {
         if save_may_enable(saved_at, self.config_epoch, enabled) {
             self.apply(config, cx)
         } else {
-            self.config = config;
+            self.config = config.into_inner();
             Ok(())
         }
     }
@@ -276,12 +276,11 @@ impl Services {
         if !self.lifecycle.validate(epoch) {
             return;
         }
-        let mut config = self.config.clone();
+        let config = self.config.clone();
         let path = self.path.clone();
-        let validation = cx.background_executor().spawn(async move {
-            config.validate(&path)?;
-            Ok::<_, anyhow::Error>(config)
-        });
+        let validation = cx
+            .background_executor()
+            .spawn(async move { config.validated(&path) });
         self.announce("Checking local speech settings…");
         self.validation = Some(cx.spawn(async move |cx| {
             let result = validation.await;
@@ -289,7 +288,7 @@ impl Services {
         }));
     }
 
-    fn validation_complete(epoch: ConfigEpoch, result: anyhow::Result<Config>, cx: &mut App) {
+    fn validation_complete(epoch: ConfigEpoch, result: anyhow::Result<ValidConfig>, cx: &mut App) {
         if !cx.has_global::<Self>() {
             return;
         }

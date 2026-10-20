@@ -1,7 +1,7 @@
 //! Opt-in profiling of the real owner and local speech with public audio and fake
 //! capture/insertion. It never installs a hook or touches an input device.
 
-use std::{path::Path, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 use speakeasy_platform::{Delivery, InsertPermit, Inserted};
 use tokio::time::timeout;
@@ -158,7 +158,8 @@ async fn wait_for_phase(
 #[tokio::test]
 #[ignore = "Profiles real local inference; requires SPEAKEASY_FIXTURE_CONFIG and SPEAKEASY_FIXTURE_WAV"]
 async fn profile_fixture_dictation() -> anyhow::Result<()> {
-    let config = Config::load(Path::new(&std::env::var("SPEAKEASY_FIXTURE_CONFIG")?))?;
+    let path = PathBuf::from(std::env::var("SPEAKEASY_FIXTURE_CONFIG")?);
+    let config = Config::read(&path)?.validated(&path)?.into_inner();
     let wav = std::fs::read(std::env::var("SPEAKEASY_FIXTURE_WAV")?)?;
     let (loaded, ready) = async_channel::bounded(1);
     let (inserted, submitted) = async_channel::bounded(1);

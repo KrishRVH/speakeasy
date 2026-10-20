@@ -701,7 +701,8 @@ mod tests {
     #[tokio::test]
     #[ignore = "Requires SPEAKEASY_FIXTURE_CONFIG and SPEAKEASY_FIXTURE_WAV (whisper.cpp samples/jfk.wav)"]
     async fn local_worker_recognizes_fixture_and_stops() -> anyhow::Result<()> {
-        let config = Config::load(Path::new(&std::env::var("SPEAKEASY_FIXTURE_CONFIG")?))?;
+        let path = Path::new(&std::env::var("SPEAKEASY_FIXTURE_CONFIG")?).to_owned();
+        let config = Config::read(&path)?.validated(&path)?.into_inner();
         let wav = std::fs::read(std::env::var("SPEAKEASY_FIXTURE_WAV")?)?;
         let language = config.language.clone();
         let started = std::time::Instant::now();

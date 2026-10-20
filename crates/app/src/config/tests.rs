@@ -1,5 +1,7 @@
 //! Checks the settings file contract, defaults, validation, and saves against temporary files.
 
+use anyhow::bail;
+
 use super::*;
 
 #[test]
@@ -112,18 +114,61 @@ fn validation_requires_an_executable_engine() -> anyhow::Result<()> {
     fs::write(&executable, b"fixture")?;
     fs::write(&model, b"fixture")?;
     fs::set_permissions(&executable, fs::Permissions::from_mode(0o600))?;
-    let mut config = Config {
+    let config = Config {
         engine_executable: executable.clone(),
         model,
         ..Config::default()
     };
     let path = directory.path().join("settings.json");
     let failure = config
-        .validate(&path)
+        .validated(&path)
         .err()
         .context("An engine without executable permission was accepted")?;
     assert!(failure.to_string().contains("not executable"));
     fs::set_permissions(executable, fs::Permissions::from_mode(0o700))?;
-    config.validate(&path)?;
+    config.validated(&path)?;
+    Ok(())
+}
+
+#[test]
+fn startup_classifies_saved_settings() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    let (config, startup) = Config::load(&path);
+    assert!(matches!(startup, Startup::Unconfigured) && config == Config::default());
+
+    fs::write(&path, "{")?;
+    let (config, startup) = Config::load(&path);
+    assert!(matches!(startup, Startup::Invalid(_)) && config == Config::default());
+
+    // A file without an engine keeps the user's other choices for Settings to show.
+    fs::write(&path, r#"{"theme":"iris"}"#)?;
+    let (config, startup) = Config::load(&path);
+    assert!(matches!(startup, Startup::Unconfigured));
+    assert_eq!(config.theme, Theme::Iris);
+
+    // A failed validation leaves the draft as the user wrote it.
+    valid_config(directory.path())?;
+    fs::write(
+        &path,
+        r#"{"engine_executable":"engine","model":"missing.gguf"}"#,
+    )?;
+    let (config, startup) = Config::load(&path);
+    assert!(matches!(startup, Startup::Invalid(_)));
+    assert_eq!(config.engine_executable, Path::new("engine"));
+
+    fs::write(
+        &path,
+        r#"{"engine_executable":"engine","model":"model.gguf"}"#,
+    )?;
+    let (config, startup) = Config::load(&path);
+    let Startup::Configured(valid) = startup else {
+        bail!("Valid settings did not configure dictation");
+    };
+    assert_eq!(
+        valid.engine_executable,
+        directory.path().join("engine").canonicalize()?
+    );
+    assert!(config == *valid);
     Ok(())
 }

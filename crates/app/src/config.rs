@@ -1,4 +1,4 @@
-//! Typed settings: path resolution, validation, and atomic saves.
+//! Typed settings: startup classification, path resolution, validation, and atomic saves.
 //!
 //! The JSON file is a user-edited contract that outlives releases. Missing keys read as
 //! [`Config::default`], so a new field needs no attribute, and unknown top-level keys are ignored,
@@ -11,6 +11,7 @@
 use std::{
     fs,
     io::Write,
+    ops::Deref,
     path::{Path, PathBuf},
 };
 
@@ -90,11 +91,28 @@ impl Config {
         .with_context(|| format!("Invalid settings in {}", path.display()))
     }
 
-    #[cfg(test)]
-    pub(crate) fn load(path: &Path) -> anyhow::Result<Self> {
-        let mut config = Self::read(path)?;
-        config.validate(path)?;
-        Ok(config)
+    /// Reads the settings at `path` for launch: the draft Settings edits, and how it stands. A file
+    /// that cannot be read yields defaults, so [`Config::save`] keeps refusing to replace it.
+    pub(crate) fn load(path: &Path) -> (Self, Startup) {
+        if !path.exists() {
+            return (Self::default(), Startup::Unconfigured);
+        }
+        let config = match Self::read(path) {
+            Ok(config) => config,
+            Err(error) => return (Self::default(), Startup::Invalid(format!("{error:#}"))),
+        };
+        if config.needs_engine() {
+            return (config, Startup::Unconfigured);
+        }
+        match config.validated(path) {
+            Ok(valid) => (Self::clone(&valid), Startup::Configured(valid)),
+            Err(error) => (config, Startup::Invalid(format!("{error:#}"))),
+        }
+    }
+
+    /// Whether the user still has to choose a speech engine.
+    pub(crate) fn needs_engine(&self) -> bool {
+        self.engine_executable.as_os_str().is_empty()
     }
 
     /// Whether `next` needs a different engine process.
@@ -106,11 +124,13 @@ impl Config {
             || self.use_gpu != next.use_gpu
     }
 
-    /// Resolves the engine and model against the settings directory and canonicalizes them, then
-    /// checks that they exist and that the remaining values are in range.
-    pub(crate) fn validate(&mut self, path: &Path) -> anyhow::Result<()> {
+    /// Resolves the engine and model of a copy against the settings directory and canonicalizes
+    /// them, then checks that they exist and that the remaining values are in range. The draft
+    /// stays as the user wrote it.
+    pub(crate) fn validated(&self, path: &Path) -> anyhow::Result<ValidConfig> {
+        let mut config = self.clone();
         let directory = path.parent().unwrap_or_else(|| Path::new("."));
-        for file in [&mut self.engine_executable, &mut self.model] {
+        for file in [&mut config.engine_executable, &mut config.model] {
             ensure!(
                 !file.as_os_str().is_empty(),
                 "Choose the local speech executable and a matching model."
@@ -127,19 +147,19 @@ impl Config {
         {
             use std::os::unix::fs::PermissionsExt;
             ensure!(
-                self.engine_executable.metadata()?.permissions().mode() & 0o111 != 0,
+                config.engine_executable.metadata()?.permissions().mode() & 0o111 != 0,
                 "Speech executable is not executable. Choose an installed engine or enable its executable permission."
             );
         }
         ensure!(
-            (1..=256).contains(&self.threads),
+            (1..=256).contains(&config.threads),
             "threads must be between 1 and 256"
         );
         ensure!(
-            (1..=16).contains(&self.language.len()),
+            (1..=16).contains(&config.language.len()),
             "Set language to a language code or auto"
         );
-        Ok(())
+        Ok(ValidConfig(config))
     }
 
     pub(crate) fn save(&self, path: &Path) -> anyhow::Result<()> {
@@ -157,6 +177,41 @@ impl Config {
         file.as_file().sync_all()?;
         file.persist(path).map_err(|error| error.error)?;
         Ok(())
+    }
+}
+
+/// How saved settings stand at launch.
+pub(crate) enum Startup {
+    /// A first launch, or a file without an engine: Settings offers setup.
+    Unconfigured,
+    Configured(ValidConfig),
+    /// The file cannot be read or validated; the message says why.
+    Invalid(String),
+}
+
+/// Settings whose engine and model resolved to canonical absolute files and whose values were in
+/// range when checked. Only [`Config::validated`] builds one; the files can still disappear later,
+/// and engine startup reports that.
+#[derive(Clone)]
+pub(crate) struct ValidConfig(Config);
+
+impl ValidConfig {
+    pub(crate) fn into_inner(self) -> Config {
+        self.0
+    }
+
+    /// Trusts `config` without checking it, for tests whose fake engines have no files.
+    #[cfg(test)]
+    pub(crate) const fn assume(config: Config) -> Self {
+        Self(config)
+    }
+}
+
+impl Deref for ValidConfig {
+    type Target = Config;
+
+    fn deref(&self) -> &Config {
+        &self.0
     }
 }
 
