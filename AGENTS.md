@@ -1,9 +1,9 @@
 # Speakeasy agent guide
 
 Speakeasy is a native Rust dictation app for Windows, macOS, and Linux. Keep it fast, small, and
-usable offline with local speech engines. Read `README.md` for setup and behavior. Before changing
-session, shutdown, keyboard, insertion, or module interfaces, read the
-[architecture change and test map](docs/architecture.md#change-and-test-map).
+usable offline with local speech engines. Before changing behavior, find its row in the
+[change and test map](docs/architecture.md#change-and-test-map); README's
+[Build and verify](README.md#build-and-verify) section lists packaging and native checks.
 
 ## Workflows
 
@@ -25,10 +25,11 @@ are outside this project's profile.
 
 ## Ownership and interfaces
 
-- `crates/core` owns pure gestures and motion; `crates/app` owns GPUI, session state, capture, and
-  the local worker; `crates/platform` owns native adapters.
-- Keep unsafe FFI confined to platform with a `SAFETY` explanation at every site. Core and the app
-  forbid unsafe code. Vendored code follows its upstream policy.
+- `crates/core` (`speakeasy-core`) owns pure gestures and motion; `crates/show` (`speakeasy-show`)
+  pure Show composition, no I/O; `crates/platform` (`speakeasy-platform`) native adapters, including
+  screen capture and the overlay window; `crates/app` (`speakeasy`) GPUI, the session owner, audio
+  capture, the local worker, and Show recording and publishing. Only platform may use unsafe code.
+- Explain every unsafe FFI site in a `SAFETY` comment; vendored code follows its upstream policy.
 - Give session state one owner. Move cross-thread work over channels; callbacks cannot stop a newer
   recording, overwrite its state, or paste stale text.
 - Locks, cells, atomics, and shared ownership need a per-site reason explaining why the value cannot
