@@ -62,7 +62,7 @@ time.sleep(60)
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Exercises the POSIX Linux package launcher")
-def test_apprun_preserves_arguments_and_library_path(tmp_path: Path) -> None:
+def test_apprun_preserves_arguments_and_environment(tmp_path: Path) -> None:
     root = tmp_path / "package with spaces"
     binary = root / "usr" / "bin" / "speakeasy"
     binary.parent.mkdir(parents=True)
@@ -79,7 +79,7 @@ def test_apprun_preserves_arguments_and_library_path(tmp_path: Path) -> None:
         text=True,
     )
     assert result.stdout.splitlines() == [
-        f"{root}/usr/lib:/public/lib",
+        "/public/lib",
         "--config",
         "a b.json",
         "--demo",

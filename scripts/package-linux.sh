@@ -52,6 +52,12 @@ printf '%s  %s\n' c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b
 chmod +x "$deploy"
 export APPIMAGE_EXTRACT_AND_RUN=1
 "$deploy" --appdir "$app_dir" --executable "$app_dir/usr/bin/speakeasy" --desktop-file "$app_dir/usr/share/applications/io.github.krvh.speakeasy.desktop" --icon-file "$app_dir/usr/share/icons/hicolor/scalable/apps/io.github.krvh.speakeasy.svg"
+# AppRun leaves LD_LIBRARY_PATH alone, so bundled libraries resolve only through this RUNPATH.
+dynamic=$(readelf -d "$app_dir/usr/bin/speakeasy")
+if [[ "$dynamic" != *"(RUNPATH)"*"[\$ORIGIN/../lib]"* ]]; then
+  echo "linuxdeploy did not set RUNPATH \$ORIGIN/../lib on usr/bin/speakeasy" >&2
+  exit 1
+fi
 # Check bundled ELF dependencies as well as the app against the same ABI floor.
 while IFS= read -r -d '' library; do
   versions=$(readelf --version-info "$library" 2> /dev/null | rg -o 'GLIBC_[0-9.]+' | sort -Vu | tail -1 || true)
