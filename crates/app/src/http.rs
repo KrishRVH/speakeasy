@@ -1,5 +1,7 @@
 //! The one place HTTP clients start. Linux reqwest is built without a rustls crypto provider, so a
 //! client built any other way panics in `build()`; this attaches ring, which GPUI already links.
+//! Clippy rejects reqwest's named constructors but cannot name its `Default` impls, so
+//! `Client::default()` and `ClientBuilder::default()` still compile and panic the same way.
 
 use reqwest::{Client, ClientBuilder};
 
