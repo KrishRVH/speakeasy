@@ -219,7 +219,7 @@ impl Scene<'_, '_> {
         let menu = Rect::from_origin(Point::new(960.0, row_center(0) - 20.0), 280.0, 40.0);
         self.fill(rounded(menu, 8.0), [255; 4]);
         self.text(
-            "Jet & Champagne",
+            "Daylight",
             17.0,
             Point::new(978.0, row_center(0) + 6.0),
             TEXT,
@@ -269,7 +269,7 @@ impl Scene<'_, '_> {
         }
         // The label runs under the Save button.
         self.text(
-            "Changes apply after you restart Speakeasy",
+            "Changes apply after you restart the app",
             16.0,
             Point::new(830.0, 768.0),
             SECONDARY,

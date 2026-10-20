@@ -165,7 +165,9 @@ async fn play_interruptions(output: &watch::Sender<Snapshot>, mut id: u64) {
         snapshot.phase = ending;
         snapshot.message = match ending {
             Phase::Copied => "Text copied. Release your shortcut keys and paste into your editor.",
-            Phase::Error => "Microphone disconnected. Choose an available microphone in Settings.",
+            Phase::Error => {
+                "Selected microphone is disconnected. Reconnect it or choose another in Settings."
+            },
             _ => "",
         }
         .into();
