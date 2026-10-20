@@ -32,21 +32,21 @@ use async_channel::Sender;
 pub use self::linux::{
     APPLICATION_ID, InputMonitor, Inserter, NativeTray, TrayAction, TrayPresentation,
     configure_pill, copy_text, prepare, reduced_motion, set_pill_visible, set_settings_visible,
-    show_error,
+    show_startup_error,
 };
 #[cfg(target_os = "macos")]
 use self::macos as native;
 #[cfg(target_os = "macos")]
 pub use self::macos::{
     InputMonitor, configure_pill, copy_text, reduced_motion, set_pill_visible,
-    set_settings_visible, show_error,
+    set_settings_visible, show_startup_error,
 };
 #[cfg(target_os = "windows")]
 use self::windows as native;
 #[cfg(target_os = "windows")]
 pub use self::windows::{
     InputMonitor, attach_console, choose_file, configure_pill, copy_text, minimize_to_tray,
-    reduced_motion, set_pill_visible, set_settings_visible, show_error,
+    reduced_motion, set_pill_visible, set_settings_visible, show_startup_error,
 };
 pub use self::{
     insertion::Delivery,

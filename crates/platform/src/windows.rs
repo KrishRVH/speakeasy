@@ -837,8 +837,9 @@ pub fn attach_console() {
     }
 }
 
-/// Presents a local startup error; callers never include audio, transcripts, or credentials.
-pub fn show_error(message: &str) {
+/// Presents an error that prevents or ends startup, blocking until the user dismisses it. Never
+/// called once a session can run. Callers never include audio, transcripts, or credentials.
+pub fn show_startup_error(message: &str) {
     let text = to_wide(message);
     // SAFETY: both NUL-terminated strings outlive this synchronous dialog.
     unsafe {

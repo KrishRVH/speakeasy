@@ -136,12 +136,12 @@ fn main() -> ExitCode {
         },
         Ok(Invocation::App(cli)) => {
             if let Err(error) = run(cli) {
-                speakeasy_platform::show_error(&format!("{error:#}"));
+                speakeasy_platform::show_startup_error(&format!("{error:#}"));
             }
             ExitCode::SUCCESS
         },
         Err(error) => {
-            speakeasy_platform::show_error(&format!("{error:#}"));
+            speakeasy_platform::show_startup_error(&format!("{error:#}"));
             ExitCode::SUCCESS
         },
     }
@@ -194,7 +194,7 @@ fn launch(
         let pill = match pill::open(updates, config.prefers_reduced_motion(), config.theme, cx) {
             Ok(pill) => pill,
             Err(error) => {
-                speakeasy_platform::show_error(&format!("Cannot open pill: {error:#}"));
+                speakeasy_platform::show_startup_error(&format!("Cannot open pill: {error:#}"));
                 cx.quit();
                 return;
             },
@@ -233,7 +233,7 @@ fn launch(
         if mode.is_resident()
             && let Err(error) = tray::install(cx)
         {
-            speakeasy_platform::show_error(&format!("{error:#}"));
+            speakeasy_platform::show_startup_error(&format!("{error:#}"));
             shell::request_quit(cx);
             return;
         }

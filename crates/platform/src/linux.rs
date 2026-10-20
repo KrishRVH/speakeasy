@@ -247,8 +247,9 @@ pub fn copy_text(_: &str) -> anyhow::Result<()> {
     anyhow::bail!("Shows are not available on Linux yet")
 }
 
-/// Presents a local startup error; callers never include audio, transcripts, or credentials.
-pub fn show_error(message: &str) {
+/// Writes an error that prevents or ends startup to stderr. Never called once a session can run.
+/// Callers never include audio, transcripts, or credentials.
+pub fn show_startup_error(message: &str) {
     eprintln!("Speakeasy: {message}");
 }
 
