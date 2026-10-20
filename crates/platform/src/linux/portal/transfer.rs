@@ -56,11 +56,15 @@ impl Drop for Selection {
     }
 }
 
+/// One transfer's share of a selection's text, withdrawn once the selection drops.
 pub(super) struct TransferPayload {
     text: Arc<str>,
     invalidated: Receiver<Infallible>,
 }
 
+/// Answers one `SelectionTransfer`: writes `payload` to the descriptor `write` yields unless its
+/// selection drops first, then reports through `done` whether the editor received it. A missing
+/// payload reports failure. Each step is bounded by [`TRANSFER_TIMEOUT`].
 pub(super) async fn transfer<D: Future<Output = anyhow::Result<()>>>(
     write: impl Future<Output = anyhow::Result<OwnedFd>>,
     done: impl FnOnce(bool) -> D,

@@ -1,5 +1,5 @@
-//! Dynamically loaded libei sender. A missing library is an unavailable sender, and modifiers stay
-//! unknown until libei reports them, never assumed released.
+//! The dynamically loaded libei sender that types the paste shortcut and direct text on Wayland.
+//! Modifiers stay unknown until libei reports them, never assumed released.
 
 use std::{
     ffi::c_void,

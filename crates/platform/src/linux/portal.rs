@@ -71,8 +71,7 @@ struct Portal {
 impl Portal {
     async fn connect() -> anyhow::Result<Self> {
         let connection = Connection::session().await?;
-        // Registration must be the first portal call: an earlier property read can cache an
-        // empty app ID on recent desktops.
+        // The host registry accepts registration only before any other portal call.
         let registered = connection
             .call_method(
                 Some(DESTINATION),
@@ -196,7 +195,8 @@ impl Portal {
     }
 }
 
-/// What the portal granted: a shortcut session and a remote desktop for keyboard input.
+/// What the portal granted: a shortcut session, a remote desktop for keyboard input, and the
+/// bindings Settings shows.
 struct Bound {
     shortcut_session: Option<OwnedObjectPath>,
     remote: Option<Remote>,
@@ -233,8 +233,11 @@ struct Remote {
     shares_clipboard: bool,
 }
 
+/// What the pump reports to the insertion loop.
 enum Notice {
+    /// The dictation shortcut was pressed, so libei's last modifier report is stale.
     ModifiersChanged,
+    /// This session does not own the portal selection holding this recording's text.
     SelectionLost(InsertPermit),
 }
 
