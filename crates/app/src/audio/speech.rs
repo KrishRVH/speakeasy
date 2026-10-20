@@ -1,5 +1,5 @@
-//! Classifies each 20 ms speech window once while recording, leaving only the final partial
-//! window to classify when capture stops.
+//! Speech detection that decides which audio a recording keeps. Each 20 ms window is classified
+//! once while recording, leaving only the final partial window to classify when capture stops.
 
 use std::{ops::Range, time::Duration};
 

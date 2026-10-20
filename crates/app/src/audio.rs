@@ -1,6 +1,6 @@
 //! Microphone capture on an owned thread, from device selection through draining and metering to
-//! sealing audio before driver teardown. The real-time callbacks live in `stream`, the in-place
-//! WAV buffer in `pcm`.
+//! sealing audio before driver teardown, and the input-device list Settings offers. The real-time
+//! callbacks live in `stream`, the in-place WAV buffer in `pcm`.
 
 mod control;
 mod pcm;

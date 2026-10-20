@@ -144,7 +144,7 @@ impl LocalSpeech {
             {
                 // The reserved port is released before the engine binds it, so another program can
                 // take it and answer. That program must never receive audio or the key, or choose
-                // the text to insert. macOS has no ownership lookup yet and trusts the answer.
+                // the text to insert. macOS has no ownership lookup, so it trusts the answer.
                 #[cfg(not(target_os = "macos"))]
                 ensure!(
                     self.group

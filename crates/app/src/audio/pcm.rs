@@ -1,5 +1,5 @@
-//! Mono PCM16 behind a reserved WAV header: audio is encoded in place, and unsealed audio is
-//! zeroed on drop, best effort.
+//! The recording's PCM16 buffer and its WAV encoding: sealing trims a finished recording to its
+//! speech and writes the header in place. The sample arithmetic capture shares lives here too.
 
 use std::{mem, ops::Range, time::Duration};
 
