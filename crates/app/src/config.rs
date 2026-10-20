@@ -269,19 +269,25 @@ impl Config {
     }
 
     pub(crate) fn save(&self, path: &Path) -> anyhow::Result<()> {
-        let directory = path
+        // Writing where a link points keeps a settings file that a dotfile manager links in.
+        let target = if path.exists() {
+            fs::canonicalize(path)?
+        } else {
+            path.to_owned()
+        };
+        let directory = target
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(directory)?;
         // Never replace a file the user still has to repair.
-        if path.exists() {
-            Self::read(path)?;
+        if target.exists() {
+            Self::read(&target)?;
         }
         let mut file = tempfile::NamedTempFile::new_in(directory)?;
         file.write_all(&serde_json::to_vec_pretty(self)?)?;
         file.as_file().sync_all()?;
-        file.persist(path).map_err(|error| error.error)?;
+        file.persist(&target).map_err(|error| error.error)?;
         Ok(())
     }
 }

@@ -162,6 +162,26 @@ fn unknown_top_level_keys_are_ignored_but_linux_keys_stay_strict() -> anyhow::Re
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn a_save_writes_through_a_linked_settings_file() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let dotfiles = directory.path().join("dotfiles");
+    fs::create_dir(&dotfiles)?;
+    let real = dotfiles.join("settings.json");
+    let path = directory.path().join("settings.json");
+    Config::default().save(&real)?;
+    std::os::unix::fs::symlink(&real, &path)?;
+    let config = Config {
+        theme: Theme::Iris,
+        ..Config::default()
+    };
+    config.save(&path)?;
+    assert!(fs::symlink_metadata(&path)?.file_type().is_symlink());
+    assert_eq!(Config::read(&real)?.theme, Theme::Iris);
+    Ok(())
+}
+
 #[test]
 fn save_refuses_to_replace_a_file_that_needs_repair() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
