@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc dc3062b85e719b8b7ceb025f16e5b86717d02fb25734d6f8042a04000d884285 # shrinks to changes = [(0, 0), (0, 0), (0, 0), (0, 0), (1, 0)], rounds = 1
+cc f6f04255ef7ba628cb952f28bfdb7da6ea042e87a2ffc6ca7cd7398a11a8ef56 # shrinks to arrivals = [(1, 0, 2), (1, 2, 2), (1, 1, 2), (1, 0, 0)]

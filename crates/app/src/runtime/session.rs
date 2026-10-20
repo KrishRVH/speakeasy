@@ -113,7 +113,6 @@ impl Session {
                 actions: footage.actions,
                 narration,
             },
-            samples: footage.samples,
             journal: footage.journal,
         })
     }

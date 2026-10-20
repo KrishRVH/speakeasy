@@ -9,7 +9,7 @@ use std::{
 use anyhow::anyhow;
 use async_channel::{Receiver, Sender};
 use speakeasy_platform::{OwnedThread, PointerMonitor, PointerSample, ScreenCapture, ScreenEvent};
-use speakeasy_show::{Image, Journal, Moment, Point, Sample, Signature, Size, Tracker};
+use speakeasy_show::{Image, Journal, Moment, Point, Size, Tracker};
 use tokio::sync::watch;
 
 use super::overlay::Canvas;
@@ -23,8 +23,7 @@ use crate::{
 pub(super) const SAMPLE_INTERVAL: Duration = Duration::from_millis(200);
 /// Frames larger than this on the long edge are halved; a reading model gains nothing from more.
 pub(super) const LONGEST_EDGE: u32 = 2_560;
-/// The most compressed bytes the journal holds. Past it, every second frame is dropped and only
-/// every second arrival kept from then on, so a long scroll or video keeps even coverage within it.
+/// The most compressed bytes a Show's journal holds; see [`Journal::with_budget`].
 const JOURNAL_BUDGET: usize = 384 << 20;
 /// How long a Show finished before its first frame waits for one; a Show needs the screen.
 const FIRST_FRAME_WAIT: Duration = Duration::from_secs(3);
@@ -105,11 +104,6 @@ struct Session<'a> {
     canvas: &'a watch::Sender<Canvas>,
     tracker: Tracker,
     journal: Journal,
-    /// One per journal frame, so selection only picks frames the journal holds.
-    samples: Vec<Sample>,
-    /// Every `stride`th arrival is kept; it doubles whenever the journal is thinned.
-    stride: usize,
-    arrived: usize,
 }
 
 impl<'a> Session<'a> {
@@ -135,10 +129,7 @@ impl<'a> Session<'a> {
             started,
             canvas,
             tracker: Tracker::new(Size { width, height }),
-            journal: Journal::new(),
-            samples: Vec::new(),
-            stride: 1,
-            arrived: 0,
+            journal: Journal::with_budget(JOURNAL_BUDGET),
         };
         // Set once finished: the latest moment to keep waiting for a first frame.
         let mut finished_by = None;
@@ -151,7 +142,7 @@ impl<'a> Session<'a> {
                         stop(&capture, &pointer).await;
                         return None;
                     }
-                    if !session.samples.is_empty() {
+                    if !session.journal.is_empty() {
                         break Ok(());
                     }
                     finished_by.get_or_insert_with(first_frame_deadline);
@@ -161,7 +152,7 @@ impl<'a> Session<'a> {
                 event = frames_received.recv() => match event {
                     Ok(ScreenEvent::Frame(frame)) => {
                         session.frame(frame);
-                        if finished_by.is_some() && !session.samples.is_empty() {
+                        if finished_by.is_some() && !session.journal.is_empty() {
                             break Ok(());
                         }
                     },
@@ -180,31 +171,13 @@ impl<'a> Session<'a> {
     }
 
     fn frame(&mut self, frame: speakeasy_platform::Frame) {
-        let keep = self.arrived.is_multiple_of(self.stride);
-        self.arrived = self.arrived.saturating_add(1);
-        if !keep {
+        if !self.journal.admit() {
             return;
         }
         let at = self.moment(frame.captured);
-        let Ok(image) = Image::from_bgra(frame.width, frame.height, frame.bgra) else {
-            return;
-        };
-        let signature = Signature::of(&image);
-        self.journal.record(at, image);
-        // The journal never moves backwards; the sample takes the moment it recorded.
-        let at = self.journal.moments().last().copied().unwrap_or(at);
-        self.samples.push(Sample { at, signature });
-        if self.journal.bytes() <= JOURNAL_BUDGET {
-            return;
+        if let Ok(image) = Image::from_bgra(frame.width, frame.height, frame.bgra) {
+            self.journal.record(at, image);
         }
-        // Halving always ends: two frames are far within the budget.
-        while self.journal.bytes() > JOURNAL_BUDGET && self.journal.moments().len() > 2 {
-            self.journal.thin();
-            self.stride = self.stride.saturating_mul(2);
-        }
-        let moments = self.journal.moments();
-        self.samples
-            .retain(|sample| moments.binary_search(&sample.at).is_ok());
     }
 
     fn pointer(&mut self, sample: PointerSample) {
@@ -234,13 +207,12 @@ impl<'a> Session<'a> {
         let ended = self.moment(Instant::now());
         let (strokes, actions) = self.tracker.finish(ended);
         anyhow::ensure!(
-            !self.samples.is_empty(),
+            !self.journal.is_empty(),
             "The screen could not be recorded. Try again."
         );
         Ok(Footage {
             surface,
             ended,
-            samples: self.samples,
             journal: self.journal.sealed(),
             strokes,
             actions,
@@ -293,13 +265,17 @@ mod tests {
 
         let [width, height] = display.size;
         assert_eq!(footage.surface, Size { width, height });
-        let moments: Vec<Moment> = footage.samples.iter().map(|sample| sample.at).collect();
+        let moments: Vec<Moment> = footage
+            .journal
+            .samples()
+            .iter()
+            .map(|sample| sample.at)
+            .collect();
         assert!(
             (4..=8).contains(&moments.len()),
             "{} frames in 1.3 s at one per 200 ms",
             moments.len()
         );
-        assert_eq!(footage.journal.moments(), moments.as_slice());
         assert!(
             moments.windows(2).all(|pair| pair[0] < pair[1]),
             "{moments:?}"
@@ -336,7 +312,7 @@ mod tests {
         timeout(Duration::from_secs(5), recorder.retire()).await?;
         eprintln!(
             "show_recording: seconds=10 frames={} journal_mb={:.1}",
-            footage.samples.len(),
+            footage.journal.samples().len(),
             footage.journal.bytes() as f64 / 1e6
         );
         Ok(())

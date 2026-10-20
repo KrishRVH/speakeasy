@@ -46,14 +46,10 @@ fn write_bundle(
     if cancelled() {
         return Ok(None);
     }
-    let Recorded {
-        recording,
-        samples,
-        journal,
-    } = recorded;
+    let Recorded { recording, journal } = recorded;
     let selection = select(
         &recording,
-        &samples,
+        journal.samples(),
         budget(recording.duration.since(Moment::START)),
     );
     let moments: Vec<Moment> = selection
@@ -93,8 +89,7 @@ mod tests {
 
     use speakeasy_platform::{InputSender, InsertPermit};
     use speakeasy_show::{
-        Journal, Manifest, Narration, Point, Recording, Sample, Signature, Size, Span, Tracker,
-        Word,
+        Journal, Manifest, Narration, Point, Recording, Size, Span, Tracker, Word,
     };
 
     use super::*;
@@ -184,7 +179,6 @@ mod tests {
     /// Records frames every 200 ms through the journal and the tracker as the recorder does.
     struct Rehearsal {
         journal: Journal,
-        samples: Vec<Sample>,
         tracker: Tracker,
         surface: Size,
     }
@@ -197,17 +191,13 @@ mod tests {
             };
             Self {
                 journal: Journal::new(),
-                samples: Vec::new(),
                 tracker: Tracker::new(surface),
                 surface,
             }
         }
 
         fn frame(&mut self, at: u64, image: Image) {
-            let at = Moment::from_millis(at);
-            let signature = Signature::of(&image);
-            self.journal.record(at, image);
-            self.samples.push(Sample { at, signature });
+            self.journal.record(Moment::from_millis(at), image);
         }
 
         fn pointer(&mut self, at: u64, x: f32, y: f32, drawing: bool, pressed: bool) {
@@ -226,7 +216,6 @@ mod tests {
                     actions,
                     narration,
                 },
-                samples: self.samples,
                 journal: self.journal,
             }
         }
@@ -279,7 +268,12 @@ mod tests {
         let (width, height) = (320, 200);
         let recorded = rehearse(width, height);
         let narration = recorded.recording.narration.clone();
-        let moments = recorded.journal.moments().to_vec();
+        let moments: Vec<Moment> = recorded
+            .journal
+            .samples()
+            .iter()
+            .map(|sample| sample.at)
+            .collect();
         let root = tempfile::tempdir()?;
         let (_input, permit) = permit();
         let written = write_bundle(recorded, &permit, &root.path().join("shows"))?
@@ -367,12 +361,12 @@ mod tests {
             let mut journal = Journal::new();
             let mut timings = Vec::new();
             for (index, image) in images.into_iter().enumerate() {
+                let at = Moment::from_millis(u64::try_from(index)? * 200);
                 let started = Instant::now();
-                let signature = black_box(Signature::of(&image));
-                journal.record(Moment::from_millis(u64::try_from(index)? * 200), image);
+                journal.record(at, image);
                 timings.push(started.elapsed().as_secs_f64() * 1000.0);
-                black_box(signature);
             }
+            black_box(journal.samples());
             let journal_mb = journal.bytes() as f64 / 1e6;
             eprintln!(
                 "show_record: scene={scene} size={width}x{height} median_ms={:.2} journal_mb={journal_mb:.1} mb_per_frame={:.2} frames={frames}",
@@ -405,7 +399,7 @@ mod tests {
         let started = Instant::now();
         let selection = select(
             &recorded.recording,
-            &recorded.samples,
+            recorded.journal.samples(),
             budget(recorded.recording.duration.since(Moment::START)),
         );
         let selected = started.elapsed();

@@ -6,7 +6,7 @@ use std::{path::PathBuf, time::Instant};
 
 use async_channel::Sender;
 use speakeasy_platform::{Delivery, InsertPermit, Inserted, Inserter};
-use speakeasy_show::{Action, Journal, Moment, Sample, Size, Stroke};
+use speakeasy_show::{Action, Journal, Moment, Size, Stroke};
 use tokio::sync::watch;
 
 use crate::{
@@ -62,8 +62,6 @@ pub(crate) struct Footage {
     pub surface: Size,
     /// When recording stopped, on the Show's timeline.
     pub ended: Moment,
-    /// A fingerprint of every frame kept, in time order.
-    pub samples: Vec<Sample>,
     pub journal: Journal,
     pub strokes: Vec<Stroke>,
     pub actions: Vec<Action>,
@@ -72,7 +70,6 @@ pub(crate) struct Footage {
 /// Everything a finished Show recorded, ready to choose its keyframes from.
 pub(crate) struct Recorded {
     pub recording: speakeasy_show::Recording,
-    pub samples: Vec<Sample>,
     pub journal: Journal,
 }
 

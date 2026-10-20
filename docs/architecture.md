@@ -242,7 +242,7 @@ under the pointer every 200 ms, halving frames until the long edge fits 2,560 pi
 frame's signature plus a copy in the journal: 64-pixel tiles, Sub-filtered and deflated, storing
 only tiles that changed. The journal holds at most 384 MB compressed: past it, every second frame is
 dropped, its tiles passing to the next frame, and only every second arrival is kept from then on, so
-a long, busy Show keeps even coverage within the cap. Signatures follow the journal, so selection
+a long, busy Show keeps even coverage within the cap. Signatures thin with the frames, so selection
 only picks frames it holds. The pointer is sampled every 8 ms. The tracker turns movement with Shift
 alone into strokes once they span 6 pixels, and button presses into clicks or drags at a 12-pixel
 threshold; a Shift press is never a click. Live strokes reach the overlay through a watch channel.

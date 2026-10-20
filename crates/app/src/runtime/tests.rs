@@ -5,7 +5,7 @@ use std::{path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, bail, ensure};
 use speakeasy_platform::{Delivery, InsertPermit, Inserted};
-use speakeasy_show::{Image, Journal, Moment, Narration, Sample, Signature, Size};
+use speakeasy_show::{Image, Journal, Moment, Narration, Size};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 use super::*;
@@ -323,10 +323,6 @@ impl Recording for FakeShow {
 fn footage() -> Footage {
     let frame = Image::from_bgra(2, 2, vec![128; 16]).expect("a 2×2 frame");
     let mut journal = Journal::new();
-    let samples = vec![Sample {
-        at: Moment::START,
-        signature: Signature::of(&frame),
-    }];
     journal.record(Moment::START, frame);
     Footage {
         surface: Size {
@@ -334,7 +330,6 @@ fn footage() -> Footage {
             height: 1000.0,
         },
         ended: Moment::from_millis(1_000),
-        samples,
         journal,
         strokes: Vec::new(),
         actions: Vec::new(),
@@ -1347,7 +1342,7 @@ async fn s_during_a_hold_turns_the_recording_into_a_show_and_publishes_it() -> a
         recorded.recording.narration,
         Narration::Text("look here".into())
     );
-    assert_eq!(recorded.samples.len(), 1);
+    assert_eq!(recorded.journal.samples().len(), 1);
     h.phase(Phase::Copied).await?;
     assert!(h.snapshot().message.contains("Show copied"));
     assert!(h.pasted.try_recv().is_err(), "A Show never pastes");

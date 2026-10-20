@@ -1,26 +1,37 @@
-//! Every frame a Show samples, kept losslessly in little memory.
+//! Every frame a Show samples, kept losslessly in little memory beside its signature.
 //!
 //! Frames are cut into tiles, and each frame stores only the tiles that changed since the frame
 //! before it. A still screen therefore costs almost nothing, and any recorded moment can be
-//! rebuilt exactly, for keyframes now and closer looks later.
+//! rebuilt exactly, for keyframes now and closer looks later. Each frame's [`Sample`] is kept and
+//! dropped with its tiles, so selection only picks frames the journal holds.
 
 use std::mem;
 
-use crate::{Image, Moment, convert};
+use crate::{
+    Image, Moment, convert,
+    signature::{Sample, Signature},
+};
 
 /// Tile edge in pixels: small enough that a blinking caret stores little, large enough that the
 /// index stays small.
 const TILE: usize = 64;
 const PIXEL: usize = 4;
 
-/// Recorded frames, in time order.
-#[derive(Debug, Default)]
+/// Recorded frames and their signatures, in time order.
+#[derive(Debug)]
 pub struct Journal {
-    moments: Vec<Moment>,
+    /// One per frame held.
+    samples: Vec<Sample>,
     /// Runs of frames of one size; a resolution change starts the next.
     segments: Vec<Segment>,
     /// Compressed bytes held.
     bytes: usize,
+    /// The most compressed bytes held once more than two frames are.
+    budget: usize,
+    /// Every `stride`th arrival is admitted; it doubles whenever the journal thins.
+    stride: usize,
+    /// Arrivals counted by [`Journal::admit`].
+    arrived: usize,
     /// The last recorded frame, which the next is compared against; absent before the first frame
     /// and once sealed.
     latest: Option<Image>,
@@ -28,7 +39,7 @@ pub struct Journal {
 
 #[derive(Debug)]
 struct Segment {
-    /// The index in [`Journal::moments`] of the segment's first frame.
+    /// The index in [`Journal::samples`] of the segment's first frame.
     first: usize,
     width: usize,
     height: usize,
@@ -53,18 +64,52 @@ struct Tile {
     height: usize,
 }
 
+impl Default for Journal {
+    fn default() -> Self {
+        Self::with_budget(usize::MAX)
+    }
+}
+
 impl Journal {
-    /// An empty journal.
+    /// An empty journal without a budget.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Records `frame` as on screen at `at`, which must not precede the last recorded moment.
+    /// An empty journal that holds at most `budget` compressed bytes. Past it, every second frame
+    /// is dropped and only every second arrival admitted from then on, so a long scroll or video
+    /// keeps even coverage within it. Two frames are always held, whatever they cost.
+    #[must_use]
+    pub const fn with_budget(budget: usize) -> Self {
+        Self {
+            samples: Vec::new(),
+            segments: Vec::new(),
+            bytes: 0,
+            budget,
+            stride: 1,
+            arrived: 0,
+            latest: None,
+        }
+    }
+
+    /// Counts a frame's arrival and says whether to [`record`](Journal::record) it, so a frame
+    /// the budget would drop costs nothing to prepare.
+    pub fn admit(&mut self) -> bool {
+        let admitted = self.arrived.is_multiple_of(self.stride);
+        self.arrived = self.arrived.saturating_add(1);
+        admitted
+    }
+
+    /// Records `frame` and its signature as on screen at `at`, which must not precede the last
+    /// recorded moment, then thins the journal while it is over budget.
     pub fn record(&mut self, at: Moment, frame: Image) {
-        let at = self.moments.last().map_or(at, |last| at.max(*last));
-        let index = self.moments.len();
-        self.moments.push(at);
+        let at = self.samples.last().map_or(at, |last| at.max(last.at));
+        let index = self.samples.len();
+        self.samples.push(Sample {
+            at,
+            signature: Signature::of(&frame),
+        });
         let added = if let (Some(before), Some(segment)) = (&self.latest, self.segments.last_mut())
             && before.width() == frame.width()
             && before.height() == frame.height()
@@ -78,6 +123,10 @@ impl Journal {
         };
         self.bytes = self.bytes.saturating_add(added);
         self.latest = Some(frame);
+        while self.bytes > self.budget && self.samples.len() > 2 {
+            self.thin();
+            self.stride = self.stride.saturating_mul(2);
+        }
     }
 
     /// The journal without the frame it keeps only to compare the next one against, for when
@@ -89,22 +138,29 @@ impl Journal {
         self
     }
 
-    /// The moments recorded, in time order.
+    /// The signature of every frame held, in time order.
     #[must_use]
-    pub fn moments(&self) -> &[Moment] {
-        &self.moments
+    pub fn samples(&self) -> &[Sample] {
+        &self.samples
     }
 
-    /// Compressed bytes held, which a recorder can keep within a budget.
+    /// Whether no frame is held.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.samples.is_empty()
+    }
+
+    /// Compressed bytes held.
     #[must_use]
     pub const fn bytes(&self) -> usize {
         self.bytes
     }
 
-    /// Drops every second frame, keeping the first and the last, so a recorder over its budget
-    /// keeps even coverage of the whole recording. Every kept frame still rebuilds exactly.
-    pub fn thin(&mut self) {
-        let count = self.moments.len();
+    /// Drops every second frame and its sample, keeping the first and the last, so a journal over
+    /// its budget keeps even coverage of the whole recording. Every kept frame still rebuilds
+    /// exactly.
+    fn thin(&mut self) {
+        let count = self.samples.len();
         let mut next = 0_usize;
         let renumbered: Vec<Option<usize>> = (0..count)
             .map(|index| {
@@ -128,11 +184,10 @@ impl Journal {
             .zip(ends)
             .filter_map(|(segment, end)| segment.thinned(&renumbered, end))
             .collect();
-        self.moments = self
-            .moments
-            .iter()
+        self.samples = mem::take(&mut self.samples)
+            .into_iter()
             .zip(&renumbered)
-            .filter_map(|(moment, kept)| kept.map(|_| *moment))
+            .filter_map(|(sample, kept)| kept.map(|_| sample))
             .collect();
         self.bytes = self.segments.iter().map(Segment::bytes).sum();
     }
@@ -148,8 +203,8 @@ impl Journal {
     #[must_use]
     pub fn frame_at(&self, at: Moment) -> Option<Image> {
         let index = self
-            .moments
-            .partition_point(|moment| *moment <= at)
+            .samples
+            .partition_point(|sample| sample.at <= at)
             .saturating_sub(1);
         let position = self
             .segments
@@ -348,6 +403,16 @@ mod tests {
         Moment::from_millis(millis)
     }
 
+    /// A frame of four flat quadrants in `shade`, 70 × 70 when `size` is 2 and 150 × 90 otherwise.
+    fn quadrants(shade: [u8; 4], size: usize) -> Image {
+        let (width, height) = if size == 2 { (70, 70) } else { (150, 90) };
+        frame(width, height, move |x, y| {
+            let quadrant = usize::from(x >= 64).wrapping_add(usize::from(y >= 64).wrapping_mul(2));
+            let value = *shade.get(quadrant).unwrap();
+            [value, value, value, 255]
+        })
+    }
+
     #[test]
     fn a_still_screen_costs_almost_nothing_and_changes_cost_their_tiles() {
         let text = |x: usize, y: usize| {
@@ -440,13 +505,7 @@ mod tests {
                 if let Some(value) = shade.get_mut(usize::from(quadrant)) {
                     *value = value.wrapping_add(40);
                 }
-                let (width, height) = if size == 2 { (70, 70) } else { (150, 90) };
-                let painted = shade;
-                let image = frame(width, height, move |x, y| {
-                    let quadrant = usize::from(x >= 64).wrapping_add(usize::from(y >= 64).wrapping_mul(2));
-                    let value = *painted.get(quadrant).unwrap();
-                    [value, value, value, 255]
-                });
+                let image = quadrants(shade, size);
                 let moment = at(u64::try_from(index).unwrap().wrapping_mul(100));
                 journal.record(moment, image.clone());
                 recorded.push((moment, image));
@@ -464,10 +523,47 @@ mod tests {
                 prop_assert!(journal.bytes() <= before);
             }
             let moments: Vec<Moment> = recorded.iter().map(|(moment, _)| *moment).collect();
-            prop_assert_eq!(journal.moments(), moments.as_slice());
+            let held: Vec<Moment> = journal.samples().iter().map(|sample| sample.at).collect();
+            prop_assert_eq!(held, moments);
             for (moment, image) in &recorded {
                 prop_assert_eq!(journal.frame_at(*moment), Some(image.clone()));
             }
+        }
+
+        #[test]
+        fn a_budget_thins_frames_and_their_samples_together(
+            arrivals in prop::collection::vec((1_u64..=300, 0_u8..4, 0_usize..3), 1..48),
+        ) {
+            // A few frames' worth, so arrivals overrun it and the journal thins again and again.
+            const BUDGET: usize = 1_500;
+            let mut journal = Journal::with_budget(BUDGET);
+            let (mut shade, mut millis) = ([0_u8; 4], 0_u64);
+            let (mut first, mut last) = (None, None);
+            for (delta, quadrant, size) in arrivals {
+                millis = millis.wrapping_add(delta);
+                if let Some(value) = shade.get_mut(usize::from(quadrant)) {
+                    *value = value.wrapping_add(40);
+                }
+                if !journal.admit() {
+                    continue;
+                }
+                let image = quadrants(shade, size);
+                first.get_or_insert_with(|| (at(millis), image.clone()));
+                last = Some(image.clone());
+                journal.record(at(millis), image);
+                let held = journal.samples().len();
+                prop_assert!(journal.bytes() <= BUDGET || held <= 2, "{} bytes in {held} frames", journal.bytes());
+            }
+            let samples = journal.samples();
+            prop_assert!(samples.windows(2).all(|pair| pair[0].at < pair[1].at));
+            for sample in samples {
+                let shown = journal.frame_at(sample.at).unwrap();
+                prop_assert!(Signature::of(&shown) == sample.signature, "at {}", sample.at.as_millis());
+            }
+            let (first_at, first_image) = first.unwrap();
+            prop_assert_eq!(samples.first().map(|sample| sample.at), Some(first_at));
+            prop_assert_eq!(journal.frame_at(first_at), Some(first_image));
+            prop_assert_eq!(journal.frame_at(samples.last().unwrap().at), last);
         }
 
         #[test]
