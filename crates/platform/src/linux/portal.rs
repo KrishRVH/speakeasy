@@ -23,7 +23,7 @@ use zbus::{
 };
 
 use super::{
-    APPLICATION_ID, NO_PASTE_BINDING, ShortcutLabels,
+    APPLICATION_ID, COPIED_FOR_MANUAL_PASTE, NO_PASTE_BINDING, ShortcutLabels,
     ei::{self, PasteBlocked, TextBlocked},
     owner_changes, stopping,
     token::TokenStore,
@@ -1167,13 +1167,13 @@ fn insert_direct(
 const fn text_remedy(blocked: TextBlocked) -> Inserted {
     Inserted::Unavailable(match blocked {
         TextBlocked::Unsupported => {
-            "This desktop does not support direct text input. Turn off Keep clipboard to use paste."
+            "This desktop does not support direct text input. Choose Insert: Paste in Settings."
         },
         TextBlocked::Paused => {
-            "Direct text input is paused on this desktop. Dictate again, or turn off Keep clipboard to use paste."
+            "Direct text input is paused on this desktop. Dictate again, or choose Insert: Paste in Settings."
         },
         TextBlocked::NullCharacter => {
-            "Direct input cannot contain a null character. Turn off Keep clipboard to use paste."
+            "Direct input cannot contain a null character. Choose Insert: Paste in Settings."
         },
     })
 }
@@ -1192,7 +1192,7 @@ fn finish_paste(
     if !owned {
         return Ok(Inserted::Unavailable(
             if bound.clipboard_session().is_some() {
-                "Clipboard ownership could not be confirmed. Dictate again or choose Copy for manual paste."
+                "Clipboard ownership could not be confirmed. Dictate again, or choose Insert: Copy for manual paste in Settings."
             } else {
                 "Clipboard changed before paste. Dictate again."
             },
@@ -1202,9 +1202,7 @@ fn finish_paste(
         return Ok(outcome);
     }
     if options.manual_paste {
-        return Ok(Inserted::Copied(
-            "Text copied. Release your shortcut keys and paste into your editor.",
-        ));
+        return Ok(COPIED_FOR_MANUAL_PASTE);
     }
     let Some(sender) = bound.sender_mut() else {
         return Ok(paste_remedy(PasteBlocked::NoKeyboard));

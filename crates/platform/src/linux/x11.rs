@@ -28,10 +28,10 @@ use x11rb::{
 };
 use xkbcommon::xkb::{KEYSYM_CASE_INSENSITIVE, Keysym, keysym_from_name};
 
-use super::{HostSession, NO_PASTE_BINDING, ShortcutLabels, stopping};
+use super::{COPIED_FOR_MANUAL_PASTE, HostSession, NO_PASTE_BINDING, ShortcutLabels, stopping};
 use crate::{
     Delivery, DesktopOptions, Input, InputSender, InsertPermit, Inserted, OwnedThread,
-    insertion::{Insertion, Reply, wait_for_released_modifiers},
+    insertion::{Insertion, PASTE_AFTER_RELEASE, Reply, wait_for_released_modifiers},
 };
 
 const MAX_FOCUS_ANCESTRY: usize = 32;
@@ -632,7 +632,7 @@ fn paste(
     }
     if request.delivery == Delivery::Direct {
         return Ok(Inserted::Unavailable(
-            "Direct text input is unavailable on this X11 desktop. Turn off Keep clipboard to paste.",
+            "Direct text input is unavailable on this X11 desktop. Choose Insert: Paste in Settings.",
         ));
     }
     match copy_after_release(keyboard, clipboard, request, options)? {
@@ -672,10 +672,11 @@ fn copy_after_release(
             Inserted::Cancelled
         }));
     };
-    if options.manual_paste || shortcut_held {
-        return Ok(ControlFlow::Break(Inserted::Copied(
-            "Text copied. Release your shortcut keys and paste into your editor.",
-        )));
+    if options.manual_paste {
+        return Ok(ControlFlow::Break(COPIED_FOR_MANUAL_PASTE));
+    }
+    if shortcut_held {
+        return Ok(ControlFlow::Break(PASTE_AFTER_RELEASE));
     }
     Ok(ControlFlow::Continue(owner))
 }

@@ -27,6 +27,8 @@ pub const APPLICATION_ID: &str = "io.github.krvh.speakeasy";
 const NO_PASTE_BINDING: Inserted = Inserted::Copied(
     "Text copied. This keyboard layout has no automatic paste binding; paste manually.",
 );
+/// The user chose to paste themselves, so insertion only copies.
+const COPIED_FOR_MANUAL_PASTE: Inserted = Inserted::Copied("Text copied. Paste into your editor.");
 
 /// Owns the desktop observation thread until explicit stop and acknowledged cleanup.
 pub struct InputMonitor {
@@ -113,7 +115,7 @@ pub fn prepare(
     let thread = OwnedThread::spawn("desktop-access", move || {
         match serve_desktop(&input, &options, incoming, &stop_requests) {
             Err(error) if !input.is_closed() => input.fail(format!(
-                "Linux desktop access stopped: {error}. Check desktop permissions or choose Desktop bindings/manual paste in Settings, then resume."
+                "Linux desktop access stopped: {error}. Check desktop permissions, or choose Shortcuts: Desktop bindings or Insert: Copy for manual paste in Settings, then resume."
             )),
             _ => input.close(),
         }

@@ -24,6 +24,9 @@ const MODIFIER_POLL: Duration = Duration::from_millis(2);
 /// The answer to a request whose insertion ended without an outcome; never the panic payload,
 /// which could quote the text.
 const INSERTION_STOPPED: &str = "Text insertion stopped unexpectedly";
+/// Shortcut keys stayed held, so the text waits on the clipboard for the user to paste.
+pub(crate) const PASTE_AFTER_RELEASE: Inserted =
+    Inserted::Copied("Text copied. Release your shortcut keys and paste into your editor.");
 
 /// Sends insertion requests to the thread that owns native clipboard and input access.
 ///
@@ -228,9 +231,7 @@ impl Delivery {
             return None;
         }
         Some(match self {
-            Self::Paste => Inserted::Copied(
-                "Text copied. Release your shortcut keys and paste into your editor.",
-            ),
+            Self::Paste => PASTE_AFTER_RELEASE,
             Self::Direct => {
                 Inserted::Unavailable("Release the shortcut and try again. Clipboard preserved.")
             },
