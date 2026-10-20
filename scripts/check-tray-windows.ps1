@@ -1,4 +1,5 @@
-param([Parameter(Mandatory=$true)][string]$Executable)
+# Debug and measure builds load shaders at runtime, so pass the repository as -WorkingDirectory.
+param([Parameter(Mandatory=$true)][string]$Executable, [string]$WorkingDirectory)
 $ErrorActionPreference = 'Stop'
 # Own simulated windows only. No microphone, hook, clipboard or global input.
 Add-Type -TypeDefinition @'
@@ -27,12 +28,13 @@ function Wait-For([scriptblock]$Condition, [string]$Failure) {
 $directory = Join-Path ([IO.Path]::GetTempPath()) ('speakeasy-tray-' + [Guid]::NewGuid())
 $null = New-Item -ItemType Directory -Path $directory
 $config = Join-Path $directory 'settings.json'
+if (!$WorkingDirectory) { $WorkingDirectory = $directory }
 # Demo must neither load this deliberately invalid configuration nor change it.
 [IO.File]::WriteAllText($config, 'demo preserves this file')
 $script:app = New-Object Diagnostics.Process
 $script:app.StartInfo.FileName = $Executable
 $script:app.StartInfo.Arguments = '--demo-tray --config "' + $config + '"'
-$script:app.StartInfo.WorkingDirectory = $directory
+$script:app.StartInfo.WorkingDirectory = $WorkingDirectory
 $script:app.StartInfo.UseShellExecute = $false
 $started = $false
 try {
@@ -66,7 +68,7 @@ try {
         try {
             $relaunch.StartInfo.FileName = $Executable
             $relaunch.StartInfo.Arguments = $script:app.StartInfo.Arguments
-            $relaunch.StartInfo.WorkingDirectory = $directory
+            $relaunch.StartInfo.WorkingDirectory = $WorkingDirectory
             $relaunch.StartInfo.UseShellExecute = $false
             $null = $relaunch.Start()
             if (!$relaunch.WaitForExit(5000)) { $relaunch.Kill(); throw 'Second launch did not exit' }
