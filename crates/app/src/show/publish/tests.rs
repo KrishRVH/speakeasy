@@ -1,3 +1,6 @@
+//! Publishes a rehearsed Show into a temporary folder and checks every file and the cancel path;
+//! the opt-in `profile_show_pipeline` times recording and publishing at 2560 × 1440.
+
 use std::{fs, time::Instant};
 
 use speakeasy_platform::{InputSender, InsertPermit};

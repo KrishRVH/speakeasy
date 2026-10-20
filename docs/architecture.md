@@ -271,11 +271,11 @@ clipboard change: publication checks the permit before each costly step and dele
 staged.
 
 Shows live in `<data root>/shows/<UTC stamp>`. On Unix, `shows` and each bundle are mode `0700`, and
-a linked `shows` is refused; on Windows they sit inside the user's local application data. The
-resident app sweeps at launch and hourly, deleting stamp-named bundles older than seven days unless
-they hold a `.pinned` file, and staging older than an hour. Other names and links are never touched,
-and a pin that cannot be read still keeps its Show. A failed sweep is reported unless a recording is
-under way, and again at each sweep until it succeeds.
+publishing refuses a linked `shows`; on Windows they sit inside the user's local application data.
+The resident app sweeps at launch and hourly, deleting stamp-named bundles older than seven days
+unless they hold a `.pinned` file, and staging older than an hour. Other names and links are never
+touched, and a pin that cannot be read still keeps its Show. A failed sweep is reported unless a
+recording is under way, and again at each sweep until it succeeds.
 
 ## Insertion and privacy
 
@@ -339,7 +339,7 @@ remaining performance gaps are in [performance](performance.md).
 | Dependency patches                                | Each vendor `README.speakeasy.md`                                                            | Portable GPUI fixtures plus local native and Linux GUI checks.                                                                                                                            |
 | Profiling, packaged launchers, private GUI checks | `scripts/profile_linux.py`, `check_demo_linux.py`, package scripts                           | Public `/proc` fixtures, explicit clocks, owned child processes, argument admission, and AppRun argument/library-path preservation.                                                       |
 | Show keyframes, ink, contact sheet, summary       | `crates/show/src/select.rs`, `align.rs`, `sheet.rs`, `bundle.rs`, `journal.rs`, `tracker.rs` | Signature-only selection cases, journal round trips, pointer gestures, a golden `show.json` and demo summary, and layout properties; `show demo` writes a bundle to view.                 |
-| Show gesture, screen lanes, publication           | `runtime/owner.rs`, `session.rs`, `show/recorder.rs`, `show/publish.rs`                      | `runtime/tests.rs` drives Shows with a fake screen and gated publication; `session.rs` checks the narration timeline; `publish/tests.rs` publishes a rehearsed Show and checks each file. |
+| Show gesture, screen lanes, publication           | `runtime/owner.rs`, `session.rs`, `show/recorder.rs`, `show/publish.rs`                      | `runtime/tests.rs` drives Shows with a fake screen and gated publication; `session.rs` checks the narration timeline; `show/publish/tests.rs` checks every file of a published rehearsal. |
 | Screen capture, pointer, overlay                  | `platform/src/screen.rs`, `screen/geometry.rs`, the native `screen.rs`                       | Geometry runs on every host; native capture requires opt-in and compares only owned-window pixels.                                                                                        |
 | Show store                                        | `show/store.rs`                                                                              | Stamp naming, private all-at-once writes, expiry, pins, staging age, and untouched foreign names.                                                                                         |
 
