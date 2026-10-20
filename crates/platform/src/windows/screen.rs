@@ -33,11 +33,3 @@ pub(crate) fn configure_overlay(_: RawWindowHandle, _: Display) -> anyhow::Resul
 }
 
 pub(crate) const fn set_overlay_visible(_: RawWindowHandle, _: bool) {}
-
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "A placeholder until capture exclusion, which can fail, is implemented"
-)]
-pub(crate) const fn set_excluded_from_capture(_: RawWindowHandle, _: bool) -> anyhow::Result<()> {
-    Ok(())
-}

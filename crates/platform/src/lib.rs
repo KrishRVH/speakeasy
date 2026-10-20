@@ -54,7 +54,7 @@ pub use self::{
     process::ProcessGroup,
     screen::{
         Display, Frame, PointerMonitor, PointerSample, ScreenCapture, ScreenEvent,
-        configure_overlay, set_excluded_from_capture, set_overlay_visible,
+        configure_overlay, set_overlay_visible,
     },
 };
 

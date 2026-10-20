@@ -81,7 +81,9 @@ impl ScreenCapture {
     /// Starts capturing the display under the pointer.
     ///
     /// Each frame reaches `events` at most once per `interval`, halved in size until its long
-    /// edge fits `longest_edge`. A frame the lane has no room for is dropped, not queued.
+    /// edge fits `longest_edge`. A frame the lane has no room for is dropped, not queued. No frame
+    /// shows a Speakeasy window, including one opened while capturing; they still appear in the
+    /// user's own screen sharing before and after.
     ///
     /// # Errors
     ///
@@ -197,17 +199,6 @@ pub fn set_overlay_visible(handle: RawWindowHandle, visible: bool) {
     native::set_overlay_visible(handle, visible);
 }
 
-/// Leaves a window out of screen capture while `excluded`, so the pill stays out of a Show yet
-/// still appears in the user's own screen sharing at other times; call on its UI thread.
-///
-/// # Errors
-///
-/// Fails when the handle is not a native window of this platform, or the system cannot exclude
-/// windows from capture.
-pub fn set_excluded_from_capture(handle: RawWindowHandle, excluded: bool) -> anyhow::Result<()> {
-    native::set_excluded_from_capture(handle, excluded)
-}
-
 /// Linux records Shows in a later release.
 #[cfg(target_os = "linux")]
 mod unsupported {
@@ -244,15 +235,4 @@ mod unsupported {
     }
 
     pub(super) const fn set_overlay_visible(_: RawWindowHandle, _: bool) {}
-
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "Matches the adapters whose exclusion can fail; Linux records nothing to exclude from"
-    )]
-    pub(super) const fn set_excluded_from_capture(
-        _: RawWindowHandle,
-        _: bool,
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
 }

@@ -449,13 +449,3 @@ pub(crate) fn set_overlay_visible(handle: RawWindowHandle, visible: bool) {
         window.orderOut(None);
     }
 }
-
-/// Does nothing: every Show's capture filter leaves out Speakeasy's whole application, so its
-/// windows need no exclusion of their own, and they still appear in the user's screen sharing.
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "Matches the adapters whose exclusion can fail; macOS excludes the application per Show instead"
-)]
-pub(crate) const fn set_excluded_from_capture(_: RawWindowHandle, _: bool) -> anyhow::Result<()> {
-    Ok(())
-}
