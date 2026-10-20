@@ -116,7 +116,8 @@ pub(super) fn stage(directory: &Path, files: &[speakeasy_show::File]) -> anyhow:
     for file in files {
         let path = staging.path().join(&file.name);
         if let Some(folder) = path.parent() {
-            fs::create_dir_all(folder)?;
+            fs::create_dir_all(folder)
+                .with_context(|| format!("Cannot create {}", folder.display()))?;
         }
         fs::write(&path, &file.contents)
             .with_context(|| format!("Cannot write {}", path.display()))?;
@@ -160,7 +161,7 @@ fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
         entries => entries.with_context(|| format!("Cannot read {}", parent.display()))?,
     };
     let cutoff = utc_stamp(now.checked_sub(KEPT_FOR).unwrap_or(SystemTime::UNIX_EPOCH));
-    let mut stuck = 0_usize;
+    let mut stuck = false;
     for entry in entries.flatten() {
         // The entry's own type: a link is never followed out of the directory.
         if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
@@ -184,11 +185,11 @@ fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
             stamp(name).is_some_and(|stamp| stamp < cutoff.as_str()) && !pinned(&path)
         };
         if expired && fs::remove_dir_all(&path).is_err() {
-            stuck = stuck.saturating_add(1);
+            stuck = true;
         }
     }
     anyhow::ensure!(
-        stuck == 0,
+        !stuck,
         "Could not delete every expired Show in {}. Close any of their files that are open; \
          Speakeasy tries again within the hour.",
         parent.display()

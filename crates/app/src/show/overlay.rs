@@ -18,7 +18,7 @@ use speakeasy_show::{Point, ink};
 use tokio::sync::watch;
 
 use crate::{
-    gpui_ext::{EntityUpdate, defer_native, follow},
+    gpui_ext::{EntityUpdate, WindowUpdate, defer_native, follow},
     runtime::{Phase, Snapshot},
 };
 
@@ -282,11 +282,7 @@ pub(crate) fn attend(
                 .await
                 .is_ok();
             if let Some(overlay) = overlay {
-                #[expect(
-                    clippy::let_underscore_must_use,
-                    reason = "A window something else already closed needs no closing; the next Show opens another"
-                )]
-                let _ = overlay.update(cx, |_, window, _| window.remove_window());
+                overlay.update_if_open(cx, |_, window, _| window.remove_window());
             }
             if !published {
                 return;

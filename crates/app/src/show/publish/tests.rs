@@ -342,7 +342,7 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let files = bundle.files(root.path())?;
     let encoded = started.elapsed();
-    super::super::store::stage(&root.path().join("show"), &files)?.persist()?;
+    store::stage(&root.path().join("show"), &files)?.persist()?;
     let written = started.elapsed();
     let bytes: usize = files.iter().map(|file| file.contents.len()).sum();
     eprintln!(

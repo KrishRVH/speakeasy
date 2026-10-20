@@ -21,7 +21,8 @@ pub(super) const LONGEST_EDGE: u32 = 2_560;
 const JOURNAL_BUDGET: usize = 384 << 20;
 /// How long a Show finished before its first frame waits for one; a Show needs the screen.
 const FIRST_FRAME_WAIT: Duration = Duration::from_secs(3);
-/// Frames the lanes from capture threads may hold before the newest ones are dropped.
+/// How many frames and pointer samples the lanes from the capture threads hold. A capture thread
+/// never blocks on a full lane: it holds back or skips what it would send.
 const FRAME_LANE: usize = 2;
 const POINTER_LANE: usize = 256;
 
@@ -126,10 +127,11 @@ impl<'a> Take<'a> {
         };
         canvas.send_replace(Canvas::covering(display));
         let [width, height] = display.size;
+        let surface = Size { width, height };
         let mut take = Take {
             started,
             canvas,
-            tracker: Tracker::new(Size { width, height }),
+            tracker: Tracker::new(surface),
             journal: Journal::with_budget(JOURNAL_BUDGET),
         };
         // Set once finished: the latest moment to keep waiting for a first frame.
@@ -164,7 +166,7 @@ impl<'a> Take<'a> {
             }
         };
         stop(&capture, &pointer).await;
-        Some(outcome.and_then(|()| take.into_footage(Size { width, height })))
+        Some(outcome.and_then(|()| take.into_footage(surface)))
     }
 
     fn moment(&self, at: Instant) -> Moment {
