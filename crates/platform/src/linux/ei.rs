@@ -158,7 +158,7 @@ impl Sender {
         let keyboard = self.keyboard.as_ref().ok_or(PasteBlocked::NoKeyboard)?;
         let keys = paste_readiness(
             keyboard.device.resumed,
-            keyboard.layouts.is_some(),
+            keyboard.layouts.as_ref(),
             keyboard.state,
         )?;
         Ok((keyboard.device.as_ptr(), keys))
@@ -349,17 +349,18 @@ pub(super) enum PasteBlocked {
     NoPasteKeys,
 }
 
-/// Decides paste readiness in a fixed order. Without a readable keymap, modifiers stay unknown
-/// forever, so that cause is reported before modifiers are judged and never reads as held keys.
+/// Decides paste readiness in a fixed order. Without `layouts` from a readable keymap, modifiers
+/// stay unknown forever, so that cause is reported before modifiers are judged and never reads as
+/// held keys.
 fn paste_readiness(
     resumed: bool,
-    readable_keymap: bool,
+    layouts: Option<&PasteLayouts>,
     state: PasteState,
 ) -> Result<PasteKeys, PasteBlocked> {
     if !resumed {
         return Err(PasteBlocked::NoKeyboard);
     }
-    if !readable_keymap {
+    if layouts.is_none() {
         return Err(PasteBlocked::NoKeyboardState);
     }
     match state {
@@ -734,26 +735,31 @@ mod tests {
             shift: 42,
             v: 47,
         };
+        let layouts = PasteLayouts {
+            blockers: 1,
+            keys: vec![Some(keys)],
+        };
+        let readable = Some(&layouts);
         assert_eq!(
-            paste_readiness(false, false, PasteState::Ready(keys)).err(),
+            paste_readiness(false, None, PasteState::Ready(keys)).err(),
             Some(PasteBlocked::NoKeyboard)
         );
         assert_eq!(
-            paste_readiness(true, false, PasteState::Unknown).err(),
+            paste_readiness(true, None, PasteState::Unknown).err(),
             Some(PasteBlocked::NoKeyboardState),
             "An unreadable keymap read as held shortcut keys"
         );
         for state in [PasteState::Unknown, PasteState::Blocked] {
             assert_eq!(
-                paste_readiness(true, true, state).err(),
+                paste_readiness(true, readable, state).err(),
                 Some(PasteBlocked::ShortcutKeys)
             );
         }
         assert_eq!(
-            paste_readiness(true, true, PasteState::NoKeys).err(),
+            paste_readiness(true, readable, PasteState::NoKeys).err(),
             Some(PasteBlocked::NoPasteKeys)
         );
-        assert!(paste_readiness(true, true, PasteState::Ready(keys)).is_ok());
+        assert!(paste_readiness(true, readable, PasteState::Ready(keys)).is_ok());
     }
 
     #[test]
