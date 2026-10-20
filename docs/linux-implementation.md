@@ -179,12 +179,12 @@ Register the installed desktop identity before portal access. The
 [host Registry contract](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.host.portal.Registry.html)
 describes registration for unsandboxed applications. Package and engine ABI checks are distinct: the
 pinned
-[NeMo requirements](https://raw.githubusercontent.com/NVIDIA/NeMo-Speech.cpp/v0.1.0/docs/install.md)
+[NeMo requirements](https://raw.githubusercontent.com/NVIDIA/NeMo-Speech.cpp/v0.2.0/docs/install.md)
 describe host GPU drivers, while a
 [CPU artifact report](https://github.com/NVIDIA/NeMo-Speech.cpp/issues/23) shows why model loading
 does not establish inference compatibility. Preserve the
-[installer layout](https://github.com/NVIDIA/NeMo-Speech.cpp/blob/v0.1.0/scripts/install.sh) and
-[RPATH definitions](https://github.com/NVIDIA/NeMo-Speech.cpp/blob/v0.1.0/CMakeLists.txt);
+[installer layout](https://github.com/NVIDIA/NeMo-Speech.cpp/blob/v0.2.0/scripts/install.sh) and
+[RPATH definitions](https://github.com/NVIDIA/NeMo-Speech.cpp/blob/v0.2.0/CMakeLists.txt);
 `setup.rs` owns current asset URLs and checksums.
 
 ## Native acceptance still required

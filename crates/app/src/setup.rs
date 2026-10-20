@@ -35,58 +35,56 @@ const MODEL: Download = Download {
 
 #[cfg(target_os = "windows")]
 const CUDA: Download = Download {
-    url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-windows-x86_64-cuda.zip",
-    size: 106_044_768,
-    sha256: "ba024204e76ca2fa4eefa8787506c3c49e418147f627f60cf9206a582b60089c",
+    url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/nemo-speech-0.2.0-windows-x86_64-cuda.zip",
+    size: 102_183_465,
+    sha256: "9ffe5e842c39a7d3211f3b2c3b3aa1bca8c0b2455d96d961ed5f22ec5108f98d",
 };
 
 #[cfg(target_os = "windows")]
 const VULKAN: Download = Download {
-    url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-windows-x86_64-vulkan.zip",
-    size: 21_967_184,
-    sha256: "b5e7b04a637da4eb25a60253e2db65774998e8dfb48c08b4db763009b82ac7ac",
+    url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/nemo-speech-0.2.0-windows-x86_64-vulkan.zip",
+    size: 19_302_464,
+    sha256: "edf15a04ba98740aa0ab75ae4681ac7ad0a488b22b35ce2cbebd10590bb1c1e1",
 };
 
 #[cfg(target_os = "windows")]
 const CPU: Download = Download {
-    url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-windows-x86_64-cpu.zip",
-    size: 4_730_421,
-    sha256: "5e4ea81046012edcd77fd8848de8eefb5a4ba38cc26f52eb544ab184695a75d6",
+    url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/nemo-speech-0.2.0-windows-x86_64-cpu.zip",
+    size: 5_528_418,
+    sha256: "82c80451086e86194aba9af19f800da77cd66d1c28d993d0efceffd6cdb49bb8",
 };
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const CUDA: Download = Download {
-    url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-linux-x86_64-cuda.tar.gz",
-    size: 107_310_946,
-    sha256: "e68628f396489c98fb353e070efaea5bc4977409ae7734fce56c251a79e29147",
+    url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/nemo-speech-0.2.0-linux-x86_64-cuda.tar.gz",
+    size: 105_010_050,
+    sha256: "aef573fcc6c2c759401d2ed03e5ca9e401ed23b0e38cb852d917080c1e2d4515",
 };
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const VULKAN: Download = Download {
-    url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-linux-x86_64-vulkan.tar.gz",
-    size: 18_014_113,
-    sha256: "ce7b7c3c8771cb7450b26e6d4bd8fb2c5e35bcd9fe0076387f35052e9b9523ae",
+    url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/nemo-speech-0.2.0-linux-x86_64-vulkan.tar.gz",
+    size: 16_618_142,
+    sha256: "c8d0ed5b9ac5fb6d5c460015ba38ea217415c44edc1e6d49120646781009aee6",
 };
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const CPU: Download = Download {
-    url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-linux-x86_64-cpu.tar.gz",
-    size: 4_583_913,
-    sha256: "0f74131d631ad2c694cf0ec53490866bb6461147959589a69fb6fc231944065b",
+    url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/nemo-speech-0.2.0-linux-x86_64-cpu.tar.gz",
+    size: 6_683_477,
+    sha256: "f396057150f1b774935c7414fd32ebc04195a795a34120d78d8c9ecefa1b7507",
 };
 
 #[cfg(target_os = "macos")]
 const METAL: Download = Download {
-    url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-macos-aarch64-metal.tar.gz",
-    size: 3_465_028,
-    sha256: "f1dff4f9dd9c96214f8cb78b982812459132df8a4ad1a42409fd94de4a366244",
+    url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/nemo-speech-0.2.0-macos-aarch64-metal.tar.gz",
+    size: 5_031_510,
+    sha256: "5cb02ba7c04f0b5585ce5cde9c830be5f0b7dfb4c83083c500109c381b4f2da9",
 };
 
 #[cfg(target_os = "windows")]
 const EXECUTABLE: &str = r"bin\nemo-speech.exe";
-#[cfg(target_os = "macos")]
-const EXECUTABLE: &str = "nemo-speech/bin/nemo-speech";
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "windows"))]
 const EXECUTABLE: &str = "bin/nemo-speech";
 
 // After a five-minute recording, Parakeet holds about 3.8 GB of GPU memory.
@@ -546,8 +544,7 @@ async fn unpack(
     if !status.success() {
         bail!("Cannot unpack the speech engine. Check free disk space, then try again.");
     }
-    #[cfg(target_os = "linux")]
-    normalize_linux_archive(&staging)?;
+    normalize_archive(&staging)?;
     remove_engine_directory(&directory)?;
     fs::rename(&staging, &directory)?;
     #[expect(
@@ -571,8 +568,9 @@ fn remove_engine_directory(path: &Path) -> anyhow::Result<()> {
     }
 }
 
-#[cfg(target_os = "linux")]
-fn normalize_linux_archive(staging: &Path) -> anyhow::Result<()> {
+/// Lifts the engine out of the one directory an archive may wrap it in, so every build lays out
+/// alike.
+fn normalize_archive(staging: &Path) -> anyhow::Result<()> {
     if staging.join(EXECUTABLE).is_file() {
         return Ok(());
     }
@@ -836,17 +834,16 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
-    fn linux_archives_preserve_the_complete_runtime_layout() -> anyhow::Result<()> {
-        for wrapper in ["", "nemo-speech"] {
+    fn archives_preserve_the_complete_runtime_layout() -> anyhow::Result<()> {
+        for wrapper in ["", "nemo-speech-0.2.0-windows-x86_64-cpu"] {
             let directory = tempfile::tempdir()?;
             let runtime = directory.path().join(wrapper);
             fs::create_dir_all(runtime.join("bin"))?;
             fs::create_dir_all(runtime.join("lib"))?;
             fs::write(runtime.join(EXECUTABLE), b"engine fixture")?;
             fs::write(runtime.join("lib/runtime.so"), b"dependency fixture")?;
-            normalize_linux_archive(directory.path())?;
+            normalize_archive(directory.path())?;
             assert_eq!(
                 fs::read(directory.path().join(EXECUTABLE))?,
                 b"engine fixture"
@@ -862,16 +859,15 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
-    fn linux_archives_reject_an_ambiguous_runtime_layout() -> anyhow::Result<()> {
+    fn archives_reject_an_ambiguous_runtime_layout() -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;
         fs::create_dir_all(directory.path().join("first/bin"))?;
         fs::create_dir_all(directory.path().join("second/bin"))?;
         for wrapper in ["first", "second"] {
             fs::write(directory.path().join(wrapper).join(EXECUTABLE), b"fixture")?;
         }
-        let failure = normalize_linux_archive(directory.path())
+        let failure = normalize_archive(directory.path())
             .err()
             .context("An ambiguous engine archive was accepted")?;
         assert!(failure.to_string().contains("unexpected layout"));
