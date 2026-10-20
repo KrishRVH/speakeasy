@@ -50,7 +50,7 @@ run = "cargo doc --workspace --all-features --no-deps --locked"
 [tasks."rust:test"]
 wait_for = ["rust:doc"]
 run = [
-  "cargo nextest run --workspace --all-targets --all-features --locked",
+  "cargo nextest run --workspace --lib --bins --tests --all-features --locked",
   "cargo test --workspace --doc --all-features --locked",
 ]
 
