@@ -16,9 +16,7 @@ use zbus::MatchRule;
 
 pub use self::tray::{NativeTray, TrayAction, TrayPresentation};
 use super::{
-    Delivery, DesktopOptions, Input, InputSender, InsertPermit, Inserted, Inserter, NativeWindow,
-    OwnedThread,
-    insertion::{Insertion, Reply},
+    DesktopOptions, Input, InputSender, Inserter, NativeWindow, OwnedThread, insertion::Insertion,
 };
 
 /// Desktop launcher and portal registration identity.

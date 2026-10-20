@@ -22,11 +22,11 @@ use zbus::{
     zvariant::{OwnedObjectPath, OwnedValue, Value},
 };
 
-use super::{
-    APPLICATION_ID, Delivery, DesktopOptions, Input, InputSender, InsertPermit, Inserted,
-    Insertion, Reply, ShortcutLabels, ei, owner_changes, stopping, token::TokenStore, x11,
+use super::{APPLICATION_ID, ShortcutLabels, ei, owner_changes, stopping, token::TokenStore, x11};
+use crate::{
+    Delivery, DesktopOptions, Input, InputSender, InsertPermit, Inserted,
+    insertion::{Insertion, MODIFIER_WAIT, Reply},
 };
-use crate::insertion::MODIFIER_WAIT;
 
 const DESTINATION: &str = "org.freedesktop.portal.Desktop";
 const DESKTOP: &str = "/org/freedesktop/portal/desktop";

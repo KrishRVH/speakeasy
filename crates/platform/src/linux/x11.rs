@@ -23,11 +23,11 @@ use x11rb::{
 };
 use xkbcommon::xkb::{KEYSYM_CASE_INSENSITIVE, Keysym, keysym_from_name};
 
-use super::{
-    Delivery, DesktopOptions, HostSession, Input, InputSender, InsertPermit, Inserted, Insertion,
-    Reply, ShortcutLabels, stopping,
+use super::{HostSession, ShortcutLabels, stopping};
+use crate::{
+    Delivery, DesktopOptions, Input, InputSender, InsertPermit, Inserted, OwnedThread,
+    insertion::{Insertion, Reply, wait_for_released_modifiers},
 };
-use crate::{OwnedThread, insertion::wait_for_released_modifiers};
 
 const MAX_FOCUS_ANCESTRY: usize = 32;
 /// The eight core modifier bits; key-event state also carries pointer-button bits above them.
