@@ -12,7 +12,7 @@ use std::{
 
 use anyhow::{Context, anyhow, bail, ensure};
 use reqwest::{Client, Response, multipart};
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
 use speakeasy_platform::ProcessGroup;
 use speakeasy_show::{Moment, Narration, Span, Word};
 use tokio::{
@@ -201,16 +201,14 @@ impl LocalSpeech {
 impl Speech for LocalSpeech {
     async fn transcribe(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<String> {
         let body = self.request(wav, language, "json").await?;
-        let reply: Transcription =
-            serde_json::from_slice(&body).context("Local speech returned invalid JSON")?;
-        reply.text.context("Local speech returned no transcript")
+        reply::<Transcription>(&body)?
+            .text
+            .context("Local speech returned no transcript")
     }
 
     async fn transcribe_words(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<Narration> {
         let body = self.request(wav, language, "verbose_json").await?;
-        let reply: Timed =
-            serde_json::from_slice(&body).context("Local speech returned invalid JSON")?;
-        reply.into_narration()
+        reply::<Timed>(&body)?.into_narration()
     }
 
     async fn probe_with_silence(&self) -> anyhow::Result<()> {
@@ -248,6 +246,14 @@ impl Warmup {
             None
         }
     }
+}
+
+/// Parses an engine reply. Serde quotes strings it did not expect, and those can be transcript
+/// text, so its error is never kept as a source.
+fn reply<T: DeserializeOwned>(body: &[u8]) -> anyhow::Result<T> {
+    serde_json::from_slice(body)
+        .ok()
+        .context("Local speech returned invalid JSON")
 }
 
 /// The part of either engine's JSON reply that Speakeasy reads.
@@ -486,8 +492,8 @@ fn exit_remedy(code: Option<i32>, signal: Option<i32>) -> &'static str {
 mod tests {
     use super::*;
 
-    fn narration(reply: &str) -> anyhow::Result<Narration> {
-        serde_json::from_str::<Timed>(reply)?.into_narration()
+    fn narration(body: &str) -> anyhow::Result<Narration> {
+        reply::<Timed>(body.as_bytes())?.into_narration()
     }
 
     fn timed(words: &[(u64, u64, &str)]) -> Narration {
@@ -547,6 +553,17 @@ mod tests {
             assert!(narration(bad).is_err(), "{bad}");
         }
         Ok(())
+    }
+
+    #[test]
+    fn malformed_replies_never_quote_engine_text() {
+        let error = reply::<Timed>(br#"{"words":"private transcript"}"#)
+            .err()
+            .map(|error| format!("{error:#}"));
+        assert!(
+            error.is_some_and(|error| !error.contains("private")),
+            "A malformed reply was accepted or quoted"
+        );
     }
 
     #[test]
@@ -667,10 +684,10 @@ mod tests {
         let (cancel, cancelled) = watch::channel(false);
         let result = LocalSpeech::start(config, cancelled).await;
         drop(cancel);
-        let error = result
-            .err()
-            .context("Engine unexpectedly became ready")?
-            .to_string();
+        let error = format!(
+            "{:#}",
+            result.err().context("Engine unexpectedly became ready")?
+        );
         assert!(error.contains("exit status: 2"));
         assert!(error.contains("server arguments"));
         assert!(!error.contains("private transcript"));
