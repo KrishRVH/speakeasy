@@ -41,6 +41,9 @@ pub(super) struct Settings {
     saving: Option<Task<()>>,
     saves: SaveQueue,
     _updates: Task<()>,
+    /// What a desktop shortcut runs to reach this instance, without `--toggle` or `--cancel`.
+    #[cfg(target_os = "linux")]
+    desktop_command: SharedString,
     /// Keeps the Windows minimize-to-tray hook alive while Settings is open.
     #[cfg(target_os = "windows")]
     pub(super) minimize_to_tray: Option<Task<()>>,
@@ -65,6 +68,13 @@ impl Settings {
             }
         });
         let saves = SaveQueue::new(config.clone());
+        #[cfg(target_os = "linux")]
+        let desktop_command = {
+            let default = crate::paths::settings_file()
+                .ok()
+                .and_then(|path| std::path::absolute(path).ok());
+            desktop_command(&cx.global::<Services>().path, default.as_deref()).into()
+        };
         let mut view = Self {
             config,
             presentation,
@@ -78,6 +88,8 @@ impl Settings {
             saving: None,
             saves,
             _updates: follow_updates,
+            #[cfg(target_os = "linux")]
+            desktop_command,
             #[cfg(target_os = "windows")]
             minimize_to_tray: None,
         };
@@ -518,6 +530,18 @@ impl Setting {
     }
 }
 
+/// The command a desktop shortcut runs to reach this instance: `speakeasy` on PATH, naming the
+/// settings file unless it is the default, since each settings file has its own instance. Desktop
+/// shortcut fields split commands like a POSIX shell, so the path is single-quoted.
+#[cfg(any(target_os = "linux", test))]
+fn desktop_command(path: &std::path::Path, default: Option<&std::path::Path>) -> String {
+    if default == Some(path) {
+        return "speakeasy".into();
+    }
+    let quoted = path.to_string_lossy().replace('\'', r"'\''");
+    format!("speakeasy --config '{quoted}'")
+}
+
 fn is_demo(cx: &App) -> bool {
     cx.global::<Services>().mode.is_demo()
 }
@@ -555,6 +579,8 @@ fn show_motion(reduced_motion: bool, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
     use crate::config::valid_config;
 
@@ -577,6 +603,20 @@ mod tests {
         );
         assert_eq!(next_microphone(&listed, Some("second")), None);
         assert_eq!(next_microphone(&listed, Some("unplugged")), None);
+    }
+
+    #[test]
+    fn desktop_commands_name_only_a_settings_file_other_than_the_default() {
+        let default = Path::new("/home/user/.config/speakeasy/settings.json");
+        assert_eq!(desktop_command(default, Some(default)), "speakeasy");
+        assert_eq!(
+            desktop_command(default, None),
+            "speakeasy --config '/home/user/.config/speakeasy/settings.json'"
+        );
+        assert_eq!(
+            desktop_command(Path::new("/home/user/it's mine.json"), Some(default)),
+            r"speakeasy --config '/home/user/it'\''s mine.json'"
+        );
     }
 
     #[test]
@@ -615,6 +655,8 @@ mod tests {
             saving: None,
             saves,
             _updates: Task::ready(()),
+            #[cfg(target_os = "linux")]
+            desktop_command: SharedString::default(),
             #[cfg(target_os = "windows")]
             minimize_to_tray: None,
         });

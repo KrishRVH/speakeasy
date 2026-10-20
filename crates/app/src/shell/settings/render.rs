@@ -149,6 +149,11 @@ impl Settings {
         let shortcut = &self.presentation.shortcut;
         let cancel_shortcut = &self.presentation.cancel_shortcut;
         let linux = &self.config.linux;
+        // Only Linux shows this section; elsewhere it still compiles.
+        #[cfg(target_os = "linux")]
+        let command = &self.desktop_command;
+        #[cfg(not(target_os = "linux"))]
+        let command = "speakeasy";
         panel(palette)
             .flex()
             .flex_col()
@@ -166,9 +171,9 @@ impl Settings {
                 palette,
                 cx,
             ))
-            .child(div().text_size(px(12.0)).child(
-                "Desktop bindings: assign speakeasy --toggle and speakeasy --cancel in your desktop's shortcut settings.",
-            ))
+            .child(div().text_size(px(12.0)).child(format!(
+                "Desktop bindings: assign {command} --toggle and {command} --cancel in your desktop's shortcut settings."
+            )))
     }
 
     fn microphone_section(
