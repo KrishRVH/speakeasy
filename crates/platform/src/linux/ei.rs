@@ -1,5 +1,5 @@
-//! Dynamically loaded libei sender. A missing library or missing modifier feedback is an
-//! unavailable capability, never an assumed released keyboard.
+//! Dynamically loaded libei sender. A missing library is an unavailable sender, and modifiers stay
+//! unknown until libei reports them, never assumed released.
 
 use std::{
     ffi::c_void,
@@ -12,7 +12,7 @@ use std::{
 };
 
 use anyhow::{Context, bail, ensure};
-use libloading::Library;
+use libloading::os::unix::{Library, RTLD_LAZY, RTLD_LOCAL};
 use tokio::io::unix::AsyncFd;
 use xkbcommon::xkb::{self, Keysym};
 
@@ -36,20 +36,29 @@ const XKB_KEYCODE_OFFSET: u32 = 8;
 
 type Pointer = *mut c_void;
 type Unref = unsafe extern "C" fn(Pointer) -> Pointer;
-type ModifierQuery = unsafe extern "C" fn(Pointer) -> u32;
 type TextInput = unsafe extern "C" fn(Pointer, *const u8, usize);
 
 macro_rules! api {
     ($($name:ident: $kind:ty),+ $(,)?) => {
-        struct Api { $($name: $kind,)+ library: Library }
+        /// libei's entry points; `text_utf8` is newer than libei 1.5, so it alone is optional.
+        struct Api { $($name: $kind,)+ text_utf8: Option<TextInput> }
         impl Api {
             fn load() -> anyhow::Result<Self> {
-                // SAFETY: symbols and C signatures match libei's public ABI; the library stays
-                // owned longer than every function pointer.
+                // SAFETY: each type is the symbol's C signature in libei's public ABI. RTLD_NODELETE
+                // keeps libei mapped for the life of the process, so the copied function pointers
+                // stay valid after the handle drops here.
                 unsafe {
-                    let library = Library::new("libei.so.1").context("Install libei for Wayland input")?;
+                    let library = Library::open(
+                        Some("libei.so.1"),
+                        RTLD_LAZY | RTLD_LOCAL | libc::RTLD_NODELETE,
+                    )
+                    .context("Install libei for Wayland input")?;
                     $(let $name = *library.get::<$kind>(concat!(stringify!($name), "\0").as_bytes())?;)+
-                    Ok(Self { $($name,)+ library })
+                    let text_utf8 = library
+                        .get::<TextInput>(b"ei_device_text_utf8_with_length\0")
+                        .ok()
+                        .map(|symbol| *symbol);
+                    Ok(Self { $($name,)+ text_utf8 })
                 }
             }
         }
@@ -81,11 +90,13 @@ api! {
     ei_device_frame: unsafe extern "C" fn(Pointer, u64),
     ei_device_stop_emulating: unsafe extern "C" fn(Pointer),
     ei_now: unsafe extern "C" fn(Pointer) -> u64,
+    ei_event_keyboard_get_xkb_mods_depressed: unsafe extern "C" fn(Pointer) -> u32,
+    ei_event_keyboard_get_xkb_mods_latched: unsafe extern "C" fn(Pointer) -> u32,
+    ei_event_keyboard_get_xkb_mods_locked: unsafe extern "C" fn(Pointer) -> u32,
+    ei_event_keyboard_get_xkb_group: unsafe extern "C" fn(Pointer) -> u32,
 }
 
 pub(super) struct Sender {
-    // Declaration order is release order: device references, then the context, before the
-    // library unloads.
     keyboard: Option<Device>,
     text: Option<Device>,
     context: EiContext,
@@ -93,8 +104,6 @@ pub(super) struct Sender {
     keymap: Option<KeyboardMap>,
     keys: Option<PasteKeys>,
     modifiers: Modifiers,
-    feedback: Option<ModifierFeedback>,
-    utf8: Option<TextInput>,
     sequence: u32,
     readiness: AsyncFd<OwnedFd>,
 }
@@ -108,11 +117,6 @@ impl Sender {
         ensure!(status == 0, "Could not connect Wayland input sender");
         // SAFETY: the live context keeps its descriptor open while it is duplicated.
         let readiness = unsafe { register_readiness((api.ei_get_fd)(context.as_ptr())) }?;
-        let feedback = ModifierFeedback::load(&api.library);
-        // SAFETY: TextInput is the symbol's public C signature.
-        let utf8 = unsafe {
-            optional_symbol::<TextInput>(&api.library, b"ei_device_text_utf8_with_length\0")
-        };
         Ok(Self {
             keyboard: None,
             text: None,
@@ -121,8 +125,6 @@ impl Sender {
             keymap: None,
             keys: None,
             modifiers: Modifiers::Unknown,
-            feedback,
-            utf8,
             sequence: 0,
             readiness,
         })
@@ -157,7 +159,7 @@ impl Sender {
     /// The UTF-8 entry point and the resumed text device it writes to.
     fn text_target(&self) -> Option<(TextInput, Pointer)> {
         let device = self.text.as_ref().filter(|device| device.resumed)?;
-        Some((self.utf8?, device.as_ptr()))
+        Some((self.api.text_utf8?, device.as_ptr()))
     }
 
     pub(super) fn dispatch(&mut self) -> anyhow::Result<()> {
@@ -199,7 +201,9 @@ impl Sender {
             if seat.is_null() || !(self.api.ei_seat_has_capability)(seat, CAPABILITY_KEYBOARD) {
                 return;
             }
-            if self.utf8.is_some() && (self.api.ei_seat_has_capability)(seat, CAPABILITY_TEXT) {
+            if self.api.text_utf8.is_some()
+                && (self.api.ei_seat_has_capability)(seat, CAPABILITY_TEXT)
+            {
                 (self.api.ei_seat_bind_capabilities)(
                     seat,
                     CAPABILITY_KEYBOARD,
@@ -256,15 +260,17 @@ impl Sender {
     }
 
     fn update_modifiers(&mut self, event: &Event) {
-        let (Some(feedback), Some(keymap)) = (&self.feedback, &self.keymap) else {
+        let Some(keymap) = &self.keymap else {
             return;
         };
         let raw = event.raw.as_ptr();
-        // SAFETY: the live event reports keyboard modifiers, and the library stays loaded.
+        // SAFETY: the live event reports keyboard modifiers.
         let (group, active_mask) = unsafe {
             (
-                (feedback.group)(raw),
-                (feedback.depressed)(raw) | (feedback.latched)(raw) | (feedback.locked)(raw),
+                (self.api.ei_event_keyboard_get_xkb_group)(raw),
+                (self.api.ei_event_keyboard_get_xkb_mods_depressed)(raw)
+                    | (self.api.ei_event_keyboard_get_xkb_mods_latched)(raw)
+                    | (self.api.ei_event_keyboard_get_xkb_mods_locked)(raw),
             )
         };
         self.keys = keymap.paste_keys(group);
@@ -332,40 +338,13 @@ enum Modifiers {
     Released,
 }
 
-/// The XKB modifier state libei reports with keyboard-modifier events.
-struct ModifierFeedback {
-    depressed: ModifierQuery,
-    latched: ModifierQuery,
-    locked: ModifierQuery,
-    group: ModifierQuery,
-}
-
-impl ModifierFeedback {
-    fn load(library: &Library) -> Option<Self> {
-        // SAFETY: ModifierQuery is each symbol's public C signature.
-        let (depressed, latched, locked, group) = unsafe {
-            (
-                optional_symbol::<ModifierQuery>(
-                    library,
-                    b"ei_event_keyboard_get_xkb_mods_depressed\0",
-                ),
-                optional_symbol::<ModifierQuery>(
-                    library,
-                    b"ei_event_keyboard_get_xkb_mods_latched\0",
-                ),
-                optional_symbol::<ModifierQuery>(
-                    library,
-                    b"ei_event_keyboard_get_xkb_mods_locked\0",
-                ),
-                optional_symbol::<ModifierQuery>(library, b"ei_event_keyboard_get_xkb_group\0"),
-            )
-        };
-        Some(Self {
-            depressed: depressed?,
-            latched: latched?,
-            locked: locked?,
-            group: group?,
-        })
+impl Drop for Sender {
+    /// Releases device references before the context, whatever the field order: destroying a
+    /// device unregisters it from the context it reaches through its seat, and a seat holds no
+    /// context reference of its own.
+    fn drop(&mut self) {
+        self.keyboard = None;
+        self.text = None;
     }
 }
 
@@ -392,8 +371,8 @@ impl EiContext {
 
 impl Drop for EiContext {
     fn drop(&mut self) {
-        // SAFETY: this is the context's only owning reference, and every owner drops it before
-        // unloading the library; dropping it closes the EIS descriptor.
+        // SAFETY: this is the context's only owning reference, and `Sender::drop` has already
+        // released every device reference; dropping it closes the EIS descriptor.
         unsafe { (self.unref)(self.raw.as_ptr()) };
     }
 }
@@ -432,8 +411,8 @@ impl Device {
 
 impl Drop for Device {
     fn drop(&mut self) {
-        // SAFETY: the guard holds this reference, and the sender releases its devices before its
-        // context and library.
+        // SAFETY: the guard holds this reference, and `Sender::drop` releases devices before their
+        // context.
         unsafe { (self.unref)(self.raw.as_ptr()) };
     }
 }
@@ -448,8 +427,7 @@ struct Event {
 
 impl Drop for Event {
     fn drop(&mut self) {
-        // SAFETY: the guard holds the event's only reference, and the sender that dispatched it
-        // keeps the library loaded.
+        // SAFETY: the guard holds the event's only reference.
         unsafe { (self.unref)(self.raw.as_ptr()) };
     }
 }
@@ -512,16 +490,6 @@ struct PasteKeys {
     control: u32,
     shift: u32,
     v: u32,
-}
-
-/// Looks up an optional libei symbol; absence means the capability is unavailable.
-///
-/// # Safety
-/// `T` must be the symbol's C signature, and the returned function pointer must not be called
-/// after `library` unloads.
-unsafe fn optional_symbol<T: Copy>(library: &Library, name: &[u8]) -> Option<T> {
-    // SAFETY: the caller supplies the symbol's signature.
-    unsafe { library.get::<T>(name) }.ok().map(|symbol| *symbol)
 }
 
 /// Registers a duplicate of `fd` for readiness polling.
