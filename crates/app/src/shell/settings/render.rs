@@ -4,8 +4,8 @@
 use std::path::Path;
 
 use gpui::{
-    AnyElement, App, Context, Div, FontWeight, KeyDownEvent, SharedString, Window, div, prelude::*,
-    px, relative, rgb, svg,
+    AnyElement, App, Context, Div, FontWeight, KeyDownEvent, Pixels, SharedString, Window, div,
+    prelude::*, px, relative, rgb, svg,
 };
 
 use super::{Action, EngineFile, Setting, Settings, is_demo};
@@ -19,9 +19,17 @@ use crate::{
     theme::{Palette, alpha, mix},
 };
 
+/// The space between stacked rows and between the controls in a row.
+const ROW_GAP: Pixels = px(8.0);
+/// A control's vertical padding. A plain label pads the same, so a row keeps one height.
+const CONTROL_PAD_Y: Pixels = px(8.0);
+/// The size of control, detail and status text.
+const TEXT: Pixels = px(12.0);
+
 impl Render for Settings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = self.config.theme.palette();
+        let ui = Ui { palette, cx };
         let unconfigured = !is_demo(cx) && self.config.needs_engine();
         div()
             .id("settings")
@@ -36,22 +44,28 @@ impl Render for Settings {
             .gap(px(20.0))
             .child(header(self.presentation.indicator, palette))
             .child(if self.is_setting_up() || unconfigured {
-                self.setup_card(palette, cx).into_any_element()
+                self.setup_card(&ui).into_any_element()
             } else {
-                self.gesture_hints(palette).into_any_element()
+                self.gesture_hints(&ui).into_any_element()
             })
             .when(!self.is_setting_up(), |settings| {
-                settings.child(self.engine_section(palette, cx))
+                settings.child(self.engine_section(&ui))
             })
             .when(cfg!(target_os = "linux"), |settings| {
-                settings.child(self.linux_section(palette, cx))
+                settings.child(self.linux_section(&ui))
             })
-            .child(self.microphone_section(palette, cx))
-            .child(self.preferences_section(palette, cx))
-            .child(self.commands(palette, cx))
+            .child(self.microphone_section(&ui))
+            .child(self.preferences_section(&ui))
+            .child(self.commands(&ui))
             .child(self.status_line(palette))
             .child(footer(palette, cx))
     }
+}
+
+/// What every control draws with: the draft's palette, and the view its actions reach.
+struct Ui<'a> {
+    palette: &'static Palette,
+    cx: &'a Context<'a, Settings>,
 }
 
 impl Settings {
@@ -60,35 +74,31 @@ impl Settings {
         self.setup.is_some()
     }
 
-    fn setup_card(&self, palette: &'static Palette, cx: &Context<Self>) -> impl IntoElement {
+    fn setup_card(&self, ui: &Ui<'_>) -> impl IntoElement {
         let progress = self.setup.as_ref().map(|(setup, _)| setup.progress());
         let (title, command) = if self.is_setting_up() {
             ("Setting up dictation", "Cancel")
         } else {
             ("Set up dictation", "Set up automatically")
         };
-        panel(palette)
+        ui.panel()
             .flex()
             .flex_col()
             .gap(px(10.0))
             .child(div().text_size(px(13.0)).child(title))
             .child(
                 div()
-                    .text_size(px(12.0))
-                    .text_color(rgb(palette.muted))
+                    .text_size(TEXT)
+                    .text_color(rgb(ui.palette.muted))
                     .child(setup_detail(progress)),
             )
             .when_some(progress, |card, progress| {
-                card.child(progress_bar(progress, palette))
+                card.child(progress_bar(progress, ui.palette))
             })
-            .child(
-                div()
-                    .flex()
-                    .child(button(command, Action::Setup, palette, cx)),
-            )
+            .child(div().flex().child(ui.button(command, Action::Setup)))
     }
 
-    fn gesture_hints(&self, palette: &'static Palette) -> impl IntoElement {
+    fn gesture_hints(&self, ui: &Ui<'_>) -> impl IntoElement {
         let shortcut = &self.presentation.shortcut;
         let cancel_shortcut = &self.presentation.cancel_shortcut;
         let desktop_bindings = cfg!(target_os = "linux") && self.config.linux.external_shortcut;
@@ -104,48 +114,38 @@ impl Settings {
         } else {
             "Add Space, or double-tap, for hands-free. Escape cancels.".into()
         };
-        panel(palette)
+        ui.panel()
             .text_size(px(13.0))
             .line_height(px(23.0))
             .child(hold_hint)
             .child(div().child(gesture_hint))
     }
 
-    fn engine_section(&self, palette: &'static Palette, cx: &Context<Self>) -> impl IntoElement {
+    fn engine_section(&self, ui: &Ui<'_>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
-            .gap(px(8.0))
+            .gap(ROW_GAP)
             .child(
                 div()
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(heading("LOCAL SPEECH", palette))
-                    .child(button(
+                    .child(ui.heading("LOCAL SPEECH"))
+                    .child(ui.button(
                         format!("Engine: {}", self.config.engine.label()),
                         Action::Engine,
-                        palette,
-                        cx,
                     )),
             )
-            .child(file_row(
+            .child(ui.file_row(
                 &self.config.engine_executable,
                 "Choose executable",
                 EngineFile::Executable,
-                palette,
-                cx,
             ))
-            .child(file_row(
-                &self.config.model,
-                "Choose model",
-                EngineFile::Model,
-                palette,
-                cx,
-            ))
+            .child(ui.file_row(&self.config.model, "Choose model", EngineFile::Model))
     }
 
-    fn linux_section(&self, palette: &'static Palette, cx: &Context<Self>) -> impl IntoElement {
+    fn linux_section(&self, ui: &Ui<'_>) -> impl IntoElement {
         let shortcut = &self.presentation.shortcut;
         let cancel_shortcut = &self.presentation.cancel_shortcut;
         let linux = &self.config.linux;
@@ -154,33 +154,27 @@ impl Settings {
         let command = &self.desktop_command;
         #[cfg(not(target_os = "linux"))]
         let command = "speakeasy";
-        panel(palette)
+        ui.panel()
             .flex()
             .flex_col()
-            .gap(px(8.0))
-            .child(heading("LINUX DESKTOP", palette))
-            .child(div().text_size(px(12.0)).child(format!("Shortcut: {shortcut}")))
-            .child(div().text_size(px(12.0)).child(format!("Cancel: {cancel_shortcut}")))
-            .child(button(
+            .gap(ROW_GAP)
+            .child(ui.heading("LINUX DESKTOP"))
+            .child(div().text_size(TEXT).child(format!("Shortcut: {shortcut}")))
+            .child(div().text_size(TEXT).child(format!("Cancel: {cancel_shortcut}")))
+            .child(ui.button(
                 if linux.external_shortcut {
                     "Shortcuts: Desktop bindings"
                 } else {
                     "Shortcuts: Native desktop"
                 },
                 Action::Toggle(Setting::DesktopBindings),
-                palette,
-                cx,
             ))
-            .child(div().text_size(px(12.0)).child(format!(
+            .child(div().text_size(TEXT).child(format!(
                 "Desktop bindings: assign {command} --toggle and {command} --cancel in your desktop's shortcut settings."
             )))
     }
 
-    fn microphone_section(
-        &self,
-        palette: &'static Palette,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
+    fn microphone_section(&self, ui: &Ui<'_>) -> impl IntoElement {
         let microphone: SharedString = match &self.config.microphone {
             None => "System default".into(),
             Some(id) => self
@@ -192,62 +186,39 @@ impl Settings {
                     |device| device.name.clone().into(),
                 ),
         };
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .child(heading("MICROPHONE", palette))
-            .child(
-                div()
-                    .flex()
-                    .gap(px(8.0))
-                    .child(button(microphone, Action::Microphone, palette, cx))
-                    .child(button("Refresh", Action::Refresh, palette, cx)),
-            )
+        ui.section("MICROPHONE").child(
+            row()
+                .child(ui.button(microphone, Action::Microphone))
+                .child(ui.button("Refresh", Action::Refresh)),
+        )
     }
 
-    fn preferences_section(
-        &self,
-        palette: &'static Palette,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .child(heading("PREFERENCES", palette))
+    fn preferences_section(&self, ui: &Ui<'_>) -> impl IntoElement {
+        ui.section("PREFERENCES")
             .when(!self.is_setting_up(), |section| {
-                section.child(
-                    div()
-                        .flex()
-                        .gap(px(8.0))
-                        .child(self.language_control(palette, cx))
-                        .child(self.switch("Prefer GPU", Setting::PreferGpu, palette, cx)),
-                )
+                section.child(row().child(self.language_control(ui)).child(self.switch(
+                    ui,
+                    "Prefer GPU",
+                    Setting::PreferGpu,
+                )))
             })
+            .child(row().child(self.delivery_control(ui)).child(self.switch(
+                ui,
+                "Reduce motion",
+                Setting::ReduceMotion,
+            )))
             .child(
-                div()
-                    .flex()
-                    .gap(px(8.0))
-                    .child(self.delivery_control(palette, cx))
-                    .child(self.switch("Reduce motion", Setting::ReduceMotion, palette, cx)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap(px(8.0))
-                    .child(self.switch("Remove um / uh", Setting::RemoveFillers, palette, cx))
-                    .child(button(
+                row()
+                    .child(self.switch(ui, "Remove um / uh", Setting::RemoveFillers))
+                    .child(ui.button(
                         format!("Theme: {}", self.config.theme.name()),
                         Action::Theme,
-                        palette,
-                        cx,
                     )),
             )
             .child(
                 div()
-                    .text_size(px(12.0))
-                    .text_color(rgb(palette.muted))
+                    .text_size(TEXT)
+                    .text_color(rgb(ui.palette.muted))
                     .child(
                         if self.config.engine == Engine::Whisper
                             && !self.config.language.eq_ignore_ascii_case("en")
@@ -261,29 +232,18 @@ impl Settings {
     }
 
     /// A button that toggles `setting`, labeled with its draft state.
-    fn switch(
-        &self,
-        label: &str,
-        setting: Setting,
-        palette: &'static Palette,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
+    fn switch(&self, ui: &Ui<'_>, label: &str, setting: Setting) -> impl IntoElement {
         let state = if setting.is_on(&self.config) {
             "On"
         } else {
             "Off"
         };
-        button(
-            format!("{label}: {state}"),
-            Action::Toggle(setting),
-            palette,
-            cx,
-        )
+        ui.button(format!("{label}: {state}"), Action::Toggle(setting))
     }
 
     /// How dictated text reaches the editor. Windows and macOS offer paste or typing as a switch;
     /// Linux adds its terminal paste keys and copying without keyboard control.
-    fn delivery_control(&self, palette: &'static Palette, cx: &Context<Self>) -> impl IntoElement {
+    fn delivery_control(&self, ui: &Ui<'_>) -> impl IntoElement {
         let label = match self.config.text_delivery() {
             #[cfg(not(target_os = "linux"))]
             TextDelivery::Paste => "Keep clipboard: Off",
@@ -298,14 +258,14 @@ impl Settings {
             #[cfg(target_os = "linux")]
             TextDelivery::Copy => "Insert: Copy only",
         };
-        button(label, Action::Delivery, palette, cx)
+        ui.button(label, Action::Delivery)
     }
 
-    fn language_control(&self, palette: &'static Palette, cx: &Context<Self>) -> AnyElement {
+    fn language_control(&self, ui: &Ui<'_>) -> AnyElement {
         if self.config.engine == Engine::Parakeet {
             return div()
-                .py(px(8.0))
-                .text_size(px(12.0))
+                .py(CONTROL_PAD_Y)
+                .text_size(TEXT)
                 .child("Language: Automatic")
                 .into_any_element();
         }
@@ -314,33 +274,29 @@ impl Settings {
             "en" => "Language: English".into(),
             language => format!("Language: {language}").into(),
         };
-        button(label, Action::Language, palette, cx).into_any_element()
+        ui.button(label, Action::Language).into_any_element()
     }
 
-    fn commands(&self, palette: &'static Palette, cx: &Context<Self>) -> impl IntoElement {
-        let running = cx.global::<Services>().running();
-        let (label, action) = if is_demo(cx) {
+    fn commands(&self, ui: &Ui<'_>) -> impl IntoElement {
+        let running = ui.cx.global::<Services>().running();
+        let (label, action) = if is_demo(ui.cx) {
             ("Replay preview", Action::Preview)
         } else if running {
             ("Save changes", Action::Save)
         } else {
             ("Enable dictation", Action::Save)
         };
-        div()
-            .flex()
-            .gap(px(8.0))
+        row()
             .when(!self.is_setting_up(), |row| {
-                row.child(button(label, action, palette, cx))
+                row.child(ui.button(label, action))
             })
-            .when(running, |row| {
-                row.child(button("Pause", Action::Pause, palette, cx))
-            })
-            .child(button("Quit", Action::Quit, palette, cx))
+            .when(running, |row| row.child(ui.button("Pause", Action::Pause)))
+            .child(ui.button("Quit", Action::Quit))
     }
 
     fn status_line(&self, palette: &'static Palette) -> impl IntoElement {
         div()
-            .text_size(px(12.0))
+            .text_size(TEXT)
             .text_color(rgb(if self.notice.is_some() {
                 palette.warn
             } else {
@@ -351,6 +307,87 @@ impl Settings {
                 status.child(div().child(notice))
             })
     }
+}
+
+impl Ui<'_> {
+    fn button(&self, label: impl IntoElement, action: Action) -> impl IntoElement {
+        let palette = self.palette;
+        div()
+            .id(action.element_id())
+            .focusable()
+            .tab_stop(true)
+            .px(px(12.0))
+            .max_w(px(390.0))
+            .overflow_hidden()
+            .text_ellipsis()
+            .py(CONTROL_PAD_Y)
+            .rounded(px(3.0))
+            .border_1()
+            .border_color(rgb(mix(palette.raise, palette.ink, 0.14)))
+            .bg(rgb(palette.raise))
+            .text_size(TEXT)
+            .hover(|style| style.bg(rgb(mix(palette.raise, palette.ink, 0.08))))
+            .focus(|style| style.border_color(rgb(palette.lamp)))
+            .cursor_pointer()
+            .on_click(
+                self.cx
+                    .listener(move |view, _, window, cx| view.act(action, window, cx)),
+            )
+            .on_key_down(
+                self.cx
+                    .listener(move |view, event: &KeyDownEvent, window, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            view.act(action, window, cx);
+                            cx.stop_propagation();
+                        }
+                    }),
+            )
+            .child(label)
+    }
+
+    fn file_row(&self, path: &Path, label: &'static str, file: EngineFile) -> impl IntoElement {
+        let name = path.file_name().map_or_else(
+            || "Not selected".into(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(12.0))
+            .child(div().flex_1().overflow_hidden().text_size(TEXT).child(name))
+            .child(self.button(label, Action::Choose(file)))
+    }
+
+    fn panel(&self) -> Div {
+        div()
+            .p(px(16.0))
+            .rounded(px(4.0))
+            .bg(rgb(self.palette.panel))
+            .border_1()
+            .border_color(alpha(self.palette.lamp, 0.14))
+    }
+
+    fn heading(&self, text: &'static str) -> impl IntoElement {
+        div()
+            .text_size(TEXT)
+            .text_color(rgb(self.palette.muted))
+            .child(text)
+    }
+
+    /// A titled stack of rows.
+    fn section(&self, title: &'static str) -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .gap(ROW_GAP)
+            .child(self.heading(title))
+    }
+}
+
+/// Controls side by side.
+fn row() -> Div {
+    div().flex().gap(ROW_GAP)
 }
 
 fn setup_detail(progress: Option<Progress>) -> String {
@@ -437,81 +474,6 @@ fn progress_bar(progress: Progress, palette: &'static Palette) -> impl IntoEleme
                     progress.done as f32 / progress.total.max(1) as f32,
                 )),
         )
-}
-
-fn file_row(
-    path: &Path,
-    label: &'static str,
-    file: EngineFile,
-    palette: &'static Palette,
-    cx: &Context<Settings>,
-) -> impl IntoElement {
-    let name = path.file_name().map_or_else(
-        || "Not selected".into(),
-        |name| name.to_string_lossy().into_owned(),
-    );
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(px(12.0))
-        .child(
-            div()
-                .flex_1()
-                .overflow_hidden()
-                .text_size(px(12.0))
-                .child(name),
-        )
-        .child(button(label, Action::Choose(file), palette, cx))
-}
-
-fn button(
-    label: impl IntoElement,
-    action: Action,
-    palette: &'static Palette,
-    cx: &Context<Settings>,
-) -> impl IntoElement {
-    div()
-        .id(action.element_id())
-        .focusable()
-        .tab_stop(true)
-        .px(px(12.0))
-        .max_w(px(390.0))
-        .overflow_hidden()
-        .text_ellipsis()
-        .py(px(8.0))
-        .rounded(px(3.0))
-        .border_1()
-        .border_color(rgb(mix(palette.raise, palette.ink, 0.14)))
-        .bg(rgb(palette.raise))
-        .text_size(px(12.0))
-        .hover(|style| style.bg(rgb(mix(palette.raise, palette.ink, 0.08))))
-        .focus(|style| style.border_color(rgb(palette.lamp)))
-        .cursor_pointer()
-        .on_click(cx.listener(move |view, _, window, cx| view.act(action, window, cx)))
-        .on_key_down(cx.listener(move |view, event: &KeyDownEvent, window, cx| {
-            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                view.act(action, window, cx);
-                cx.stop_propagation();
-            }
-        }))
-        .child(label)
-}
-
-fn panel(palette: &'static Palette) -> Div {
-    div()
-        .p(px(16.0))
-        .rounded(px(4.0))
-        .bg(rgb(palette.panel))
-        .border_1()
-        .border_color(alpha(palette.lamp, 0.14))
-}
-
-fn heading(text: &'static str, palette: &'static Palette) -> impl IntoElement {
-    div()
-        .text_size(px(12.0))
-        .text_color(rgb(palette.muted))
-        .child(text)
 }
 
 fn jewel(color: u32, size: f32) -> impl IntoElement {
