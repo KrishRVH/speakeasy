@@ -70,7 +70,7 @@ use windows_sys::Win32::{
 };
 
 use self::{
-    exclusion::{EXCLUSION_BUILD, Exclusions, exclude_always, windows_build},
+    exclusion::{Exclusions, exclude_always, exclusion_supported},
     readback::{Readback, device_for},
 };
 use super::{BASE_DPI, configure_pill, hwnd_of, is_key_down, ok_or_last_error};
@@ -227,7 +227,7 @@ fn record(
     stopping: &Receiver<Infallible>,
 ) -> Result<(), Failure> {
     join_lasting_apartment()?;
-    if windows_build().is_none_or(|build| build < EXCLUSION_BUILD) {
+    if !exclusion_supported() {
         return Err(Failure::OldWindows);
     }
     let mut exclusions = Exclusions::default();

@@ -26,7 +26,7 @@ use super::Failure;
 use crate::windows::ok_or_last_error;
 
 /// The first build that leaves excluded windows out of capture; earlier builds black them out.
-pub(super) const EXCLUSION_BUILD: u32 = 19_041;
+const EXCLUSION_BUILD: u32 = 19_041;
 /// Marks a window `configure_overlay` left out of all screen capture, so that a capture ending
 /// never shows it to capture again.
 pub(super) const ALWAYS_EXCLUDED: PCWSTR = w!("SpeakeasyAlwaysExcluded");
@@ -114,7 +114,7 @@ pub(super) fn affinity(window: HWND) -> Option<u32> {
 /// Leaves `hwnd` out of all screen capture for good, marked so no capture ending restores it.
 pub(super) fn exclude_always(hwnd: HWND) -> anyhow::Result<()> {
     ensure!(
-        windows_build().is_some_and(|build| build >= EXCLUSION_BUILD),
+        exclusion_supported(),
         "Shows need Windows 10 version 2004 or later"
     );
     // SAFETY: the caller passes a live window this process owns on its UI thread. The subclass
@@ -146,9 +146,14 @@ unsafe extern "system" fn always_excluded(
     }
 }
 
+/// Whether this Windows build leaves excluded windows out of capture rather than blacking them out.
+pub(super) fn exclusion_supported() -> bool {
+    windows_build().is_some_and(|build| build >= EXCLUSION_BUILD)
+}
+
 /// The running Windows build, read from the kernel: the documented version APIs report Windows 8
 /// to executables whose manifests list no newer version.
-pub(super) fn windows_build() -> Option<u32> {
+fn windows_build() -> Option<u32> {
     let mut version = OSVERSIONINFOW {
         dwOSVersionInfoSize: u32::try_from(size_of::<OSVERSIONINFOW>()).ok()?,
         ..Default::default()
