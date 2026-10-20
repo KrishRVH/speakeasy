@@ -41,8 +41,9 @@ are outside this project's profile.
   acknowledges before opening replacements. Keep UI and callbacks responsive; measure before
   introducing caches or background services.
 - Build deep modules with small interfaces and explicit inputs. Put behavior, state, and tests
-  together. Add abstractions for actual duplication or a useful side-effect seam; remove forwarding
-  wrappers and obsolete re-exports.
+  together; a test module over about 250 lines, or longer than its code, lives with its opt-in
+  checks in a child `tests.rs` behind `#[cfg(test)] mod tests;`. Add abstractions for actual
+  duplication or a useful side-effect seam; remove forwarding wrappers and obsolete re-exports.
 - Carry invariants in types, use enums for meaningful alternatives, and make always-present values
   non-optional. Keep internals private and document public contracts, failure modes, and required
   native-thread ownership.
