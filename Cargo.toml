@@ -30,7 +30,11 @@ libc = "0.2.189"
 libloading = "0.9.0"
 objc2 = "0.6.4"
 objc2-app-kit = "0.3.2"
+objc2-core-graphics = { version = "0.3.2", default-features = false }
+objc2-core-media = { version = "0.3.2", default-features = false }
+objc2-core-video = { version = "0.3.2", default-features = false }
 objc2-foundation = "0.3.2"
+objc2-screen-capture-kit = { version = "0.3.2", default-features = false }
 png = "0.18.1"
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 raw-window-handle = "0.6.2"
