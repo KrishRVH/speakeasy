@@ -1,6 +1,7 @@
-//! The outline of a freehand stroke, as a pen of varying pressure would leave it.
+//! Ink as the overlay and a bundle both draw it: its color, its pen, and the outline of a freehand
+//! stroke, as a pen of varying pressure would leave it.
 //!
-//! Adapted from perfect-freehand 1.2.2 under the MIT License; see `NOTICE.md`.
+//! The outline is adapted from perfect-freehand 1.2.2 under the MIT License; see `NOTICE.md`.
 
 use std::f32::consts::PI;
 
@@ -25,6 +26,9 @@ struct Node {
     /// Distance along the line from the first node.
     run: f32,
 }
+
+/// The red of ink on the overlay and in a bundle's frames.
+pub const COLOR: [u8; 4] = [255, 59, 48, 255];
 
 /// The pen width for ink on a surface `width × height` pixels, alike on the overlay and in a
 /// bundle's frames.

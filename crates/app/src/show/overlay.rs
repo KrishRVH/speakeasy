@@ -27,12 +27,14 @@ use crate::{
 /// arrow drawn right after it stay and leave together.
 const HOLD: Duration = Duration::from_millis(650);
 const FADE: Duration = Duration::from_millis(650);
-/// The red of ink, which the bundle draws in the same color.
-const INK: Rgba = Rgba {
-    r: 1.0,
-    g: 59.0 / 255.0,
-    b: 48.0 / 255.0,
-    a: 1.0,
+const INK: Rgba = {
+    let [red, green, blue, _] = ink::COLOR;
+    Rgba {
+        r: red as f32 / 255.0,
+        g: green as f32 / 255.0,
+        b: blue as f32 / 255.0,
+        a: 1.0,
+    }
 };
 
 /// What the overlay shows, published by a Show's recorder or the demo's.

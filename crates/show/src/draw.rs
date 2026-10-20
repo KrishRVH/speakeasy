@@ -10,8 +10,6 @@ use crate::{
     select::Reason,
 };
 
-/// The red of drawn ink.
-const INK: [u8; 4] = [255, 59, 48, 255];
 const RIPPLE_FILL: [u8; 4] = [0, 136, 255, 68];
 const RIPPLE_RING: [u8; 4] = [0, 136, 255, 235];
 const WHITE: [u8; 4] = [255, 255, 255, 255];
@@ -66,7 +64,7 @@ pub(crate) fn annotate(
         if let Some(outline) = closed_curve(&ink::outline(&pixels, pen)) {
             canvas.fill_path(
                 &outline,
-                &paint(INK),
+                &paint(ink::COLOR),
                 FillRule::Winding,
                 Transform::identity(),
                 None,
