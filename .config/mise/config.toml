@@ -6,8 +6,9 @@ lockfile = true
 idiomatic_version_file_enable_tools = ["rust"]
 
 [vars]
-# Without pipefail a git failure hands the markdown tool an empty list, and it passes.
-md_files = '''set -o pipefail; git ls-files -z --cached --others --exclude-standard -- '*.md' ':(exclude)vendor/' '''
+# Tasks that pipe this list run under bash with pipefail, which /bin/sh lacks on older dash: without
+# it a git failure hands the markdown tool an empty list, and it passes.
+md_files = '''git ls-files -z --cached --others --exclude-standard -- '*.md' ':(exclude)vendor/' '''
 
 [env]
 UV_PYTHON_PREFERENCE = "only-system"
@@ -125,10 +126,12 @@ run = "bun install --frozen-lockfile --no-summary"
 
 [tasks."md:fmt:check"]
 depends = ["md:install"]
+shell = "bash -o errexit -o pipefail -c"
 run = "{{vars.md_files}} | xargs -0 bun run prettier --check --no-error-on-unmatched-pattern --log-level warn"
 
 [tasks."md:lint"]
 depends = ["md:install"]
+shell = "bash -o errexit -o pipefail -c"
 run = "{{vars.md_files}} | xargs -0 bun run markdownlint-cli2"
 
 [tasks."md:links"]
@@ -142,6 +145,7 @@ run = "typos --config typos.toml ."
 
 [tasks."md:standards"]
 depends = ["md:install"]
+shell = "bash -o errexit -o pipefail -c"
 run = [
   "{{vars.md_files}} | xargs -0 bun run prettier --write --no-error-on-unmatched-pattern",
   "{{vars.md_files}} | xargs -0 bun run markdownlint-cli2 --fix",
