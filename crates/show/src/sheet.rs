@@ -139,12 +139,11 @@ fn fitted(image: &Image, cell: Cell) -> (u32, u32) {
 /// whole sheet stays within [`LONGEST_EDGE`] and [`MOST_PIXELS`].
 fn layout(aspects: &[f32], widths: &[f32]) -> ((u32, u32), Vec<Cell>) {
     let rows = plan(aspects);
-    let row_aspects: Vec<f32> = rows.iter().map(|row| sum(aspects, row).max(0.1)).collect();
+    let row_aspects: Vec<f32> = rows.iter().map(|row| sum(aspects, row)).collect();
     let sheet_aspect = row_aspects
         .iter()
         .map(|aspect| aspect.recip())
         .sum::<f32>()
-        .max(0.01)
         .recip();
     let native = rows
         .iter()
@@ -296,7 +295,7 @@ struct Scorer<'a> {
 impl<'a> Scorer<'a> {
     fn new(aspects: &'a [f32]) -> Self {
         let total: f32 = aspects.iter().sum();
-        let mean_aspect = total / aspects.len().max(1) as f32;
+        let mean_aspect = total / aspects.len() as f32;
         // Portrait frames, such as phones, read best on a squarer sheet.
         let target_sheet = if mean_aspect < 0.7 { 1.05 } else { 1.25 };
         Self {
@@ -343,8 +342,7 @@ impl<'a> Scorer<'a> {
         let median = f32::midpoint(
             middle(sorted.len().saturating_sub(1) / 2),
             middle(sorted.len() / 2),
-        )
-        .max(1e-6);
+        );
         let outliers: f32 = areas
             .iter()
             .map(|area| {
@@ -423,7 +421,8 @@ mod tests {
 
     #[test]
     fn layout_stays_within_what_a_model_reads() {
-        // Fixed padding and gutters make mixed extremes take several passes to fit.
+        // The first case lays out tall against the longest edge; the other two need more than one
+        // fitting pass (see `FIT_PASSES`).
         for aspects in [
             &[0.25, 0.25, 4.5, 4.5, 3.0, 0.46, 4.5, 2.4, 0.56, 2.0][..],
             &[3.0, 4.5, 4.5, 2.0, 0.56, 1.33, 4.5, 4.5, 4.5],
