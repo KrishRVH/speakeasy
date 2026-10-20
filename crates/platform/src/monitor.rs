@@ -1,4 +1,5 @@
-//! Stop coordination for a native event loop that cannot receive owner messages.
+//! Stop coordination for the macOS event tap's run loop, which cannot receive owner messages and
+//! publishes its `CFRunLoop` only once running. Portable, so its tests run on every host.
 //!
 //! Publishing the loop's handle and requesting stop share one lock, so a stop that arrives before
 //! the loop starts stays effective and a wake never reaches a retired handle.

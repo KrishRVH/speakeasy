@@ -13,7 +13,7 @@ mod keyboard;
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
-#[cfg(any(target_os = "windows", target_os = "macos", test))]
+#[cfg(any(target_os = "macos", test))]
 mod monitor;
 mod owned_thread;
 mod process;

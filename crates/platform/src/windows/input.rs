@@ -25,7 +25,9 @@ use windows_sys::{
                 NOTIFY_FOR_THIS_SESSION, WTSRegisterSessionNotification,
                 WTSUnRegisterSessionNotification,
             },
-            Threading::{CreateEventW, GetCurrentThreadId, INFINITE, SetEvent},
+            Threading::{
+                CreateEventW, GetCurrentThreadId, INFINITE, SetEvent, WaitForSingleObject,
+            },
         },
         UI::{
             Input::KeyboardAndMouse::{KEYEVENTF_KEYUP, VIRTUAL_KEY},
@@ -45,9 +47,7 @@ use windows_sys::{
 };
 
 use super::{OWN_INPUT, is_key_down, ok_or_last_error, send_input, synthetic_key, take_handle};
-use crate::{
-    CANCEL_SHORTCUT, Input, InputSender, OwnedThread, SHORTCUT, keyboard, monitor::MonitorControl,
-};
+use crate::{CANCEL_SHORTCUT, Input, InputSender, OwnedThread, SHORTCUT, keyboard};
 
 /// Posted by the keyboard hook so the message loop, not the hook callback, masks Start.
 const MASK_START: u32 = WM_APP + 1;
@@ -65,37 +65,28 @@ thread_local! {
 /// Owns the keyboard hook thread until explicit stop and acknowledged cleanup.
 pub(crate) struct HookMonitor {
     thread: OwnedThread,
-    // Shared with the hook thread, which cannot receive owner messages while it waits natively.
-    control: Arc<MonitorControl<()>>,
-    // Shared so a stop can end the hook thread's wait; the event closes once both release it.
+    // Shared so a stop can end the hook thread's wait, which cannot receive owner messages; the
+    // manual-reset event records a stop however early it comes, and closes once both release it.
     wake: Arc<OwnedHandle>,
 }
 
 impl HookMonitor {
     pub(crate) fn start(input: InputSender) -> anyhow::Result<Self> {
-        let control = Arc::new(MonitorControl::default());
         let wake = Arc::new(manual_reset_event()?);
         let thread = OwnedThread::spawn("input-monitor", {
-            let control = Arc::clone(&control);
             let wake = Arc::clone(&wake);
-            move || monitor(&input, &control, &wake)
+            move || monitor(&input, &wake)
         })?;
-        Ok(Self {
-            thread,
-            control,
-            wake,
-        })
+        Ok(Self { thread, wake })
     }
 
     /// Requests native observation shutdown without joining its thread.
     pub(crate) fn request_stop(&self) {
-        self.control.request_stop(|()| {
-            // SAFETY: the shared owning handle stays open through native exit; setting a
-            // manual-reset event wakes a running or future wait.
-            unsafe {
-                SetEvent(self.wake.as_raw_handle());
-            }
-        });
+        // SAFETY: the shared owning handle stays open through native exit; setting a manual-reset
+        // event wakes a running or future wait.
+        unsafe {
+            SetEvent(self.wake.as_raw_handle());
+        }
     }
 
     /// Resolves once native resources have retired; await it before replacing or dropping the
@@ -247,47 +238,48 @@ fn manual_reset_event() -> io::Result<OwnedHandle> {
     unsafe { take_handle(CreateEventW(null(), TRUE, FALSE, null())) }
 }
 
-fn monitor(input: &InputSender, control: &MonitorControl<()>, wake: &OwnedHandle) {
+fn monitor(input: &InputSender, wake: &OwnedHandle) {
     HOOK.set(Some(HookState {
         input: input.clone(),
         policy: keyboard::Windows::default(),
     }));
-    if let Err(error) = run_event_loop(input, control, wake)
-        && !control.stopping()
+    if let Err(error) = run_event_loop(input, wake)
+        && !stop_requested(wake)
         && !input.is_closed()
     {
         input.deliver(Input::Unavailable(format!(
             "Cannot monitor the dictation shortcut: {error}. Pause and resume dictation to try again."
         )));
     }
-    control.retire();
     drop(HOOK.take());
     input.close();
 }
 
-fn run_event_loop(
-    input: &InputSender,
-    control: &MonitorControl<()>,
-    wake: &OwnedHandle,
-) -> io::Result<()> {
-    if control.stopping() {
+fn run_event_loop(input: &InputSender, wake: &OwnedHandle) -> io::Result<()> {
+    // A stop that came first never installs the hook.
+    if stop_requested(wake) {
         return Ok(());
     }
     create_message_queue();
     let _hook = KeyboardHook::install()?;
     let window = LifecycleWindow::create()?;
     let _notifications = SessionNotifications::register(&window)?;
-    let ready = || {
-        input.deliver(Input::DesktopReady {
-            shortcut: SHORTCUT.into(),
-            cancel: CANCEL_SHORTCUT.into(),
-        });
-    };
-    if control.start((), ready) {
-        pump_messages(control, wake)
-    } else {
-        Ok(())
+    // A stop landing after this check may still see readiness, which is harmless: each runtime has
+    // its own input lane, and the runtime is stopped together with its monitor.
+    if stop_requested(wake) {
+        return Ok(());
     }
+    input.deliver(Input::DesktopReady {
+        shortcut: SHORTCUT.into(),
+        cancel: CANCEL_SHORTCUT.into(),
+    });
+    pump_messages(wake)
+}
+
+/// Whether a stop has set the monitor's manual-reset event; once set, it stays set.
+fn stop_requested(wake: &OwnedHandle) -> bool {
+    // SAFETY: the owning handle stays open for this zero-timeout wait.
+    unsafe { WaitForSingleObject(wake.as_raw_handle(), 0) == WAIT_OBJECT_0 }
 }
 
 /// Peeking makes Windows create this thread's queue before the hook posts to it.
@@ -301,14 +293,14 @@ fn create_message_queue() {
 
 /// Runs the message loop until stop, `WM_QUIT`, or the wake event; stop wins even under continuous
 /// input.
-fn pump_messages(control: &MonitorControl<()>, wake: &OwnedHandle) -> io::Result<()> {
-    let wake = [wake.as_raw_handle()];
-    while dispatch_queued_messages(control).is_continue() && !control.stopping() {
+fn pump_messages(wake: &OwnedHandle) -> io::Result<()> {
+    let handles = [wake.as_raw_handle()];
+    while dispatch_queued_messages(wake).is_continue() && !stop_requested(wake) {
         // SAFETY: the one-handle array outlives this synchronous wait.
         let woken = unsafe {
             MsgWaitForMultipleObjectsEx(
                 1,
-                wake.as_ptr(),
+                handles.as_ptr(),
                 INFINITE,
                 QS_ALLINPUT,
                 MWMO_INPUTAVAILABLE,
@@ -323,11 +315,11 @@ fn pump_messages(control: &MonitorControl<()>, wake: &OwnedHandle) -> io::Result
     Ok(())
 }
 
-fn dispatch_queued_messages(control: &MonitorControl<()>) -> ControlFlow<()> {
+fn dispatch_queued_messages(wake: &OwnedHandle) -> ControlFlow<()> {
     let mut message = MSG::default();
     // SAFETY: PeekMessageW writes only this live local.
     while unsafe { PeekMessageW(&raw mut message, null_mut(), 0, 0, PM_REMOVE) } != 0 {
-        if control.stopping() || message.message == WM_QUIT {
+        if stop_requested(wake) || message.message == WM_QUIT {
             return ControlFlow::Break(());
         }
         if message.message == MASK_START {
