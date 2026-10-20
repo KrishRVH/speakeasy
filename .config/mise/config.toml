@@ -171,6 +171,5 @@ foreach ($script in Get-ChildItem scripts/*.ps1) {
 """
 
 [tasks.hygiene]
-description = "Check current repository paths, task references, and size"
-depends = ["py:install"]
-run = "uv run --no-sync python scripts/check_repository.py"
+description = "Check committed names and mise task references"
+run = "python scripts/check_repository.py"
