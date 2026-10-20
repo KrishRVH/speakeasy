@@ -2,6 +2,7 @@
 //!
 //! Native callbacks report key events and deliver the decided input. Modifiers and Escape stay
 //! passive; only Space for hands-free and S for a Show are swallowed, and only during a hold.
+//! Shift never interrupts a hold, since a Show draws with it.
 
 use std::mem;
 
@@ -164,6 +165,9 @@ impl Windows {
     /// holds the chord.
     pub(super) const CHORD_KEYS: [u16; 4] = [0xA2, 0xA3, 0x5B, 0x5C];
     const ESCAPE: u16 = 0x1B;
+    /// Shift, left Shift, and right Shift. macOS reports them as flag changes, which never
+    /// interrupt either.
+    const SHIFT_KEYS: [u16; 3] = [0x10, 0xA0, 0xA1];
     const SHOW: u16 = 0x53;
     const SPACE: u16 = 0x20;
 
@@ -185,6 +189,7 @@ impl Windows {
             Ok(Self::ESCAPE) => Decision::pass(down.then_some(Action::Cancel)),
             Ok(Self::SPACE) => self.chord.space(down),
             Ok(Self::SHOW) => self.chord.show(down),
+            Ok(key) if Self::SHIFT_KEYS.contains(&key) => Decision::pass(None),
             Ok(key) if Self::CHORD_KEYS.contains(&key) => {
                 self.chord_key(key, down, physical_before_event)
             },
@@ -271,6 +276,7 @@ mod tests {
     const SPACE: u32 = 0x20;
     const LETTER_S: u32 = 0x53;
     const LETTER_A: u32 = 0x41;
+    const LEFT_SHIFT: u32 = 0xA0;
     const NONE_HELD: [bool; 4] = [false; 4];
 
     fn held(keys: &[u32]) -> [bool; 4] {
@@ -331,6 +337,10 @@ mod tests {
         let show = policy.observe(LETTER_S, true, both);
         assert!(show.swallows());
         assert_eq!(show.action, Some(Action::Show));
+        // Reaching for Shift to draw before letting go of the chord keeps the Show.
+        let shift = policy.observe(LEFT_SHIFT, true, both);
+        assert!(!shift.swallows());
+        assert_eq!(shift.action, None);
         // The chord's release follows, but S's own release still belongs to the shortcut.
         assert_eq!(
             policy.observe(LEFT_CONTROL, false, both).action,

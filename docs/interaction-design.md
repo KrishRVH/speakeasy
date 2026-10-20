@@ -93,9 +93,14 @@ edits.
 - Linux holds Ctrl+Super+Space or double-taps it for hands-free; its accepted binding is shown in
   Settings. Desktop command bindings start/finish hands-free.
 - On Windows/macOS, the shortcut's modifiers are observed, never swallowed. Only the Space that
-  locks hands-free is withheld from the focused app. Any other key during a hold belongs to a
-  different shortcut: dictation cancels and waits for release. On Windows, an unassigned mask key
-  keeps the released Win key from opening Start.
+  locks hands-free and the S that starts a Show are withheld from the focused app. Shift stays
+  passive so a Show can draw with it; any other key during a hold belongs to a different shortcut:
+  dictation cancels and waits for release. On Windows, an unassigned mask key keeps the released Win
+  key from opening Start.
+- S during a Windows/macOS hold turns the recording into a Show, locked hands-free. The pill
+  replaces the lock with a red screen mark while the screen records, and says **Show copied** once
+  the bundle is written and its summary copied. Shift alone draws ink that holds briefly after the
+  pen lifts, then fades; clicks pass through to the apps underneath.
 - Windows/macOS Escape cancels immediately and continues to the focused app. Linux uses a reserved
   Ctrl+Super+Escape chord or an explicit command binding; bare Escape is not globally captured.
   Animation never delays cancellation or owns the microphone lifetime.

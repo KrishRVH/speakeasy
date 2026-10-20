@@ -5,7 +5,7 @@
 <p align="center">
   <strong>Private dictation for Windows, macOS, and Linux.</strong><br>
   Hold a shortcut, speak, and your words appear wherever you are typing.<br>
-  Local speech engines. No account, no upload, no history.
+  Local speech engines. No account, no upload, no dictation history.
 </p>
 
 <p align="center">
@@ -31,6 +31,7 @@ slot on screen while you speak, and keeps every word on your machine.
 | Dictate while held; release to type            | <kbd>Ctrl</kbd> + <kbd>Win</kbd>                    | <kbd>Fn</kbd>                    |
 | Hands-free; press the shortcut again to finish | <kbd>Ctrl</kbd> + <kbd>Win</kbd> + <kbd>Space</kbd> | <kbd>Fn</kbd> + <kbd>Space</kbd> |
 | Cancel; the key still reaches your app         | <kbd>Escape</kbd>                                   | <kbd>Escape</kbd>                |
+| Show your screen as well; see below            | <kbd>S</kbd> during the hold                        | <kbd>S</kbd> during the hold     |
 
 The shortcuts match Wispr Flow's defaults, and double-tapping the shortcut also starts hands-free.
 On Mac, set **System Settings › Keyboard › Press 🌐 key to** to **Do Nothing** so Fn only dictates.
@@ -40,13 +41,29 @@ by default and removes standalone English hesitation words locally before insert
 containing only these fillers sends nothing. Turn it off for non-English Parakeet dictation or
 literal transcription; Whisper removes fillers only when its language is set to English.
 
+### Show your coding agent
+
+A Show is a narrated screen recording a coding agent can read. Press <kbd>S</kbd> while holding the
+shortcut: the pill shows a red screen mark, and Speakeasy records the display under the pointer
+along with your voice. Release the shortcut and keep talking; hold <kbd>Shift</kbd> to draw circles
+and arrows that fade as you go, and click through as usual. Press the shortcut again to finish.
+
+Speakeasy picks the keyframes your ink, clicks, and words point at, annotates them, and writes a
+bundle of keyframes, a contact sheet, `summary.md`, and `show.json`. The pill says **Show copied**:
+paste the summary into your agent and it opens the frames itself. Shows record on Windows and Mac;
+Linux follows in a later release. A Mac asks for screen recording access on the first Show.
+
 ## What's said here stays here
 
 - Speech runs in a local NeMo-Speech.cpp or whisper.cpp process that Speakeasy owns and stops. Setup
   downloads the engine and model once; nothing is uploaded.
 - The microphone opens only while you dictate. Audio, transcripts, and engine output are never
   logged.
-- There are no accounts, cloud providers, telemetry, or transcript history.
+- The screen is recorded only during a Show you start, and Speakeasy's own windows stay out of it. A
+  Show is written to the `shows` folder beside the engine and model, readable only by you, and
+  deleted after seven days unless pinned: a file named `.pinned` in its folder keeps it. Cancelling
+  writes nothing.
+- There are no accounts, cloud providers, telemetry, or dictation history.
 
 ## Get started
 

@@ -514,14 +514,14 @@ mod tests {
 
     #[test]
     fn whisper_tokens_join_into_words_without_control_tokens() -> anyhow::Result<()> {
-        let reply = r#"{"text":" Ask not.","segments":[{"words":[
+        let reply = r#"{"text":" Ask yourself.","segments":[{"words":[
             {"word":"[_BEG_]","start":0.0,"end":0.0},
             {"word":" Ask","start":0.10,"end":0.30},
-            {"word":" n","start":0.30,"end":0.40},
-            {"word":"ot.","start":0.40,"end":0.62}]}]}"#;
+            {"word":" your","start":0.30,"end":0.40},
+            {"word":"self.","start":0.40,"end":0.62}]}]}"#;
         assert_eq!(
             narration(reply)?,
-            timed(&[(100, 300, "Ask"), (300, 620, "not.")])
+            timed(&[(100, 300, "Ask"), (300, 620, "yourself.")])
         );
         Ok(())
     }
