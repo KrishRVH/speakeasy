@@ -116,12 +116,11 @@ stateDiagram-v2
     Recording --> Stopping: release / next press / limit
     Stopping --> AwaitingWorker: audio complete; retire microphone
     AwaitingWorker --> Transcribing: worker ready
-    Transcribing --> Inserting: nonempty text
-    Inserting --> [*]: submitted / copied / cancelled
+    Transcribing --> Delivering: nonempty text; insert
     Stopping --> AwaitingFootage: silent Show
     Transcribing --> AwaitingFootage: Show narration
-    AwaitingFootage --> Publishing: footage complete
-    Publishing --> [*]: copied / cancelled
+    AwaitingFootage --> Delivering: footage complete; publish
+    Delivering --> [*]: submitted / copied / cancelled
     Recording --> [*]: cancel; revoke permit and retire
     Transcribing --> [*]: cancel; revoke permit and recover worker
 ```
@@ -265,7 +264,7 @@ Narration carries word timings (`Detail::Words`): Parakeet words, or Whisper tok
 leading spaces. `Session::narrate` moves them from the audio's start onto the Show's timeline, which
 begins with the session, adding the microphone's start delay and the quiet trimmed before speech. A
 silent Show publishes with empty narration. `AwaitingFootage` holds the narration, awaiting footage.
-`Publishing` selects keyframes, reads them from the journal, composes the bundle, and stages it in a
+Publishing selects keyframes, reads them from the journal, composes the bundle, and stages it in a
 hidden `.partial-*` sibling off the owner's thread. The bundle appears, and its summary is copied,
 only once the session's permit commits. A Show cancelled before then leaves no bundle and no
 clipboard change: publication checks the permit before each costly step and deletes anything it

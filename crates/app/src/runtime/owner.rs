@@ -7,7 +7,10 @@ use async_channel::{Receiver, RecvError, Sender};
 use speakeasy_core::gesture::{Action, Gesture, State};
 use speakeasy_platform::{Input, InputSender, Inserted};
 use speakeasy_show::Narration;
-use tokio::{sync::watch, task::JoinError};
+use tokio::{
+    sync::watch,
+    task::{JoinError, JoinHandle},
+};
 
 use super::{
     LOADING, Meter, Phase, Snapshot, Wiring,
@@ -15,7 +18,7 @@ use super::{
     now,
     ports::{CaptureEvent, PUBLISH_STOPPED, Ports, Published, Recording, SessionId, ShowEvent},
     reap,
-    session::{Delivered, InsertTask, PublishTask, Screen, Session, Stage},
+    session::{Delivered, Screen, Session, Stage},
     worker::{Completion, Detail, Transcript, Worker},
 };
 use crate::config::{Change, Config};
@@ -74,8 +77,7 @@ enum Wake<W> {
     Capture(Result<CaptureEvent, RecvError>),
     Show(Result<ShowEvent, RecvError>),
     Worker(Completion<W>),
-    Insertion(Result<anyhow::Result<Inserted>, JoinError>),
-    Publication(Result<anyhow::Result<Published>, JoinError>),
+    Delivered(Result<Delivered, JoinError>),
     Retired,
     Timer,
 }
@@ -102,8 +104,8 @@ struct Owner<P: Ports> {
     worker: Worker<P::Speech>,
     microphone: Device<P::Recording>,
     screen: Device<P::Show>,
-    retiring_insertions: Vec<InsertTask>,
-    retiring_publications: Vec<PublishTask>,
+    /// Abandoned insertions and publications, kept until they finish their own cleanup.
+    retiring: Vec<JoinHandle<Delivered>>,
     /// Whether the latest session was a Show, which the pill presents differently.
     latest_show: bool,
 
@@ -154,8 +156,7 @@ impl<P: Ports> Owner<P> {
             worker,
             microphone: Device::Free,
             screen: Device::Free,
-            retiring_insertions: Vec::new(),
-            retiring_publications: Vec::new(),
+            retiring: Vec::new(),
             latest_show: false,
             snapshots,
             meter,
@@ -188,10 +189,7 @@ impl<P: Ports> Owner<P> {
             () = self.microphone.retired() => Wake::Retired,
             () = self.screen.retired() => Wake::Retired,
             completion = self.worker.completed() => Wake::Worker(completion),
-            delivered = delivered => match delivered {
-                Delivered::Insertion(result) => Wake::Insertion(result),
-                Delivered::Publication(result) => Wake::Publication(result),
-            },
+            delivered = delivered => Wake::Delivered(delivered),
             () = timer => Wake::Timer,
         }
     }
@@ -228,12 +226,8 @@ impl<P: Ports> Owner<P> {
                 self.handle_worker(completion);
                 None
             },
-            Wake::Insertion(result) => {
-                self.handle_insertion(result);
-                None
-            },
-            Wake::Publication(result) => {
-                self.handle_publication(result);
+            Wake::Delivered(result) => {
+                self.handle_delivered(result);
                 None
             },
             Wake::Timer => self.gesture.tick(now()),
@@ -395,7 +389,10 @@ impl<P: Ports> Owner<P> {
             let insertion = self
                 .ports
                 .insert(text, session.permit.clone(), self.config.delivery());
-            session.stage = Stage::Inserting(tokio::spawn(insertion));
+            session.stage =
+                Stage::Delivering(tokio::spawn(
+                    async move { Delivered::Inserted(insertion.await) },
+                ));
         }
     }
 
@@ -404,22 +401,6 @@ impl<P: Ports> Owner<P> {
         if let Some(session) = &mut self.session {
             session.narrate(narration);
         }
-    }
-
-    fn handle_insertion(&mut self, result: Result<anyhow::Result<Inserted>, JoinError>) {
-        // `wait` already joined this insertion, so the session holds no work left to retire.
-        self.end_session();
-        self.outcome = match result {
-            Ok(Ok(Inserted::Sent)) => Outcome::Done,
-            Ok(Ok(Inserted::Copied(message))) => Outcome::Copied(message),
-            Ok(Ok(Inserted::Cancelled)) => Outcome::Cancelled,
-            Ok(Ok(Inserted::Unavailable(message))) => Outcome::Failed(message.into()),
-            Ok(Err(_)) | Err(_) => Outcome::Failed(
-                "Could not submit text. Check desktop permissions and clipboard access, then try again."
-                    .into(),
-            ),
-        };
-        self.gesture.complete();
     }
 
     /// Turns the held recording into a Show, keeping the narration already captured, and locks it
@@ -454,14 +435,31 @@ impl<P: Ports> Owner<P> {
         }
     }
 
-    fn handle_publication(&mut self, result: Result<anyhow::Result<Published>, JoinError>) {
-        // `wait` already joined this publication, so the session holds no work left to retire.
+    fn handle_delivered(&mut self, result: Result<Delivered, JoinError>) {
+        // Only a Show publishes, and a session cannot become one once transcription starts.
+        let show = self
+            .session
+            .as_ref()
+            .is_some_and(|session| session.show.is_some());
+        // `wait` already joined this delivery, so the session holds no work left to retire.
         self.end_session();
         self.outcome = match result {
-            Ok(Ok(Published::Copied(_))) => Outcome::Copied(SHOW_COPIED),
-            Ok(Ok(Published::Cancelled)) => Outcome::Cancelled,
-            Ok(Err(error)) => Outcome::Failed(format!("{error:#}")),
-            Err(_) => Outcome::Failed(PUBLISH_STOPPED.into()),
+            Ok(Delivered::Inserted(Ok(Inserted::Sent))) => Outcome::Done,
+            Ok(Delivered::Inserted(Ok(Inserted::Copied(message)))) => Outcome::Copied(message),
+            Ok(
+                Delivered::Inserted(Ok(Inserted::Cancelled))
+                | Delivered::Published(Ok(Published::Cancelled)),
+            ) => Outcome::Cancelled,
+            Ok(Delivered::Inserted(Ok(Inserted::Unavailable(message)))) => {
+                Outcome::Failed(message.into())
+            },
+            Ok(Delivered::Published(Ok(Published::Copied(_)))) => Outcome::Copied(SHOW_COPIED),
+            Ok(Delivered::Published(Err(error))) => Outcome::Failed(format!("{error:#}")),
+            Err(_) if show => Outcome::Failed(PUBLISH_STOPPED.into()),
+            Ok(Delivered::Inserted(Err(_))) | Err(_) => Outcome::Failed(
+                "Could not submit text. Check desktop permissions and clipboard access, then try again."
+                    .into(),
+            ),
         };
         self.gesture.complete();
     }
@@ -522,8 +520,7 @@ impl<P: Ports> Owner<P> {
         }
         match session.stage {
             Stage::Opening | Stage::Recording | Stage::Stopping => self.microphone.retire(),
-            Stage::Inserting(task) => self.retiring_insertions.push(task),
-            Stage::Publishing(task) => self.retiring_publications.push(task),
+            Stage::Delivering(task) => self.retiring.push(task),
             Stage::AwaitingWorker(mut sealed) => sealed.wav.fill(0),
             Stage::Transcribing { .. } if self.worker.is_transcribing() => {
                 self.worker.recover(&self.ports, &self.config);
@@ -538,12 +535,12 @@ impl<P: Ports> Owner<P> {
         self.outcome = Outcome::Failed(message);
     }
 
-    async fn advance(&mut self) {
+    fn advance(&mut self) {
         self.open_queued_capture();
         self.open_queued_screen();
         self.start_transcription();
         self.start_publishing();
-        self.reap_retired_work().await;
+        self.reap_retired_work();
     }
 
     /// Opens a Show's screen recorder once any previous one has retired, even after its narration
@@ -583,7 +580,9 @@ impl<P: Ports> Owner<P> {
             let publication = self
                 .ports
                 .publish(footage, narration, session.permit.clone());
-            session.stage = Stage::Publishing(tokio::spawn(publication));
+            session.stage = Stage::Delivering(tokio::spawn(async move {
+                Delivered::Published(publication.await)
+            }));
         }
     }
 
@@ -640,20 +639,10 @@ impl<P: Ports> Owner<P> {
     }
 
     /// Obsolete insertions and publications finish their own cleanup; they are never aborted, and
-    /// their results cannot reach the current session.
-    async fn reap_retired_work(&mut self) {
-        for task in self
-            .retiring_insertions
-            .extract_if(.., |task| task.is_finished())
-        {
-            reap(task).await;
-        }
-        for task in self
-            .retiring_publications
-            .extract_if(.., |task| task.is_finished())
-        {
-            reap(task).await;
-        }
+    /// their results cannot reach the current session. A finished one is dropped with its result;
+    /// an unfinished one stays, because dropping its handle would detach it from shutdown.
+    fn reap_retired_work(&mut self) {
+        self.retiring.retain(|task| !task.is_finished());
     }
 
     fn message(&self) -> &str {
@@ -696,10 +685,7 @@ impl<P: Ports> Owner<P> {
         self.captures.close();
         self.abandon();
         let retired = async {
-            for task in self.retiring_insertions {
-                reap(task).await;
-            }
-            for task in self.retiring_publications {
+            for task in self.retiring {
                 reap(task).await;
             }
         };
@@ -720,7 +706,7 @@ pub(super) async fn run<P: Ports>(wiring: Wiring<P>) {
         if owner.handle(wake).is_break() {
             break;
         }
-        owner.advance().await;
+        owner.advance();
         owner.publish();
     }
     owner.shutdown().await;

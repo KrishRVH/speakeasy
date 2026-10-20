@@ -17,9 +17,6 @@ use super::{
     ports::{Footage, Published, Sealed, SessionId},
 };
 
-pub(super) type InsertTask = JoinHandle<anyhow::Result<Inserted>>;
-pub(super) type PublishTask = JoinHandle<anyhow::Result<Published>>;
-
 pub(super) struct Session {
     pub id: SessionId,
     pub permit: InsertPermit,
@@ -61,8 +58,7 @@ impl Session {
             Stage::AwaitingWorker(_)
             | Stage::Transcribing { .. }
             | Stage::AwaitingFootage(_)
-            | Stage::Inserting(_)
-            | Stage::Publishing(_) => Phase::Processing,
+            | Stage::Delivering(_) => Phase::Processing,
         }
     }
 
@@ -101,10 +97,9 @@ impl Session {
 
     /// Resolves once the session's insertion or publication finishes, and pends otherwise.
     /// Cancel-safe: dropped early, it leaves the task running.
-    pub(super) async fn delivered(&mut self) -> Delivered {
+    pub(super) async fn delivered(&mut self) -> Result<Delivered, JoinError> {
         match &mut self.stage {
-            Stage::Inserting(task) => Delivered::Insertion(task.await),
-            Stage::Publishing(task) => Delivered::Publication(task.await),
+            Stage::Delivering(task) => task.await,
             _ => pending().await,
         }
     }
@@ -127,10 +122,11 @@ impl Session {
     }
 }
 
-/// How a session's last task ended: dictated text reached the editor, or a Show was published.
+/// What a session's last task returns: how its dictated text was inserted, or its Show
+/// published.
 pub(super) enum Delivered {
-    Insertion(Result<anyhow::Result<Inserted>, JoinError>),
-    Publication(Result<anyhow::Result<Published>, JoinError>),
+    Inserted(anyhow::Result<Inserted>),
+    Published(anyhow::Result<Published>),
 }
 
 pub(super) enum Stage {
@@ -149,9 +145,8 @@ pub(super) enum Stage {
     },
     /// A Show's narration, placed on its timeline, waits for its screen recording to finish.
     AwaitingFootage(Narration),
-    Inserting(InsertTask),
-    /// A Show is being composed, written, and copied.
-    Publishing(PublishTask),
+    /// Dictated text is being inserted, or a Show composed, written, and copied.
+    Delivering(JoinHandle<Delivered>),
 }
 
 #[cfg(test)]

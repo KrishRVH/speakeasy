@@ -78,6 +78,7 @@ struct FakePorts {
     screen_retirement: Option<Gate<()>>,
     publication: Option<Gate<()>>,
     publish_error: Option<&'static str>,
+    publish_panics: bool,
     captures: Sender<OpenedCapture>,
     shows: Sender<OpenedShow>,
     jobs: Sender<TranscriptionJob>,
@@ -118,6 +119,7 @@ impl FakePorts {
             screen_retirement: None,
             publication: None,
             publish_error: None,
+            publish_panics: false,
             captures,
             shows,
             jobs,
@@ -201,6 +203,7 @@ impl Ports for FakePorts {
         let published = self.published.clone();
         let publication = self.publication.clone();
         let publish_error = self.publish_error;
+        let publish_panics = self.publish_panics;
         async move {
             if let Some(gate) = publication {
                 gate.pass(()).await?;
@@ -208,6 +211,7 @@ impl Ports for FakePorts {
             if let Some(error) = publish_error {
                 bail!(error);
             }
+            assert!(!publish_panics, "The fake publication panicked");
             if !permit.commit() {
                 return Ok(Published::Cancelled);
             }

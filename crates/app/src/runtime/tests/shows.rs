@@ -1,7 +1,7 @@
 //! Show scenarios: S during a hold, screen lanes, footage, and publication, against a fake
 //! screen and gated publication.
 
-use super::*;
+use super::{ports::PUBLISH_STOPPED, *};
 
 /// Holds the shortcut and presses S, returning the screen recorder's lane.
 async fn start_show(h: &mut Harness) -> anyhow::Result<OpenedShow> {
@@ -79,8 +79,17 @@ async fn cancelling_while_publishing_leaves_no_trace() -> anyhow::Result<()> {
     publishing.reached().await?;
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
+    h.runtime.request_stop();
+    assert!(
+        still_pending(h.exited()).await,
+        "Shutdown left the cancelled publication running"
+    );
     publishing.release().await?;
-    assert!(still_pending(h.published.recv()).await);
+    timeout(PATIENCE, h.exited()).await?;
+    assert!(
+        h.published.try_recv().is_err(),
+        "A cancelled Show was published"
+    );
     h.close().await
 }
 
@@ -95,6 +104,18 @@ async fn a_show_that_cannot_be_published_explains_why() -> anyhow::Result<()> {
     h.transcribe_next_as("look").await?;
     h.phase(Phase::Error).await?;
     assert!(h.snapshot().message.contains("disk full"));
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_publication_that_panics_reports_the_fixed_show_failure() -> anyhow::Result<()> {
+    let mut h = Harness::with_ports(Config::default(), |ports| ports.publish_panics = true)?;
+    start_show(&mut h).await?;
+    h.input(Input::Release);
+    h.input(Input::Press);
+    h.transcribe_next_as("look").await?;
+    h.phase(Phase::Error).await?;
+    assert_eq!(h.snapshot().message, PUBLISH_STOPPED);
     h.close().await
 }
 
