@@ -135,30 +135,59 @@ impl Sender {
         }
     }
 
-    pub(super) fn can_paste(&self) -> bool {
-        self.paste_target().is_some()
+    /// What stops automatic paste right now, if anything.
+    pub(super) fn paste_blocked(&self) -> Option<PasteBlocked> {
+        self.paste_target().err()
     }
 
-    pub(super) fn can_type_text(&self) -> bool {
-        self.text_target().is_some()
+    /// Prepares a paste through the resumed keyboard once libei has reported every paste-blocking
+    /// modifier released.
+    ///
+    /// # Errors
+    /// Returns what stops automatic paste.
+    pub(super) fn ready_paste(&mut self) -> Result<ReadyPaste<'_>, PasteBlocked> {
+        let (keyboard, keys) = self.paste_target()?;
+        Ok(ReadyPaste {
+            sender: self,
+            keyboard,
+            keys,
+        })
     }
 
-    /// The resumed keyboard and its paste keys, once its modifiers are known to be released.
-    fn paste_target(&self) -> Option<(Pointer, PasteKeys)> {
-        let keyboard = self
-            .keyboard
-            .as_ref()
-            .filter(|keyboard| keyboard.device.resumed)?;
-        match keyboard.state {
-            PasteState::Ready(keys) => Some((keyboard.device.as_ptr(), keys)),
-            PasteState::Unknown | PasteState::Blocked | PasteState::NoKeys => None,
+    fn paste_target(&self) -> Result<(Pointer, PasteKeys), PasteBlocked> {
+        let keyboard = self.keyboard.as_ref().ok_or(PasteBlocked::NoKeyboard)?;
+        let keys = paste_readiness(
+            keyboard.device.resumed,
+            keyboard.layouts.is_some(),
+            keyboard.state,
+        )?;
+        Ok((keyboard.device.as_ptr(), keys))
+    }
+
+    /// Prepares `text` for the resumed text device.
+    ///
+    /// # Errors
+    /// Returns what stops direct text input.
+    pub(super) fn ready_text<'t>(
+        &mut self,
+        text: &'t str,
+    ) -> Result<ReadyText<'_, 't>, TextBlocked> {
+        let (Some(input), Some(device)) = (self.api.text_utf8, &self.text) else {
+            return Err(TextBlocked::Unsupported);
+        };
+        if !device.resumed {
+            return Err(TextBlocked::Paused);
         }
-    }
-
-    /// The UTF-8 entry point and the resumed text device it writes to.
-    fn text_target(&self) -> Option<(TextInput, Pointer)> {
-        let device = self.text.as_ref().filter(|device| device.resumed)?;
-        Some((self.api.text_utf8?, device.as_ptr()))
+        if text.contains('\0') {
+            return Err(TextBlocked::NullCharacter);
+        }
+        let device = device.as_ptr();
+        Ok(ReadyText {
+            sender: self,
+            input,
+            device,
+            text,
+        })
     }
 
     pub(super) fn dispatch(&mut self) -> anyhow::Result<()> {
@@ -289,52 +318,133 @@ impl Sender {
         };
     }
 
-    pub(super) fn paste(&mut self, terminal: bool) -> anyhow::Result<()> {
-        let (keyboard, keys) = self
-            .paste_target()
-            .context("Wayland keyboard is not ready to paste")?;
+    /// Numbers the next emulation sequence.
+    fn next_sequence(&mut self) -> u32 {
         self.sequence = self.sequence.wrapping_add(1);
-        // SAFETY: keyboard is a held, resumed keyboard-capable device. The complete sequence
-        // releases every injected key before stopping.
-        unsafe {
-            (self.api.ei_device_start_emulating)(keyboard, self.sequence);
-            (self.api.ei_device_keyboard_key)(keyboard, keys.control, true);
-            if terminal {
-                (self.api.ei_device_keyboard_key)(keyboard, keys.shift, true);
-            }
-            (self.api.ei_device_keyboard_key)(keyboard, keys.v, true);
-            (self.api.ei_device_frame)(keyboard, (self.api.ei_now)(self.context.as_ptr()));
-            (self.api.ei_device_keyboard_key)(keyboard, keys.v, false);
-            if terminal {
-                (self.api.ei_device_keyboard_key)(keyboard, keys.shift, false);
-            }
-            (self.api.ei_device_keyboard_key)(keyboard, keys.control, false);
-            (self.api.ei_device_frame)(keyboard, (self.api.ei_now)(self.context.as_ptr()));
-            (self.api.ei_device_stop_emulating)(keyboard);
-        }
-        Ok(())
+        self.sequence
     }
+}
 
-    pub(super) fn type_text(&mut self, text: &str) -> anyhow::Result<()> {
-        let (send, device) = self
-            .text_target()
-            .context("Direct UTF-8 input is unavailable on this desktop")?;
-        ensure!(
-            !text.contains('\0'),
-            "Direct input cannot contain a null character"
-        );
-        self.sequence = self.sequence.wrapping_add(1);
-        // SAFETY: device is a held, resumed text-capable device. Each chunk stays alive for its C
-        // call, and each frame respects the EI UTF-8 frame limit.
+/// Why automatic paste cannot run. Each blocker has its own remedy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PasteBlocked {
+    /// libei has added no keyboard, or has paused it.
+    NoKeyboard,
+    /// The keyboard's keymap could not be read, so its modifiers can never be judged.
+    NoKeyboardState,
+    /// A shortcut modifier is held, or libei has not reported modifiers since they could have
+    /// changed.
+    ShortcutKeys,
+    /// The active layout cannot type the paste shortcut.
+    NoPasteKeys,
+}
+
+/// Decides paste readiness in a fixed order. Without a readable keymap, modifiers stay unknown
+/// forever, so that cause is reported before modifiers are judged and never reads as held keys.
+fn paste_readiness(
+    resumed: bool,
+    readable_keymap: bool,
+    state: PasteState,
+) -> Result<PasteKeys, PasteBlocked> {
+    if !resumed {
+        return Err(PasteBlocked::NoKeyboard);
+    }
+    if !readable_keymap {
+        return Err(PasteBlocked::NoKeyboardState);
+    }
+    match state {
+        PasteState::Unknown | PasteState::Blocked => Err(PasteBlocked::ShortcutKeys),
+        PasteState::NoKeys => Err(PasteBlocked::NoPasteKeys),
+        PasteState::Ready(keys) => Ok(keys),
+    }
+}
+
+/// A paste every readiness check allowed. It borrows the sender exclusively, so no libei event can
+/// pause or remove the keyboard before [`send`](Self::send).
+#[must_use]
+pub(super) struct ReadyPaste<'a> {
+    sender: &'a mut Sender,
+    keyboard: Pointer,
+    keys: PasteKeys,
+}
+
+impl ReadyPaste<'_> {
+    /// Presses and releases the paste shortcut, with Shift for a terminal.
+    pub(super) fn send(self, terminal: bool) {
+        let Self {
+            sender,
+            keyboard,
+            keys,
+        } = self;
+        let sequence = sender.next_sequence();
+        let api = &sender.api;
+        let context = sender.context.as_ptr();
+        // SAFETY: keyboard is the sender's referenced keyboard-capable device, and the exclusive
+        // borrow has kept it resumed since the readiness check. The complete sequence releases
+        // every injected key before stopping.
         unsafe {
-            (self.api.ei_device_start_emulating)(device, self.sequence);
-            for chunk in utf8_chunks(text) {
-                send(device, chunk.as_ptr(), chunk.len());
-                (self.api.ei_device_frame)(device, (self.api.ei_now)(self.context.as_ptr()));
+            (api.ei_device_start_emulating)(keyboard, sequence);
+            (api.ei_device_keyboard_key)(keyboard, keys.control, true);
+            if terminal {
+                (api.ei_device_keyboard_key)(keyboard, keys.shift, true);
             }
-            (self.api.ei_device_stop_emulating)(device);
+            (api.ei_device_keyboard_key)(keyboard, keys.v, true);
+            (api.ei_device_frame)(keyboard, (api.ei_now)(context));
+            (api.ei_device_keyboard_key)(keyboard, keys.v, false);
+            if terminal {
+                (api.ei_device_keyboard_key)(keyboard, keys.shift, false);
+            }
+            (api.ei_device_keyboard_key)(keyboard, keys.control, false);
+            (api.ei_device_frame)(keyboard, (api.ei_now)(context));
+            (api.ei_device_stop_emulating)(keyboard);
         }
-        Ok(())
+    }
+}
+
+/// Why direct text input cannot run.
+#[derive(Clone, Copy)]
+pub(super) enum TextBlocked {
+    /// libei or the desktop offers no text device.
+    Unsupported,
+    /// libei has paused the text device.
+    Paused,
+    /// EI text cannot carry a null character.
+    NullCharacter,
+}
+
+/// Text every readiness check allowed. It borrows the sender exclusively, so no libei event can
+/// pause or remove the text device before [`send`](Self::send).
+#[must_use]
+pub(super) struct ReadyText<'a, 't> {
+    sender: &'a mut Sender,
+    input: TextInput,
+    device: Pointer,
+    text: &'t str,
+}
+
+impl ReadyText<'_, '_> {
+    /// Types the text in frames within the EI text limit.
+    pub(super) fn send(self) {
+        let Self {
+            sender,
+            input,
+            device,
+            text,
+        } = self;
+        let sequence = sender.next_sequence();
+        let api = &sender.api;
+        let context = sender.context.as_ptr();
+        // SAFETY: device is the sender's referenced text-capable device, and the exclusive borrow
+        // has kept it resumed since the readiness check. Each chunk stays alive for its C call and
+        // holds no null character, and each frame respects the EI UTF-8 frame limit.
+        unsafe {
+            (api.ei_device_start_emulating)(device, sequence);
+            for chunk in utf8_chunks(text) {
+                input(device, chunk.as_ptr(), chunk.len());
+                (api.ei_device_frame)(device, (api.ei_now)(context));
+            }
+            (api.ei_device_stop_emulating)(device);
+        }
     }
 }
 
@@ -618,6 +728,35 @@ mod tests {
             assert!(layouts.keys(keymap.num_layouts()).is_none());
         }
         Ok(())
+    }
+
+    #[test]
+    fn paste_readiness_names_the_root_blocker_first() {
+        let keys = PasteKeys {
+            control: 29,
+            shift: 42,
+            v: 47,
+        };
+        assert_eq!(
+            paste_readiness(false, false, PasteState::Ready(keys)).err(),
+            Some(PasteBlocked::NoKeyboard)
+        );
+        assert_eq!(
+            paste_readiness(true, false, PasteState::Unknown).err(),
+            Some(PasteBlocked::NoKeyboardState),
+            "An unreadable keymap read as held shortcut keys"
+        );
+        for state in [PasteState::Unknown, PasteState::Blocked] {
+            assert_eq!(
+                paste_readiness(true, true, state).err(),
+                Some(PasteBlocked::ShortcutKeys)
+            );
+        }
+        assert_eq!(
+            paste_readiness(true, true, PasteState::NoKeys).err(),
+            Some(PasteBlocked::NoPasteKeys)
+        );
+        assert!(paste_readiness(true, true, PasteState::Ready(keys)).is_ok());
     }
 
     #[test]

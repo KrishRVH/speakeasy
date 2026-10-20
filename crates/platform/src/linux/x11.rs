@@ -28,7 +28,7 @@ use x11rb::{
 };
 use xkbcommon::xkb::{KEYSYM_CASE_INSENSITIVE, Keysym, keysym_from_name};
 
-use super::{HostSession, ShortcutLabels, stopping};
+use super::{HostSession, NO_PASTE_BINDING, ShortcutLabels, stopping};
 use crate::{
     Delivery, DesktopOptions, Input, InputSender, InsertPermit, Inserted, OwnedThread,
     insertion::{Insertion, Reply, wait_for_released_modifiers},
@@ -696,9 +696,7 @@ fn paste_copied(
     };
     let v = keyboard.unshifted_keycode(Keysym::v);
     let (Some(control), Some(v)) = (control, v) else {
-        return Ok(Inserted::Copied(
-            "Text copied. This keyboard layout has no automatic paste binding; paste manually.",
-        ));
+        return Ok(NO_PASTE_BINDING);
     };
     if !first_layout || (options.terminal_paste && shift.is_none()) {
         return Ok(Inserted::Copied(

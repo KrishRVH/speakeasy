@@ -16,11 +16,17 @@ use zbus::MatchRule;
 
 pub use self::tray::{NativeTray, TrayAction, TrayPresentation};
 use super::{
-    DesktopOptions, Input, InputSender, Inserter, NativeWindow, OwnedThread, insertion::Insertion,
+    DesktopOptions, Input, InputSender, Inserted, Inserter, NativeWindow, OwnedThread,
+    insertion::Insertion,
 };
 
 /// Desktop launcher and portal registration identity.
 pub const APPLICATION_ID: &str = "io.github.krvh.speakeasy";
+
+/// The active keyboard layout cannot type the paste shortcut, on X11 or through libei.
+const NO_PASTE_BINDING: Inserted = Inserted::Copied(
+    "Text copied. This keyboard layout has no automatic paste binding; paste manually.",
+);
 
 /// Owns the desktop observation thread until explicit stop and acknowledged cleanup.
 pub struct InputMonitor {

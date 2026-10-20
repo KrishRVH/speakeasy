@@ -22,7 +22,13 @@ use zbus::{
     zvariant::{OwnedObjectPath, OwnedValue, Value},
 };
 
-use super::{APPLICATION_ID, ShortcutLabels, ei, owner_changes, stopping, token::TokenStore, x11};
+use super::{
+    APPLICATION_ID, NO_PASTE_BINDING, ShortcutLabels,
+    ei::{self, PasteBlocked, TextBlocked},
+    owner_changes, stopping,
+    token::TokenStore,
+    x11,
+};
 use crate::{
     Delivery, DesktopOptions, Input, InputSender, InsertPermit, Inserted,
     insertion::{Insertion, MODIFIER_WAIT, Reply},
@@ -289,7 +295,10 @@ impl<'a> Insertions<'a> {
             !request.permit.active()
                 || self.options.manual_paste
                 || request.delivery == Delivery::Direct
-                || self.bound.sender().is_some_and(ei::Sender::can_paste)
+                || self
+                    .bound
+                    .sender()
+                    .is_some_and(|sender| sender.paste_blocked().is_none())
                 || started.elapsed() >= MODIFIER_WAIT
         }) else {
             return Ok(());
@@ -1139,26 +1148,34 @@ fn insert_direct(
     if let Some(outcome) = Delivery::Direct.check_focus(external) {
         return Ok(outcome);
     }
-    if request.text.contains('\0') {
-        return Ok(Inserted::Unavailable(
-            "Direct input cannot contain a null character. Turn off Keep clipboard to use paste.",
-        ));
-    }
     bound.dispatch()?;
-    let Some(sender) = bound.sender_mut().filter(|sender| sender.can_type_text()) else {
-        return Ok(Inserted::Unavailable(
-            "This desktop does not support direct text input. Turn off Keep clipboard to use paste.",
-        ));
+    let Some(sender) = bound.sender_mut() else {
+        return Ok(text_remedy(TextBlocked::Unsupported));
+    };
+    let ready = match sender.ready_text(&request.text) {
+        Ok(ready) => ready,
+        Err(blocked) => return Ok(text_remedy(blocked)),
     };
     if !request.permit.commit() {
         return Ok(Inserted::Cancelled);
     }
-    if sender.type_text(&request.text).is_err() {
-        return Ok(Inserted::Unavailable(
-            "Direct text input could not complete. Check your editor before dictating again; submission was not repeated.",
-        ));
-    }
+    ready.send();
     Ok(Inserted::Sent)
+}
+
+/// How to recover when direct text input cannot run.
+const fn text_remedy(blocked: TextBlocked) -> Inserted {
+    Inserted::Unavailable(match blocked {
+        TextBlocked::Unsupported => {
+            "This desktop does not support direct text input. Turn off Keep clipboard to use paste."
+        },
+        TextBlocked::Paused => {
+            "Direct text input is paused on this desktop. Dictate again, or turn off Keep clipboard to use paste."
+        },
+        TextBlocked::NullCharacter => {
+            "Direct input cannot contain a null character. Turn off Keep clipboard to use paste."
+        },
+    })
 }
 
 fn finish_paste(
@@ -1189,20 +1206,34 @@ fn finish_paste(
             "Text copied. Release your shortcut keys and paste into your editor.",
         ));
     }
-    let Some(sender) = bound.sender_mut().filter(|sender| sender.can_paste()) else {
-        return Ok(Inserted::Copied(
-            "Text copied. This desktop could not confirm released shortcut keys; paste manually.",
-        ));
+    let Some(sender) = bound.sender_mut() else {
+        return Ok(paste_remedy(PasteBlocked::NoKeyboard));
+    };
+    let ready = match sender.ready_paste() {
+        Ok(ready) => ready,
+        Err(blocked) => return Ok(paste_remedy(blocked)),
     };
     if !request.permit.commit() {
         return Ok(Inserted::Cancelled);
     }
-    if sender.paste(options.terminal_paste).is_err() {
-        return Ok(Inserted::Copied(
-            "Text copied, but input submission failed. Paste manually; automatic paste was not repeated.",
-        ));
-    }
+    ready.send(options.terminal_paste);
     Ok(Inserted::Sent)
+}
+
+/// How to paste the copied text when automatic paste cannot run.
+const fn paste_remedy(blocked: PasteBlocked) -> Inserted {
+    match blocked {
+        PasteBlocked::NoKeyboard => Inserted::Copied(
+            "Text copied. Desktop keyboard input is unavailable or paused; paste manually.",
+        ),
+        PasteBlocked::NoKeyboardState => Inserted::Copied(
+            "Text copied. The desktop's keyboard layout could not be read; paste manually.",
+        ),
+        PasteBlocked::ShortcutKeys => Inserted::Copied(
+            "Text copied. This desktop could not confirm released shortcut keys; paste manually.",
+        ),
+        PasteBlocked::NoPasteKeys => NO_PASTE_BINDING,
+    }
 }
 
 fn apply_notice(
