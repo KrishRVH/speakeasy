@@ -1,9 +1,9 @@
 //! Every frame a Show samples, kept losslessly in little memory beside its signature.
 //!
 //! Frames are cut into tiles, and each frame stores only the tiles that changed since the frame
-//! before it. A still screen therefore costs almost nothing, and any recorded moment can be
-//! rebuilt exactly, for keyframes now and closer looks later. Each frame's [`Sample`] is kept and
-//! dropped with its tiles, so selection only picks frames the journal holds.
+//! before it. A still screen therefore costs almost nothing, and any recorded moment rebuilds
+//! exactly. Each frame's [`Sample`] is kept and dropped with its tiles, so selection only picks
+//! frames the journal holds.
 
 use std::{mem, time::Duration};
 

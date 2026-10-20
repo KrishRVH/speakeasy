@@ -1,9 +1,10 @@
 //! Turns a recorded Show into a bundle a coding agent can read.
 //!
 //! A Show is a screen recording with narration, pointer events, and ink drawn over the screen.
-//! [`select`] picks the keyframes worth showing from frame signatures taken during capture, and
-//! [`compose`] annotates them and writes the contact sheet, summary, and manifest. Nothing here
-//! performs I/O: callers supply frames and receive encoded files.
+//! During capture, [`Tracker`] turns pointer samples into ink and actions, and [`Journal`] keeps
+//! every sampled frame with its signature. [`select`] picks the keyframes worth showing from those
+//! signatures, and [`compose`] annotates them into a [`Bundle`]: keyframes, contact sheet, summary,
+//! and manifest. Nothing here performs I/O: callers supply frames and receive encoded files.
 //!
 //! Selection, layout, and drawing follow Scrawl's, under the MIT License; see `NOTICE.md`.
 
