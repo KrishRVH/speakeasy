@@ -1,5 +1,6 @@
-//! The Settings view. It edits a draft that reaches Services only through a durable save, and owns
-//! the setup, file picker, microphone scan, and saves it starts.
+//! The Settings view. It edits a draft that reaches Services only through a durable save; a demo,
+//! which never saves, previews its theme and motion directly. The view owns the setup, file picker,
+//! microphone scan, and saves it starts.
 
 mod render;
 
