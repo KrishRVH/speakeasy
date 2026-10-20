@@ -91,7 +91,9 @@ impl Staged {
     }
 }
 
-/// Writes `files` beside `directory`, which must not exist yet. Shows are private to the user.
+/// Writes `files` beside `directory`, which must not exist yet. On Unix the bundle is the user's
+/// alone; on Windows it takes its parent's access, which for the Shows folder is the user's alone
+/// (see [`private_directory`]).
 pub(super) fn stage(directory: &Path, files: &[speakeasy_show::File]) -> anyhow::Result<Staged> {
     anyhow::ensure!(
         !directory.exists(),
@@ -109,7 +111,6 @@ pub(super) fn stage(directory: &Path, files: &[speakeasy_show::File]) -> anyhow:
         use std::os::unix::fs::PermissionsExt as _;
         builder.permissions(fs::Permissions::from_mode(0o700));
     }
-    // Windows already limits the user's local application data to the user.
     let staging = builder
         .tempdir_in(parent)
         .with_context(|| format!("Cannot write in {}", parent.display()))?;

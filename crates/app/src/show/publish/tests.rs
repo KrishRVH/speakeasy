@@ -340,9 +340,10 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     let bundle = compose(recording, selection, frames, &typeface)?;
     let composed = started.elapsed();
     let root = tempfile::tempdir()?;
-    let files = bundle.files(root.path())?;
+    let directory = root.path().join("show");
+    let files = bundle.files(&directory)?;
     let encoded = started.elapsed();
-    store::stage(&root.path().join("show"), &files)?.persist()?;
+    store::stage(&directory, &files)?.persist()?;
     let written = started.elapsed();
     let bytes: usize = files.iter().map(|file| file.contents.len()).sum();
     eprintln!(

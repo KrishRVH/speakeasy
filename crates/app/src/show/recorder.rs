@@ -21,9 +21,10 @@ pub(super) const LONGEST_EDGE: u32 = 2_560;
 const JOURNAL_BUDGET: usize = 384 << 20;
 /// How long a Show finished before its first frame waits for one; a Show needs the screen.
 const FIRST_FRAME_WAIT: Duration = Duration::from_secs(3);
-/// How many frames and pointer samples the lanes from the capture threads hold. A capture thread
-/// never blocks on a full lane: it holds back or skips what it would send.
+/// How many frames wait for the recorder. A frame that finds the lane full goes unsent; no capture
+/// thread waits for room for one.
 const FRAME_LANE: usize = 2;
+/// How many pointer samples wait for the recorder. A sample that finds the lane full is skipped.
 const POINTER_LANE: usize = 256;
 
 /// A Show's screen recording; the session owner finishes or retires it like a microphone.
