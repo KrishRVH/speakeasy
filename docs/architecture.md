@@ -51,6 +51,7 @@ flowchart LR
 | `crates/app/src/child.rs`                                        | Hidden child processes, killed with their owner and reaped before anything replaces them.                                                                                                                                             |
 | `crates/app/src/instance.rs`                                     | Configuration-directory lock and an owned loopback listener for revealing Settings and dispatching desktop Toggle and Cancel commands.                                                                                                |
 | `crates/app/src/config.rs`                                       | Typed settings, path resolution, validation, and atomic saves.                                                                                                                                                                        |
+| `crates/app/src/paths.rs`                                        | Where Speakeasy keeps files: the roaming settings file and the machine-local data root, inside the user's own folders with no working-directory fallback.                                                                             |
 | `crates/app/src/show.rs` and `show/`                             | Show recording on an owned thread, the ink overlay, publishing, seven-day retention, private all-at-once bundle writes, and the `show` subcommand.                                                                                    |
 
 Core, show, and app forbid unsafe code. Platform contains native FFI with local safety explanations.
@@ -144,9 +145,10 @@ can leave paint pending and spin the message loop. Visible paint reaches GPUI. T
 cancelled before session services are retired at quit.
 
 Settings validation and durable saves run off the UI thread. Saves serialize the requested drafts,
-coalescing queued requests to the latest one. Completion preserves edits made after Save, and Pause
-invalidates a pending enable request. Quit waits for requested writes. Resume validates configured
-files in the background before enabling dictation.
+coalescing queued requests to the latest one, and each write patches only the keys changed since the
+last successful write. Completion preserves edits made after Save, and Pause invalidates a pending
+enable request. Quit waits for requested writes. Resume validates configured files in the background
+before enabling dictation.
 
 Relaunch discovery uses `instance.port` next to the locked `instance.lock`. The loopback listener
 accepts fixed Reveal, Toggle, and Cancel commands, returns a fixed identification response, and

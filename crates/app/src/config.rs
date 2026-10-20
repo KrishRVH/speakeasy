@@ -6,9 +6,10 @@
 //! so a file from another release still loads. A renamed key keeps its old name with
 //! `#[serde(alias = "old")]`, on the field or on the enum variant that replaces a retired Engine or
 //! Theme, and a retyped key goes through a private wire struct that migrates the old shape.
-//! [`LinuxSettings`] stays strict because only hand edits reach it, so retiring one of its keys must
-//! keep accepting that key. A save writes only the keys Settings changed, so unknown keys, hand
-//! edits, path spellings and unchanged Linux defaults stay as the file has them.
+//! [`LinuxSettings`] stays strict because its shortcut and cancel keys exist only as hand edits, so a
+//! misspelled key fails instead of silently keeping a default; retiring one of its keys must keep
+//! accepting that key. A save writes only the keys Settings changed, so unknown keys, hand edits,
+//! path spellings and unchanged Linux defaults stay as the file has them.
 
 use std::{
     fs,
@@ -175,8 +176,8 @@ impl Config {
     }
 
     /// Reads the settings at `path` for launch: the draft Settings edits, and how it stands. A file
-    /// that cannot be read yields defaults, so [`Config::save_changes`] keeps refusing to replace
-    /// it.
+    /// that cannot be read yields defaults for Settings to edit, and [`Config::save_changes`] still
+    /// refuses to replace that file until it parses.
     pub(crate) fn load(path: &Path) -> (Self, Startup) {
         if !path.exists() {
             return (Self::default(), Startup::Unconfigured);

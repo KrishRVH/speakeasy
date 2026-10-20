@@ -531,8 +531,8 @@ impl Setting {
 }
 
 /// The command a desktop shortcut runs to reach this instance: `speakeasy` on PATH, naming the
-/// settings file unless it is the default, since each settings file has its own instance. Desktop
-/// shortcut fields split commands like a POSIX shell, so the path is single-quoted.
+/// settings file unless it is the default, because a launch finds its instance through that file's
+/// folder. Desktop shortcut fields split commands like a POSIX shell, so the path is single-quoted.
 #[cfg(any(target_os = "linux", test))]
 fn desktop_command(path: &std::path::Path, default: Option<&std::path::Path>) -> String {
     if default == Some(path) {
