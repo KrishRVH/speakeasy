@@ -1,5 +1,7 @@
 //! X11 and Xwayland access: reserved-shortcut grabs, focus checks, clipboard ownership, and XTEST
-//! paste. Blocking X calls run on owned worker threads, never on the desktop service's loop.
+//! paste. Clipboard, focus, and paste calls, which can wait on another client, run on owned worker
+//! threads; the desktop service's loop makes only the server round trips that track shortcuts and
+//! the keyboard mapping.
 
 mod clipboard;
 mod paste;
@@ -33,6 +35,7 @@ const CORE_MODIFIERS: u16 = 0xFF;
 /// `WM_HINTS` with only the input hint set, to false: the window never takes keyboard focus.
 const NO_INPUT_HINTS: [u32; 9] = [1, 0, 0, 0, 0, 0, 0, 0, 0];
 
+#[derive(PartialEq, Eq)]
 struct Keyboard {
     first_keycode: u8,
     symbols_per_key: usize,
@@ -199,11 +202,20 @@ impl ShortcutTracker<'_> {
         match event {
             Event::KeyPress(key) => self.press(&key),
             Event::XinputRawKeyRelease(_) | Event::KeyRelease(_) if self.held => self.release(),
-            Event::MappingNotify(_) => {
-                bail!("Keyboard mapping changed; resume dictation to bind the new layout")
-            },
+            Event::MappingNotify(_) => self.check_mapping(),
             _ => Ok(()),
         }
+    }
+
+    /// The grabs and the insertion worker's paste keys were resolved from the keyboard mapping, so a
+    /// changed one stops input. The server announces the mapping whenever input switches keyboards,
+    /// as an XTEST paste after physical typing does, even when nothing changed.
+    fn check_mapping(&self) -> anyhow::Result<()> {
+        ensure!(
+            Keyboard::load(self.connection)? == *self.keyboard,
+            "Keyboard mapping changed; resume dictation to bind the new layout"
+        );
+        Ok(())
     }
 
     fn press(&mut self, key: &xproto::KeyPressEvent) -> anyhow::Result<()> {

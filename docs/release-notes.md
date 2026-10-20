@@ -21,6 +21,8 @@ coding agent can read.
   and a theme or reduced-motion change no longer stops a recording.
 - On Linux, Settings' **Insert** control chooses how text arrives, and Settings shows the exact
   desktop command to bind.
+- On Linux, the first paste after starting no longer reports that the clipboard changed, and on X11
+  a paste no longer stops dictation with a keyboard mapping error.
 - On Windows and Mac, the tray's **Start dictation** waits until desktop input is ready.
 - Windows no longer needs the Visual C++ Redistributable, and the Linux app is smaller.
 - Mac permission errors explain how to restore access that already looks granted.

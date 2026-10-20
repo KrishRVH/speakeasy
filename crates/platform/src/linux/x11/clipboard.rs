@@ -223,7 +223,14 @@ impl ClipboardAccess for Clipboard {
     }
 
     fn set_text(&mut self, text: &str) -> anyhow::Result<Option<Window>> {
-        self.native()?.set_text(text)?;
+        let native = self.native()?;
+        native.set_text(text)?;
+        // arboard claims the selection on its own connection without waiting for the server.
+        // Reading back through it waits for that claim, so the owner this connection queries next
+        // is current rather than the one the copy replaced.
+        if native.get_text()? != text {
+            return Ok(None);
+        }
         // Another client can take the selection as soon as the copy returns, so paste needs both
         // the payload and an owner that stays put.
         let owner = self.owner()?;
