@@ -272,7 +272,7 @@ extern "C" fn on_run_loop_entry(
     }
 }
 
-/// Fn, Fn+Space, and passive Escape, on the event tap's run-loop thread.
+/// Fn, Fn+Space, Fn+S, and passive Escape, on the event tap's run-loop thread.
 fn observe(
     input: &InputSender,
     policy: &mut keyboard::Mac,

@@ -174,7 +174,7 @@ impl Source {
             },
             move |content: Option<&SCShareableContent>, _: Option<&NSError>| {
                 // Of the reasons macOS lists no content, a missing Screen Recording permission is
-                // the one the user can act on, and macOS has not always reported it the same way.
+                // the one the user can act on, and macOS versions do not report it consistently.
                 Self::new(content.ok_or(PERMISSION)?, id, longest_edge)
             },
         )

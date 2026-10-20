@@ -193,7 +193,8 @@ impl NativeWindow {
     }
 }
 
-/// Linux records Shows in a later release.
+/// Linux records no Shows yet: finding a display and configuring an overlay fail, and the other
+/// entry points do nothing.
 #[cfg(target_os = "linux")]
 mod unsupported {
     use std::{convert::Infallible, time::Duration};
