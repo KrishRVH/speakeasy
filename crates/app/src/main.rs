@@ -33,7 +33,7 @@ use tokio::sync::watch;
 use crate::{
     config::{Config, Startup, ValidConfig},
     instance::{Instance, Request},
-    runtime::{Phase, Snapshot},
+    runtime::{Meter, Phase, Snapshot},
     shell::{LaunchMode, Services},
 };
 
@@ -172,11 +172,18 @@ fn launch(
     let (valid, snapshot) = split_startup(startup);
     let configured = valid.is_some();
     let (output, updates) = watch::channel(snapshot);
+    let (meter, levels) = watch::channel(Meter::default());
     let application = Application::new().with_assets(icons::Icons);
     application.on_reopen(shell::reveal);
     application.run(move |cx| {
         load_wordmark_font(cx);
-        let pill = match pill::open(updates, config.prefers_reduced_motion(), config.theme, cx) {
+        let pill = match pill::open(
+            updates,
+            levels,
+            config.prefers_reduced_motion(),
+            config.theme,
+            cx,
+        ) {
             Ok(pill) => pill,
             Err(error) => {
                 speakeasy_platform::show_startup_error(&format!("Cannot open pill: {error:#}"));
@@ -192,7 +199,7 @@ fn launch(
             cx,
         );
         cx.set_global(Services::new(
-            path, config, output, canvas, pill, instance, mode,
+            path, config, output, meter, canvas, pill, instance, mode,
         ));
         if let Some(requests) = requests {
             cx.update_global::<Services, _>(|services, cx| {

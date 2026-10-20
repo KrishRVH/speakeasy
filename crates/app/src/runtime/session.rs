@@ -39,8 +39,6 @@ pub(super) type PublishTask = JoinHandle<anyhow::Result<Published>>;
 pub(super) struct Session {
     pub id: SessionId,
     pub permit: InsertPermit,
-    pub level: f32,
-    pub meter_tick: u64,
     /// When the session began; a Show's timeline counts from here.
     pub started: Instant,
     /// When the microphone delivered its first audio.
@@ -66,8 +64,6 @@ impl Session {
         Self {
             id,
             permit,
-            level: 0.0,
-            meter_tick: 0,
             started,
             audio_started: None,
             stage: Stage::Queued,
@@ -143,11 +139,6 @@ impl Session {
                 Stage::Recording
             };
         }
-    }
-
-    pub(super) fn show_level(&mut self, level: f32) {
-        self.level = level;
-        self.meter_tick = self.meter_tick.wrapping_add(1);
     }
 
     pub(super) fn finish(&mut self) {

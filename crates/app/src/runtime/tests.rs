@@ -392,6 +392,7 @@ struct Harness<Owner = OwnedThread> {
     runtime: Runtime<Owner>,
     output: watch::Sender<Snapshot>,
     updates: watch::Receiver<Snapshot>,
+    levels: watch::Receiver<Meter>,
     captures: Receiver<OpenedCapture>,
     shows: Receiver<OpenedShow>,
     jobs: Receiver<TranscriptionJob>,
@@ -413,12 +414,16 @@ impl Harness {
 impl Harness<JoinHandle<()>> {
     /// Runs the owner on this test's executor, so `tokio::time::advance` drives its deadlines.
     fn paused(customize: impl FnOnce(&mut FakePorts)) -> anyhow::Result<Self> {
-        Self::host(Config::default(), customize, |config, output, ports| {
-            let (input, inputs) = input_lane();
-            Runtime::host(config, output, ports, input, inputs, |wiring| {
-                Ok(tokio::spawn(owner::run(wiring)))
-            })
-        })
+        Self::host(
+            Config::default(),
+            customize,
+            |config, output, meter, ports| {
+                let (input, inputs) = input_lane();
+                Runtime::host(config, output, meter, ports, input, inputs, |wiring| {
+                    Ok(tokio::spawn(owner::run(wiring)))
+                })
+            },
+        )
     }
 
     async fn close(mut self) -> anyhow::Result<()> {
@@ -433,18 +438,25 @@ impl<Owner: Sync> Harness<Owner> {
     fn host(
         config: Config,
         customize: impl FnOnce(&mut FakePorts),
-        start: impl FnOnce(Config, watch::Sender<Snapshot>, FakePorts) -> anyhow::Result<Runtime<Owner>>,
+        start: impl FnOnce(
+            Config,
+            watch::Sender<Snapshot>,
+            watch::Sender<Meter>,
+            FakePorts,
+        ) -> anyhow::Result<Runtime<Owner>>,
     ) -> anyhow::Result<Self> {
         let (mut ports, reports) = FakePorts::new();
         customize(&mut ports);
         let cleanup = ports.cleanup_gates();
         let (output, updates) = watch::channel(Snapshot::default());
-        let runtime = start(config, output.clone(), ports)?;
+        let (meter, levels) = watch::channel(Meter::default());
+        let runtime = start(config, output.clone(), meter, ports)?;
         Ok(Self {
             _cleanup: cleanup,
             runtime,
             output,
             updates,
+            levels,
             captures: reports.captures,
             shows: reports.shows,
             jobs: reports.jobs,
@@ -460,6 +472,18 @@ impl<Owner: Sync> Harness<Owner> {
 
     async fn observe(&mut self, predicate: impl FnMut(&Snapshot) -> bool) -> anyhow::Result<()> {
         timeout(PATIENCE, self.updates.wait_for(predicate)).await??;
+        Ok(())
+    }
+
+    /// Waits until the meter shows exactly `level`, which proves the owner handled every input
+    /// that outranked the level report.
+    async fn observe_level(&mut self, level: f32) -> anyhow::Result<()> {
+        timeout(
+            PATIENCE,
+            self.levels
+                .wait_for(|meter| meter.level.to_bits() == level.to_bits()),
+        )
+        .await??;
         Ok(())
     }
 
@@ -523,10 +547,6 @@ async fn still_pending(future: impl Future) -> bool {
     timeout(Duration::from_millis(30), future).await.is_err()
 }
 
-fn level_is(level: f32) -> impl FnMut(&Snapshot) -> bool {
-    move |snapshot| snapshot.level.to_bits() == level.to_bits()
-}
-
 #[tokio::test(start_paused = true)]
 async fn desktop_readiness_blocks_capture_until_native_startup_completes() -> anyhow::Result<()> {
     let mut h = Harness::paused(|ports| ports.desktop_pending = true)?;
@@ -570,7 +590,7 @@ async fn locking_a_hold_keeps_the_same_capture_until_the_next_press() -> anyhow:
     h.observe(|snapshot| snapshot.hands_free).await?;
     h.input(Input::Release);
     events.send(CaptureEvent::Level(id, 0.25)).await?;
-    h.observe(level_is(0.25)).await?;
+    h.observe_level(0.25).await?;
     tokio::time::advance(Duration::from_secs(1)).await;
     assert!(h.jobs.try_recv().is_err());
     assert!(h.captures.try_recv().is_err());
@@ -588,7 +608,7 @@ async fn double_tap_uses_one_capture_and_single_tap_obeys_its_deadline() -> anyh
     tokio::time::advance(Duration::from_millis(50)).await;
     h.input(Input::Release);
     events.send(CaptureEvent::Level(id, 0.25)).await?;
-    h.observe(level_is(0.25)).await?;
+    h.observe_level(0.25).await?;
     tokio::time::advance(Duration::from_millis(100)).await;
     h.input(Input::Press);
     h.observe(|snapshot| snapshot.hands_free).await?;
@@ -605,7 +625,7 @@ async fn double_tap_uses_one_capture_and_single_tap_obeys_its_deadline() -> anyh
     h.input(Input::Release);
     let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
     events.send(CaptureEvent::Level(id, 0.5)).await?;
-    h.observe(level_is(0.5)).await?;
+    h.observe_level(0.5).await?;
     tokio::time::advance(Duration::from_millis(299)).await;
     assert!(h.jobs.try_recv().is_err());
     tokio::time::advance(Duration::from_millis(1)).await;
@@ -943,6 +963,31 @@ async fn cancelled_inference_and_late_audio_cannot_affect_the_next_session() -> 
     Ok(())
 }
 
+#[tokio::test(start_paused = true)]
+async fn levels_after_a_capture_ends_never_reach_the_meter() -> anyhow::Result<()> {
+    let mut h = Harness::paused(|_| {})?;
+    let (old_id, old_events) = h.start().await?;
+    old_events.send(CaptureEvent::Level(old_id, 0.25)).await?;
+    h.observe_level(0.25).await?;
+    old_events
+        .send(CaptureEvent::Finished(old_id, Ok(None)))
+        .await?;
+    h.phase(Phase::Empty).await?;
+    // The capture lane is ordered, so each phase below is published after the level before it.
+    old_events.send(CaptureEvent::Level(old_id, 0.5)).await?;
+    let (new_id, events) = h.start().await?;
+    events.send(CaptureEvent::Level(old_id, 0.75)).await?;
+    events
+        .send(CaptureEvent::Finished(new_id, Ok(None)))
+        .await?;
+    h.phase(Phase::Empty).await?;
+    assert!(
+        !h.levels.has_changed()?,
+        "A level from an ended capture reached the meter"
+    );
+    h.close().await
+}
+
 #[tokio::test]
 async fn failures_recover_the_worker_and_hook_loss_stops_without_inserting() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
@@ -1071,7 +1116,7 @@ async fn warmup_failure_while_stopping_retains_capture_and_retries_on_demand() -
     assert_eq!(h.snapshot().phase, Phase::Stopping);
     h.input(Input::Press);
     events.send(CaptureEvent::Level(id, 0.4)).await?;
-    h.observe(level_is(0.4)).await?;
+    h.observe_level(0.4).await?;
     assert!(h.captures.try_recv().is_err());
     assert!(h.loads.try_recv().is_err(), "Failed warmup must not loop");
     events
@@ -1238,7 +1283,7 @@ async fn a_report_during_a_held_recording_is_dropped_and_the_text_still_pastes()
         .map_err(anyhow::Error::msg)?;
     // The report lane outranks capture, so the level arrives only after the report is handled.
     events.send(CaptureEvent::Level(id, 0.25)).await?;
-    h.observe(level_is(0.25)).await?;
+    h.observe_level(0.25).await?;
     assert_eq!(h.snapshot().message, "", "The recording showed the report");
     tokio::time::advance(Duration::from_millis(250)).await;
     h.input(Input::Release);

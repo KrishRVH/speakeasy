@@ -20,7 +20,7 @@ use tokio::sync::watch;
 use self::{grille::Grille, symbol::Symbol};
 use crate::{
     gpui_ext::{EntityUpdate, native_window},
-    runtime::{Phase, Snapshot},
+    runtime::{Meter, Phase, Snapshot},
     theme::{Palette, Theme, alpha},
 };
 
@@ -91,6 +91,7 @@ pub(crate) struct Pill {
 impl Pill {
     fn new(
         updates: watch::Receiver<Snapshot>,
+        levels: watch::Receiver<Meter>,
         reduced_motion: bool,
         theme: Theme,
         window: &Window,
@@ -114,24 +115,40 @@ impl Pill {
             frame_pending: false,
             wake: None,
             visibility: None,
-            _updates: Self::follow(updates, window, cx),
+            _updates: Self::follow(updates, levels, window, cx),
         }
     }
 
-    /// Applies the current snapshot, then each later one, while the window and publisher live.
+    /// Applies the current snapshot, then each later snapshot and level, while the window and both
+    /// publishers live. A snapshot outranks a level that arrives with it, so the level can match
+    /// the session it belongs to.
     fn follow(
         mut updates: watch::Receiver<Snapshot>,
+        mut levels: watch::Receiver<Meter>,
         window: &Window,
         cx: &Context<Self>,
     ) -> Task<()> {
         updates.mark_changed();
         cx.spawn_in(window, async move |this, cx| {
-            while updates.changed().await.is_ok() {
-                let snapshot = updates.borrow_and_update().clone();
-                if this
-                    .update_in(cx, |pill, _, cx| pill.apply_snapshot(snapshot, cx))
-                    .is_err()
-                {
+            loop {
+                let applied = tokio::select! {
+                    biased;
+                    changed = updates.changed() => match changed {
+                        Ok(()) => {
+                            let snapshot = updates.borrow_and_update().clone();
+                            this.update_in(cx, |pill, _, cx| pill.apply_snapshot(snapshot, cx))
+                        },
+                        Err(_) => break,
+                    },
+                    changed = levels.changed() => match changed {
+                        Ok(()) => {
+                            let meter = *levels.borrow_and_update();
+                            this.update_in(cx, |pill, _, cx| pill.apply_meter(meter, cx))
+                        },
+                        Err(_) => break,
+                    },
+                };
+                if applied.is_err() {
                     break;
                 }
             }
@@ -172,25 +189,37 @@ impl Pill {
             self.wake = None;
             self.hint_until = None;
         }
-        let previous_history = self.history;
         if new_session {
             self.history.fill(0.0);
         }
-        if snapshot.phase == Phase::Recording && snapshot.meter_tick != previous.meter_tick {
-            self.history.rotate_left(1);
-            if let Some(newest) = self.history.last_mut() {
-                *newest = snapshot.level;
-            }
-        }
-        // Exact comparison: any tolerance would hide quiet speech.
-        let history_changed = previous_history.map(f32::to_bits) != self.history.map(f32::to_bits);
         self.snapshot = snapshot;
-        // A hidden native window never renders, so it cannot wait for `render` to show it.
-        if state_changed && !self.visible && self.scene(now).is_shown() {
-            self.set_visible(true, cx);
+        if state_changed {
+            // A hidden native window never renders, so it cannot wait for `render` to show it.
+            if !self.visible && self.scene(now).is_shown() {
+                self.set_visible(true, cx);
+            }
+            cx.notify();
         }
-        // An animating pill paints new levels on its pending frame.
-        if state_changed || (history_changed && !self.animating) {
+    }
+
+    /// Adds `meter` to the level history while the current snapshot records the session it
+    /// measured; a level that arrives before its session's snapshot or after it ends is dropped.
+    fn apply_meter(&mut self, meter: Meter, cx: &mut Context<Self>) {
+        let snapshot = &self.snapshot;
+        if snapshot.phase != Phase::Recording
+            || meter.epoch != snapshot.epoch
+            || meter.session != snapshot.id
+        {
+            return;
+        }
+        let previous = self.history;
+        self.history.rotate_left(1);
+        if let Some(newest) = self.history.last_mut() {
+            *newest = meter.level;
+        }
+        // Exact comparison: any tolerance would hide quiet speech. An animating pill paints new
+        // levels on its pending frame.
+        if previous.map(f32::to_bits) != self.history.map(f32::to_bits) && !self.animating {
             cx.notify();
         }
     }
@@ -228,9 +257,10 @@ impl Pill {
         for (spring, omega) in self.capsule.springs_mut() {
             moving |= advance(spring, omega);
         }
+        let newest = self.history.last().copied().unwrap_or_default();
         for (spring, level) in self.meter.iter_mut().zip(self.history) {
             spring.target = match scene.phase {
-                Phase::Recording if reduced_motion => self.snapshot.level,
+                Phase::Recording if reduced_motion => newest,
                 Phase::Recording => level,
                 _ => 0.0,
             };
@@ -666,6 +696,7 @@ impl Clock {
 
 pub(crate) fn open(
     updates: watch::Receiver<Snapshot>,
+    levels: watch::Receiver<Meter>,
     reduced_motion: bool,
     theme: Theme,
     cx: &mut App,
@@ -702,7 +733,7 @@ pub(crate) fn open(
             // closing the process's main window, is refused.
             window.on_window_should_close(cx, |_, _| false);
             configured = native_window(window, "pill").and_then(|native| native.configure_pill());
-            cx.new(|cx| Pill::new(updates, reduced_motion, theme, window, cx))
+            cx.new(|cx| Pill::new(updates, levels, reduced_motion, theme, window, cx))
         },
     )?;
     configured?;
@@ -917,7 +948,8 @@ mod tests {
 
         fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {
             let (_publisher, updates) = watch::channel(Snapshot::default());
-            let pill = open(updates, true, Theme::default(), cx)?;
+            let (_meter, levels) = watch::channel(Meter::default());
+            let pill = open(updates, levels, true, Theme::default(), cx)?;
             let (native, raw, display) = pill.update(cx, |_, window, _| {
                 Ok::<_, anyhow::Error>((
                     native_window(window, "pill")?,
@@ -1009,7 +1041,8 @@ mod tests {
             Timer::after(Duration::from_millis(100)).await;
             let id = cx.update(|cx| {
                 let (_publisher, updates) = watch::channel(Snapshot::default());
-                let _pill = open(updates, true, Theme::default(), cx)?;
+                let (_meter, levels) = watch::channel(Meter::default());
+                let _pill = open(updates, levels, true, Theme::default(), cx)?;
                 let colors = cx.open_window(
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(Bounds::new(

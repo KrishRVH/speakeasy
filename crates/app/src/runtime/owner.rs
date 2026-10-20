@@ -10,7 +10,7 @@ use speakeasy_show::Narration;
 use tokio::{sync::watch, task::JoinError};
 
 use super::{
-    CaptureEvent, LOADING, Phase, ShowEvent, Snapshot, Wiring,
+    CaptureEvent, LOADING, Meter, Phase, ShowEvent, Snapshot, Wiring,
     device::Device,
     now, reap,
     session::{Delivered, InsertTask, PublishTask, Session, SessionId, Show, Stage},
@@ -109,6 +109,7 @@ struct Owner<P: Ports> {
     latest_show: bool,
 
     snapshots: watch::Sender<Snapshot>,
+    meter: watch::Sender<Meter>,
     epoch: u64,
     outcome: Outcome,
     notice: Option<Notice>,
@@ -124,6 +125,7 @@ impl<P: Ports> Owner<P> {
             inputs,
             reports,
             snapshots,
+            meter,
             permits,
             stopping,
             ports,
@@ -157,6 +159,7 @@ impl<P: Ports> Owner<P> {
             retiring_publications: Vec::new(),
             latest_show: false,
             snapshots,
+            meter,
             epoch,
             outcome: Outcome::Idle,
             notice: Some(Notice::LoadingModel),
@@ -298,7 +301,13 @@ impl<P: Ports> Owner<P> {
                 session.audio_started.get_or_insert_with(now);
                 session.audio_ready(gesture);
             },
-            CaptureEvent::Level(_, level) => session.show_level(level),
+            CaptureEvent::Level(id, level) => {
+                self.meter.send_replace(Meter {
+                    epoch: self.epoch,
+                    session: id.into(),
+                    level,
+                });
+            },
             CaptureEvent::Finished(_, Ok(Some(sealed))) => {
                 if let Some(show) = &mut session.show {
                     show.trimmed = sealed.trimmed;
@@ -676,8 +685,6 @@ impl<P: Ports> Owner<P> {
             phase: session.map_or_else(|| self.outcome.phase(), Session::phase),
             hands_free: self.gesture.state() == State::HandsFree,
             show: self.latest_show,
-            level: session.map_or(0.0, |session| session.level),
-            meter_tick: session.map_or(0, |session| session.meter_tick),
             started: self.latest_started,
             message: self.message().to_owned(),
             model: self.worker.model(),

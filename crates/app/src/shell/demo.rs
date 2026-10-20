@@ -1,6 +1,6 @@
-//! The `--demo` preview: a scripted session published on the snapshot channel. The script never
-//! reaches the runtime, a microphone, or text insertion; its Show draws on the overlay and records
-//! nothing.
+//! The `--demo` preview: a scripted session published on the snapshot and meter channels. The
+//! script never reaches the runtime, a microphone, or text insertion; its Show draws on the overlay
+//! and records nothing.
 
 use std::{
     sync::Arc,
@@ -15,7 +15,7 @@ use tokio::sync::watch;
 
 use crate::{
     pill::COUNTDOWN,
-    runtime::{ModelState, Phase, Snapshot},
+    runtime::{Meter, ModelState, Phase, Snapshot},
     show::Canvas,
 };
 
@@ -24,7 +24,11 @@ const NEAR_RECORDING_LIMIT: Duration = RECORDING_LIMIT
     .saturating_sub(COUNTDOWN)
     .saturating_add(Duration::from_secs(2));
 
-pub(super) async fn play(output: watch::Sender<Snapshot>, canvas: watch::Sender<Canvas>) {
+pub(super) async fn play(
+    output: watch::Sender<Snapshot>,
+    meter: watch::Sender<Meter>,
+    canvas: watch::Sender<Canvas>,
+) {
     let mut snapshot = starting(output.borrow().id.wrapping_add(1));
     present(&output, &snapshot, Duration::from_millis(350)).await;
     snapshot.phase = Phase::Recording;
@@ -32,16 +36,15 @@ pub(super) async fn play(output: watch::Sender<Snapshot>, canvas: watch::Sender<
     while start.elapsed() < Duration::from_secs(5) {
         let seconds = start.elapsed().as_secs_f32();
         snapshot.hands_free = seconds > 2.0;
-        snapshot.meter_tick = snapshot.meter_tick.wrapping_add(1);
-        snapshot.level =
+        let level =
             (seconds * 7.0).sin().mul_add(0.45, 0.35).max(0.0) * (seconds * 2.1).sin().abs();
+        measure(&meter, &snapshot, level);
         present(&output, &snapshot, Duration::from_millis(32)).await;
     }
     snapshot.started = Instant::now()
         .checked_sub(NEAR_RECORDING_LIMIT)
         .unwrap_or_else(Instant::now);
-    snapshot.level = 0.0;
-    snapshot.meter_tick = snapshot.meter_tick.wrapping_add(1);
+    measure(&meter, &snapshot, 0.0);
     present(&output, &snapshot, Duration::from_secs(2)).await;
     for (phase, duration) in [
         (Phase::Stopping, Duration::from_millis(150)),
@@ -51,7 +54,7 @@ pub(super) async fn play(output: watch::Sender<Snapshot>, canvas: watch::Sender<
         snapshot.phase = phase;
         present(&output, &snapshot, duration).await;
     }
-    let id = play_show(&output, &canvas, snapshot.id.wrapping_add(1)).await;
+    let id = play_show(&output, &meter, &canvas, snapshot.id.wrapping_add(1)).await;
     play_interruptions(&output, id).await;
 }
 
@@ -59,6 +62,7 @@ pub(super) async fn play(output: watch::Sender<Snapshot>, canvas: watch::Sender<
 /// copied. Returns its id.
 async fn play_show(
     output: &watch::Sender<Snapshot>,
+    meter: &watch::Sender<Meter>,
     canvas: &watch::Sender<Canvas>,
     id: u64,
 ) -> u64 {
@@ -83,12 +87,11 @@ async fn play_show(
         }
         snapshot.show = show;
         snapshot.hands_free = show;
-        snapshot.meter_tick = snapshot.meter_tick.wrapping_add(1);
-        snapshot.level = (seconds * 5.0).sin().mul_add(0.3, 0.3).max(0.0);
+        let level = (seconds * 5.0).sin().mul_add(0.3, 0.3).max(0.0);
+        measure(meter, &snapshot, level);
         present(output, &snapshot, Duration::from_millis(32)).await;
     }
     drop(clear);
-    snapshot.level = 0.0;
     snapshot.hands_free = false;
     for (phase, duration) in [
         (Phase::Stopping, Duration::from_millis(150)),
@@ -184,7 +187,23 @@ fn starting(id: u64) -> Snapshot {
     }
 }
 
+/// Publishes `snapshot` unless it is already current, as the owner does, then holds it.
 async fn present(output: &watch::Sender<Snapshot>, snapshot: &Snapshot, duration: Duration) {
-    output.send_replace(snapshot.clone());
+    output.send_if_modified(|current| {
+        let changed = *current != *snapshot;
+        if changed {
+            current.clone_from(snapshot);
+        }
+        changed
+    });
     Timer::after(duration).await;
+}
+
+/// Reports `level` as the meter of `snapshot`'s session.
+fn measure(meter: &watch::Sender<Meter>, snapshot: &Snapshot, level: f32) {
+    meter.send_replace(Meter {
+        epoch: snapshot.epoch,
+        session: snapshot.id,
+        level,
+    });
 }

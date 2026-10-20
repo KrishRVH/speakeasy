@@ -67,9 +67,6 @@ pub(crate) struct Snapshot {
     pub hands_free: bool,
     /// Whether the latest session became a Show, recording the screen as well as the microphone.
     pub show: bool,
-    pub level: f32,
-    /// Advances with every level report, so a repeated level still reaches the meter.
-    pub meter_tick: u64,
     /// When the latest session started; the pill's recording clock counts from it.
     pub started: Instant,
     pub message: String,
@@ -88,8 +85,6 @@ impl Default for Snapshot {
             phase: Phase::Idle,
             hands_free: false,
             show: false,
-            level: 0.0,
-            meter_tick: 0,
             started: now(),
             message: String::new(),
             model: ModelState::Unavailable,
@@ -98,6 +93,16 @@ impl Default for Snapshot {
             cancel_shortcut: speakeasy_platform::CANCEL_SHORTCUT.into(),
         }
     }
+}
+
+/// The latest microphone level, on its own lane so that level reports never republish session
+/// state. Every report replaces it; the pill applies it only while its snapshot shows the same
+/// epoch and session recording.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Meter {
+    pub epoch: u64,
+    pub session: u64,
+    pub level: f32,
 }
 
 /// A capture thread's report about the session that opened it.
@@ -134,6 +139,7 @@ impl Runtime {
     pub(crate) fn start(
         config: ValidConfig,
         snapshots: watch::Sender<Snapshot>,
+        meter: watch::Sender<Meter>,
         canvas: watch::Sender<Canvas>,
     ) -> anyhow::Result<(Self, InputMonitor)> {
         let (input, inputs) = input_lane();
@@ -143,6 +149,7 @@ impl Runtime {
         let runtime = Self::host(
             config.into_inner(),
             snapshots,
+            meter,
             ports,
             input,
             inputs,
@@ -155,12 +162,14 @@ impl Runtime {
     fn start_with<P: Ports>(
         config: Config,
         snapshots: watch::Sender<Snapshot>,
+        meter: watch::Sender<Meter>,
         ports: P,
     ) -> anyhow::Result<Self> {
         let (input, inputs) = input_lane();
         Self::host(
             config,
             snapshots,
+            meter,
             ports,
             input,
             inputs,
@@ -183,6 +192,7 @@ impl<Owner> Runtime<Owner> {
     fn host<P: Ports>(
         config: Config,
         snapshots: watch::Sender<Snapshot>,
+        meter: watch::Sender<Meter>,
         ports: P,
         input: InputSender,
         inputs: Receiver<Input>,
@@ -199,6 +209,7 @@ impl<Owner> Runtime<Owner> {
             inputs,
             reports: reported,
             snapshots,
+            meter,
             permits: input.clone(),
             stopping,
             ports,
@@ -252,6 +263,7 @@ struct Wiring<P> {
     inputs: Receiver<Input>,
     reports: Receiver<String>,
     snapshots: watch::Sender<Snapshot>,
+    meter: watch::Sender<Meter>,
     permits: InputSender,
     stopping: Receiver<Infallible>,
     ports: P,

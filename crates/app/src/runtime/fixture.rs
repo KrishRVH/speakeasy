@@ -164,13 +164,14 @@ async fn profile_fixture_dictation() -> anyhow::Result<()> {
     let (loaded, ready) = async_channel::bounded(1);
     let (inserted, submitted) = async_channel::bounded(1);
     let (output, mut updates) = watch::channel(Snapshot::default());
+    let (meter, _) = watch::channel(Meter::default());
     let started = Instant::now();
     let fixture = Fixture {
         wav,
         loaded,
         inserted,
     };
-    let runtime = Runtime::start_with(config, output, fixture)?;
+    let runtime = Runtime::start_with(config, output, meter, fixture)?;
     wait_for_signal(&ready, &mut updates, STARTUP_TIMEOUT).await?;
     let startup_ms = started.elapsed().as_secs_f64() * 1000.0;
     let mut requests_ms = Vec::new();

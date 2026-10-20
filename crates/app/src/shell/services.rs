@@ -18,7 +18,7 @@ use crate::{
     gpui_ext::AppUpdate,
     instance::{Instance, Request},
     pill::Pill,
-    runtime::{self, Phase, Runtime, Snapshot},
+    runtime::{self, Meter, Phase, Runtime, Snapshot},
     show::Canvas,
     status::Status,
 };
@@ -84,6 +84,8 @@ pub(crate) struct Services {
     pub config: Config,
     pub(super) config_epoch: ConfigEpoch,
     pub output: watch::Sender<Snapshot>,
+    /// Where microphone levels reach the pill.
+    pub(super) meter: watch::Sender<Meter>,
     /// Where a Show's live ink reaches the overlay.
     pub(super) canvas: watch::Sender<Canvas>,
     pub(super) pill: WindowHandle<Pill>,
@@ -98,10 +100,15 @@ pub(crate) struct Services {
 impl Global for Services {}
 
 impl Services {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The composition root hands over each lane and handle Services owns; a parameter struct would only rename this list"
+    )]
     pub(crate) fn new(
         path: PathBuf,
         config: Config,
         output: watch::Sender<Snapshot>,
+        meter: watch::Sender<Meter>,
         canvas: watch::Sender<Canvas>,
         pill: WindowHandle<Pill>,
         instance: Option<Instance>,
@@ -116,6 +123,7 @@ impl Services {
             config,
             config_epoch: ConfigEpoch::default(),
             output,
+            meter,
             canvas,
             pill,
             settings: None,
@@ -236,8 +244,12 @@ impl Services {
             runtime.configure(config.clone());
         } else {
             self.announce(runtime::LOADING);
-            let (runtime, monitor) =
-                Runtime::start(config.clone(), self.output.clone(), self.canvas.clone())?;
+            let (runtime, monitor) = Runtime::start(
+                config.clone(),
+                self.output.clone(),
+                self.meter.clone(),
+                self.canvas.clone(),
+            )?;
             self.lifecycle = Lifecycle::Running(Owners { runtime, monitor });
         }
         self.config = config.into_inner();

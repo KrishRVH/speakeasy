@@ -103,7 +103,8 @@ Capture callbacks carry a typed `SessionId`. One lookup checks both identity and
 Moving inference or insertion handles out of the observation path makes their obsolete results
 unable to change the current session. Cancellation revokes the permit before waiting for cleanup.
 Callback atomics control capture and cancellation; other state changes arrive as messages. The UI
-receives coalesced snapshots and never reads PCM. A lifecycle epoch captured before thread startup
+receives coalesced snapshots of session state and never reads PCM; levels reach only the pill, on a
+separate meter lane tagged with epoch and session. A lifecycle epoch captured before thread startup
 prevents an old publisher from replacing a newer shell pause/quit notice.
 
 ```mermaid
