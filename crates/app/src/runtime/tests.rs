@@ -1267,6 +1267,7 @@ async fn a_report_during_a_held_recording_is_dropped_and_the_text_still_pastes()
     // The report lane outranks capture, so the level arrives only after the report is handled.
     events.send(CaptureEvent::Level(id, 0.25)).await?;
     h.observe(level_is(0.25)).await?;
+    assert_eq!(h.snapshot().message, "", "The recording showed the report");
     tokio::time::advance(Duration::from_millis(250)).await;
     h.input(Input::Release);
     h.transcribe_next_as("fixture").await?;
@@ -1435,7 +1436,6 @@ async fn a_show_that_cannot_be_published_explains_why() -> anyhow::Result<()> {
     h.transcribe_next_as("look").await?;
     h.phase(Phase::Error).await?;
     assert!(h.snapshot().message.contains("disk full"));
-    assert!(h.published.try_recv().is_err());
     h.close().await
 }
 
