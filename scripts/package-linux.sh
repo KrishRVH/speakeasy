@@ -60,6 +60,11 @@ while IFS= read -r -d '' library; do
     exit 1
   fi
 done < <(rg --files --hidden -0 "$app_dir/usr/lib")
+# appimagetool otherwise embeds whatever type2-runtime `continuous` holds at build time.
+runtime="$staging/runtime-x86_64"
+curl --fail --location --retry 3 --output "$runtime" 'https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64'
+printf '%s  %s\n' 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d "$runtime" | sha256sum --check --status
+export LDAI_RUNTIME_FILE="$runtime"
 export OUTPUT="$PWD/artifacts/speakeasy-linux-x86_64.AppImage"
 "$deploy" --appdir "$app_dir" --output appimage
 tar -C "$staging" -czf artifacts/speakeasy-linux-x86_64.tar.gz Speakeasy.AppDir
