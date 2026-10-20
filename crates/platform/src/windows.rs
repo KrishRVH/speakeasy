@@ -1,10 +1,10 @@
 //! Windows adapter: the Ctrl+Win keyboard hook and session-change cancellation, clipboard or direct
 //! text insertion, GPUI window presentation, the file dialog, and Show screen capture.
 //!
-//! This module answers the system queries `desktop` forwards (reduced motion, the launching
-//! console, and the startup error dialog) and keeps what the Windows code shares: held modifiers,
-//! synthetic input tagged so the hook ignores it, the thread-checked window behind `NativeWindow`,
-//! and handle and string conversions.
+//! This module serves `desktop`'s reduced-motion query and startup error dialog, attaches the
+//! launching console for the crate root's Windows-only export, and keeps what the Windows code
+//! shares: held modifiers, synthetic input tagged so the hook ignores it, the thread-checked window
+//! behind `NativeWindow`, and handle and string conversions.
 
 mod dialog;
 mod input;

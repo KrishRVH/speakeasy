@@ -1,4 +1,5 @@
-//! Reading capture frames back to memory, halved on the GPU until they fit.
+//! The Direct3D 11 device on the adapter that drives the display, and reading capture frames back
+//! to memory, halved on the GPU until they fit.
 
 use std::slice;
 
