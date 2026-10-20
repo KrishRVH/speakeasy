@@ -224,12 +224,12 @@ fn unknown_top_level_keys_are_ignored_but_linux_keys_stay_strict() -> anyhow::Re
     assert!(Config::read(&path)? == expected);
     fs::write(
         &path,
-        r#"{"engine_executable":"e","model":"m","linux":{"shorcut":"X"}}"#,
+        r#"{"engine_executable":"e","model":"m","linux":{"chord":"X"}}"#,
     )?;
     let error = Config::read(&path)
         .err()
-        .context("A misspelled Linux key was accepted")?;
-    assert!(format!("{error:#}").contains("shorcut"));
+        .context("An unknown Linux key was accepted")?;
+    assert!(format!("{error:#}").contains("chord"));
     Ok(())
 }
 
