@@ -9,7 +9,7 @@ use std::{
     net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, bail, ensure};
@@ -203,18 +203,39 @@ fn serve(listener: &TcpListener, nonce: u128, requests: &Sender<Request>) {
 /// Says nothing until the caller presents `nonce`, then acknowledges and reads one request. A caller
 /// that gives up before the acknowledgement has written no request, so nothing is delivered.
 fn handshake(stream: &mut TcpStream, nonce: u128) -> io::Result<Option<Request>> {
-    stream.set_read_timeout(Some(IO_TIMEOUT))?;
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
+    let mut caller = Caller {
+        stream,
+        accepted: Instant::now(),
+    };
     let mut presented = [0; size_of::<u128>()];
-    stream.read_exact(&mut presented)?;
+    caller.read_exact(&mut presented)?;
     if u128::from_le_bytes(presented) != nonce {
         return Ok(None);
     }
-    stream.write_all(&[ACKNOWLEDGED])?;
+    caller.stream.write_all(&[ACKNOWLEDGED])?;
     let mut request = [0];
-    stream.read_exact(&mut request)?;
+    caller.read_exact(&mut request)?;
     let [byte] = request;
     Ok(Request::from_byte(byte))
+}
+
+/// A connection whose reads share one `IO_TIMEOUT`. A read timeout alone restarts with every byte,
+/// so a caller that trickles bytes could hold the serial accept loop once per byte.
+struct Caller<'stream> {
+    stream: &'stream mut TcpStream,
+    accepted: Instant,
+}
+
+impl Read for Caller<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let remaining = IO_TIMEOUT
+            .checked_sub(self.accepted.elapsed())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or(io::ErrorKind::TimedOut)?;
+        self.stream.set_read_timeout(Some(remaining))?;
+        self.stream.read(buffer)
+    }
 }
 
 fn connect(port_file: &Path) -> anyhow::Result<TcpStream> {
@@ -237,8 +258,6 @@ fn connect(port_file: &Path) -> anyhow::Result<TcpStream> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
-
     use super::*;
 
     const PATIENCE: Duration = Duration::from_secs(2);
@@ -306,6 +325,29 @@ mod tests {
         );
         Instance::send(&path, Request::Toggle)?;
         assert_eq!(next_request(&requests)?, Request::Toggle);
+        Ok(())
+    }
+
+    #[test]
+    fn a_secret_trickled_past_the_timeout_is_never_acknowledged() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("settings.json");
+        let (instance, _requests) = Instance::acquire(&path)?.context("First owner missing")?;
+        let endpoint = Endpoint::read(&path.with_file_name(PORT_FILE))?;
+        let mut slow = TcpStream::connect_timeout(&instance.address, PATIENCE)?;
+        slow.set_nodelay(true)?;
+        // Each byte arrives well within IO_TIMEOUT of the last; the whole secret does not.
+        for byte in endpoint.nonce.to_le_bytes() {
+            if slow.write_all(&[byte]).is_err() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        slow.set_read_timeout(Some(PATIENCE))?;
+        assert!(
+            slow.read_exact(&mut [0]).is_err(),
+            "A trickled secret held the server past its timeout"
+        );
         Ok(())
     }
 
