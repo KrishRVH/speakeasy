@@ -53,8 +53,8 @@ module unless a test file is named.
 - **Local recognition**: [local_speech.rs](../crates/app/src/local_speech.rs),
   [child.rs](../crates/app/src/child.rs), [http.rs](../crates/app/src/http.rs), and
   [platform/src/process.rs](../crates/platform/src/process.rs) start, query, and reap engines.
-  [local_speech/tests.rs](../crates/app/src/local_speech/tests.rs) controls process exit and
-  cancellation.
+  [local_speech/tests.rs](../crates/app/src/local_speech/tests.rs) drives startup and requests
+  against fake engines.
 - **Transcript cleanup**: [transcript.rs](../crates/app/src/transcript.rs), with the filler policy
   in `Config::fillers` ([config.rs](../crates/app/src/config.rs)). Tested in transcript.rs.
 - **Insertion**: [platform/src/insertion.rs](../crates/platform/src/insertion.rs),
@@ -230,6 +230,7 @@ about 0.8 GB. Fixture tests read `SPEAKEASY_FIXTURE_CONFIG`, a settings file, an
 Default checks cannot establish live microphone, screen capture, overlay placement, hooks, clipboard
 and editor acceptance, compositor behavior, or mixed-display frame pacing.
 [Native acceptance](performance.md#native-acceptance) and the
-[Linux matrix](linux-implementation.md#native-acceptance-still-required) track them. Release notes
-use absolute `https://github.com/KrishRVH/speakeasy/blob/main/...` links, because relative links
-break in a GitHub release body.
+[Linux matrix](linux-implementation.md#native-acceptance-still-required) track them. Releases follow
+[AGENTS.md](../AGENTS.md#tests-and-review); release notes use absolute
+`https://github.com/KrishRVH/speakeasy/blob/main/...` links, because relative links break in a
+GitHub release body.
