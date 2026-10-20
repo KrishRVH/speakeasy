@@ -127,7 +127,8 @@ Vulkan development packages.
 Settings also choose the microphone, GPU use, filler removal, how text is delivered, reduced motion,
 and theme: **Jet & Champagne**, **Emerald Lounge**, **Iris**, or **Midnight Chrome**. Changes apply
 when you save. Theme and reduced-motion changes keep a recording running; microphone, language,
-filler removal, and delivery changes end it but keep the model loaded. Saving stays responsive and
+filler removal, and delivery changes end it but keep the model loaded. On Linux, Shortcuts changes
+and most Insert changes restart dictation, which reloads the model. Saving stays responsive and
 preserves edits made while the save is running. Pausing during a save keeps dictation paused; Quit
 finishes requested saves.
 

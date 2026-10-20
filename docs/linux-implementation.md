@@ -48,10 +48,11 @@ usable state.
 Insertion follows the shared commit permit and cancellation rules in
 [cross-module invariants](architecture.md#cross-module-invariants). Immediately before submitting
 input, both paths follow X11/Xwayland focus ancestors to the first window that publishes
-`_NET_WM_PID`; when Speakeasy's own windows or a failed lookup hold focus, nothing is submitted and
-pasted text is left for manual paste. Under Wayland, X focus None means a native Wayland editor took
-focus, while PointerRoot stays refused. The portal path queries focus on the owned X clipboard
-worker, which keeps cancellation responsive and opens the clipboard only for a copy.
+`_NET_WM_PID`; when Speakeasy's own windows or a failed lookup hold focus, nothing is submitted.
+Paste leaves the text copied for manual paste, and typing reports the target unavailable with the
+clipboard untouched. Under Wayland, X focus None means a native Wayland editor took focus, while
+PointerRoot stays refused. The portal path queries focus on the owned X clipboard worker, which
+keeps cancellation responsive and opens the clipboard only for a copy.
 
 Automatic paste requires released modifiers. X11 queries physical key state; Wayland requires actual
 EI modifier feedback and a paste key from the advertised layout. Shortcut deactivation alone is
