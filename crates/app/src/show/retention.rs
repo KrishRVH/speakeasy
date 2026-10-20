@@ -23,23 +23,19 @@ const SWEEP_EVERY: Duration = Duration::from_hours(1);
 /// A file of this name inside a Show keeps it.
 const PIN: &str = ".pinned";
 
-/// Deletes expired Shows now and then hourly for the app's life. The first failure goes to
-/// `report`, which returns whether it could be shown; once one is, later failures stay quiet.
-pub(crate) fn attend(report: impl Fn(&anyhow::Error, &mut App) -> bool + 'static, cx: &App) {
+/// Deletes expired Shows now and then hourly for the app's life, giving each failure to `report`;
+/// a failure that persists is reported again at every sweep.
+pub(crate) fn attend(report: impl Fn(&anyhow::Error, &mut App) + 'static, cx: &App) {
     cx.spawn(async move |cx| {
-        let mut reported = false;
         loop {
             let swept = cx
                 .background_executor()
                 .spawn(async { sweep(&super::directory(), SystemTime::now()) })
                 .await;
             if let Err(error) = swept
-                && !reported
+                && cx.update(|cx| report(&error, cx)).is_err()
             {
-                match cx.update(|cx| report(&error, cx)) {
-                    Ok(shown) => reported = shown,
-                    Err(_) => return,
-                }
+                return;
             }
             cx.background_executor().timer(SWEEP_EVERY).await;
         }

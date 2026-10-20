@@ -264,8 +264,8 @@ staged.
 Shows live in `<data root>/shows/<UTC stamp>`: mode `0700` on Unix, and inside the user's local
 application data on Windows. The resident app sweeps at launch and hourly, deleting stamp-named
 bundles older than seven days unless they hold a `.pinned` file, and staging older than an hour.
-Other names and links are never touched, and a pin that cannot be read still keeps its Show. The
-first sweep failure is reported once no recording is under way; later ones retry quietly.
+Other names and links are never touched, and a pin that cannot be read still keeps its Show. A
+failed sweep is reported unless a recording is under way, and again at each sweep until it succeeds.
 
 ## Insertion and privacy
 

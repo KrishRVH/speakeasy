@@ -105,6 +105,9 @@ const BYTES_PER_PIXEL: usize = 4;
 const TICKS_PER_SECOND: i128 = 10_000_000;
 /// The first build that leaves excluded windows out of capture; earlier builds black them out.
 const EXCLUSION_BUILD: u32 = 19_041;
+/// A frame's timestamp may mark when it was presented rather than when its composition began, a
+/// refresh later at most; frames stamped this soon after an exclusion may predate it.
+const COMPOSITION_MARGIN: Duration = Duration::from_millis(50);
 /// Marks a window `configure_overlay` left out of all screen capture, so that a capture ending
 /// never shows it to capture again.
 const ALWAYS_EXCLUDED: PCWSTR = w!("SpeakeasyAlwaysExcluded");
@@ -252,13 +255,13 @@ fn record(
     let mut exclusions = Exclusions::default();
     exclusions.refresh()?;
     // Frames composed before a Speakeasy window was left out may show it.
-    let mut clean_from = Instant::now();
+    let mut clean_from = clean_after_now();
     let mut capture = Capture::start(display, interval, longest_edge, stopping)?;
     let mut pacer = Pacer::new(interval);
     while !stopping.is_closed() && !events.is_closed() {
         // A window opened since the last check is in the first frame Windows composes with it.
         if capture.poll(clean_from)? && exclusions.refresh()? {
-            clean_from = Instant::now();
+            clean_from = clean_after_now();
             capture.forget();
         }
         let now = Instant::now();
@@ -273,6 +276,12 @@ fn record(
         thread::sleep(POLL);
     }
     Ok(())
+}
+
+/// The earliest frame timestamp that cannot predate an exclusion made now.
+fn clean_after_now() -> Instant {
+    let now = Instant::now();
+    now.checked_add(COMPOSITION_MARGIN).unwrap_or(now)
 }
 
 /// Spaces sent frames at least `interval` apart.
@@ -307,10 +316,10 @@ struct Exclusions {
 
 impl Exclusions {
     /// Leaves out every window of this process that capture would still show, hidden ones too so
-    /// they stay out once shown. Reports whether a visible one was among them, because frames
-    /// composed before now may show it.
+    /// they stay out once shown. Reports whether any was newly left out: even one hidden now may
+    /// have been shown in frames composed since the last check.
     fn refresh(&mut self) -> Result<bool, Failure> {
-        let mut revealed = false;
+        let mut newcomers = false;
         let own = top_level_windows()?
             .into_iter()
             .filter(|&window| owned(window));
@@ -324,12 +333,12 @@ impl Exclusions {
             };
             if excluded {
                 self.changed.push(window);
-                revealed |= visible;
+                newcomers = true;
             } else if visible {
                 return Err(Failure::Exposed);
             }
         }
-        Ok(revealed)
+        Ok(newcomers)
     }
 }
 

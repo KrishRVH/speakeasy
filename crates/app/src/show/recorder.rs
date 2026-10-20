@@ -189,11 +189,11 @@ impl<'a> Session<'a> {
         let Ok(image) = Image::from_bgra(frame.width, frame.height, frame.bgra) else {
             return;
         };
-        self.samples.push(Sample {
-            at,
-            signature: Signature::of(&image),
-        });
+        let signature = Signature::of(&image);
         self.journal.record(at, image);
+        // The journal never moves backwards; the sample takes the moment it recorded.
+        let at = self.journal.moments().last().copied().unwrap_or(at);
+        self.samples.push(Sample { at, signature });
         if self.journal.bytes() <= JOURNAL_BUDGET {
             return;
         }

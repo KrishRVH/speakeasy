@@ -83,12 +83,7 @@ impl Portal {
         match registered {
             Ok(_) => {},
             // Portals without the host registry identify the app from its launcher instead.
-            Err(zbus::Error::MethodError(name, _, _))
-                if matches!(
-                    name.as_str(),
-                    "org.freedesktop.DBus.Error.UnknownMethod"
-                        | "org.freedesktop.DBus.Error.UnknownInterface"
-                ) => {},
+            Err(error) if lacks_registry(&error) => {},
             Err(error) => {
                 return Err(error).context(
                     "Install the supplied Speakeasy desktop launcher before enabling portal shortcuts",
@@ -990,6 +985,16 @@ async fn serve(
 
 /// Activation and release share one stream: separate queues can reorder a double-tap into two
 /// activations followed by two releases.
+/// Whether a registration failed because the portal predates the host registry. zbus reports the
+/// bus's standard errors as `fdo` variants, not by name.
+fn lacks_registry(error: &zbus::Error) -> bool {
+    matches!(
+        error,
+        zbus::Error::FDO(error)
+            if matches!(**error, zbus::fdo::Error::UnknownMethod(_) | zbus::fdo::Error::UnknownInterface(_))
+    )
+}
+
 async fn shortcut_signals(connection: &Connection) -> anyhow::Result<MessageStream> {
     let rule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
@@ -1297,6 +1302,31 @@ mod tests {
     use std::{io::Read as _, os::unix::net::UnixStream};
 
     use super::*;
+
+    #[test]
+    fn only_a_portal_without_the_host_registry_skips_registration() -> anyhow::Result<()> {
+        let call = Message::method_call(DESKTOP, "Register")
+            .interface("org.freedesktop.host.portal.Registry")
+            .build(&())?;
+        let reply = |name: &str| -> anyhow::Result<zbus::Error> {
+            Ok(zbus::Error::from(
+                Message::error(&call.header(), name).build(&("refused",))?,
+            ))
+        };
+        assert!(lacks_registry(&reply(
+            "org.freedesktop.DBus.Error.UnknownMethod"
+        )?));
+        assert!(lacks_registry(&reply(
+            "org.freedesktop.DBus.Error.UnknownInterface"
+        )?));
+        assert!(!lacks_registry(&reply(
+            "org.freedesktop.DBus.Error.AccessDenied"
+        )?));
+        assert!(!lacks_registry(&reply(
+            "org.freedesktop.portal.Error.Failed"
+        )?));
+        Ok(())
+    }
 
     #[test]
     fn cancelled_direct_input_precedes_focus_and_capability_errors() -> anyhow::Result<()> {

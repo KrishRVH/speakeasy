@@ -296,10 +296,8 @@ impl<P: Ports> Owner<P> {
                 self.gesture.complete();
                 self.outcome = Outcome::Empty;
             },
-            CaptureEvent::Finished(_, Err(error)) => {
-                self.conclude_capture();
-                self.fail(error.to_string());
-            },
+            // Failing retires both devices; the screen is never asked to finish footage for nobody.
+            CaptureEvent::Finished(_, Err(error)) => self.fail(error.to_string()),
         }
     }
 
