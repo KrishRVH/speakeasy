@@ -149,13 +149,13 @@ async fn stopping(stop: &Receiver<Infallible>, input: &InputSender) {
 
 /// Matches the bus announcing that `name` gained, lost, or changed its owner.
 fn owner_changes(name: &'static str) -> zbus::Result<MatchRule<'static>> {
-    MatchRule::builder()
+    Ok(MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
-        .sender("org.freedesktop.DBus")
-        .interface("org.freedesktop.DBus")
-        .member("NameOwnerChanged")
-        .add_arg(name)
-        .build()
+        .sender("org.freedesktop.DBus")?
+        .interface("org.freedesktop.DBus")?
+        .member("NameOwnerChanged")?
+        .add_arg(name)?
+        .build())
 }
 
 /// An X11 or Xwayland window; each call opens its own connection to the server.

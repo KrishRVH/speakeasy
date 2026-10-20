@@ -13,7 +13,7 @@ tokio = { workspace = true, features = ["rt", "time", "macros", "net", "sync"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 arboard.workspace = true
-zbus = { workspace = true, features = ["proxy", "service", "tokio"] }
+zbus = { workspace = true, features = ["tokio"] }
 futures-util.workspace = true
 libloading.workspace = true
 x11rb = { workspace = true, features = ["allow-unsafe-code", "shape", "xinput", "xkb", "xtest"] }

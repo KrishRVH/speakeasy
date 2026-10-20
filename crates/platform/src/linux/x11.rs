@@ -903,8 +903,8 @@ pub(super) fn set_visible(window: Window, visible: bool) {
     let _ = change();
 }
 
-/// GPUI connects through libxcb, so these connections must too: x11rb's pure-Rust connection skips
-/// the abstract socket libxcb tries first and can resolve `DISPLAY` to a different server.
+/// GPUI connects through libxcb, so these connections must too: x11rb's pure-Rust connection
+/// resolves `DISPLAY` on its own and can reach a different server than GPUI's windows.
 fn connect() -> anyhow::Result<(XCBConnection, usize)> {
     Ok(XCBConnection::connect(None)?)
 }

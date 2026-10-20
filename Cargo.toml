@@ -14,6 +14,8 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+# libloading, tiny-skia, x11rb, and zbus match the majors GPUI 0.2.2 brings in, so each compiles
+# once; move them with GPUI.
 anyhow = "1.0.104"
 arboard = { version = "3.7.0", default-features = false }
 async-channel = "2.5.0"
@@ -29,7 +31,7 @@ getrandom = "0.4.3"
 gpui = { version = "=0.2.2", default-features = false }
 # 0.2.190 drops the Linux `ENOATTR` that GPUI 0.2.2 still reaches through xattr 0.2.3.
 libc = "=0.2.189"
-libloading = "0.9.0"
+libloading = "0.8.9"
 objc2 = "0.6.5"
 objc2-app-kit = "0.3.2"
 objc2-core-graphics = { version = "0.3.2", default-features = false }
@@ -49,16 +51,17 @@ serde = "1.0.229"
 serde_json = "1.0.154"
 sha2 = "0.11.1"
 tempfile = "3.27.0"
-tiny-skia = { version = "0.12.0", default-features = false, features = ["std", "simd"] }
+tiny-skia = { version = "0.11.4", default-features = false, features = ["std", "simd"] }
 tokio = "1.54.0"
 tray-icon = { version = "0.26.1", default-features = false }
 ttf-parser = { version = "0.25.1", default-features = false, features = ["std"] }
 windows = "0.62.2"
 windows-future = "0.3.2"
 windows-sys = "0.61.2"
-x11rb = "0.14.0"
+x11rb = "0.13.2"
+# Ahead of GPUI's 0.8, which panics on a keymap that holds an interior NUL.
 xkbcommon = "0.9.0"
-zbus = { version = "6.0.0", default-features = false }
+zbus = { version = "5.19.0", default-features = false }
 
 [workspace.lints.rust]
 future_incompatible = { level = "deny", priority = -1 }

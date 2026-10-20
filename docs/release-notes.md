@@ -19,7 +19,8 @@ coding agent can read.
 - Text left on the clipboard for you to paste is a notice that says how, no longer an error.
 - Shift no longer cancels dictation when pressed during a Windows hold.
 - `--demo` previews a Show, with ink drawn and fading on screen on Windows and Mac.
-- Dependencies and tools are updated to their latest stable releases.
+- Dependencies and tools are updated to their latest stable releases, except libloading, tiny-skia,
+  x11rb, and zbus, which match the versions GPUI uses.
 
 Dictation, existing settings, models, filler removal, and gestures are otherwise unchanged.
 Recordings retain the five-minute limit. Audio and recognition stay local, with no dictation history

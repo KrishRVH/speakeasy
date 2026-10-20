@@ -1,14 +1,15 @@
 //! The `StatusNotifierItem` tray icon and its dbusmenu, served on an owned D-Bus thread. Menu
 //! clicks reach the UI only for enabled entries, and tray failure leaves the app usable.
 
-use std::{collections::HashMap, convert::Infallible, num::NonZeroUsize, time::Duration};
+use std::{collections::HashMap, convert::Infallible, time::Duration};
 
 use anyhow::Context;
 use async_channel::{Receiver, Sender};
 use futures_util::{StreamExt, stream::Select};
 use zbus::{
-    Connection, MatchRule, Message, MessageStream, ObjectPath, OwnedObjectPath, Variant,
+    Connection, MatchRule, Message, MessageStream,
     object_server::{InterfaceRef, SignalEmitter},
+    zvariant::{ObjectPath, OwnedObjectPath, Value},
 };
 
 use super::owner_changes;
@@ -244,8 +245,8 @@ impl MenuEntry {
     }
 }
 
-type Properties = HashMap<String, Variant<'static>>;
-type Layout = (i32, Properties, Vec<Variant<'static>>);
+type Properties = HashMap<String, Value<'static>>;
+type Layout = (i32, Properties, Vec<Value<'static>>);
 
 struct MenuItem {
     entry: MenuEntry,
@@ -256,9 +257,9 @@ struct MenuItem {
 impl MenuItem {
     fn properties(&self) -> Properties {
         HashMap::from([
-            ("label".into(), Variant::from(self.label.clone())),
-            ("enabled".into(), Variant::from(self.enabled)),
-            ("visible".into(), Variant::from(true)),
+            ("label".into(), Value::from(self.label.clone())),
+            ("enabled".into(), Value::from(self.enabled)),
+            ("visible".into(), Value::from(true)),
         ])
     }
 }
@@ -313,10 +314,10 @@ impl Menu {
             self.items
                 .iter()
                 .map(|item| {
-                    Variant::from((
+                    Value::from((
                         item.entry.id(),
                         item.properties(),
-                        Vec::<Variant<'static>>::new(),
+                        Vec::<Value<'static>>::new(),
                     ))
                 })
                 .collect()
@@ -324,7 +325,7 @@ impl Menu {
             Vec::new()
         };
         let root = if parent == ROOT_ID {
-            HashMap::from([("children-display".into(), Variant::from("submenu"))])
+            HashMap::from([("children-display".into(), Value::from("submenu"))])
         } else {
             self.item(parent).map_or_default(MenuItem::properties)
         };
@@ -344,7 +345,7 @@ impl Menu {
             .collect()
     }
 
-    fn get_property(&self, id: i32, name: &str) -> zbus::fdo::Result<Variant<'static>> {
+    fn get_property(&self, id: i32, name: &str) -> zbus::fdo::Result<Value<'static>> {
         self.item(id)
             .and_then(|item| item.properties().remove(name))
             .ok_or_else(|| zbus::fdo::Error::InvalidArgs("Unknown menu property".into()))
@@ -362,7 +363,7 @@ impl Menu {
         (Vec::new(), Vec::new())
     }
 
-    fn event(&self, id: i32, event: &str, data: Variant<'_>, timestamp: u32) {
+    fn event(&self, id: i32, event: &str, data: Value<'_>, timestamp: u32) {
         let _ = (data, timestamp);
         if event != "clicked" {
             return;
@@ -376,7 +377,7 @@ impl Menu {
         }
     }
 
-    fn event_group(&self, events: Vec<(i32, String, Variant<'_>, u32)>) -> Vec<i32> {
+    fn event_group(&self, events: Vec<(i32, String, Value<'_>, u32)>) -> Vec<i32> {
         for (id, event, data, timestamp) in events {
             self.event(id, &event, data, timestamp);
         }
@@ -512,19 +513,14 @@ async fn host_changes(
 ) -> anyhow::Result<Select<MessageStream, MessageStream>> {
     let watcher = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
-        .sender(WATCHER)
-        .interface(WATCHER)
-        .path(WATCHER_PATH)
-        .build()?;
+        .sender(WATCHER)?
+        .interface(WATCHER)?
+        .path(WATCHER_PATH)?
+        .build();
     Ok(futures_util::stream::select(
-        MessageStream::for_match_rule(watcher, connection, NonZeroUsize::new(SIGNAL_BACKLOG))
+        MessageStream::for_match_rule(watcher, connection, Some(SIGNAL_BACKLOG)).await?,
+        MessageStream::for_match_rule(owner_changes(WATCHER)?, connection, Some(SIGNAL_BACKLOG))
             .await?,
-        MessageStream::for_match_rule(
-            owner_changes(WATCHER)?,
-            connection,
-            NonZeroUsize::new(SIGNAL_BACKLOG),
-        )
-        .await?,
     ))
 }
 
@@ -609,11 +605,11 @@ mod tests {
             revision: 1,
             events,
         };
-        menu.event(MenuEntry::Pause.id(), "clicked", Variant::from(0_i32), 0);
-        menu.event(99, "clicked", Variant::from(0_i32), 0);
-        menu.event(MenuEntry::Settings.id(), "hovered", Variant::from(0_i32), 0);
+        menu.event(MenuEntry::Pause.id(), "clicked", Value::from(0_i32), 0);
+        menu.event(99, "clicked", Value::from(0_i32), 0);
+        menu.event(MenuEntry::Settings.id(), "hovered", Value::from(0_i32), 0);
         assert!(received.try_recv().is_err());
-        menu.event(MenuEntry::Settings.id(), "clicked", Variant::from(0_i32), 0);
+        menu.event(MenuEntry::Settings.id(), "clicked", Value::from(0_i32), 0);
         assert_eq!(received.try_recv()?, TrayAction::Settings);
         assert!(menu.get_property(99, "enabled").is_err());
         let (_, (_, _, children)) = menu.get_layout(ROOT_ID, -1, Vec::new());

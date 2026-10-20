@@ -117,7 +117,7 @@ dependencies = [
  "parking_lot",
  "percent-encoding",
  "windows-sys 0.61.2",
- "x11rb 0.13.2",
+ "x11rb",
 ]
 
 [[package]]
@@ -164,7 +164,7 @@ version = "0.38.0+1.3.281"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bb44936d800fea8f016d7f2311c6a4f97aebd5dc86f09906139ec848cf3a46f"
 dependencies = [
- "libloading 0.8.9",
+ "libloading",
 ]
 
 [[package]]
@@ -193,7 +193,7 @@ dependencies = [
  "serde",
  "serde_repr",
  "url",
- "zbus 5.19.0",
+ "zbus",
 ]
 
 [[package]]
@@ -211,7 +211,7 @@ dependencies = [
  "serde",
  "serde_repr",
  "url",
- "zbus 5.19.0",
+ "zbus",
 ]
 
 [[package]]
@@ -597,7 +597,7 @@ dependencies = [
  "hidden-trait",
  "js-sys",
  "khronos-egl",
- "libloading 0.8.9",
+ "libloading",
  "log",
  "mint",
  "naga",
@@ -866,7 +866,7 @@ checksum = "157a8ba7b480713b56f4c09fd13fc3e0a22a5dfab8097ba61cbc5feef950788a"
 dependencies = [
  "glob",
  "libc",
- "libloading 0.8.9",
+ "libloading",
 ]
 
 [[package]]
@@ -1494,7 +1494,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
- "libloading 0.8.9",
+ "libloading",
 ]
 
 [[package]]
@@ -2292,7 +2292,7 @@ dependencies = [
  "windows-numerics 0.2.0",
  "windows-registry 0.5.3",
  "x11-clipboard",
- "x11rb 0.13.2",
+ "x11rb",
  "xkbcommon 0.8.0",
  "zed-font-kit",
  "zed-scap",
@@ -3069,7 +3069,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6aae1df220ece3c0ada96b8153459b67eebe9ae9212258bb0134ae60416fdf76"
 dependencies = [
  "libc",
- "libloading 0.8.9",
+ "libloading",
 ]
 
 [[package]]
@@ -3143,16 +3143,6 @@ name = "libloading"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
-dependencies = [
- "cfg-if",
- "windows-link 0.2.1",
-]
-
-[[package]]
-name = "libloading"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "754ca22de805bb5744484a5b151a9e1a8e837d5dc232c2d7d8c2e3492edc8b60"
 dependencies = [
  "cfg-if",
  "windows-link 0.2.1",
@@ -4080,8 +4070,8 @@ dependencies = [
  "serde",
  "sha2 0.10.9",
  "subtle",
- "zbus 5.19.0",
- "zbus_macros 5.19.0",
+ "zbus",
+ "zbus_macros",
  "zeroize",
  "zvariant",
 ]
@@ -4935,7 +4925,7 @@ dependencies = [
  "pico-args",
  "rgb",
  "svgtypes",
- "tiny-skia 0.11.4",
+ "tiny-skia",
  "usvg",
 ]
 
@@ -5605,7 +5595,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tray-icon",
- "x11rb 0.14.0",
+ "x11rb",
 ]
 
 [[package]]
@@ -5628,7 +5618,7 @@ dependencies = [
  "core-graphics 0.25.0",
  "futures-util",
  "libc",
- "libloading 0.9.0",
+ "libloading",
  "objc2",
  "objc2-app-kit",
  "objc2-core-graphics",
@@ -5643,9 +5633,9 @@ dependencies = [
  "windows 0.62.2",
  "windows-future 0.3.2",
  "windows-sys 0.61.2",
- "x11rb 0.14.0",
+ "x11rb",
  "xkbcommon 0.9.0",
- "zbus 6.0.0",
+ "zbus",
 ]
 
 [[package]]
@@ -5657,7 +5647,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "tiny-skia 0.12.0",
+ "tiny-skia",
  "ttf-parser 0.25.1",
 ]
 
@@ -6124,21 +6114,7 @@ dependencies = [
  "cfg-if",
  "log",
  "png 0.17.16",
- "tiny-skia-path 0.11.4",
-]
-
-[[package]]
-name = "tiny-skia"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47ffee5eaaf5527f630fb0e356b90ebdec84d5d18d937c5e440350f88c5a91ea"
-dependencies = [
- "arrayref",
- "arrayvec",
- "bytemuck",
- "cfg-if",
- "log",
- "tiny-skia-path 0.12.0",
+ "tiny-skia-path",
 ]
 
 [[package]]
@@ -6146,17 +6122,6 @@ name = "tiny-skia-path"
 version = "0.11.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c9e7fc0c2e86a30b117d0462aa261b72b7a99b7ebd7deb3a14ceda95c5bdc93"
-dependencies = [
- "arrayref",
- "bytemuck",
- "strict-num",
-]
-
-[[package]]
-name = "tiny-skia-path"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edca365c3faccca67d06593c5980fa6c57687de727a03131735bb85f01fdeeb9"
 dependencies = [
  "arrayref",
  "bytemuck",
@@ -6192,6 +6157,7 @@ dependencies = [
  "signal-hook-registry",
  "socket2",
  "tokio-macros",
+ "tracing",
  "windows-sys 0.61.2",
 ]
 
@@ -6612,7 +6578,7 @@ dependencies = [
  "siphasher",
  "strict-num",
  "svgtypes",
- "tiny-skia-path 0.11.4",
+ "tiny-skia-path",
  "unicode-bidi",
  "unicode-script",
  "unicode-vo",
@@ -7500,7 +7466,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "662d74b3d77e396b8e5beb00b9cad6a9eccf40b2ef68cc858784b14c41d535a3"
 dependencies = [
  "libc",
- "x11rb 0.13.2",
+ "x11rb",
 ]
 
 [[package]]
@@ -7513,21 +7479,8 @@ dependencies = [
  "gethostname",
  "libc",
  "rustix 1.1.5",
- "x11rb-protocol 0.13.2",
+ "x11rb-protocol",
  "xcursor",
-]
-
-[[package]]
-name = "x11rb"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a8885a854a8bfdf87a301e53e41b17c5f8f33639903131338b997b1eb614f44"
-dependencies = [
- "as-raw-xcb-connection",
- "gethostname",
- "libc",
- "rustix 1.1.5",
- "x11rb-protocol 0.14.0",
 ]
 
 [[package]]
@@ -7535,12 +7488,6 @@ name = "x11rb-protocol"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
-
-[[package]]
-name = "x11rb-protocol"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acf4d1bc32aa46eec18caa634ec3cf4c05bfa151f12b93b510b15190f69a1ca8"
 
 [[package]]
 name = "xattr"
@@ -7693,42 +7640,15 @@ dependencies = [
  "rustix 1.1.5",
  "serde",
  "serde_repr",
+ "tokio",
  "tracing",
  "uds_windows",
  "uuid",
  "windows-sys 0.61.2",
  "winnow 1.0.4",
- "zbus_macros 5.19.0",
+ "zbus_macros",
  "zbus_names",
  "zvariant",
-]
-
-[[package]]
-name = "zbus"
-version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "266223222c9d81e5966455a9da0783e35d56a7ccab79a03c2366b2d98f8fc8a9"
-dependencies = [
- "async-trait",
- "bitflags 2.13.2",
- "endi",
- "futures-core",
- "hex",
- "libc",
- "ordered-stream",
- "rustix 1.1.5",
- "serde",
- "serde_repr",
- "socket2",
- "tokio",
- "uds_windows",
- "uuid",
- "windows-sys 0.61.2",
- "winnow 1.0.4",
- "zbus_macros 6.0.0",
- "zbus_utils",
- "zcheapstr",
- "zruntime",
 ]
 
 [[package]]
@@ -7747,18 +7667,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zbus_macros"
-version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69191782481ef4e0ac88ca487347c52e08bb85cceb2a163b79f7281fe5be0a3c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.9",
- "zbus_utils",
-]
-
-[[package]]
 name = "zbus_names"
 version = "4.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7767,19 +7675,6 @@ dependencies = [
  "serde",
  "winnow 1.0.4",
  "zvariant",
-]
-
-[[package]]
-name = "zbus_utils"
-version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c27a055b114bd9fc3686e90f62bd1fe612d523fc5f620bac3b1d2f42d3f6cab8"
-dependencies = [
- "proc-macro2",
- "quote",
- "serde",
- "syn 3.0.9",
- "winnow 1.0.4",
 ]
 
 [[package]]
@@ -7911,7 +7806,7 @@ dependencies = [
  "ahash",
  "hashbrown 0.14.5",
  "log",
- "x11rb 0.13.2",
+ "x11rb",
  "xim-ctext",
  "xim-parser",
 ]
@@ -8027,16 +7922,6 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[package]]
-name = "zruntime"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "467fd80a2014d186319f14b81aef027aa466712f355c90158a0e6b39de60726d"
-dependencies = [
- "futures-core",
- "futures-io",
-]
 
 [[package]]
 name = "zune-core"

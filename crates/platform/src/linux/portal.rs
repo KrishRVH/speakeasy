@@ -7,7 +7,6 @@ use std::{
     fs::File,
     io::Write,
     mem,
-    num::NonZeroUsize,
     ops::ControlFlow,
     os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd},
     sync::Arc,
@@ -19,7 +18,8 @@ use async_channel::{Receiver, Sender};
 use futures_util::{FutureExt, StreamExt, future::LocalBoxFuture, stream::FuturesUnordered};
 use tokio::{io::unix::AsyncFd, task::JoinSet};
 use zbus::{
-    Connection, MatchRule, Message, MessageStream, OwnedObjectPath, OwnedVariant, Proxy, Variant,
+    Connection, MatchRule, Message, MessageStream, Proxy,
+    zvariant::{OwnedObjectPath, OwnedValue, Value},
 };
 
 use super::{
@@ -53,8 +53,8 @@ const SELECTION_TIMEOUT: Duration = Duration::from_secs(2);
 const OWNERSHIP_SETTLE: Duration = Duration::from_millis(500);
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(1);
 
-type Results = HashMap<String, OwnedVariant>;
-type Options = HashMap<&'static str, Variant<'static>>;
+type Results = HashMap<String, OwnedValue>;
+type Options = HashMap<&'static str, Value<'static>>;
 type DesktopChanges = futures_util::stream::Select<MessageStream, MessageStream>;
 type Transfers<'a> = FuturesUnordered<LocalBoxFuture<'a, anyhow::Result<()>>>;
 
@@ -121,7 +121,7 @@ impl Portal {
         Ok(Proxy::new(&self.connection, DESTINATION, DESKTOP, interface).await?)
     }
 
-    async fn request<B: serde::Serialize + zbus::DynamicType + Sync>(
+    async fn request<B: serde::Serialize + zbus::zvariant::DynamicType + Sync>(
         &mut self,
         interface: &'static str,
         method: &'static str,
@@ -135,7 +135,7 @@ impl Portal {
         let mut restarts = MessageStream::for_match_rule(
             owner_changes(DESTINATION)?,
             &self.connection,
-            NonZeroUsize::new(REVOCATION_BACKLOG),
+            Some(REVOCATION_BACKLOG),
         )
         .await?;
         // Track the request before calling, so retirement can close a consent dialog that has
@@ -163,8 +163,8 @@ impl Portal {
             format!("{DESKTOP}/session/{}/{session}", self.sender_segment()?).try_into()?;
         self.sessions.push(predicted.clone());
         let options = Options::from([
-            ("handle_token", Variant::from(handle.clone())),
-            ("session_handle_token", Variant::from(session)),
+            ("handle_token", Value::from(handle.clone())),
+            ("session_handle_token", Value::from(session)),
         ]);
         let mut result = self
             .request(interface, "CreateSession", handle, &(options,))
@@ -397,7 +397,8 @@ impl<'a> Insertions<'a> {
         let clipboard = self.clipboard;
         let session = path.clone();
         let write = async move {
-            let fd: zbus::OwnedFd = clipboard.call("SelectionWrite", &(session, serial)).await?;
+            let fd: zbus::zvariant::OwnedFd =
+                clipboard.call("SelectionWrite", &(session, serial)).await?;
             Ok(OwnedFd::from(fd))
         };
         let done = move |success: bool| async move {
@@ -757,19 +758,19 @@ async fn bind_shortcuts(
         (
             DICTATE_ID,
             Options::from([
-                ("description", Variant::from("Hold to dictate")),
-                ("preferred_trigger", Variant::from(options.shortcut.clone())),
+                ("description", Value::from("Hold to dictate")),
+                ("preferred_trigger", Value::from(options.shortcut.clone())),
             ]),
         ),
         (
             CANCEL_ID,
             Options::from([
-                ("description", Variant::from("Cancel dictation")),
-                ("preferred_trigger", Variant::from(options.cancel.clone())),
+                ("description", Value::from("Cancel dictation")),
+                ("preferred_trigger", Value::from(options.cancel.clone())),
             ]),
         ),
     ];
-    let request = Options::from([("handle_token", Variant::from(handle.clone()))]);
+    let request = Options::from([("handle_token", Value::from(handle.clone()))]);
     let mut result = portal
         .request(
             SHORTCUTS,
@@ -804,8 +805,8 @@ async fn start_remote_desktop(portal: &mut Portal) -> anyhow::Result<Remote> {
     let session = portal.create_session(REMOTE).await?;
     let handle = portal.next_token()?;
     let mut devices = Options::from([
-        ("handle_token", Variant::from(handle.clone())),
-        ("types", Variant::from(KEYBOARD_DEVICE)),
+        ("handle_token", Value::from(handle.clone())),
+        ("types", Value::from(KEYBOARD_DEVICE)),
     ]);
     if let Some(store) = &tokens
         && portal
@@ -815,9 +816,9 @@ async fn start_remote_desktop(portal: &mut Portal) -> anyhow::Result<Remote> {
             .await?
             >= PERSISTENT_REMOTE_VERSION
     {
-        devices.insert("persist_mode", Variant::from(PERSIST_UNTIL_REVOKED));
+        devices.insert("persist_mode", Value::from(PERSIST_UNTIL_REVOKED));
         if let Ok(Some(previous)) = store.consume() {
-            devices.insert("restore_token", Variant::from(previous));
+            devices.insert("restore_token", Value::from(previous));
         }
     }
     portal
@@ -825,7 +826,7 @@ async fn start_remote_desktop(portal: &mut Portal) -> anyhow::Result<Remote> {
         .await?;
     let clipboard_requested = request_clipboard(portal, &session).await?;
     let handle = portal.next_token()?;
-    let start = Options::from([("handle_token", Variant::from(handle.clone()))]);
+    let start = Options::from([("handle_token", Value::from(handle.clone()))]);
     let mut result = portal
         .request(REMOTE, "Start", handle, &(session.clone(), "", start))
         .await?;
@@ -853,7 +854,7 @@ async fn start_remote_desktop(portal: &mut Portal) -> anyhow::Result<Remote> {
             .remove("clipboard_enabled")
             .and_then(|value| bool::try_from(value).ok())
             .unwrap_or(false);
-    let descriptor: zbus::OwnedFd = portal
+    let descriptor: zbus::zvariant::OwnedFd = portal
         .proxy(REMOTE)
         .await?
         .call("ConnectToEIS", &(session.clone(), Options::new()))
@@ -983,55 +984,58 @@ async fn serve(
     Ok(())
 }
 
-/// Activation and release share one stream: separate queues can reorder a double-tap into two
-/// activations followed by two releases.
-/// Whether a registration failed because the portal predates the host registry. zbus reports the
-/// bus's standard errors as `fdo` variants, not by name.
+/// Whether a registration failed because the portal predates the host registry. zbus reports a
+/// method call's error reply by its D-Bus error name.
 fn lacks_registry(error: &zbus::Error) -> bool {
     matches!(
         error,
-        zbus::Error::FDO(error)
-            if matches!(**error, zbus::fdo::Error::UnknownMethod(_) | zbus::fdo::Error::UnknownInterface(_))
+        zbus::Error::MethodError(name, _, _)
+            if matches!(
+                name.as_str(),
+                "org.freedesktop.DBus.Error.UnknownMethod"
+                    | "org.freedesktop.DBus.Error.UnknownInterface"
+            )
     )
 }
 
+/// Activation and release share one stream: separate queues can reorder a double-tap into two
+/// activations followed by two releases.
 async fn shortcut_signals(connection: &Connection) -> anyhow::Result<MessageStream> {
     let rule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
-        .sender(DESTINATION)
-        .interface(SHORTCUTS)
-        .path(DESKTOP)
-        .build()?;
-    Ok(MessageStream::for_match_rule(rule, connection, NonZeroUsize::new(SIGNAL_BACKLOG)).await?)
+        .sender(DESTINATION)?
+        .interface(SHORTCUTS)?
+        .path(DESKTOP)?
+        .build();
+    Ok(MessageStream::for_match_rule(rule, connection, Some(SIGNAL_BACKLOG)).await?)
 }
 
 /// Clipboard ownership changes, queued to the depth a handoff drains.
 async fn selection_owner_changes(connection: &Connection) -> anyhow::Result<MessageStream> {
     let rule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
-        .sender(DESTINATION)
-        .interface(CLIPBOARD)
-        .member("SelectionOwnerChanged")
-        .path(DESKTOP)
-        .build()?;
-    Ok(MessageStream::for_match_rule(rule, connection, NonZeroUsize::new(SIGNAL_BACKLOG)).await?)
+        .sender(DESTINATION)?
+        .interface(CLIPBOARD)?
+        .member("SelectionOwnerChanged")?
+        .path(DESKTOP)?
+        .build();
+    Ok(MessageStream::for_match_rule(rule, connection, Some(SIGNAL_BACKLOG)).await?)
 }
 
 /// Session closures and portal restarts, either of which revokes desktop access.
 async fn desktop_changes(connection: &Connection) -> anyhow::Result<DesktopChanges> {
     let closed = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
-        .sender(DESTINATION)
-        .interface(SESSION)
-        .member("Closed")
-        .build()?;
+        .sender(DESTINATION)?
+        .interface(SESSION)?
+        .member("Closed")?
+        .build();
     Ok(futures_util::stream::select(
-        MessageStream::for_match_rule(closed, connection, NonZeroUsize::new(REVOCATION_BACKLOG))
-            .await?,
+        MessageStream::for_match_rule(closed, connection, Some(REVOCATION_BACKLOG)).await?,
         MessageStream::for_match_rule(
             owner_changes(DESTINATION)?,
             connection,
-            NonZeroUsize::new(REVOCATION_BACKLOG),
+            Some(REVOCATION_BACKLOG),
         )
         .await?,
     ))
@@ -1058,7 +1062,7 @@ fn set_selection<'a>(
         if !permit.active() {
             return Ok(Prepared::Copied { owner: None });
         }
-        let mime_types = Options::from([("mime_types", Variant::from(PLAIN_TEXT.to_vec()))]);
+        let mime_types = Options::from([("mime_types", Value::from(PLAIN_TEXT.to_vec()))]);
         tokio::time::timeout(
             SELECTION_TIMEOUT,
             clipboard.call::<_, _, ()>("SetSelection", &(session, mime_types)),
@@ -1305,12 +1309,12 @@ mod tests {
 
     #[test]
     fn only_a_portal_without_the_host_registry_skips_registration() -> anyhow::Result<()> {
-        let call = Message::method_call(DESKTOP, "Register")
-            .interface("org.freedesktop.host.portal.Registry")
+        let call = Message::method_call(DESKTOP, "Register")?
+            .interface("org.freedesktop.host.portal.Registry")?
             .build(&())?;
         let reply = |name: &str| -> anyhow::Result<zbus::Error> {
             Ok(zbus::Error::from(
-                Message::error(&call.header(), name).build(&("refused",))?,
+                Message::error(&call.header(), name)?.build(&("refused",))?,
             ))
         };
         assert!(lacks_registry(&reply(
@@ -1504,9 +1508,9 @@ mod tests {
             owned: true,
         };
         let owner_event = |owned: bool| {
-            let values = Results::from([("session_is_owner".into(), OwnedVariant::from(owned))]);
+            let values = Results::from([("session_is_owner".into(), OwnedValue::from(owned))]);
             Ok::<_, anyhow::Error>(
-                Message::signal(DESKTOP, CLIPBOARD, "SelectionOwnerChanged")
+                Message::signal(DESKTOP, CLIPBOARD, "SelectionOwnerChanged")?
                     .build(&(session.clone(), values))?,
             )
         };
