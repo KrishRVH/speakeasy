@@ -231,6 +231,8 @@ async fn footage_from_an_earlier_show_never_reaches_a_later_one() -> anyhow::Res
     let mut late = footage();
     late.ended = Moment::from_millis(9_999);
     stale.send(ShowEvent::Finished(earlier, Ok(late))).await?;
+    // The owner takes the stale footage while this Show is still recording its own.
+    assert!(still_pending(h.published.recv()).await);
     h.input(Input::Release);
     h.input(Input::Press);
     h.transcribe_next_as("this one").await?;
