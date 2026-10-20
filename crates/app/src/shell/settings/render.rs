@@ -242,7 +242,8 @@ impl Settings {
     }
 
     /// How dictated text reaches the editor. Windows and macOS offer paste or typing as a switch;
-    /// Linux adds its terminal paste keys and copying without keyboard control.
+    /// Linux adds its terminal paste keys and copying without keyboard control, and its labels keep
+    /// the names that platform remedies tell users to choose.
     fn delivery_control(&self, ui: &Ui<'_>) -> impl IntoElement {
         let label = match self.config.text_delivery() {
             #[cfg(not(target_os = "linux"))]
@@ -254,9 +255,9 @@ impl Settings {
             #[cfg(target_os = "linux")]
             TextDelivery::TerminalPaste => "Insert: Paste (Ctrl+Shift+V)",
             #[cfg(target_os = "linux")]
-            TextDelivery::Type => "Insert: Type, keep clipboard",
+            TextDelivery::Type => "Insert: Type (Keep clipboard)",
             #[cfg(target_os = "linux")]
-            TextDelivery::Copy => "Insert: Copy only",
+            TextDelivery::Copy => "Insert: Copy for manual paste",
         };
         ui.button(label, Action::Delivery)
     }
