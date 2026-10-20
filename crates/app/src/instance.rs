@@ -22,6 +22,10 @@ const PORT_FILE: &str = "instance.port";
 const MAX_PORT_FILE_BYTES: u64 = 64;
 /// The listener's reply to a caller that presented the secret.
 const ACKNOWLEDGED: u8 = 0x06;
+const NOT_RUNNING: &str = "Speakeasy is not running. Start it before using a desktop shortcut";
+/// A port file this version cannot parse comes from an older version or is damaged; a restart
+/// rewrites it.
+const OUTDATED: &str = "Restart Speakeasy to use desktop shortcuts";
 const IO_TIMEOUT: Duration = Duration::from_millis(100);
 const REVEAL_ATTEMPTS: u32 = 25;
 const REVEAL_RETRY: Duration = Duration::from_millis(20);
@@ -140,10 +144,9 @@ impl Endpoint {
     fn read(port_file: &Path) -> anyhow::Result<Self> {
         let mut text = String::new();
         File::open(port_file)
-            .context("Start Speakeasy before using a desktop shortcut")?
+            .context(NOT_RUNNING)?
             .take(MAX_PORT_FILE_BYTES)
             .read_to_string(&mut text)?;
-        // An older version publishes only its port.
         text.trim()
             .split_once(' ')
             .and_then(|(port, nonce)| {
@@ -152,7 +155,7 @@ impl Endpoint {
                     nonce: u128::from_str_radix(nonce, 16).ok()?,
                 })
             })
-            .context("Restart Speakeasy to use desktop shortcuts")
+            .context(OUTDATED)
     }
 }
 
@@ -216,12 +219,14 @@ fn handshake(stream: &mut TcpStream, nonce: u128) -> io::Result<Option<Request>>
 fn connect(port_file: &Path) -> anyhow::Result<TcpStream> {
     let endpoint = Endpoint::read(port_file)?;
     let address = SocketAddr::from((Ipv4Addr::LOCALHOST, endpoint.port));
-    let mut stream = TcpStream::connect_timeout(&address, IO_TIMEOUT)?;
+    let mut stream = TcpStream::connect_timeout(&address, IO_TIMEOUT).context(NOT_RUNNING)?;
     stream.set_read_timeout(Some(IO_TIMEOUT))?;
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
     stream.write_all(&endpoint.nonce.to_le_bytes())?;
     let mut reply = [0];
-    stream.read_exact(&mut reply)?;
+    stream
+        .read_exact(&mut reply)
+        .context("Speakeasy did not answer; try the shortcut again")?;
     ensure!(
         reply == [ACKNOWLEDGED],
         "Speakeasy instance could not be verified"
@@ -300,6 +305,26 @@ mod tests {
         );
         Instance::send(&path, Request::Toggle)?;
         assert_eq!(next_request(&requests)?, Request::Toggle);
+        Ok(())
+    }
+
+    #[test]
+    fn unreachable_instances_name_their_remedy() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("settings.json");
+        let stale = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?
+            .local_addr()?
+            .port();
+        for (published, remedy) in [
+            (format!("{stale} {:032x}", 1), NOT_RUNNING),
+            (stale.to_string(), OUTDATED),
+        ] {
+            fs::write(directory.path().join(PORT_FILE), published)?;
+            let error = Instance::send(&path, Request::Toggle)
+                .err()
+                .context("An unreachable instance accepted a request")?;
+            assert!(format!("{error:#}").starts_with(remedy), "{error:#}");
+        }
         Ok(())
     }
 

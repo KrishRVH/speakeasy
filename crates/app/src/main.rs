@@ -111,15 +111,16 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             },
         },
-        Ok(Invocation::App(cli)) => {
-            if let Err(error) = run(cli) {
+        Ok(Invocation::App(cli)) => match run(cli) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
                 speakeasy_platform::show_startup_error(&format!("{error:#}"));
-            }
-            ExitCode::SUCCESS
+                ExitCode::FAILURE
+            },
         },
         Err(error) => {
             speakeasy_platform::show_startup_error(&format!("{error:#}"));
-            ExitCode::SUCCESS
+            ExitCode::FAILURE
         },
     }
 }
