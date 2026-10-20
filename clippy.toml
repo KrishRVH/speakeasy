@@ -32,9 +32,10 @@ disallowed-types = [
     { path = "std::sync::atomic::AtomicUsize", reason = "ambient counters are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
     # Ecosystem equivalents inherit the doctrine unchanged: routing around a
     # disallowed std primitive through a dependency is a violation, not an
-    # escape. These entries are inert until the crate enters the graph.
-    { path = "tokio::sync::Mutex", reason = "send the event to the task that owns the state over a channel instead of reaching into state through a lock (AGENTS.md ownership and interfaces)" },
-    { path = "tokio::sync::RwLock", reason = "send the event to the task that owns the state over a channel instead of reaching into state through a lock (AGENTS.md ownership and interfaces)" },
+    # escape. These entries are inert until the crate enters the graph; the
+    # tokio entries also accept a graph whose tokio lacks the `sync` feature.
+    { path = "tokio::sync::Mutex", reason = "send the event to the task that owns the state over a channel instead of reaching into state through a lock (AGENTS.md ownership and interfaces)", allow-invalid = true },
+    { path = "tokio::sync::RwLock", reason = "send the event to the task that owns the state over a channel instead of reaching into state through a lock (AGENTS.md ownership and interfaces)", allow-invalid = true },
     { path = "parking_lot::Mutex", reason = "send the event to the state's owning thread over a channel instead of reaching into state through a lock (AGENTS.md ownership and interfaces)" },
     { path = "parking_lot::RwLock", reason = "send the event to the state's owning thread over a channel instead of reaching into state through a lock (AGENTS.md ownership and interfaces)" },
     { path = "dashmap::DashMap", reason = "a concurrent map is shared mutable state; give the map one owner and send it events (AGENTS.md ownership and interfaces)" },
