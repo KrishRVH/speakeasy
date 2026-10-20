@@ -24,8 +24,41 @@ const PIN: &str = ".pinned";
 const STAGING_PREFIX: &str = ".partial-";
 
 /// Where Shows live: machine-local, beside the engines and models.
-pub(super) fn directory() -> anyhow::Result<PathBuf> {
+fn directory() -> anyhow::Result<PathBuf> {
     Ok(crate::paths::data_root()?.join("shows"))
+}
+
+/// [`directory`], ready for a new Show. On Unix it is created or tightened to be the user's alone,
+/// since even a Show's name tells when the user recorded; Windows already limits local application
+/// data to the user.
+pub(super) fn private_directory() -> anyhow::Result<PathBuf> {
+    let directory = directory()?;
+    #[cfg(unix)]
+    make_private(&directory)?;
+    Ok(directory)
+}
+
+/// Creates `directory` if needed and leaves it readable only by the user. A link is refused rather
+/// than followed, so only a folder Speakeasy owns has its permissions changed.
+#[cfg(unix)]
+fn make_private(directory: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(directory)
+        .with_context(|| format!("Cannot create {}", directory.display()))?;
+    let linked = fs::symlink_metadata(directory)
+        .with_context(|| format!("Cannot read {}", directory.display()))?
+        .file_type()
+        .is_symlink();
+    anyhow::ensure!(
+        !linked,
+        "{} is a link; Shows need a folder of their own, so replace the link with one",
+        directory.display()
+    );
+    fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
+        .with_context(|| format!("Cannot make {} private", directory.display()))
 }
 
 /// An unused directory under `parent` named for `now` in UTC, such as `20261019T143603Z`.
@@ -365,6 +398,30 @@ mod tests {
             .map(|entry| entry.map(|entry| entry.file_name()))
             .collect::<Result<_, _>>()?;
         assert_eq!(names, ["20261019T143603Z"]);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_shows_folder_is_made_private_and_a_link_is_refused() -> anyhow::Result<()> {
+        use std::os::unix::fs::{PermissionsExt as _, symlink};
+        let mode = |path: &Path| -> anyhow::Result<u32> {
+            Ok(fs::metadata(path)?.permissions().mode() & 0o777)
+        };
+        let root = tempfile::tempdir()?;
+        let created = root.path().join("speakeasy/shows");
+        make_private(&created)?;
+        assert_eq!(mode(&created)?, 0o700);
+
+        let existing = root.path().join("existing");
+        fs::create_dir(&existing)?;
+        fs::set_permissions(&existing, fs::Permissions::from_mode(0o755))?;
+        let link = root.path().join("link");
+        symlink(&existing, &link)?;
+        assert!(make_private(&link).is_err(), "a link is never followed");
+        assert_eq!(mode(&existing)?, 0o755, "what a link names is left alone");
+        make_private(&existing)?;
+        assert_eq!(mode(&existing)?, 0o700, "an existing folder is tightened");
         Ok(())
     }
 }

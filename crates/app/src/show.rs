@@ -61,7 +61,7 @@ impl Command {
         let bundle = Demo::new(Typeface::parse(crate::BRAND_FONT_FILE)?).bundle(DEMO_SIZE)?;
         let directory = match out {
             Some(out) => out,
-            None => store::fresh_directory(&store::directory()?, SystemTime::now())?,
+            None => store::fresh_directory(&store::private_directory()?, SystemTime::now())?,
         };
         store::stage(&directory, &bundle.files(&directory)?)?.persist()?;
         print!("{}", bundle.summary(&directory));

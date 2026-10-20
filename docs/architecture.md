@@ -270,11 +270,12 @@ only once the session's permit commits. A Show cancelled before then leaves no b
 clipboard change: publication checks the permit before each costly step and deletes anything it
 staged.
 
-Shows live in `<data root>/shows/<UTC stamp>`: mode `0700` on Unix, and inside the user's local
-application data on Windows. The resident app sweeps at launch and hourly, deleting stamp-named
-bundles older than seven days unless they hold a `.pinned` file, and staging older than an hour.
-Other names and links are never touched, and a pin that cannot be read still keeps its Show. A
-failed sweep is reported unless a recording is under way, and again at each sweep until it succeeds.
+Shows live in `<data root>/shows/<UTC stamp>`. On Unix, `shows` and each bundle are mode `0700`, and
+a linked `shows` is refused; on Windows they sit inside the user's local application data. The
+resident app sweeps at launch and hourly, deleting stamp-named bundles older than seven days unless
+they hold a `.pinned` file, and staging older than an hour. Other names and links are never touched,
+and a pin that cannot be read still keeps its Show. A failed sweep is reported unless a recording is
+under way, and again at each sweep until it succeeds.
 
 ## Insertion and privacy
 
