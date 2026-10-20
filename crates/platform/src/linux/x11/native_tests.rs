@@ -184,12 +184,21 @@ impl PrivateServer {
     fn start() -> anyhow::Result<Self> {
         // Xvfb reports its display once it accepts clients, and exits without reporting when the
         // display is in use. Candidates start from the process ID so concurrent checks rarely meet.
+        // Only the abstract socket listens, so a killed server leaves no socket file behind.
         let first = (std::process::id() % 20_000).saturating_add(100);
         for number in (first..).take(8) {
             let display = format!(":{number}");
             let mut server = Self {
                 process: Command::new("Xvfb")
-                    .args([display.as_str(), "-displayfd", "1", "-nolisten", "tcp"])
+                    .args([
+                        display.as_str(),
+                        "-displayfd",
+                        "1",
+                        "-nolisten",
+                        "tcp",
+                        "-nolisten",
+                        "unix",
+                    ])
                     .stdin(Stdio::null())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::null())

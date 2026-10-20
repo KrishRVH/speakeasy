@@ -377,6 +377,7 @@ mod tests {
         let shift = keyboard(Keysym::Shift_L);
         let no_shift = keyboard(Keysym::NoSymbol);
         assert_eq!(paste_keys(&shift, true), Some((8, Some(9), 10)));
+        assert_eq!(paste_keys(&shift, false), Some((8, None, 10)));
         assert_eq!(paste_keys(&no_shift, false), Some((8, None, 10)));
         assert_eq!(paste_keys(&no_shift, true), None);
     }
