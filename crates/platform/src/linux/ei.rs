@@ -325,6 +325,16 @@ impl Sender {
     }
 }
 
+impl Drop for Sender {
+    /// Releases device references before the context, whatever the field order: destroying a
+    /// device unregisters it from the context it reaches through its seat, and a seat holds no
+    /// context reference of its own.
+    fn drop(&mut self) {
+        self.keyboard = None;
+        self.text = None;
+    }
+}
+
 /// Why automatic paste cannot run. Each blocker has its own remedy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PasteBlocked {
@@ -469,16 +479,6 @@ enum PasteState {
     /// Modifiers are released, but the active layout cannot type the paste shortcut.
     NoKeys,
     Ready(PasteKeys),
-}
-
-impl Drop for Sender {
-    /// Releases device references before the context, whatever the field order: destroying a
-    /// device unregisters it from the context it reaches through its seat, and a seat holds no
-    /// context reference of its own.
-    fn drop(&mut self) {
-        self.keyboard = None;
-        self.text = None;
-    }
 }
 
 /// The sender's owning reference to its libei context.
