@@ -337,6 +337,14 @@ mod tests {
             held(false, false, true).any(),
             "Fn alone must hold the paste"
         );
+        assert!(
+            held(true, false, false).any(),
+            "Shift alone must hold the paste"
+        );
+        assert!(
+            held(false, true, false).any(),
+            "A shortcut modifier must hold the paste"
+        );
         assert!(!Modifiers::default().any());
     }
 
