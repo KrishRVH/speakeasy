@@ -92,7 +92,7 @@ native acceptance before changing GPUI termination handling.
 `runtime.rs` exposes start, configure, stop, and a completion acknowledgement. `owner.rs` receives
 one wake, handles it, advances ready work, and publishes a snapshot. Its decisions use owned state;
 snapshots are presentation only. `Session` owns a generation-bound permit and its current stage.
-Each `Device`, microphone or screen, is `Free`, `Open`, or `Retiring`, so opening cannot replace it.
+Each `Device`, microphone or screen, is `Free`, `Open`, or `Retiring`; only a `Free` device opens.
 `Worker` is unavailable, loading (including recovery after a cancelled transcription), ready, or
 transcribing; load and transcription jobs have different result types. Replacement consumes the old
 job and reaps its process before loading another. Stopping capture during a failed warmup retains
