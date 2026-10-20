@@ -251,3 +251,148 @@ impl fmt::Display for Count {
         write!(f, "{count} {noun}{plural}")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::{Action, InkPoint, Moment, Narration, Shape, Size, Span, Stroke, Word};
+
+    fn at(millis: u64) -> Moment {
+        Moment::from_millis(millis)
+    }
+
+    #[test]
+    fn show_json_keeps_its_wire_format() {
+        let click = Action::Click {
+            at: at(400),
+            point: Point::new(0.5, 0.25),
+        };
+        let word = |start: u64, text: &str| Word {
+            span: Span::new(at(start), at(start + 200)),
+            text: text.to_owned(),
+        };
+        let ink = |x: f32, millis: u64| InkPoint {
+            point: Point::new(x, 0.5),
+            at: at(millis),
+        };
+        let manifest = Manifest {
+            version: Manifest::VERSION,
+            recording: Recording {
+                duration: at(2_000),
+                surface: Size {
+                    width: 800.0,
+                    height: 600.0,
+                },
+                strokes: vec![Stroke::new(vec![ink(0.25, 100), ink(0.75, 300)]).unwrap()],
+                actions: vec![
+                    click,
+                    Action::Drag {
+                        span: Span::new(at(600), at(900)),
+                        from: Point::new(0.25, 0.75),
+                        to: Point::new(0.75, 0.75),
+                    },
+                ],
+                narration: Narration::Words(vec![word(100, "Look"), word(300, "here.")]),
+            },
+            marks: vec![Mark {
+                shape: Shape::Line {
+                    from: Point::new(0.25, 0.5),
+                    to: Point::new(0.75, 0.5),
+                },
+                strokes: 0..1,
+                span: Span::new(at(100), at(300)),
+                bounds: Rect {
+                    left: 0.25,
+                    top: 0.5,
+                    right: 0.75,
+                    bottom: 0.5,
+                },
+            }],
+            keyframes: vec![
+                Keyframe {
+                    index: 1,
+                    at: at(300),
+                    reason: Reason::Mark,
+                    event: "drew a line".to_owned(),
+                    said: Some("Look here.".to_owned()),
+                    marks: 0..1,
+                    action: None,
+                },
+                Keyframe {
+                    index: 2,
+                    at: at(1_000),
+                    reason: Reason::Click,
+                    event: "clicked".to_owned(),
+                    said: None,
+                    marks: 0..0,
+                    action: Some(click),
+                },
+                Keyframe {
+                    index: 3,
+                    at: at(1_500),
+                    reason: Reason::SceneChange,
+                    event: "scene changed".to_owned(),
+                    said: None,
+                    marks: 0..0,
+                    action: None,
+                },
+            ],
+        };
+        let click = json!({"kind": "click", "at": 400, "point": [0.5, 0.25]});
+        let golden = json!({
+            "version": 1,
+            "duration": 2000,
+            "surface": {"width": 800.0, "height": 600.0},
+            "strokes": [[[0.25, 0.5, 100], [0.75, 0.5, 300]]],
+            "actions": [
+                click,
+                {"kind": "drag", "span": [600, 900], "from": [0.25, 0.75], "to": [0.75, 0.75]},
+            ],
+            "narration": {"words": [
+                {"span": [100, 300], "text": "Look"},
+                {"span": [300, 500], "text": "here."},
+            ]},
+            "marks": [{
+                "shape": "line",
+                "from": [0.25, 0.5],
+                "to": [0.75, 0.5],
+                "strokes": [0, 1],
+                "span": [100, 300],
+                "bounds": [0.25, 0.5, 0.75, 0.5],
+            }],
+            "keyframes": [
+                {
+                    "index": 1,
+                    "at": 300,
+                    "reason": "mark",
+                    "event": "drew a line",
+                    "said": "Look here.",
+                    "marks": [0, 1],
+                },
+                {
+                    "index": 2,
+                    "at": 1000,
+                    "reason": "click",
+                    "event": "clicked",
+                    "marks": [0, 0],
+                    "action": click,
+                },
+                {"index": 3, "at": 1500, "reason": "sceneChange", "event": "scene changed", "marks": [0, 0]},
+            ],
+        });
+        let changed =
+            "show.json changed; bump Manifest::VERSION if an existing reader would misread it";
+        assert_eq!(
+            serde_json::to_value(&manifest).unwrap(),
+            golden,
+            "{changed}"
+        );
+        assert_eq!(
+            serde_json::from_value::<Manifest>(golden).unwrap(),
+            manifest,
+            "{changed}"
+        );
+    }
+}

@@ -425,8 +425,5 @@ mod tests {
             marks[0].to_string(),
             "underlined x 0.10–0.80 at y 0.51 (2 strokes)"
         );
-        let json = serde_json::to_value(&marks[0]).unwrap();
-        assert_eq!(json["shape"], "underline");
-        assert_eq!(json["strokes"], serde_json::json!([0, 2]));
     }
 }
