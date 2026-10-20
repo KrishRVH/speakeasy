@@ -16,6 +16,14 @@ const CONTACT_SHEET: &str = "contact-sheet.png";
 const SUMMARY: &str = "summary.md";
 const MANIFEST: &str = "show.json";
 
+impl Keyframe {
+    /// The keyframe image's path within a bundle.
+    #[must_use]
+    pub fn file(&self) -> String {
+        format!("frames/frame-{:02}.png", self.index)
+    }
+}
+
 /// Everything a Show recorded and chose, as `show.json` stores it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

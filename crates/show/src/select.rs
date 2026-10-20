@@ -87,14 +87,6 @@ pub struct Keyframe {
     pub action: Option<Action>,
 }
 
-impl Keyframe {
-    /// The keyframe image's path within a bundle.
-    #[must_use]
-    pub fn file(&self) -> String {
-        format!("frames/frame-{:02}.png", self.index)
-    }
-}
-
 /// The marks a Show's ink forms and the keyframes chosen to show it.
 ///
 /// Only [`select`] makes one, so it holds at least one keyframe, numbered from one in time order,
