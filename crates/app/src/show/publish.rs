@@ -10,6 +10,7 @@ use anyhow::{Context as _, anyhow};
 use speakeasy_platform::InsertPermit;
 use speakeasy_show::{Image, Typeface, compose, select};
 
+use super::store;
 use crate::ports::{PUBLISH_STOPPED, Published, Recorded};
 
 /// Composes and writes `recorded` off the caller's thread. The bundle appears and its summary is
@@ -17,7 +18,7 @@ use crate::ports::{PUBLISH_STOPPED, Published, Recorded};
 /// and deletes anything it staged.
 pub(crate) async fn publish(recorded: Recorded, permit: InsertPermit) -> anyhow::Result<Published> {
     tokio::task::spawn_blocking(move || {
-        let Some(written) = write_bundle(recorded, &permit, &super::directory()?)? else {
+        let Some(written) = write_bundle(recorded, &permit, &store::directory()?)? else {
             return Ok(Published::Cancelled);
         };
         speakeasy_platform::copy_text(&written.summary).map_err(|error| {
@@ -63,8 +64,8 @@ fn write_bundle(
     if cancelled() {
         return Ok(None);
     }
-    let directory = super::fresh_directory(parent, SystemTime::now())?;
-    let staged = super::stage(&directory, &bundle.files(&directory)?)?;
+    let directory = store::fresh_directory(parent, SystemTime::now())?;
+    let staged = store::stage(&directory, &bundle.files(&directory)?)?;
     if !permit.commit() {
         return Ok(None);
     }
@@ -406,7 +407,7 @@ mod tests {
         let root = tempfile::tempdir()?;
         let files = bundle.files(root.path())?;
         let encoded = started.elapsed();
-        super::super::stage(&root.path().join("show"), &files)?.persist()?;
+        super::super::store::stage(&root.path().join("show"), &files)?.persist()?;
         let written = started.elapsed();
         let bytes: usize = files.iter().map(|file| file.contents.len()).sum();
         eprintln!(

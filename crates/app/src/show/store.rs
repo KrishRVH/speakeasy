@@ -1,17 +1,14 @@
-//! Shows expire a week after they are recorded unless pinned, so screen recordings never pile up
-//! unnoticed.
+//! Where Shows live on disk: stamp naming, private all-at-once writes, and seven-day expiry.
 
 use std::{
     fs,
     io::ErrorKind,
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
 
 use anyhow::Context as _;
 use gpui::App;
-
-use super::utc_stamp;
 
 /// How long an unpinned Show is kept.
 const KEPT_FOR: Duration = Duration::from_hours(7 * 24);
@@ -23,11 +20,87 @@ const SWEEP_EVERY: Duration = Duration::from_hours(1);
 /// A file of this name inside a Show keeps it.
 const PIN: &str = ".pinned";
 
+/// Where Shows live: machine-local, beside the engines and models.
+pub(super) fn directory() -> anyhow::Result<PathBuf> {
+    Ok(crate::paths::data_root()?.join("shows"))
+}
+
+/// An unused directory under `parent` named for `now` in UTC, such as `20261019T143603Z`.
+pub(super) fn fresh_directory(parent: &Path, now: SystemTime) -> anyhow::Result<PathBuf> {
+    let stamp = utc_stamp(now);
+    (1..=100_u8)
+        .map(|attempt| match attempt {
+            1 => parent.join(&stamp),
+            _ => parent.join(format!("{stamp}-{attempt}")),
+        })
+        .find(|candidate| !candidate.exists())
+        .context("Too many Shows were written this second")
+}
+
+/// Writes `files` into `directory`, which must not exist, all at once.
+pub(super) fn write(directory: &Path, files: &[speakeasy_show::File]) -> anyhow::Result<()> {
+    stage(directory, files)?.persist()
+}
+
+/// A bundle written to a hidden sibling of its directory. It appears there only once persisted,
+/// so a reader never sees half a bundle, and dropping it unpersisted deletes it.
+pub(super) struct Staged {
+    staging: tempfile::TempDir,
+    directory: PathBuf,
+}
+
+impl Staged {
+    /// Moves the bundle into place.
+    pub(super) fn persist(mut self) -> anyhow::Result<()> {
+        fs::rename(self.staging.path(), &self.directory)
+            .with_context(|| format!("Cannot create {}", self.directory.display()))?;
+        // The staging directory is now the bundle.
+        self.staging.disable_cleanup(true);
+        Ok(())
+    }
+}
+
+/// Writes `files` beside `directory`, which must not exist yet. Shows are private to the user.
+pub(super) fn stage(directory: &Path, files: &[speakeasy_show::File]) -> anyhow::Result<Staged> {
+    anyhow::ensure!(
+        !directory.exists(),
+        "{} already exists, and a Show never replaces one",
+        directory.display()
+    );
+    let parent = directory
+        .parent()
+        .context("A Show's directory needs a parent")?;
+    fs::create_dir_all(parent).with_context(|| format!("Cannot create {}", parent.display()))?;
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".partial-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        builder.permissions(fs::Permissions::from_mode(0o700));
+    }
+    // Windows already limits the user's local application data to the user.
+    let staging = builder
+        .tempdir_in(parent)
+        .with_context(|| format!("Cannot write in {}", parent.display()))?;
+    for file in files {
+        let path = staging.path().join(&file.name);
+        if let Some(folder) = path.parent() {
+            fs::create_dir_all(folder)?;
+        }
+        fs::write(&path, &file.contents)
+            .with_context(|| format!("Cannot write {}", path.display()))?;
+    }
+    Ok(Staged {
+        staging,
+        directory: directory.to_path_buf(),
+    })
+}
+
 /// Deletes expired Shows now and then hourly for the app's life, giving each failure to `report`;
 /// a failure that persists is reported again at every sweep.
 pub(crate) fn attend(report: impl Fn(&anyhow::Error, &mut App) + 'static, cx: &App) {
     // Without a data folder no Show can be published, so none can expire.
-    let Ok(parent) = super::directory() else {
+    let Ok(parent) = directory() else {
         return;
     };
     cx.spawn(async move |cx| {
@@ -116,9 +189,64 @@ fn stamp(name: &str) -> Option<&str> {
     (stamped && numbered).then_some(stamp)
 }
 
+/// `now` in UTC as `YYYYMMDDTHHMMSSZ`, which sorts in time order.
+fn utc_stamp(now: SystemTime) -> String {
+    let seconds = now
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let (days, time) = (seconds / 86_400, seconds % 86_400);
+    let (year, month, day) = civil_date(days);
+    format!(
+        "{year:04}{month:02}{day:02}T{:02}{:02}{:02}Z",
+        time / 3_600,
+        time / 60 % 60,
+        time % 60
+    )
+}
+
+/// The proleptic Gregorian date `days` after 1970-01-01, after Howard Hinnant's `civil_from_days`.
+fn civil_date(days: u64) -> (u64, u64, u64) {
+    // Count years from March, so each year's leap day falls at its end.
+    let shifted = days.saturating_add(719_468);
+    let era = shifted / 146_097;
+    let day_of_era = shifted % 146_097;
+    let year_of_era = day_of_era
+        .saturating_sub(day_of_era / 1_460)
+        .saturating_add(day_of_era / 36_524)
+        .saturating_sub(day_of_era / 146_096)
+        / 365;
+    let day_of_year = day_of_era.saturating_sub(
+        year_of_era
+            .saturating_mul(365)
+            .saturating_add(year_of_era / 4)
+            .saturating_sub(year_of_era / 100),
+    );
+    let month_index = day_of_year.saturating_mul(5).saturating_add(2) / 153;
+    let day = day_of_year
+        .saturating_sub(month_index.saturating_mul(153).saturating_add(2) / 5)
+        .saturating_add(1);
+    let month = if month_index < 10 {
+        month_index.saturating_add(3)
+    } else {
+        month_index.saturating_sub(9)
+    };
+    let year = era
+        .saturating_mul(400)
+        .saturating_add(year_of_era)
+        .saturating_add(u64::from(month <= 2));
+    (year, month, day)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn at(seconds: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_secs(seconds))
+            .unwrap()
+    }
 
     #[test]
     fn a_week_old_show_expires_unless_pinned() -> anyhow::Result<()> {
@@ -190,5 +318,48 @@ mod tests {
         ] {
             assert_eq!(stamp(name), None, "{name}");
         }
+    }
+
+    #[test]
+    fn stamps_name_utc_moments_in_order() {
+        assert_eq!(utc_stamp(at(0)), "19700101T000000Z");
+        assert_eq!(utc_stamp(at(951_782_400)), "20000229T000000Z");
+        assert_eq!(utc_stamp(at(1_792_420_563)), "20261019T143603Z");
+        assert_eq!(utc_stamp(at(4_102_444_799)), "20991231T235959Z");
+    }
+
+    #[test]
+    fn a_bundle_appears_whole_under_a_fresh_name() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let parent = root.path().join("shows");
+        let first = fresh_directory(&parent, at(1_792_420_563))?;
+        let files = [
+            speakeasy_show::File {
+                name: "summary.md".into(),
+                contents: b"text".to_vec(),
+            },
+            speakeasy_show::File {
+                name: "frames/frame-01.png".into(),
+                contents: vec![1, 2],
+            },
+        ];
+        write(&first, &files)?;
+        assert_eq!(fs::read(first.join("frames/frame-01.png"))?, [1, 2]);
+        assert!(
+            write(&first, &files).is_err(),
+            "an existing bundle is never replaced"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(fs::metadata(&first)?.permissions().mode() & 0o777, 0o700);
+        }
+        let second = fresh_directory(&parent, at(1_792_420_563))?;
+        assert_eq!(second.file_name(), Some("20261019T143603Z-2".as_ref()));
+        let names: Vec<_> = fs::read_dir(&parent)?
+            .map(|entry| entry.map(|entry| entry.file_name()))
+            .collect::<Result<_, _>>()?;
+        assert_eq!(names, ["20261019T143603Z"]);
+        Ok(())
     }
 }
