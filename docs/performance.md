@@ -44,7 +44,7 @@ Compare paired runs and check word accuracy and formatting as well as latency. K
 of logs. The opt-in tests `profile_fixture_dictation` and `profile_ready_text_latency` exercise the
 real session owner with public audio or fake devices; the README lists the fixture variables. The
 synthetic `profile_audio_pipeline` probe times callback/downmix/consumer work; `profile_audio_seal`
-times sealing a five-minute recording whose speech windows were classified while recording: the
+times sealing a five-minute recording, classified for speech while recording. Sealing includes the
 remaining window, range selection, trimming, capacity reclamation, and WAV encoding; it excludes
 microphone teardown, inference, and insertion. The synthetic `profile_show_pipeline` probe reports
 the recorder's per-frame fingerprint and journal cost on 2560 × 1440 desktops that stay still, type,
@@ -72,7 +72,7 @@ Pass explicit app and worker PIDs, reported separately. For example:
 ```sh
 mise exec -- python scripts/profile_linux.py --pid 1234 --pid 1235 --label idle-hidden \
   --seconds 30 --output artifacts/profiles/linux-idle.json
-cargo test -p speakeasy --release --locked profile_audio -- --ignored --nocapture
+cargo test -p speakeasy --release --locked profile_audio -- --ignored --nocapture --test-threads=1
 cargo test -p speakeasy --release --locked profile_ready_text_latency -- --ignored --nocapture
 ```
 
