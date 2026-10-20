@@ -241,15 +241,21 @@ fn a_save_writes_through_a_linked_settings_file() -> anyhow::Result<()> {
     fs::create_dir(&dotfiles)?;
     let real = dotfiles.join("settings.json");
     let path = directory.path().join("settings.json");
+    // A relative link to an absolute one, made before the file they name exists.
+    std::os::unix::fs::symlink(&real, directory.path().join("linked.json"))?;
+    std::os::unix::fs::symlink("linked.json", &path)?;
+    let is_link = |link: &Path| {
+        fs::symlink_metadata(directory.path().join(link))
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    };
     let defaults = Config::default();
-    Config::save_changes(&defaults, &defaults, &defaults, &real)?;
-    std::os::unix::fs::symlink(&real, &path)?;
+    Config::save_changes(&defaults, &defaults, &defaults, &path)?;
     let config = Config {
         theme: Theme::Iris,
         ..Config::default()
     };
     Config::save_changes(&defaults, &config, &config, &path)?;
-    assert!(fs::symlink_metadata(&path)?.file_type().is_symlink());
+    assert!(is_link(Path::new("settings.json")) && is_link(Path::new("linked.json")));
     assert_eq!(Config::read(&real)?.theme, Theme::Iris);
     Ok(())
 }

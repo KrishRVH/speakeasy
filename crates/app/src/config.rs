@@ -18,7 +18,7 @@ use std::{
 };
 
 use anyhow::{Context, anyhow, ensure};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
 use speakeasy_platform::{Delivery, DesktopOptions};
 
@@ -168,15 +168,10 @@ impl Config {
     }
 
     pub(crate) fn read(path: &Path) -> anyhow::Result<Self> {
-        Self::parse(
+        parse(
             &fs::read(path).with_context(|| format!("Cannot read {}", path.display()))?,
             path,
         )
-    }
-
-    fn parse(contents: &[u8], path: &Path) -> anyhow::Result<Self> {
-        serde_json::from_slice(contents)
-            .with_context(|| format!("Invalid settings in {}", path.display()))
     }
 
     /// Reads the settings at `path` for launch: the draft Settings edits, and how it stands. A file
@@ -307,26 +302,50 @@ impl Config {
     ) -> anyhow::Result<()> {
         let cannot_save =
             |error: io::Error| anyhow!("Cannot save settings to {}: {error}", path.display());
-        // Writing where a link points keeps a settings file that a dotfile manager links in.
-        let target = if path.exists() {
-            fs::canonicalize(path).map_err(cannot_save)?
-        } else {
-            path.to_owned()
-        };
-        let contents = if target.exists() {
-            let contents = fs::read(&target).map_err(cannot_save)?;
-            // Never replace a file the user still has to repair.
-            Self::parse(&contents, &target)?;
-            let mut file: Map<String, Value> = serde_json::from_slice(&contents)
-                .with_context(|| format!("Invalid settings in {}", target.display()))?;
-            patch(&mut file, base, draft, validated)
-                .with_context(|| format!("Cannot save settings to {}", path.display()))?;
-            serde_json::to_vec_pretty(&file)?
-        } else {
-            serde_json::to_vec_pretty(validated)?
+        let target = link_target(path).map_err(cannot_save)?;
+        let contents = match fs::read(&target) {
+            Ok(contents) => {
+                // Never replace a file the user still has to repair. Parsing the bytes as settings,
+                // not the map below, keeps the line and column in the error.
+                parse::<Self>(&contents, path)?;
+                let mut file: Map<String, Value> = parse(&contents, path)?;
+                patch(&mut file, base, draft, validated)
+                    .with_context(|| format!("Cannot save settings to {}", path.display()))?;
+                serde_json::to_vec_pretty(&file)?
+            },
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                serde_json::to_vec_pretty(validated)?
+            },
+            Err(error) => return Err(cannot_save(error)),
         };
         replace(&target, &contents).map_err(cannot_save)
     }
+}
+
+fn parse<T: DeserializeOwned>(contents: &[u8], path: &Path) -> anyhow::Result<T> {
+    serde_json::from_slice(contents)
+        .with_context(|| format!("Invalid settings in {}", path.display()))
+}
+
+/// Linux's own limit on following a chain of links, which also ends a loop of them.
+const LINK_DEPTH: usize = 40;
+
+/// The file a save writes: where a link at `path` points, through any chain of links, so a settings
+/// file that a dotfile manager links in stays linked, even before the file it names exists.
+fn link_target(path: &Path) -> io::Result<PathBuf> {
+    let mut target = path.to_owned();
+    for _ in 0..LINK_DEPTH {
+        if !fs::symlink_metadata(&target).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+            return Ok(target);
+        }
+        let link = fs::read_link(&target)?;
+        // A relative link names a file beside it; joining an absolute one replaces the folder.
+        target = match target.parent() {
+            Some(folder) => folder.join(link),
+            None => link,
+        };
+    }
+    Err(io::Error::other("Too many levels of symbolic links"))
 }
 
 fn cannot_open(file: &Path, error: &io::Error) -> anyhow::Error {
