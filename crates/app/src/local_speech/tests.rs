@@ -359,7 +359,7 @@ async fn local_worker_recognizes_fixture_and_stops() -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let result = worker.transcribe(wav, &language).await?;
     eprintln!(
-        "Provider startup: {startup:?}; inference: {:?}",
+        "Engine startup: {startup:?}; inference: {:?}",
         started.elapsed()
     );
     // Failure output must never include the recognized text.
@@ -369,7 +369,7 @@ async fn local_worker_recognizes_fixture_and_stops() -> anyhow::Result<()> {
     );
     let stopped = std::time::Instant::now();
     worker.stop().await;
-    eprintln!("Provider shutdown: {:?}", stopped.elapsed());
+    eprintln!("Engine shutdown: {:?}", stopped.elapsed());
     assert!(
         worker.child.try_wait()?.is_some(),
         "Owned worker did not terminate"
