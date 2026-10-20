@@ -123,6 +123,15 @@ impl Span {
         self.start <= moment && moment <= self.end
     }
 
+    /// The same stretch, `by` later.
+    #[must_use]
+    pub fn delayed(self, by: Duration) -> Self {
+        Self {
+            start: self.start.saturating_add(by),
+            end: self.end.saturating_add(by),
+        }
+    }
+
     /// The smallest stretch covering both.
     #[must_use]
     pub fn union(self, other: Self) -> Self {

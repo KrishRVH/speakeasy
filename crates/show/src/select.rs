@@ -52,7 +52,7 @@ pub enum Reason {
     /// The screen settled after changing.
     SceneChange,
     /// A word such as "look" or "now" pointed at it.
-    Speech,
+    Cue,
     /// Nothing else stood out, so it shows the screen midway through.
     Middle,
 }
@@ -153,7 +153,7 @@ pub fn select(recording: &Recording, samples: &[Sample], budget: usize) -> Selec
     );
     candidates.extend(
         recording
-            .speech
+            .narration
             .words()
             .iter()
             .filter_map(|word| frames.cue_candidate(word, &transitions)),
@@ -170,7 +170,7 @@ pub fn select(recording: &Recording, samples: &[Sample], budget: usize) -> Selec
         budget,
     };
     chooser.choose_marks();
-    chooser.cover_long_stretches(recording.speech.words());
+    chooser.cover_long_stretches(recording.narration.words());
     chooser.fill_ordinary();
     chooser.drop_repeated_cues();
     let mut chosen = chooser.chosen;
@@ -182,7 +182,7 @@ pub fn select(recording: &Recording, samples: &[Sample], budget: usize) -> Selec
         .collect();
     let keyframes = chosen
         .into_iter()
-        .zip(align::align(&anchors, &recording.speech))
+        .zip(align::align(&anchors, &recording.narration))
         .enumerate()
         .map(|(position, (candidate, said))| Keyframe {
             index: position.saturating_add(1),
@@ -351,7 +351,7 @@ impl<'a> Frames<'a> {
             frame,
             span: Span::at(said),
             score,
-            reason: Reason::Speech,
+            reason: Reason::Cue,
             snapped: snapped.is_some(),
             event,
             marks: 0..0,
@@ -472,7 +472,7 @@ impl Candidate {
     fn rank(&self, frames: &Frames<'_>) -> Rank {
         Rank {
             ordinary: self.marks.is_empty(),
-            unsnapped_cue: self.reason == Reason::Speech && !self.snapped,
+            unsnapped_cue: self.reason == Reason::Cue && !self.snapped,
             score: self.score,
             at: frames.at(self.frame),
         }
@@ -506,7 +506,7 @@ impl Chooser<'_> {
         if crowded {
             return false;
         }
-        !matches!(candidate.reason, Reason::Speech | Reason::SceneChange)
+        !matches!(candidate.reason, Reason::Cue | Reason::SceneChange)
             || self
                 .chosen
                 .iter()
@@ -563,13 +563,13 @@ impl Chooser<'_> {
         let shown: Vec<usize> = self
             .chosen
             .iter()
-            .filter(|candidate| candidate.reason != Reason::Speech)
+            .filter(|candidate| candidate.reason != Reason::Cue)
             .map(|candidate| candidate.frame)
             .collect();
         if self.chosen.len() > 1 && !shown.is_empty() {
             let frames = self.frames;
             self.chosen.retain(|candidate| {
-                candidate.reason != Reason::Speech
+                candidate.reason != Reason::Cue
                     || shown.iter().all(|&other| {
                         frames
                             .signature(other)
@@ -939,7 +939,7 @@ impl fmt::Display for Direction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{InkPoint, Speech, Stroke, recording::Size, signature::tests::signature};
+    use crate::{InkPoint, Narration, Stroke, recording::Size, signature::tests::signature};
 
     fn sample(at: u64, level: u8) -> Sample {
         Sample {
@@ -981,8 +981,8 @@ mod tests {
         }
     }
 
-    fn words(list: &[(u64, &str)]) -> Speech {
-        Speech::Words(
+    fn words(list: &[(u64, &str)]) -> Narration {
+        Narration::Words(
             list.iter()
                 .map(|&(at, text)| Word {
                     span: Span::new(
@@ -995,7 +995,7 @@ mod tests {
         )
     }
 
-    fn recording(strokes: Vec<Stroke>, actions: Vec<Action>, speech: Speech) -> Recording {
+    fn recording(strokes: Vec<Stroke>, actions: Vec<Action>, narration: Narration) -> Recording {
         Recording {
             duration: Moment::from_millis(60_000),
             surface: Size {
@@ -1004,7 +1004,7 @@ mod tests {
             },
             strokes,
             actions,
-            speech,
+            narration,
         }
     }
 
@@ -1036,7 +1036,7 @@ mod tests {
             &recording(
                 vec![dab(2_000), dab(4_000)],
                 vec![click(750)],
-                Speech::default(),
+                Narration::default(),
             ),
             &frames,
             2,
@@ -1057,7 +1057,7 @@ mod tests {
             .collect();
         let strokes = every(1_000, 2_000, 8).map(dab).collect();
         let shown = select(
-            &recording(strokes, Vec::new(), Speech::default()),
+            &recording(strokes, Vec::new(), Narration::default()),
             &frames,
             7,
         );
@@ -1071,7 +1071,7 @@ mod tests {
         let still = samples(1_000, 50_000, |_| 128);
         let strokes = [2_000, 9_000, 20_000, 33_000, 40_000].map(dab).to_vec();
         let shown = select(
-            &recording(strokes, Vec::new(), Speech::default()),
+            &recording(strokes, Vec::new(), Narration::default()),
             &still,
             12,
         );
@@ -1097,7 +1097,7 @@ mod tests {
         let frames = samples(250, 3_000, |_| 128);
         let actions = vec![click(1_000), click(1_100), click(2_300)];
         let shown = select(
-            &recording(Vec::new(), actions, Speech::default()),
+            &recording(Vec::new(), actions, Narration::default()),
             &frames,
             12,
         );
@@ -1108,7 +1108,7 @@ mod tests {
     #[test]
     fn narration_divides_among_marks() {
         let frames = [sample(1_000, 0), sample(4_000, 255)];
-        let speech = words(&[
+        let narration = words(&[
             (0, "Make"),
             (1_000, "this"),
             (2_000, "smaller,"),
@@ -1117,7 +1117,7 @@ mod tests {
             (7_000, "that."),
         ]);
         let shown = select(
-            &recording(vec![dab(1_000), dab(4_000)], Vec::new(), speech),
+            &recording(vec![dab(1_000), dab(4_000)], Vec::new(), narration),
             &frames,
             12,
         );
@@ -1130,7 +1130,7 @@ mod tests {
     #[test]
     fn spoken_cues_never_repeat_an_unchanged_screen() {
         let still = samples(250, 5_000, |_| 90);
-        let speech = words(&[
+        let narration = words(&[
             (500, "Look"),
             (700, "at"),
             (900, "this."),
@@ -1138,15 +1138,15 @@ mod tests {
             (3_200, "it's"),
             (3_400, "stuck."),
         ]);
-        let shown = select(&recording(Vec::new(), Vec::new(), speech), &still, 12);
+        let shown = select(&recording(Vec::new(), Vec::new(), narration), &still, 12);
         assert_eq!(shown.keyframes().len(), 1);
-        assert_eq!(shown.keyframes()[0].reason, Reason::Speech);
+        assert_eq!(shown.keyframes()[0].reason, Reason::Cue);
         assert_eq!(said(&shown), [Some("Look at this. Now it's stuck.")]);
 
         // A cue over a screen a scene change already settled on adds nothing.
         let changed = samples(250, 5_000, |at| if at < 1_000 { 40 } else { 90 });
-        let speech = words(&[(3_500, "Look"), (3_700, "here.")]);
-        let shown = select(&recording(Vec::new(), Vec::new(), speech), &changed, 12);
+        let narration = words(&[(3_500, "Look"), (3_700, "here.")]);
+        let shown = select(&recording(Vec::new(), Vec::new(), narration), &changed, 12);
         assert_eq!(shown.keyframes().len(), 1);
         assert_eq!(shown.keyframes()[0].reason, Reason::SceneChange);
     }
@@ -1154,7 +1154,7 @@ mod tests {
     #[test]
     fn a_spoken_cue_finds_the_change_it_points_at() {
         let frames = samples(250, 6_000, |at| if at < 3_250 { 40 } else { 220 });
-        let speech = words(&[
+        let narration = words(&[
             (200, "Here's"),
             (400, "the"),
             (600, "list."),
@@ -1163,12 +1163,12 @@ mod tests {
             (2_800, "now."),
         ]);
         let shown = select(
-            &recording(Vec::new(), vec![click(500)], speech),
+            &recording(Vec::new(), vec![click(500)], narration),
             &frames,
             12,
         );
         assert_eq!(times(&shown), [750, 3_250]);
-        assert_eq!(shown.keyframes()[1].reason, Reason::Speech);
+        assert_eq!(shown.keyframes()[1].reason, Reason::Cue);
         assert_eq!(
             shown.keyframes()[1].event,
             "said “watch” as the screen changed"
@@ -1186,7 +1186,7 @@ mod tests {
             &recording(
                 vec![dab(2_000), dab(4_000)],
                 vec![click(3_000)],
-                Speech::default(),
+                Narration::default(),
             ),
             &still,
             12,
@@ -1204,7 +1204,7 @@ mod tests {
             .chain(heavy(6_000))
             .collect();
         let shown = select(
-            &recording(strokes, Vec::new(), Speech::default()),
+            &recording(strokes, Vec::new(), Narration::default()),
             &still,
             12,
         );
@@ -1217,7 +1217,7 @@ mod tests {
         let still = samples(250, 15_000, |_| 128);
         let strokes = every(1_000, 2_000, 6).map(dab).collect();
         let clicks = every(2_000, 2_000, 5).map(click).collect();
-        let shown = select(&recording(strokes, clicks, Speech::default()), &still, 3);
+        let shown = select(&recording(strokes, clicks, Narration::default()), &still, 3);
         let marks: Vec<Range<usize>> = shown.keyframes().iter().map(|k| k.marks.clone()).collect();
         assert_eq!(marks, [0..2, 2..4, 4..6]);
     }
@@ -1225,9 +1225,9 @@ mod tests {
     #[test]
     fn nothing_cuts_into_a_drawing_session() {
         let still = samples(250, 10_000, |_| 128);
-        let speech = words(&[(4_000, "look")]);
+        let narration = words(&[(4_000, "look")]);
         let shown = select(
-            &recording(vec![dab(2_000), dab(6_000)], Vec::new(), speech),
+            &recording(vec![dab(2_000), dab(6_000)], Vec::new(), narration),
             &still,
             12,
         );

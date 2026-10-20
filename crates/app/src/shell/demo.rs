@@ -19,7 +19,7 @@ const NEAR_RECORDING_LIMIT: Duration = RECORDING_LIMIT
 
 pub(super) async fn play(output: watch::Sender<Snapshot>) {
     let mut snapshot = starting(output.borrow().id.wrapping_add(1));
-    show(&output, &snapshot, Duration::from_millis(350)).await;
+    present(&output, &snapshot, Duration::from_millis(350)).await;
     snapshot.phase = Phase::Recording;
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(5) {
@@ -28,23 +28,51 @@ pub(super) async fn play(output: watch::Sender<Snapshot>) {
         snapshot.meter_tick = snapshot.meter_tick.wrapping_add(1);
         snapshot.level =
             (seconds * 7.0).sin().mul_add(0.45, 0.35).max(0.0) * (seconds * 2.1).sin().abs();
-        show(&output, &snapshot, Duration::from_millis(32)).await;
+        present(&output, &snapshot, Duration::from_millis(32)).await;
     }
     snapshot.started = Instant::now()
         .checked_sub(NEAR_RECORDING_LIMIT)
         .unwrap_or_else(Instant::now);
     snapshot.level = 0.0;
     snapshot.meter_tick = snapshot.meter_tick.wrapping_add(1);
-    show(&output, &snapshot, Duration::from_secs(2)).await;
+    present(&output, &snapshot, Duration::from_secs(2)).await;
     for (phase, duration) in [
         (Phase::Stopping, Duration::from_millis(150)),
         (Phase::Processing, Duration::from_millis(1400)),
         (Phase::Done, Duration::from_millis(450)),
     ] {
         snapshot.phase = phase;
-        show(&output, &snapshot, duration).await;
+        present(&output, &snapshot, duration).await;
     }
-    play_interruptions(&output, snapshot.id).await;
+    let id = play_show(&output, snapshot.id.wrapping_add(1)).await;
+    play_interruptions(&output, id).await;
+}
+
+/// A held recording that S turns into a Show, finished hands-free and copied. Returns its id.
+async fn play_show(output: &watch::Sender<Snapshot>, id: u64) -> u64 {
+    let mut snapshot = starting(id);
+    present(output, &snapshot, Duration::from_millis(250)).await;
+    snapshot.phase = Phase::Recording;
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(3) {
+        let seconds = start.elapsed().as_secs_f32();
+        snapshot.show = seconds > 0.8;
+        snapshot.hands_free = snapshot.show;
+        snapshot.meter_tick = snapshot.meter_tick.wrapping_add(1);
+        snapshot.level = (seconds * 5.0).sin().mul_add(0.3, 0.3).max(0.0);
+        present(output, &snapshot, Duration::from_millis(32)).await;
+    }
+    snapshot.level = 0.0;
+    snapshot.hands_free = false;
+    for (phase, duration) in [
+        (Phase::Stopping, Duration::from_millis(150)),
+        (Phase::Processing, Duration::from_millis(1200)),
+        (Phase::Done, Duration::from_millis(1600)),
+    ] {
+        snapshot.phase = phase;
+        present(output, &snapshot, duration).await;
+    }
+    id
 }
 
 /// Each recording cuts off the previous ending, and a cancel is followed at once by the next
@@ -53,9 +81,9 @@ async fn play_interruptions(output: &watch::Sender<Snapshot>, mut id: u64) {
     for ending in [Phase::Cancelled, Phase::Empty, Phase::Error] {
         id = id.wrapping_add(1);
         let mut snapshot = starting(id);
-        show(output, &snapshot, Duration::from_millis(180)).await;
+        present(output, &snapshot, Duration::from_millis(180)).await;
         snapshot.phase = Phase::Recording;
-        show(output, &snapshot, Duration::from_millis(700)).await;
+        present(output, &snapshot, Duration::from_millis(700)).await;
         snapshot.phase = ending;
         if ending == Phase::Error {
             snapshot.message =
@@ -66,7 +94,7 @@ async fn play_interruptions(output: &watch::Sender<Snapshot>, mut id: u64) {
         } else {
             Duration::from_secs(2)
         };
-        show(output, &snapshot, held).await;
+        present(output, &snapshot, held).await;
     }
 }
 
@@ -79,7 +107,7 @@ fn starting(id: u64) -> Snapshot {
     }
 }
 
-async fn show(output: &watch::Sender<Snapshot>, snapshot: &Snapshot, duration: Duration) {
+async fn present(output: &watch::Sender<Snapshot>, snapshot: &Snapshot, duration: Duration) {
     output.send_replace(snapshot.clone());
     Timer::after(duration).await;
 }

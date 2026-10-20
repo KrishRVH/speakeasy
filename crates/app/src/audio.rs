@@ -169,10 +169,17 @@ impl<E: Into<anyhow::Error>> From<E> for Startup {
     }
 }
 
+/// Speech sealed for recognition: a WAV, and how much leading quiet was trimmed before it, which
+/// places times the recognizer reports back on the recording's clock.
+pub(crate) struct Sealed {
+    pub wav: Vec<u8>,
+    pub trimmed: Duration,
+}
+
 /// The sealed outcome and resources retained until it has been reported. The generic device is
 /// an internal seam for testing blocked teardown without opening a microphone.
 struct Recorded<D> {
-    outcome: anyhow::Result<Option<Vec<u8>>>,
+    outcome: anyhow::Result<Option<Sealed>>,
     device: D,
 }
 
@@ -368,7 +375,7 @@ impl Pcm16 {
 
     /// Seals a completed recording with its accumulated speech windows. Short recordings and
     /// insufficient speech produce no WAV; retained audio keeps padding and checked encoding.
-    fn seal(mut self, mut speech: Speech, rate: u32) -> anyhow::Result<Option<Vec<u8>>> {
+    fn seal(mut self, mut speech: Speech, rate: u32) -> anyhow::Result<Option<Sealed>> {
         if self.samples() < samples_in(MINIMUM_RECORDING, rate) {
             return Ok(None);
         }
@@ -376,9 +383,11 @@ impl Pcm16 {
         let Some(range) = speech.retained(self.audio().len()) else {
             return Ok(None);
         };
+        let trimmed = duration_of(range.start, rate);
         self.retain_audio(range);
         self.release_excess_capacity();
-        self.into_wav(rate).map(Some)
+        let wav = self.into_wav(rate)?;
+        Ok(Some(Sealed { wav, trimmed }))
     }
 
     fn retain_audio(&mut self, audio: Range<usize>) {
@@ -753,6 +762,12 @@ fn bytes_in(samples: usize) -> usize {
     samples.saturating_mul(SAMPLE_BYTES)
 }
 
+/// How long `bytes` of audio at `rate` last.
+fn duration_of(bytes: usize, rate: u32) -> Duration {
+    let samples = bytes / SAMPLE_BYTES;
+    Duration::from_secs_f64(samples as f64 / f64::from(rate.max(1)))
+}
+
 /// Lists input devices without opening a stream. Drivers may block, and CPAL leaves its calling
 /// thread in a single-threaded COM apartment, so enumeration runs on its own detached thread.
 pub(crate) async fn microphones() -> anyhow::Result<Vec<InputDevice>> {
@@ -935,7 +950,10 @@ mod tests {
         let (release, waiting) = async_channel::bounded(1);
         let capture = Capture::spawn(SessionId::FIRST, events, move |_, _| {
             Ok(Recorded {
-                outcome: Ok(Some(vec![1, 2])),
+                outcome: Ok(Some(Sealed {
+                    wav: vec![1, 2],
+                    trimmed: Duration::ZERO,
+                })),
                 device: Device {
                     entered,
                     release: waiting,
@@ -952,7 +970,7 @@ mod tests {
         release.send(()).await?;
         timeout(PATIENCE, retirement).await?;
         assert!(
-            matches!(report?, Ok(CaptureEvent::Finished(SessionId::FIRST, Ok(Some(wav)))) if wav == [1, 2])
+            matches!(report?, Ok(CaptureEvent::Finished(SessionId::FIRST, Ok(Some(sealed)))) if sealed.wav == [1, 2])
         );
         assert!(pending, "Retirement acknowledged before device teardown");
         Ok(())
@@ -1338,9 +1356,11 @@ mod tests {
         let expected = pcm.audio()[rate * 3..rate * 15].to_vec();
         let click = pcm_from(&[(rate / 20, 3000), (rate * 2 - rate / 20, 0)]);
         let rate = u32::try_from(rate).unwrap();
-        let wav = pcm.seal(Speech::new(rate).unwrap(), rate).unwrap().unwrap();
-        assert_eq!(&wav[WAV_HEADER_BYTES..], expected);
-        assert_eq!(wav_sample_rate(&wav), Some(rate));
+        let sealed = pcm.seal(Speech::new(rate).unwrap(), rate).unwrap().unwrap();
+        assert_eq!(&sealed.wav[WAV_HEADER_BYTES..], expected);
+        assert_eq!(wav_sample_rate(&sealed.wav), Some(rate));
+        // Two quiet seconds lead the speech; half a second of padding is kept before it.
+        assert_eq!(sealed.trimmed, Duration::from_millis(1_500));
 
         assert!(
             click
@@ -1358,10 +1378,11 @@ mod tests {
                 let pcm = pcm_from(&[(samples, 3000)]);
                 let mut speech = Speech::new(rate).unwrap();
                 speech.extend(pcm.audio());
-                let wav = pcm.seal(speech, rate).unwrap();
-                assert_eq!(wav.is_some(), millis == 200);
-                if let Some(wav) = wav {
-                    assert_eq!(wav.len(), WAV_HEADER_BYTES + bytes_in(samples));
+                let sealed = pcm.seal(speech, rate).unwrap();
+                assert_eq!(sealed.is_some(), millis == 200);
+                if let Some(sealed) = sealed {
+                    assert_eq!(sealed.wav.len(), WAV_HEADER_BYTES + bytes_in(samples));
+                    assert_eq!(sealed.trimmed, Duration::ZERO);
                 }
             }
         }
@@ -1379,9 +1400,10 @@ mod tests {
         }
         let expected = pcm.audio()[rate * 79..rate * 101].to_vec();
         let rate = u32::try_from(rate).unwrap();
-        let wav = pcm.seal(Speech::new(rate).unwrap(), rate).unwrap().unwrap();
-        assert_eq!(&wav[WAV_HEADER_BYTES..], expected);
-        assert_eq!(wav.capacity(), wav.len());
+        let sealed = pcm.seal(Speech::new(rate).unwrap(), rate).unwrap().unwrap();
+        assert_eq!(&sealed.wav[WAV_HEADER_BYTES..], expected);
+        assert_eq!(sealed.wav.capacity(), sealed.wav.len());
+        assert_eq!(sealed.trimmed, Duration::from_millis(39_500));
     }
 
     #[test]

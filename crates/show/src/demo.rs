@@ -5,8 +5,8 @@ use std::time::Duration;
 use tiny_skia::{FillRule, LinearGradient, Paint, Path, PixmapMut, SpreadMode, Transform};
 
 use crate::{
-    Action, Error, Image, InkPoint, Moment, Point, Recording, Size, Span, Speech, Stroke, Typeface,
-    Word,
+    Action, Error, Image, InkPoint, Moment, Narration, Point, Recording, Size, Span, Stroke,
+    Typeface, Word,
     draw::{paint, rounded},
     geometry::Rect,
 };
@@ -90,7 +90,7 @@ impl Demo {
                     to: normalized(slider_x(0.7), slider_y()),
                 },
             ],
-            speech: narration(),
+            narration: narration(),
         }
     }
 
@@ -408,9 +408,9 @@ fn strokes() -> Vec<Stroke> {
 }
 
 /// Words spread over each phrase at a steady speaking pace.
-fn narration() -> Speech {
+fn narration() -> Narration {
     const PER_CHARACTER: Duration = Duration::from_millis(62);
-    Speech::Words(
+    Narration::Words(
         NARRATION
             .into_iter()
             .flat_map(|(start, phrase)| {

@@ -18,6 +18,7 @@ use crate::{
     instance::{Instance, Request},
     pill::Pill,
     runtime::{self, Phase, Runtime, Snapshot},
+    show::Canvas,
     status::Status,
 };
 
@@ -82,6 +83,8 @@ pub(crate) struct Services {
     pub config: Config,
     pub(super) config_epoch: ConfigEpoch,
     pub output: watch::Sender<Snapshot>,
+    /// Where a Show's live ink reaches the overlay.
+    canvas: watch::Sender<Canvas>,
     pub(super) pill: WindowHandle<Pill>,
     pub(super) settings: Option<WindowHandle<Settings>>,
     pub mode: LaunchMode,
@@ -98,6 +101,7 @@ impl Services {
         path: PathBuf,
         config: Config,
         output: watch::Sender<Snapshot>,
+        canvas: watch::Sender<Canvas>,
         pill: WindowHandle<Pill>,
         instance: Option<Instance>,
         mode: LaunchMode,
@@ -111,6 +115,7 @@ impl Services {
             config,
             config_epoch: ConfigEpoch::default(),
             output,
+            canvas,
             pill,
             settings: None,
             mode,
@@ -209,7 +214,8 @@ impl Services {
             runtime.configure(config.clone());
         } else {
             self.announce(runtime::LOADING);
-            let (runtime, monitor) = Runtime::start(config.clone(), self.output.clone())?;
+            let (runtime, monitor) =
+                Runtime::start(config.clone(), self.output.clone(), self.canvas.clone())?;
             self.lifecycle = Lifecycle::Running(Owners { runtime, monitor });
         }
         self.config = config;

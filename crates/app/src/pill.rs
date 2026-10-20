@@ -28,6 +28,8 @@ const METER_BARS: usize = 24;
 const FRAME_INTERVAL: Duration = Duration::from_millis(5);
 
 const SUBMITTED_FOR: Duration = Duration::from_millis(350);
+/// Long enough to read **Show copied**, which tells the user to paste.
+const COPIED_FOR: Duration = Duration::from_millis(1600);
 const EMPTY_FOR: Duration = Duration::from_millis(1200);
 const ERROR_FOR: Duration = Duration::from_secs(8);
 const TRAY_HINT_FOR: Duration = Duration::from_secs(3);
@@ -161,6 +163,7 @@ impl Pill {
         let new_phase = new_session || snapshot.phase != previous.phase;
         let state_changed = new_phase
             || snapshot.hands_free != previous.hands_free
+            || snapshot.show != previous.show
             || snapshot.message != previous.message;
         if new_phase || (snapshot.phase == Phase::Error && snapshot.message != previous.message) {
             self.phase_at = now;
@@ -183,7 +186,12 @@ impl Pill {
         if state_changed
             && !self.visible
             && (snapshot.phase.is_active()
-                || feedback_remaining(snapshot.phase, now.duration_since(self.phase_at)).is_some())
+                || feedback_remaining(
+                    snapshot.phase,
+                    snapshot.show,
+                    now.duration_since(self.phase_at),
+                )
+                .is_some())
         {
             self.set_visible(true, cx);
         }
@@ -200,11 +208,12 @@ impl Pill {
         Scene {
             phase,
             since_phase,
-            feedback: feedback_remaining(phase, since_phase),
+            feedback: feedback_remaining(phase, self.snapshot.show, since_phase),
             hint: self
                 .hint_until
                 .and_then(|until| until.checked_duration_since(now)),
             hands_free: self.snapshot.hands_free,
+            show: self.snapshot.show,
             clock: Clock::new(now.duration_since(self.snapshot.started).as_secs()),
         }
     }
@@ -421,7 +430,7 @@ impl Pill {
                         )
                         .size_full(),
                     )
-                    .when_some(slot_label(scene.phase, palette), |slot, label| {
+                    .when_some(slot_label(&scene, palette), |slot, label| {
                         slot.child(
                             div()
                                 .absolute()
@@ -438,8 +447,11 @@ impl Pill {
                     }),
             )
             .when(shows_clock, |row| {
-                row.when(scene.hands_free, |row| {
-                    row.child(Symbol::Lock.element(palette.muted))
+                // A Show is always hands-free; its mark says the screen is recording too.
+                row.map(|row| match (scene.show, scene.hands_free) {
+                    (true, _) => row.child(Symbol::Screen.element(palette.live)),
+                    (false, true) => row.child(Symbol::Lock.element(palette.muted)),
+                    (false, false) => row,
                 })
                 .child(
                     div()
@@ -536,6 +548,8 @@ struct Scene {
     feedback: Option<Duration>,
     hint: Option<Duration>,
     hands_free: bool,
+    /// Whether the session records the screen as a Show.
+    show: bool,
     clock: Clock,
 }
 
@@ -578,6 +592,7 @@ impl Scene {
             Phase::Recording | Phase::Stopping if self.shows_clock() => size(228.0, 38.0),
             Phase::Recording | Phase::Stopping => size(RECORDING_WIDTH, 38.0),
             Phase::Processing => size(104.0, 32.0),
+            Phase::Done if self.show => size(150.0, 34.0),
             Phase::Done => size(76.0, 34.0),
             Phase::Empty => size(182.0, 36.0),
             Phase::Error => size(MESSAGE_WIDTH, 64.0),
@@ -687,8 +702,9 @@ fn apply_native_visibility(pill: AnyWindowHandle, visible: bool, cx: &App) -> Ta
     })
 }
 
-fn feedback_remaining(phase: Phase, since_phase: Duration) -> Option<Duration> {
+fn feedback_remaining(phase: Phase, show: bool, since_phase: Duration) -> Option<Duration> {
     let duration = match phase {
+        Phase::Done if show => COPIED_FOR,
         Phase::Done => SUBMITTED_FOR,
         Phase::Empty => EMPTY_FOR,
         Phase::Error => ERROR_FOR,
@@ -715,8 +731,8 @@ fn lid_target(phase: Phase) -> f32 {
     }
 }
 
-fn slot_label(phase: Phase, palette: &Palette) -> Option<AnyElement> {
-    match phase {
+fn slot_label(scene: &Scene, palette: &Palette) -> Option<AnyElement> {
+    match scene.phase {
         Phase::Starting => Some(
             div()
                 .flex()
@@ -730,6 +746,15 @@ fn slot_label(phase: Phase, palette: &Palette) -> Option<AnyElement> {
             div()
                 .text_size(px(12.0))
                 .child("No speech detected")
+                .into_any_element(),
+        ),
+        Phase::Done if scene.show => Some(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(7.0))
+                .child(Symbol::Check.element(palette.lamp))
+                .child(div().text_size(px(12.0)).child("Show copied"))
                 .into_any_element(),
         ),
         Phase::Done => Some(Symbol::Check.element(palette.lamp).into_any_element()),
@@ -783,14 +808,28 @@ mod tests {
     #[test]
     fn feedback_deadlines_expire_and_never_apply_to_recording_or_cancellation() {
         assert_eq!(
-            feedback_remaining(Phase::Done, Duration::ZERO),
+            feedback_remaining(Phase::Done, false, Duration::ZERO),
             Some(SUBMITTED_FOR)
         );
-        assert_eq!(feedback_remaining(Phase::Done, SUBMITTED_FOR), None);
-        assert_eq!(feedback_remaining(Phase::Recording, Duration::ZERO), None);
-        assert_eq!(feedback_remaining(Phase::Recording, SUBMITTED_FOR), None);
-        assert_eq!(feedback_remaining(Phase::Cancelled, Duration::ZERO), None);
-        assert_eq!(feedback_remaining(Phase::Error, ERROR_FOR), None);
+        assert_eq!(feedback_remaining(Phase::Done, false, SUBMITTED_FOR), None);
+        assert!(
+            feedback_remaining(Phase::Done, true, SUBMITTED_FOR).is_some(),
+            "A copied Show stays long enough to read"
+        );
+        assert_eq!(feedback_remaining(Phase::Done, true, COPIED_FOR), None);
+        assert_eq!(
+            feedback_remaining(Phase::Recording, false, Duration::ZERO),
+            None
+        );
+        assert_eq!(
+            feedback_remaining(Phase::Recording, true, SUBMITTED_FOR),
+            None
+        );
+        assert_eq!(
+            feedback_remaining(Phase::Cancelled, false, Duration::ZERO),
+            None
+        );
+        assert_eq!(feedback_remaining(Phase::Error, false, ERROR_FOR), None);
     }
 
     #[test]

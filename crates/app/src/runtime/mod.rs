@@ -1,7 +1,7 @@
 //! Thread ownership and presentation interface for the dictation owner. Stop revokes authority
 //! immediately; `stopped` acknowledges owned native cleanup.
 
-mod microphone;
+mod device;
 mod owner;
 mod session;
 mod worker;
@@ -14,8 +14,10 @@ use tokio::{sync::watch, task::JoinError};
 
 pub(crate) use self::session::SessionId;
 use crate::{
+    audio::Sealed,
     config::Config,
-    ports::{Desktop, Ports},
+    ports::{Desktop, Footage, Ports},
+    show::Canvas,
 };
 
 /// The status while a speech worker loads, shared by the owner, Settings, and the tray.
@@ -61,6 +63,8 @@ pub(crate) struct Snapshot {
     pub id: u64,
     pub phase: Phase,
     pub hands_free: bool,
+    /// Whether the latest session became a Show, recording the screen as well as the microphone.
+    pub show: bool,
     pub level: f32,
     /// Advances with every level report, so a repeated level still reaches the meter.
     pub meter_tick: u64,
@@ -81,6 +85,7 @@ impl Default for Snapshot {
             id: 0,
             phase: Phase::Idle,
             hands_free: false,
+            show: false,
             level: 0.0,
             meter_tick: 0,
             started: now(),
@@ -97,7 +102,12 @@ impl Default for Snapshot {
 pub(crate) enum CaptureEvent {
     Ready(SessionId),
     Level(SessionId, f32),
-    Finished(SessionId, anyhow::Result<Option<Vec<u8>>>),
+    Finished(SessionId, anyhow::Result<Option<Sealed>>),
+}
+
+/// A Show recorder's report about the session that opened it.
+pub(crate) enum ShowEvent {
+    Finished(SessionId, anyhow::Result<Footage>),
 }
 
 impl CaptureEvent {
@@ -121,11 +131,12 @@ impl Runtime {
     pub(crate) fn start(
         config: Config,
         snapshots: watch::Sender<Snapshot>,
+        canvas: watch::Sender<Canvas>,
     ) -> anyhow::Result<(Self, InputMonitor)> {
         let (input, inputs) = input_lane();
         let (monitor, inserter) =
             speakeasy_platform::prepare(input.clone(), config.desktop_options())?;
-        let ports = Desktop { inserter };
+        let ports = Desktop { inserter, canvas };
         let runtime = Self::host(
             config,
             snapshots,

@@ -1,5 +1,6 @@
-//! At most one device, open or retiring. The owner opens only from `Free`, and retirement
-//! acknowledges native teardown before another capture can start.
+//! At most one recording device, open or retiring: the microphone, or a Show's screen recorder.
+//! The owner opens only from `Free`, and retirement acknowledges native teardown before another
+//! capture can start.
 
 use std::{future::pending, mem};
 
@@ -9,14 +10,14 @@ use super::reap;
 use crate::ports::Recording;
 
 #[derive(Default)]
-pub(super) enum Microphone<R> {
+pub(super) enum Device<R> {
     #[default]
     Free,
     Open(R),
     Retiring(JoinHandle<()>),
 }
 
-impl<R: Recording> Microphone<R> {
+impl<R: Recording> Device<R> {
     pub(super) const fn is_free(&self) -> bool {
         matches!(self, Self::Free)
     }

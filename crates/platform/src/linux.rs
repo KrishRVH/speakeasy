@@ -238,6 +238,15 @@ pub fn reduced_motion() -> bool {
     false
 }
 
+/// Places `text` on the clipboard; Linux publishes Shows in a later release.
+///
+/// # Errors
+///
+/// Always fails on Linux for now.
+pub fn copy_text(_: &str) -> anyhow::Result<()> {
+    anyhow::bail!("Shows are not available on Linux yet")
+}
+
 /// Presents a local startup error; callers never include audio, transcripts, or credentials.
 pub fn show_error(message: &str) {
     eprintln!("Speakeasy: {message}");

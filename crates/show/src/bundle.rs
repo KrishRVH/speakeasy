@@ -172,7 +172,7 @@ impl Bundle {
                 None => format!("- #{} ({}) {}", keyframe.index, keyframe.at, keyframe.event),
             }
         }));
-        let text = recording.speech.text();
+        let text = recording.narration.text();
         if keyframes.is_empty() && !text.is_empty() {
             lines.push(format!("“{text}”"));
         }

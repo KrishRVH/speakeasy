@@ -29,6 +29,20 @@ impl Image {
         Self::from_premultiplied(width, height, rgba)
     }
 
+    /// Wraps captured BGRA or BGRX rows; the screen is opaque, so their fourth byte is ignored.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a dimension is zero or `bgra` does not hold exactly `width × height` pixels.
+    pub fn from_bgra(width: u32, height: u32, mut bgra: Vec<u8>) -> Result<Self, Error> {
+        let (pixels, _) = bgra.as_chunks_mut::<4>();
+        for [blue, _, red, alpha] in pixels {
+            std::mem::swap(blue, red);
+            *alpha = u8::MAX;
+        }
+        Self::from_premultiplied(width, height, bgra)
+    }
+
     /// An opaque image of one color.
     pub(crate) fn filled(
         width: u32,
@@ -41,7 +55,11 @@ impl Image {
         Ok(Self { pixmap })
     }
 
-    fn from_premultiplied(width: u32, height: u32, data: Vec<u8>) -> Result<Self, Error> {
+    pub(crate) fn from_premultiplied(
+        width: u32,
+        height: u32,
+        data: Vec<u8>,
+    ) -> Result<Self, Error> {
         IntSize::from_wh(width, height)
             .and_then(|size| Pixmap::from_vec(data, size))
             .map(|pixmap| Self { pixmap })
@@ -227,6 +245,13 @@ mod tests {
 
     fn pixels(image: &Image) -> Vec<[u8; 4]> {
         image.as_ref().data().as_chunks::<4>().0.to_vec()
+    }
+
+    #[test]
+    fn captures_swap_to_rgba_and_become_opaque() {
+        let image = Image::from_bgra(2, 1, vec![1, 2, 3, 0, 4, 5, 6, 9]).unwrap();
+        assert_eq!(pixels(&image), [[3, 2, 1, 255], [6, 5, 4, 255]]);
+        assert!(Image::from_bgra(2, 2, vec![0; 8]).is_err());
     }
 
     #[test]

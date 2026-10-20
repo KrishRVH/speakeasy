@@ -1,7 +1,8 @@
 //! Pure keyboard policy for the modifier-only shortcuts: Ctrl+Win on Windows, Fn on macOS.
 //!
 //! Native callbacks report key events and deliver the decided input. Modifiers and Escape stay
-//! passive; only Space used for hands-free is swallowed.
+//! passive; only Space for hands-free and S for a Show are swallowed, and only during a hold.
+//! Shift never interrupts a hold, since a Show draws with it.
 
 use std::mem;
 
@@ -9,12 +10,13 @@ use super::{Input, InputSender};
 
 /// Hold state for the modifier-only shortcut.
 ///
-/// Space during a hold locks hands-free; any other key belongs to a different shortcut, so it
-/// cancels dictation and waits for the chord's release.
+/// Space during a hold locks hands-free, and S turns the recording into a Show; any other key
+/// belongs to a different shortcut, so it cancels dictation and waits for the chord's release.
 #[derive(Default)]
 struct Chord {
     hold: Hold,
     swallowing_space: bool,
+    swallowing_show: bool,
 }
 
 impl Chord {
@@ -35,17 +37,12 @@ impl Chord {
     /// Swallows Space pressed during a hold through its release, including repeats after the chord
     /// itself is released.
     fn space(&mut self, down: bool) -> Decision {
-        let swallowed = if down {
-            self.swallowing_space |= self.hold == Hold::Held;
-            self.swallowing_space
-        } else {
-            mem::take(&mut self.swallowing_space)
-        };
-        if swallowed {
-            Decision::swallow(down.then_some(Action::Lock))
-        } else {
-            Decision::pass(None)
-        }
+        swallow_while_held(self.hold, &mut self.swallowing_space, down, Action::Lock)
+    }
+
+    /// Swallows S pressed during a hold the way [`space`](Self::space) swallows Space.
+    fn show(&mut self, down: bool) -> Decision {
+        swallow_while_held(self.hold, &mut self.swallowing_show, down, Action::Show)
     }
 
     fn other_key(&mut self, down: bool) -> Decision {
@@ -63,6 +60,22 @@ impl Chord {
     }
 }
 
+/// Swallows a key pressed while the chord is held, from that press through its release, and
+/// delivers `action` on each press.
+fn swallow_while_held(hold: Hold, swallowing: &mut bool, down: bool, action: Action) -> Decision {
+    let swallowed = if down {
+        *swallowing |= hold == Hold::Held;
+        *swallowing
+    } else {
+        mem::take(swallowing)
+    };
+    if swallowed {
+        Decision::swallow(down.then_some(action))
+    } else {
+        Decision::pass(None)
+    }
+}
+
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Hold {
     #[default]
@@ -77,6 +90,7 @@ enum Action {
     Press,
     Release,
     Lock,
+    Show,
     Cancel,
     /// Cancel, then release: another shortcut or a session change ended the hold.
     Interrupt,
@@ -88,6 +102,7 @@ impl Action {
             Self::Press => input.deliver(Input::Press),
             Self::Release => input.deliver(Input::Release),
             Self::Lock => input.deliver(Input::Lock),
+            Self::Show => input.deliver(Input::Show),
             Self::Cancel => input.deliver(Input::Cancel),
             Self::Interrupt => {
                 input.deliver(Input::Cancel);
@@ -150,6 +165,10 @@ impl Windows {
     /// holds the chord.
     pub(super) const CHORD_KEYS: [u16; 4] = [0xA2, 0xA3, 0x5B, 0x5C];
     const ESCAPE: u16 = 0x1B;
+    /// Shift, left Shift, and right Shift. macOS reports them as flag changes, which never
+    /// interrupt either.
+    const SHIFT_KEYS: [u16; 3] = [0x10, 0xA0, 0xA1];
+    const SHOW: u16 = 0x53;
     const SPACE: u16 = 0x20;
 
     /// Ends dictation for a session change, then waits for the chord's release.
@@ -169,6 +188,8 @@ impl Windows {
         match u16::try_from(key) {
             Ok(Self::ESCAPE) => Decision::pass(down.then_some(Action::Cancel)),
             Ok(Self::SPACE) => self.chord.space(down),
+            Ok(Self::SHOW) => self.chord.show(down),
+            Ok(key) if Self::SHIFT_KEYS.contains(&key) => Decision::pass(None),
             Ok(key) if Self::CHORD_KEYS.contains(&key) => {
                 self.chord_key(key, down, physical_before_event)
             },
@@ -220,6 +241,7 @@ pub(super) struct Mac {
 impl Mac {
     const ESCAPE: i64 = 53;
     const FUNCTION: i64 = 63;
+    const SHOW: i64 = 1;
     const SPACE: i64 = 49;
 
     /// Decides one event-tap event.
@@ -233,6 +255,7 @@ impl Mac {
             MacEvent::Key { code, down } => match code {
                 Self::ESCAPE => Decision::pass(down.then_some(Action::Cancel)),
                 Self::SPACE => self.chord.space(down),
+                Self::SHOW => self.chord.show(down),
                 _ => self.chord.other_key(down),
             },
         }
@@ -251,7 +274,9 @@ mod tests {
     const RIGHT_WINDOWS: u32 = 0x5C;
     const ESCAPE: u32 = 0x1B;
     const SPACE: u32 = 0x20;
+    const LETTER_S: u32 = 0x53;
     const LETTER_A: u32 = 0x41;
+    const LEFT_SHIFT: u32 = 0xA0;
     const NONE_HELD: [bool; 4] = [false; 4];
 
     fn held(keys: &[u32]) -> [bool; 4] {
@@ -301,6 +326,37 @@ mod tests {
         let escape = policy.observe(ESCAPE, true, NONE_HELD);
         assert!(!escape.swallows());
         assert_eq!(escape.action, Some(Action::Cancel));
+    }
+
+    #[test]
+    fn s_during_a_hold_starts_a_show_and_is_swallowed_through_its_release() {
+        let mut policy = Windows::default();
+        policy.observe(LEFT_CONTROL, true, NONE_HELD);
+        policy.observe(LEFT_WINDOWS, true, held(&[LEFT_CONTROL]));
+        let both = held(&[LEFT_CONTROL, LEFT_WINDOWS]);
+        let show = policy.observe(LETTER_S, true, both);
+        assert!(show.swallows());
+        assert_eq!(show.action, Some(Action::Show));
+        // Reaching for Shift to draw before letting go of the chord keeps the Show.
+        let shift = policy.observe(LEFT_SHIFT, true, both);
+        assert!(!shift.swallows());
+        assert_eq!(shift.action, None);
+        // The chord's release follows, but S's own release still belongs to the shortcut.
+        assert_eq!(
+            policy.observe(LEFT_CONTROL, false, both).action,
+            Some(Action::Release)
+        );
+        assert!(policy.observe(LETTER_S, false, NONE_HELD).swallows());
+        // Typing S with no hold reaches the app untouched.
+        let typed = policy.observe(LETTER_S, true, NONE_HELD);
+        assert!(!typed.swallows());
+        assert_eq!(typed.action, None);
+
+        let mut mac = Mac::default();
+        mac.observe(function(true));
+        let show = mac.observe(key(Mac::SHOW, true));
+        assert!(show.swallows());
+        assert_eq!(show.action, Some(Action::Show));
     }
 
     #[test]

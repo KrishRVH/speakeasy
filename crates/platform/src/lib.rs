@@ -31,21 +31,22 @@ use async_channel::Sender;
 #[cfg(target_os = "linux")]
 pub use self::linux::{
     APPLICATION_ID, InputMonitor, Inserter, NativeTray, TrayAction, TrayPresentation,
-    configure_pill, prepare, reduced_motion, set_pill_visible, set_settings_visible, show_error,
+    configure_pill, copy_text, prepare, reduced_motion, set_pill_visible, set_settings_visible,
+    show_error,
 };
 #[cfg(target_os = "macos")]
 use self::macos as native;
 #[cfg(target_os = "macos")]
 pub use self::macos::{
-    InputMonitor, configure_pill, reduced_motion, set_pill_visible, set_settings_visible,
-    show_error,
+    InputMonitor, configure_pill, copy_text, reduced_motion, set_pill_visible,
+    set_settings_visible, show_error,
 };
 #[cfg(target_os = "windows")]
 use self::windows as native;
 #[cfg(target_os = "windows")]
 pub use self::windows::{
-    InputMonitor, attach_console, choose_file, configure_pill, minimize_to_tray, reduced_motion,
-    set_pill_visible, set_settings_visible, show_error,
+    InputMonitor, attach_console, choose_file, configure_pill, copy_text, minimize_to_tray,
+    reduced_motion, set_pill_visible, set_settings_visible, show_error,
 };
 pub use self::{
     insertion::Delivery,
@@ -53,7 +54,7 @@ pub use self::{
     process::ProcessGroup,
     screen::{
         Display, Frame, PointerMonitor, PointerSample, ScreenCapture, ScreenEvent,
-        configure_overlay, set_excluded_from_capture, set_overlay_visible,
+        configure_overlay, set_overlay_visible,
     },
 };
 
@@ -112,6 +113,8 @@ pub enum Input {
     Release,
     /// Space during a hold requests hands-free capture.
     Lock,
+    /// S during a hold turns the recording into a Show, which also captures the screen.
+    Show,
     /// Discards the active session and revokes pending insertion.
     Cancel,
     /// Starts or finishes hands-free capture.

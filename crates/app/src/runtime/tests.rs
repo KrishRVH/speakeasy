@@ -1,16 +1,17 @@
 //! Drives the production owner through fake ports, either on its own thread or on the test's paused
 //! clock, where deadlines are exact.
 
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, bail, ensure};
 use speakeasy_platform::{Delivery, InsertPermit, Inserted};
+use speakeasy_show::{Image, Journal, Moment, Narration, Sample, Signature, Size};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 use super::*;
 use crate::{
     config::Engine,
-    ports::{Recording, Speech},
+    ports::{Footage, Published, Recorded, Recording, Speech},
 };
 
 const PATIENCE: Duration = Duration::from_secs(2);
@@ -18,6 +19,7 @@ const PATIENCE: Duration = Duration::from_secs(2);
 type Reply = oneshot::Sender<anyhow::Result<String>>;
 type TranscriptionJob = (String, Reply);
 type OpenedCapture = (SessionId, Sender<CaptureEvent>);
+type OpenedShow = (SessionId, Sender<ShowEvent>);
 
 /// Where a fake pauses for the test: it reports entry, then waits for release.
 #[derive(Clone)]
@@ -70,25 +72,33 @@ struct FakePorts {
     retirement: Option<Gate<()>>,
     stop: Option<Gate<()>>,
     insertion: Option<Gate<InsertPermit>>,
+    show_error: Option<&'static str>,
+    publication: Option<Gate<()>>,
     captures: Sender<OpenedCapture>,
+    shows: Sender<OpenedShow>,
     jobs: Sender<TranscriptionJob>,
     pasted: Sender<String>,
+    published: Sender<Recorded>,
     loads: Sender<()>,
 }
 
 /// What the fakes report back to the test.
 struct Reports {
     captures: Receiver<OpenedCapture>,
+    shows: Receiver<OpenedShow>,
     jobs: Receiver<TranscriptionJob>,
     pasted: Receiver<String>,
+    published: Receiver<Recorded>,
     loads: Receiver<()>,
 }
 
 impl FakePorts {
     fn new() -> (Self, Reports) {
         let (captures, opened) = async_channel::bounded(8);
+        let (shows, opened_shows) = async_channel::bounded(8);
         let (jobs, requested) = async_channel::bounded(8);
         let (pasted, submitted) = async_channel::bounded(8);
+        let (published, written) = async_channel::bounded(8);
         let (loads, loaded) = async_channel::bounded(8);
         let ports = Self {
             desktop_pending: false,
@@ -99,15 +109,21 @@ impl FakePorts {
             retirement: None,
             stop: None,
             insertion: None,
+            show_error: None,
+            publication: None,
             captures,
+            shows,
             jobs,
             pasted,
+            published,
             loads,
         };
         let reports = Reports {
             captures: opened,
+            shows: opened_shows,
             jobs: requested,
             pasted: submitted,
+            published: written,
             loads: loaded,
         };
         (ports, reports)
@@ -119,12 +135,14 @@ impl FakePorts {
             .flatten()
             .map(|gate| gate.release.clone());
         let insertion = self.insertion.iter().map(|gate| gate.release.clone());
-        CleanupGates(releases.chain(insertion).collect())
+        let publication = self.publication.iter().map(|gate| gate.release.clone());
+        CleanupGates(releases.chain(insertion).chain(publication).collect())
     }
 }
 
 impl Ports for FakePorts {
     type Recording = FakeRecording;
+    type Show = FakeShow;
     type Speech = FakeSpeech;
 
     fn prepares_desktop(&self) -> bool {
@@ -148,6 +166,38 @@ impl Ports for FakePorts {
             delayed_finish: self.delayed_finish,
             retirement: self.retirement.clone(),
         })
+    }
+
+    fn show(
+        &self,
+        id: SessionId,
+        _: Instant,
+        events: Sender<ShowEvent>,
+    ) -> anyhow::Result<FakeShow> {
+        if let Some(error) = self.show_error {
+            bail!(error);
+        }
+        self.shows.try_send((id, events.clone()))?;
+        Ok(FakeShow { id, events })
+    }
+
+    fn publish(
+        &self,
+        recorded: Recorded,
+        permit: InsertPermit,
+    ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
+        let published = self.published.clone();
+        let publication = self.publication.clone();
+        async move {
+            if let Some(gate) = publication {
+                gate.pass(()).await?;
+            }
+            if !permit.commit() {
+                return Ok(Published::Cancelled);
+            }
+            published.try_send(recorded)?;
+            Ok(Published::Copied(PathBuf::from("fake show")))
+        }
     }
 
     fn load(
@@ -208,7 +258,13 @@ impl Recording for FakeRecording {
         if self.delayed_finish {
             return;
         }
-        let finished = CaptureEvent::Finished(self.id, Ok(Some(vec![1, 2])));
+        let finished = CaptureEvent::Finished(
+            self.id,
+            Ok(Some(Sealed {
+                wav: vec![1, 2],
+                trimmed: Duration::ZERO,
+            })),
+        );
         self.events
             .try_send(finished)
             .expect("capture lane has room for fake audio");
@@ -218,6 +274,43 @@ impl Recording for FakeRecording {
         if let Some(gate) = self.retirement {
             gate.pass_during_cleanup(()).await;
         }
+    }
+}
+
+/// Reports one gray frame as its footage when finished.
+struct FakeShow {
+    id: SessionId,
+    events: Sender<ShowEvent>,
+}
+
+impl Recording for FakeShow {
+    fn finish(&self) {
+        self.events
+            .try_send(ShowEvent::Finished(self.id, Ok(footage())))
+            .expect("show lane has room for fake footage");
+    }
+
+    async fn retire(self) {}
+}
+
+fn footage() -> Footage {
+    let frame = Image::from_bgra(2, 2, vec![128; 16]).expect("a 2×2 frame");
+    let mut journal = Journal::new();
+    let samples = vec![Sample {
+        at: Moment::START,
+        signature: Signature::of(&frame),
+    }];
+    journal.record(Moment::START, frame);
+    Footage {
+        surface: Size {
+            width: 1000.0,
+            height: 1000.0,
+        },
+        ended: Moment::from_millis(1_000),
+        samples,
+        journal,
+        strokes: Vec::new(),
+        actions: Vec::new(),
     }
 }
 
@@ -232,6 +325,16 @@ impl Speech for FakeSpeech {
         let (reply, result) = oneshot::channel();
         self.jobs.send((language.to_owned(), reply)).await?;
         result.await?
+    }
+
+    async fn transcribe_words(
+        &self,
+        wav: Vec<u8>,
+        language: &str,
+    ) -> anyhow::Result<speakeasy_show::Narration> {
+        self.transcribe(wav, language)
+            .await
+            .map(speakeasy_show::Narration::Text)
     }
 
     async fn probe_with_silence(&self) -> anyhow::Result<()> {
@@ -268,8 +371,10 @@ struct Harness<Owner = OwnedThread> {
     output: watch::Sender<Snapshot>,
     updates: watch::Receiver<Snapshot>,
     captures: Receiver<OpenedCapture>,
+    shows: Receiver<OpenedShow>,
     jobs: Receiver<TranscriptionJob>,
     pasted: Receiver<String>,
+    published: Receiver<Recorded>,
     loads: Receiver<()>,
 }
 
@@ -319,8 +424,10 @@ impl<Owner: Sync> Harness<Owner> {
             output,
             updates,
             captures: reports.captures,
+            shows: reports.shows,
             jobs: reports.jobs,
             pasted: reports.pasted,
+            published: reports.published,
             loads: reports.loads,
         })
     }
@@ -948,7 +1055,13 @@ async fn warmup_failure_while_stopping_retains_capture_and_retries_on_demand() -
     assert!(h.captures.try_recv().is_err());
     assert!(h.loads.try_recv().is_err(), "Failed warmup must not loop");
     events
-        .send(CaptureEvent::Finished(id, Ok(Some(vec![1, 2]))))
+        .send(CaptureEvent::Finished(
+            id,
+            Ok(Some(Sealed {
+                wav: vec![1, 2],
+                trimmed: Duration::ZERO,
+            })),
+        ))
         .await?;
     receive(&h.loads).await?;
     results.send(Ok(())).await?;
@@ -1108,4 +1221,111 @@ async fn profile_ready_text_latency() -> anyhow::Result<()> {
         samples.len()
     );
     Ok(())
+}
+
+/// Holds the shortcut and presses S, returning the screen recorder's lane.
+async fn start_show<Owner: Sync>(h: &mut Harness<Owner>) -> anyhow::Result<OpenedShow> {
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    receive(&h.captures).await?;
+    h.input(Input::Show);
+    h.observe(|snapshot| snapshot.show && snapshot.hands_free)
+        .await?;
+    receive(&h.shows).await
+}
+
+#[tokio::test(start_paused = true)]
+async fn s_during_a_hold_turns_the_recording_into_a_show_and_publishes_it() -> anyhow::Result<()> {
+    let mut h = Harness::paused(|_| {})?;
+    start_show(&mut h).await?;
+    // The Show is locked hands-free: releasing the shortcut keeps recording.
+    h.input(Input::Release);
+    tokio::time::advance(Duration::from_secs(2)).await;
+    assert!(h.jobs.try_recv().is_err());
+    h.input(Input::Press);
+    let (_, reply) = receive(&h.jobs).await?;
+    answer(reply, "look here")?;
+    let recorded = receive(&h.published).await?;
+    assert_eq!(
+        recorded.recording.narration,
+        Narration::Text("look here".into())
+    );
+    assert_eq!(recorded.samples.len(), 1);
+    h.phase(Phase::Done).await?;
+    assert!(h.snapshot().message.contains("Show copied"));
+    assert!(h.pasted.try_recv().is_err(), "A Show never pastes");
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_silent_show_still_publishes_its_screen() -> anyhow::Result<()> {
+    let mut h = Harness::paused(|ports| ports.delayed_finish = true)?;
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    let (id, events) = receive(&h.captures).await?;
+    h.input(Input::Show);
+    receive(&h.shows).await?;
+    h.input(Input::Release);
+    h.input(Input::Press);
+    events.send(CaptureEvent::Finished(id, Ok(None))).await?;
+    let recorded = receive(&h.published).await?;
+    assert_eq!(recorded.recording.narration, Narration::default());
+    assert!(h.jobs.try_recv().is_err(), "Silence is not transcribed");
+    h.phase(Phase::Done).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancelling_a_show_publishes_nothing_and_frees_the_screen() -> anyhow::Result<()> {
+    let mut h = Harness::paused(|_| {})?;
+    start_show(&mut h).await?;
+    h.input(Input::Cancel);
+    h.phase(Phase::Cancelled).await?;
+    tokio::time::advance(Duration::from_secs(1)).await;
+    assert!(h.published.try_recv().is_err());
+    // The next Show opens a new screen recorder.
+    h.input(Input::Release);
+    start_show(&mut h).await?;
+    h.close().await
+}
+
+#[tokio::test]
+async fn cancelling_while_publishing_leaves_no_trace() -> anyhow::Result<()> {
+    let (publication, publishing) = gate(1);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.publication = Some(publication);
+    })?;
+    start_show(&mut h).await?;
+    h.input(Input::Release);
+    h.input(Input::Press);
+    h.transcribe_next_as("this broke").await?;
+    publishing.reached().await?;
+    h.input(Input::Cancel);
+    h.phase(Phase::Cancelled).await?;
+    publishing.release().await?;
+    assert!(still_pending(h.published.recv()).await);
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_screen_that_cannot_be_recorded_explains_why() -> anyhow::Result<()> {
+    let mut h = Harness::paused(|ports| ports.show_error = Some("screen recording denied"))?;
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    h.input(Input::Show);
+    h.phase(Phase::Error).await?;
+    assert!(h.snapshot().message.contains("screen recording denied"));
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn s_outside_a_hold_records_no_screen() -> anyhow::Result<()> {
+    let mut h = Harness::paused(|_| {})?;
+    h.input(Input::Show);
+    h.start().await?;
+    h.input(Input::Show);
+    tokio::time::advance(Duration::from_secs(1)).await;
+    assert!(h.shows.try_recv().is_err());
+    assert!(!h.snapshot().show);
+    h.close().await
 }

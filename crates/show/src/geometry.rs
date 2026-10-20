@@ -71,7 +71,7 @@ impl Point {
 
     /// Scales each axis separately, such as from normalized coordinates to pixels.
     #[must_use]
-    pub(crate) fn scaled(self, x: f32, y: f32) -> Self {
+    pub fn scaled(self, x: f32, y: f32) -> Self {
         Self::new(self.x * x, self.y * y)
     }
 

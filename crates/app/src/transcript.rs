@@ -1,4 +1,6 @@
-//! Deterministic transcript cleanup before native insertion.
+//! Deterministic transcript cleanup before native insertion or a Show.
+
+use speakeasy_show::{Narration, Word};
 
 /// Whether to remove English hesitation tokens or keep literal engine words.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -13,22 +15,8 @@ pub(crate) enum Fillers {
 pub(crate) fn for_insertion(text: &str, fillers: Fillers) -> String {
     let mut output = String::with_capacity(text.len());
     for token in text.split_whitespace() {
-        let word = token.trim_matches(is_pause_punctuation);
-        if fillers == Fillers::Remove
-            && (word.eq_ignore_ascii_case("um") || word.eq_ignore_ascii_case("uh"))
-        {
-            // A comma before a hesitation belongs to that pause; a sentence ending still matters.
-            if output.ends_with(',') {
-                output.pop();
-            }
-            if !output.is_empty() && !output.ends_with(['.', '!', '?']) {
-                let ending = token
-                    .trim_start_matches(is_pause_punctuation)
-                    .strip_prefix(word)
-                    .unwrap_or_default()
-                    .trim_matches([',', ';', ':', '…']);
-                output.push_str(ending);
-            }
+        if let Some(ending) = hesitation(token, fillers) {
+            close_after_hesitation(&mut output, ending);
             continue;
         }
         if !output.is_empty() {
@@ -37,6 +25,53 @@ pub(crate) fn for_insertion(text: &str, fillers: Fillers) -> String {
         output.push_str(token);
     }
     output
+}
+
+/// The same cleanup for a Show's narration. Timed words lose their hesitations one by one, and a
+/// sentence ending a hesitation carried moves to the word before, where clause breaks read it.
+pub(crate) fn for_show(narration: Narration, fillers: Fillers) -> Narration {
+    match narration {
+        Narration::Text(text) => Narration::Text(for_insertion(&text, fillers)),
+        Narration::Words(words) => {
+            let mut kept: Vec<Word> = Vec::with_capacity(words.len());
+            for word in words {
+                match hesitation(&word.text, fillers) {
+                    Some(ending) => {
+                        if let Some(previous) = kept.last_mut() {
+                            close_after_hesitation(&mut previous.text, ending);
+                        }
+                    },
+                    None => kept.push(word),
+                }
+            }
+            Narration::Words(kept)
+        },
+    }
+}
+
+/// When `token` is a standalone `um` or `uh` being removed, the sentence ending it carried.
+fn hesitation(token: &str, fillers: Fillers) -> Option<&str> {
+    let word = token.trim_matches(is_pause_punctuation);
+    (fillers == Fillers::Remove
+        && (word.eq_ignore_ascii_case("um") || word.eq_ignore_ascii_case("uh")))
+    .then(|| {
+        token
+            .trim_start_matches(is_pause_punctuation)
+            .strip_prefix(word)
+            .unwrap_or_default()
+            .trim_matches([',', ';', ':', '…'])
+    })
+}
+
+/// Ends the text before a removed hesitation: a comma before it belonged to that pause, but a
+/// sentence ending still matters.
+fn close_after_hesitation(text: &mut String, ending: &str) {
+    if text.ends_with(',') {
+        text.pop();
+    }
+    if !text.is_empty() && !text.ends_with(['.', '!', '?']) {
+        text.push_str(ending);
+    }
 }
 
 fn is_pause_punctuation(character: char) -> bool {
@@ -68,6 +103,31 @@ mod tests {
     fn meaningful_words_compounds_and_literal_terms_survive() {
         let input = "umbrella thumb album uhura uh-oh um-based um_uh uh2 2um ü umé um\u{301} 中文um um中文 like you know hmm er \"um\" ‘uh’ (um)";
         assert_eq!(for_insertion(input, Fillers::Remove), input);
+    }
+
+    #[test]
+    fn timed_words_lose_hesitations_but_keep_their_sentence_endings() {
+        let word = |text: &str| Word {
+            span: speakeasy_show::Span::default(),
+            text: text.to_owned(),
+        };
+        let words = ["Um,", "it", "works", "um.", "Then,", "uh", "nothing!"]
+            .map(word)
+            .to_vec();
+        let Narration::Words(kept) = for_show(Narration::Words(words.clone()), Fillers::Remove)
+        else {
+            panic!("timed words stay timed");
+        };
+        let texts: Vec<&str> = kept.iter().map(|word| word.text.as_str()).collect();
+        assert_eq!(texts, ["it", "works.", "Then", "nothing!"]);
+        assert_eq!(
+            for_show(Narration::Words(words.clone()), Fillers::Preserve),
+            Narration::Words(words)
+        );
+        assert_eq!(
+            for_show(Narration::Text("Um, ready.".into()), Fillers::Remove),
+            Narration::Text("ready.".into())
+        );
     }
 
     #[test]

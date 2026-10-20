@@ -54,14 +54,16 @@ are outside this project's profile.
 
 ## App contracts
 
-Preserve hold-to-talk, double-tap hands-free, and the hard five-minute recording limit. Windows and
-macOS observe passive Escape without swallowing it; Linux uses an explicit reserved cancel chord or
-desktop command binding.
+Preserve hold-to-talk, double-tap hands-free, S-during-a-hold Shows, and the hard five-minute
+recording limit. Windows and macOS observe passive Escape without swallowing it; Linux uses an
+explicit reserved cancel chord or desktop command binding.
 
-Keep errors actionable and local. Never add transcript history, accounts, telemetry, automatic audio
-upload, or silent provider switching. Preserve user settings and edits. Keep secrets in ignored
-local `.env` files; never print keys, recorded audio, transcript text, or engine output. Models and
-generated artifacts stay out of Git.
+Keep errors actionable and local. Never add dictation history, accounts, telemetry, automatic
+upload, or silent provider switching. A Show is the one record Speakeasy keeps: the screen is
+captured only after the user asks, frames leave out Speakeasy's windows, and bundles stay private to
+the user and expire after seven days unless pinned. Preserve user settings and edits. Keep secrets
+in ignored local `.env` files; never print keys, recorded audio, screen pixels, transcript text, or
+engine output. Models and generated artifacts stay out of Git.
 
 ## Tests and review
 
@@ -70,11 +72,11 @@ enforce. Do not test trivial getters, constructors, copied config values, or fra
 Show that a new assertion fails for a concrete fault; mechanical moves need no new tests. Use
 property tests for generated boundary inputs and commit proptest regression seeds.
 
-Default tests use fakes or public fixtures. They must not record live microphone audio, install a
-global hook, or modify the user's clipboard or focused app. `--demo` is simulated. Native
-microphone/input/clipboard acceptance requires explicit opt-in; report it separately from mocked
-checks. Owned-window rendering checks run on private or native displays without microphone or input
-access.
+Default tests use fakes or public fixtures. They must not record live microphone audio, capture the
+screen, install a global hook, or modify the user's clipboard or focused app. `--demo` is simulated.
+Native microphone/screen/input/clipboard acceptance requires explicit opt-in; report it separately
+from mocked checks. Screen checks compare only owned-window pixels and never write others.
+Owned-window rendering checks run on private or native displays without microphone or input access.
 
 Get an independent read-only agent review for nontrivial behavior or architecture changes. Verify
 findings with source evidence or a regression test. One writer owns one worktree; reviewers stay

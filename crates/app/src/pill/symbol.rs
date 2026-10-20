@@ -6,6 +6,7 @@ use gpui::{PathBuilder, Pixels, Point, Window, canvas, point, prelude::*, px, rg
 pub(super) enum Symbol {
     Microphone,
     Lock,
+    Screen,
     Check,
     Attention,
 }
@@ -27,6 +28,17 @@ impl Symbol {
                     (3.0, 14.0),
                     (3.0, 7.0),
                 ],
+            ],
+            Self::Screen => &[
+                &[
+                    (2.0, 3.0),
+                    (14.0, 3.0),
+                    (14.0, 11.0),
+                    (2.0, 11.0),
+                    (2.0, 3.0),
+                ],
+                &[(8.0, 11.0), (8.0, 14.0)],
+                &[(5.0, 14.0), (11.0, 14.0)],
             ],
             Self::Check => &[&[(2.0, 8.0), (6.0, 12.0), (14.0, 4.0)]],
             Self::Attention => &[&[(8.0, 2.0), (8.0, 10.0)], &[(8.0, 12.0), (8.0, 14.0)]],

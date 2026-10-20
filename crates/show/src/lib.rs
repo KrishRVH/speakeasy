@@ -17,7 +17,8 @@ mod draw;
 mod error;
 mod geometry;
 mod image;
-mod ink;
+pub mod ink;
+mod journal;
 mod marks;
 mod moment;
 mod recording;
@@ -25,6 +26,7 @@ mod select;
 mod serde_range;
 mod sheet;
 mod signature;
+mod tracker;
 mod typeface;
 
 pub use crate::{
@@ -33,10 +35,12 @@ pub use crate::{
     error::Error,
     geometry::{Point, Rect},
     image::Image,
+    journal::Journal,
     marks::{Mark, Shape},
     moment::{Moment, Span},
-    recording::{Action, EmptyStroke, InkPoint, Recording, Size, Speech, Stroke, Word, budget},
+    recording::{Action, EmptyStroke, InkPoint, Narration, Recording, Size, Stroke, Word, budget},
     select::{Keyframe, Reason, Selection, select},
     signature::{Sample, Signature},
+    tracker::Tracker,
     typeface::Typeface,
 };

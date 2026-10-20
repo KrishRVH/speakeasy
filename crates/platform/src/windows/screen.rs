@@ -811,13 +811,6 @@ pub(crate) fn set_overlay_visible(handle: RawWindowHandle, visible: bool) {
     }
 }
 
-pub(crate) fn set_excluded_from_capture(
-    handle: RawWindowHandle,
-    excluded: bool,
-) -> anyhow::Result<()> {
-    exclude_from_capture(hwnd_of(handle)?, excluded)
-}
-
 fn exclude_from_capture(hwnd: HWND, excluded: bool) -> anyhow::Result<()> {
     let affinity = if excluded {
         ensure!(
@@ -1021,7 +1014,7 @@ mod tests {
             let [width, height] = display.native.extent();
             let half = width.max(height).cast_unsigned() / 2;
             let halved = scene.capture(display, half).await?;
-            set_excluded_from_capture(scene.overlay_handle()?, false)?;
+            exclude_from_capture(hwnd_of(scene.overlay_handle()?)?, false)?;
             thread::sleep(COMPOSED);
             let included = scene.capture(display, u32::MAX).await?;
             drop(scene);

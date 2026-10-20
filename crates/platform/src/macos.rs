@@ -433,6 +433,16 @@ pub(super) fn insert(
     }
 }
 
+/// Places `text` on the general pasteboard.
+///
+/// # Errors
+///
+/// Fails when the pasteboard refuses the text.
+pub fn copy_text(text: &str) -> anyhow::Result<()> {
+    arboard::Clipboard::new()?.set_text(text)?;
+    Ok(())
+}
+
 fn paste(text: &str, permit: &InsertPermit) -> anyhow::Result<Inserted> {
     let mut clipboard = arboard::Clipboard::new()?;
     if !permit.active() {

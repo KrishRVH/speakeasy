@@ -14,6 +14,7 @@ use anyhow::{Context, anyhow, bail, ensure};
 use reqwest::{Client, Response, multipart};
 use serde::Deserialize;
 use speakeasy_platform::ProcessGroup;
+use speakeasy_show::{Moment, Narration, Span, Word};
 use tokio::{
     process::{Child, Command},
     sync::watch,
@@ -158,8 +159,9 @@ impl LocalSpeech {
     }
 }
 
-impl Speech for LocalSpeech {
-    async fn transcribe(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<String> {
+impl LocalSpeech {
+    /// Sends `wav` for recognition and returns the reply's body in the requested `format`.
+    async fn request(&self, wav: Vec<u8>, language: &str, format: &str) -> anyhow::Result<Vec<u8>> {
         let request = match self.engine {
             Engine::Parakeet => {
                 let rate = audio::wav_sample_rate(&wav).context("Missing recording sample rate")?;
@@ -170,10 +172,10 @@ impl Speech for LocalSpeech {
                 self.client
                     .post(self.url("v1/audio/transcriptions"))
                     .bearer_auth(&self.secret)
-                    .multipart(recording_form(wav)?)
+                    .multipart(recording_form(wav, format)?)
             },
             Engine::Whisper => {
-                let form = recording_form(wav)?
+                let form = recording_form(wav, format)?
                     .text("language", language.to_owned())
                     .text("temperature", "0.0");
                 self.client.post(self.url("inference")).multipart(form)
@@ -196,10 +198,23 @@ impl Speech for LocalSpeech {
             "Local speech returned HTTP {}",
             response.status().as_u16()
         );
-        let body = read_bounded(response).await?;
+        read_bounded(response).await
+    }
+}
+
+impl Speech for LocalSpeech {
+    async fn transcribe(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<String> {
+        let body = self.request(wav, language, "json").await?;
         let reply: Transcription =
             serde_json::from_slice(&body).context("Local speech returned invalid JSON")?;
         reply.text.context("Local speech returned no transcript")
+    }
+
+    async fn transcribe_words(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<Narration> {
+        let body = self.request(wav, language, "verbose_json").await?;
+        let reply: Timed =
+            serde_json::from_slice(&body).context("Local speech returned invalid JSON")?;
+        reply.into_narration()
     }
 
     async fn probe_with_silence(&self) -> anyhow::Result<()> {
@@ -243,6 +258,93 @@ impl Warmup {
 #[derive(Deserialize)]
 struct Transcription {
     text: Option<String>,
+}
+
+/// The part of either engine's timed reply that Speakeasy reads. Parakeet lists whole words;
+/// whisper.cpp lists tokens within segments.
+#[derive(Deserialize)]
+struct Timed {
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    words: Vec<Token>,
+    #[serde(default)]
+    segments: Vec<TimedSegment>,
+}
+
+#[derive(Deserialize)]
+struct TimedSegment {
+    #[serde(default)]
+    words: Vec<Token>,
+}
+
+/// A word or word piece, timed in seconds from the start of the audio.
+#[derive(Deserialize)]
+struct Token {
+    word: String,
+    start: f64,
+    end: f64,
+}
+
+impl Timed {
+    fn into_narration(self) -> anyhow::Result<Narration> {
+        let words = if self.words.is_empty() {
+            joined(self.segments.into_iter().flat_map(|segment| segment.words))?
+        } else {
+            self.words
+                .into_iter()
+                .filter(|token| !token.word.trim().is_empty())
+                .map(|token| {
+                    Ok(Word {
+                        span: token.span()?,
+                        text: token.word.trim().to_owned(),
+                    })
+                })
+                .collect::<anyhow::Result<_>>()?
+        };
+        Ok(if words.is_empty() && !self.text.trim().is_empty() {
+            Narration::Text(self.text.trim().to_owned())
+        } else {
+            Narration::Words(words)
+        })
+    }
+}
+
+impl Token {
+    fn span(&self) -> anyhow::Result<Span> {
+        let time = |seconds: f64| {
+            Duration::try_from_secs_f64(seconds)
+                .map(Moment::from)
+                .ok()
+                .context("Local speech returned invalid word timings")
+        };
+        let (start, end) = (time(self.start)?, time(self.end)?);
+        ensure!(start <= end, "Local speech returned invalid word timings");
+        Ok(Span::new(start, end))
+    }
+}
+
+/// whisper.cpp splits words into tokens; a token that starts with a space starts a word. Its
+/// bracketed control tokens are not speech.
+fn joined(tokens: impl Iterator<Item = Token>) -> anyhow::Result<Vec<Word>> {
+    let mut words: Vec<Word> = Vec::new();
+    for token in tokens {
+        if token.word.trim().is_empty() || token.word.trim_start().starts_with("[_") {
+            continue;
+        }
+        let span = token.span()?;
+        match words.last_mut() {
+            Some(word) if !token.word.starts_with(char::is_whitespace) => {
+                word.text.push_str(&token.word);
+                word.span = word.span.union(span);
+            },
+            _ => words.push(Word {
+                span,
+                text: token.word.trim().to_owned(),
+            }),
+        }
+    }
+    Ok(words)
 }
 
 fn server_command(config: &Config, port: u16, secret: &str, served: &Path) -> Command {
@@ -324,13 +426,13 @@ async fn unless_cancelled<T>(
     }
 }
 
-fn recording_form(wav: Vec<u8>) -> reqwest::Result<multipart::Form> {
+fn recording_form(wav: Vec<u8>, format: &str) -> reqwest::Result<multipart::Form> {
     let file = multipart::Part::bytes(wav)
         .file_name("dictation.wav")
         .mime_str("audio/wav")?;
     Ok(multipart::Form::new()
         .part("file", file)
-        .text("response_format", "json"))
+        .text("response_format", format.to_owned()))
 }
 
 async fn read_bounded(mut response: Response) -> anyhow::Result<Vec<u8>> {
@@ -379,6 +481,69 @@ fn exit_remedy(code: Option<i32>, signal: Option<i32>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn narration(reply: &str) -> anyhow::Result<Narration> {
+        serde_json::from_str::<Timed>(reply)?.into_narration()
+    }
+
+    fn timed(words: &[(u64, u64, &str)]) -> Narration {
+        Narration::Words(
+            words
+                .iter()
+                .map(|&(start, end, text)| Word {
+                    span: Span::new(Moment::from_millis(start), Moment::from_millis(end)),
+                    text: text.to_owned(),
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn parakeet_words_keep_their_times_and_punctuation() -> anyhow::Result<()> {
+        // Trimmed from a NeMo-Speech.cpp reply to whisper.cpp's public `jfk.wav`.
+        let reply = r#"{"duration":11,"language":"","task":"transcribe","text":"And so, my",
+            "words":[{"confidence":1,"end":0.56000000000000005,"start":0.23999999999999999,"word":"And"},
+                     {"confidence":1,"end":1.04,"start":0.56000000000000005,"word":"so,"},
+                     {"confidence":1,"end":1.28,"start":1.04,"word":"my"}]}"#;
+        assert_eq!(
+            narration(reply)?,
+            timed(&[(240, 560, "And"), (560, 1_040, "so,"), (1_040, 1_280, "my")])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn whisper_tokens_join_into_words_without_control_tokens() -> anyhow::Result<()> {
+        let reply = r#"{"text":" Ask yourself.","segments":[{"words":[
+            {"word":"[_BEG_]","start":0.0,"end":0.0},
+            {"word":" Ask","start":0.10,"end":0.30},
+            {"word":" your","start":0.30,"end":0.40},
+            {"word":"self.","start":0.40,"end":0.62}]}]}"#;
+        assert_eq!(
+            narration(reply)?,
+            timed(&[(100, 300, "Ask"), (300, 620, "yourself.")])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn replies_without_timings_keep_their_text_and_bad_timings_fail() -> anyhow::Result<()> {
+        assert_eq!(
+            narration(r#"{"text":" Untimed. "}"#)?,
+            Narration::Text("Untimed.".into())
+        );
+        assert_eq!(
+            narration(r#"{"text":"","words":[]}"#)?,
+            Narration::Words(Vec::new())
+        );
+        for bad in [
+            r#"{"words":[{"word":"x","start":2.0,"end":1.0}]}"#,
+            r#"{"words":[{"word":"x","start":-1.0,"end":1.0}]}"#,
+        ] {
+            assert!(narration(bad).is_err(), "{bad}");
+        }
+        Ok(())
+    }
 
     #[test]
     fn exit_diagnostics_identify_actions_without_engine_output() {
