@@ -4,6 +4,9 @@ min_version = "2026.9.18"
 lockfile = true
 idiomatic_version_file_enable_tools = ["rust"]
 
+[vars]
+md_files = '''git ls-files -z --cached --others --exclude-standard -- '*.md' ':(exclude)vendor/' '''
+
 [env]
 UV_PYTHON_PREFERENCE = "only-system"
 UV_PYTHON_DOWNLOADS = "never"
@@ -124,15 +127,15 @@ run = "bun install --frozen-lockfile"
 
 [tasks."md:fmt"]
 depends = ["md:install"]
-run = "bun run format"
+run = "{{vars.md_files}} | xargs -0 bun run prettier --write --no-error-on-unmatched-pattern"
 
 [tasks."md:fmt:check"]
 depends = ["md:install"]
-run = "bun run format:check"
+run = "{{vars.md_files}} | xargs -0 bun run prettier --check --no-error-on-unmatched-pattern --log-level warn"
 
 [tasks."md:lint"]
 depends = ["md:install"]
-run = "bun run lint"
+run = "{{vars.md_files}} | xargs -0 bun run markdownlint-cli2"
 
 [tasks."md:links"]
 run = "lychee --config lychee.toml --root-dir \"$PWD\" --offline --extensions md ."
@@ -145,7 +148,10 @@ run = "typos --config typos.toml ."
 
 [tasks."md:standards"]
 depends = ["md:install"]
-run = ["bun run format", "bun run lint:fix"]
+run = [
+  "{{vars.md_files}} | xargs -0 bun run prettier --write --no-error-on-unmatched-pattern",
+  "{{vars.md_files}} | xargs -0 bun run markdownlint-cli2 --fix",
+]
 
 [tasks."md:standards:check"]
 depends = ["md:fmt:check", "md:lint", "md:links", "md:typos"]

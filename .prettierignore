@@ -1,6 +1,1 @@
 vendor/
-.scratch/
-artifacts/
-target/
-.venv/
-node_modules/
