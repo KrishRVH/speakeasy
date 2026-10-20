@@ -18,7 +18,7 @@ use super::{
 };
 use crate::{
     config::Config,
-    ports::{Ports, Published, Recording},
+    ports::{PUBLISH_STOPPED, Ports, Published, Recording},
 };
 
 /// What a copied Show tells the user.
@@ -460,9 +460,7 @@ impl<P: Ports> Owner<P> {
             Ok(Ok(Published::Copied(_))) => Outcome::Copied(SHOW_COPIED),
             Ok(Ok(Published::Cancelled)) => Outcome::Cancelled,
             Ok(Err(error)) => Outcome::Failed(format!("{error:#}")),
-            Err(_) => {
-                Outcome::Failed("Publishing the Show stopped unexpectedly. Try again.".into())
-            },
+            Err(_) => Outcome::Failed(PUBLISH_STOPPED.into()),
         };
         self.gesture.complete();
     }

@@ -20,6 +20,9 @@ use crate::{
 /// The error a speech startup reports once cancelled.
 pub(crate) const STARTUP_CANCELLED: &str = "Local model startup cancelled";
 
+/// The failure a Show publication reports when its task ends without a result.
+pub(crate) const PUBLISH_STOPPED: &str = "Publishing the Show stopped unexpectedly. Try again.";
+
 pub(crate) trait Recording: Send + 'static {
     /// Requests the end of capture; the recording then reports its `Finished` event.
     fn finish(&self);

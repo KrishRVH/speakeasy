@@ -6,11 +6,11 @@ use std::{
     time::SystemTime,
 };
 
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 use speakeasy_platform::InsertPermit;
 use speakeasy_show::{Image, Moment, Typeface, budget, compose, select};
 
-use crate::ports::{Published, Recorded};
+use crate::ports::{PUBLISH_STOPPED, Published, Recorded};
 
 /// Composes and writes `recorded` off the caller's thread. The bundle appears and its summary is
 /// copied only once `permit` commits; a publication cancelled before then stops at its next check
@@ -25,7 +25,8 @@ pub(crate) async fn publish(recorded: Recorded, permit: InsertPermit) -> anyhow:
         Ok(Published::Copied(written.directory))
     })
     .await
-    .context("Publishing the Show stopped unexpectedly. Try again.")?
+    // A failed join reports a fixed message, since a panic payload could carry private text.
+    .unwrap_or_else(|_| Err(anyhow!(PUBLISH_STOPPED)))
 }
 
 /// A bundle in place, and the summary that names its files.
