@@ -91,9 +91,10 @@ impl ScreenCapture {
     /// Starts capturing the display under the pointer.
     ///
     /// Each frame reaches `events` at most once per `interval`, halved in size until its long
-    /// edge fits `longest_edge`. A frame the lane has no room for is dropped, not queued. No frame
-    /// shows a Speakeasy window, including one opened while capturing; they still appear in the
-    /// user's own screen sharing before and after.
+    /// edge fits `longest_edge`. No frame waits behind a full lane: Windows holds back its newest
+    /// frame until there is room or a newer one replaces it, and macOS drops it. No frame shows a
+    /// Speakeasy window, including one opened while capturing; they still appear in the user's own
+    /// screen sharing before and after.
     ///
     /// # Errors
     ///

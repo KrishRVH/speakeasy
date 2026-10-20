@@ -115,11 +115,10 @@ cargo run --locked -p speakeasy -- show demo  # a scripted Show bundle
 
 `--demo` uses simulated audio without the microphone, global shortcut, model, or clipboard. It
 previews hands-free, the countdown, submission, a Show with its ink on Windows and Mac, interrupted
-dismissal, cancellation, silence, and an error. On Windows and macOS, `--demo-tray` adds the tray
-and the Settings hide-and-reopen behavior with dictation disabled. `show demo` writes a scripted
-Show bundle and prints its summary. Linux has experimental desktop support; see the Linux
-instructions below. GPUI's X11 build needs ALSA, fontconfig, X11/XCB, xkbcommon, and Vulkan
-development packages.
+dismissal, cancellation, silence, and an error. `--demo-tray` adds the tray and the Settings
+hide-and-reopen behavior with dictation disabled. `show demo` writes a scripted Show bundle and
+prints its summary. Linux has experimental desktop support; see the Linux instructions below. GPUI's
+X11 build needs ALSA, fontconfig, X11/XCB, xkbcommon, and Vulkan development packages.
 
 </details>
 
@@ -156,12 +155,12 @@ install -Dm644 packaging/linux/io.github.krvh.speakeasy.desktop \
 For the tar package, link its absolute `Speakeasy.AppDir/AppRun` path instead, and install the
 desktop file from `usr/share/applications` inside that directory. For AppImage, make it executable,
 link its absolute path as `speakeasy`, and install the desktop file from this repository or its
-`--appimage-extract` output. The executable stays in the chosen location. Automatic paste needs
-compositor modifier feedback and libei; typing needs direct text support as well. Settings'
-**Insert** control chooses **Paste (Ctrl+V)**, **Paste (Ctrl+Shift+V)** for terminals, **Type (Keep
-clipboard)**, or **Copy for manual paste** if automatic insertion is unavailable. X11 automatic
-paste uses the first keyboard layout with an unshifted V key; other layouts copy and explain how to
-paste manually.
+`--appimage-extract` output. The executable stays in the chosen location. On Wayland, automatic
+paste needs compositor modifier feedback and libei, and typing needs EI direct text support; X11
+pastes through XTest and cannot type. Settings' **Insert** control chooses **Paste (Ctrl+V)**,
+**Paste (Ctrl+Shift+V)** for terminals, **Type (Keep clipboard)**, or **Copy for manual paste** if
+automatic insertion is unavailable. X11 automatic paste uses the first keyboard layout with an
+unshifted V key; other layouts copy and explain how to paste manually.
 
 For a desktop without suitable shortcut permissions, choose **Shortcuts: Desktop bindings** and
 assign the two commands Settings shows in your desktop's shortcut settings: `speakeasy --toggle` and

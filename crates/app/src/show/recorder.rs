@@ -21,8 +21,8 @@ pub(super) const LONGEST_EDGE: u32 = 2_560;
 const JOURNAL_BUDGET: usize = 384 << 20;
 /// How long a Show finished before its first frame waits for one; a Show needs the screen.
 const FIRST_FRAME_WAIT: Duration = Duration::from_secs(3);
-/// How many frames wait for the recorder. A frame that finds the lane full goes unsent; no capture
-/// thread waits for room for one.
+/// How many frames wait for the recorder; [`ScreenCapture::start`] says what capture does with a
+/// frame the lane has no room for.
 const FRAME_LANE: usize = 2;
 /// How many pointer samples wait for the recorder. A sample that finds the lane full is skipped.
 const POINTER_LANE: usize = 256;
