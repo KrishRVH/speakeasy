@@ -1,5 +1,5 @@
-//! The X11 clipboard and focus worker. Clipboard and focus calls can wait on Xwayland or another
-//! client, so one owned thread serves them for both the X11 and the Wayland insertion paths.
+//! The X11 clipboard both insertion paths copy through, and the worker thread that serves it, with
+//! focus checks, to the Wayland portal path.
 
 use anyhow::Context;
 use async_channel::{Receiver, Sender};

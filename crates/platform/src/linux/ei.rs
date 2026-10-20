@@ -505,8 +505,9 @@ impl EiContext {
 
 impl Drop for EiContext {
     fn drop(&mut self) {
-        // SAFETY: this is the context's only owning reference, and `Sender::drop` has already
-        // released every device reference; dropping it closes the EIS descriptor.
+        // SAFETY: this is the context's only owning reference, and no device reference outlives
+        // it: only `Sender` acquires devices, and `Sender::drop` releases them before this field
+        // drops. Dropping it closes the EIS descriptor.
         unsafe { (self.unref)(self.raw.as_ptr()) };
     }
 }

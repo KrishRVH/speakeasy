@@ -1,5 +1,4 @@
-//! The portal insertion pipeline: each request waits for released modifiers, copies through the
-//! portal or X11 clipboard, confirms ownership and focus, then pastes or types through libei.
+//! The portal insertion pipeline and the remedies it reports when paste or direct text cannot run.
 
 use std::{os::fd::OwnedFd, time::Instant};
 
@@ -26,8 +25,9 @@ use crate::{
     },
 };
 
-/// The insertion pipeline: requests wait for released modifiers, then copy, confirm clipboard
-/// ownership, and check focus before submitting native input.
+/// The insertion pipeline. A paste request waits for released modifiers unless the user pastes
+/// manually, then copies through the portal or X11 clipboard and confirms ownership; direct text
+/// skips both. Every request checks focus before it pastes or types through libei.
 pub(super) struct Insertions<'a> {
     pub(super) transfers: Transfers<'a>,
     pub(super) preparing: Option<Preparing<'a>>,
