@@ -68,5 +68,4 @@ export LDAI_RUNTIME_FILE="$runtime"
 export OUTPUT="$PWD/artifacts/speakeasy-linux-x86_64.AppImage"
 "$deploy" --appdir "$app_dir" --output appimage
 tar -C "$staging" -czf artifacts/speakeasy-linux-x86_64.tar.gz Speakeasy.AppDir
-sha256sum artifacts/speakeasy-linux-x86_64.AppImage artifacts/speakeasy-linux-x86_64.tar.gz > artifacts/speakeasy-linux-x86_64.sha256
 echo "Built AppImage and bundled tar archive in artifacts/."
