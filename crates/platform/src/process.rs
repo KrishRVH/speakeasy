@@ -1,5 +1,5 @@
-//! Termination authority over the local speech worker and every process it starts, and the check
-//! that the worker's loopback listener belongs to it.
+//! Termination authority over the local speech worker and every process it starts, and, on Linux
+//! and Windows, the check that the worker's loopback listener belongs to it.
 //!
 //! Authority comes only from a freshly spawned child's identifier, never from a process lookup.
 //! Listener lookups only test membership in the group and never grant termination authority.
