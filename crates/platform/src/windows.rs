@@ -40,8 +40,10 @@ use windows_sys::{
     w,
 };
 
-pub use self::insertion::copy_text;
-pub(crate) use self::{input::HookMonitor, insertion::Insert};
+pub(crate) use self::{
+    input::{Monitor, start},
+    insertion::{Insert, copy_text},
+};
 #[cfg(test)]
 use crate::NativeWindow;
 use crate::keyboard::Modifiers;
@@ -67,9 +69,7 @@ pub(super) fn modifiers() -> Modifiers {
     }
 }
 
-/// Returns whether the system asks apps to reduce motion; Linux uses the app setting.
-#[must_use]
-pub fn reduced_motion() -> bool {
+pub(crate) fn reduced_motion() -> bool {
     let mut animates = TRUE;
     // SAFETY: SPI_GETCLIENTAREAANIMATION writes a BOOL into this live variable.
     unsafe {
@@ -91,11 +91,7 @@ pub fn attach_console() {
     }
 }
 
-/// Presents an error that prevents or ends a launch, blocking until the user dismisses it.
-///
-/// The app reports runtime failures in its own windows instead. Callers never include audio,
-/// transcripts, or credentials.
-pub fn show_startup_error(message: &str) {
+pub(crate) fn show_startup_error(message: &str) {
     let text = to_wide(message);
     // SAFETY: both NUL-terminated strings outlive this synchronous dialog.
     unsafe {

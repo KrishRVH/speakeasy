@@ -42,8 +42,8 @@ use objc2_foundation::{
 use raw_window_handle::{RawWindowHandle, WindowHandle};
 
 use super::{
-    CANCEL_SHORTCUT, Input, InputSender, Inserted, NativeWindow, OwnedThread, PILL_MARGIN,
-    PILL_WIDTH, SHORTCUT, insertion,
+    CANCEL_SHORTCUT, DesktopOptions, Input, InputSender, Inserted, Inserter, NativeWindow,
+    OwnedThread, PILL_MARGIN, PILL_WIDTH, SHORTCUT, insertion,
     keyboard::{self, MacEvent, Modifiers},
     monitor::MonitorControl,
 };
@@ -54,46 +54,43 @@ const OWN_INPUT: i64 = 0x5350_4541;
 /// this many UTF-16 units.
 const TEXT_EVENT_UNITS: usize = 16;
 
-/// Owns the event tap's thread until explicit stop and acknowledged cleanup.
-pub(super) struct HookMonitor {
-    // Declared first so dropping joins the thread before the lifecycle observers are removed.
-    thread: OwnedThread,
+/// What `InputMonitor` holds beside the event tap's thread, which it joins before dropping this:
+/// the tap's stop control, the lifecycle observers, and the insertion thread.
+pub(super) struct Monitor {
     // Shared with the run-loop thread, which publishes its run loop for the owner to stop.
     control: Arc<MonitorControl<CFRunLoop>>,
     _observers: Vec<Observer>,
+    insertion: insertion::Worker,
 }
 
-impl HookMonitor {
-    pub(super) fn start(input: InputSender) -> anyhow::Result<Self> {
-        let observers = lifecycle_observers(&input);
-        let control = Arc::new(MonitorControl::default());
-        let thread = OwnedThread::spawn("input-monitor", {
-            let control = Arc::clone(&control);
-            move || monitor(&input, &control)
-        })?;
-        Ok(Self {
-            thread,
-            control,
-            _observers: observers,
-        })
-    }
-
-    /// Requests native observation shutdown without joining its thread.
+impl Monitor {
     pub(super) fn request_stop(&self) {
         self.control.request_stop(CFRunLoop::stop);
+        self.insertion.request_stop();
     }
 
-    /// Resolves once native resources have retired; await it before replacing or dropping the
-    /// monitor.
     pub(super) fn stopped(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
-        self.thread.exited()
+        self.insertion.stopped()
     }
 }
 
-impl Drop for HookMonitor {
-    fn drop(&mut self) {
-        self.request_stop();
-    }
+pub(super) fn start(
+    input: InputSender,
+    _: DesktopOptions,
+) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
+    let (insertion, inserter) = insertion::Worker::start(input.clone())?;
+    let observers = lifecycle_observers(&input);
+    let control = Arc::new(MonitorControl::default());
+    let thread = OwnedThread::spawn("input-monitor", {
+        let control = Arc::clone(&control);
+        move || monitor(&input, &control)
+    })?;
+    let monitor = Monitor {
+        control,
+        _observers: observers,
+        insertion,
+    };
+    Ok((thread, monitor, inserter))
 }
 
 /// The run-loop entry observer's context, borrowed from `run_event_loop`'s frame.
@@ -428,12 +425,7 @@ pub(super) fn modifiers() -> Modifiers {
         )
 }
 
-/// Places `text` on the general pasteboard.
-///
-/// # Errors
-///
-/// Fails when the pasteboard refuses the text.
-pub fn copy_text(text: &str) -> anyhow::Result<()> {
+pub(super) fn copy_text(text: &str) -> anyhow::Result<()> {
     arboard::Clipboard::new()?.set_text(text)?;
     Ok(())
 }
@@ -534,17 +526,11 @@ fn clipboard_sequence() -> isize {
     NSPasteboard::generalPasteboard().changeCount()
 }
 
-/// Returns whether the system asks apps to reduce motion; Linux uses the app setting.
-#[must_use]
-pub fn reduced_motion() -> bool {
+pub(super) fn reduced_motion() -> bool {
     NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
 }
 
-/// Presents an error that prevents or ends a launch, blocking until the user dismisses it.
-///
-/// The app reports runtime failures in its own windows instead. Callers never include audio,
-/// transcripts, or credentials.
-pub fn show_startup_error(message: &str) {
+pub(super) fn show_startup_error(message: &str) {
     if let Some(main) = MainThreadMarker::new() {
         let alert = NSAlert::new(main);
         alert.setMessageText(&NSString::from_str("Speakeasy could not start"));

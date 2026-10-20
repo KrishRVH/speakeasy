@@ -34,27 +34,24 @@ const NO_PASTE_BINDING: Inserted = Inserted::Copied(
 /// The user chose to paste themselves, so insertion only copies.
 const COPIED_FOR_MANUAL_PASTE: Inserted = Inserted::Copied("Text copied. Paste into your editor.");
 
-/// Owns the desktop observation thread until explicit stop and acknowledged cleanup.
-pub struct InputMonitor {
+/// What `InputMonitor` holds beside the desktop thread: the lane that asks it to stop. Insertion
+/// runs on that thread too, so nothing else outlives it.
+pub(crate) struct Monitor {
+    /// Never sends; closing it asks the desktop thread to stop.
     stop: Sender<Infallible>,
-    thread: OwnedThread,
 }
 
-impl InputMonitor {
-    /// Requests native observation shutdown without joining its thread.
-    pub fn request_stop(&self) {
+impl Monitor {
+    pub(crate) fn request_stop(&self) {
         self.stop.close();
     }
 
-    /// Resolves once native resources retire; await it before replacing or dropping the monitor.
-    pub fn stopped(&self) -> impl Future<Output = ()> + use<> {
-        self.thread.exited()
-    }
-}
-
-impl Drop for InputMonitor {
-    fn drop(&mut self) {
-        self.request_stop();
+    #[expect(
+        clippy::unused_self,
+        reason = "Linux inserts on the desktop thread, so no thread outlives the one InputMonitor joins"
+    )]
+    pub(crate) fn stopped(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
+        std::future::ready(())
     }
 }
 
@@ -106,14 +103,10 @@ impl ShortcutLabels {
     }
 }
 
-/// Starts desktop preparation; readiness arrives as `Input::DesktopReady`.
-///
-/// # Errors
-/// Returns a desktop-thread startup failure; permission failures arrive as input events.
-pub fn prepare(
+pub(crate) fn start(
     input: InputSender,
     options: DesktopOptions,
-) -> anyhow::Result<(InputMonitor, Inserter)> {
+) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
     let (inserter, incoming) = Inserter::lane();
     let (stop, stop_requests) = async_channel::bounded(1);
     let thread = OwnedThread::spawn("desktop-access", move || {
@@ -124,7 +117,7 @@ pub fn prepare(
             _ => input.close(),
         }
     })?;
-    Ok((InputMonitor { stop, thread }, inserter))
+    Ok((thread, Monitor { stop }, inserter))
 }
 
 fn serve_desktop(
@@ -211,27 +204,15 @@ impl NativeWindow {
     }
 }
 
-/// Whether the desktop asks for reduced motion. Speakeasy reads no Linux desktop motion
-/// preference, so the app setting decides.
-#[must_use]
-pub fn reduced_motion() -> bool {
+pub(crate) fn reduced_motion() -> bool {
     false
 }
 
-/// Places `text` on the clipboard; Linux publishes Shows in a later release.
-///
-/// # Errors
-///
-/// Always fails on Linux for now.
-pub fn copy_text(_: &str) -> anyhow::Result<()> {
+pub(crate) fn copy_text(_: &str) -> anyhow::Result<()> {
     anyhow::bail!("Shows are not available on Linux yet")
 }
 
-/// Writes an error that prevents or ends a launch to stderr.
-///
-/// The app reports runtime failures in its own windows instead. Callers never include audio,
-/// transcripts, or credentials.
-pub fn show_startup_error(message: &str) {
+pub(crate) fn show_startup_error(message: &str) {
     eprintln!("Speakeasy: {message}");
 }
 

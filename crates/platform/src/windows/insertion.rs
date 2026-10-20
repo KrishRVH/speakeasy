@@ -17,12 +17,7 @@ use windows_sys::Win32::{
 use super::{modifiers, send_input, synthetic_key};
 use crate::{Inserted, insertion::NativeInsert};
 
-/// Places `text` on the clipboard, with Windows line endings.
-///
-/// # Errors
-///
-/// Fails when another application holds the clipboard or refuses the text.
-pub fn copy_text(text: &str) -> anyhow::Result<()> {
+pub(crate) fn copy_text(text: &str) -> anyhow::Result<()> {
     let text = windows_line_endings(text);
     let _clipboard = open_clipboard()?;
     clipboard_win::raw::set_string(&text)?;

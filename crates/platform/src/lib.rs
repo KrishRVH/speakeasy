@@ -25,21 +25,18 @@ mod windows;
 
 #[cfg(target_os = "linux")]
 use self::linux as native;
+// Linux only: the launcher and portal identity, and the tray GPUI does not offer there.
 #[cfg(target_os = "linux")]
-pub use self::linux::{
-    APPLICATION_ID, InputMonitor, NativeTray, TrayAction, TrayPresentation, copy_text, prepare,
-    reduced_motion, show_startup_error,
-};
+pub use self::linux::{APPLICATION_ID, NativeTray, TrayAction, TrayPresentation};
 #[cfg(target_os = "macos")]
 use self::macos as native;
-#[cfg(target_os = "macos")]
-pub use self::macos::{copy_text, reduced_motion, show_startup_error};
 #[cfg(target_os = "windows")]
 use self::windows as native;
+// Windows only: the console a windowed executable lacks.
 #[cfg(target_os = "windows")]
-pub use self::windows::{attach_console, copy_text, reduced_motion, show_startup_error};
+pub use self::windows::attach_console;
 pub use self::{
-    desktop::NativeWindow,
+    desktop::{InputMonitor, NativeWindow, copy_text, prepare, reduced_motion, show_startup_error},
     input::{Input, InputSender, InsertPermit},
     insertion::{Delivery, Inserter},
     owned_thread::OwnedThread,
@@ -131,49 +128,4 @@ impl Default for DesktopOptions {
             external_shortcut: false,
         }
     }
-}
-
-/// Owns desktop observation and the insertion thread until explicit stop and acknowledged cleanup.
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-pub struct InputMonitor {
-    hook: native::HookMonitor,
-    insertion: insertion::Worker,
-}
-
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-impl InputMonitor {
-    /// Requests native observation and insertion shutdown without joining their threads.
-    pub fn request_stop(&self) {
-        self.hook.request_stop();
-        self.insertion.request_stop();
-    }
-
-    /// Resolves once both threads have retired their native resources; await it before replacing
-    /// or dropping the monitor.
-    pub fn stopped(&self) -> impl Future<Output = ()> + use<> {
-        let hook = self.hook.stopped();
-        let insertion = self.insertion.stopped();
-        async move {
-            hook.await;
-            insertion.await;
-        }
-    }
-}
-
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-impl Drop for InputMonitor {
-    fn drop(&mut self) {
-        self.request_stop();
-    }
-}
-
-/// Starts desktop observation and the insertion thread that serves its matching [`Inserter`].
-///
-/// # Errors
-/// Returns thread startup or native desktop initialization failures.
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-pub fn prepare(input: InputSender, _: DesktopOptions) -> anyhow::Result<(InputMonitor, Inserter)> {
-    let (insertion, inserter) = insertion::Worker::start(input.clone())?;
-    let hook = native::HookMonitor::start(input)?;
-    Ok((InputMonitor { hook, insertion }, inserter))
 }

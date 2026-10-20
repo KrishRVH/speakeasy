@@ -1,5 +1,5 @@
 //! Windows keyboard observation: the Ctrl+Win low-level hook and the lifecycle window that
-//! cancels dictation when the session locks, ends, or sleeps.
+//! cancels dictation when the session locks, ends, or sleeps, started beside the insertion thread.
 //!
 //! The hook thread creates and removes every native resource its callbacks reach.
 
@@ -47,7 +47,10 @@ use windows_sys::{
 };
 
 use super::{OWN_INPUT, is_key_down, ok_or_last_error, send_input, synthetic_key, take_handle};
-use crate::{CANCEL_SHORTCUT, Input, InputSender, OwnedThread, SHORTCUT, keyboard};
+use crate::{
+    CANCEL_SHORTCUT, DesktopOptions, Input, InputSender, Inserter, OwnedThread, SHORTCUT,
+    insertion, keyboard,
+};
 
 /// Posted by the keyboard hook so the message loop, not the hook callback, masks Start.
 const MASK_START: u32 = WM_APP + 1;
@@ -62,44 +65,41 @@ thread_local! {
     static HOOK: RefCell<Option<HookState>> = const { RefCell::new(None) };
 }
 
-/// Owns the keyboard hook thread until explicit stop and acknowledged cleanup.
-pub(crate) struct HookMonitor {
-    thread: OwnedThread,
+/// What `InputMonitor` holds beside the hook thread: the event that stops it, and the insertion
+/// thread.
+pub(crate) struct Monitor {
     // Shared so a stop can end the hook thread's wait, which cannot receive owner messages; the
     // manual-reset event records a stop however early it comes, and closes once both release it.
     wake: Arc<OwnedHandle>,
+    insertion: insertion::Worker,
 }
 
-impl HookMonitor {
-    pub(crate) fn start(input: InputSender) -> anyhow::Result<Self> {
-        let wake = Arc::new(manual_reset_event()?);
-        let thread = OwnedThread::spawn("input-monitor", {
-            let wake = Arc::clone(&wake);
-            move || monitor(&input, &wake)
-        })?;
-        Ok(Self { thread, wake })
-    }
-
-    /// Requests native observation shutdown without joining its thread.
+impl Monitor {
     pub(crate) fn request_stop(&self) {
         // SAFETY: the shared owning handle stays open through native exit; setting a manual-reset
         // event wakes a running or future wait.
         unsafe {
             SetEvent(self.wake.as_raw_handle());
         }
+        self.insertion.request_stop();
     }
 
-    /// Resolves once native resources have retired; await it before replacing or dropping the
-    /// monitor.
     pub(crate) fn stopped(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
-        self.thread.exited()
+        self.insertion.stopped()
     }
 }
 
-impl Drop for HookMonitor {
-    fn drop(&mut self) {
-        self.request_stop();
-    }
+pub(crate) fn start(
+    input: InputSender,
+    _: DesktopOptions,
+) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
+    let (insertion, inserter) = insertion::Worker::start(input.clone())?;
+    let wake = Arc::new(manual_reset_event()?);
+    let thread = OwnedThread::spawn("input-monitor", {
+        let wake = Arc::clone(&wake);
+        move || monitor(&input, &wake)
+    })?;
+    Ok((thread, Monitor { wake, insertion }, inserter))
 }
 
 struct HookState {
