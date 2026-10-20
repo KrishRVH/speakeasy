@@ -50,8 +50,8 @@ and arrows that fade as you go, and click through as usual. Press the shortcut a
 
 Speakeasy picks the keyframes your ink, clicks, and words point at, annotates them, and writes a
 bundle of keyframes, a contact sheet, `summary.md`, and `show.json`. The pill says **Show copied**:
-paste the summary into your agent and it opens the frames itself. Shows record on Windows and Mac;
-Linux follows in a later release. A Mac asks for screen recording access on the first Show.
+paste the summary into your agent and it opens the frames itself. Shows record on Windows, and
+experimentally on Mac; Linux follows in a later release.
 
 ## What's said here stays here
 
@@ -124,11 +124,12 @@ Vulkan development packages.
 
 </details>
 
-Settings also choose the microphone, GPU use, filler removal, clipboard behavior, reduced motion,
+Settings also choose the microphone, GPU use, filler removal, how text is delivered, reduced motion,
 and theme: **Jet & Champagne**, **Emerald Lounge**, **Iris**, or **Midnight Chrome**. Changes apply
-when you save. Appearance, microphone, language, and filler removal changes keep the model loaded.
-Saving stays responsive and preserves edits made while the save is running. Pausing during a save
-keeps dictation paused; Quit finishes requested saves.
+when you save. Theme and reduced-motion changes keep a recording running; microphone, language,
+filler removal, and delivery changes end it but keep the model loaded. Saving stays responsive and
+preserves edits made while the save is running. Pausing during a save keeps dictation paused; Quit
+finishes requested saves.
 
 ## Linux (experimental)
 
@@ -156,33 +157,26 @@ For the tar package, link its absolute `Speakeasy.AppDir/AppRun` path instead, a
 desktop file from `usr/share/applications` inside that directory. For AppImage, make it executable,
 link its absolute path as `speakeasy`, and install the desktop file from this repository or its
 `--appimage-extract` output. The executable stays in the chosen location. Automatic paste needs
-compositor modifier feedback and libei; **Keep clipboard** additionally needs direct text support.
-Choose **Copy for manual paste** if automatic insertion is unavailable. For terminals, select
-**Ctrl+Shift+V** as the paste shortcut. X11 automatic paste uses the first keyboard layout with an
-unshifted V key; other layouts copy and explain how to paste manually.
+compositor modifier feedback and libei; typing needs direct text support as well. Settings'
+**Insert** control chooses **Paste (Ctrl+V)**, **Paste (Ctrl+Shift+V)** for terminals, **Type (Keep
+clipboard)**, or **Copy for manual paste** if automatic insertion is unavailable. X11 automatic
+paste uses the first keyboard layout with an unshifted V key; other layouts copy and explain how to
+paste manually.
 
-For a desktop without suitable shortcut permissions, enable **Desktop bindings** and assign
-`speakeasy --toggle` and `speakeasy --cancel` in its shortcut settings. This mode starts/finishes
-hands-free. Enable manual paste as well to avoid requesting keyboard-control access. On X11, native
-chords can be set in the optional `linux` settings object: `shortcut`, `cancel`, `terminal_paste`,
-`manual_paste`, and `external_shortcut`. Ordinary chord keys use the portal syntax, such as
-`CTRL+LOGO+space`. Save and resume after changing bindings or keyboard maps.
+For a desktop without suitable shortcut permissions, choose **Shortcuts: Desktop bindings** and
+assign the two commands Settings shows in your desktop's shortcut settings: `speakeasy --toggle` and
+`speakeasy --cancel`, with `--config` when you use another settings file. This mode starts/finishes
+hands-free. Choose **Insert: Copy for manual paste** as well to avoid requesting keyboard-control
+access. On X11, native chords can be set in the optional `linux` settings object: `shortcut`,
+`cancel`, `terminal_paste`, `manual_paste`, and `external_shortcut`. Ordinary chord keys use the
+portal syntax, such as `CTRL+LOGO+space`. Save and resume after changing bindings or keyboard maps.
 
 Rendering uses X11 or Xwayland with Vulkan. A tray host is optional: without one, closing Settings
 quits and the launcher reopens the app. Configuration lives under `$XDG_CONFIG_HOME/speakeasy`,
 downloads under `$XDG_DATA_HOME/speakeasy`, and private portal restore credentials under
-`$XDG_STATE_HOME/speakeasy`, with standard home directory defaults. The pinned upstream Linux CPU
-engine has a reported illegal-instruction failure on some CPUs without AVX-512. A synthetic
-inference check precedes readiness, and an incompatible build produces an error; choose a compatible
-engine in Settings. This check does not establish a universal CPU fallback. Engine and desktop
-compatibility remain separate from the app's glibc baseline.
-
-`bash scripts/package-linux.sh` prepares an x86_64 AppImage and bundled tar on an older builder,
-checking glibc 2.35. `--native-tar` makes an unbundled archive for the current machine; extract it
-and run `Speakeasy.AppDir/AppRun`. The release workflow builds Linux on Ubuntu 22.04. Local native
-graphics checks run those binaries in an Ubuntu 24.04 container with stock Mesa, preserving the
-build ABI while exercising a corrected software driver. CPU, memory, latency, and frame pacing
-checks are described in [performance](docs/performance.md).
+`$XDG_STATE_HOME/speakeasy`, with standard home directory defaults. Some CPUs without AVX-512 cannot
+run the pinned Linux CPU engine; Speakeasy checks before readiness and explains how to choose
+another engine in Settings ([details](docs/linux-implementation.md#setup-and-distribution)).
 
 ## Speech engines
 
@@ -196,21 +190,26 @@ GPU** switches between the GPU and the CPU. After a five-minute recording the GP
 speech**, choose its executable and model, and save; switching is always explicit. The known-good
 Windows build is [whisper.cpp b5130](https://github.com/ggml-org/whisper.cpp/releases/tag/b5130):
 extract the complete runtime and choose `Release/whisper-server.exe`. Turn off **Prefer GPU** for a
-CPU-only build. The `threads` setting applies to Whisper and defaults to four.
+CPU-only build. The `threads` setting applies to Whisper and defaults to four. On shared Linux
+machines, prefer Parakeet: other accounts can read Whisper's
+[request route](docs/architecture.md#local-recognition-and-privacy).
 
 The worker stays warm on loopback. With a GPU, one silent request initializes its kernels before the
 first dictation; Linux CPU workers also validate inference before readiness. Cancelling GPU work
 keeps a healthy worker and replaces it if a two-second recovery check fails. Cancelling active CPU
-inference replaces the worker. **Pause dictation** releases the shortcut and the model. Relative
+inference replaces the worker. **Pause dictation** releases the shortcut and the model. On Mac and
+Linux, force-quitting Speakeasy can leave the worker running; quit from its menu instead. Relative
 engine and model paths resolve beside the settings file.
 
 ## Everyday use
 
 Settings live in `%APPDATA%\speakeasy\settings.json` on Windows and
 `~/Library/Application Support/speakeasy/settings.json` on Mac. Start from `settings.example.json`
-and pass `--config <path>` to use another file. Configured launches go straight to the tray or menu
-bar. Closing Settings hides it and keeps unsaved edits; Windows minimize also hides it. Reopening
-Speakeasy or choosing **Settings…** in the tray brings it back.
+and pass `--config <path>` to use another file. Speakeasy reads settings files from other releases,
+and saving writes only the settings you changed, so edits you make to the file by hand stay.
+Configured launches go straight to the tray or menu bar. Closing Settings hides it and keeps unsaved
+edits; Windows minimize also hides it. Reopening Speakeasy or choosing **Settings…** in the tray
+brings it back.
 
 The tray icon shows loading, ready, recording, processing, paused, and attention states. Its menu
 pauses or resumes dictation, starts or finishes a recording, cancels, opens Settings, and quits.
@@ -227,79 +226,53 @@ mise install
 mise run standards:check
 ```
 
-The pinned toolchain and lockfiles make local checks reproducible. The gate checks Rust formatting,
-Clippy, docs, tests, and unused dependencies; Python formatting, lint, types, and fixture tests;
-shell formatting, lint, and syntax; and Markdown formatting, structure, local links, and spelling.
-`mise run standards` applies safe formatters and autofixes. `mise tasks` lists focused checks such
-as `mise run rust:lint` and `mise run py:test`.
+The pinned toolchain and lockfiles make local checks reproducible. `mise run standards` applies safe
+formatters and autofixes, and `mise tasks` lists the focused checks.
 
 Default tests drive the real session owner with mocked microphone, inference, and insertion. A
 paused clock exercises gesture deadlines and the five-minute cap. They never record, install a
 global hook, or touch the clipboard. Run checks locally before pushing to `main`. See the
-[architecture change and test map](docs/architecture.md#change-and-test-map).
+[architecture change and test map](docs/architecture.md#change-and-test-map), and
+[verification](docs/architecture.md#verification) for opt-in tests and their fixtures.
 
 <details>
-<summary>Packaging, fixture tests, and native checks</summary>
+<summary>Packaging and native checks</summary>
 
 <br>
 
 - `scripts/package-windows.ps1`, `bash scripts/package-macos.sh`, and
-  `bash scripts/package-linux.sh` package the app into `artifacts/`. Packages carry no engine or
-  model; setup downloads them on first launch. The Mac bundle carries its microphone usage
-  declaration and a local signature; grant it Microphone and Accessibility access. Distribution
+  `bash scripts/package-linux.sh` package the app into `artifacts/`; `--native-tar` makes an
+  unbundled Linux archive for the current machine. Packages carry no engine or model; setup
+  downloads them on first launch. The Mac bundle carries its microphone usage declaration and a
+  local signature; grant its permissions as [Get started](#get-started) describes. Distribution
   needs Developer ID signing and notarization.
-- With `SPEAKEASY_FIXTURE_CONFIG` pointing at a settings file and `SPEAKEASY_FIXTURE_WAV` at public
-  audio such as whisper.cpp's `samples/jfk.wav`:
-
-  ```sh
-  cargo test -p speakeasy local_worker_recognizes_fixture_and_stops -- --ignored
-  cargo test -p speakeasy profile_fixture_dictation -- --ignored --nocapture
-  ```
-
-  The first checks recognition and worker shutdown. The second times the real session owner and
-  engine with fake capture and insertion; it excludes microphone teardown and OS paste latency. With
-  only `SPEAKEASY_FIXTURE_WAV`, `cargo test -p speakeasy install_chooses -- --ignored` runs setup
-  into a temporary directory, downloading about 0.8 GB, and recognizes the fixture with the build
-  this machine would get.
-
 - `scripts/check-demo-windows.ps1 -Executable <speakeasy.exe>` checks that the demo pill stays
   non-activating and passes clicks through.
   `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks minimize, close, relaunch, and
-  configuration preservation with owned `--demo-tray` windows. On Windows,
-  `cargo test -p speakeasy-platform hidden_pill_consumes_paint -- --ignored` checks hidden and
-  visible paint dispatch with an owned native window and fake renderer, without microphone, hook,
-  clipboard, or input access.
-- On Windows, `cargo test -p speakeasy-platform capture_leaves_out -- --ignored` shows owned windows
-  and checks that capture leaves them out, tallying only their pixels. On Windows and Mac,
-  `cargo test -p speakeasy a_real_screen_records -- --ignored` records the real screen for about a
-  second and checks the footage's shape, keeping no pixels. `profile_show_pipeline`, run the same
-  way with `--release`, times recording and publishing on synthetic desktops.
+  configuration preservation with owned `--demo-tray` windows. `mise run ps:syntax` parses the
+  Windows scripts on a native PowerShell host.
 - On Linux, `mise exec -- python scripts/check_demo_linux.py target/release/speakeasy` opens a
-  private Xvfb display, checks rendered Settings and the pill's input shape, and waits for the
-  simulated preview to hide. It needs Xvfb, x11-utils, and a Vulkan driver. Headless Xvfb checks
-  need Mesa's X11 software presentation fix, included in Mesa 24.1.
-  `bash scripts/check-rendering-linux.sh` builds the native fixtures and runs them, plus the release
-  binary that `package-linux.sh` builds, in an Ubuntu 24.04 Docker container with stock Mesa;
-  `--packages` checks the AppImage and tar launchers locally. The separate
-  `idle_native_pill_starts_unmapped_and_can_show_and_hide` opt-in test verifies the pill starts
-  hidden and supports native show/hide on that private display.
+  private Xvfb display, checks rendered Settings, and checks that the preview shows and then hides
+  the pill. It needs Xvfb, x11-utils, and a Vulkan driver. `bash scripts/check-rendering-linux.sh`
+  runs, in an Ubuntu 24.04 Docker container with stock Mesa, the opt-in `idle_native_pill_` tests of
+  the pill's window hints, input shape, and visibility, the native rendering example, and that demo
+  check on the release binary that `package-linux.sh` builds; `--packages` checks the AppImage and
+  tar launchers instead. [Linux implementation](docs/linux-implementation.md#setup-and-distribution)
+  explains the Mesa requirement.
 - `cargo run --locked -p speakeasy --example check_native_rendering -- --native-gui` opens an owned
   non-activating window, renders an embedded SVG and paths, resizes, and repeats show/hide. It runs
   on the process main thread for AppKit. Linux needs a private display, such as `xvfb-run -a`;
   Windows and Mac use their native desktop. It accesses no microphone, global hook, or clipboard.
-- `.github/workflows/release.yml` builds and uploads Windows, macOS, and Linux packages without
-  running checks or tests. A change to `Cargo.toml` on `main`, or a manual workflow dispatch, starts
-  packaging. Only `main` publishes the GitHub release for the workspace version; manual branch runs
-  upload build artifacts. Bump the workspace version and update `docs/release-notes.md` for each
-  release.
 
-Live microphone-to-editor dictation and interactive macOS use still need hands-on acceptance.
+Live microphone, editor, and screen acceptance is tracked under
+[verification](docs/architecture.md#verification).
 
 </details>
 
 ## Documentation
 
-- [Architecture](docs/architecture.md): module ownership, sessions, recognition, and privacy.
+- [Architecture](docs/architecture.md): the change and test map, cross-module invariants,
+  recognition, privacy, and verification.
 - [Interaction design](docs/interaction-design.md): the brand, the pill, the tray, and interaction
   contracts.
 - [Performance](docs/performance.md): constraints, profiling methods, and native measurement limits.
