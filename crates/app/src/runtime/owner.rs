@@ -68,6 +68,7 @@ impl Notice {
 enum Wake<W> {
     Stop,
     Input(Result<Input, RecvError>),
+    Report(Result<String, RecvError>),
     Configuration(Result<(), watch::error::RecvError>),
     Capture(Result<CaptureEvent, RecvError>),
     Show(Result<ShowEvent, RecvError>),
@@ -84,6 +85,7 @@ struct Owner<P: Ports> {
 
     changes: watch::Receiver<Config>,
     inputs: Receiver<Input>,
+    reports: Receiver<String>,
     stopping: Receiver<Infallible>,
     events: Sender<CaptureEvent>,
     captures: Receiver<CaptureEvent>,
@@ -118,6 +120,7 @@ impl<P: Ports> Owner<P> {
         let Wiring {
             mut changes,
             inputs,
+            reports,
             snapshots,
             permits,
             stopping,
@@ -134,6 +137,7 @@ impl<P: Ports> Owner<P> {
             config,
             changes,
             inputs,
+            reports,
             stopping,
             events,
             captures,
@@ -173,6 +177,7 @@ impl<P: Ports> Owner<P> {
             biased;
             _ = self.stopping.recv() => Wake::Stop,
             input = self.inputs.recv() => Wake::Input(input),
+            report = self.reports.recv() => Wake::Report(report),
             changed = self.changes.changed() => Wake::Configuration(changed),
             event = self.captures.recv() => Wake::Capture(event),
             event = self.shows.recv() => Wake::Show(event),
@@ -189,8 +194,19 @@ impl<P: Ports> Owner<P> {
 
     fn handle(&mut self, wake: Wake<P::Speech>) -> ControlFlow<()> {
         let action = match wake {
-            Wake::Stop | Wake::Configuration(Err(_)) => return ControlFlow::Break(()),
+            // Only `Runtime` holds the report and configuration senders, and dropping it stops first.
+            Wake::Stop | Wake::Report(Err(_)) | Wake::Configuration(Err(_)) => {
+                return ControlFlow::Break(());
+            },
             Wake::Input(input) => self.handle_input(input)?,
+            Wake::Report(Ok(message)) => {
+                // The owner's own state, not a published copy, decides idleness, so a session that
+                // started meanwhile is never overwritten.
+                if self.session.is_none() {
+                    self.outcome = Outcome::Failed(message);
+                }
+                None
+            },
             Wake::Configuration(Ok(())) => {
                 self.configure();
                 None

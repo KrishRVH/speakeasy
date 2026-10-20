@@ -1197,6 +1197,55 @@ async fn delayed_owner_start_cannot_claim_a_newer_shell_publisher() -> anyhow::R
     Ok(())
 }
 
+const REPORT: &str = "Could not delete every expired Show";
+
+#[tokio::test(start_paused = true)]
+async fn an_idle_report_survives_model_load_and_desktop_readiness() -> anyhow::Result<()> {
+    let (results, loading) = async_channel::bounded(1);
+    let mut h = Harness::paused(|ports| {
+        ports.load_results = Some(loading);
+        ports.desktop_pending = true;
+    })?;
+    receive(&h.loads).await?;
+    h.runtime
+        .report(REPORT.into())
+        .map_err(anyhow::Error::msg)?;
+    h.phase(Phase::Error).await?;
+    results.send(Ok(())).await?;
+    h.observe(|snapshot| snapshot.model == ModelState::Ready)
+        .await?;
+    h.input(Input::DesktopReady {
+        shortcut: "fixture shortcut".into(),
+        cancel: "fixture cancel".into(),
+    });
+    h.observe(|snapshot| snapshot.desktop_ready).await?;
+    assert_eq!(h.snapshot().phase, Phase::Error);
+    assert_eq!(h.snapshot().message, REPORT);
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_report_during_a_held_recording_is_dropped_and_the_text_still_pastes()
+-> anyhow::Result<()> {
+    let mut h = Harness::paused(|_| {})?;
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    let (id, events) = receive(&h.captures).await?;
+    h.runtime
+        .report(REPORT.into())
+        .map_err(anyhow::Error::msg)?;
+    // The report lane outranks capture, so the level arrives only after the report is handled.
+    events.send(CaptureEvent::Level(id, 0.25)).await?;
+    h.observe(level_is(0.25)).await?;
+    tokio::time::advance(Duration::from_millis(250)).await;
+    h.input(Input::Release);
+    h.transcribe_next_as("fixture").await?;
+    assert_eq!(receive(&h.pasted).await?, "fixture");
+    h.phase(Phase::Done).await?;
+    assert_eq!(h.snapshot().message, "");
+    h.close().await
+}
+
 #[tokio::test(start_paused = true)]
 async fn recovery_failure_keeps_a_queued_dictation_until_microphone_retirement()
 -> anyhow::Result<()> {

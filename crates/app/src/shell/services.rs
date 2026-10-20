@@ -173,14 +173,23 @@ impl Services {
         }));
     }
 
-    /// Shows `error` unless a recording is under way, which it must not interrupt. The check and
-    /// the write are one step, so a session starting meanwhile is never overwritten.
-    pub(crate) fn publish_error_when_idle(&self, error: &anyhow::Error) {
+    /// Shows `error` unless a recording is under way, which it must not interrupt. A running owner
+    /// keeps it until the next recording or settings change; otherwise the check and the write
+    /// are one step, and no owner remains to publish over it.
+    pub(crate) fn report(&self, error: &anyhow::Error) {
+        let message = error.to_string();
+        let unsent = match self.runtime().filter(|runtime| runtime.is_running()) {
+            Some(runtime) => runtime.report(message),
+            None => Err(message),
+        };
+        let Err(message) = unsent else {
+            return;
+        };
         self.output.send_if_modified(|snapshot| {
             let idle = !snapshot.phase.is_active();
             if idle {
                 snapshot.phase = Phase::Error;
-                snapshot.message = error.to_string();
+                snapshot.message = message;
             }
             idle
         });

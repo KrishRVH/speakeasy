@@ -8,7 +8,7 @@ mod worker;
 
 use std::{convert::Infallible, io, sync::Arc, time::Instant};
 
-use async_channel::{Receiver, Sender};
+use async_channel::{Receiver, Sender, TrySendError};
 use speakeasy_platform::{Input, InputMonitor, InputSender, OwnedThread};
 use tokio::{sync::watch, task::JoinError};
 
@@ -126,6 +126,7 @@ pub(crate) struct Runtime<Owner = OwnedThread> {
     owner: Owner,
     pub input: InputSender,
     configuration: watch::Sender<Config>,
+    reports: Sender<String>,
     stop: Sender<Infallible>,
 }
 
@@ -189,10 +190,13 @@ impl<Owner> Runtime<Owner> {
     ) -> anyhow::Result<Self> {
         let epoch = snapshots.borrow().epoch;
         let (configuration, changes) = watch::channel(config);
+        // One report waits for the owner's next wake; the retention sweep repeats a dropped one.
+        let (reports, reported) = async_channel::bounded(1);
         let (stop, stopping) = async_channel::bounded(1);
         let owner = run(Wiring {
             changes,
             inputs,
+            reports: reported,
             snapshots,
             permits: input.clone(),
             stopping,
@@ -203,8 +207,18 @@ impl<Owner> Runtime<Owner> {
             owner,
             input,
             configuration,
+            reports,
             stop,
         })
+    }
+
+    /// Shows `message` as a failure unless a session is under way, which it must not interrupt.
+    /// A report already waiting absorbs this one; a stopped owner hands `message` back.
+    pub(crate) fn report(&self, message: String) -> Result<(), String> {
+        match self.reports.try_send(message) {
+            Ok(()) | Err(TrySendError::Full(_)) => Ok(()),
+            Err(TrySendError::Closed(message)) => Err(message),
+        }
     }
 
     pub(crate) fn configure(&self, config: Config) {
@@ -231,6 +245,7 @@ impl<Owner> Drop for Runtime<Owner> {
 struct Wiring<P> {
     changes: watch::Receiver<Config>,
     inputs: Receiver<Input>,
+    reports: Receiver<String>,
     snapshots: watch::Sender<Snapshot>,
     permits: InputSender,
     stopping: Receiver<Infallible>,

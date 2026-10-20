@@ -217,10 +217,7 @@ fn launch(
         }
         cx.on_app_quit(release_services).detach();
         if mode.is_resident() {
-            show::attend_retention(
-                |error, cx| cx.global::<Services>().publish_error_when_idle(error),
-                cx,
-            );
+            show::attend_retention(|error, cx| cx.global::<Services>().report(error), cx);
         }
         if configured
             && let Err(error) =
