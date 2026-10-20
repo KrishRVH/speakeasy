@@ -30,7 +30,7 @@ const POINTER_LANE: usize = 256;
 
 /// A Show's screen recording; the session owner finishes or retires it like a microphone.
 pub(crate) struct Recorder {
-    /// Never sends; sending finishes the recording, and closing it cancels.
+    /// Sending finishes the recording; closing it cancels.
     finish: Sender<()>,
     thread: OwnedThread,
 }
@@ -76,6 +76,13 @@ impl Recording for Recorder {
             exited.await;
             drop(self);
         }
+    }
+}
+
+/// A recorder dropped without retiring cancels before its thread joins.
+impl Drop for Recorder {
+    fn drop(&mut self) {
+        self.finish.close();
     }
 }
 
