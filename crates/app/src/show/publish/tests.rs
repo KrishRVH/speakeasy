@@ -247,6 +247,23 @@ fn a_cancelled_show_never_reaches_the_disk() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn a_show_cancelled_while_its_images_encode_never_writes_them() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    // A file where the Shows folder belongs, so any attempt to write the bundle fails the call.
+    let blocked = directory.path().join("shows");
+    fs::write(&blocked, b"")?;
+    let (input, permit) = permit();
+    // The folder is prepared just before encoding begins, after the last check that precedes it.
+    let cancel_while_encoding = || {
+        input.cancel();
+        Ok(blocked.clone())
+    };
+    let (footage, narration) = rehearse(32, 20);
+    assert!(write_bundle(footage, narration, &permit, cancel_while_encoding)?.is_none());
+    Ok(())
+}
+
 fn median_ms(mut timings: Vec<f64>) -> f64 {
     timings.sort_by(f64::total_cmp);
     timings[timings.len() / 2]

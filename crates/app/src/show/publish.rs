@@ -40,8 +40,9 @@ struct Written {
 }
 
 /// Writes a Show as a new bundle in the folder `parent` prepares, or nothing once `permit` is
-/// revoked. `parent` runs only after the last cancellation check, so a cancelled Show never touches
-/// the disk and never fails on a folder it did not need.
+/// revoked. A Show cancelled before it is composed never runs `parent`, one cancelled while its
+/// images encode never writes them, and one cancelled while they are staged stops at commit and
+/// deletes them.
 fn write_bundle(
     footage: Footage,
     narration: Narration,
@@ -70,7 +71,11 @@ fn write_bundle(
         return Ok(None);
     }
     let directory = store::fresh_directory(&parent()?, SystemTime::now())?;
-    let staged = store::stage(&directory, &bundle.files(&directory)?)?;
+    let files = bundle.files(&directory)?;
+    if cancelled() {
+        return Ok(None);
+    }
+    let staged = store::stage(&directory, &files)?;
     if !permit.commit() {
         return Ok(None);
     }
