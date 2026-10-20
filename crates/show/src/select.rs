@@ -253,6 +253,11 @@ impl<'a> Frames<'a> {
         self.samples.len().saturating_sub(1)
     }
 
+    /// Whether frame `other` differs from frame `one` by at least [`NOVELTY`].
+    fn novel(&self, one: usize, other: usize) -> bool {
+        self.signature(one).transition(self.signature(other)) >= NOVELTY
+    }
+
     /// The frame on screen closest to `moment`.
     fn nearest(&self, moment: Moment) -> usize {
         let after = self.samples.partition_point(|sample| sample.at < moment);
@@ -545,14 +550,7 @@ impl Chooser<'_> {
             || self
                 .chosen
                 .iter()
-                .all(|other| self.novel(other.frame, candidate.frame))
-    }
-
-    fn novel(&self, one: usize, other: usize) -> bool {
-        self.frames
-            .signature(one)
-            .transition(self.frames.signature(other))
-            >= NOVELTY
+                .all(|other| self.frames.novel(other.frame, candidate.frame))
     }
 
     fn full(&self, limit: usize) -> bool {
@@ -605,15 +603,13 @@ impl Chooser<'_> {
             .map(|candidate| candidate.frame)
             .collect();
         if self.chosen.len() > 1 && !shown.is_empty() {
+            // A copy of the shared reference, since `retain` borrows `self.chosen` mutably.
             let frames = self.frames;
             self.chosen.retain(|candidate| {
                 !matches!(candidate.basis, Basis::Cue { .. })
-                    || shown.iter().all(|&other| {
-                        frames
-                            .signature(other)
-                            .transition(frames.signature(candidate.frame))
-                            >= NOVELTY
-                    })
+                    || shown
+                        .iter()
+                        .all(|&other| frames.novel(other, candidate.frame))
             });
         }
     }
