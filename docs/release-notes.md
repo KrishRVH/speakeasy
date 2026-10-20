@@ -16,6 +16,7 @@ coding agent can read.
   core, ink holds GPU memory only while it shows, and an idle Speakeasy uses what it did before.
 - New installs set up NeMo-Speech.cpp 0.2.0, which recognizes speech as 0.1.0 did. Existing installs
   keep their engine.
+- Text left on the clipboard for you to paste is a notice that says how, no longer an error.
 - Shift no longer cancels dictation when pressed during a Windows hold.
 - `--demo` previews a Show, with ink drawn and fading on screen on Windows and Mac.
 - Dependencies and tools are updated to their latest stable releases.
