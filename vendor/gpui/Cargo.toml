@@ -280,6 +280,15 @@ package = "gpui_http_client"
 
 [dependencies.image]
 version = "0.25.1"
+features = [
+    "bmp",
+    "gif",
+    "jpeg",
+    "png",
+    "tiff",
+    "webp",
+]
+default-features = false
 
 [dependencies.inventory]
 version = "0.3.19"
