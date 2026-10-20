@@ -113,12 +113,9 @@ pub(super) fn affinity(window: HWND) -> Option<u32> {
 
 /// Leaves `hwnd` out of all screen capture for good, marked so no capture ending restores it.
 pub(super) fn exclude_always(hwnd: HWND) -> anyhow::Result<()> {
-    ensure!(
-        exclusion_supported(),
-        "Shows need Windows 10 version 2004 or later"
-    );
-    // SAFETY: the caller passes a window this thread owns. The subclass
-    // removes the mark before the window is destroyed, as properties require.
+    ensure!(exclusion_supported(), Failure::OldWindows);
+    // SAFETY: the caller passes a window this thread owns. The subclass removes the mark before the
+    // window is destroyed, as properties require.
     unsafe {
         ok_or_last_error(SetPropW(hwnd, ALWAYS_EXCLUDED, hwnd.cast()))?;
         ok_or_last_error(SetWindowSubclass(hwnd, Some(always_excluded), 1, 0))?;
