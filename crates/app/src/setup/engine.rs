@@ -10,13 +10,11 @@ use std::{
 
 #[cfg(target_os = "macos")]
 use anyhow::Context as _;
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "macos"))]
 use anyhow::bail;
 use reqwest::Client;
 use tokio::{sync::watch, time::timeout};
 
-#[cfg(target_os = "windows")]
-use super::system32;
 use super::{
     Installation, Progress,
     archive::{EXECUTABLE, unpack},
@@ -73,14 +71,6 @@ const METAL: Download = Download {
     sha256: "5cb02ba7c04f0b5585ce5cde9c830be5f0b7dfb4c83083c500109c381b4f2da9",
 };
 
-// After a five-minute recording, Parakeet holds about 3.8 GB of GPU memory.
-#[cfg(any(
-    target_os = "windows",
-    all(target_os = "linux", target_arch = "x86_64"),
-    test
-))]
-const GPU_MEMORY: u64 = 6_000_000_000;
-
 /// The engine build setup kept, and whether it should run on the GPU.
 pub(super) struct ChosenEngine {
     pub(super) executable: PathBuf,
@@ -119,8 +109,7 @@ pub(super) async fn choose_engine(
         });
     }
     let cpu = unpack(client, &CPU, root, progress, installation).await?;
-    #[cfg(target_os = "linux")]
-    if doctor(&cpu, installation).await.is_none() {
+    if cfg!(target_os = "linux") && doctor(&cpu, installation).await.is_none() {
         bail!(
             "The downloaded engine cannot run on this Linux CPU. Choose a portable NeMo-Speech.cpp build in Settings."
         );
@@ -165,12 +154,9 @@ pub(super) async fn choose_engine(
     all(target_os = "linux", target_arch = "x86_64")
 ))]
 fn nvidia_driver() -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        system32().join("nvidia-smi.exe").is_file()
-    }
-    #[cfg(target_os = "linux")]
-    {
+    if cfg!(target_os = "windows") {
+        super::system32().join("nvidia-smi.exe").is_file()
+    } else {
         Path::new("/proc/driver/nvidia/version").is_file()
     }
 }
@@ -211,6 +197,8 @@ fn is_accelerated(report: &serde_json::Value) -> bool {
     test
 ))]
 fn has_discrete_gpu(report: &serde_json::Value) -> bool {
+    // After a five-minute recording, Parakeet holds about 3.8 GB of GPU memory.
+    const GPU_MEMORY: u64 = 6_000_000_000;
     is_accelerated(report)
         && report["devices"].as_array().is_some_and(|devices| {
             devices.iter().any(|device| {

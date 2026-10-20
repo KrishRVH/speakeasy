@@ -284,7 +284,6 @@ async fn install(
     })
 }
 
-#[cfg(target_os = "windows")]
 fn system32() -> PathBuf {
     PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
         .join("System32")

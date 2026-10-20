@@ -11,11 +11,10 @@ use anyhow::{Context as _, bail};
 use reqwest::Client;
 use tokio::sync::watch;
 
-#[cfg(target_os = "windows")]
-use super::system32;
 use super::{
     Installation, Progress,
     download::{Download, fetch, file_name},
+    system32,
 };
 use crate::child::hidden_command;
 
@@ -58,10 +57,11 @@ pub(super) async fn unpack(
     remove_engine_directory(&staging)?;
     fs::create_dir_all(&staging)?;
     // The system tar reads this platform's archives; a tar earlier in PATH may not.
-    #[cfg(target_os = "windows")]
-    let tar = system32().join("tar.exe");
-    #[cfg(not(target_os = "windows"))]
-    let tar = PathBuf::from("/usr/bin/tar");
+    let tar = if cfg!(target_os = "windows") {
+        system32().join("tar.exe")
+    } else {
+        PathBuf::from("/usr/bin/tar")
+    };
     let mut command = hidden_command(tar);
     command
         .arg("-xf")
@@ -196,6 +196,64 @@ mod tests {
             b"not a directory"
         );
         assert!(installation.child.is_none());
+        Ok(())
+    }
+
+    /// An uncompressed ustar archive holding one file, a format every system tar reads.
+    fn ustar(name: &str, contents: &[u8]) -> Vec<u8> {
+        let size = format!("{:011o}\0", contents.len());
+        let fields: [(usize, &[u8]); 10] = [
+            (0, name.as_bytes()),
+            (100, b"0000755\0"),
+            (108, b"0000000\0"),
+            (116, b"0000000\0"),
+            (124, size.as_bytes()),
+            (136, b"00000000000\0"),
+            // The checksum counts its own field as spaces.
+            (148, b"        "),
+            (156, b"0"),
+            (257, b"ustar\0"),
+            (263, b"00"),
+        ];
+        let mut header = [0; 512];
+        for (offset, field) in fields {
+            header[offset..][..field.len()].copy_from_slice(field);
+        }
+        let checksum: u32 = header.iter().copied().map(u32::from).sum();
+        header[148..156].copy_from_slice(format!("{checksum:06o}\0 ").as_bytes());
+        let mut archive = header.to_vec();
+        archive.extend_from_slice(contents);
+        // Pad the file to whole blocks, then end the archive with two empty blocks.
+        archive.resize(archive.len().next_multiple_of(512), 0);
+        archive.extend_from_slice(&[0; 1024]);
+        archive
+    }
+
+    #[tokio::test]
+    async fn unpack_extracts_an_engine_with_the_system_tar() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path();
+        fs::create_dir_all(root.join("downloads"))?;
+        let entry = format!("nemo-speech-fixture/{}", EXECUTABLE.replace('\\', "/"));
+        fs::write(
+            root.join("downloads/fixture.tar"),
+            ustar(&entry, b"engine fixture"),
+        )?;
+        let (progress, _) = watch::channel(Progress::default());
+        let mut installation = Installation {
+            child: None,
+            _lock: Installation::lock(root, &progress).await?,
+        };
+        let archive = Download {
+            url: "http://127.0.0.1:0/fixture.tar",
+            size: 0,
+            sha256: "unused: the archive is already downloaded",
+        };
+        let engine = unpack(&Client::new(), &archive, root, &progress, &mut installation).await?;
+        assert_eq!(engine, root.join("engines").join("fixture.tar"));
+        assert_eq!(fs::read(engine.join(EXECUTABLE))?, b"engine fixture");
+        assert!(!root.join("engines/fixture.tar.part").exists());
+        assert!(!root.join("downloads/fixture.tar").exists());
         Ok(())
     }
 }
