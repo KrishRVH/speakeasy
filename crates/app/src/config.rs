@@ -324,11 +324,17 @@ impl Config {
 
 /// Parses `contents` as settings and as the map a save patches, so a file that reads is always one a
 /// save can patch: skipping an unknown key accepts values that holding it does not, such as `1e400`
-/// or a lone surrogate. Settings parse first, so a repair notice names the setting to fix.
+/// or a lone surrogate, and serde reads `linux` from an array that a save cannot patch key by key.
+/// Settings parse first, so a repair notice names the setting to fix.
 fn parse(contents: &[u8], path: &Path) -> anyhow::Result<(Config, Map<String, Value>)> {
-    serde_json::from_slice(contents)
+    let invalid = || format!("Invalid settings in {}", path.display());
+    let (config, file): (Config, Map<String, Value>) = serde_json::from_slice(contents)
         .and_then(|config| Ok((config, serde_json::from_slice(contents)?)))
-        .with_context(|| format!("Invalid settings in {}", path.display()))
+        .with_context(invalid)?;
+    if file.get("linux").is_some_and(|linux| !linux.is_object()) {
+        return Err(anyhow!("The linux settings must be an object").context(invalid()));
+    }
+    Ok((config, file))
 }
 
 /// Linux's own limit on following a chain of links, which also ends a loop of them.

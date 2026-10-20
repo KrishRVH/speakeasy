@@ -264,6 +264,18 @@ fn a_file_that_reads_is_one_a_save_can_patch() -> anyhow::Result<()> {
         let saved = save(&held, &draft, &path).is_ok();
         assert_eq!(read, saved, "{}", String::from_utf8_lossy(retired));
     }
+    // Serde reads a struct from an array too, which a save cannot patch key by key.
+    let mut linux = held.clone();
+    linux.linux.external_shortcut = true;
+    for value in ["[]", "{}"] {
+        fs::write(
+            &path,
+            format!(r#"{{"engine_executable":"e","model":"m","linux":{value}}}"#),
+        )?;
+        let read = Config::read(&path).is_ok();
+        let saved = save(&held, &linux, &path).is_ok();
+        assert_eq!(read, saved, "{value}");
+    }
     Ok(())
 }
 
