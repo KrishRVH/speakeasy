@@ -1,4 +1,5 @@
-//! Pure keyboard policy for the modifier-only shortcuts: Ctrl+Win on Windows, Fn on macOS.
+//! Pure keyboard policy for the modifier-only shortcuts: Ctrl+Win on Windows, Fn on macOS, and
+//! the held-modifier rules for paste and Show ink.
 //!
 //! Native callbacks report key events and deliver the decided input. Modifiers and Escape stay
 //! passive; only Space for hands-free and S for a Show are swallowed, and only during a hold.
@@ -151,6 +152,29 @@ impl Decision {
     }
 }
 
+/// Modifier keys held right now, as the paste wait and Show ink read them.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Modifiers {
+    pub(super) shift: bool,
+    /// Control, Alt or Option, Command, or Windows: any of them makes Shift part of a shortcut.
+    pub(super) shortcut: bool,
+    /// macOS Fn, the hold-to-talk key, which may be down while Shift draws; false on Windows.
+    pub(super) function: bool,
+}
+
+impl Modifiers {
+    /// Insertion waits while any modifier is held, so a paste never merges with the shortcut.
+    pub(super) const fn any(self) -> bool {
+        self.shift || self.shortcut || self.function
+    }
+
+    /// Shift alone draws, so Shift shortcuts never draw; Fn does not count, since the user may
+    /// still be holding it to talk.
+    pub(super) const fn draws(self) -> bool {
+        self.shift && !self.shortcut
+    }
+}
+
 /// Ctrl+Win policy over virtual-key codes from the low-level keyboard hook.
 #[cfg(any(target_os = "windows", test))]
 #[derive(Default)]
@@ -292,6 +316,28 @@ mod tests {
 
     fn key(code: i64, down: bool) -> MacEvent {
         MacEvent::Key { code, down }
+    }
+
+    #[test]
+    fn shift_draws_beside_fn_but_any_modifier_holds_paste() {
+        let held = |shift, shortcut, function| Modifiers {
+            shift,
+            shortcut,
+            function,
+        };
+        assert!(
+            held(true, false, true).draws(),
+            "Shift must draw while Fn is held to talk"
+        );
+        assert!(
+            !held(true, true, false).draws(),
+            "A Shift shortcut must not draw"
+        );
+        assert!(
+            held(false, false, true).any(),
+            "Fn alone must hold the paste"
+        );
+        assert!(!Modifiers::default().any());
     }
 
     #[test]

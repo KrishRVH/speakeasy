@@ -155,7 +155,7 @@ fn serve(requests: &Receiver<Insertion>) {
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 fn serve_one(request: &Insertion) -> anyhow::Result<Inserted> {
-    wait_for_released_modifiers(&request.permit, || Ok(native::modifiers_down()))?;
+    wait_for_released_modifiers(&request.permit, || Ok(native::modifiers().any()))?;
     insert(
         &mut native::Insert::new(),
         &request.text,

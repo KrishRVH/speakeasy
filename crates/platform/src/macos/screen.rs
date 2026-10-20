@@ -43,6 +43,7 @@ use tokio::{runtime, time};
 
 use crate::{
     NativeWindow,
+    keyboard::Modifiers,
     screen::{
         self, Frame, PointerSample, ScreenEvent,
         geometry::{Bounds, fit, narrow, pack_rows, pixels},
@@ -370,14 +371,18 @@ pub(crate) fn pointer(display: Display) -> Option<PointerSample> {
     let [x, y] = display.bounds.normalize(pointer_location()?)?;
     let state = CGEventSourceStateID::CombinedSessionState;
     let flags = CGEventSource::flags_state(state);
-    // Fn is Speakeasy's hold-to-talk key, so it may be down while Shift draws.
-    let chords =
-        CGEventFlags::MaskControl | CGEventFlags::MaskAlternate | CGEventFlags::MaskCommand;
+    let modifiers = Modifiers {
+        shift: flags.contains(CGEventFlags::MaskShift),
+        shortcut: flags.intersects(
+            CGEventFlags::MaskControl | CGEventFlags::MaskAlternate | CGEventFlags::MaskCommand,
+        ),
+        function: flags.contains(CGEventFlags::MaskSecondaryFn),
+    };
     Some(PointerSample {
         at,
         x,
         y,
-        drawing: flags.contains(CGEventFlags::MaskShift) && !flags.intersects(chords),
+        drawing: modifiers.draws(),
         pressed: CGEventSource::button_state(state, CGMouseButton::Left),
     })
 }

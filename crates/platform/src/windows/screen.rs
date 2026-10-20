@@ -58,9 +58,7 @@ use windows_sys::Win32::{
     },
     UI::{
         HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI},
-        Input::KeyboardAndMouse::{
-            VK_CONTROL, VK_LBUTTON, VK_LWIN, VK_MENU, VK_RBUTTON, VK_RWIN, VK_SHIFT,
-        },
+        Input::KeyboardAndMouse::{VK_LBUTTON, VK_RBUTTON},
         WindowsAndMessaging::{
             GetCursorPos, GetSystemMetrics, HWND_TOPMOST, SM_SWAPBUTTON, SW_HIDE,
             SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, ShowWindow,
@@ -176,7 +174,7 @@ pub(crate) fn pointer(display: Display) -> Option<PointerSample> {
         at,
         x,
         y,
-        drawing: shift_alone(),
+        drawing: super::modifiers().draws(),
         pressed: primary_button_down(),
     })
 }
@@ -185,14 +183,6 @@ fn cursor() -> Option<POINT> {
     let mut point = POINT::default();
     // SAFETY: GetCursorPos writes only this live local.
     (unsafe { GetCursorPos(&raw mut point) } != FALSE).then_some(point)
-}
-
-/// Shift held without Ctrl, Alt, or Windows, so Shift shortcuts never draw.
-fn shift_alone() -> bool {
-    is_key_down(VK_SHIFT)
-        && ![VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN]
-            .into_iter()
-            .any(is_key_down)
 }
 
 /// `GetAsyncKeyState` reads physical buttons, so a swapped mouse's primary button is its right one.

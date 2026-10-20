@@ -14,7 +14,7 @@ use windows_sys::Win32::{
     },
 };
 
-use super::{modifiers_down, send_input, synthetic_key};
+use super::{modifiers, send_input, synthetic_key};
 use crate::{Inserted, insertion::NativeInsert};
 
 /// Places `text` on the clipboard, with Windows line endings.
@@ -104,7 +104,7 @@ impl NativeInsert for Insert {
     }
 
     fn shortcut_released(&mut self) -> bool {
-        !modifiers_down()
+        !modifiers().any()
     }
 
     fn send(&mut self, keys: Keys) -> anyhow::Result<Inserted> {

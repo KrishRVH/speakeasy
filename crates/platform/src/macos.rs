@@ -44,7 +44,7 @@ use raw_window_handle::{RawWindowHandle, WindowHandle};
 use super::{
     CANCEL_SHORTCUT, Input, InputSender, Inserted, NativeWindow, OwnedThread, PILL_MARGIN,
     PILL_WIDTH, SHORTCUT, insertion,
-    keyboard::{self, MacEvent},
+    keyboard::{self, MacEvent, Modifiers},
     monitor::MonitorControl,
 };
 
@@ -402,19 +402,30 @@ impl Window {
     }
 }
 
-pub(super) fn modifiers_down() -> bool {
+/// The modifier keys held now, as the session's combined input state reports them.
+pub(super) fn modifiers() -> Modifiers {
     CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
         .and_then(CGEvent::new)
         // An unreadable modifier state counts as held, so insertion waits rather than pasting early.
-        .map_or(true, |event| {
-            event.get_flags().intersects(
-                CGEventFlags::CGEventFlagControl
-                    | CGEventFlags::CGEventFlagAlternate
-                    | CGEventFlags::CGEventFlagCommand
-                    | CGEventFlags::CGEventFlagShift
-                    | CGEventFlags::CGEventFlagSecondaryFn,
-            )
-        })
+        .map_or(
+            Modifiers {
+                shift: false,
+                shortcut: true,
+                function: false,
+            },
+            |event| {
+                let flags = event.get_flags();
+                Modifiers {
+                    shift: flags.contains(CGEventFlags::CGEventFlagShift),
+                    shortcut: flags.intersects(
+                        CGEventFlags::CGEventFlagControl
+                            | CGEventFlags::CGEventFlagAlternate
+                            | CGEventFlags::CGEventFlagCommand,
+                    ),
+                    function: flags.contains(CGEventFlags::CGEventFlagSecondaryFn),
+                }
+            },
+        )
 }
 
 /// Places `text` on the general pasteboard.
@@ -503,7 +514,7 @@ impl insertion::NativeInsert for Insert {
     }
 
     fn shortcut_released(&mut self) -> bool {
-        !modifiers_down()
+        !modifiers().any()
     }
 
     fn send(&mut self, keys: Vec<CGEvent>) -> anyhow::Result<Inserted> {

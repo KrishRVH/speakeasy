@@ -44,6 +44,7 @@ pub use self::insertion::copy_text;
 pub(crate) use self::{input::HookMonitor, insertion::Insert};
 #[cfg(test)]
 use crate::NativeWindow;
+use crate::keyboard::Modifiers;
 
 /// Tags input Speakeasy synthesizes, so its own keyboard hook ignores it.
 const OWN_INPUT: usize = 0x5350_4541;
@@ -55,10 +56,15 @@ fn is_key_down(key: VIRTUAL_KEY) -> bool {
     unsafe { GetAsyncKeyState(i32::from(key)) < 0 }
 }
 
-pub(super) fn modifiers_down() -> bool {
-    [VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN]
-        .into_iter()
-        .any(is_key_down)
+/// The modifier keys physically held now.
+pub(super) fn modifiers() -> Modifiers {
+    Modifiers {
+        shift: is_key_down(VK_SHIFT),
+        shortcut: [VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN]
+            .into_iter()
+            .any(is_key_down),
+        function: false,
+    }
 }
 
 /// Returns whether the system asks apps to reduce motion; Linux uses the app setting.
