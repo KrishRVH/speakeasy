@@ -19,7 +19,7 @@ use super::{
 use crate::{
     audio::{self, InputDevice},
     config::{Config, Engine},
-    gpui_ext::{EntityUpdate, WindowUpdate},
+    gpui_ext::{EntityUpdate, WindowUpdate, follow},
     runtime::Snapshot,
     setup::{Installed, Setup},
     status::Indicator,
@@ -56,17 +56,6 @@ impl Settings {
         cx: &Context<Self>,
     ) -> Self {
         let presentation = Presentation::new(&updates.borrow_and_update(), cx.global::<Services>());
-        let follow_updates = cx.spawn(async move |this, cx| {
-            while updates.changed().await.is_ok() {
-                let snapshot = updates.borrow_and_update().clone();
-                if this
-                    .update(cx, |view, cx| view.apply_snapshot(&snapshot, cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
         let saves = SaveQueue::new(config.clone());
         #[cfg(target_os = "linux")]
         let desktop_command = {
@@ -87,7 +76,9 @@ impl Settings {
             retiring_setups: Vec::new(),
             saving: None,
             saves,
-            _updates: follow_updates,
+            _updates: follow(updates, cx, Snapshot::clone, |view, snapshot, cx| {
+                view.apply_snapshot(&snapshot, cx);
+            }),
             #[cfg(target_os = "linux")]
             desktop_command,
             #[cfg(target_os = "windows")]

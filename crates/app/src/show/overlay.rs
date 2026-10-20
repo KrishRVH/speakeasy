@@ -18,7 +18,7 @@ use speakeasy_show::{Point, ink};
 use tokio::sync::watch;
 
 use crate::{
-    gpui_ext::{EntityUpdate, native_window},
+    gpui_ext::{EntityUpdate, defer_native, follow},
     runtime::{Phase, Snapshot},
 };
 
@@ -144,7 +144,7 @@ struct Overlay {
 impl Overlay {
     fn new(canvas: watch::Receiver<Canvas>, window: &Window, cx: &Context<Self>) -> Self {
         Self {
-            _updates: Self::follow(canvas.clone(), window, cx),
+            _updates: follow(canvas.clone(), cx, Canvas::display, Self::cover),
             canvas,
             window: window.window_handle(),
             display: None,
@@ -153,38 +153,16 @@ impl Overlay {
         }
     }
 
-    /// Redraws on every canvas change while the window and publisher live.
-    fn follow(
-        mut canvas: watch::Receiver<Canvas>,
-        window: &Window,
-        cx: &Context<Self>,
-    ) -> Task<()> {
-        cx.spawn_in(window, async move |this, cx| {
-            while canvas.changed().await.is_ok() {
-                let display = canvas.borrow_and_update().display();
-                if this
-                    .update_in(cx, |overlay, _, cx| overlay.cover(display, cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
-    }
-
-    /// Moves onto `display` and shows, or hides when there is none. Native calls run in a task,
-    /// after the window borrow ends, because showing can synchronously request a frame.
+    /// Moves onto `display` and shows, or hides when there is none, then redraws the ink.
     fn cover(&mut self, display: Option<Display>, cx: &mut Context<Self>) {
         if display != self.display {
             self.display = display;
-            let window = self.window;
-            self.visibility = Some(cx.spawn(async move |_, cx| {
-                if let Ok(Ok(native)) =
-                    cx.update_window(window, |_, window, _| native_window(window, "overlay"))
-                {
-                    place(&native, display);
-                }
-            }));
+            self.visibility = Some(defer_native(
+                self.window,
+                "overlay",
+                cx,
+                move |native, _| place(native, display),
+            ));
         }
         cx.notify();
     }
@@ -339,13 +317,8 @@ pub(crate) fn attend(
     .detach();
 }
 
-fn open(
-    mut canvas: watch::Receiver<Canvas>,
-    cx: &mut App,
-) -> anyhow::Result<WindowHandle<Overlay>> {
+fn open(canvas: watch::Receiver<Canvas>, cx: &mut App) -> anyhow::Result<WindowHandle<Overlay>> {
     let display = cx.primary_display().context("No display available")?;
-    // The overlay first covers the display already waiting in the canvas.
-    canvas.mark_changed();
     let overlay = cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(display.bounds())),

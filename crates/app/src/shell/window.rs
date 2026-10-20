@@ -1,5 +1,4 @@
-//! Opening, showing, and hiding the Settings window, and its file picker. Native windows are
-//! resolved only when used, in tasks that run after GPUI releases the window borrow.
+//! Opening, showing, and hiding the Settings window, and its file picker.
 
 use std::path::PathBuf;
 
@@ -12,7 +11,9 @@ use gpui::{
 };
 
 use super::{Services, settings::Settings};
-use crate::gpui_ext::{AppUpdate, WindowUpdate, native_window};
+#[cfg(target_os = "windows")]
+use crate::gpui_ext::native_window;
+use crate::gpui_ext::{AppUpdate, WindowUpdate, defer_native};
 
 /// Names the Settings window in errors about its native handle.
 const WINDOW_NAME: &str = "Settings";
@@ -99,15 +100,12 @@ fn window_options(cx: &App) -> WindowOptions {
 }
 
 fn set_visible(settings: WindowHandle<Settings>, visible: bool, cx: &mut App) {
-    let task = cx.spawn(async move |cx| {
-        let resolved = settings.update(cx, |_, window, _| native_window(window, WINDOW_NAME));
-        if let Ok(Ok(native)) = resolved {
-            native.set_settings_visible(visible);
-            if visible {
-                cx.update_if_running(|cx| cx.activate(true));
-            } else {
-                cx.update_if_running(show_tray_hint);
-            }
+    let task = defer_native(settings.into(), WINDOW_NAME, cx, move |native, cx| {
+        native.set_settings_visible(visible);
+        if visible {
+            cx.update_if_running(|cx| cx.activate(true));
+        } else {
+            cx.update_if_running(show_tray_hint);
         }
     });
     // Replacing the task cancels a queued hide when Settings is reopened first.

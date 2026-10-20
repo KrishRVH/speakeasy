@@ -19,7 +19,7 @@ use tokio::sync::watch;
 
 use self::{grille::Grille, symbol::Symbol};
 use crate::{
-    gpui_ext::{EntityUpdate, native_window},
+    gpui_ext::{EntityUpdate, defer_native, follow, native_window},
     runtime::{Meter, Phase, Snapshot},
     theme::{Palette, Theme, alpha},
 };
@@ -105,6 +105,7 @@ pub(crate) struct Pill {
     wake: Option<Task<()>>,
     visibility: Option<Task<()>>,
     _updates: Task<()>,
+    _levels: Task<()>,
 }
 
 impl Pill {
@@ -134,44 +135,9 @@ impl Pill {
             frame_pending: false,
             wake: None,
             visibility: None,
-            _updates: Self::follow(updates, levels, window, cx),
+            _updates: follow(updates, cx, Snapshot::clone, Self::apply_snapshot),
+            _levels: follow(levels, cx, |meter| *meter, Self::apply_meter),
         }
-    }
-
-    /// Applies the current snapshot, then each later snapshot and level, while the window and both
-    /// publishers live. A snapshot outranks a level that arrives with it, so the level can match
-    /// the session it belongs to.
-    fn follow(
-        mut updates: watch::Receiver<Snapshot>,
-        mut levels: watch::Receiver<Meter>,
-        window: &Window,
-        cx: &Context<Self>,
-    ) -> Task<()> {
-        updates.mark_changed();
-        cx.spawn_in(window, async move |this, cx| {
-            loop {
-                let applied = tokio::select! {
-                    biased;
-                    changed = updates.changed() => match changed {
-                        Ok(()) => {
-                            let snapshot = updates.borrow_and_update().clone();
-                            this.update_in(cx, |pill, _, cx| pill.apply_snapshot(snapshot, cx))
-                        },
-                        Err(_) => break,
-                    },
-                    changed = levels.changed() => match changed {
-                        Ok(()) => {
-                            let meter = *levels.borrow_and_update();
-                            this.update_in(cx, |pill, _, cx| pill.apply_meter(meter, cx))
-                        },
-                        Err(_) => break,
-                    },
-                };
-                if applied.is_err() {
-                    break;
-                }
-            }
-        })
     }
 
     pub(crate) fn set_reduced_motion(&mut self, reduced_motion: bool) {
@@ -307,7 +273,9 @@ impl Pill {
 
     fn set_visible(&mut self, visible: bool, cx: &App) {
         self.visible = visible;
-        self.visibility = Some(apply_native_visibility(self.window, visible, cx));
+        self.visibility = Some(defer_native(self.window, "pill", cx, move |native, _| {
+            native.set_pill_visible(visible);
+        }));
     }
 
     /// Redraws on the first native frame at or after `frame_due`, staying in display sync without a
@@ -762,17 +730,6 @@ pub(crate) fn open(
     )?;
     configured?;
     Ok(pill)
-}
-
-/// Applies `visible` in a task: native show can synchronously request a GPUI frame, so it must run
-/// after the current window borrow ends. Replacing the task drops, and so cancels, an older one.
-fn apply_native_visibility(pill: AnyWindowHandle, visible: bool, cx: &App) -> Task<()> {
-    cx.spawn(async move |cx| {
-        if let Ok(Ok(native)) = cx.update_window(pill, |_, window, _| native_window(window, "pill"))
-        {
-            native.set_pill_visible(visible);
-        }
-    })
 }
 
 fn feedback_remaining(phase: Phase, show: bool, since_phase: Duration) -> Option<Duration> {
