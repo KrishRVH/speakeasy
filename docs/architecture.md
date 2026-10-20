@@ -3,9 +3,8 @@
 Speakeasy is a Rust desktop app for Windows, macOS, and Linux. GPUI renders Settings and one
 non-activating dictation pill. A session owner coordinates native input, CPAL capture, a local
 speech worker, and insertion into the focused application; a Show adds a screen recorder and
-publishes a bundle instead of inserting. Linux has experimental X11/Wayland desktop support; native
-desktop acceptance is pending. [Linux implementation](linux-implementation.md) records its support
-limits and remaining checks.
+publishes a bundle instead of inserting. Linux support is experimental;
+[Linux implementation](linux-implementation.md) records its limits and remaining checks.
 
 ```mermaid
 flowchart LR
@@ -25,328 +24,212 @@ flowchart LR
     Gate --> Insert
 ```
 
-## Modules
+## Change and test map
 
-| Area                                                             | Responsibility                                                                                                                                                                                                                        |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `crates/core`                                                    | Pure gesture deadlines and analytic motion springs.                                                                                                                                                                                   |
-| `crates/show`                                                    | Pure Show composition: frame signatures, the compressed frame journal, pointer tracking into ink and actions, ink marks, keyframe selection, narration alignment, annotation, the contact sheet, summary, and manifest. No I/O.       |
-| `crates/platform`                                                | Native keyboard input, lifecycle notifications, pill windows, screen capture, pointer sampling, the Show overlay window, the Windows file dialog, insertion, reduced-motion preference, owned threads, and owned process containment. |
-| `crates/app/src/runtime/`                                        | One session owner; recording, inference, cancellation, settings changes, and final insertion ordering.                                                                                                                                |
-| `runtime/session.rs`, `device.rs`, `worker.rs`                   | Session authority and presentation stages; one open or retiring microphone and screen recorder; one ready worker or owned load/inference/recovery job.                                                                                |
-| `crates/platform/src/keyboard.rs`, `monitor.rs`, `insertion.rs`  | Portable keyboard decisions and held-modifier rules, the macOS run-loop stop handshake, and the insertion lane and commit protocol every platform shares; native adapters collect facts and submit effects.                           |
-| `crates/app/src/audio.rs`, `audio/control.rs`, `audio/speech.rs` | CPAL capture, typed callback control, bounded ring, audio levels, speech gate, quiet-edge trimming, and five-minute recording limit.                                                                                                  |
-| `audio/stream.rs`, `pcm.rs`                                      | CPAL streams whose real-time callbacks never allocate or block; mono PCM16 behind a reserved WAV header, encoded in place, with unsealed audio zeroed on drop, best effort.                                                           |
-| `crates/app/src/local_speech.rs`                                 | Warm Whisper or Parakeet process, loopback HTTP, bounded responses, word timings for Shows, and cancellation recovery.                                                                                                                |
-| `crates/app/src/transcript.rs`                                   | Linear transcript whitespace and filler cleanup before insertion or a Show.                                                                                                                                                           |
-| `crates/app/src/runtime/ports.rs`                                | Capture, screen, speech, insertion, and Show publishing interfaces used by the session owner and unattended fixtures.                                                                                                                 |
-| `crates/app/src/pill.rs` and `pill/`                             | Grille pill, measured audio envelope, and frame-driven motion.                                                                                                                                                                        |
-| `crates/app/src/setup.rs` and `setup/`                           | Automatic setup: engine choice through NeMo's doctor, pinned resumable downloads, and extraction.                                                                                                                                     |
-| `crates/app/src/shell.rs` and `shell/`                           | Settings, ordered durable saves, service lifecycle, pause, and coordinated shutdown.                                                                                                                                                  |
-| `crates/app/src/tray.rs` and `tray/`                             | Owned native tray icon, menu actions, and snapshot-driven status updates.                                                                                                                                                             |
-| `crates/app/src/status.rs`                                       | Shared readiness and capture status for Settings and the tray.                                                                                                                                                                        |
-| `crates/app/src/theme.rs`                                        | Selectable color themes shared by Settings, the pill, and the tray.                                                                                                                                                                   |
-| `crates/app/src/icons.rs`                                        | Embedded SVG icons and pill glyphs for GPUI's sprite atlas.                                                                                                                                                                           |
-| `crates/app/src/gpui_ext.rs`                                     | GPUI updates that become no-ops once their entity, window, or app is gone, views that follow a watch channel, and native windows for platform calls, now or deferred past GPUI's window borrow.                                       |
-| `crates/app/src/child.rs`                                        | Hidden child processes, killed with their owner and reaped before anything replaces them.                                                                                                                                             |
-| `crates/app/src/http.rs`                                         | The one HTTP client constructor: rustls on ring with the system trust store on Linux, the OS TLS stack elsewhere.                                                                                                                     |
-| `crates/app/src/instance.rs`                                     | Configuration-directory lock and an owned loopback listener for revealing Settings and dispatching desktop Toggle and Cancel commands.                                                                                                |
-| `crates/app/src/config.rs`                                       | Typed settings, path resolution, validation, and atomic saves.                                                                                                                                                                        |
-| `crates/app/src/paths.rs`                                        | Where Speakeasy keeps files: the roaming settings file and the machine-local data root, inside the user's own folders with no working-directory fallback.                                                                             |
-| `crates/app/src/show.rs` and `show/`                             | Show recording on an owned thread, the ink overlay, publishing, seven-day retention, private all-at-once bundle writes, and the `show` subcommand.                                                                                    |
+Every source file opens with a `//!` summary, and the owning file's summary is its contract;
+`rg -m1 '^//!' crates` lists them. [AGENTS.md](../AGENTS.md#ownership-and-interfaces) maps the
+crates. Find the area you are changing, read its owners, and run their tests, which live in each
+module unless a test file is named.
 
-Core, show, and app forbid unsafe code. Platform contains native FFI with local safety explanations.
-Application tests live beside their modules; dependency regression fixtures under
-`crates/platform/tests` include the patched helpers directly.
+- **Gestures and deadlines**: [core/src/gesture.rs](../crates/core/src/gesture.rs) turns timestamped
+  shortcut transitions into actions and deadlines.
+  [runtime/tests/dictation.rs](../crates/app/src/runtime/tests/dictation.rs) drives the owner on
+  paused Tokio time with production deadlines.
+- **Session owner**: [runtime.rs](../crates/app/src/runtime.rs),
+  [runtime/owner.rs](../crates/app/src/runtime/owner.rs),
+  [session.rs](../crates/app/src/runtime/session.rs),
+  [device.rs](../crates/app/src/runtime/device.rs),
+  [worker.rs](../crates/app/src/runtime/worker.rs), and the
+  [ports.rs](../crates/app/src/runtime/ports.rs) seam own a session's authority, devices, and
+  worker. [runtime/tests.rs](../crates/app/src/runtime/tests.rs) hosts the owner on fakes;
+  [tests/model.rs](../crates/app/src/runtime/tests/model.rs) checks device release over generated
+  input.
+- **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
+  [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
+  [pcm.rs](../crates/app/src/audio/pcm.rs), and [speech.rs](../crates/app/src/audio/speech.rs)
+  capture, meter, and seal a trimmed WAV before driver teardown.
+  [audio/tests.rs](../crates/app/src/audio/tests.rs) and
+  [stream/tests.rs](../crates/app/src/audio/stream/tests.rs) use synthetic samples.
+- **Local recognition**: [local_speech.rs](../crates/app/src/local_speech.rs),
+  [child.rs](../crates/app/src/child.rs), [http.rs](../crates/app/src/http.rs), and
+  [platform/src/process.rs](../crates/platform/src/process.rs) start, query, and reap engines.
+  [local_speech/tests.rs](../crates/app/src/local_speech/tests.rs) controls process exit and
+  cancellation.
+- **Transcript cleanup**: [transcript.rs](../crates/app/src/transcript.rs), with the filler policy
+  in `Config::fillers` ([config.rs](../crates/app/src/config.rs)). Tested in transcript.rs.
+- **Insertion**: [platform/src/insertion.rs](../crates/platform/src/insertion.rs),
+  [input.rs](../crates/platform/src/input.rs),
+  [windows/insertion.rs](../crates/platform/src/windows/insertion.rs),
+  [macos.rs](../crates/platform/src/macos.rs), [linux/x11/](../crates/platform/src/linux/x11), and
+  [linux/portal/](../crates/platform/src/linux/portal) own delivery, the permit commit, and
+  clipboard checks. [insertion/tests.rs](../crates/platform/src/insertion/tests.rs) and the input,
+  X11, and portal modules test them.
+- **Shortcuts and desktop adapters**: [keyboard.rs](../crates/platform/src/keyboard.rs),
+  [desktop.rs](../crates/platform/src/desktop.rs), [monitor.rs](../crates/platform/src/monitor.rs),
+  [owned_thread.rs](../crates/platform/src/owned_thread.rs),
+  [windows.rs](../crates/platform/src/windows.rs) and [windows/](../crates/platform/src/windows),
+  [macos.rs](../crates/platform/src/macos.rs), and [linux.rs](../crates/platform/src/linux.rs) with
+  [linux/](../crates/platform/src/linux) observe shortcuts and present native windows. Pure key
+  decisions run on every host; native hooks need opt-in.
+- **Pill and motion**: [pill.rs](../crates/app/src/pill.rs) and [pill/](../crates/app/src/pill),
+  [core/src/motion.rs](../crates/core/src/motion.rs), [gpui_ext.rs](../crates/app/src/gpui_ext.rs),
+  [icons.rs](../crates/app/src/icons.rs), and [theme.rs](../crates/app/src/theme.rs) animate the
+  latest snapshot. [pill/native_tests.rs](../crates/app/src/pill/native_tests.rs) is opt-in on a
+  private display.
+- **Settings and the settings file**: [shell/settings.rs](../crates/app/src/shell/settings.rs) and
+  [settings/render.rs](../crates/app/src/shell/settings/render.rs) edit a draft;
+  [config.rs](../crates/app/src/config.rs) and [paths.rs](../crates/app/src/paths.rs) own the file
+  contract and where it lives. [config/tests.rs](../crates/app/src/config/tests.rs) pins that
+  contract.
+- **Pause, reconfigure, quit, and saves**: [shell.rs](../crates/app/src/shell.rs),
+  [services.rs](../crates/app/src/shell/services.rs),
+  [lifecycle.rs](../crates/app/src/shell/lifecycle.rs),
+  [shutdown.rs](../crates/app/src/shell/shutdown.rs), [save.rs](../crates/app/src/shell/save.rs),
+  [window.rs](../crates/app/src/shell/window.rs), and [main.rs](../crates/app/src/main.rs).
+  Lifecycle and save tests check terminal Quit, ordered writes, and edits or Pause after Save.
+- **Setup**: [setup.rs](../crates/app/src/setup.rs) and [setup/](../crates/app/src/setup) choose,
+  download, verify, and unpack engines; a full install is opt-in.
+- **Tray and status**: [tray.rs](../crates/app/src/tray.rs), [tray/](../crates/app/src/tray),
+  [status.rs](../crates/app/src/status.rs), and
+  [platform/src/linux/tray.rs](../crates/platform/src/linux/tray.rs) mirror service state.
+- **Instance and relaunch**: [instance.rs](../crates/app/src/instance.rs) owns the lock and the
+  secret-gated loopback commands.
+- **Show recording and publication**: [show.rs](../crates/app/src/show.rs),
+  [show/recorder.rs](../crates/app/src/show/recorder.rs),
+  [show/publish.rs](../crates/app/src/show/publish.rs), and the session owner.
+  [runtime/tests/shows.rs](../crates/app/src/runtime/tests/shows.rs) drives Shows with a fake
+  screen; [show/publish/tests.rs](../crates/app/src/show/publish/tests.rs) checks every published
+  file and the cancel path.
+- **Show composition**: [crates/show/src](../crates/show/src), notably
+  [select.rs](../crates/show/src/select.rs) and [select/](../crates/show/src/select),
+  [journal.rs](../crates/show/src/journal.rs), [tracker.rs](../crates/show/src/tracker.rs),
+  [align.rs](../crates/show/src/align.rs), [sheet.rs](../crates/show/src/sheet.rs), and
+  [demo.rs](../crates/show/src/demo.rs), tested in their modules and
+  [select/tests.rs](../crates/show/src/select/tests.rs); `speakeasy show demo` writes a bundle to
+  view.
+- **Show bundle format**: [bundle.rs](../crates/show/src/bundle.rs) and
+  [describe.rs](../crates/show/src/describe.rs). A golden `show.json` in bundle.rs and the demo's
+  summary in demo.rs pin what agents read.
+- **Show store**: [show/store.rs](../crates/app/src/show/store.rs) names, writes, and expires
+  bundles.
+- **Screen capture and overlay**: [platform/src/screen.rs](../crates/platform/src/screen.rs),
+  [screen/geometry.rs](../crates/platform/src/screen/geometry.rs),
+  [windows/screen.rs](../crates/platform/src/windows/screen.rs) with
+  [windows/screen/](../crates/platform/src/windows/screen),
+  [macos/screen.rs](../crates/platform/src/macos/screen.rs), and
+  [show/overlay.rs](../crates/app/src/show/overlay.rs). Geometry and overlay timing run on every
+  host; native capture is opt-in.
+- **Scripts and packaging**: [scripts/](../scripts) and [packaging/](../packaging) profile, package,
+  and launch the app, checked by [tests/test_profiling.py](../tests/test_profiling.py) and
+  [tests/test_launchers.py](../tests/test_launchers.py).
+- **Dependency patches**: the root Cargo patch selects a narrowly patched GPUI 0.2.2;
+  [vendor/gpui](../vendor/gpui/README.speakeasy.md) and
+  [vendor/gpui_media](../vendor/gpui_media/README.speakeasy.md) record each patched contract, and
+  [platform/tests/](../crates/platform/tests) checks them.
 
-The root Cargo patch selects a narrowly patched GPUI 0.2.2 source under `vendor/gpui`, outside the
-workspace. Its native handle, visibility, queued-event, timing, frame-source lifetime, and
-rendering-resource contracts are documented in
-[the dependency patch](../vendor/gpui/README.speakeasy.md). Unmodified upstream files and the
-license are preserved; regression checks cover the patched behavior.
+## Cross-module invariants
 
-## Session ownership
+No single module owns these rules; a change to any party keeps them.
 
-Capture starts on the first shortcut press. Hold/release finishes a recording; Space during the hold
-on Windows/macOS or a double-tap enables hands-free capture, and another press finishes it. A short
-single tap finishes after the double-tap window. S during a Windows/macOS hold makes a
-[Show](#shows). Windows/macOS Escape passes to the focused app; Linux uses a reserved cancel chord
-or explicit desktop command. Both invalidate the insertion gate immediately. The five-minute cap is
-independent of UI animation.
+- **Revoke before cleanup.** Escape, the Linux cancel chord, a settings change, Pause, and Quit
+  revoke the recording's insertion permit before any cleanup is awaited, even while a clipboard call
+  is blocked. `commit()` runs immediately before the irreversible effect, and an obsolete permit
+  never authorizes newer work.
+- **One identity-and-stage lookup.** Capture, screen, and worker events carry a typed `SessionId`,
+  applied only after one lookup matches identity and stage, so a late callback cannot stop a newer
+  recording, overwrite its state, or deliver stale text.
+- **Retire before reopening.** A microphone, screen recorder, worker, insertion thread, or desktop
+  service acknowledges native teardown before its replacement opens. Retiring work stays owned until
+  then, and abandoning a session never waits for it.
+- **Snapshots only present.** The owner decides from owned state and publishes coalesced snapshots;
+  views never read PCM, and their timers cannot publish session state. Meter levels travel on their
+  own lane, applied only to the matching epoch and recording.
+- **The lifecycle epoch fences publishers.** An owner takes the shell's epoch before its thread
+  starts and publishes only while that epoch is current, so a retiring owner cannot replace a newer
+  pause or quit notice.
+- **Quit drains without a timeout.** Every application-owned Quit route awaits audio teardown,
+  process reaping, insertion, setup, and requested saves while rendering continues. The instance
+  lock is released after the last Settings writer.
+- **Reports go through the owner.** Background failures, such as a failed retention sweep, reach a
+  running owner's report lane and never interrupt a recording; without an owner, Services shows them
+  while idle.
+- **A Show appears only after commit.** Publishing composes and stages the bundle off the owner's
+  thread in a private `.partial-*` directory. The bundle appears and its summary is copied only once
+  the permit commits; a Show cancelled first leaves no bundle and no clipboard change.
+- **Insertion is never repeated.** Validation precedes the single commit. After it, a native failure
+  reports a partial, unavailable, or manual-paste outcome. Submission cannot prove that an editor
+  accepted the text, and Escape cannot retract input already submitted.
+- **Private content stays out of diagnostics.** Audio, transcripts, worker output, engine stderr,
+  and screen pixels never reach logs or error messages; join failures and panics report fixed
+  messages.
 
-Capture owns its microphone thread. Finishing stops callback publication, waits for in-flight
-packets, and reports sealed audio before native stream teardown, so recognition can overlap cleanup.
-Cancellation also quiesces callbacks. Both retire the microphone asynchronously; a retry waits for
-device teardown before opening another capture. Shortcut monitoring initializes off the UI thread on
-every platform and reports desktop readiness through the session's input channel. Pause starts
-microphone, speech, and shortcut cleanup together and waits for their owned completion. The shell
-retains thread-affine native monitors on the UI thread through retirement. Application-owned Quit
-requests enter a terminal lifecycle state, stop services and setup, drain requested saves, and await
-cleanup while rendering continues. Repeated Quit requests are harmless, and delayed
-validation/save/setup completion cannot re-enable dictation. The instance lock is released after
-Settings writers. Cleanup waits without a time limit for audio-driver teardown, process reaping,
-insertion, setup, and saves. A stuck owner leaves Quitting visible while the UI remains responsive.
-Native forced termination still uses synchronous disposal as a fallback; its responsiveness requires
-native acceptance before changing GPUI termination handling.
+### Session ownership
 
-`runtime.rs` exposes start, configure, stop, and a completion acknowledgement. `owner.rs` receives
-one wake, handles it, advances ready work, and publishes a snapshot. Its decisions use owned state;
-snapshots are presentation only. `Session` owns a generation-bound permit and its current stage.
-Each `Device`, microphone or screen, is `Free`, `Open`, or `Retiring`; only a `Free` device opens.
-`Worker` is unavailable, loading (including recovery after a cancelled transcription), ready, or
-transcribing; load and transcription jobs have different result types. Replacement consumes the old
-job and reaps its process before loading another. Stopping capture during a failed warmup retains
-the gesture and device until audio completion; the next on-demand load can retry without a warmup
-retry loop.
-
-Capture callbacks carry a typed `SessionId`. One lookup checks both identity and capture stage.
-Moving inference or insertion handles out of the observation path makes their obsolete results
-unable to change the current session. Cancellation revokes the permit before waiting for cleanup.
-Callback atomics control capture and cancellation; other state changes arrive as messages. The UI
-receives coalesced snapshots of session state and never reads PCM; levels reach only the pill, on a
-separate meter lane tagged with epoch and session. A lifecycle epoch captured before thread startup
-prevents an old publisher from replacing a newer shell pause/quit notice.
+Capture starts on the first shortcut press, and the five-minute cap holds whatever the UI animates;
+[interaction design](interaction-design.md#interaction-contracts) owns the gestures. Each wake of
+`owner.rs` handles one message, advances ready work, and publishes a snapshot. A `Session` holds its
+permit and one stage:
 
 ```mermaid
 stateDiagram-v2
+    state "AwaitingFootage(Narration)" as AwaitingFootage
     [*] --> Queued
     Queued --> Opening: microphone free
     Opening --> Recording: first samples
     Opening --> Stopping: finish requested
     Recording --> Stopping: release / next press / limit
-    Stopping --> AwaitingWorker: audio complete; retire microphone
+    Stopping --> AwaitingWorker: audio sealed; retire microphone
+    Stopping --> [*]: no speech
     AwaitingWorker --> Transcribing: worker ready
-    Transcribing --> Delivering: nonempty text; insert
-    Stopping --> AwaitingFootage: silent Show
+    Transcribing --> Delivering: dictation text; insert
+    Transcribing --> [*]: no speech
+    Stopping --> AwaitingFootage: silent Show; empty narration
     Transcribing --> AwaitingFootage: Show narration
-    AwaitingFootage --> Delivering: footage complete; publish
-    Delivering --> [*]: submitted / copied / cancelled
+    AwaitingFootage --> Delivering: footage recorded; publish
+    Delivering --> [*]: Done / Copied / Cancelled / Error
     Recording --> [*]: cancel; revoke permit and retire
     Transcribing --> [*]: cancel; revoke permit and recover worker
 ```
 
-The shell lifecycle owns one runtime/monitor pair: disabled, validating, running, stopping with an
-optional latest configuration, or quitting. Retiring owners remain retained until both acknowledge.
-A second pause discards a pending resume; quitting is terminal. Validation epochs also protect
-delayed saves from resuming an intentionally paused app. Snapshots distinguish model readiness from
-capture state, and empty recognition from submitted input. Only native input submission produces the
-completion check. View-owned feedback timers redraw the current snapshot; they cannot publish
-session changes. A weak view callback checks animation deadlines on native frames within the
-[frame budget](performance.md#implementation-constraints), without a repeating timer. Meter updates
-coalesce into the pending frame; session changes redraw immediately. Native visibility work resolves
-the latest pill state before showing or hiding it, so a queued dismissal cannot hide a later
-recording.
-
-Settings stays alive when hidden, preserving unsaved edits. On Windows, file choices use a native
-Open dialog on its own thread; shown from GPUI's UI thread, the dialog stays unpainted while GPUI is
-idle. Windows intercepts the native minimize command with a window-owned subclass and enqueues a
-hide; macOS retains its normal minimize behavior. Native show/hide runs outside GPUI borrows. The
-Windows pill consumes hidden paint messages with a native paint cycle; merely validating its region
-can leave paint pending and spin the message loop. Visible paint reaches GPUI. Tray tasks are
-cancelled before session services are retired at quit.
-
-Settings validation and durable saves run off the UI thread. Saves serialize the requested drafts,
-coalescing queued requests to the latest one, and each write patches only the keys changed since the
-last successful write. Completion preserves edits made after Save, and Pause invalidates a pending
-enable request. Quit waits for requested writes. Resume validates configured files in the background
-before enabling dictation.
-
-Relaunch discovery uses `instance.port` next to the locked `instance.lock`; only the user can read
-its port and per-launch secret. The loopback listener answers nothing until a caller presents the
-secret, then reads one fixed Reveal, Toggle, or Cancel command; a caller that times out before the
-acknowledgement has delivered nothing. It carries no audio or transcript data. Linux exposes
-Toggle/Cancel only when desktop command bindings are enabled. Its thread sleeps in accept, is
-explicitly woken and joined at shutdown, and holds the lock until cleanup finishes. The first-hide
-hint is remembered in `tray-hint-seen` beside settings without rewriting the user's configuration.
-
-The audio callback writes to a bounded ring without allocating. The speech meter spans −60 to −6
-dBFS; its top is a speech reference, not a clipping indication. Unencoded PCM is zeroed whenever its
-buffer drops, and a captured WAV awaiting a worker is zeroed if its session ends; neither erases
-copies in the ring, allocator, HTTP client, or engine. A consumer owns mono PCM at the device's
-sample rate, begins with a ten-second reservation, and grows only up to the recording limit. A
-native discontinuity before the first sample is queued does not abort startup. After that, a
-discontinuity fails the recording rather than silently transcribing potentially incomplete speech.
-Refused real-time priority and automatic route changes keep the stream active. Fatal stream errors
-return through a bounded, nonblocking channel with their driver details, while a full application
-ring has a separate error. The consumer classifies complete 20 ms speech windows while recording,
-leaving the final partial window for finish. It requires 100 ms of audible windows, trims quiet
-edges of at least one second while retaining 500 ms padding, and preserves interior pauses. WAV
-preparation reuses the PCM allocation and stays off the UI. The native acceptance procedure is in
-[performance](performance.md#native-acceptance). Heavily trimmed recordings release excess PCM
-capacity when at least 8 MiB is unused and capacity is at least four times the remaining length.
-
-## Setup
-
-A fresh install opens Settings and starts setup; later launches offer it only while no engine is
-configured. Setup owns its thread and runtime. Cancel signals it immediately and retains it until
-cleanup acknowledges; Quit joins active and retiring setup work. A machine-local `setup.lock`
-serializes directory writes across retries and app instances. Cancellation terminates and waits for
-the owned extraction or doctor process before releasing that lock; partial downloads remain
-available to resume. It chooses a NeMo-Speech.cpp build by asking each candidate's `doctor` command
-whether its accelerator works: CUDA when an NVIDIA driver and a working GPU of at least 6 GB are
-present; otherwise the Vulkan build, using the GPU only with at least 6 GB; and the CPU build only
-when Vulkan cannot run. Apple silicon uses Metal.
-
-Downloads use pinned GitHub release and Hugging Face revision URLs. Each is written beside its
-destination as a `.part` file, resumed with an HTTP range request, and renamed into place only after
-its size and SHA-256 match. A complete partial file is verified locally without another download.
-Resumed data is hashed in bounded chunks with cancellation opportunities between reads. The system
-`tar` unpacks engine archives into a staging directory that is then renamed, and unused builds are
-removed. The result is saved like a manual choice and enables dictation.
-
-## Local recognition
-
-The configured `engine_executable` and model select one explicitly chosen engine: Parakeet, on the
-GPU or CPU, or Whisper. These are external native inference processes; the desktop application is
-Rust. Audio is posted from memory to the owned worker on loopback, through a client without proxies,
-redirects, or reused connections. On Linux and Windows, readiness and every request first require
-that the worker's own process group holds the listener on its port; macOS does not check yet. Worker
-output and transcripts are not retained in diagnostic logs.
-
-Model loading starts in the background. GPU preference adds a silent warmup request before
-readiness. Linux CPU workers also validate one synthetic inference before readiness, because model
-loading alone cannot establish CPU compatibility. Whisper language travels with each request, so a
-language change does not reload the model. Whisper uses full context and default timestamp decoding.
-
-The transcription job runs `transcript::for_insertion` for either engine before publishing its
-result. Engine segment whitespace becomes single spaces, never Enter presses. With `remove_fillers`
-enabled (the default), whitespace-delimited “um” and “uh” tokens are removed without case
-sensitivity, including adjacent pause punctuation; compounds, identifiers, and individually quoted
-tokens stay literal. Whisper only removes fillers for explicit English requests; other languages and
-`auto` preserve literal words. Parakeet auto-detects without returning language metadata, so its
-cleanup switch expresses the user's English preference; disable it for other languages. Request-time
-preferences travel with the transcription job and do not reload the model. Cleanup removes a
-preceding filler comma and preserves sentence endings after content. Filler-only results follow the
-empty-recognition path without insertion. Cleanup takes linear time and one output allocation,
-without token collections, regular expressions, another model, or a background service.
-
-GPU cancellation drops the request and checks recovery with a bounded silent inference. A failed
-two-second recovery terminates and waits for the worker before replacement. Cancellation of active
-CPU inference terminates the worker and reloads it. Windows Job Objects terminate owned children
-when the app exits. Unix process groups are cleaned up during orderly shutdown; a force-quit can
-leave a worker running. Pause retires the runtime asynchronously; Quit waits for owned cleanup. A
-failed warmup does not retry-loop. Startup errors report the exit status and a local remedy for
-unsupported CPU instructions, Windows loader errors, or incompatible server arguments. Engine stderr
-remains discarded because it can include private text; diagnostic messages never forward engine
-output. Model startup and inference receive cooperative cancellation. Retirement waits for process
-exit before loading a replacement, while the session owner continues receiving input.
-
-## Shows
-
-S during a Windows/macOS hold turns the recording into a Show and locks it hands-free; the next
-press finishes it. The microphone keeps recording, so words spoken before S belong to the Show. The
-screen recorder is a second owned device beside the microphone: it opens once its predecessor
-retires, even after the narration has ended, finishes whenever capture ends, and retires without
-being awaited when the session is cancelled or fails. A recorder finished before its first frame
-waits up to three seconds for one. Linux has no screen adapter yet, so its shortcuts never deliver
-S.
-
-The recorder runs on an owned thread with its own current-thread runtime. It captures the display
-under the pointer every 200 ms, halving frames until the long edge fits 2,560 pixels, and keeps each
-frame's signature plus a copy in the journal: 64-pixel tiles, Sub-filtered and deflated, storing
-only tiles that changed. The journal holds at most 384 MB compressed: past it, every second frame is
-dropped, its tiles passing to the next frame, and only every second arrival is kept from then on, so
-a long, busy Show keeps even coverage within the cap. Signatures thin with the frames, so selection
-only picks frames it holds. The pointer is sampled every 8 ms. The tracker turns movement with Shift
-alone into strokes once they span 6 pixels, and button presses into clicks or drags at a 12-pixel
-threshold; a Shift press is never a click. Live strokes reach the overlay through a watch channel.
-
-The overlay is a click-through, non-activating GPUI window over the recorded display. It opens for
-each Show and closes when the Show ends, because a full-screen window holds GPU memory the size of
-its display; a failure to open it is reported once a launch, and each later Show tries again. Ink
-holds for 650 ms after the pen lifts, then fades over 650 ms; a stroke begun after the fade starts a
-clean canvas. Capture leaves out every Speakeasy window, including the overlay and pill, for its
-whole lifetime: macOS filters out the application, and Windows sets display affinity on each of the
-process's top-level windows, rechecks them with every frame, and restores them at stop. Frames
-therefore show ink only as the bundle redraws it.
-
-Narration carries word timings (`Detail::Words`): Parakeet words, or Whisper tokens joined at their
-leading spaces. `Session::narrate` moves them from the audio's start onto the Show's timeline, which
-begins with the session, adding the microphone's start delay and the quiet trimmed before speech. A
-silent Show publishes with empty narration. `AwaitingFootage` holds the narration, awaiting footage.
-Publishing selects keyframes, reads them from the journal, composes the bundle, and stages it in a
-hidden `.partial-*` sibling off the owner's thread. The bundle appears, and its summary is copied,
-only once the session's permit commits. A Show cancelled before then leaves no bundle and no
-clipboard change: publication checks the permit before each costly step and deletes anything it
-staged.
-
-Shows live in `<data root>/shows/<UTC stamp>`. On Unix, `shows` and each bundle are mode `0700`, and
-publishing refuses a linked `shows`; on Windows they sit inside the user's local application data.
-The resident app sweeps at launch and hourly, deleting stamp-named bundles older than seven days
-unless they hold a `.pinned` file, and staging older than an hour. Other names and links are never
-touched, and a pin that cannot be read still keeps its Show. A failed sweep is reported unless a
-recording is under way, and again at each sweep until it succeeds.
-
-## Insertion and privacy
-
-Insertion is asynchronous and owns a generation-bound commit permit. Native preparation cannot block
-the session owner or authorize a newer recording. Only the currently owned completion can update the
-session; shutdown awaits obsolete insertion cleanup.
-
-Insertion waits up to 800 ms for physical modifiers to be released, rechecking every 2 ms. Normal
-mode writes text to the clipboard and submits the platform paste shortcut. Windows clipboard
-sequence and Mac change-count checks preserve newer copies. Linux uses X11 selection ownership or
-portal ownership notifications; it never restores a stale clipboard payload during cleanup. If
-automatic paste cannot proceed after copying, Settings explains how to paste manually. Target focus
-takes precedence over held modifiers on Windows and macOS. Linux follows X11/Xwayland focus
-ancestors and checks `_NET_WM_PID` immediately before submitting input; own Settings windows and
-failed focus lookups use manual paste. On the portal path, X focus None means no Speakeasy X window
-is focused; PointerRoot stays refused. These read-only focus queries run on the owned X worker,
-keeping portal cancellation responsive; its native clipboard is opened only for paste requests. GPUI
-currently renders through X11/Xwayland on Linux, including Wayland sessions. Correct focus loss when
-switching to a native Wayland editor remains a native acceptance item. Linux manual copy skips
-modifier waiting. X11 enqueues the entire paste and its releases before one server synchronization,
-then checks every submission. Wayland clipboard preparation and bounded selection transfers remain
-owned by the desktop service; blocking X11 fallback clipboard calls use a serialized worker. Serving
-a committed clipboard selection outlives its paste permit and ends when that selection loses
-ownership or the service retires.
-
-**Keep clipboard** uses native Unicode input and leaves the clipboard untouched. Linux requires
-advertised EI text support; X11 reports this mode as unavailable. All text validation precedes the
-single permit commit. After commit, a native failure reports a partial/unavailable submission or
-manual-paste outcome and is never automatically repeated. Both paths check cancellation before
-committing native input. Submission cannot prove that an editor accepted the text, and Escape cannot
-retract input already submitted to the OS.
+## Local recognition and privacy
 
 There are no accounts, cloud providers, dictation history, or telemetry. The microphone opens only
 when dictation is triggered, and the screen only for a Show. Remote microphone routing belongs to
 the OS and the user's audio bridge; see [remote dictation](remote-dictation.md).
 
+The speech worker listens on loopback only. On Linux and Windows, readiness and every request first
+check that the worker's own process group holds its listener; macOS does not check yet. Each worker
+gets a fresh random key. Parakeet receives it in its owner-only environment, but whisper-server
+accepts its route only on the command line, so on Linux other local accounts can read it through
+`/proc` unless `/proc` is mounted with `hidepid`. That route is the only guard on Whisper's
+`/inference` and model-loading `/load` requests, so prefer Parakeet on shared Linux machines;
+automatic setup installs it.
+
 ## Verification
 
-`mise run standards:check` is the local gate. Run native checks locally on their target platform; CI
-only builds and publishes release packages. From Linux,
-`cargo clippy -p speakeasy-platform -p speakeasy-core --all-targets --locked --target aarch64-apple-darwin -- -D warnings`
-(and the same with `--target x86_64-pc-windows-msvc`) type-checks the native adapters; it cannot
-verify native runtime behavior or the SDK-dependent GPUI application build.
+`mise run standards:check` is the local gate; CI only builds and publishes release packages. The
+gate also type-checks `speakeasy-platform` for Windows and macOS, but the app's platform code and
+all native runtime behavior need checks on their own platform.
 
-Default checks use fake capture and insertion. Public-audio fixtures exercise the real session owner
-and local worker; `--demo` uses the actual views with scripted levels and no microphone, global
-hook, or insertion. Native microphone/screen/editor acceptance requires explicit opt-in and is
-reported separately. Build commands are in the [README](../README.md); profiling methods and
-remaining performance gaps are in [performance](performance.md).
+Default checks use fake capture and insertion; opt-in public-audio fixtures drive the real session
+owner and local worker, and `--demo` uses the actual views with scripted levels.
+[AGENTS.md](../AGENTS.md#tests-and-review) sets what default tests may touch. Use explicit gates for
+fake cleanup, closing them when a failed test disposes its harness. Timer timeouts inside fakes
+change paused-time behavior; use bounded observation helpers instead. Add a port only for an actual
+side effect. Keep native mechanics in the adapter and deterministic decisions in portable code.
 
-### Change and test map
+Opt-in checks are `#[ignore = "..."]` tests whose reason says what each touches, and
+`rg -A1 '#\[ignore =' crates` lists them. Run one at a time with
+`cargo test -p <package> <test name> -- --ignored`, adding `--release --nocapture` for `profile_*`.
+Never run `--ignored` without a name filter: unfiltered, it records the real screen on Windows and
+macOS, opens windows on Linux's current display, and with `SPEAKEASY_FIXTURE_WAV` set downloads
+about 0.8 GB. Fixture tests read `SPEAKEASY_FIXTURE_CONFIG`, a settings file, and
+`SPEAKEASY_FIXTURE_WAV`, public audio such as whisper.cpp's `samples/jfk.wav`. The
+[README](../README.md#build-and-verify) lists packaging scripts and native checks.
 
-| Change                                            | Read first                                                                                   | Relevant default checks                                                                                                                                                                   |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Gestures, deadlines, startup, cancellation        | `runtime/owner.rs`, `session.rs`, `device.rs`, `worker.rs`                                   | `runtime/tests.rs` hosts the owner on fakes; `tests/dictation.rs` drives it on paused Tokio time with production deadlines; `tests/model.rs` checks device release over generated input.  |
-| Device errors, callback limits, PCM preparation   | `audio.rs`, `audio/stream.rs`, `control.rs`, `pcm.rs`, `speech.rs`, `ports.rs`               | Synthetic samples check callback budgets, cancellation, checked WAV encoding, and controlled thread teardown.                                                                             |
-| Pause, reconfigure, quit, delayed saves           | `shell/services.rs`, `lifecycle.rs`, `shutdown.rs`, `save.rs`                                | Lifecycle and save tests check terminal quit, latest pending configuration, ordered writes, and later edits/Pause.                                                                        |
-| Windows/macOS keyboard policy                     | `platform/keyboard.rs`, `windows/input.rs` or `macos.rs`                                     | Pure key decisions run on every host; native hook lifecycle requires opt-in.                                                                                                              |
-| Insertion                                         | `platform/insertion.rs`, `input.rs`, `windows/insertion.rs`, `macos.rs`, or `linux/`         | Eligibility, cancellation/commit, clipboard ownership, focus ancestry, and partial key submission.                                                                                        |
-| Engine startup/recovery                           | `local_speech.rs`, `runtime/worker.rs`                                                       | Controlled process exit/cancellation and fake worker retirement; public fixture checks are separate.                                                                                      |
-| Dependency patches                                | Each vendor `README.speakeasy.md`                                                            | Portable GPUI fixtures plus local native and Linux GUI checks.                                                                                                                            |
-| Profiling, packaged launchers, private GUI checks | `scripts/profile_linux.py`, `check_demo_linux.py`, package scripts                           | Public `/proc` fixtures, explicit clocks, owned child processes, argument admission, and AppRun argument/library-path preservation.                                                       |
-| Show keyframes, ink, contact sheet, summary       | `crates/show/src/select.rs`, `align.rs`, `sheet.rs`, `bundle.rs`, `journal.rs`, `tracker.rs` | Signature-only selection cases, journal round trips, pointer gestures, a golden `show.json` and demo summary, and layout properties; `show demo` writes a bundle to view.                 |
-| Show gesture, screen lanes, publication           | `runtime/owner.rs`, `session.rs`, `show/recorder.rs`, `show/publish.rs`                      | `runtime/tests/shows.rs` drives Shows with a fake screen and gated publication; `session.rs` checks the narration timeline; `show/publish/tests.rs` checks each published rehearsal file. |
-| Screen capture, pointer, overlay                  | `platform/src/screen.rs`, `screen/geometry.rs`, the native `screen.rs`                       | Geometry runs on every host; native capture requires opt-in and compares only owned-window pixels.                                                                                        |
-| Show store                                        | `show/store.rs`                                                                              | Stamp naming, private all-at-once writes, expiry, pins, staging age, and untouched foreign names.                                                                                         |
-
-Live microphone, screen capture, overlay placement, hooks, clipboard/editor acceptance, compositor
-behavior, and mixed-display frame pacing require explicit native acceptance.
-
-Use explicit gates for fake cleanup, closing them when a failed test disposes its harness. Timer
-timeouts inside fakes change paused-time behavior; use bounded observation helpers instead. Add a
-port only for an actual side effect. Keep native mechanics in the adapter and deterministic
-decisions in portable code.
+Default checks cannot establish live microphone, screen capture, overlay placement, hooks, clipboard
+and editor acceptance, compositor behavior, or mixed-display frame pacing.
+[Native acceptance](performance.md#native-acceptance) and the
+[Linux matrix](linux-implementation.md#native-acceptance-still-required) track them. Release notes
+use absolute `https://github.com/KrishRVH/speakeasy/blob/main/...` links, because relative links
+break in a GitHub release body.
