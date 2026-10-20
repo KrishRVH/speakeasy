@@ -171,18 +171,10 @@ fn paste_copied(
     options: &DesktopOptions,
     owner: Window,
 ) -> anyhow::Result<Inserted> {
-    let first_layout = uses_first_layout(&clipboard.connection).unwrap_or(false);
-    let control = keyboard.unshifted_keycode(Keysym::Control_L);
-    let shift = if options.terminal_paste {
-        keyboard.unshifted_keycode(Keysym::Shift_L)
-    } else {
-        None
-    };
-    let v = keyboard.unshifted_keycode(Keysym::v);
-    let (Some(control), Some(v)) = (control, v) else {
+    let Some((control, shift, v)) = paste_keys(keyboard, options.terminal_paste) else {
         return Ok(NO_PASTE_BINDING);
     };
-    if !first_layout || (options.terminal_paste && shift.is_none()) {
+    if !uses_first_layout(&clipboard.connection).unwrap_or(false) {
         return Ok(Inserted::Copied(
             "Text copied. Automatic paste needs your first keyboard layout; paste manually with the current layout.",
         ));
@@ -219,6 +211,21 @@ fn paste_copied(
         ));
     }
     Ok(Inserted::Sent)
+}
+
+/// The paste chord's keycodes in the first layout, the only one XTEST types through: Control, Shift
+/// for terminal paste, and V.
+fn paste_keys(keyboard: &Keyboard, terminal_paste: bool) -> Option<(u8, Option<u8>, u8)> {
+    let shift = if terminal_paste {
+        Some(keyboard.unshifted_keycode(Keysym::Shift_L)?)
+    } else {
+        None
+    };
+    Some((
+        keyboard.unshifted_keycode(Keysym::Control_L)?,
+        shift,
+        keyboard.unshifted_keycode(Keysym::v)?,
+    ))
 }
 
 fn uses_first_layout(connection: &XCBConnection) -> anyhow::Result<bool> {
@@ -349,6 +356,29 @@ mod tests {
             enqueued,
             checks: checks.len(),
         }
+    }
+
+    #[test]
+    fn terminal_paste_needs_shift_in_the_first_layout() {
+        let keyboard = |shift: Keysym| Keyboard {
+            first_keycode: 8,
+            symbols_per_key: 2,
+            symbols: vec![
+                Keysym::Control_L.raw(),
+                0,
+                shift.raw(),
+                0,
+                Keysym::v.raw(),
+                Keysym::V.raw(),
+            ],
+            modifier_keys: Vec::new(),
+            keys_per_modifier: 0,
+        };
+        let shift = keyboard(Keysym::Shift_L);
+        let no_shift = keyboard(Keysym::NoSymbol);
+        assert_eq!(paste_keys(&shift, true), Some((8, Some(9), 10)));
+        assert_eq!(paste_keys(&no_shift, false), Some((8, None, 10)));
+        assert_eq!(paste_keys(&no_shift, true), None);
     }
 
     #[test]
