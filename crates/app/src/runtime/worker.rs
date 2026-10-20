@@ -5,6 +5,7 @@
 use std::{future::pending, mem, time::Duration};
 
 use anyhow::{anyhow, ensure};
+use speakeasy_show::Narration;
 use tokio::{
     sync::watch,
     task::{JoinError, JoinHandle},
@@ -107,7 +108,12 @@ impl<W: Speech> Worker<W> {
     }
 
     /// Starts transcribing on a ready worker, or hands the audio back.
-    pub(super) fn transcribe(&mut self, wav: Vec<u8>, config: &Config) -> Result<(), Vec<u8>> {
+    pub(super) fn transcribe(
+        &mut self,
+        wav: Vec<u8>,
+        detail: Detail,
+        config: &Config,
+    ) -> Result<(), Vec<u8>> {
         let mut worker = match mem::take(self) {
             Self::Ready(worker) => worker,
             other => {
@@ -129,9 +135,7 @@ impl<W: Speech> Worker<W> {
             let transcript = tokio::select! {
                 biased;
                 _ = cancelled.changed() => Ok(Transcript::Cancelled),
-                result = worker.transcribe(wav, &language) => {
-                    result.map(|text| Transcript::Text(transcript::for_insertion(&text, fillers)))
-                },
+                result = recognize(&worker, wav, &language, detail, fillers) => result,
             };
             match transcript {
                 Ok(transcript) => Ok((worker, transcript)),
@@ -187,12 +191,10 @@ impl<W: Speech> Worker<W> {
         match self {
             Self::Ready(worker) => Some((worker, false)),
             Self::Loading(job) => job.task.await.ok()?.ok().map(|worker| (worker, false)),
-            Self::Transcribing(job) => job
-                .task
-                .await
-                .ok()?
-                .ok()
-                .map(|(worker, transcript)| (worker, matches!(transcript, Transcript::Text(_)))),
+            Self::Transcribing(job) => job.task.await.ok()?.ok().map(|(worker, transcript)| {
+                let completed = !matches!(transcript, Transcript::Cancelled);
+                (worker, completed)
+            }),
             Self::Unavailable => None,
         }
     }
@@ -203,8 +205,16 @@ pub(super) enum Completion<W> {
     Transcribed(anyhow::Result<(W, Transcript)>),
 }
 
+/// What a transcription returns: text for dictation, or timed words for a Show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Detail {
+    Text,
+    Words,
+}
+
 pub(super) enum Transcript {
     Text(String),
+    Words(Narration),
     Cancelled,
 }
 
@@ -236,6 +246,26 @@ fn joined<T>(result: Result<anyhow::Result<T>, JoinError>) -> anyhow::Result<T> 
         Err(anyhow!(
             "Transcription worker stopped unexpectedly. Try again."
         ))
+    })
+}
+
+/// Recognizes `wav` as dictation text or as a Show's timed narration, cleaned up either way.
+async fn recognize<W: Speech>(
+    worker: &W,
+    wav: Vec<u8>,
+    language: &str,
+    detail: Detail,
+    fillers: Fillers,
+) -> anyhow::Result<Transcript> {
+    Ok(match detail {
+        Detail::Text => {
+            let text = worker.transcribe(wav, language).await?;
+            Transcript::Text(transcript::for_insertion(&text, fillers))
+        },
+        Detail::Words => {
+            let narration = worker.transcribe_words(wav, language).await?;
+            Transcript::Words(transcript::for_show(narration, fillers))
+        },
     })
 }
 

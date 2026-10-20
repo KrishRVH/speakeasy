@@ -19,7 +19,7 @@ pub struct Recording {
     /// Clicks and drags that passed through to the apps underneath.
     pub actions: Vec<Action>,
     /// The narration.
-    pub speech: Speech,
+    pub narration: Narration,
 }
 
 /// A size in logical pixels.
@@ -183,20 +183,20 @@ impl Action {
 /// The narration, as the recognizer reported it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Speech {
+pub enum Narration {
     /// Words with the moments they were spoken, in order; empty when nothing was said.
     Words(Vec<Word>),
     /// Text without timings, which can only be attached to the first keyframe.
     Text(String),
 }
 
-impl Default for Speech {
+impl Default for Narration {
     fn default() -> Self {
         Self::Words(Vec::new())
     }
 }
 
-impl Speech {
+impl Narration {
     /// The narration as one line of text.
     #[must_use]
     pub fn text(&self) -> String {
@@ -208,6 +208,24 @@ impl Speech {
                 .collect::<Vec<_>>()
                 .join(" "),
             Self::Text(text) => text.trim().to_owned(),
+        }
+    }
+
+    /// The same narration, every word `by` later, such as from the start of the audio to the
+    /// start of the Show.
+    #[must_use]
+    pub fn delayed(self, by: Duration) -> Self {
+        match self {
+            Self::Words(words) => Self::Words(
+                words
+                    .into_iter()
+                    .map(|word| Word {
+                        span: word.span.delayed(by),
+                        ..word
+                    })
+                    .collect(),
+            ),
+            text @ Self::Text(_) => text,
         }
     }
 

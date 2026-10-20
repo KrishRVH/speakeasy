@@ -161,6 +161,7 @@ impl Pill {
         let new_phase = new_session || snapshot.phase != previous.phase;
         let state_changed = new_phase
             || snapshot.hands_free != previous.hands_free
+            || snapshot.show != previous.show
             || snapshot.message != previous.message;
         if new_phase || (snapshot.phase == Phase::Error && snapshot.message != previous.message) {
             self.phase_at = now;
@@ -205,6 +206,7 @@ impl Pill {
                 .hint_until
                 .and_then(|until| until.checked_duration_since(now)),
             hands_free: self.snapshot.hands_free,
+            show: self.snapshot.show,
             clock: Clock::new(now.duration_since(self.snapshot.started).as_secs()),
         }
     }
@@ -421,7 +423,7 @@ impl Pill {
                         )
                         .size_full(),
                     )
-                    .when_some(slot_label(scene.phase, palette), |slot, label| {
+                    .when_some(slot_label(&scene, palette), |slot, label| {
                         slot.child(
                             div()
                                 .absolute()
@@ -438,8 +440,11 @@ impl Pill {
                     }),
             )
             .when(shows_clock, |row| {
-                row.when(scene.hands_free, |row| {
-                    row.child(Symbol::Lock.element(palette.muted))
+                // A Show is always hands-free; its mark says the screen is recording too.
+                row.map(|row| match (scene.show, scene.hands_free) {
+                    (true, _) => row.child(Symbol::Screen.element(palette.live)),
+                    (false, true) => row.child(Symbol::Lock.element(palette.muted)),
+                    (false, false) => row,
                 })
                 .child(
                     div()
@@ -536,6 +541,8 @@ struct Scene {
     feedback: Option<Duration>,
     hint: Option<Duration>,
     hands_free: bool,
+    /// Whether the session records the screen as a Show.
+    show: bool,
     clock: Clock,
 }
 
@@ -578,6 +585,7 @@ impl Scene {
             Phase::Recording | Phase::Stopping if self.shows_clock() => size(228.0, 38.0),
             Phase::Recording | Phase::Stopping => size(RECORDING_WIDTH, 38.0),
             Phase::Processing => size(104.0, 32.0),
+            Phase::Done if self.show => size(150.0, 34.0),
             Phase::Done => size(76.0, 34.0),
             Phase::Empty => size(182.0, 36.0),
             Phase::Error => size(MESSAGE_WIDTH, 64.0),
@@ -715,8 +723,8 @@ fn lid_target(phase: Phase) -> f32 {
     }
 }
 
-fn slot_label(phase: Phase, palette: &Palette) -> Option<AnyElement> {
-    match phase {
+fn slot_label(scene: &Scene, palette: &Palette) -> Option<AnyElement> {
+    match scene.phase {
         Phase::Starting => Some(
             div()
                 .flex()
@@ -730,6 +738,15 @@ fn slot_label(phase: Phase, palette: &Palette) -> Option<AnyElement> {
             div()
                 .text_size(px(12.0))
                 .child("No speech detected")
+                .into_any_element(),
+        ),
+        Phase::Done if scene.show => Some(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(7.0))
+                .child(Symbol::Check.element(palette.lamp))
+                .child(div().text_size(px(12.0)).child("Show copied"))
                 .into_any_element(),
         ),
         Phase::Done => Some(Symbol::Check.element(palette.lamp).into_any_element()),

@@ -7,7 +7,10 @@ use speakeasy_platform::{Delivery, InsertPermit, Inserted};
 use tokio::time::timeout;
 
 use super::*;
-use crate::{local_speech::LocalSpeech, ports::Recording};
+use crate::{
+    local_speech::LocalSpeech,
+    ports::{Published, Recorded, Recording},
+};
 
 /// Outlasts the worker's own startup bounds, 120 s to serve and 120 s to warm up, by 5 s.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(2 * 120 + 5);
@@ -23,6 +26,7 @@ struct Fixture {
 
 impl Ports for Fixture {
     type Recording = FixtureRecording;
+    type Show = FixtureRecording;
     type Speech = LocalSpeech;
 
     fn prepares_desktop(&self) -> bool {
@@ -41,6 +45,25 @@ impl Ports for Fixture {
             wav: self.wav.clone(),
             events,
         })
+    }
+
+    fn show(
+        &self,
+        _: SessionId,
+        _: Instant,
+        _: Sender<ShowEvent>,
+    ) -> anyhow::Result<FixtureRecording> {
+        anyhow::bail!("The dictation fixture records no Shows")
+    }
+
+    fn publish(
+        &self,
+        _: Recorded,
+        _: InsertPermit,
+    ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
+        std::future::ready(Err(anyhow::anyhow!(
+            "The dictation fixture publishes no Shows"
+        )))
     }
 
     fn load(
@@ -89,7 +112,13 @@ struct FixtureRecording {
 
 impl Recording for FixtureRecording {
     fn finish(&self) {
-        let finished = CaptureEvent::Finished(self.id, Ok(Some(self.wav.clone())));
+        let finished = CaptureEvent::Finished(
+            self.id,
+            Ok(Some(Sealed {
+                wav: self.wav.clone(),
+                trimmed: Duration::ZERO,
+            })),
+        );
         self.events
             .try_send(finished)
             .expect("capture lane has room for fixture audio");

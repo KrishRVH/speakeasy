@@ -23,6 +23,7 @@ core-foundation = "0.10.1"
 core-graphics = "0.25.0"
 cpal = "0.18.2"
 embed-resource = "3.0.11"
+fdeflate = "0.3.7"
 futures-util = "0.3.34"
 gpui = { version = "=0.2.2", default-features = false }
 libc = "0.2.189"

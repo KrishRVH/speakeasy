@@ -5648,6 +5648,7 @@ dependencies = [
 name = "speakeasy-show"
 version = "0.3.5"
 dependencies = [
+ "fdeflate",
  "png 0.18.1",
  "proptest",
  "serde",

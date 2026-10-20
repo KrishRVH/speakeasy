@@ -812,6 +812,18 @@ pub fn reduced_motion() -> bool {
     animates == FALSE
 }
 
+/// Places `text` on the clipboard, with Windows line endings.
+///
+/// # Errors
+///
+/// Fails when another application holds the clipboard or refuses the text.
+pub fn copy_text(text: &str) -> anyhow::Result<()> {
+    let text = text.replace("\r\n", "\n").replace('\n', "\r\n");
+    let _clipboard = open_clipboard()?;
+    clipboard_win::raw::set_string(&text)?;
+    Ok(())
+}
+
 /// Sends output to the terminal that launched this windowed executable, if one did.
 ///
 /// A windowed executable starts without a console, so command-line output would vanish. Output

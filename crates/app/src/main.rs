@@ -199,10 +199,13 @@ fn launch(
                 return;
             },
         };
+        let (canvas, ink) = watch::channel(show::Canvas::default());
+        show::attend_overlay(ink, cx);
         cx.set_global(Services::new(
             path,
             config.clone(),
             output,
+            canvas,
             pill,
             instance,
             mode,
@@ -213,6 +216,9 @@ fn launch(
             });
         }
         cx.on_app_quit(release_services).detach();
+        if mode.is_resident() {
+            show::attend_retention(|error, cx| cx.global::<Services>().publish_error(error), cx);
+        }
         if configured
             && let Err(error) =
                 cx.update_global::<Services, _>(|services, cx| services.apply(config, cx))

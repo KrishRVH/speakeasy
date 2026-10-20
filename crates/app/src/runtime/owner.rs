@@ -6,24 +6,27 @@ use std::{convert::Infallible, mem, ops::ControlFlow, sync::Arc, time::Instant};
 use async_channel::{Receiver, RecvError, Sender};
 use speakeasy_core::gesture::{Action, Gesture, State};
 use speakeasy_platform::{Input, InputSender, Inserted};
+use speakeasy_show::Narration;
 use tokio::{sync::watch, task::JoinError};
 
 use super::{
-    CaptureEvent, LOADING, Phase, Snapshot, Wiring,
-    microphone::Microphone,
+    CaptureEvent, LOADING, Phase, ShowEvent, Snapshot, Wiring,
+    device::Device,
     now, reap,
-    session::{InsertTask, Session, SessionId, Stage},
-    worker::{Completion, Transcript, Worker},
+    session::{Delivered, InsertTask, PublishTask, Session, SessionId, Show, Stage},
+    worker::{Completion, Detail, Transcript, Worker},
 };
 use crate::{
     config::Config,
-    ports::{Ports, Recording},
+    ports::{Ports, Published, Recording},
 };
 
 /// What the status shows while no session is active: the latest result or failure.
 enum Outcome {
     Idle,
     Done,
+    /// A Show's bundle was written and its summary copied.
+    Shown,
     Empty,
     Cancelled,
     Failed(String),
@@ -33,7 +36,7 @@ impl Outcome {
     const fn phase(&self) -> Phase {
         match self {
             Self::Idle => Phase::Idle,
-            Self::Done => Phase::Done,
+            Self::Done | Self::Shown => Phase::Done,
             Self::Empty => Phase::Empty,
             Self::Cancelled => Phase::Cancelled,
             Self::Failed(_) => Phase::Error,
@@ -63,8 +66,10 @@ enum Wake<W> {
     Input(Result<Input, RecvError>),
     Configuration(Result<(), watch::error::RecvError>),
     Capture(Result<CaptureEvent, RecvError>),
+    Show(Result<ShowEvent, RecvError>),
     Worker(Completion<W>),
     Insertion(Result<anyhow::Result<Inserted>, JoinError>),
+    Publication(Result<anyhow::Result<Published>, JoinError>),
     Retired,
     Timer,
 }
@@ -78,6 +83,8 @@ struct Owner<P: Ports> {
     stopping: Receiver<Infallible>,
     events: Sender<CaptureEvent>,
     captures: Receiver<CaptureEvent>,
+    show_events: Sender<ShowEvent>,
+    shows: Receiver<ShowEvent>,
 
     permits: InputSender,
     gesture: Gesture,
@@ -86,8 +93,12 @@ struct Owner<P: Ports> {
     latest_started: Instant,
 
     worker: Worker<P::Speech>,
-    microphone: Microphone<P::Recording>,
+    microphone: Device<P::Recording>,
+    screen: Device<P::Show>,
     retiring_insertions: Vec<InsertTask>,
+    retiring_publications: Vec<PublishTask>,
+    /// Whether the latest session was a Show, which the pill presents differently.
+    latest_show: bool,
 
     snapshots: watch::Sender<Snapshot>,
     epoch: u64,
@@ -111,6 +122,7 @@ impl<P: Ports> Owner<P> {
         } = wiring;
         let config = changes.borrow_and_update().clone();
         let (events, captures) = async_channel::bounded(64);
+        let (show_events, shows) = async_channel::bounded(4);
         let desktop_ready = !ports.prepares_desktop();
         let worker = Worker::load(&ports, &config);
         Self {
@@ -121,14 +133,19 @@ impl<P: Ports> Owner<P> {
             stopping,
             events,
             captures,
+            show_events,
+            shows,
             permits,
             gesture: Gesture::default(),
             session: None,
             latest_id: SessionId::default(),
             latest_started: now(),
             worker,
-            microphone: Microphone::Free,
+            microphone: Device::Free,
+            screen: Device::Free,
             retiring_insertions: Vec::new(),
+            retiring_publications: Vec::new(),
+            latest_show: false,
             snapshots,
             epoch,
             outcome: Outcome::Idle,
@@ -145,7 +162,7 @@ impl<P: Ports> Owner<P> {
                 .deadline()
                 .map(|at| tokio::time::sleep_until(at.into())),
         );
-        let insertion = or_pending(self.session.as_mut().and_then(Session::insertion));
+        let delivered = or_pending(self.session.as_mut().map(Session::delivered));
         // Biased: stop outranks the input lane that `request_stop` closes beside it, so a pause
         // never reads as a shortcut failure.
         tokio::select! {
@@ -154,9 +171,14 @@ impl<P: Ports> Owner<P> {
             input = self.inputs.recv() => Wake::Input(input),
             changed = self.changes.changed() => Wake::Configuration(changed),
             event = self.captures.recv() => Wake::Capture(event),
+            event = self.shows.recv() => Wake::Show(event),
             () = self.microphone.retired() => Wake::Retired,
+            () = self.screen.retired() => Wake::Retired,
             completion = self.worker.completed() => Wake::Worker(completion),
-            result = insertion => Wake::Insertion(result),
+            delivered = delivered => match delivered {
+                Delivered::Insertion(result) => Wake::Insertion(result),
+                Delivered::Publication(result) => Wake::Publication(result),
+            },
             () = timer => Wake::Timer,
         }
     }
@@ -173,13 +195,21 @@ impl<P: Ports> Owner<P> {
                 self.handle_capture(event);
                 None
             },
-            Wake::Capture(Err(_)) | Wake::Retired => None,
+            Wake::Show(Ok(event)) => {
+                self.handle_show(event);
+                None
+            },
+            Wake::Capture(Err(_)) | Wake::Show(Err(_)) | Wake::Retired => None,
             Wake::Worker(completion) => {
                 self.handle_worker(completion);
                 None
             },
             Wake::Insertion(result) => {
                 self.handle_insertion(result);
+                None
+            },
+            Wake::Publication(result) => {
+                self.handle_publication(result);
                 None
             },
             Wake::Timer => self.gesture.tick(now()),
@@ -199,6 +229,7 @@ impl<P: Ports> Owner<P> {
             Input::Press | Input::Toggle => None,
             Input::Release => self.gesture.release(now()),
             Input::Lock => self.gesture.lock(),
+            Input::Show => self.start_show(),
             Input::Cancel => self.gesture.cancel(),
             Input::Unavailable(message) => return self.stop_with_failure(message),
             Input::DesktopReady { shortcut, cancel } => {
@@ -241,10 +272,22 @@ impl<P: Ports> Owner<P> {
             return;
         };
         match event {
-            CaptureEvent::Ready(_) => session.audio_ready(gesture),
+            CaptureEvent::Ready(_) => {
+                session.audio_started.get_or_insert_with(now);
+                session.audio_ready(gesture);
+            },
             CaptureEvent::Level(_, level) => session.show_level(level),
-            CaptureEvent::Finished(_, Ok(Some(wav))) => {
-                session.stage = Stage::AwaitingWorker(wav);
+            CaptureEvent::Finished(_, Ok(Some(sealed))) => {
+                if let Some(show) = &mut session.show {
+                    show.trimmed = sealed.trimmed;
+                }
+                session.stage = Stage::AwaitingWorker(sealed.wav);
+                self.conclude_capture();
+            },
+            // A Show is worth sending without a word said: its ink and clicks still tell.
+            CaptureEvent::Finished(_, Ok(None)) if session.show.is_some() => {
+                session.narrate(Narration::default());
+                session.stage = Stage::AwaitingFootage;
                 self.conclude_capture();
             },
             CaptureEvent::Finished(_, Ok(None)) => {
@@ -288,8 +331,10 @@ impl<P: Ports> Owner<P> {
             Completion::Loaded(Err(error)) => self.fail(error.to_string()),
             Completion::Transcribed(Ok((worker, transcript))) => {
                 self.worker = Worker::Ready(worker);
-                if let Transcript::Text(text) = transcript {
-                    self.insert_transcript(text);
+                match transcript {
+                    Transcript::Text(text) => self.insert_transcript(text),
+                    Transcript::Words(narration) => self.narrate(narration),
+                    Transcript::Cancelled => {},
                 }
             },
             Completion::Transcribed(Err(error)) => {
@@ -329,6 +374,18 @@ impl<P: Ports> Owner<P> {
         }
     }
 
+    /// Only the current Show's narration arrives here, for the same reason as a transcript.
+    fn narrate(&mut self, narration: Narration) {
+        if let Some(session) = self
+            .session
+            .as_mut()
+            .filter(|session| matches!(session.stage, Stage::Transcribing))
+        {
+            session.narrate(narration);
+            session.stage = Stage::AwaitingFootage;
+        }
+    }
+
     fn handle_insertion(&mut self, result: Result<anyhow::Result<Inserted>, JoinError>) {
         // `wait` already joined this insertion, so the session holds no work left to retire.
         self.end_session();
@@ -346,11 +403,58 @@ impl<P: Ports> Owner<P> {
         self.gesture.complete();
     }
 
+    /// Turns the held recording into a Show, keeping the narration already captured, and locks it
+    /// hands-free; the next press finishes it.
+    fn start_show(&mut self) -> Option<Action> {
+        let held = self.gesture.state() == State::Held;
+        let session = self
+            .session
+            .as_mut()
+            .filter(|session| held && session.is_capturing() && session.show.is_none())?;
+        session.show = Some(Show::default());
+        self.latest_show = true;
+        self.gesture.lock()
+    }
+
+    fn handle_show(&mut self, event: ShowEvent) {
+        let ShowEvent::Finished(id, footage) = event;
+        let Some(show) = self
+            .session
+            .as_mut()
+            .filter(|session| session.id == id)
+            .and_then(|session| session.show.as_mut())
+        else {
+            return;
+        };
+        match footage {
+            Ok(footage) => {
+                show.footage = Some(footage);
+                self.screen.retire();
+            },
+            Err(error) => self.fail(format!("{error:#}")),
+        }
+    }
+
+    fn handle_publication(&mut self, result: Result<anyhow::Result<Published>, JoinError>) {
+        // `wait` already joined this publication, so the session holds no work left to retire.
+        self.end_session();
+        self.outcome = match result {
+            Ok(Ok(Published::Copied(_))) => Outcome::Shown,
+            Ok(Ok(Published::Cancelled)) => Outcome::Cancelled,
+            Ok(Err(error)) => Outcome::Failed(format!("{error:#}")),
+            Err(_) => {
+                Outcome::Failed("Publishing the Show stopped unexpectedly. Try again.".into())
+            },
+        };
+        self.gesture.complete();
+    }
+
     fn handle_action(&mut self, action: Option<Action>) -> ControlFlow<()> {
         match action {
             Some(Action::Start) => return self.start_session(),
             Some(Action::Finish) => {
                 self.microphone.finish();
+                self.screen.finish();
                 if let Some(session) = &mut self.session {
                     session.finish();
                 }
@@ -374,9 +478,10 @@ impl<P: Ports> Owner<P> {
         };
         self.latest_id = id;
         self.latest_started = now();
+        self.latest_show = false;
         self.outcome = Outcome::Idle;
         self.notice = None;
-        self.session = Some(Session::new(id, permit));
+        self.session = Some(Session::new(id, permit, self.latest_started));
         ControlFlow::Continue(())
     }
 
@@ -392,14 +497,18 @@ impl<P: Ports> Owner<P> {
             return;
         };
         session.permit.revoke();
+        if session.show.is_some() {
+            self.screen.retire();
+        }
         match session.stage {
             Stage::Opening | Stage::Recording | Stage::Stopping => self.microphone.retire(),
             Stage::Inserting(task) => self.retiring_insertions.push(task),
+            Stage::Publishing(task) => self.retiring_publications.push(task),
             Stage::AwaitingWorker(mut wav) => wav.fill(0),
             Stage::Transcribing if self.worker.is_transcribing() => {
                 self.worker.recover(&self.ports, &self.config);
             },
-            Stage::Queued | Stage::Transcribing => {},
+            Stage::Queued | Stage::Transcribing | Stage::AwaitingFootage => {},
         }
     }
 
@@ -411,8 +520,52 @@ impl<P: Ports> Owner<P> {
 
     async fn advance(&mut self) {
         self.open_queued_capture();
+        self.open_queued_screen();
         self.start_transcription();
-        self.reap_finished_insertions().await;
+        self.start_publishing();
+        self.reap_retired_work().await;
+    }
+
+    /// Opens a Show's screen recorder once any previous one has retired.
+    fn open_queued_screen(&mut self) {
+        if self.permits.is_closed() || !self.screen.is_free() {
+            return;
+        }
+        let Some(session) = self.session.as_mut().filter(|session| {
+            session.is_capturing() && session.show.as_ref().is_some_and(|show| !show.opened)
+        }) else {
+            return;
+        };
+        match self
+            .ports
+            .show(session.id, session.started, self.show_events.clone())
+        {
+            Ok(recorder) => {
+                if self.gesture.state() == State::Processing {
+                    recorder.finish();
+                }
+                self.screen = Device::Open(recorder);
+                if let Some(show) = &mut session.show {
+                    show.opened = true;
+                }
+            },
+            Err(error) => self.fail(format!("Could not record the screen: {error:#}")),
+        }
+    }
+
+    /// Publishes a Show once its narration and screen recording are both in.
+    fn start_publishing(&mut self) {
+        let Some(session) = self
+            .session
+            .as_mut()
+            .filter(|session| matches!(session.stage, Stage::AwaitingFootage))
+        else {
+            return;
+        };
+        if let Some(recorded) = session.take_recorded() {
+            let publication = self.ports.publish(recorded, session.permit.clone());
+            session.stage = Stage::Publishing(tokio::spawn(publication));
+        }
     }
 
     fn open_queued_capture(&mut self) {
@@ -435,7 +588,7 @@ impl<P: Ports> Owner<P> {
                 if self.gesture.state() == State::Processing {
                     recording.finish();
                 }
-                self.microphone = Microphone::Open(recording);
+                self.microphone = Device::Open(recording);
                 session.stage = Stage::Opening;
             },
             Err(error) => self.fail(format!("Could not start microphone worker: {error}")),
@@ -446,23 +599,34 @@ impl<P: Ports> Owner<P> {
         let Some(session) = self.session.as_mut() else {
             return;
         };
+        let detail = if session.show.is_some() {
+            Detail::Words
+        } else {
+            Detail::Text
+        };
         let Stage::AwaitingWorker(wav) = &mut session.stage else {
             return;
         };
         if self.worker.revive(&self.ports, &self.config) {
             self.notice = Some(Notice::LoadingModel);
         }
-        match self.worker.transcribe(mem::take(wav), &self.config) {
+        match self.worker.transcribe(mem::take(wav), detail, &self.config) {
             Ok(()) => session.stage = Stage::Transcribing,
             Err(unclaimed) => *wav = unclaimed,
         }
     }
 
-    /// Obsolete insertions finish their own cleanup; they are never aborted, and their results
-    /// cannot reach the current session.
-    async fn reap_finished_insertions(&mut self) {
+    /// Obsolete insertions and publications finish their own cleanup; they are never aborted, and
+    /// their results cannot reach the current session.
+    async fn reap_retired_work(&mut self) {
         for task in self
             .retiring_insertions
+            .extract_if(.., |task| task.is_finished())
+        {
+            reap(task).await;
+        }
+        for task in self
+            .retiring_publications
             .extract_if(.., |task| task.is_finished())
         {
             reap(task).await;
@@ -472,6 +636,7 @@ impl<P: Ports> Owner<P> {
     fn message(&self) -> &str {
         match &self.outcome {
             Outcome::Failed(message) => message,
+            Outcome::Shown => "Show copied. Paste it into your coding agent.",
             Outcome::Idle | Outcome::Done | Outcome::Empty | Outcome::Cancelled => {
                 self.notice.as_ref().map_or("", Notice::text)
             },
@@ -486,6 +651,7 @@ impl<P: Ports> Owner<P> {
             id: self.latest_id.into(),
             phase: session.map_or_else(|| self.outcome.phase(), Session::phase),
             hands_free: self.gesture.state() == State::HandsFree,
+            show: self.latest_show,
             level: session.map_or(0.0, |session| session.level),
             meter_tick: session.map_or(0, |session| session.meter_tick),
             started: self.latest_started,
@@ -508,12 +674,20 @@ impl<P: Ports> Owner<P> {
         self.permits.close();
         self.captures.close();
         self.abandon();
-        let insertions = async {
+        let retired = async {
             for task in self.retiring_insertions {
                 reap(task).await;
             }
+            for task in self.retiring_publications {
+                reap(task).await;
+            }
         };
-        tokio::join!(self.worker.stop(), self.microphone.stop(), insertions);
+        tokio::join!(
+            self.worker.stop(),
+            self.microphone.stop(),
+            self.screen.stop(),
+            retired
+        );
     }
 }
 

@@ -1,5 +1,10 @@
 //! Shows: screen recordings with narration and ink, written as bundles a coding agent reads.
 
+mod overlay;
+mod publish;
+mod recorder;
+mod retention;
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -8,6 +13,13 @@ use std::{
 
 use anyhow::Context as _;
 use speakeasy_show::{Demo, Moment, Sample, Signature, Typeface, budget, compose, select};
+
+pub(crate) use self::{
+    overlay::{Canvas, attend as attend_overlay},
+    publish::publish,
+    recorder::Recorder,
+    retention::attend as attend_retention,
+};
 
 /// Frames are fingerprinted this often while a Show records.
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(200);
@@ -96,9 +108,31 @@ fn fresh_directory(parent: &Path, now: SystemTime) -> anyhow::Result<PathBuf> {
         .context("Too many Shows were written this second")
 }
 
-/// Writes `files` into `directory`, which must not exist, all at once: they land in a hidden
-/// sibling first, so a reader never sees half a bundle. Shows are private to the user.
+/// Writes `files` into `directory`, which must not exist, all at once.
 fn write(directory: &Path, files: &[speakeasy_show::File]) -> anyhow::Result<()> {
+    stage(directory, files)?.persist()
+}
+
+/// A bundle written to a hidden sibling of its directory. It appears there only once persisted,
+/// so a reader never sees half a bundle, and dropping it unpersisted deletes it.
+struct Staged {
+    staging: tempfile::TempDir,
+    directory: PathBuf,
+}
+
+impl Staged {
+    /// Moves the bundle into place.
+    fn persist(mut self) -> anyhow::Result<()> {
+        fs::rename(self.staging.path(), &self.directory)
+            .with_context(|| format!("Cannot create {}", self.directory.display()))?;
+        // The staging directory is now the bundle.
+        self.staging.disable_cleanup(true);
+        Ok(())
+    }
+}
+
+/// Writes `files` beside `directory`, which must not exist yet. Shows are private to the user.
+fn stage(directory: &Path, files: &[speakeasy_show::File]) -> anyhow::Result<Staged> {
     anyhow::ensure!(
         !directory.exists(),
         "{} already exists; choose a new directory",
@@ -116,7 +150,7 @@ fn write(directory: &Path, files: &[speakeasy_show::File]) -> anyhow::Result<()>
         builder.permissions(fs::Permissions::from_mode(0o700));
     }
     // Windows already limits the user's local application data to the user.
-    let mut staging = builder
+    let staging = builder
         .tempdir_in(parent)
         .with_context(|| format!("Cannot write in {}", parent.display()))?;
     for file in files {
@@ -127,11 +161,10 @@ fn write(directory: &Path, files: &[speakeasy_show::File]) -> anyhow::Result<()>
         fs::write(&path, &file.contents)
             .with_context(|| format!("Cannot write {}", path.display()))?;
     }
-    fs::rename(staging.path(), directory)
-        .with_context(|| format!("Cannot create {}", directory.display()))?;
-    // The staging directory is now the bundle.
-    staging.disable_cleanup(true);
-    Ok(())
+    Ok(Staged {
+        staging,
+        directory: directory.to_path_buf(),
+    })
 }
 
 /// `now` in UTC as `YYYYMMDDTHHMMSSZ`, which sorts in time order.

@@ -4,10 +4,10 @@ use std::time::Duration;
 
 use crate::{
     Moment,
-    recording::{Speech, Word},
+    recording::{Narration, Word},
 };
 
-/// Speech after a silence this long starts a new thought. Measured from one word's start to the
+/// Narration after a silence this long starts a new thought. Measured from one word's start to the
 /// next because the recognizer stretches a word's end across the pause after it.
 const PAUSE: Duration = Duration::from_secs(2);
 /// A clause lasts at most this long past its last word's start; the recognizer's reported end can
@@ -24,16 +24,16 @@ const COMMA_CLAUSE_WORDS: usize = 3;
 ///
 /// Each keyframe's text runs from the start of the clause in progress at its anchor until the
 /// next keyframe's text starts, so the narration is partitioned in order with nothing repeated or
-/// dropped. Speech before the first keyframe belongs to it.
-pub(crate) fn align(anchors: &[Moment], speech: &Speech) -> Vec<Option<String>> {
+/// dropped. Narration before the first keyframe belongs to it.
+pub(crate) fn align(anchors: &[Moment], narration: &Narration) -> Vec<Option<String>> {
     let mut said = vec![String::new(); anchors.len()];
-    match speech {
-        Speech::Text(text) => {
+    match narration {
+        Narration::Text(text) => {
             if let Some(first) = said.first_mut() {
                 text.trim().clone_into(first);
             }
         },
-        Speech::Words(words) => {
+        Narration::Words(words) => {
             let mut words: Vec<&Word> = words
                 .iter()
                 .filter(|word| !word.text.trim().is_empty())
@@ -126,8 +126,8 @@ mod tests {
     use super::*;
     use crate::Span;
 
-    fn speech(words: &[(u64, &str)]) -> Speech {
-        Speech::Words(
+    fn narration(words: &[(u64, &str)]) -> Narration {
+        Narration::Words(
             words
                 .iter()
                 .map(|&(start, text)| Word {
@@ -146,8 +146,8 @@ mod tests {
     }
 
     /// Each keyframe's text, empty where nothing was said.
-    fn texts(anchors: &[u64], speech: &Speech) -> Vec<String> {
-        align(&at(anchors), speech)
+    fn texts(anchors: &[u64], narration: &Narration) -> Vec<String> {
+        align(&at(anchors), narration)
             .into_iter()
             .map(Option::unwrap_or_default)
             .collect()
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn words_partition_without_duplicates_or_gaps() {
-        let said = speech(&[
+        let said = narration(&[
             (0, "Make"),
             (1_000, "this"),
             (2_000, "smaller"),
@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn an_action_mid_sentence_takes_the_sentence_from_its_start() {
-        let said = speech(&[
+        let said = narration(&[
             (100, "First"),
             (300, "the"),
             (500, "header."),
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn a_short_comma_lead_in_stays_with_its_clause() {
-        let said = speech(&[
+        let said = narration(&[
             (200, "The"),
             (400, "message"),
             (600, "was"),
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn a_long_pause_starts_a_new_thought_even_without_punctuation() {
         // Recognizers stretch a word's end across the pause after it, so only starts count.
-        let said = Speech::Words(vec![
+        let said = Narration::Words(vec![
             Word {
                 span: Span::new(Moment::from_millis(0), Moment::from_millis(2_900)),
                 text: "first".into(),
@@ -227,7 +227,7 @@ mod tests {
     fn an_action_after_a_finished_sentence_does_not_reopen_it() {
         // The recognizer stretched "header." across the pause after it; an action during that
         // pause belongs to what comes next.
-        let mut said = speech(&[
+        let mut said = narration(&[
             (100, "First"),
             (300, "the"),
             (500, "header."),
@@ -237,7 +237,7 @@ mod tests {
             (2_600, "it,"),
             (2_800, "nothing."),
         ]);
-        if let Speech::Words(words) = &mut said {
+        if let Narration::Words(words) = &mut said {
             words[2].span = Span::new(Moment::from_millis(500), Moment::from_millis(1_950));
         }
         assert_eq!(
@@ -248,9 +248,9 @@ mod tests {
 
     #[test]
     fn untimed_text_and_silence() {
-        let text = Speech::Text(" All of it. ".into());
+        let text = Narration::Text(" All of it. ".into());
         assert_eq!(texts(&[0, 900], &text), ["All of it.", ""]);
-        assert_eq!(texts(&[0], &Speech::default()), [""]);
+        assert_eq!(texts(&[0], &Narration::default()), [""]);
         assert_eq!(texts(&[], &text), Vec::<String>::new());
     }
 }

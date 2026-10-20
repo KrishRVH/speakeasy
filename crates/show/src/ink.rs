@@ -30,7 +30,8 @@ struct Node {
 /// `size` wide, narrowing where it moved fast and rounded at its ends and sharp turns.
 ///
 /// Returns no points for an empty path or a size that is not positive and finite.
-pub(crate) fn outline(points: &[Point], size: f32) -> Vec<Point> {
+#[must_use]
+pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
     if !size.is_finite() || size <= 0.0 {
         return Vec::new();
     }
