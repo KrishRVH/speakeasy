@@ -121,7 +121,8 @@ impl Demo {
     ///
     /// # Errors
     ///
-    /// Fails when a keyframe dimension is zero or too large to allocate.
+    /// Fails when a keyframe dimension is zero or too large to allocate, or the script records no
+    /// frames.
     pub fn bundle(&self, keyframe: (u32, u32)) -> Result<Bundle, Error> {
         let recording = self.recording();
         let samples = std::iter::successors(Some(Moment::START), |at| {
@@ -135,7 +136,7 @@ impl Demo {
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
-        let selection = select(&recording, &samples);
+        let selection = select(&recording, &samples).ok_or_else(Error::unsampled)?;
         let frames = selection
             .moments()
             .into_iter()

@@ -197,20 +197,6 @@ impl Default for Narration {
 }
 
 impl Narration {
-    /// The narration as one line of text.
-    #[must_use]
-    pub fn text(&self) -> String {
-        match self {
-            Self::Words(words) => words
-                .iter()
-                .map(|word| word.text.trim())
-                .filter(|text| !text.is_empty())
-                .collect::<Vec<_>>()
-                .join(" "),
-            Self::Text(text) => text.trim().to_owned(),
-        }
-    }
-
     /// The same narration, every word `by` later, such as from the start of the audio to the
     /// start of the Show.
     #[must_use]

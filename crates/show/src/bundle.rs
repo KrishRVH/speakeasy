@@ -41,8 +41,7 @@ impl Manifest {
 pub struct Bundle {
     manifest: Manifest,
     frames: Vec<Image>,
-    /// Absent when nothing was chosen to show.
-    contact_sheet: Option<Image>,
+    contact_sheet: Image,
 }
 
 /// One file of a bundle, named by its path within the bundle's directory.
@@ -84,11 +83,7 @@ pub fn compose(
             (image, corner)
         })
         .collect();
-    let contact_sheet = if annotated.is_empty() {
-        None
-    } else {
-        Some(sheet::render(&keyframes, &annotated, typeface)?)
-    };
+    let contact_sheet = sheet::render(&keyframes, &annotated, typeface)?;
     let frames = annotated
         .into_iter()
         .zip(&keyframes)
@@ -151,12 +146,10 @@ impl Bundle {
             Count(keyframes.len(), "keyframe"),
             directory.display()
         )];
-        if self.contact_sheet.is_some() {
-            lines.push(format!(
-                "Contact sheet: {}",
-                directory.join(CONTACT_SHEET).display()
-            ));
-        }
+        lines.push(format!(
+            "Contact sheet: {}",
+            directory.join(CONTACT_SHEET).display()
+        ));
         lines.extend(keyframes.iter().map(|keyframe| {
             let said = keyframe
                 .said
@@ -173,10 +166,6 @@ impl Bundle {
                 None => format!("- #{} ({}) {}", keyframe.index, keyframe.at, keyframe.event),
             }
         }));
-        let text = recording.narration.text();
-        if keyframes.is_empty() && !text.is_empty() {
-            lines.push(format!("“{text}”"));
-        }
         match keyframes.as_slice() {
             [] => {},
             [only] => lines.push(format!(
@@ -199,18 +188,16 @@ impl Bundle {
     ///
     /// Fails if an image or the manifest cannot be encoded, which valid input never causes.
     pub fn files(&self, directory: &Path) -> Result<Vec<File>, Error> {
-        let images: Vec<(String, &Image)> = self
-            .contact_sheet
-            .iter()
-            .map(|sheet| (CONTACT_SHEET.to_owned(), sheet))
-            .chain(
-                self.manifest
-                    .keyframes
-                    .iter()
-                    .map(Keyframe::file)
-                    .zip(&self.frames),
-            )
-            .collect();
+        let images: Vec<(String, &Image)> =
+            std::iter::once((CONTACT_SHEET.to_owned(), &self.contact_sheet))
+                .chain(
+                    self.manifest
+                        .keyframes
+                        .iter()
+                        .map(Keyframe::file)
+                        .zip(&self.frames),
+                )
+                .collect();
         let mut files = parallel::map(&images, |(name, image)| {
             image.encode_png().map(|contents| File {
                 name: name.clone(),

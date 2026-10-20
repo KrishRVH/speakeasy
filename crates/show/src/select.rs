@@ -97,9 +97,9 @@ impl Keyframe {
 
 /// The marks a Show's ink forms and the keyframes chosen to show it.
 ///
-/// Only [`select`] makes one, so its keyframes are numbered from one in time order and refer
-/// only to its own marks.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// Only [`select`] makes one, so it holds at least one keyframe, numbered from one in time order,
+/// and its keyframes refer only to its own marks.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Selection {
     pub(crate) marks: Vec<Mark>,
     pub(crate) keyframes: Vec<Keyframe>,
@@ -136,8 +136,10 @@ impl Selection {
 /// alike screens until they fit. Clicks, scene changes, and spoken cues such as "look here" fill
 /// up to six, and long stretches of narration without a keyframe earn one from inside them.
 /// A cue never repeats a screen already chosen, so talking over a still screen yields one frame.
+///
+/// `None` only when there are no samples to choose from.
 #[must_use]
-pub fn select(recording: &Recording, samples: &[Sample]) -> Selection {
+pub fn select(recording: &Recording, samples: &[Sample]) -> Option<Selection> {
     select_within(
         recording,
         samples,
@@ -153,16 +155,12 @@ fn budget(duration: Duration) -> usize {
         .min(MOST_KEYFRAMES)
 }
 
-/// [`select`] with up to `budget` keyframes, never more than twelve.
-fn select_within(recording: &Recording, samples: &[Sample], budget: usize) -> Selection {
-    let marks = marks::group(&recording.strokes, recording.surface);
+/// [`select`] with up to `budget` keyframes, never more than twelve; `None` also when `budget` is
+/// zero.
+fn select_within(recording: &Recording, samples: &[Sample], budget: usize) -> Option<Selection> {
     let budget = budget.min(MOST_KEYFRAMES);
-    let Some(frames) = Frames::new(samples).filter(|_| budget > 0) else {
-        return Selection {
-            marks,
-            keyframes: Vec::new(),
-        };
-    };
+    let frames = Frames::new(samples).filter(|_| budget > 0)?;
+    let marks = marks::group(&recording.strokes, recording.surface);
     let actions = settle(&recording.actions);
     let action_times: Vec<Moment> = actions.iter().map(|action| action.span().start()).collect();
     let transitions = frames.transitions();
@@ -214,7 +212,7 @@ fn select_within(recording: &Recording, samples: &[Sample], budget: usize) -> Se
         .iter()
         .map(|candidate| candidate.anchor(&frames))
         .collect();
-    let keyframes = chosen
+    let keyframes: Vec<Keyframe> = chosen
         .into_iter()
         .zip(align::align(&anchors, &recording.narration))
         .enumerate()
@@ -228,7 +226,7 @@ fn select_within(recording: &Recording, samples: &[Sample], budget: usize) -> Se
             action: candidate.action,
         })
         .collect();
-    Selection { marks, keyframes }
+    (!keyframes.is_empty()).then_some(Selection { marks, keyframes })
 }
 
 /// The samples in time order. Every frame index this view hands out is in bounds.
@@ -1074,7 +1072,8 @@ mod tests {
             ),
             &frames,
             2,
-        );
+        )
+        .unwrap();
         assert_eq!(times(&shown), [1_000, 4_000]);
         assert_eq!(shown.keyframes()[0].reason, Reason::Click);
         assert_eq!(shown.keyframes()[1].reason, Reason::Mark);
@@ -1094,7 +1093,8 @@ mod tests {
             &recording(strokes, Vec::new(), Narration::default()),
             &frames,
             7,
-        );
+        )
+        .unwrap();
         assert_eq!(shown.keyframes().len(), 7);
         let covered: Vec<Range<usize>> =
             shown.keyframes().iter().map(|k| k.marks.clone()).collect();
@@ -1108,7 +1108,8 @@ mod tests {
             &recording(strokes, Vec::new(), Narration::default()),
             &still,
             12,
-        );
+        )
+        .unwrap();
         assert_eq!(times(&shown), [20_000, 40_000]);
     }
 
@@ -1121,7 +1122,7 @@ mod tests {
             sample(1_500, 255),
             sample(1_750, 255),
         ];
-        let shown = select_within(&Recording::default(), &frames, 12);
+        let shown = select_within(&Recording::default(), &frames, 12).unwrap();
         assert_eq!(times(&shown), [1_500]);
         assert_eq!(shown.keyframes()[0].reason, Reason::SceneChange);
     }
@@ -1134,7 +1135,8 @@ mod tests {
             &recording(Vec::new(), actions, Narration::default()),
             &frames,
             12,
-        );
+        )
+        .unwrap();
         assert_eq!(times(&shown), [1_250, 2_500]);
         assert_eq!(shown.keyframes()[0].event, "clicked (x 0.50, y 0.50)");
     }
@@ -1154,7 +1156,8 @@ mod tests {
             &recording(vec![dab(1_000), dab(4_000)], Vec::new(), narration),
             &frames,
             12,
-        );
+        )
+        .unwrap();
         assert_eq!(
             said(&shown),
             [Some("Make this smaller,"), Some("and move that.")]
@@ -1172,7 +1175,8 @@ mod tests {
             (3_200, "it's"),
             (3_400, "stuck."),
         ]);
-        let shown = select_within(&recording(Vec::new(), Vec::new(), narration), &still, 12);
+        let shown =
+            select_within(&recording(Vec::new(), Vec::new(), narration), &still, 12).unwrap();
         assert_eq!(shown.keyframes().len(), 1);
         assert_eq!(shown.keyframes()[0].reason, Reason::Cue);
         assert_eq!(said(&shown), [Some("Look at this. Now it's stuck.")]);
@@ -1180,7 +1184,8 @@ mod tests {
         // A cue over a screen a scene change already settled on adds nothing.
         let changed = samples(250, 5_000, |at| if at < 1_000 { 40 } else { 90 });
         let narration = words(&[(3_500, "Look"), (3_700, "here.")]);
-        let shown = select_within(&recording(Vec::new(), Vec::new(), narration), &changed, 12);
+        let shown =
+            select_within(&recording(Vec::new(), Vec::new(), narration), &changed, 12).unwrap();
         assert_eq!(shown.keyframes().len(), 1);
         assert_eq!(shown.keyframes()[0].reason, Reason::SceneChange);
     }
@@ -1200,7 +1205,8 @@ mod tests {
             &recording(Vec::new(), vec![click(500)], narration),
             &frames,
             12,
-        );
+        )
+        .unwrap();
         assert_eq!(times(&shown), [750, 3_250]);
         assert_eq!(shown.keyframes()[1].reason, Reason::Cue);
         assert_eq!(
@@ -1224,7 +1230,8 @@ mod tests {
             ),
             &still,
             12,
-        );
+        )
+        .unwrap();
         let marks: Vec<Range<usize>> = shown.keyframes().iter().map(|k| k.marks.clone()).collect();
         assert!(
             marks.contains(&(0..1)) && marks.contains(&(1..2)),
@@ -1241,7 +1248,8 @@ mod tests {
             &recording(strokes, Vec::new(), Narration::default()),
             &still,
             12,
-        );
+        )
+        .unwrap();
         let marks: Vec<Range<usize>> = shown.keyframes().iter().map(|k| k.marks.clone()).collect();
         assert_eq!(marks, [0..2, 2..3]);
     }
@@ -1251,7 +1259,8 @@ mod tests {
         let still = samples(250, 15_000, |_| 128);
         let strokes = every(1_000, 2_000, 6).map(dab).collect();
         let clicks = every(2_000, 2_000, 5).map(click).collect();
-        let shown = select_within(&recording(strokes, clicks, Narration::default()), &still, 3);
+        let shown =
+            select_within(&recording(strokes, clicks, Narration::default()), &still, 3).unwrap();
         let marks: Vec<Range<usize>> = shown.keyframes().iter().map(|k| k.marks.clone()).collect();
         assert_eq!(marks, [0..2, 2..4, 4..6]);
     }
@@ -1264,7 +1273,8 @@ mod tests {
             &recording(vec![dab(2_000), dab(6_000)], Vec::new(), narration),
             &still,
             12,
-        );
+        )
+        .unwrap();
         assert_eq!(shown.keyframes().len(), 1);
         assert_eq!(shown.keyframes()[0].reason, Reason::Mark);
     }
@@ -1284,7 +1294,8 @@ mod tests {
         };
         let frames = samples(500, 120_000, level);
         let talk: Vec<(u64, &str)> = every(0, 500, 240).map(|at| (at, "word")).collect();
-        let shown = select_within(&recording(Vec::new(), Vec::new(), words(&talk)), &frames, 4);
+        let shown =
+            select_within(&recording(Vec::new(), Vec::new(), words(&talk)), &frames, 4).unwrap();
         let at = times(&shown);
         assert_eq!(at.len(), 4, "{at:?}");
         assert!(at[0] <= 30_000 && at[1] <= 60_000, "{at:?}");
@@ -1304,7 +1315,8 @@ mod tests {
 
         // The same talk over an unchanged screen stays one frame.
         let still = samples(500, 120_000, |_| 90);
-        let shown = select_within(&recording(Vec::new(), Vec::new(), words(&talk)), &still, 12);
+        let shown =
+            select_within(&recording(Vec::new(), Vec::new(), words(&talk)), &still, 12).unwrap();
         assert_eq!(shown.keyframes().len(), 1);
     }
 
@@ -1320,7 +1332,7 @@ mod tests {
             _ => 210,
         };
         let frames = samples(500, 150_000, level);
-        let shown = select_within(&Recording::default(), &frames, 2);
+        let shown = select_within(&Recording::default(), &frames, 2).unwrap();
         assert_eq!(times(&shown), [70_000, 138_000]);
     }
 
@@ -1334,18 +1346,11 @@ mod tests {
     #[test]
     fn a_quiet_show_falls_back_to_its_middle() {
         let frames = [sample(0, 0), sample(1_000, 0), sample(2_000, 0)];
-        let shown = select_within(&Recording::default(), &frames, 12);
+        let shown = select_within(&Recording::default(), &frames, 12).unwrap();
         assert_eq!(times(&shown), [1_000]);
         assert_eq!(shown.keyframes()[0].reason, Reason::Middle);
-        let none = Vec::<Keyframe>::new();
-        assert_eq!(
-            select_within(&Recording::default(), &frames, 0).keyframes,
-            none
-        );
-        assert_eq!(
-            select_within(&Recording::default(), &[], 12).keyframes,
-            none
-        );
+        assert_eq!(select_within(&Recording::default(), &frames, 0), None);
+        assert_eq!(select_within(&Recording::default(), &[], 12), None);
     }
 
     proptest::proptest! {
@@ -1379,23 +1384,26 @@ mod tests {
                 words(&narration),
             );
             let shown = select_within(&recording, &frames, budget);
+            proptest::prop_assert_eq!(shown.is_some(), budget > 0);
+            let Some(shown) = shown else {
+                return Ok(());
+            };
             let keyframes = shown.keyframes();
+            proptest::prop_assert!(!keyframes.is_empty());
             proptest::prop_assert!(keyframes.len() <= budget.min(MOST_KEYFRAMES));
             proptest::prop_assert!(keyframes.iter().map(|k| k.index).eq(1..=keyframes.len()));
             proptest::prop_assert!(keyframes.windows(2).all(|pair| pair[0].at <= pair[1].at));
-            if !keyframes.is_empty() {
-                let covered: Vec<usize> = keyframes.iter().flat_map(|k| k.marks.clone()).collect();
-                proptest::prop_assert_eq!(covered, (0..shown.marks().len()).collect::<Vec<_>>());
-                let mut said: Vec<&str> = keyframes
-                    .iter()
-                    .filter_map(|k| k.said.as_deref())
-                    .flat_map(str::split_whitespace)
-                    .collect();
-                let mut expected: Vec<&str> = narration.iter().map(|(_, word)| *word).collect();
-                said.sort_unstable();
-                expected.sort_unstable();
-                proptest::prop_assert_eq!(said, expected);
-            }
+            let covered: Vec<usize> = keyframes.iter().flat_map(|k| k.marks.clone()).collect();
+            proptest::prop_assert_eq!(covered, (0..shown.marks().len()).collect::<Vec<_>>());
+            let mut said: Vec<&str> = keyframes
+                .iter()
+                .filter_map(|k| k.said.as_deref())
+                .flat_map(str::split_whitespace)
+                .collect();
+            let mut expected: Vec<&str> = narration.iter().map(|(_, word)| *word).collect();
+            said.sort_unstable();
+            expected.sort_unstable();
+            proptest::prop_assert_eq!(said, expected);
         }
     }
 

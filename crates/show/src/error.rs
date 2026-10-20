@@ -10,6 +10,7 @@ pub struct Error(Kind);
 enum Kind {
     Dimensions { width: u32, height: u32 },
     Frames { keyframes: usize, frames: usize },
+    Unsampled,
     Manifest(serde_json::Error),
     Png(Box<dyn std::error::Error + Send + Sync>),
     Typeface,
@@ -22,6 +23,10 @@ impl Error {
 
     pub(crate) const fn frames(keyframes: usize, frames: usize) -> Self {
         Self(Kind::Frames { keyframes, frames })
+    }
+
+    pub(crate) const fn unsampled() -> Self {
+        Self(Kind::Unsampled)
     }
 
     pub(crate) const fn manifest(error: serde_json::Error) -> Self {
@@ -52,6 +57,7 @@ impl fmt::Display for Error {
                     "{keyframes} keyframes were chosen but {frames} frames were supplied"
                 )
             },
+            Kind::Unsampled => f.write_str("no frames were sampled to choose keyframes from"),
             Kind::Manifest(_) => f.write_str("the manifest could not be written"),
             Kind::Png(_) => f.write_str("the PNG could not be processed"),
             Kind::Typeface => f.write_str("the badge typeface could not be read"),
@@ -64,7 +70,9 @@ impl std::error::Error for Error {
         match &self.0 {
             Kind::Manifest(error) => Some(error),
             Kind::Png(error) => Some(error.as_ref()),
-            Kind::Dimensions { .. } | Kind::Frames { .. } | Kind::Typeface => None,
+            Kind::Dimensions { .. } | Kind::Frames { .. } | Kind::Unsampled | Kind::Typeface => {
+                None
+            },
         }
     }
 }

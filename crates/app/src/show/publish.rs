@@ -47,7 +47,8 @@ fn write_bundle(
         return Ok(None);
     }
     let Recorded { recording, journal } = recorded;
-    let selection = select(&recording, journal.samples());
+    let selection = select(&recording, journal.samples())
+        .context("The screen could not be recorded. Try again.")?;
     let frames = journal
         .frames_at(&selection.moments())
         .into_iter()
@@ -388,7 +389,8 @@ mod tests {
             ),
         );
         let started = Instant::now();
-        let selection = select(&recorded.recording, recorded.journal.samples());
+        let selection =
+            select(&recorded.recording, recorded.journal.samples()).context("selected")?;
         let selected = started.elapsed();
         let frames = recorded
             .journal
