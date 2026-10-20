@@ -25,7 +25,8 @@ mod windows;
 
 #[cfg(target_os = "linux")]
 use self::linux as native;
-// Linux only: the launcher and portal identity, and the tray GPUI does not offer there.
+// Linux only: the launcher and portal identity, and the StatusNotifierItem tray; Windows and
+// macOS use `tray-icon` in the app.
 #[cfg(target_os = "linux")]
 pub use self::linux::{APPLICATION_ID, NativeTray, TrayAction, TrayPresentation};
 #[cfg(target_os = "macos")]

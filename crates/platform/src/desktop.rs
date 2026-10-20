@@ -1,5 +1,7 @@
 //! The desktop facade every platform shares, declared and documented once over each OS's native
-//! module: input observation, the windows Speakeasy presents natively, and system services.
+//! module: input observation, system services, and the `NativeWindow` handle. The handle's
+//! presentation methods live beside the native code behind them: in each OS's module, and in
+//! `screen` for the Show overlay.
 
 use std::marker::PhantomData;
 
