@@ -682,6 +682,8 @@ impl<P: Ports> Owner<P> {
 
     async fn shutdown(mut self) {
         self.permits.close();
+        // Nothing reads the capture lane from here on, and a capture thread reports `Finished`
+        // with a blocking send even when cancelled, so a full lane would stall its teardown.
         self.captures.close();
         self.abandon();
         let retired = async {

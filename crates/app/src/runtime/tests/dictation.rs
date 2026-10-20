@@ -1,5 +1,6 @@
-//! Dictation scenarios: capture, gestures and deadlines, shutdown ordering, inference,
-//! insertion, configuration, lifecycle epochs, warmup, and the reply-to-insertion latency profile.
+//! Dictation scenarios: capture, gestures and deadlines, shutdown ordering, inference, insertion,
+//! configuration, lifecycle epochs, warmup, failure reports, and the reply-to-insertion latency
+//! profile.
 
 use super::*;
 use crate::{config::Engine, theme::Theme};
