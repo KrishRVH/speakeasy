@@ -26,7 +26,7 @@ use super::{
 };
 use crate::{
     Delivery, DesktopOptions, InputSender, Inserted, OwnedThread,
-    insertion::{Insertion, PASTE_AFTER_RELEASE, wait_for_released_modifiers},
+    insertion::{Insertion, PASTE_AFTER_RELEASE, abandon_queued, wait_for_released_modifiers},
     linux::{COPIED_FOR_MANUAL_PASTE, HostSession, NO_PASTE_BINDING},
 };
 
@@ -35,9 +35,8 @@ use crate::{
 /// stopped.
 ///
 /// Every request shares one X connection, so a failed setup or a panic ends the thread instead of
-/// serving on with a connection in an unknown state. It reports why, then closes the lane and drops
-/// each queued request, which answers its caller: the worker's own end of the lane would otherwise
-/// keep those requests waiting with no reader.
+/// serving on with a connection in an unknown state. It reports why, then abandons each queued
+/// request, which answers its caller.
 pub(super) struct InsertionWorker {
     _thread: OwnedThread,
     input: InputSender,
@@ -74,10 +73,7 @@ impl InsertionWorker {
                         "X11 input stopped unexpectedly. Resume dictation to reconnect.".into(),
                     ),
                 }
-                requests.close();
-                while let Ok(request) = requests.try_recv() {
-                    drop(request);
-                }
+                abandon_queued(&requests);
             }
         })?;
         Ok(Self {

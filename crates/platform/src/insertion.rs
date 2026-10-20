@@ -83,6 +83,18 @@ pub(crate) struct Insertion {
     pub(crate) reply: Reply<anyhow::Result<Inserted>>,
 }
 
+/// Closes an [`Inserter`]'s lane and drops each request still queued on it, which answers its
+/// caller with [`INSERTION_STOPPED`]. Losing every reader only closes a lane: its queued requests
+/// live on with the caller's `Inserter` clones, so a thread that stops reading calls this or leaves
+/// their callers waiting forever.
+#[cfg(target_os = "linux")]
+pub(crate) fn abandon_queued(requests: &Receiver<Insertion>) {
+    requests.close();
+    while let Ok(request) = requests.try_recv() {
+        drop(request);
+    }
+}
+
 /// The single answer to one request.
 pub(crate) struct Reply<T>(Sender<T>);
 

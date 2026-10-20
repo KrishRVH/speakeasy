@@ -21,7 +21,7 @@ use zbus::MatchRule;
 pub use self::tray::{NativeTray, TrayAction, TrayPresentation};
 use super::{
     DesktopOptions, Input, InputSender, Inserted, Inserter, NativeWindow, OwnedThread,
-    insertion::Insertion,
+    insertion::{Insertion, abandon_queued},
 };
 
 /// Desktop launcher and portal registration identity.
@@ -35,7 +35,7 @@ const NO_PASTE_BINDING: Inserted = Inserted::Copied(
 const COPIED_FOR_MANUAL_PASTE: Inserted = Inserted::Copied("Text copied. Paste into your editor.");
 
 /// What `InputMonitor` holds beside the desktop thread: the lane that asks it to stop. Insertion
-/// runs on that thread too, so nothing else outlives it.
+/// runs on that thread or on X11 workers it owns and joins before it exits, so nothing outlives it.
 pub(crate) struct Monitor {
     /// Never sends; closing it asks the desktop thread to stop.
     stop: Sender<Infallible>,
@@ -48,7 +48,7 @@ impl Monitor {
 
     #[expect(
         clippy::unused_self,
-        reason = "Linux inserts on the desktop thread, so no thread outlives the one InputMonitor joins"
+        reason = "Linux insertion threads belong to the desktop thread, which joins them before exiting, so none outlives the one InputMonitor joins"
     )]
     pub(crate) fn stopped(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
         std::future::ready(())
@@ -107,15 +107,35 @@ pub(crate) fn start(
     input: InputSender,
     options: DesktopOptions,
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
+    start_serving(input, options, serve_desktop)
+}
+
+/// Runs `serve` on the desktop thread. Once it returns, by any path, the thread reports why and then
+/// abandons every insertion still queued, since nothing reads the lane after that; the report comes
+/// first, so the owner learns why before those requests fail.
+fn start_serving(
+    input: InputSender,
+    options: DesktopOptions,
+    serve: impl FnOnce(
+        &InputSender,
+        &DesktopOptions,
+        Receiver<Insertion>,
+        &Receiver<Infallible>,
+    ) -> anyhow::Result<()>
+    + Send
+    + 'static,
+) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
     let (inserter, incoming) = Inserter::lane();
     let (stop, stop_requests) = async_channel::bounded(1);
     let thread = OwnedThread::spawn("desktop-access", move || {
-        match serve_desktop(&input, &options, incoming, &stop_requests) {
+        let lane = incoming.clone();
+        match serve(&input, &options, incoming, &stop_requests) {
             Err(error) if !input.is_closed() => input.fail(format!(
                 "Linux desktop access stopped: {error}. Check desktop permissions, or choose Shortcuts: Desktop bindings, Insert: Copy for manual paste, or both in Settings, then resume."
             )),
             _ => input.close(),
         }
+        abandon_queued(&lane);
     })?;
     Ok((thread, Monitor { stop }, inserter))
 }
@@ -218,7 +238,45 @@ pub(crate) fn show_startup_error(message: &str) {
 
 #[cfg(test)]
 mod tests {
+    use std::{sync::mpsc, time::Duration};
+
+    use anyhow::Context as _;
+    use futures_util::FutureExt as _;
+
     use super::*;
+    use crate::Delivery;
+
+    #[tokio::test]
+    async fn a_stopped_desktop_thread_answers_every_queued_insertion() -> anyhow::Result<()> {
+        let (events, _received) = async_channel::bounded(4);
+        let input = InputSender::new(events);
+        let (taken, holding) = async_channel::bounded(1);
+        let (release, released) = mpsc::channel();
+        // Holds one request, as the portal does while it prepares a paste, until another queues.
+        let serve = move |_: &_, _: &_, requests: Receiver<Insertion>, _: &_| {
+            let _in_hand = requests.recv_blocking()?;
+            taken.try_send(())?;
+            released.recv_timeout(Duration::from_secs(2))?;
+            Ok(())
+        };
+        let (_thread, _monitor, inserter) =
+            start_serving(input.clone(), DesktopOptions::default(), serve)?;
+        let permit = input.begin().context("Recording")?;
+        let in_hand = inserter.insert("fixture".into(), permit.clone(), Delivery::Paste);
+        let mut in_hand = Box::pin(in_hand);
+        assert!(in_hand.as_mut().now_or_never().is_none());
+        tokio::time::timeout(Duration::from_secs(1), holding.recv()).await??;
+        let mut queued = Box::pin(inserter.insert("fixture".into(), permit, Delivery::Paste));
+        assert!(queued.as_mut().now_or_never().is_none());
+        release.send(())?;
+        for answer in [in_hand, queued] {
+            let answer = tokio::time::timeout(Duration::from_secs(2), answer)
+                .await
+                .context("An insertion request was left waiting")?;
+            assert!(answer.is_err());
+        }
+        Ok(())
+    }
 
     #[test]
     fn host_session_is_independent_of_xwayland_rendering() {
