@@ -110,13 +110,13 @@ cargo run --locked -p speakeasy -- show demo  # a scripted Show bundle
 ```
 
 `--demo` uses simulated audio without the microphone, global shortcut, model, or clipboard. It
-previews hands-free, the countdown, submission, a Show with its ink, interrupted dismissal,
-cancellation, silence, and an error. On Windows and macOS, `--demo-tray` adds the tray and the
-Settings hide-and-reopen behavior with dictation disabled. `show demo` writes a scripted Show, a
-narrated screen recording for a coding agent, as a bundle of keyframes, contact sheet, `summary.md`,
-and `show.json`, and prints the summary. Linux has experimental desktop support; see the Linux
-instructions below. GPUI's X11 build needs ALSA, fontconfig, X11/XCB, xkbcommon, and Vulkan
-development packages.
+previews hands-free, the countdown, submission, a Show with its ink on Windows and Mac, interrupted
+dismissal, cancellation, silence, and an error. On Windows and macOS, `--demo-tray` adds the tray
+and the Settings hide-and-reopen behavior with dictation disabled. `show demo` writes a scripted
+Show, a narrated screen recording for a coding agent, as a bundle of keyframes, contact sheet,
+`summary.md`, and `show.json`, and prints the summary. Linux has experimental desktop support; see
+the Linux instructions below. GPUI's X11 build needs ALSA, fontconfig, X11/XCB, xkbcommon, and
+Vulkan development packages.
 
 </details>
 
@@ -265,6 +265,11 @@ global hook, or touch the clipboard. Run checks locally before pushing to `main`
   `cargo test -p speakeasy-platform hidden_pill_consumes_paint -- --ignored` checks hidden and
   visible paint dispatch with an owned native window and fake renderer, without microphone, hook,
   clipboard, or input access.
+- On Windows, `cargo test -p speakeasy-platform capture_leaves_out -- --ignored` shows owned windows
+  and checks that capture leaves them out, tallying only their pixels. On Windows and Mac,
+  `cargo test -p speakeasy a_real_screen_records -- --ignored` records the real screen for about a
+  second and checks the footage's shape, keeping no pixels. `profile_show_pipeline`, run the same
+  way with `--release`, times recording and publishing on synthetic desktops.
 - On Linux, `mise exec -- python scripts/check_demo_linux.py target/release/speakeasy` opens a
   private Xvfb display, checks rendered Settings and the pill's input shape, and waits for the
   simulated preview to hide. It needs Xvfb, x11-utils, and a Vulkan driver. Headless Xvfb checks

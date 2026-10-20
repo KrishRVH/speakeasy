@@ -29,7 +29,7 @@ const INK: Rgba = Rgba {
     a: 1.0,
 };
 
-/// What the overlay shows, published by a Show's recorder.
+/// What the overlay shows, published by a Show's recorder or the demo's.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Canvas {
     /// The display to cover; `None` hides the overlay.
@@ -194,6 +194,7 @@ fn paint(canvas: &Canvas, bounds: Bounds<gpui::Pixels>, opacity: f32, window: &m
 /// that records no Shows never opens one.
 pub(crate) fn attend(mut canvas: watch::Receiver<Canvas>, cx: &App) {
     cx.spawn(async move |cx| {
+        let mut reported = false;
         loop {
             if canvas
                 .wait_for(|canvas| canvas.display.is_some())
@@ -203,23 +204,30 @@ pub(crate) fn attend(mut canvas: watch::Receiver<Canvas>, cx: &App) {
                 return;
             }
             let overlay = match cx.update(|cx| open(canvas.clone(), cx)) {
-                Ok(Ok(overlay)) => overlay,
-                Ok(Err(error)) => {
+                Ok(Ok(overlay)) => Some(overlay),
+                // One dialog a launch; each later Show tries again without one.
+                Ok(Err(error)) if !reported => {
+                    reported = true;
                     speakeasy_platform::show_error(&format!(
                         "Cannot open the Show overlay; ink will not appear while drawing: {error:#}"
                     ));
-                    return;
+                    None
                 },
+                Ok(Err(_)) => None,
                 Err(_) => return,
             };
             let published = canvas
                 .wait_for(|canvas| canvas.display.is_none())
                 .await
                 .is_ok();
-            let closed = overlay
-                .update(cx, |_, window, _| window.remove_window())
-                .is_ok();
-            if !(published && closed) {
+            if let Some(overlay) = overlay {
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "A window something else already closed needs no closing; the next Show opens another"
+                )]
+                let _ = overlay.update(cx, |_, window, _| window.remove_window());
+            }
+            if !published {
                 return;
             }
         }

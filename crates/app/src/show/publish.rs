@@ -257,6 +257,11 @@ mod tests {
             .context("an active permit publishes")?;
         assert!(!permit.active(), "Publishing spends the permit");
 
+        assert_eq!(
+            fs::read_to_string(written.directory.join("summary.md"))?,
+            written.summary,
+            "the summary copied is the one written"
+        );
         let manifest: Manifest =
             serde_json::from_slice(&fs::read(written.directory.join("show.json"))?)?;
         assert_eq!(manifest.recording.narration, narration);

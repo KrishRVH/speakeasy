@@ -684,6 +684,9 @@ pub(crate) fn open(
         },
         |window, cx| {
             window.set_window_title("Speakeasy pill");
+            // The pill lives as long as the app; a close request from outside, such as a tool
+            // closing the process's main window, is refused.
+            window.on_window_should_close(cx, |_, _| false);
             configured = raw_handle(window, "pill").and_then(speakeasy_platform::configure_pill);
             cx.new(|cx| Pill::new(updates, reduced_motion, theme, window, cx))
         },

@@ -61,7 +61,7 @@ async fn play_show(
 ) -> u64 {
     // A platform that records no Shows has no display to draw on, and the preview draws nothing.
     let display = Display::under_pointer().ok();
-    canvas.send_replace(Canvas::default());
+    let clear = Clear::new(canvas);
     let mut snapshot = starting(id);
     present(output, &snapshot, Duration::from_millis(250)).await;
     snapshot.phase = Phase::Recording;
@@ -77,7 +77,7 @@ async fn play_show(
         }
         present(output, &snapshot, Duration::from_millis(32)).await;
     }
-    canvas.send_replace(Canvas::default());
+    drop(clear);
     snapshot.level = 0.0;
     snapshot.hands_free = false;
     for (phase, duration) in [
@@ -89,6 +89,23 @@ async fn play_show(
         present(output, &snapshot, duration).await;
     }
     id
+}
+
+/// Empties the overlay's canvas when made and again however the Show ends, including when a replay
+/// drops the preview mid-stroke.
+struct Clear<'a>(&'a watch::Sender<Canvas>);
+
+impl<'a> Clear<'a> {
+    fn new(canvas: &'a watch::Sender<Canvas>) -> Self {
+        canvas.send_replace(Canvas::default());
+        Self(canvas)
+    }
+}
+
+impl Drop for Clear<'_> {
+    fn drop(&mut self) {
+        self.0.send_replace(Canvas::default());
+    }
 }
 
 /// Covers `display` from the Show's start, then draws a circle from one second in, lifting the pen

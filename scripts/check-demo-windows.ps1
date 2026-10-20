@@ -17,6 +17,7 @@ public static class DemoWindows {
     [DllImport("user32")] public static extern IntPtr WindowFromPhysicalPoint(Point point);
     [DllImport("user32")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+    [DllImport("user32")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
     public struct Rect { public int Left, Top, Right, Bottom; }
 }
 '@ -ReferencedAssemblies System.Drawing
@@ -31,6 +32,7 @@ try {
     $started = $process.Start()
     $script:demoProcess = $process.Id
     $script:pill = [IntPtr]::Zero
+    $script:settings = [IntPtr]::Zero
     $callback = [DemoWindows+Callback]{ param($window, $unused)
         [uint32]$owner = 0
         $null = [DemoWindows]::GetWindowThreadProcessId($window, [ref]$owner)
@@ -38,6 +40,7 @@ try {
             $title = New-Object Text.StringBuilder 256
             $null = [DemoWindows]::GetWindowText($window, $title, 256)
             if ($title.ToString() -eq 'Speakeasy pill') { $script:pill = $window }
+            if ($title.ToString() -eq 'Speakeasy') { $script:settings = $window }
         }
         return $true
     }
@@ -62,8 +65,14 @@ try {
     Write-Host 'PASS: native demo starts; visible pill stays nonactivating and passes hit testing to the desktop below.'
 } finally {
     if ($started -and !$process.HasExited) {
-        $null = $process.CloseMainWindow()
-        if (!$process.WaitForExit(4000)) { $process.Kill(); $process.WaitForExit() }
+        # A user ends the demo by closing Settings; the pill refuses to close on its own. Settings
+        # may open after the pill, so look for it again.
+        $null = [DemoWindows]::EnumWindows($callback, [IntPtr]::Zero)
+        $null = [DemoWindows]::PostMessage($script:settings, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+        if (!$process.WaitForExit(4000)) {
+            $process.Kill(); $process.WaitForExit()
+            throw 'Demo did not quit after Settings closed'
+        }
     }
     $process.Dispose()
     $null = [DemoWindows]::SetThreadDpiAwarenessContext($previousDpi)
