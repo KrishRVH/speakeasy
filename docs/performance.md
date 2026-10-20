@@ -22,34 +22,34 @@ when the full interaction remains correct.
   motion has a 200-FPS ceiling; settled and hidden views request no animation frames. Display
   refresh can impose a lower rate.
 - Speech classification runs incrementally on the capture consumer, leaving only a partial window to
-  classify at stop. [Architecture](architecture.md#session-ownership) owns trimming and sealed
-  audio/teardown ordering. WAV preparation reuses the PCM allocation, checks lengths, and rejects
-  unsupported input.
+  classify at stop. [audio/speech.rs](../crates/app/src/audio/speech.rs) owns trimming, and
+  [audio.rs](../crates/app/src/audio.rs) seals audio before driver teardown. WAV preparation reuses
+  the PCM allocation, checks lengths, and rejects unsupported input.
 - A Show's recorder keeps per-frame work to a few milliseconds and its journal under a fixed cap.
   Its overlay holds full-window path targets only while ink shows; GPUI frees them after a frame
   without paths, and the window closes when the Show ends. Publishing rebuilds, resamples, and
-  encodes keyframes on up to one thread per core. Hot pixel loops use plain multiply-add: `mul_add`
-  is a software call on x86-64's baseline.
+  encodes keyframes on up to one thread per core.
 - Do not add an always-on microphone, worker pool, cache, resampler, or background service without a
   measured user benefit and explicit resource ownership.
 
-The [architecture](architecture.md) owns the detailed state and privacy contracts. Historical
-benchmark results belong to Git and published release history; they are not a performance claim
-about a newly changed revision.
+Code owns state contracts; [architecture](architecture.md) maps owners and cross-module invariants.
+Historical benchmark results belong to Git and published release history; they are not a performance
+claim about a newly changed revision.
 
 ## Measuring
 
 Record hardware, model and runtime, sample rate, request boundaries, warmup, and competing load.
 Compare paired runs and check word accuracy and formatting as well as latency. Keep transcripts out
 of logs. The opt-in tests `profile_fixture_dictation` and `profile_ready_text_latency` exercise the
-real session owner with public audio or fake devices; the README lists the fixture variables. The
-synthetic `profile_audio_pipeline` probe times callback/downmix/consumer work; `profile_audio_seal`
-times sealing a five-minute recording, classified for speech while recording. Sealing includes the
-remaining window, range selection, trimming, capacity reclamation, and WAV encoding; it excludes
-microphone teardown, inference, and insertion. The synthetic `profile_show_pipeline` probe reports
-the recorder's per-frame fingerprint and journal cost on 2560 × 1440 desktops that stay still, type,
-scroll, open a dialog, or play video, with journal megabytes per frame, and each stage of publishing
-a one-minute Show: selection, keyframe rebuilding, composition, PNG encoding, and the private write.
+real session owner with public audio or fake devices; [verification](architecture.md#verification)
+names the fixture variables. The synthetic `profile_audio_pipeline` probe times
+callback/downmix/consumer work; `profile_audio_seal` times sealing a five-minute recording,
+classified for speech while recording. Sealing includes the remaining window, range selection,
+trimming, capacity reclamation, and WAV encoding; it excludes microphone teardown, inference, and
+insertion. The synthetic `profile_show_pipeline` probe reports the recorder's per-frame fingerprint
+and journal cost on 2560 × 1440 desktops that stay still, type, scroll, open a dialog, or play
+video, with journal megabytes per frame, and each stage of publishing a one-minute Show: selection,
+keyframe rebuilding, composition, PNG encoding, and the private write.
 `profile_real_screen_recording` records the real screen for ten seconds on Windows or Mac, keeping
 no pixels; on Windows, run the test binary directly and sample its process, not Cargo's, with
 `profile-windows.ps1`. Use ordinary native profilers rather than a permanent benchmark suite.
@@ -114,7 +114,8 @@ Exercise short dictation, long recordings, the five-minute boundary, denied and 
 device removal, clipboard-owner changes, and focus changes. Include fullscreen apps such as games,
 terminals, protected fields, mixed-DPI and mixed-refresh displays, and display removal. Report
 editor acceptance separately from an OS accepting injected input. Never capture or log private
-transcript data for a benchmark.
+transcript data for a benchmark. Before changing GPUI termination handling, check that forced
+termination, which still disposes synchronously, keeps the UI responsive.
 
 Use native frame/CPU/GPU profilers for displayed pacing, driver work, power, and energy. Process CPU
 counters alone do not establish those outcomes. In particular,
@@ -123,7 +124,7 @@ counts CPU cycles, not elapsed time; frequency and core placement affect their r
 sustained idle periods after warmup and report native verification limits with the exact revision
 and environment.
 
-Linux GNOME/KDE/X11 editor, portal, and audio acceptance remains separate from the private Mesa
-rendering fixture. Windows/macOS hooks and insertion also need native acceptance. Hands-on macOS
-runtime performance, accessibility, idle power, and representative mixed-display pacing remain
-measurement gaps.
+[Verification](architecture.md#verification) states what default checks leave unproven, and the
+[Linux matrix](linux-implementation.md#native-acceptance-still-required) tracks desktop acceptance.
+Hands-on macOS runtime performance, accessibility, idle power, and representative mixed-display
+pacing remain measurement gaps.
