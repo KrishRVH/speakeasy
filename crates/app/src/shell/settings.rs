@@ -178,8 +178,9 @@ impl Settings {
     }
 
     fn refresh_microphones(&mut self, cx: &Context<Self>) {
-        // The demo is simulated and never touches audio devices.
-        if is_demo(cx) {
+        // The demo is simulated and never touches audio devices. A scan stuck in a driver keeps its
+        // detached thread, so a second Refresh would only strand another.
+        if is_demo(cx) || self.microphone_scan.is_some() {
             return;
         }
         let scan = audio::microphones();
