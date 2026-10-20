@@ -12,7 +12,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use speakeasy_show::{Demo, Moment, Sample, Signature, Typeface, budget, compose, select};
+use speakeasy_show::{Demo, Moment, Sample, Signature, Typeface, compose, select};
 
 pub(crate) use self::{
     overlay::{Canvas, attend as attend_overlay},
@@ -81,7 +81,7 @@ impl Command {
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-        let selection = select(&recording, &samples, budget(duration));
+        let selection = select(&recording, &samples);
         let frames = selection
             .keyframes()
             .iter()

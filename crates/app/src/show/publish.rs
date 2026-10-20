@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{Context as _, anyhow};
 use speakeasy_platform::InsertPermit;
-use speakeasy_show::{Image, Moment, Typeface, budget, compose, select};
+use speakeasy_show::{Image, Typeface, compose, select};
 
 use crate::ports::{PUBLISH_STOPPED, Published, Recorded};
 
@@ -47,18 +47,9 @@ fn write_bundle(
         return Ok(None);
     }
     let Recorded { recording, journal } = recorded;
-    let selection = select(
-        &recording,
-        journal.samples(),
-        budget(recording.duration.since(Moment::START)),
-    );
-    let moments: Vec<Moment> = selection
-        .keyframes()
-        .iter()
-        .map(|keyframe| keyframe.at)
-        .collect();
+    let selection = select(&recording, journal.samples());
     let frames = journal
-        .frames_at(&moments)
+        .frames_at(&selection.moments())
         .into_iter()
         .map(|frame| frame.context("A keyframe was not recorded"))
         .collect::<anyhow::Result<Vec<Image>>>()?;
@@ -89,7 +80,7 @@ mod tests {
 
     use speakeasy_platform::{InputSender, InsertPermit};
     use speakeasy_show::{
-        Journal, Manifest, Narration, Point, Recording, Size, Span, Tracker, Word,
+        Journal, Manifest, Moment, Narration, Point, Recording, Size, Span, Tracker, Word,
     };
 
     use super::*;
@@ -397,20 +388,11 @@ mod tests {
             ),
         );
         let started = Instant::now();
-        let selection = select(
-            &recorded.recording,
-            recorded.journal.samples(),
-            budget(recorded.recording.duration.since(Moment::START)),
-        );
+        let selection = select(&recorded.recording, recorded.journal.samples());
         let selected = started.elapsed();
-        let moments: Vec<Moment> = selection
-            .keyframes()
-            .iter()
-            .map(|keyframe| keyframe.at)
-            .collect();
         let frames = recorded
             .journal
-            .frames_at(&moments)
+            .frames_at(&selection.moments())
             .into_iter()
             .map(|frame| frame.context("recorded"))
             .collect::<anyhow::Result<Vec<_>>>()?;

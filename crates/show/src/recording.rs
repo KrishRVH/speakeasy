@@ -254,22 +254,6 @@ impl Word {
     }
 }
 
-/// The most keyframes any Show holds.
-pub(crate) const MOST_KEYFRAMES: usize = 12;
-
-/// The keyframes a Show of this length may hold.
-///
-/// Six for a Show shorter than 40 seconds, one more for each further 20 seconds, up to twelve.
-/// Each keyframe costs a reading model about a thousand tokens, so a longer Show earns more only as
-/// it tells more.
-#[must_use]
-pub fn budget(duration: Duration) -> usize {
-    const BASE: usize = 6;
-    let extra = duration.saturating_sub(Duration::from_secs(20)).as_secs() / 20;
-    BASE.saturating_add(usize::try_from(extra).unwrap_or(MOST_KEYFRAMES))
-        .min(MOST_KEYFRAMES)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,12 +277,5 @@ mod tests {
         assert_eq!(serde_json::from_str::<Stroke>(&json).unwrap(), stroke);
         assert!(Stroke::new(Vec::new()).is_none());
         assert!(serde_json::from_str::<Stroke>("[]").is_err());
-    }
-
-    #[test]
-    fn the_budget_grows_with_duration() {
-        let budgets =
-            [8, 39, 40, 67, 140, 268, u64::MAX].map(|seconds| budget(Duration::from_secs(seconds)));
-        assert_eq!(budgets, [6, 6, 7, 8, 12, 12, 12]);
     }
 }

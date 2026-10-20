@@ -39,7 +39,7 @@ pub use crate::{
     journal::Journal,
     marks::{Mark, Shape},
     moment::{Moment, Span},
-    recording::{Action, EmptyStroke, InkPoint, Narration, Recording, Size, Stroke, Word, budget},
+    recording::{Action, EmptyStroke, InkPoint, Narration, Recording, Size, Stroke, Word},
     select::{Keyframe, Reason, Selection, select},
     signature::{Sample, Signature},
     tracker::Tracker,

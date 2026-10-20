@@ -455,11 +455,7 @@ mod tests {
                 }
             })
             .collect();
-        let selection = select(
-            &recording,
-            &samples,
-            crate::budget(recording.duration.since(Moment::START)),
-        );
+        let selection = select(&recording, &samples);
         let frames = selection
             .keyframes
             .iter()
