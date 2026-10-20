@@ -100,7 +100,7 @@ impl Command {
 
 /// Where Shows live: machine-local, beside the engines and models.
 fn directory() -> PathBuf {
-    crate::setup::data_root().join("shows")
+    crate::paths::data_root().join("shows")
 }
 
 /// An unused directory under `parent` named for `now` in UTC, such as `20261019T143603Z`.

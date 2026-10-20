@@ -76,7 +76,7 @@ pub(crate) struct Setup {
 impl Setup {
     pub(crate) fn start() -> anyhow::Result<Self> {
         Self::spawn(|progress, cancelled| {
-            let root = data_root();
+            let root = crate::paths::data_root();
             match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -247,21 +247,6 @@ impl Installation {
         }
         self.child = None;
     }
-}
-
-/// Engines, models, and Shows are machine-local, so they stay out of roaming settings.
-pub(crate) fn data_root() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
-    #[cfg(target_os = "macos")]
-    let base = std::env::var_os("HOME")
-        .map(|home| PathBuf::from(home).join("Library/Application Support"));
-    #[cfg(target_os = "linux")]
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")));
-    base.unwrap_or_else(|| PathBuf::from(".")).join("speakeasy")
 }
 
 async fn install(

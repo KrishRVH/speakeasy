@@ -10,6 +10,7 @@ mod gpui_ext;
 mod icons;
 mod instance;
 mod local_speech;
+mod paths;
 mod pill;
 mod ports;
 mod runtime;
@@ -68,7 +69,7 @@ impl Cli {
         let mut cli = Self {
             mode: LaunchMode::Live,
             command: None,
-            path: config::default_path(),
+            path: paths::settings_file(),
         };
         while let Some(arg) = args.next() {
             match arg.as_str() {

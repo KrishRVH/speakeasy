@@ -263,21 +263,6 @@ impl Default for LinuxSettings {
     }
 }
 
-pub(crate) fn default_path() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    let base = std::env::var_os("APPDATA").map(PathBuf::from);
-    #[cfg(target_os = "macos")]
-    let base = std::env::var_os("HOME")
-        .map(|home| PathBuf::from(home).join("Library/Application Support"));
-    #[cfg(target_os = "linux")]
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")));
-    base.unwrap_or_else(|| PathBuf::from("."))
-        .join("speakeasy/settings.json")
-}
-
 /// Settings that pass validation: a fake engine and model written into `directory`.
 #[cfg(test)]
 pub(crate) fn valid_config(directory: &Path) -> anyhow::Result<Config> {
