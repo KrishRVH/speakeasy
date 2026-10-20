@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn layout_stays_within_what_a_model_reads() {
-        // Mixed extremes once overshot by a few pixels when gutters were scaled with the frames.
+        // Fixed padding and gutters make mixed extremes take several passes to fit.
         for aspects in [
             &[0.25, 0.25, 4.5, 4.5, 3.0, 0.46, 4.5, 2.4, 0.56, 2.0][..],
             &[3.0, 4.5, 4.5, 2.0, 0.56, 1.33, 4.5, 4.5, 4.5],

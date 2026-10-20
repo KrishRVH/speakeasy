@@ -32,7 +32,8 @@ pub(crate) enum Corner {
 /// take so it does not cover what the keyframe is about.
 ///
 /// A keyframe made for marks shows all their ink. Any other keyframe shows the ink drawn up to its
-/// moment that was lifted at most a moment before, as the screen looked then.
+/// moment from strokes still in progress or lifted within [`RECENT_INK`], as the screen looked
+/// then.
 pub(crate) fn annotate(
     image: &mut Image,
     keyframe: &Keyframe,
