@@ -3,6 +3,9 @@
 //! Frames leave out Speakeasy's own windows, and pointer samples are normalized to the same
 //! display, so ink drawn on the overlay lines up with the frames it annotates.
 
+#[cfg(any(target_os = "macos", test))]
+pub(crate) mod geometry;
+
 use std::{
     convert::Infallible,
     thread,
