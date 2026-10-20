@@ -499,7 +499,7 @@ impl Pill {
                         } else {
                             palette.muted
                         }))
-                        .child(scene.clock.text),
+                        .child(scene.clock.text()),
                 )
             })
     }
@@ -668,28 +668,28 @@ impl Scene {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+/// The recording's elapsed seconds, and whether it has reached the countdown before its limit.
 struct Clock {
+    seconds: u64,
     near_limit: bool,
-    text: String,
 }
 
 impl Clock {
     fn new(seconds: u64) -> Self {
         let limit = RECORDING_LIMIT.as_secs();
-        if seconds >= limit.saturating_sub(COUNTDOWN.as_secs()) {
-            Self {
-                near_limit: true,
-                text: {
-                    let left = limit.saturating_sub(seconds);
-                    format!("{}:{:02} left", left / 60, left % 60)
-                },
-            }
+        Self {
+            seconds,
+            near_limit: seconds >= limit.saturating_sub(COUNTDOWN.as_secs()),
+        }
+    }
+
+    /// The elapsed time, or the time left once the countdown begins.
+    fn text(&self) -> String {
+        if self.near_limit {
+            let left = RECORDING_LIMIT.as_secs().saturating_sub(self.seconds);
+            format!("{}:{:02} left", left / 60, left % 60)
         } else {
-            Self {
-                near_limit: false,
-                text: format!("{}:{:02}", seconds / 60, seconds % 60),
-            }
+            format!("{}:{:02}", self.seconds / 60, self.seconds % 60)
         }
     }
 }
@@ -889,13 +889,13 @@ mod tests {
 
     #[test]
     fn limit_countdown_is_clamped_and_only_appears_in_the_last_thirty_seconds() {
-        let clock = |near_limit, text: &str| Clock {
-            near_limit,
-            text: text.into(),
+        let clock = |seconds| {
+            let clock = Clock::new(seconds);
+            (clock.near_limit, clock.text())
         };
-        assert_eq!(Clock::new(269), clock(false, "4:29"));
-        assert_eq!(Clock::new(270), clock(true, "0:30 left"));
-        assert_eq!(Clock::new(305), clock(true, "0:00 left"));
+        assert_eq!(clock(269), (false, "4:29".into()));
+        assert_eq!(clock(270), (true, "0:30 left".into()));
+        assert_eq!(clock(305), (true, "0:00 left".into()));
     }
 
     #[cfg(target_os = "linux")]
