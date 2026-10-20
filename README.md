@@ -9,8 +9,10 @@
 </p>
 
 <p align="center">
+  <a href="#show-your-coding-agent">Shows</a>&nbsp;&nbsp;◆&nbsp;&nbsp;
   <a href="#get-started">Get started</a>&nbsp;&nbsp;◆&nbsp;&nbsp;
   <a href="#speech-engines">Speech engines</a>&nbsp;&nbsp;◆&nbsp;&nbsp;
+  <a href="#everyday-use">Everyday use</a>&nbsp;&nbsp;◆&nbsp;&nbsp;
   <a href="#build-and-verify">Build and verify</a>&nbsp;&nbsp;◆&nbsp;&nbsp;
   <a href="docs/architecture.md">Architecture</a>
 </p>
@@ -23,7 +25,8 @@ slot on screen while you speak, and keeps every word on your machine.
 
 <p align="center">
   <img src="docs/assets/pill.png"
-    alt="The pill opening the microphone, listening, recording hands-free, and confirming typed text" width="760">
+    alt="The pill opening the microphone, listening, hands-free with a lock and timer, and a check for typed text"
+    width="760">
 </p>
 
 | Gesture                                        | Windows                                             | Mac                              |
@@ -35,11 +38,32 @@ slot on screen while you speak, and keeps every word on your machine.
 
 The shortcuts match Wispr Flow's defaults, and double-tapping the shortcut also starts hands-free.
 On Mac, set **System Settings › Keyboard › Press 🌐 key to** to **Do Nothing** so Fn only dictates.
-Recordings stop at five minutes, with a countdown for the last 30 seconds. A check means the text
-was submitted to your app; **No speech detected** means nothing was sent. **Remove um / uh** is on
-by default and removes standalone English hesitation words locally before insertion. Speech
-containing only these fillers sends nothing. Turn it off for non-English Parakeet dictation or
-literal transcription; Whisper removes fillers only when its language is set to English.
+**Remove um / uh** is on by default and removes standalone English hesitation words locally before
+insertion. Speech containing only these fillers sends nothing. Turn it off for non-English Parakeet
+dictation or literal transcription; Whisper removes fillers only when its language is set to
+English.
+
+### Reading the pill
+
+The pill sits at the bottom of the screen, never takes focus, and lets clicks through to the app
+underneath. Hold the shortcut and the slot opens; the red waveform follows your voice. Hands-free
+adds a lock and the elapsed time. Near the five-minute limit, while it works, and once you finish,
+the pill shows:
+
+<p align="center">
+  <img src="docs/assets/pill-states.png"
+    alt="Pill states: 0:26 left in gold, the working lamp, No speech detected, Text copied, and a microphone error"
+    width="760">
+</p>
+
+- **Time left.** Recordings stop at five minutes. The last 30 seconds count down in gold, and at
+  zero the recording finishes and its text is delivered as usual.
+- **Working.** The lamp slides through the slot while your speech is transcribed on this machine.
+- **Typed.** A check, shown above, means the text was submitted to your app.
+- **No speech detected.** Nothing was sent.
+- **Text copied.** The text is on the clipboard but was not pasted, for example because the shortcut
+  keys were still held or Speakeasy itself had focus. Paste it where you want it.
+- **Needs attention.** An error says what to do next and stays in Settings after the pill fades.
 
 ### Show your coding agent
 
@@ -48,10 +72,40 @@ shortcut: the pill shows a red screen mark, and Speakeasy records the display un
 along with your voice. Release the shortcut and keep talking; hold <kbd>Shift</kbd> to draw circles
 and arrows that fade as you go, and click through as usual. Press the shortcut again to finish.
 
+<p align="center">
+  <img src="docs/assets/show.png"
+    alt="A Show in progress: red ink circles a label running under a Save button; the pill shows the screen mark"
+    width="760">
+</p>
+
+<p align="center">
+  <img src="docs/assets/show-pill.png"
+    alt="The pill recording a Show, with a red screen mark and 0:02, and the pill saying Show copied" width="760">
+</p>
+
 Speakeasy picks the keyframes your ink, clicks, and words point at, annotates them, and writes a
-bundle of keyframes, a contact sheet, `summary.md`, and `show.json`. The pill says **Show copied**:
-paste the summary into your agent and it opens the frames itself. Shows record on Windows, and
-experimentally on Mac, but not on Linux.
+bundle of keyframes, a contact sheet, `summary.md`, and `show.json`. The pill says **Show copied**
+and the summary is on the clipboard: paste it into your agent and it opens the frames itself. Shows
+record on Windows, and experimentally on Mac, but not on Linux.
+
+<p align="center">
+  <img src="docs/assets/show-sheet.png"
+    alt="A contact sheet of four timed keyframes marked with a click, a circle and arrow, a click, and a drag"
+    width="760">
+</p>
+
+On Windows, the summary for that contact sheet reads as follows; `speakeasy show demo` writes this
+scripted bundle of a made-up app:
+
+```text
+Screen recording (0:20, 4 keyframes): …\speakeasy\shows\20261020T143205Z
+Contact sheet: …\speakeasy\shows\20261020T143205Z\contact-sheet.png
+- #1 (0:02) [clicked] “Here's the settings window. When I open Appearance,”
+- #2 (0:09) [circled, drew an arrow] “the theme picker is here, but look, this label runs under the save button.”
+- #3 (0:12) [clicked] “Now I click reduce motion and nothing happens.”
+- #4 (0:17) [dragged right] “Dragging the text size slider works, though.”
+Full-size keyframes: frames/frame-01.png to frames/frame-04.png. Timeline: show.json.
+```
 
 ## What's said here stays here
 
@@ -96,6 +150,12 @@ use. They live in `%LOCALAPPDATA%\speakeasy` on Windows and
 `~/Library/Application Support/speakeasy` on Mac. **Cancel** pauses setup, and the next attempt
 resumes where it stopped.
 
+<p align="center">
+  <img src="docs/assets/setup.png"
+    alt="Settings during first-launch setup, downloading the Parakeet model with a progress bar and Cancel"
+    width="530">
+</p>
+
 <details>
 <summary>Build from source</summary>
 
@@ -121,14 +181,6 @@ prints its summary. Linux has experimental desktop support; see the Linux instru
 X11 build needs ALSA, fontconfig, X11/XCB, xkbcommon, and Vulkan development packages.
 
 </details>
-
-Settings also choose the microphone, GPU use, filler removal, how text is delivered, reduced motion,
-and theme: **Jet & Champagne**, **Emerald Lounge**, **Iris**, or **Midnight Chrome**. Changes apply
-when you save. Theme and reduced-motion changes keep a recording running; microphone, language,
-filler removal, and delivery changes end it but keep the model loaded. On Linux, Shortcuts changes
-and most Insert changes restart dictation, which reloads the model. Saving stays responsive and
-preserves edits made while the save is running. Pausing during a save keeps dictation paused; Quit
-finishes requested saves.
 
 ## Linux (experimental)
 
@@ -196,11 +248,37 @@ machines, prefer Parakeet: other accounts can read Whisper's
 The worker stays warm on loopback. With a GPU, one silent request initializes its kernels before the
 first dictation; Linux CPU workers also validate inference before readiness. Cancelling GPU work
 keeps a healthy worker and replaces it if a two-second recovery check fails. Cancelling active CPU
-inference replaces the worker. **Pause dictation** releases the shortcut and the model. On Mac and
-Linux, force-quitting Speakeasy can leave the worker running; quit from its menu instead. Relative
-engine and model paths resolve beside the settings file.
+inference replaces the worker. On Mac and Linux, force-quitting Speakeasy can leave the worker
+running; quit from its menu instead. Relative engine and model paths resolve beside the settings
+file.
 
 ## Everyday use
+
+### Settings
+
+<p align="center">
+  <img src="docs/assets/settings.png"
+    alt="Settings: shortcut hints, the Parakeet engine and model, microphone, preferences, Ready · Parakeet"
+    width="500">
+</p>
+
+Settings show the shortcuts and the engine and model in use, and choose the microphone, GPU use,
+filler removal, how text is delivered, reduced motion, and theme. The status line near the bottom
+says whether dictation is ready, or shows the latest error or notice.
+
+Changes apply when you save. Theme and reduced-motion changes keep a recording running; microphone,
+language, filler removal, and delivery changes end it but keep the model loaded. On Linux, Shortcuts
+changes and most Insert changes restart dictation, which reloads the model. Saving stays responsive
+and preserves edits made while the save is running. Pausing during a save keeps dictation paused;
+Quit finishes requested saves.
+
+<p align="center">
+  <img src="docs/assets/themes.png"
+    alt="Settings in the four themes: Jet & Champagne, Emerald Lounge, Iris, and Midnight Chrome" width="760">
+</p>
+
+The theme colors Settings, the pill, and the Windows and Linux tray icon: **Jet & Champagne**,
+**Emerald Lounge**, **Iris**, or **Midnight Chrome**.
 
 Settings live in `%APPDATA%\speakeasy\settings.json` on Windows and
 `~/Library/Application Support/speakeasy/settings.json` on Mac. Start from `settings.example.json`
@@ -210,9 +288,21 @@ Windows and Mac, configured launches go straight to the tray or menu bar; Linux 
 startup. Closing Settings hides it and keeps unsaved edits; Windows minimize also hides it.
 Reopening Speakeasy or choosing **Settings…** in the tray brings it back.
 
-The tray icon shows loading, ready, recording, processing, paused, and attention states. Its menu
-pauses or resumes dictation, starts or finishes a recording, cancels, opens Settings, and quits.
-Errors stay in Settings after the pill fades.
+### Tray
+
+<p align="center">
+  <img src="docs/assets/tray.png"
+    alt="Tray icon: ready, red while recording, a ring while working, a pause badge, an attention badge"
+    width="760">
+</p>
+
+The tray icon shows whether Speakeasy is ready, recording, working (for example loading the model or
+transcribing), paused, or needs attention. The Mac menu bar icon is monochrome, so it marks
+recording with a badge instead of red. The menu pauses or resumes dictation, starts or finishes a
+recording, cancels, opens Settings, and quits. **Pause dictation**, or **Pause** in Settings,
+releases the shortcut and the model until you resume.
+
+### Text delivery
 
 By default the text is pasted through the clipboard and stays there. **Keep clipboard** types it as
 direct input instead, which some editors reject. Protected fields and elevated Windows apps may
