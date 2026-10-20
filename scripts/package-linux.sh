@@ -1,23 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-if [[ $# -gt 1 ]]; then
-  echo "Usage: bash scripts/package-linux.sh [--native-tar]" >&2
-  exit 1
-fi
-if [[ "$(uname -s)" != Linux || "$(uname -m)" != x86_64 ]]; then
-  echo "Linux packaging currently requires an x86_64 Linux builder." >&2
-  exit 1
-fi
 native=false
-case "${1:-}" in
-  --native-tar) native=true ;;
-  '') ;;
+case "$#:${1:-}" in
+  0:) ;;
+  1:--native-tar) native=true ;;
   *)
     echo "Usage: bash scripts/package-linux.sh [--native-tar]" >&2
     exit 1
     ;;
 esac
+if [[ "$(uname -s)" != Linux || "$(uname -m)" != x86_64 ]]; then
+  echo "Linux packaging requires an x86_64 Linux builder." >&2
+  exit 1
+fi
 cargo build --release --locked -p speakeasy
 required=$(readelf --version-info target/release/speakeasy | rg -o 'GLIBC_[0-9.]+' | sort -Vu | tail -1)
 if [[ "$native" == false && "$(printf '%s\n' GLIBC_2.35 "$required" | sort -V | tail -1)" != GLIBC_2.35 ]]; then

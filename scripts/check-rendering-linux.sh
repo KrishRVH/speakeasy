@@ -1,12 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-if [[ $# -gt 1 ]]; then
-  echo "Usage: bash scripts/check-rendering-linux.sh [--packages]" >&2
-  exit 1
-fi
-case "${1:-}" in
-  --packages | '') ;;
+case "$#:${1:-}" in
+  0: | 1:--packages) ;;
   *)
     echo "Usage: bash scripts/check-rendering-linux.sh [--packages]" >&2
     exit 1
