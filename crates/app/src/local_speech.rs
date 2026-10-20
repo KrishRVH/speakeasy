@@ -71,8 +71,6 @@ impl LocalSpeech {
         let directory = tempfile::Builder::new().prefix("speakeasy-").tempdir()?;
         let secret = random_token()?;
         let mut command = server_command(&config, port, &secret, directory.path());
-        // Release the reserved port just before the engine binds it.
-        drop(listener);
         let client = client_builder()?
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
@@ -80,6 +78,8 @@ impl LocalSpeech {
             // A pooled connection could outlive the listener check that precedes each request.
             .pool_max_idle_per_host(0)
             .build()?;
+        // Release the reserved port just before the engine binds it.
+        drop(listener);
         let mut child = command.spawn().context(
             "Cannot start local speech. Check the selected engine executable and its native dependencies.",
         )?;
@@ -165,9 +165,7 @@ impl LocalSpeech {
             Engine::Whisper => format!("http://{LOOPBACK}:{port}/{}/{path}", self.secret),
         }
     }
-}
 
-impl LocalSpeech {
     /// Sends `wav` for recognition and returns the reply's body in the requested `format`.
     async fn request(&self, wav: Vec<u8>, language: &str, format: &str) -> anyhow::Result<Vec<u8>> {
         // The engine may have exited and lost its port since readiness. Each request connects

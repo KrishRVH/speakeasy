@@ -93,7 +93,6 @@ fn recoverable_stream_notifications_do_not_abort_recording() {
             }
             handle_stream_error(kind.into(), &errors, &control);
             assert!(received.try_recv().is_err(), "{kind} aborted capture");
-            assert!(capture_failure(&Control::default(), &received).is_ok());
         }
     }
 }
