@@ -185,7 +185,7 @@ describe host GPU drivers, while a
 does not establish inference compatibility. Preserve the
 [installer layout](https://github.com/NVIDIA/NeMo-Speech.cpp/blob/v0.2.0/scripts/install.sh) and
 [RPATH definitions](https://github.com/NVIDIA/NeMo-Speech.cpp/blob/v0.2.0/CMakeLists.txt);
-`setup.rs` owns current asset URLs and checksums.
+`setup.rs` owns the model's URL and checksum, and `setup/engine.rs` owns the engines'.
 
 ## Native acceptance still required
 
