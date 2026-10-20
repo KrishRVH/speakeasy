@@ -273,6 +273,47 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn shipped_example_is_the_wire_format() -> anyhow::Result<()> {
+        const EXAMPLE: &str = include_str!("../../../settings.example.json");
+        let config: Config = serde_json::from_str(EXAMPLE)?;
+        assert_eq!(
+            serde_json::to_value(&config)?,
+            serde_json::from_str::<serde_json::Value>(EXAMPLE)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn engine_and_theme_spellings_are_the_wire_format() -> anyhow::Result<()> {
+        for (engine, name) in [(Engine::Whisper, "whisper"), (Engine::Parakeet, "parakeet")] {
+            assert_eq!(serde_json::to_value(engine)?, name);
+            assert!(serde_json::from_value::<Engine>(name.into())? == engine);
+        }
+        for (theme, name) in [
+            (Theme::Jet, "jet"),
+            (Theme::Emerald, "emerald"),
+            (Theme::Iris, "iris"),
+            (Theme::Chrome, "chrome"),
+        ] {
+            assert_eq!(serde_json::to_value(theme)?, name);
+            assert_eq!(serde_json::from_value::<Theme>(name.into())?, theme);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn save_refuses_to_replace_a_file_that_needs_repair() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("settings.json");
+        // A type error, not an unknown key, so the case holds whatever unknown keys are allowed.
+        let broken = br#"{"engine_executable":"","model":"","threads":"four"}"#;
+        fs::write(&path, broken)?;
+        assert!(Config::default().save(&path).is_err());
+        assert_eq!(fs::read(&path)?, broken);
+        Ok(())
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn validation_requires_an_executable_engine() -> anyhow::Result<()> {
