@@ -1,8 +1,9 @@
 //! GPUI conveniences: updates whose only failure is that their target no longer exists, views that
-//! follow a watch channel, and native window calls deferred past GPUI's window borrow.
+//! follow a watch channel, and native windows for platform calls, now or deferred past GPUI's
+//! window borrow.
 //!
-//! Each update closure returns `()`, so these helpers can never discard an error the closure itself
-//! produced.
+//! The `update_if_*` closures return `()`, so those helpers can never discard an error the closure
+//! itself produced.
 
 use anyhow::{Context as _, anyhow};
 use gpui::{
