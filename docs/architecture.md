@@ -196,8 +196,10 @@ removed. The result is saved like a manual choice and enables dictation.
 
 The configured `engine_executable` and model select one explicitly chosen engine: Parakeet, on the
 GPU or CPU, or Whisper. These are external native inference processes; the desktop application is
-Rust. Audio is posted from memory to the owned worker on loopback, through a client without proxies
-or redirects. Worker output and transcripts are not retained in diagnostic logs.
+Rust. Audio is posted from memory to the owned worker on loopback, through a client without proxies,
+redirects, or reused connections. On Linux and Windows, readiness and every request first require
+that the worker's own process group holds the listener on its port; macOS does not check yet. Worker
+output and transcripts are not retained in diagnostic logs.
 
 Model loading starts in the background. GPU preference adds a silent warmup request before
 readiness. Linux CPU workers also validate one synthetic inference before readiness, because model

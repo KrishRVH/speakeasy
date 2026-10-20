@@ -37,6 +37,7 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 // waits long before this.
 const INFERENCE_TIMEOUT: Duration = Duration::from_mins(30);
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+const STOPPED: &str = "Local transcription stopped. Check the model/backend and try again.";
 const SIGILL: i32 = 4;
 const USAGE_ERROR: u32 = 2;
 const STATUS_ILLEGAL_INSTRUCTION: u32 = 0xC000_001D;
@@ -49,7 +50,7 @@ pub(crate) struct LocalSpeech {
     /// Declared before `child`, so dropping terminates the group before its leader can be reaped.
     group: ProcessGroup,
     child: Child,
-    endpoint: String,
+    port: u16,
     /// Parakeet's API key, passed only through its environment, and Whisper's route, which is on
     /// its argv and so visible to other local users.
     secret: String,
@@ -75,20 +76,18 @@ impl LocalSpeech {
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)
+            // A pooled connection could outlive the listener check that precedes each request.
+            .pool_max_idle_per_host(0)
             .build()?;
         let mut child = command.spawn().context(
             "Cannot start local speech. Check the selected engine executable and its native dependencies.",
         )?;
         let group = contain(&mut child).await?;
-        let endpoint = match config.engine {
-            Engine::Parakeet => format!("http://{LOOPBACK}:{port}"),
-            Engine::Whisper => format!("http://{LOOPBACK}:{port}/{secret}"),
-        };
         let mut speech = Self {
             engine: config.engine,
             group,
             child,
-            endpoint,
+            port,
             secret,
             client,
             _directory: directory,
@@ -144,6 +143,16 @@ impl LocalSpeech {
                 .await
                 && response.status().is_success()
             {
+                // The reserved port is released before the engine binds it, so another program can
+                // take it and answer. That program must never receive audio or the key, or choose
+                // the text to insert. macOS has no ownership lookup yet and trusts the answer.
+                #[cfg(not(target_os = "macos"))]
+                ensure!(
+                    self.group
+                        .holds_loopback_listener(self.port)
+                        .context("Cannot verify the local speech process. Try again.")?,
+                    "Another program took the local speech port. Try again."
+                );
                 return Ok(());
             }
             sleep(HEALTH_POLL).await;
@@ -151,13 +160,26 @@ impl LocalSpeech {
     }
 
     fn url(&self, path: &str) -> String {
-        format!("{}/{path}", self.endpoint)
+        let port = self.port;
+        match self.engine {
+            Engine::Parakeet => format!("http://{LOOPBACK}:{port}/{path}"),
+            Engine::Whisper => format!("http://{LOOPBACK}:{port}/{}/{path}", self.secret),
+        }
     }
 }
 
 impl LocalSpeech {
     /// Sends `wav` for recognition and returns the reply's body in the requested `format`.
     async fn request(&self, wav: Vec<u8>, language: &str, format: &str) -> anyhow::Result<Vec<u8>> {
+        // The engine may have exited and lost its port since readiness. Each request connects
+        // afresh, leaving only the moment between this check and that connection.
+        #[cfg(not(target_os = "macos"))]
+        ensure!(
+            self.group
+                .holds_loopback_listener(self.port)
+                .is_ok_and(|held| held),
+            STOPPED
+        );
         let request = match self.engine {
             Engine::Parakeet => {
                 let rate = audio::wav_sample_rate(&wav).context("Missing recording sample rate")?;
@@ -186,7 +208,7 @@ impl LocalSpeech {
                 if error.is_timeout() {
                     anyhow!("Transcription timed out. Try a smaller model or GPU acceleration.")
                 } else {
-                    anyhow!("Local transcription stopped. Check the model/backend and try again.")
+                    anyhow!(STOPPED)
                 }
             })?;
         ensure!(
@@ -702,7 +724,11 @@ mod tests {
         )?;
         let (cancel, cancelled) = watch::channel(false);
         let task = tokio::spawn(LocalSpeech::start(config, cancelled));
-        let pid = timeout(Duration::from_secs(5), fixture_pid(directory.path())).await?;
+        let pid: u32 = timeout(
+            Duration::from_secs(5),
+            fixture_number(&directory.path().join("worker.pid")),
+        )
+        .await?;
         cancel.send_replace(true);
         assert!(
             timeout(Duration::from_secs(5), task)
@@ -717,12 +743,114 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
-    async fn fixture_pid(directory: &Path) -> u32 {
+    #[tokio::test]
+    async fn a_program_that_takes_the_released_port_never_becomes_the_engine() -> anyhow::Result<()>
+    {
+        let (directory, config) = fake_engine(concat!(
+            "#!/bin/sh\n",
+            "while [ \"$#\" -gt 0 ]; do\n",
+            "  [ \"$1\" = --port ] && printf '%s' \"$2\" > \"$(dirname \"$0\")/worker.port\"\n",
+            "  shift\n",
+            "done\n",
+            "exec sleep 60\n",
+        ))?;
+        let (_cancel, cancelled) = watch::channel(false);
+        let start = tokio::spawn(LocalSpeech::start(config, cancelled));
+        let port: u16 = timeout(
+            Duration::from_secs(5),
+            fixture_number(&directory.path().join("worker.port")),
+        )
+        .await?;
+        let squatter = tokio::net::TcpListener::bind((LOOPBACK, port)).await?;
+        let started = tokio::select! {
+            started = start => started?,
+            failed = impersonate_engine(&squatter) => {
+                failed?;
+                bail!("The impersonated engine stopped answering");
+            },
+        };
+        let error = started
+            .err()
+            .context("The program on the engine's port became the engine")?;
+        assert_eq!(
+            error.to_string(),
+            "Another program took the local speech port. Try again."
+        );
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn audio_never_reaches_a_program_that_took_a_ready_engines_port() -> anyhow::Result<()> {
+        let squatter = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
+        let mut command = hidden_command("sleep");
+        command.arg("60").process_group(0);
+        let mut child = command.spawn()?;
+        // A ready engine that has since lost its port to the squatter.
+        let mut speech = LocalSpeech {
+            engine: Engine::Whisper,
+            group: contain(&mut child).await?,
+            child,
+            port: squatter.local_addr()?.port(),
+            secret: random_token()?,
+            client: Client::new(),
+            _directory: tempfile::tempdir()?,
+        };
+        let wav = audio::silent_wav(16_000, Duration::from_secs(1))?;
+        let transcribed = tokio::select! {
+            transcribed = speech.transcribe(wav, "en") => transcribed,
+            failed = impersonate_engine(&squatter) => {
+                failed?;
+                bail!("The impersonated engine stopped answering");
+            },
+        };
+        speech.stop().await;
+        let error = transcribed
+            .err()
+            .context("The program on the engine's port transcribed")?;
+        assert_eq!(error.to_string(), STOPPED);
+        Ok(())
+    }
+
+    /// Answers every request on `listener` with an empty transcript, as a program that took the
+    /// engine's port could; returns only on failure.
+    #[cfg(target_os = "linux")]
+    async fn impersonate_engine(listener: &tokio::net::TcpListener) -> anyhow::Result<()> {
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
         loop {
-            if let Ok(pid) = tokio::fs::read_to_string(directory.join("worker.pid")).await
-                && let Ok(pid) = pid.parse()
+            let mut stream = BufReader::new(listener.accept().await?.0);
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                if stream.read_line(&mut line).await? == 0 || line.trim().is_empty() {
+                    break;
+                }
+                if let Some((name, value)) = line.split_once(':')
+                    && name.eq_ignore_ascii_case("content-length")
+                {
+                    length = value.trim().parse()?;
+                }
+            }
+            stream.read_exact(&mut vec![0; length]).await?;
+            stream
+                .write_all(
+                    concat!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n",
+                        "Content-Length: 11\r\nConnection: close\r\n\r\n{\"text\":\"\"}",
+                    )
+                    .as_bytes(),
+                )
+                .await?;
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn fixture_number<T: std::str::FromStr>(path: &Path) -> T {
+        loop {
+            if let Ok(text) = tokio::fs::read_to_string(path).await
+                && let Ok(number) = text.parse()
             {
-                return pid;
+                return number;
             }
             sleep(Duration::from_millis(5)).await;
         }
