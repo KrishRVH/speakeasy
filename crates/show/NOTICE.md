@@ -4,7 +4,8 @@
 
 - [Scrawl](https://github.com/kitlangton/scrawl), Copyright (c) 2026 Kit Langton: keyframe
   selection, narration alignment, mark shapes, the contact-sheet layout, and the badge and ripple
-  designs, in `src/select.rs`, `src/align.rs`, `src/marks.rs`, `src/sheet.rs`, and `src/draw.rs`.
+  designs, in `src/select.rs` and `src/select/`, `src/align.rs`, `src/marks.rs`, `src/describe.rs`,
+  `src/sheet.rs`, and `src/draw.rs`.
 - [perfect-freehand](https://github.com/steveruizok/perfect-freehand) 1.2.2, Copyright (c) 2021
   Stephen Ruiz Ltd: the stroke outline in `src/ink.rs`.
 
