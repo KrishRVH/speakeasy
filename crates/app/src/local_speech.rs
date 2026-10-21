@@ -146,8 +146,9 @@ impl LocalSpeech {
                 && response.status().is_success()
             {
                 // The reserved port is released before the engine binds it, so another program can
-                // take it and answer. That program must never receive audio or the key, or choose
-                // the text to insert. macOS has no ownership lookup, so it trusts the answer.
+                // take it and answer. That program must never receive audio or choose the text to
+                // insert. Whisper's probe carries its route secret, which opens nothing on an
+                // engine that lost the port. macOS has no ownership lookup, so it trusts the answer.
                 #[cfg(not(target_os = "macos"))]
                 ensure!(
                     self.group
