@@ -50,7 +50,8 @@ pub const PILL_WIDTH: u16 = 400;
 /// The pill window's height in device-independent pixels.
 pub const PILL_HEIGHT: u16 = 100;
 /// The gap in device-independent pixels between the pill window and the bottom of the work area.
-pub const PILL_MARGIN: u16 = 2;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub(crate) const PILL_MARGIN: u16 = 2;
 
 /// The hold-to-talk shortcut as people see it.
 #[cfg(target_os = "macos")]
