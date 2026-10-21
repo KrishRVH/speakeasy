@@ -77,9 +77,7 @@ pub(super) async fn fetch(
         .await
         .context("The download stopped. Check your internet connection, then try again.")?
     {
-        done = done
-            .checked_add(chunk.len() as u64)
-            .context("The download exceeded its published size. Try again.")?;
+        done = done.saturating_add(chunk.len() as u64);
         if done > download.size {
             break;
         }
