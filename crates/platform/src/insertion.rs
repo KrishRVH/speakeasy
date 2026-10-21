@@ -214,8 +214,8 @@ impl Delivery {
     /// Returns the outcome that stops insertion before it touches the target: Speakeasy has focus,
     /// or shortcut keys are still held. Focus takes precedence.
     ///
-    /// [`insert`] runs it as the last check before committing, after every slow preparation step,
-    /// so the focus and keys it judges are current.
+    /// [`insert`] runs it after every slow preparation step, so the focus and keys it judges are
+    /// current.
     #[cfg(any(target_os = "windows", target_os = "macos", test))]
     fn preflight(self, external_focus: bool, shortcut_released: bool) -> Option<Inserted> {
         self.check_focus(external_focus)

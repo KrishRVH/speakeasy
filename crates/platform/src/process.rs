@@ -183,7 +183,7 @@ impl ProcessGroup {
     /// terminates the group before reaping its leader.
     ///
     /// # Errors
-    /// Returns an error if the process identifier or native group setup is invalid.
+    /// Returns an error for an identifier no spawned child can have: 0, 1, or one beyond `pid_t`.
     pub fn attach(pid: u32) -> anyhow::Result<Self> {
         anyhow::ensure!(
             pid > 1,

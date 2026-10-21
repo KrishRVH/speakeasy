@@ -104,7 +104,8 @@ impl Gesture {
         }
     }
 
-    /// Switches a hold to hands-free on Space, keeping its capture.
+    /// Switches a hold to hands-free, keeping its capture: Space locks a hold, and a Show starts
+    /// locked.
     pub fn lock(&mut self) -> Option<Action> {
         let Phase::Held { started } = self.phase else {
             return None;
