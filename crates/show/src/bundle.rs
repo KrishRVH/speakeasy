@@ -1,6 +1,6 @@
 //! The finished Show: annotated keyframes, the contact sheet, the summary, and the manifest.
 
-use std::path::Path;
+use std::{fmt, path::Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -52,12 +52,22 @@ pub struct Bundle {
 }
 
 /// One file of a bundle, named by its path within the bundle's directory.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct File {
     /// The path within the bundle, with `/` separators.
     pub name: String,
     /// The file's bytes.
     pub contents: Vec<u8>,
+}
+
+/// Names the file and its size; its contents are screen images or narration and never print.
+impl fmt::Debug for File {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("File")
+            .field("name", &self.name)
+            .field("bytes", &self.contents.len())
+            .finish()
+    }
 }
 
 /// Annotates each chosen frame with its ink and click ripple, lays them out on a contact sheet,
@@ -360,5 +370,15 @@ mod tests {
             manifest,
             "{changed}"
         );
+    }
+
+    #[test]
+    fn debugging_a_file_never_prints_its_contents() {
+        let file = File {
+            name: "frames/frame-01.png".to_owned(),
+            contents: vec![0x5A; 4_096],
+        };
+        let shown = format!("{file:?}");
+        assert!(shown.contains("frame-01") && shown.len() < 80, "{shown}");
     }
 }

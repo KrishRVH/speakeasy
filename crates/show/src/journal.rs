@@ -5,7 +5,7 @@
 //! A journal over its budget thins evenly, and each frame's [`Sample`] is dropped with its tiles,
 //! so selection only picks frames the journal holds.
 
-use std::{mem, time::Duration};
+use std::{fmt, mem, time::Duration};
 
 use crate::{
     Image, Moment, convert,
@@ -18,7 +18,6 @@ const TILE: usize = 64;
 const PIXEL: usize = 4;
 
 /// Recorded frames and their signatures, in time order.
-#[derive(Debug)]
 pub struct Journal {
     /// One per frame held.
     samples: Vec<Sample>,
@@ -37,7 +36,6 @@ pub struct Journal {
     latest: Option<Image>,
 }
 
-#[derive(Debug)]
 struct Segment {
     /// The index in [`Journal::samples`] of the segment's first frame.
     first: usize,
@@ -49,7 +47,6 @@ struct Segment {
 
 /// A tile as one frame left it: rows of pixels, each byte replaced by its difference from the
 /// same byte of the pixel to its left, then deflated.
-#[derive(Debug)]
 struct Version {
     frame: usize,
     data: Box<[u8]>,
@@ -67,6 +64,18 @@ struct Tile {
 impl Default for Journal {
     fn default() -> Self {
         Self::with_budget(usize::MAX)
+    }
+}
+
+/// Summarizes the journal; its tiles are screen content and never print.
+impl fmt::Debug for Journal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Journal")
+            .field("frames", &self.samples.len())
+            .field("bytes", &self.bytes)
+            .field("budget", &self.budget)
+            .field("stride", &self.stride)
+            .finish_non_exhaustive()
     }
 }
 
@@ -519,6 +528,19 @@ mod tests {
             }
         }
         assert_eq!(admitted, [0, 1, 2, 4, 8]);
+    }
+
+    #[test]
+    fn debugging_a_journal_never_prints_its_frames() {
+        let mut journal = Journal::new();
+        journal.record(at(0), quadrants([0; 4], 2));
+        let one = format!("{journal:?}");
+        for shade in 1_u8..20 {
+            let moment = at(u64::from(shade) * 200);
+            journal.record(moment, quadrants([shade, 0, shade, 0], 3));
+        }
+        let many = format!("{journal:?}");
+        assert!(many.len() <= one.len() + 8, "{one}\n{many}");
     }
 
     proptest! {
