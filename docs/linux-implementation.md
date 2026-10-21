@@ -24,10 +24,11 @@ Gestures, the default **Ctrl+Super+Space** and reserved **Ctrl+Super+Escape** ch
 bindings follow the [interaction contracts](interaction-design.md#interaction-contracts); command
 bindings give hands-free only, never hold/release.
 
-Settings shows the actual accepted dictate and cancel bindings. X11 releases its active keyboard
-grab immediately after a trigger, returning unrelated keys to the focused editor. Portal activations
-and deactivations are consumed in message order, with repeated activations ignored while held.
-Binding or keyboard map changes require Save and Resume.
+Settings shows the actual accepted dictate and cancel bindings. A chord another X11 app already
+grabs stops desktop access with an error naming it. X11 releases its active keyboard grab
+immediately after a trigger, returning unrelated keys to the focused editor. Portal activations and
+deactivations are consumed in message order, with repeated activations ignored while held. Binding
+or keyboard map changes require Save and Resume.
 
 ## Owned preparation and insertion
 

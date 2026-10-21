@@ -10,12 +10,13 @@ mod paste;
 
 use std::{convert::Infallible, os::fd::AsFd};
 
-use anyhow::{Context, bail, ensure};
+use anyhow::{Context, anyhow, bail, ensure};
 use async_channel::Receiver;
 use x11rb::{
     connection::Connection,
+    errors::ReplyError,
     protocol::{
-        Event, shape,
+        ErrorKind, Event, shape,
         shape::ConnectionExt as _,
         xinput,
         xinput::ConnectionExt as _,
@@ -171,7 +172,7 @@ impl Shortcuts {
         // its own grab.
         let caps = u16::from(xproto::ModMask::LOCK);
         let lock_states = [0, lock & caps, lock & !caps, lock];
-        for binding in [self.dictate, self.cancel] {
+        for (binding, name) in [(self.dictate, "dictation"), (self.cancel, "cancel")] {
             for locks in lock_states {
                 connection
                     .grab_key(
@@ -182,7 +183,14 @@ impl Shortcuts {
                         xproto::GrabMode::ASYNC,
                         xproto::GrabMode::ASYNC,
                     )?
-                    .check()?;
+                    .check()
+                    .map_err(|error| match error {
+                        // The server refuses a passive grab that another client already holds.
+                        ReplyError::X11Error(error) if error.error_kind == ErrorKind::Access => {
+                            anyhow!("Another app already uses the {name} shortcut; free it there")
+                        },
+                        error => error.into(),
+                    })?;
             }
         }
         Ok(())

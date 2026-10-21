@@ -101,6 +101,43 @@ async fn a_keyboard_switch_keeps_shortcuts_and_a_remap_stops_them() -> anyhow::R
     Ok(())
 }
 
+#[tokio::test]
+#[ignore = "Grabs a key on a private Xvfb display it starts, never the current one"]
+async fn a_shortcut_another_app_holds_stops_input_naming_the_shortcut() -> anyhow::Result<()> {
+    if !on_private_display("a_shortcut_another_app_holds_stops_input_naming_the_shortcut")? {
+        return Ok(());
+    }
+    let (connection, screen) = connect()?;
+    let root = connection
+        .setup()
+        .roots
+        .get(screen)
+        .context("X11 display has no screen")?
+        .root;
+    let options = DesktopOptions::default();
+    let held = Keyboard::load(&connection)?.binding(&options.shortcut)?;
+    connection
+        .grab_key(
+            false,
+            root,
+            xproto::ModMask::from(held.modifiers),
+            held.key,
+            xproto::GrabMode::ASYNC,
+            xproto::GrabMode::ASYNC,
+        )?
+        .check()?;
+    let (events, received) = async_channel::bounded(8);
+    let (_desktop, _monitor, _inserter) = crate::linux::start(InputSender::new(events), options)?;
+    let stopped = tokio::time::timeout(Duration::from_secs(3), received.recv())
+        .await?
+        .context("Desktop input closed")?;
+    ensure!(
+        matches!(&stopped, Input::Unavailable(reason) if reason.contains("Another app already uses the dictation shortcut")),
+        "A held shortcut gave {stopped:?}"
+    );
+    Ok(())
+}
+
 #[test]
 #[ignore = "Writes the clipboard of a private Xvfb display it starts, never the current one"]
 fn a_fresh_clipboard_owns_its_first_copy() -> anyhow::Result<()> {
