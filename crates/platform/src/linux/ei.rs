@@ -190,6 +190,11 @@ impl Sender {
         })
     }
 
+    /// Applies queued libei events to the sender's devices.
+    ///
+    /// # Errors
+    /// Fails when libei reports a disconnect. That is libei's last event, so later calls succeed:
+    /// the caller must treat the error as the end of desktop access.
     pub(super) fn dispatch(&mut self) -> anyhow::Result<()> {
         // SAFETY: the context is live and dispatched only on its owning thread.
         unsafe { (self.api.ei_dispatch)(self.context.as_ptr()) };

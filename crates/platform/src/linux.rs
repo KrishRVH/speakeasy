@@ -1,5 +1,6 @@
-//! Linux desktop resources live on an owned thread. Rendering may use Xwayland, so input
-//! follows the host session rather than the presence of DISPLAY.
+//! Linux desktop input and insertion live on an owned thread, and owned windows present through
+//! X11. Rendering may use Xwayland, so input follows the host session rather than the presence of
+//! DISPLAY.
 
 mod ei;
 mod portal;

@@ -671,8 +671,8 @@ async fn serve(
         }
         .watch(),
     );
-    // Focus checks need the X worker, which opens the X clipboard only for X11 copies; portal
-    // clipboard and direct text never touch clipboard contents.
+    // Focus checks need the X worker, which touches X clipboard contents only for X11 copies,
+    // never for portal copies or direct text.
     let worker = x11::ClipboardWorker::spawn(input.clone())?;
     tokio::select! {
         biased;

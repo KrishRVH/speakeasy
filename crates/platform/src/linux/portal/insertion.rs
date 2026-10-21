@@ -191,9 +191,8 @@ impl<'a> Insertions<'a> {
         Ok(())
     }
 
-    /// Submits a prepared request. A libei disconnect found here ends the service, as it does
-    /// between requests: libei reports it once, so failing only this request would leave the
-    /// service serving on a dead connection.
+    /// Submits a prepared request. A libei disconnect found while catching up ends the service, as
+    /// it does between requests, because `ei::Sender::dispatch` reports it only once.
     fn finish(&mut self, request: Insertion, external: bool, route: Route) -> anyhow::Result<()> {
         // Notices queued while preparation awaited other processes must apply first: a missed
         // press could paste while the shortcut is held.
