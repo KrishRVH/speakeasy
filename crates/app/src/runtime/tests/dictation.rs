@@ -750,6 +750,31 @@ async fn a_report_during_a_held_recording_is_dropped_and_the_text_still_pastes()
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_model_that_recovers_from_a_failed_warmup_clears_the_failure() -> anyhow::Result<()> {
+    let (results, loading) = async_channel::bounded(2);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.load_results = Some(loading);
+    })?;
+    receive(&h.loads).await?;
+    h.start().await?;
+    results.send(Err(anyhow!("Initial warmup failed"))).await?;
+    h.observe(|snapshot| snapshot.message == "Initial warmup failed")
+        .await?;
+    h.input(Input::Cancel);
+    h.phase(Phase::Cancelled).await?;
+    receive(&h.loads).await?;
+    results.send(Ok(())).await?;
+    h.observe(|snapshot| snapshot.model == ModelState::Ready)
+        .await?;
+    assert_eq!(
+        h.snapshot().message,
+        "",
+        "A ready model still reports its failed warmup"
+    );
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
 async fn recovery_failure_keeps_a_queued_dictation_until_microphone_retirement()
 -> anyhow::Result<()> {
     let (results, loading) = async_channel::bounded(4);

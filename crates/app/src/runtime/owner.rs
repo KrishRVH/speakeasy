@@ -340,7 +340,10 @@ impl<P: Ports> Owner<P> {
         match completion {
             Completion::Loaded(Ok(worker)) => {
                 self.worker = Worker::Ready(worker);
-                if matches!(self.notice, Some(Notice::LoadingModel)) {
+                if matches!(
+                    self.notice,
+                    Some(Notice::LoadingModel | Notice::WarmupFailed(_))
+                ) {
                     self.notice = None;
                 }
             },
