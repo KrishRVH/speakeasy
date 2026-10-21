@@ -176,8 +176,7 @@ impl<'a> Insertions<'a> {
                 return Ok(());
             },
             Ok(Prepared::Target { external, route }) => {
-                self.finish(request, external, route);
-                return Ok(());
+                return self.finish(request, external, route);
             },
             Err(error) => {
                 request.reply.send(Err(error));
@@ -192,10 +191,14 @@ impl<'a> Insertions<'a> {
         Ok(())
     }
 
-    fn finish(&mut self, request: Insertion, external: bool, route: Route) {
+    /// Submits a prepared request. A libei disconnect found here ends the service, as it does
+    /// between requests: libei reports it once, so failing only this request would leave the
+    /// service serving on a dead connection.
+    fn finish(&mut self, request: Insertion, external: bool, route: Route) -> anyhow::Result<()> {
         // Notices queued while preparation awaited other processes must apply first: a missed
         // press could paste while the shortcut is held.
         self.apply_queued_notices();
+        self.bound.dispatch()?;
         let outcome = match route {
             Route::Direct => insert_direct(self.bound, &request, external),
             Route::Paste { owned } => {
@@ -205,7 +208,8 @@ impl<'a> Insertions<'a> {
                 finish_paste(self.bound, &request, self.options, owned, external)
             },
         };
-        request.reply.send(outcome);
+        request.reply.send(Ok(outcome));
+        Ok(())
     }
 
     pub(super) fn serve_transfer(&self, event: &Message) -> anyhow::Result<()> {
@@ -348,30 +352,25 @@ fn query_focus(
     .boxed_local()
 }
 
-fn insert_direct(
-    bound: &mut Bound,
-    request: &Insertion,
-    external: bool,
-) -> anyhow::Result<Inserted> {
+fn insert_direct(bound: &mut Bound, request: &Insertion, external: bool) -> Inserted {
     if !request.permit.active() {
-        return Ok(Inserted::Cancelled);
+        return Inserted::Cancelled;
     }
     if let Some(outcome) = Delivery::Direct.check_focus(external) {
-        return Ok(outcome);
+        return outcome;
     }
-    bound.dispatch()?;
     let Some(sender) = bound.sender_mut() else {
-        return Ok(text_remedy(TextBlocked::Unsupported));
+        return text_remedy(TextBlocked::Unsupported);
     };
     let ready = match sender.ready_text(&request.text) {
         Ok(ready) => ready,
-        Err(blocked) => return Ok(text_remedy(blocked)),
+        Err(blocked) => return text_remedy(blocked),
     };
     if !request.permit.commit() {
-        return Ok(Inserted::Cancelled);
+        return Inserted::Cancelled;
     }
     ready.send();
-    Ok(Inserted::Sent)
+    Inserted::Sent
 }
 
 /// How to recover when direct text input cannot run.
@@ -395,38 +394,37 @@ fn finish_paste(
     options: &DesktopOptions,
     owned: bool,
     external: bool,
-) -> anyhow::Result<Inserted> {
-    bound.dispatch()?;
+) -> Inserted {
     if !request.permit.active() {
-        return Ok(Inserted::Cancelled);
+        return Inserted::Cancelled;
     }
     if !owned {
-        return Ok(if bound.clipboard_session().is_some() {
+        return if bound.clipboard_session().is_some() {
             Inserted::Unavailable(
                 "Clipboard ownership could not be confirmed. Dictate again, or choose Insert: Copy for manual paste in Settings.",
             )
         } else {
             CLIPBOARD_CHANGED
-        });
+        };
     }
     if let Some(outcome) = Delivery::Paste.check_focus(external) {
-        return Ok(outcome);
+        return outcome;
     }
     if options.manual_paste {
-        return Ok(COPIED_FOR_MANUAL_PASTE);
+        return COPIED_FOR_MANUAL_PASTE;
     }
     let Some(sender) = bound.sender_mut() else {
-        return Ok(paste_remedy(PasteBlocked::NoKeyboard));
+        return paste_remedy(PasteBlocked::NoKeyboard);
     };
     let ready = match sender.ready_paste() {
         Ok(ready) => ready,
-        Err(blocked) => return Ok(paste_remedy(blocked)),
+        Err(blocked) => return paste_remedy(blocked),
     };
     if !request.permit.commit() {
-        return Ok(Inserted::Cancelled);
+        return Inserted::Cancelled;
     }
     ready.send(options.terminal_paste);
-    Ok(Inserted::Sent)
+    Inserted::Sent
 }
 
 /// How to paste the copied text when automatic paste cannot run.
@@ -493,7 +491,7 @@ mod tests {
                     reply,
                 };
                 assert!(matches!(
-                    insert_direct(&mut bound, &request, external)?,
+                    insert_direct(&mut bound, &request, external),
                     Inserted::Cancelled
                 ));
             }
