@@ -5,7 +5,7 @@ use std::time::Duration;
 use tiny_skia::{FillRule, Paint, Path, PathBuilder, PixmapMut, Stroke as Line, Transform};
 
 use crate::{
-    Image, Keyframe, Moment, Point, Rect, Typeface, ink,
+    Image, Keyframe, Mark, Moment, Point, Rect, Typeface, ink,
     recording::{Action, Recording},
 };
 
@@ -30,25 +30,25 @@ pub(crate) enum Corner {
 /// Draws a keyframe's ink and click ripple onto its frame, returning the corner its badge should
 /// take so it does not cover what the keyframe is about.
 ///
-/// A keyframe made for marks shows all their ink. Any other keyframe shows the ink drawn up to its
-/// moment from strokes still in progress or lifted within [`RECENT_INK`], as the screen looked
-/// then.
+/// A keyframe made for marks, given as `marks`, shows all their ink. Any other keyframe shows the
+/// ink drawn up to its moment from strokes still in progress or lifted within [`RECENT_INK`], as
+/// the screen looked then.
 pub(crate) fn annotate(
     image: &mut Image,
     keyframe: &Keyframe,
     recording: &Recording,
-    strokes_of_marks: &[std::ops::Range<usize>],
+    marks: &[Mark],
 ) -> Corner {
     let (width, height) = (image.width() as f32, image.height() as f32);
     let detail = ink::detail(width, height);
     let pen = ink::pen(width, height);
-    let shown = |index: usize| strokes_of_marks.iter().any(|range| range.contains(&index));
+    let shown = |index: usize| marks.iter().any(|mark| mark.strokes.contains(&index));
     let mut ink_points: Vec<Point> = Vec::new();
     let mut canvas = image.as_mut();
     for (index, stroke) in recording.strokes.iter().enumerate() {
         let path: Vec<Point> = if shown(index) {
             stroke.path().collect()
-        } else if strokes_of_marks.is_empty()
+        } else if marks.is_empty()
             && stroke.span().start() <= keyframe.at
             && keyframe.at.since(stroke.span().end()) <= RECENT_INK
         {

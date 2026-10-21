@@ -1,6 +1,6 @@
 //! The finished Show: annotated keyframes, the contact sheet, the summary, and the manifest.
 
-use std::{ops::Range, path::Path};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -82,11 +82,7 @@ pub fn compose(
         .into_iter()
         .zip(&keyframes)
         .map(|(mut image, keyframe)| {
-            let strokes: Vec<Range<usize>> = shown(&marks, keyframe)
-                .iter()
-                .map(|mark| mark.strokes.clone())
-                .collect();
-            let corner = draw::annotate(&mut image, keyframe, &recording, &strokes);
+            let corner = draw::annotate(&mut image, keyframe, &recording, shown(&marks, keyframe));
             (image, corner)
         })
         .collect();
