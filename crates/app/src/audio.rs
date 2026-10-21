@@ -453,15 +453,17 @@ pub(crate) async fn microphones() -> anyhow::Result<Vec<InputDevice>> {
 }
 
 fn enumerate_microphones() -> anyhow::Result<Vec<InputDevice>> {
-    cpal::default_host()
+    // A device that cannot report its id or name cannot be chosen, so it drops out of the list
+    // rather than hiding every other microphone.
+    Ok(cpal::default_host()
         .input_devices()?
-        .map(|device| {
-            Ok(InputDevice {
-                id: device.id()?.to_string(),
-                name: device.description()?.name().to_owned(),
+        .filter_map(|device| {
+            Some(InputDevice {
+                id: device.id().ok()?.to_string(),
+                name: device.description().ok()?.name().to_owned(),
             })
         })
-        .collect()
+        .collect())
 }
 
 #[cfg(test)]
