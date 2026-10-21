@@ -594,21 +594,18 @@ fn feedback_remaining(phase: Phase, show: bool, since_phase: Duration) -> Option
         .filter(|left| !left.is_zero())
 }
 
-/// When the drawing hint ends, given the snapshot that replaces `previous` and the current deadline
-/// `until`. The hint starts once a Show records, so S pressed while the microphone opens still gets
-/// the full hint, and a new session drops it.
+/// When the drawing hint ends, given the snapshot that replaces `previous` and the deadline `until`
+/// kept so far. A session's hint starts the first time it records as a Show, so S pressed while the
+/// microphone opens still gets the full hint, and the session's later snapshots keep its deadline.
 fn draw_hint_until(
     previous: &Snapshot,
     snapshot: &Snapshot,
     now: Instant,
     until: Option<Instant>,
 ) -> Option<Instant> {
-    let recording_show = |snapshot: &Snapshot| snapshot.show && snapshot.phase == Phase::Recording;
-    let new_session = snapshot.id != previous.id;
-    if recording_show(snapshot) && (new_session || !recording_show(previous)) {
+    let until = until.filter(|_| snapshot.id == previous.id);
+    if until.is_none() && snapshot.show && snapshot.phase == Phase::Recording {
         now.checked_add(DRAW_HINT_FOR)
-    } else if new_session {
-        None
     } else {
         until
     }
@@ -712,6 +709,15 @@ mod tests {
         assert!(
             !show(280, Some(left)).shows_draw_hint(),
             "The countdown to the limit outranks the hint"
+        );
+        let stopping = Scene {
+            phase: Phase::Stopping,
+            hands_free: false,
+            ..show(2, Some(left))
+        };
+        assert!(
+            !stopping.shows_draw_hint(),
+            "A Show that stops drops the hint with its clock"
         );
     }
 

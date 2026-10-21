@@ -74,6 +74,7 @@ async fn play_show(
     snapshot.phase = Phase::Recording;
     let start = Instant::now();
     let mut lifted = false;
+    // Long enough for the drawing hint to hand back to the clock.
     while start.elapsed() < Duration::from_millis(4500) {
         let seconds = start.elapsed().as_secs_f32();
         let show = seconds > 0.8;
