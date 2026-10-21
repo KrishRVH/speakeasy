@@ -288,15 +288,8 @@ impl Capturing for FakeMicrophone {
         if self.delayed_finish {
             return;
         }
-        let finished = CaptureEvent::Finished(
-            self.id,
-            Ok(Some(Sealed {
-                wav: vec![1, 2],
-                trimmed: Duration::ZERO,
-            })),
-        );
         self.events
-            .try_send(finished)
+            .try_send(CaptureEvent::Finished(self.id, Ok(Some(sealed()))))
             .expect("capture lane has room for fake audio");
     }
 
@@ -325,6 +318,13 @@ impl Capturing for FakeScreen {
         if let Some(gate) = self.retirement {
             gate.pass_during_cleanup(()).await;
         }
+    }
+}
+
+fn sealed() -> Sealed {
+    Sealed {
+        wav: vec![1, 2],
+        trimmed: Duration::ZERO,
     }
 }
 

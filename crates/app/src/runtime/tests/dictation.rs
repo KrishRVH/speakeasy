@@ -344,7 +344,6 @@ async fn saved_cleanup_opt_out_keeps_words_and_worker() -> anyhow::Result<()> {
     )?;
     h.runtime
         .configure(ValidConfig::assume(Config::read(&path)?));
-    h.input(Input::Cancel);
     h.phase(Phase::Idle).await?;
     h.start().await?;
     h.finish_as("\nUm, speak uh literally.\n").await?;
@@ -366,7 +365,6 @@ async fn dictation_inserts_once_and_request_preferences_keep_the_warm_worker() -
     h.finish_as("fixture one").await?;
     assert_eq!(receive(&h.pasted).await?, "fixture one");
     h.phase(Phase::Done).await?;
-    h.input(Input::Cancel);
     let config = Config {
         reduced_motion: true,
         preserve_clipboard: true,
@@ -579,13 +577,7 @@ async fn warmup_failure_while_stopping_retains_capture_and_retries_on_demand() -
     assert!(h.captures.try_recv().is_err());
     assert!(h.loads.try_recv().is_err(), "Failed warmup must not loop");
     events
-        .send(CaptureEvent::Finished(
-            id,
-            Ok(Some(Sealed {
-                wav: vec![1, 2],
-                trimmed: Duration::ZERO,
-            })),
-        ))
+        .send(CaptureEvent::Finished(id, Ok(Some(sealed()))))
         .await?;
     receive(&h.loads).await?;
     results.send(Ok(())).await?;

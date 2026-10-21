@@ -541,13 +541,6 @@ impl Model {
     }
 }
 
-fn sealed() -> Sealed {
-    Sealed {
-        wav: vec![1, 2],
-        trimmed: Duration::ZERO,
-    }
-}
-
 async fn run(steps: &[Step], releases: Releases) -> anyhow::Result<()> {
     let mut model = Model::start(releases)?;
     settle().await;
