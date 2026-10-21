@@ -74,7 +74,7 @@ async fn play_show(
     snapshot.phase = Phase::Recording;
     let start = Instant::now();
     let mut lifted = false;
-    while start.elapsed() < Duration::from_secs(3) {
+    while start.elapsed() < Duration::from_millis(4500) {
         let seconds = start.elapsed().as_secs_f32();
         let show = seconds > 0.8;
         if let Some(display) = display.filter(|_| show) {

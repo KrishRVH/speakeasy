@@ -38,6 +38,8 @@ const NOTICE_FOR: Duration = Duration::from_secs(6);
 const EMPTY_FOR: Duration = Duration::from_millis(1200);
 const ERROR_FOR: Duration = Duration::from_secs(8);
 const TRAY_HINT_FOR: Duration = Duration::from_secs(3);
+/// How long a recording that turns into a Show says how to draw, in place of its clock.
+const DRAW_HINT_FOR: Duration = Duration::from_secs(3);
 
 const CLOCK_TICK: Duration = Duration::from_secs(1);
 /// The final stretch of a recording during which the pill counts down to the limit.
@@ -85,6 +87,7 @@ const TRAY_HINT: &str = if cfg!(target_os = "macos") {
 } else {
     "In the tray · Use Speakeasy’s menu to quit"
 };
+const DRAW_HINT: &str = "Hold Shift to draw";
 
 #[expect(
     clippy::struct_excessive_bools,
@@ -97,7 +100,8 @@ pub(crate) struct Pill {
     history: [f32; METER_BARS],
     window: AnyWindowHandle,
     phase_at: Instant,
-    hint_until: Option<Instant>,
+    tray_hint_until: Option<Instant>,
+    draw_hint_until: Option<Instant>,
     frame_at: Instant,
     frame_due: Instant,
     reduced_motion: bool,
@@ -128,7 +132,8 @@ impl Pill {
             history: [0.0; METER_BARS],
             window: window.window_handle(),
             phase_at: now,
-            hint_until: None,
+            tray_hint_until: None,
+            draw_hint_until: None,
             frame_at: now,
             frame_due: now,
             reduced_motion,
@@ -156,7 +161,7 @@ impl Pill {
         if self.visible {
             return false;
         }
-        self.hint_until = Instant::now().checked_add(TRAY_HINT_FOR);
+        self.tray_hint_until = Instant::now().checked_add(TRAY_HINT_FOR);
         self.wake = None;
         self.set_visible(true, cx);
         cx.notify();
@@ -175,8 +180,9 @@ impl Pill {
         if new_phase || (snapshot.phase == Phase::Error && snapshot.message != previous.message) {
             self.phase_at = now;
             self.wake = None;
-            self.hint_until = None;
+            self.tray_hint_until = None;
         }
+        self.draw_hint_until = draw_hint_until(previous, &snapshot, now, self.draw_hint_until);
         if new_session {
             self.history.fill(0.0);
         }
@@ -219,8 +225,11 @@ impl Pill {
             phase,
             since_phase,
             feedback: feedback_remaining(phase, self.snapshot.show, since_phase),
-            hint: self
-                .hint_until
+            tray_hint: self
+                .tray_hint_until
+                .and_then(|until| until.checked_duration_since(now)),
+            draw_hint: self
+                .draw_hint_until
                 .and_then(|until| until.checked_duration_since(now)),
             hands_free: self.snapshot.hands_free,
             show: self.snapshot.show,
@@ -398,7 +407,9 @@ struct Scene {
     phase: Phase,
     since_phase: Duration,
     feedback: Option<Duration>,
-    hint: Option<Duration>,
+    tray_hint: Option<Duration>,
+    /// Time left on a new Show's drawing hint.
+    draw_hint: Option<Duration>,
     hands_free: bool,
     /// Whether the session records the screen as a Show.
     show: bool,
@@ -407,7 +418,7 @@ struct Scene {
 
 impl Scene {
     fn is_shown(&self) -> bool {
-        self.phase.is_active() || self.feedback.is_some() || self.hint.is_some()
+        self.phase.is_active() || self.feedback.is_some() || self.tray_hint.is_some()
     }
 
     fn is_capturing(&self) -> bool {
@@ -415,7 +426,7 @@ impl Scene {
     }
 
     fn has_slot(&self) -> bool {
-        self.hint.is_none()
+        self.tray_hint.is_none()
             && match self.phase {
                 Phase::Starting
                 | Phase::Recording
@@ -437,16 +448,22 @@ impl Scene {
         self.is_capturing() && (self.hands_free || self.clock.near_limit)
     }
 
+    /// The drawing hint takes the clock's place, unless the clock is counting down to the limit.
+    fn shows_draw_hint(&self) -> bool {
+        self.draw_hint.is_some() && self.shows_clock() && !self.clock.near_limit
+    }
+
     fn capsule_size(&self) -> Size<f32> {
         if !self.is_shown() {
             return RESTING_SIZE;
         }
-        if self.hint.is_some() {
+        if self.tray_hint.is_some() {
             return size(MESSAGE_WIDTH, 36.0);
         }
         match self.phase {
             Phase::Starting => size(172.0, 38.0),
             Phase::Recording | Phase::Stopping if self.clock.near_limit => size(262.0, 38.0),
+            Phase::Recording | Phase::Stopping if self.shows_draw_hint() => size(300.0, 38.0),
             Phase::Recording | Phase::Stopping if self.shows_clock() => size(228.0, 38.0),
             Phase::Recording | Phase::Stopping => size(RECORDING_WIDTH, 38.0),
             Phase::Processing => size(104.0, 32.0),
@@ -459,9 +476,12 @@ impl Scene {
     }
 
     fn wake_after(&self) -> Option<Duration> {
-        self.feedback.or(self.hint).or_else(|| {
+        self.feedback.or(self.tray_hint).or_else(|| {
             if self.is_capturing() {
-                Some(CLOCK_TICK)
+                Some(
+                    self.draw_hint
+                        .map_or(CLOCK_TICK, |left| left.min(CLOCK_TICK)),
+                )
             } else if self.phase == Phase::Processing && self.since_phase < SWEEP_DELAY {
                 Some(SWEEP_DELAY.saturating_sub(self.since_phase))
             } else {
@@ -574,6 +594,26 @@ fn feedback_remaining(phase: Phase, show: bool, since_phase: Duration) -> Option
         .filter(|left| !left.is_zero())
 }
 
+/// When the drawing hint ends, given the snapshot that replaces `previous` and the current deadline
+/// `until`. The hint starts once a Show records, so S pressed while the microphone opens still gets
+/// the full hint, and a new session drops it.
+fn draw_hint_until(
+    previous: &Snapshot,
+    snapshot: &Snapshot,
+    now: Instant,
+    until: Option<Instant>,
+) -> Option<Instant> {
+    let recording_show = |snapshot: &Snapshot| snapshot.show && snapshot.phase == Phase::Recording;
+    let new_session = snapshot.id != previous.id;
+    if recording_show(snapshot) && (new_session || !recording_show(previous)) {
+        now.checked_add(DRAW_HINT_FOR)
+    } else if new_session {
+        None
+    } else {
+        until
+    }
+}
+
 fn next_frame_deadline(previous: Instant, now: Instant) -> Instant {
     previous
         .checked_add(FRAME_INTERVAL)
@@ -643,6 +683,91 @@ mod tests {
             None
         );
         assert_eq!(feedback_remaining(Phase::Error, false, ERROR_FOR), None);
+    }
+
+    #[test]
+    fn a_new_show_says_how_to_draw_in_place_of_its_clock_until_the_hint_ends() {
+        let show = |seconds, draw_hint| Scene {
+            phase: Phase::Recording,
+            since_phase: Duration::ZERO,
+            feedback: None,
+            tray_hint: None,
+            draw_hint,
+            hands_free: true,
+            show: true,
+            clock: Clock::new(seconds),
+        };
+        let left = Duration::from_millis(400);
+        let hinted = show(2, Some(left));
+        assert!(hinted.shows_draw_hint());
+        assert!(
+            hinted.capsule_size().width > show(2, None).capsule_size().width,
+            "The capsule widens for the hint"
+        );
+        assert_eq!(
+            hinted.wake_after(),
+            Some(left),
+            "The clock returns as the hint ends"
+        );
+        assert!(
+            !show(280, Some(left)).shows_draw_hint(),
+            "The countdown to the limit outranks the hint"
+        );
+    }
+
+    #[test]
+    fn the_drawing_hint_starts_when_a_show_records_and_ends_with_its_session() {
+        let snapshot = |id, phase, show| Snapshot {
+            id,
+            phase,
+            hands_free: show,
+            show,
+            ..Snapshot::default()
+        };
+        let now = Instant::now();
+        let later = now + Duration::from_secs(1);
+        let full = now.checked_add(DRAW_HINT_FOR);
+        let held = snapshot(1, Phase::Recording, false);
+        let show = snapshot(1, Phase::Recording, true);
+        assert_eq!(
+            draw_hint_until(&held, &show, now, None),
+            full,
+            "S during a hold starts the hint"
+        );
+        let republished = Snapshot {
+            message: "Republished".into(),
+            ..show.clone()
+        };
+        assert_eq!(
+            draw_hint_until(&show, &republished, later, full),
+            full,
+            "A republished Show keeps its deadline"
+        );
+        let opening = snapshot(1, Phase::Starting, true);
+        assert_eq!(
+            draw_hint_until(&snapshot(1, Phase::Starting, false), &opening, now, None),
+            None,
+            "The hint waits for the microphone"
+        );
+        assert_eq!(
+            draw_hint_until(&opening, &show, later, None),
+            later.checked_add(DRAW_HINT_FOR),
+            "A Show that starts recording gets the full hint"
+        );
+        let hands_free = Snapshot {
+            hands_free: true,
+            ..held.clone()
+        };
+        assert_eq!(
+            draw_hint_until(&held, &hands_free, now, None),
+            None,
+            "Hands-free dictation is not a Show"
+        );
+        assert_eq!(
+            draw_hint_until(&show, &snapshot(2, Phase::Starting, false), later, full),
+            None,
+            "A new session drops the hint"
+        );
     }
 
     #[test]

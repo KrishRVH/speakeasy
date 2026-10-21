@@ -34,7 +34,7 @@ non-activating and click-through.
 | Starting         | Closed lid with a microphone symbol and “Opening mic…”.                                                            |
 | Recording        | Open slot, live rim, and measured grille.                                                                          |
 | Hands-free       | Grille, lock symbol, and elapsed timer beside the slot.                                                            |
-| Show recording   | The hands-free layout with a red screen mark in place of the lock, while capture is open.                          |
+| Show recording   | Hands-free layout with a red screen mark for the lock; “Hold Shift to draw” replaces the timer for three seconds.  |
 | Final 30 seconds | Remaining time in the attention color; the recording limit stays in the session owner.                             |
 | Stopping         | The lid stays open until capture stops; the grille settles.                                                        |
 | Processing       | The lid partly closes; a lamp highlight sweeps the opening after 250 ms.                                           |

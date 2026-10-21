@@ -68,19 +68,24 @@ the pill shows:
 ### Show your coding agent
 
 A Show is a narrated screen recording a coding agent can read. Press <kbd>S</kbd> while holding the
-shortcut: the pill shows a red screen mark, and Speakeasy records the display under the pointer
-along with your voice. Release the shortcut and keep talking; hold <kbd>Shift</kbd> to draw circles
-and arrows that fade as you go, and click through as usual. Press the shortcut again to finish.
+shortcut, and Speakeasy records the display under the pointer along with your voice; the pill shows
+a red screen mark and **Hold Shift to draw**, then the elapsed time. Release the shortcut and keep
+talking. To draw circles and arrows, hold <kbd>Shift</kbd> and move the pointer without clicking;
+the ink fades as you go. Click through your app as usual, and press the shortcut again to finish.
+
+In this example, a Show reports bugs in a made-up settings app, and `speakeasy show demo` writes the
+same bundle.
 
 <p align="center">
   <img src="docs/assets/show.png"
-    alt="A Show in progress: red ink circles a label running under a Save button; the pill shows the screen mark"
+    alt="A Show of the made-up app: ink circles a label running under its Save button; the pill says Hold Shift to draw"
     width="760">
 </p>
 
 <p align="center">
   <img src="docs/assets/show-pill.png"
-    alt="The pill recording a Show, with a red screen mark and 0:02, and the pill saying Show copied" width="760">
+    alt="The pill starting a Show with a screen mark and Hold Shift to draw, recording at 0:06, then Show copied"
+    width="760">
 </p>
 
 Speakeasy picks the keyframes your ink, clicks, and words point at, annotates them, and writes a
@@ -90,12 +95,11 @@ record on Windows, and experimentally on Mac, but not on Linux.
 
 <p align="center">
   <img src="docs/assets/show-sheet.png"
-    alt="A contact sheet of four timed keyframes marked with a click, a circle and arrow, a click, and a drag"
+    alt="The made-up app's contact sheet: four keyframes marked with a click, a circle and arrow, a click, and a drag"
     width="760">
 </p>
 
-On Windows, the summary for that contact sheet reads as follows; `speakeasy show demo` writes this
-scripted bundle of a made-up app:
+On Windows, the summary for that contact sheet reads as follows:
 
 ```text
 Screen recording (0:20, 4 keyframes): …\speakeasy\shows\20261020T143205Z

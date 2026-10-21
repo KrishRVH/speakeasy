@@ -1,13 +1,15 @@
 //! The pill's element tree: the capsule, its slot or message, and the marks inside them. It reads
 //! the pill's state and the scene of one frame and changes neither.
 
-use gpui::{AnyElement, BoxShadow, Div, canvas, div, point, prelude::*, px, rgb, rgba};
+use gpui::{
+    AnyElement, BoxShadow, Div, SharedString, canvas, div, point, prelude::*, px, rgb, rgba,
+};
 use speakeasy_core::motion::Spring;
 
 use super::{
-    LABEL_FADE_FROM, LID_CLOSED, Pill, RECORDING_WIDTH, ROW_PADDING, SHADOW_BLUR, SHADOW_OFFSET,
-    SHADOW_ROOM, SLOT_SIDE_INSET, SLOT_VERTICAL_INSET, Scene, TRAY_HINT, grille::Grille,
-    symbol::Symbol,
+    DRAW_HINT, LABEL_FADE_FROM, LID_CLOSED, Pill, RECORDING_WIDTH, ROW_PADDING, SHADOW_BLUR,
+    SHADOW_OFFSET, SHADOW_ROOM, SLOT_SIDE_INSET, SLOT_VERTICAL_INSET, Scene, TRAY_HINT,
+    grille::Grille, symbol::Symbol,
 };
 use crate::{
     runtime::Phase,
@@ -54,7 +56,7 @@ impl Pill {
     }
 
     fn render_content(&self, scene: Scene, palette: &'static Palette) -> AnyElement {
-        if scene.hint.is_some() {
+        if scene.tray_hint.is_some() {
             div()
                 .text_size(px(12.0))
                 .child(TRAY_HINT)
@@ -114,7 +116,7 @@ impl Pill {
     fn render_slot(&self, scene: Scene, palette: &'static Palette) -> Div {
         let (width, height) = (self.capsule.width.value(), self.capsule.height.value());
         let shows_clock = scene.shows_clock();
-        // The clock takes any width beyond a recording capsule's.
+        // The clock, or the drawing hint in its place, takes any width beyond a recording capsule's.
         let slot_width = if shows_clock {
             width.min(RECORDING_WIDTH)
         } else {
@@ -177,22 +179,20 @@ impl Pill {
                     }),
             )
             .when(shows_clock, |row| {
+                let (text, color): (SharedString, _) = if scene.shows_draw_hint() {
+                    (DRAW_HINT.into(), palette.ink)
+                } else if scene.clock.near_limit {
+                    (scene.clock.text().into(), palette.warn)
+                } else {
+                    (scene.clock.text().into(), palette.muted)
+                };
                 // A Show is always hands-free; its mark says the screen is recording too.
                 row.map(|row| match (scene.show, scene.hands_free) {
                     (true, _) => row.child(Symbol::Screen.element(palette.live)),
                     (false, true) => row.child(Symbol::Lock.element(palette.muted)),
                     (false, false) => row,
                 })
-                .child(
-                    div()
-                        .text_size(px(11.0))
-                        .text_color(rgb(if scene.clock.near_limit {
-                            palette.warn
-                        } else {
-                            palette.muted
-                        }))
-                        .child(scene.clock.text()),
-                )
+                .child(div().text_size(px(11.0)).text_color(rgb(color)).child(text))
             })
     }
 }

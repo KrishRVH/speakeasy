@@ -119,6 +119,10 @@ impl Settings {
             .line_height(px(23.0))
             .child(hold_hint)
             .child(div().child(gesture_hint))
+            // Linux records no Shows.
+            .when(!cfg!(target_os = "linux"), |panel| {
+                panel.child(div().child("Add S for a Show, then hold Shift to draw."))
+            })
     }
 
     fn engine_section(&self, ui: &Ui<'_>) -> impl IntoElement {
