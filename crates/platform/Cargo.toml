@@ -18,7 +18,7 @@ futures-util.workspace = true
 libloading.workspace = true
 x11rb = { workspace = true, features = ["allow-unsafe-code", "shape", "xinput", "xkb", "xtest"] }
 xkbcommon.workspace = true
-serde = { workspace = true, features = ["derive"] }
+serde.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
