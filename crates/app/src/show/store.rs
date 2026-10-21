@@ -397,6 +397,9 @@ mod tests {
         }
         let second = fresh_directory(&parent, at(1_792_420_563))?;
         assert_eq!(second.file_name(), Some("20261019T143603Z-2".as_ref()));
+        // A bundle dropped before it persists, as a Show cancelled at commit drops it, leaves
+        // nothing behind.
+        drop(stage(&second, &files)?);
         let names: Vec<_> = fs::read_dir(&parent)?
             .map(|entry| entry.map(|entry| entry.file_name()))
             .collect::<Result<_, _>>()?;

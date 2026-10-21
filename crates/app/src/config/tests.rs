@@ -33,7 +33,7 @@ fn a_new_file_skips_default_linux_keys_and_a_change_writes_only_its_key() -> any
 }
 
 #[test]
-fn a_save_keeps_hand_edits_and_path_spellings() -> anyhow::Result<()> {
+fn a_save_keeps_unknown_keys_hand_edits_and_path_spellings() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     valid_config(directory.path())?;
@@ -44,10 +44,10 @@ fn a_save_keeps_hand_edits_and_path_spellings() -> anyhow::Result<()> {
     let (base, Startup::Configured(_)) = Config::load(&path) else {
         bail!("The settings did not validate");
     };
-    // Edited by hand while Speakeasy runs.
+    // Edited by hand while Speakeasy runs, beside a key another release wrote.
     fs::write(
         &path,
-        r#"{"engine_executable":"engine","model":"model.gguf","threads":8}"#,
+        r#"{"engine_executable":"engine","model":"model.gguf","threads":8,"retired":1}"#,
     )?;
     let draft = Config {
         theme: Theme::Iris,
@@ -57,13 +57,17 @@ fn a_save_keeps_hand_edits_and_path_spellings() -> anyhow::Result<()> {
     Config::save_changes(&[&base], &draft, &validated, &path)?;
     let saved = saved(&path)?;
     let keys: Vec<_> = saved.as_object().into_iter().flat_map(Map::keys).collect();
-    assert_eq!(keys, ["engine_executable", "model", "threads", "theme"]);
+    assert_eq!(
+        keys,
+        ["engine_executable", "model", "threads", "retired", "theme"]
+    );
     assert_eq!(
         saved,
         serde_json::json!({
             "engine_executable": "engine",
             "model": "model.gguf",
             "threads": 8,
+            "retired": 1,
             "theme": "iris",
         })
     );
