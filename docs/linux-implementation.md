@@ -7,8 +7,8 @@ compositor or editor compatibility.
 ## Shared behavior and desktop adapters
 
 Linux shares everything but its native adapters with Windows and macOS: audio, speech, session
-ownership, Settings, the pill, and tray policy. [Architecture](architecture.md) maps the modules and
-the invariants they share.
+ownership, Settings, the pill, and tray policy. Linux records no Shows: its screen adapter reports
+them unavailable. [Architecture](architecture.md) maps the modules and the invariants they share.
 
 Linux selects its input adapter from the host session. An available `DISPLAY` can belong to Xwayland
 and does not establish desktop-wide X11 input access. Rendering and input use separate connections
@@ -40,10 +40,10 @@ Portals use the installed `io.github.krvh.speakeasy.desktop` launcher identity. 
 registers it before other portal calls; older portal frontends without registration retain their
 launcher-derived identity. See the [installation instructions](../README.md#linux-experimental).
 
-Wayland requests keyboard access, optional Clipboard access, and no screen capture. Restore
-credentials are single-use, private 0600 files under the XDG state directory. They are absent from
-settings and diagnostics. Frontend restart, session closure, device pause, and disconnect invalidate
-usable state.
+Wayland requests keyboard access and optional Clipboard access, except for **Copy for manual
+paste**, and never screen capture. Restore credentials are single-use, private 0600 files under the
+XDG state directory. They are absent from settings and diagnostics. Frontend restart, session
+closure, device pause, and disconnect invalidate usable state.
 
 Insertion follows the shared commit permit and cancellation rules in
 [cross-module invariants](architecture.md#cross-module-invariants). Immediately before submitting
@@ -54,10 +54,10 @@ clipboard untouched. Under Wayland, X focus None means a native Wayland editor t
 PointerRoot stays refused. The portal path queries focus on the owned X clipboard worker, which
 keeps cancellation responsive and opens the clipboard only for a copy.
 
-Automatic paste requires released modifiers. X11 queries physical key state; Wayland requires actual
-EI modifier feedback and a paste key from the advertised layout. Shortcut deactivation alone is
-insufficient. Unknown state yields an explicit manual-paste result. X11 automatic paste requires the
-first keyboard layout with an unshifted V key; other layouts receive manual-paste guidance.
+Automatic paste requires released modifiers. X11 queries the X server's key state; Wayland requires
+actual EI modifier feedback and a paste key from the advertised layout. Shortcut deactivation alone
+is insufficient. Unknown state yields an explicit manual-paste result. X11 automatic paste requires
+the first keyboard layout with an unshifted V key; other layouts receive manual-paste guidance.
 Clipboard writes are followed by ownership and cancellation checks; cleanup never restores a stale
 clipboard payload. Submitted synthetic keys receive release cleanup even after partial failure. X11
 queues each paste and its releases before one server synchronization and checks every submission.
@@ -115,7 +115,8 @@ bundled libraries. `--native-tar` produces an unbundled development archive for 
 The release workflow builds Linux on Ubuntu 22.04. Local native graphics checks run the built
 binaries and both packaged launchers in an Ubuntu 24.04 container with stock Mesa and a private
 virtual display. They cover rendered Settings, simulated pill show/hide, and hidden-window display
-disconnect. The software driver needs the X11 presentation-depth fix included in
+disconnect; the tar launcher checks startup and Settings rendering only. The software driver needs
+the X11 presentation-depth fix included in
 [Mesa 24.1](https://docs.mesa3d.org/relnotes/24.1.0.html); Ubuntu 22.04's Mesa 23 can present black
 windows under Xvfb without DRI3. This fixture limitation does not establish compatibility of
 hardware drivers or desktop compositors. Models and engines remain separate downloads.

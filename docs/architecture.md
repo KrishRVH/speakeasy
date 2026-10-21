@@ -55,7 +55,8 @@ module unless a test file is named.
   [child.rs](../crates/app/src/child.rs), [http.rs](../crates/app/src/http.rs), and
   [platform/src/process.rs](../crates/platform/src/process.rs) start, query, and reap engines.
   [local_speech/tests.rs](../crates/app/src/local_speech/tests.rs) drives startup and requests
-  against fake engines.
+  against fake engines; [runtime/fixture.rs](../crates/app/src/runtime/fixture.rs) profiles the real
+  owner and worker on public audio, opt-in.
 - **Transcript cleanup**: [transcript.rs](../crates/app/src/transcript.rs), with the filler policy
   in `Config::fillers` ([config.rs](../crates/app/src/config.rs)). Tested in transcript.rs.
 - **Insertion**: [platform/src/insertion.rs](../crates/platform/src/insertion.rs),
@@ -75,8 +76,10 @@ module unless a test file is named.
 - **Pill and motion**: [pill.rs](../crates/app/src/pill.rs) and [pill/](../crates/app/src/pill),
   [core/src/motion.rs](../crates/core/src/motion.rs), [gpui_ext.rs](../crates/app/src/gpui_ext.rs),
   [icons.rs](../crates/app/src/icons.rs), and [theme.rs](../crates/app/src/theme.rs) animate the
-  latest snapshot. [pill/native_tests.rs](../crates/app/src/pill/native_tests.rs) is opt-in on a
-  private display.
+  latest snapshot, and [shell/demo.rs](../crates/app/src/shell/demo.rs) scripts the `--demo`
+  preview. [pill/native_tests.rs](../crates/app/src/pill/native_tests.rs) is opt-in on a private
+  display, and the [check_native_rendering](../crates/app/examples/check_native_rendering.rs)
+  example checks owned-window rendering on each platform.
 - **Settings and the settings file**: [shell/settings.rs](../crates/app/src/shell/settings.rs) and
   [settings/render.rs](../crates/app/src/shell/settings/render.rs) edit a draft;
   [config.rs](../crates/app/src/config.rs) and [paths.rs](../crates/app/src/paths.rs) own the file
@@ -87,7 +90,8 @@ module unless a test file is named.
   [lifecycle.rs](../crates/app/src/shell/lifecycle.rs),
   [shutdown.rs](../crates/app/src/shell/shutdown.rs), [save.rs](../crates/app/src/shell/save.rs),
   [window.rs](../crates/app/src/shell/window.rs), and [main.rs](../crates/app/src/main.rs).
-  Lifecycle and save tests check terminal Quit, ordered writes, and edits or Pause after Save.
+  Lifecycle, save, and Services tests check terminal Quit, ordered writes, and edits or Pause after
+  Save.
 - **Setup**: [setup.rs](../crates/app/src/setup.rs) and [setup/](../crates/app/src/setup) choose,
   download, verify, and unpack engines; a full install is opt-in.
 - **Tray and status**: [tray.rs](../crates/app/src/tray.rs), [tray/](../crates/app/src/tray),
@@ -121,12 +125,14 @@ module unless a test file is named.
   [show/overlay.rs](../crates/app/src/show/overlay.rs). Geometry and overlay timing run on every
   host; native capture is opt-in.
 - **Scripts and packaging**: [scripts/](../scripts) and [packaging/](../packaging) profile, package,
-  and launch the app, checked by [tests/test_profiling.py](../tests/test_profiling.py) and
-  [tests/test_launchers.py](../tests/test_launchers.py).
+  and launch the app, and [app/build.rs](../crates/app/build.rs) embeds the Windows resources.
+  [tests/test_profiling.py](../tests/test_profiling.py) checks the Linux profiler, and
+  [tests/test_launchers.py](../tests/test_launchers.py) the Linux demo check's process ownership,
+  `AppRun`, and script arguments.
 - **Dependency patches**: the root Cargo patch selects a narrowly patched GPUI 0.2.2;
   [vendor/gpui](../vendor/gpui/README.speakeasy.md) and
-  [vendor/gpui_media](../vendor/gpui_media/README.speakeasy.md) record each patched contract, and
-  [platform/tests/](../crates/platform/tests) checks the GPUI patches.
+  [vendor/gpui_media](../vendor/gpui_media/README.speakeasy.md) record each patched contract and the
+  checks that cover it, and [platform/tests/](../crates/platform/tests) runs the portable ones.
 
 ## Cross-module invariants
 
@@ -170,7 +176,7 @@ No single module owns these rules; a change to any party keeps them.
 Capture starts on the first shortcut press, and the five-minute cap holds whatever the UI animates;
 [interaction design](interaction-design.md#interaction-contracts) owns the gestures. Each wake of
 `owner.rs` handles one message, advances ready work, and publishes a snapshot. A `Session` holds its
-permit and one stage:
+permit and one stage, and cancellation or a failure ends it from any stage:
 
 ```mermaid
 stateDiagram-v2
@@ -178,7 +184,7 @@ stateDiagram-v2
     [*] --> Queued
     Queued --> Opening: microphone free
     Opening --> Recording: first samples
-    Opening --> Stopping: finish requested
+    Opening --> Stopping: first samples after finish
     Recording --> Stopping: release / next press / limit
     Stopping --> AwaitingWorker: audio sealed; retire microphone
     Stopping --> [*]: no speech
@@ -198,19 +204,19 @@ stateDiagram-v2
 Remote microphone routing belongs to the OS and the user's audio bridge; see
 [remote dictation](remote-dictation.md).
 
-The speech worker listens on loopback only. On Linux and Windows, readiness and every request first
-check that the worker's own process group holds its listener; macOS has no such check. Each worker
-gets a fresh random key. Parakeet receives it in its owner-only environment, but whisper-server
-accepts its route only on the command line, so on Linux other local accounts can read it through
-`/proc` unless `/proc` is mounted with `hidepid`. That route is the only guard on Whisper's
-`/inference` and model-loading `/load` requests, so prefer Parakeet on shared Linux machines;
-automatic setup installs it.
+The speech worker listens on loopback only. On Linux and Windows, Speakeasy declares the worker
+ready, and sends each request, only after checking that the worker's own process group, a job object
+on Windows, holds its listener; macOS has no such check. Each worker gets a fresh random key.
+Parakeet receives it in its owner-only environment, but whisper-server accepts its route only on the
+command line, so on Linux other local accounts can read it through `/proc` unless `/proc` is mounted
+with `hidepid`. That route is the only guard on Whisper's `/inference` and model-loading `/load`
+requests, so prefer Parakeet on shared Linux machines; automatic setup installs it.
 
 ## Verification
 
-`mise run standards:check` is the local gate; CI only builds and publishes release packages. The
-gate also type-checks `speakeasy-platform` for Windows and macOS, but the app's platform code and
-all native runtime behavior need checks on their own platform.
+The local gate, `mise run standards:check`, type-checks `speakeasy-platform` for Windows and macOS
+as well as the host, but the app's platform code and all native runtime behavior need checks on
+their own platform.
 
 Default checks use fake capture and insertion; opt-in public-audio fixtures drive the real session
 owner and local worker, and `--demo` uses the actual views with scripted levels.

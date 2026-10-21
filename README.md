@@ -78,7 +78,7 @@ same bundle.
 
 <p align="center">
   <img src="docs/assets/show.png"
-    alt="A Show of the made-up app: ink circles a label running under its Save button; the pill says Hold Shift to draw"
+    alt="A Show of the made-up app: ink circles the theme picker and points at Save; the pill says Hold Shift to draw"
     width="760">
 </p>
 
@@ -138,13 +138,13 @@ The first launch sets everything up. Speakeasy checks the machine, downloads the
 [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) build and NVIDIA's Parakeet v3 model,
 about 0.8 GB in all, and turns dictation on:
 
-| Machine                                | Engine build                                    | Speech runs on |
-| -------------------------------------- | ----------------------------------------------- | -------------- |
-| Windows, NVIDIA GPU with 6 GB or more  | CUDA                                            | GPU            |
-| Windows, another GPU with 6 GB or more | Vulkan                                          | GPU            |
-| Any other Windows PC                   | Vulkan, or CPU without a Vulkan driver          | CPU            |
-| Mac with Apple silicon                 | Metal                                           | GPU            |
-| Linux x86_64                           | CUDA, Vulkan, or CPU after compatibility checks | GPU or CPU     |
+| Machine                                         | Engine build                                    | Speech runs on |
+| ----------------------------------------------- | ----------------------------------------------- | -------------- |
+| Windows, NVIDIA GPU with 6 GB or more           | CUDA                                            | GPU            |
+| Windows, another discrete GPU with 6 GB or more | Vulkan                                          | GPU            |
+| Any other Windows PC                            | Vulkan, or CPU without a Vulkan driver          | CPU            |
+| Mac with Apple silicon                          | Metal                                           | GPU            |
+| Linux x86_64                                    | CUDA, Vulkan, or CPU after compatibility checks | GPU or CPU     |
 
 Then hold <kbd>Ctrl</kbd> + <kbd>Win</kbd> (Windows), <kbd>Fn</kbd> (Mac), or <kbd>Ctrl</kbd> +
 <kbd>Super</kbd> + <kbd>Space</kbd> (Linux) in an editor and speak.
@@ -179,10 +179,10 @@ cargo run --locked -p speakeasy -- show demo  # a scripted Show bundle
 
 `--demo` uses simulated audio without the microphone, global shortcut, model, or clipboard. It
 previews hands-free, the countdown, submission, a Show with its ink on Windows and Mac, interrupted
-dismissal, cancellation, silence, and an error. `--demo-tray` adds the tray and the Settings
-hide-and-reopen behavior with dictation disabled. `show demo` writes a scripted Show bundle and
-prints its summary. Linux has experimental desktop support; see the Linux instructions below. GPUI's
-X11 build needs ALSA, fontconfig, X11/XCB, xkbcommon, and Vulkan development packages.
+dismissal, cancellation, silence, copied text, and an error. `--demo-tray` adds the tray and the
+Settings hide-and-reopen behavior with dictation disabled. `show demo` writes a scripted Show bundle
+and prints its summary. Linux has experimental desktop support; see the Linux instructions below.
+Linux builds need ALSA, fontconfig, X11/XCB, xkbcommon, and Vulkan development packages.
 
 </details>
 
@@ -222,9 +222,10 @@ For a desktop without suitable shortcut permissions, choose **Shortcuts: Desktop
 assign the two commands Settings shows in your desktop's shortcut settings: `speakeasy --toggle` and
 `speakeasy --cancel`, with `--config` when you use another settings file. This mode starts/finishes
 hands-free. Choose **Insert: Copy for manual paste** as well to avoid requesting keyboard-control
-access. On X11, native chords can be set in the optional `linux` settings object: `shortcut`,
-`cancel`, `terminal_paste`, `manual_paste`, and `external_shortcut`. Ordinary chord keys use the
-portal syntax, such as `CTRL+LOGO+space`. Save and resume after changing bindings or keyboard maps.
+access. The optional `linux` settings object holds the `shortcut` and `cancel` chords in portal
+syntax, such as `CTRL+LOGO+space`: X11 grabs them, and Wayland requests them as preferred triggers.
+It also holds the `terminal_paste`, `manual_paste`, and `external_shortcut` flags that Insert and
+Shortcuts set. Save and resume after changing bindings or keyboard maps.
 
 Rendering uses X11 or Xwayland with Vulkan. A tray host is optional: without one, closing Settings
 quits and the launcher reopens the app. Configuration lives under `$XDG_CONFIG_HOME/speakeasy`,
@@ -324,7 +325,7 @@ formatters and autofixes, and `mise tasks` lists the focused checks.
 
 Default tests drive the real session owner with mocked microphone, inference, and insertion. A
 paused clock exercises gesture deadlines and the five-minute cap. They never record, install a
-global hook, or touch the clipboard. Run checks locally before pushing to `main`. See the
+global hook, or touch the clipboard. See the
 [architecture change and test map](docs/architecture.md#change-and-test-map), and
 [verification](docs/architecture.md#verification) for opt-in tests and their fixtures.
 

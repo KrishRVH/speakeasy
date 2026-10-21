@@ -18,7 +18,8 @@ appears only while capture is open, and its `lamp` accent never signals recordin
 and Midnight Chrome are selectable in Settings. Settings previews an unsaved theme; the pill and
 tray change when it is saved. The Settings wordmark is Josefin Sans SemiBold, embedded under the SIL
 Open Font License, and the line is “Say the word.” App icons are rendered from the SVG sources in
-`packaging/brand`; sizes of 32 px and below omit the ornament.
+`packaging/brand`; the Windows and macOS icons omit the ornament at 32 px and below, and Linux
+installs the full scalable icon.
 
 ## Pill
 
@@ -82,11 +83,11 @@ quits; the launcher reopens it.
 
 The tray shows the Grille mark with its slot lit in the theme's lamp color and its bars cut through.
 Recording turns the slot red; busy, paused, and attention add a cut-jewel badge. macOS renders a
-template icon, so recording also adds a diamond badge and every state differs by shape. On Windows a
-faint keyline keeps the lamp color legible on light taskbars. The menu shows current status and
-engine, Pause/Resume, Start/Finish, Cancel, Settings, and Quit. It never animates while idle. Errors
-remain accessible in Settings after the pill's notice expires, including while there are unsaved
-edits.
+template icon, so recording also adds a diamond badge and every state differs by shape. On Windows
+and Linux a faint keyline keeps the lamp color legible on light taskbars. The menu shows current
+status and engine, Pause/Resume, Start/Finish, Cancel, Settings, and Quit. It never animates while
+idle. Errors remain accessible in Settings after the pill's notice expires, including while there
+are unsaved edits.
 
 ## Interaction contracts
 
