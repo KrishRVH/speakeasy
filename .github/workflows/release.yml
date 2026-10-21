@@ -59,7 +59,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libfontconfig1-dev libfreetype6-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev pkg-config ripgrep
+          sudo apt-get install -y libasound2-dev libfontconfig1-dev libfreetype6-dev libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev pkg-config
       - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh

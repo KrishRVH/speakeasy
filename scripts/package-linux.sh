@@ -15,7 +15,7 @@ if [[ "$(uname -s)" != Linux || "$(uname -m)" != x86_64 ]]; then
   exit 1
 fi
 cargo build --release --locked -p speakeasy
-required=$(readelf --version-info target/release/speakeasy | rg -o 'GLIBC_[0-9.]+' | sort -Vu | tail -1)
+required=$(readelf --version-info target/release/speakeasy | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -1)
 if [[ "$native" == false && "$(printf '%s\n' GLIBC_2.35 "$required" | sort -V | tail -1)" != GLIBC_2.35 ]]; then
   echo "Binary requires $required. Build distribution packages on Ubuntu 22.04 (glibc 2.35), or use --native-tar for this machine." >&2
   exit 1
@@ -54,14 +54,15 @@ if [[ "$dynamic" != *"(RUNPATH)"*"[\$ORIGIN/../lib]"* ]]; then
   echo "linuxdeploy did not set RUNPATH \$ORIGIN/../lib on usr/bin/speakeasy" >&2
   exit 1
 fi
-# Check bundled ELF dependencies as well as the app against the same ABI floor.
+# Check bundled ELF dependencies as well as the app against the same ABI floor. find lists every
+# file; rg would apply the repository's .gitignore, whose `*.so` hides unversioned libraries.
 while IFS= read -r -d '' library; do
-  versions=$(readelf --version-info "$library" 2> /dev/null | rg -o 'GLIBC_[0-9.]+' | sort -Vu | tail -1 || true)
+  versions=$(readelf --version-info "$library" 2> /dev/null | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -1 || true)
   if [[ -n "$versions" && "$(printf '%s\n' GLIBC_2.35 "$versions" | sort -V | tail -1)" != GLIBC_2.35 ]]; then
     echo "Bundled library requires $versions: $library" >&2
     exit 1
   fi
-done < <(rg --files --hidden -0 "$app_dir/usr/lib")
+done < <(find "$app_dir/usr/lib" -type f -print0)
 # appimagetool otherwise embeds whatever type2-runtime `continuous` holds at build time.
 runtime="$staging/runtime-x86_64"
 curl --fail --location --retry 3 --output "$runtime" 'https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64'
