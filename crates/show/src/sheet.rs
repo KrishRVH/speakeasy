@@ -30,7 +30,7 @@ const SMALLEST_INNER: u32 = 64;
 const FIT_PASSES: usize = 16;
 /// Two frames whose aspects add up past this sit in rows of their own.
 const PAIR_SPLIT: f32 = 3.6;
-/// A frame takes a row to itself only when at least this wide.
+/// Among three or more frames, one takes a row to itself only when at least this wide.
 const WIDE_ALONE: f32 = 1.85;
 /// Frames shown smaller or larger than these multiples of the median area are penalized.
 const SMALL_AREA: f32 = 0.58;
@@ -222,10 +222,10 @@ fn sum(values: &[f32], range: &Range<usize>) -> f32 {
 
 /// Splits frames, in order, into justified rows of one to six.
 ///
-/// Every split is scored and the cheapest wins. The score keeps the sheet's aspect near a vision
-/// model's sweet spot, keeps every frame's displayed area near the others' so wide and tall crops
-/// both stay legible, and avoids cramped rows. A frame gets a row to itself only when it is very
-/// wide.
+/// Two frames share a row unless together they are too wide. For three or more, every split is
+/// scored and the cheapest wins. The score keeps the sheet's aspect near a vision model's sweet
+/// spot, keeps every frame's displayed area near the others' so wide and tall crops both stay
+/// legible, and avoids cramped rows; a frame gets a row to itself only when it is very wide.
 fn plan(aspects: &[f32]) -> Vec<Range<usize>> {
     match *aspects {
         [] => Vec::new(),

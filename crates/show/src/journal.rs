@@ -86,9 +86,10 @@ impl Journal {
         Self::default()
     }
 
-    /// An empty journal that holds at most `budget` compressed bytes. Past it, every second frame
-    /// is dropped and only every second arrival admitted from then on, so a long scroll or video
-    /// keeps even coverage within it. Two frames are always held, whatever they cost.
+    /// An empty journal that holds at most `budget` compressed bytes. Each time it runs past the
+    /// budget, every second frame is dropped and arrivals are admitted half as often from then on,
+    /// so a long scroll or video keeps even coverage within it. Two frames are always held,
+    /// whatever they cost.
     #[must_use]
     pub const fn with_budget(budget: usize) -> Self {
         Self {
