@@ -151,7 +151,8 @@ pub(crate) trait Ports: Send + 'static {
         permit: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static;
 
-    /// Starts a speech worker; `cancelled` becoming true abandons startup.
+    /// Starts a speech worker; `cancelled` becoming true abandons startup. Nothing starts until the
+    /// future is first polled, because a replacement is built before its predecessor has exited.
     fn load(
         &self,
         config: Config,
