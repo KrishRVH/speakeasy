@@ -1,5 +1,5 @@
-//! macOS adapter: the Fn event tap, session-change cancellation, native window presentation, and
-//! clipboard or direct text insertion.
+//! macOS adapter: the Fn event tap, session-change cancellation, native window presentation,
+//! clipboard or direct text insertion, and Show screen capture.
 //!
 //! The tap's run-loop thread creates and removes every native resource its callbacks reach.
 
@@ -130,7 +130,8 @@ impl Observer {
     ) -> Self {
         let input = input.clone();
         let callback = RcBlock::new(move |_: NonNull<NSNotification>| input.deliver(Input::Cancel));
-        // SAFETY: the block captures a Send channel/atomic gate, accesses no AppKit objects, and
+        // SAFETY: with no queue the block runs on whichever thread posts the notification; it
+        // captures only an `InputSender`, which any thread may use, touches no AppKit object, and
         // the center retains it until the observer is removed.
         let token = unsafe {
             center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &callback)

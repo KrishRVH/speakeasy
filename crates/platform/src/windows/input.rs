@@ -76,8 +76,7 @@ pub(crate) struct Monitor {
 
 impl Monitor {
     pub(crate) fn request_stop(&self) {
-        // SAFETY: the shared owning handle stays open through native exit; setting a manual-reset
-        // event wakes a running or future wait.
+        // SAFETY: `wake` keeps the event open for this call, which takes the handle by value.
         unsafe {
             SetEvent(self.wake.as_raw_handle());
         }
