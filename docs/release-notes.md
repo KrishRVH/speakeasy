@@ -1,39 +1,25 @@
 # Release notes
 
-Speakeasy 0.3.6 records Shows: narrated screen recordings, with ink drawn over the screen, that a
-coding agent can read.
+Speakeasy 0.3.7 shows how to draw in a Show and makes more of its errors say what to do next.
 
-- Press <kbd>S</kbd> while holding the dictation shortcut to make the recording a Show. Speakeasy
-  records the display under the pointer along with your voice; hold <kbd>Shift</kbd> to draw ink
-  that fades as you go, and click through as usual. Press the shortcut again to finish, then paste
-  the copied summary into your coding agent.
-- Speakeasy's own windows never appear in a Show. Shows are written to the `shows` folder beside the
-  engine and model, readable only by you, and deleted after seven days unless a file named `.pinned`
-  in their folder keeps them. Cancelling leaves nothing behind.
-- Shows record on Windows, and experimentally on Mac, which asks for screen recording access on the
-  first Show. Linux records Shows in a later release.
-- A finished Show is copied within a fraction of a second. Recording costs a few percent of one CPU
-  core, ink holds GPU memory only while it shows, and an idle Speakeasy uses what it did before.
-- New installs set up NeMo-Speech.cpp 0.2.0, which recognizes speech as 0.1.0 did. Existing installs
-  keep their engine.
-- Text left on the clipboard for you to paste is a notice that says how, no longer an error.
-- Settings files from other releases load. Saving writes only what you changed, so hand edits stay,
-  and a theme or reduced-motion change no longer stops a recording.
-- On Linux, Settings' **Insert** control chooses how text arrives, and Settings shows the exact
-  desktop command to bind.
-- On Linux, the first paste after starting no longer reports that the clipboard changed, and on X11
-  a paste no longer stops dictation with a keyboard mapping error.
-- On Windows and Mac, the tray's **Start dictation** waits until desktop input is ready.
-- Windows no longer needs the Visual C++ Redistributable, and the Linux app is smaller.
-- Mac permission errors explain how to restore access that already looks granted.
-- Shift no longer cancels dictation when pressed during a Windows hold.
-- `--demo` previews a Show, with ink drawn and fading on screen on Windows and Mac.
-- Dependencies and tools are updated to their latest compatible stable releases, except libloading,
-  tiny-skia, x11rb, and zbus, which match the versions GPUI uses.
+- When a Show starts recording, the pill reads **Hold Shift to draw** for three seconds before the
+  elapsed time returns, and Settings lists the gesture beside the dictation shortcut on Windows and
+  Mac. To draw, release the shortcut, then hold <kbd>Shift</kbd> and move the pointer without
+  clicking.
+- `--demo` previews the drawing hint and the disconnected-microphone error that Speakeasy reports.
+  `speakeasy show demo` reports bugs in a made-up settings app rather than in one named Speakeasy.
+- Settings lists every microphone it can name when one cannot be read, where it listed none, and
+  clears a failed model load once the model recovers.
+- Microphone and local engine errors say how to recover, and an engine that stops mid-reply reports
+  that it stopped.
+- On Linux X11, an error names the dictation or cancel shortcut that another app already holds. On
+  Wayland, losing desktop input while typing stops desktop access with steps to restore it, where
+  each later paste failed with the wrong advice.
+- The README walks through every feature with screenshots.
 
-Dictation, existing settings, models, filler removal, and gestures are otherwise unchanged.
-Recordings retain the five-minute limit. Audio and recognition stay local, with no dictation history
-or uploads.
+Dictation, settings, models, filler removal, gestures, and Shows are otherwise unchanged. Recordings
+retain the five-minute limit. Audio and recognition stay local, with no dictation history or
+uploads.
 
 Windows x64 and Apple silicon macOS zip packages, plus experimental Linux x86_64 AppImage and
 bundled tar packages, are attached with SHA-256 checksums. Verification runs locally. Live
