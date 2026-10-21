@@ -393,7 +393,7 @@ fn select_device(
             .default_input_device()
             .context("No microphone found. Connect a microphone and try again.")?);
     };
-    for device in host.input_devices()? {
+    for device in host.input_devices().map_err(microphone_error)? {
         checkpoint()?;
         if device.id().is_ok_and(|actual| actual.to_string() == id) {
             return Ok(device);

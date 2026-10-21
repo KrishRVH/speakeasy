@@ -49,7 +49,7 @@ pub(super) fn build_stream(
         SampleFormat::F32 => stream::<f32>(device, format.config(), callbacks),
         SampleFormat::I16 => stream::<i16>(device, format.config(), callbacks),
         SampleFormat::U16 => stream::<u16>(device, format.config(), callbacks),
-        _ => bail!("Microphone sample format is unsupported. Choose a standard PCM microphone."),
+        _ => bail!(UNSUPPORTED_FORMAT),
     }
 }
 

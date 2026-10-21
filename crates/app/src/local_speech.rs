@@ -38,7 +38,8 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 // waits long before this.
 const INFERENCE_TIMEOUT: Duration = Duration::from_mins(30);
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
-const STOPPED: &str = "Local transcription stopped. Check the model/backend and try again.";
+const STOPPED: &str =
+    "Local transcription stopped. Check the selected model and engine, then try again.";
 const SIGILL: i32 = 4;
 const USAGE_ERROR: u32 = 2;
 const STATUS_ILLEGAL_INSTRUCTION: u32 = 0xC000_001D;
@@ -108,7 +109,9 @@ impl LocalSpeech {
         unless_cancelled(cancelled, async {
             timeout(STARTUP_TIMEOUT, self.wait_until_serving())
                 .await
-                .context("Local model startup timed out")?
+                .context(
+                    "Local model startup timed out. Check the selected model and engine, then try again.",
+                )?
         })
         .await?;
         if let Some(warmup) = Warmup::required(config) {
@@ -200,17 +203,10 @@ impl LocalSpeech {
             .timeout(INFERENCE_TIMEOUT)
             .send()
             .await
-            // The request URL carries the private route, so the transport error never reaches users.
-            .map_err(|error| {
-                if error.is_timeout() {
-                    anyhow!("Transcription timed out. Try a smaller model or GPU acceleration.")
-                } else {
-                    anyhow!(STOPPED)
-                }
-            })?;
+            .map_err(transport_error)?;
         ensure!(
             response.status().is_success(),
-            "Local speech returned HTTP {}",
+            "Local speech returned HTTP {}. Check the selected model and engine, then try again.",
             response.status().as_u16()
         );
         read_bounded(response).await
@@ -464,9 +460,19 @@ fn recording_form(wav: Vec<u8>, format: &str) -> reqwest::Result<multipart::Form
         .text("response_format", format.to_owned()))
 }
 
+/// A failed exchange with the engine as a fixed message. The request URL carries the private route,
+/// so the transport error never reaches users.
+fn transport_error(error: reqwest::Error) -> anyhow::Error {
+    if error.is_timeout() {
+        anyhow!("Transcription timed out. Try a smaller model or GPU acceleration.")
+    } else {
+        anyhow!(STOPPED)
+    }
+}
+
 async fn read_bounded(mut response: Response) -> anyhow::Result<Vec<u8>> {
     let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
+    while let Some(chunk) = response.chunk().await.map_err(transport_error)? {
         ensure!(
             chunk.len() <= MAX_RESPONSE_BYTES.saturating_sub(body.len()),
             "Local speech response exceeded the size limit"

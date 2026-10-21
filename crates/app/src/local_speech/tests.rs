@@ -173,6 +173,44 @@ fn engine_secrets_are_unrelated_128_bit_tokens() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn a_reply_cut_short_reports_a_stopped_engine_without_transport_detail() -> anyhow::Result<()>
+{
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let listener = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
+    let url = format!(
+        "http://{}/{}/inference",
+        listener.local_addr()?,
+        random_token()?
+    );
+    let engine = tokio::spawn(async move {
+        let mut stream = BufReader::new(listener.accept().await?.0);
+        let mut line = String::new();
+        while stream.read_line(&mut line).await? > 0 && !line.trim().is_empty() {
+            line.clear();
+        }
+        // Promises more of the reply than it sends, then hangs up.
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 64\r\n\r\n{\"text\":")
+            .await?;
+        anyhow::Ok(())
+    });
+    let response = client_builder()?
+        .no_proxy()
+        .build()?
+        .get(&url)
+        .send()
+        .await?;
+    engine.await??;
+    let error = read_bounded(response)
+        .await
+        .err()
+        .context("A truncated reply was accepted")?;
+    assert_eq!(format!("{error:#}"), STOPPED);
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 fn fake_engine(script: &str) -> anyhow::Result<(tempfile::TempDir, Config)> {
     use std::os::unix::fs::PermissionsExt;

@@ -130,7 +130,9 @@ pub(super) async fn choose_engine(
     let metal = unpack(client, &METAL, root, progress, installation).await?;
     let report = doctor(&metal, installation)
         .await
-        .context("The speech engine cannot run on this Mac.")?;
+        .context(
+            "The speech engine cannot run on this Mac. Choose a compatible engine executable in Settings.",
+        )?;
     Ok(ChosenEngine {
         executable: keep_only(root, &metal)?,
         use_gpu: is_accelerated(&report),
