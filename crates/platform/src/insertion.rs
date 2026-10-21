@@ -194,7 +194,7 @@ fn serve(
 fn deliver(request: &Insertion) -> anyhow::Result<Inserted> {
     wait_for_released_modifiers(&request.permit, || Ok(native::modifiers().any()))?;
     insert(
-        &mut native::Insert::new(),
+        &mut native::Insert,
         &request.text,
         &request.permit,
         request.delivery,

@@ -571,13 +571,13 @@ pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyh
             SetWindowPos(hwnd, HWND_TOPMOST, left, top, width, height, SWP_NOACTIVATE)
         })
     };
-    // SAFETY: as above.
-    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    // SAFETY: reads the DPI of this thread's live window by handle.
+    let dpi = || unsafe { GetDpiForWindow(hwnd) };
+    let before = dpi();
     place()?;
     // Arriving on a display of another DPI makes GPUI resize the window to the size Windows
     // suggests; placing it again from that display lands it on the exact bounds.
-    // SAFETY: as above.
-    if unsafe { GetDpiForWindow(hwnd) } != dpi {
+    if dpi() != before {
         place()?;
     }
     Ok(())

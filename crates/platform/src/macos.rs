@@ -421,12 +421,6 @@ pub(super) fn copy_text(text: &str) -> anyhow::Result<()> {
 /// The native steps of one insertion, which [`insertion::insert`] puts in order.
 pub(super) struct Insert;
 
-impl Insert {
-    pub(super) const fn new() -> Self {
-        Self
-    }
-}
-
 impl insertion::NativeInsert for Insert {
     /// Every event is created before commit, so a failed creation cannot leave partial input.
     type Keys = Vec<CGEvent>;
@@ -482,7 +476,9 @@ impl insertion::NativeInsert for Insert {
     }
 
     fn external_focus(&mut self) -> bool {
-        has_external_target()
+        NSWorkspace::sharedWorkspace()
+            .frontmostApplication()
+            .is_some_and(|app| i64::from(app.processIdentifier()) != i64::from(std::process::id()))
     }
 
     fn shortcut_released(&mut self) -> bool {
@@ -517,10 +513,4 @@ pub(super) fn show_startup_error(message: &str) {
         alert.setInformativeText(&NSString::from_str(message));
         alert.runModal();
     }
-}
-
-fn has_external_target() -> bool {
-    NSWorkspace::sharedWorkspace()
-        .frontmostApplication()
-        .is_some_and(|app| i64::from(app.processIdentifier()) != i64::from(std::process::id()))
 }

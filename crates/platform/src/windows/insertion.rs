@@ -27,12 +27,6 @@ pub(crate) fn copy_text(text: &str) -> anyhow::Result<()> {
 /// The native steps of one insertion, which [`crate::insertion::insert`] puts in order.
 pub(crate) struct Insert;
 
-impl Insert {
-    pub(crate) const fn new() -> Self {
-        Self
-    }
-}
-
 /// Keyboard input built in full, submitted only after the recording commits.
 pub(crate) enum Keys {
     /// Ctrl+V.
@@ -95,7 +89,15 @@ impl NativeInsert for Insert {
     }
 
     fn external_focus(&mut self) -> bool {
-        has_external_target()
+        // SAFETY: the foreground window is queried and used immediately, with a live PID out
+        // parameter; a window destroyed in between fails the lookup.
+        unsafe {
+            let window = GetForegroundWindow();
+            let mut pid = 0;
+            !window.is_null()
+                && GetWindowThreadProcessId(window, &raw mut pid) != 0
+                && pid != GetCurrentProcessId()
+        }
     }
 
     fn shortcut_released(&mut self) -> bool {
@@ -151,16 +153,5 @@ fn open_clipboard() -> anyhow::Result<clipboard_win::Clipboard> {
             Err(error) if Instant::now() >= until => return Err(error.into()),
             Err(_) => thread::sleep(Duration::from_millis(2)),
         }
-    }
-}
-
-fn has_external_target() -> bool {
-    // SAFETY: foreground HWND is queried and used immediately, with a valid PID out parameter.
-    unsafe {
-        let window = GetForegroundWindow();
-        let mut pid = 0;
-        !window.is_null()
-            && GetWindowThreadProcessId(window, &raw mut pid) != 0
-            && pid != GetCurrentProcessId()
     }
 }
