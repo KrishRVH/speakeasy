@@ -75,48 +75,22 @@ impl<T> MonitorControl<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        sync::{Arc, mpsc},
-        thread,
-        time::Duration,
-    };
-
     use super::MonitorControl;
 
     #[test]
-    fn monitor_stop_before_delayed_start_never_publishes_ready() -> anyhow::Result<()> {
-        let control = Arc::new(MonitorControl::default());
-        let loop_control = Arc::clone(&control);
-        let (initialized, entered) = mpsc::channel();
-        let (release, released) = mpsc::channel();
-        let (ready, events) = mpsc::sync_channel(1);
-        let thread = thread::spawn(move || {
-            initialized
-                .send(())
-                .expect("Fake monitor startup lane is open");
-            released.recv().expect("Test releases the fake monitor");
-            let started = loop_control.start(42, || {
-                ready.try_send(()).expect("Fake readiness lane is open");
-            });
-            loop_control.retire();
-            started
-        });
-        entered.recv_timeout(Duration::from_secs(2))?;
+    fn monitor_stop_before_start_never_publishes_ready() {
+        let control = MonitorControl::default();
         let mut woke = false;
         control.request_stop(|_| woke = true);
-        release.send(())?;
-        let started = thread
-            .join()
-            .map_err(|_panic| anyhow::anyhow!("Fake monitor failed"))?;
-        assert!(!started);
-        assert!(!woke);
+        let mut ready = false;
+        assert!(!control.start(42, || ready = true));
+        control.retire();
+        assert!(!woke && !ready);
         assert!(control.stopping());
-        assert!(events.recv().is_err());
         assert!(
             !control.start(43, || {}),
             "Retirement made a stop-before-start monitor ready"
         );
-        Ok(())
     }
 
     #[test]

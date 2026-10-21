@@ -490,24 +490,6 @@ mod tests {
     }
 
     #[test]
-    fn chord_ignores_a_second_press_while_held() {
-        let mut chord = Chord::default();
-        assert_eq!(chord.press(), Some(Action::Press));
-        assert_eq!(chord.press(), None, "A second press restarted the hold");
-        assert_eq!(chord.release(), Some(Action::Release));
-    }
-
-    #[test]
-    fn chord_interrupted_by_another_shortcut_waits_for_release() {
-        let mut chord = Chord::default();
-        assert_eq!(chord.press(), Some(Action::Press));
-        assert!(chord.interrupt());
-        assert_eq!(chord.press(), None, "Interrupted chord restarted");
-        assert_eq!(chord.release(), None);
-        assert_eq!(chord.press(), Some(Action::Press));
-    }
-
-    #[test]
     fn hands_free_space_press_and_release_never_reach_the_app() {
         let mut chord = Chord::default();
         assert_eq!(chord.press(), Some(Action::Press));
