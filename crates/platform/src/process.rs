@@ -397,7 +397,12 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn only_listeners_held_inside_the_job_count() -> anyhow::Result<()> {
-        use std::process::{Command, Stdio};
+        use std::{
+            io::{BufRead, BufReader},
+            process::{Command, Stdio},
+        };
+
+        use anyhow::Context;
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = listener.local_addr()?.port();
@@ -407,11 +412,26 @@ mod tests {
             super::loopback_listener_owners(client.local_addr()?.port())?,
             Vec::<u32>::new()
         );
-        let mut child = Command::new("ping")
-            .args(["-n", "60", "127.0.0.1"])
-            .stdout(Stdio::null())
+        // Windows names the process that opened a socket as its owner, so the child opens its own
+        // listener and reports the port once it listens.
+        let mut child = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); \
+                 $listener.Start(); [Console]::Out.WriteLine($listener.LocalEndpoint.Port); \
+                 [Console]::Out.Flush(); Start-Sleep 60",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
             .spawn()?;
         let group = ProcessGroup::attach(child.id())?;
+        let mut reported = String::new();
+        BufReader::new(child.stdout.take().context("Child output missing")?)
+            .read_line(&mut reported)?;
+        let held = reported.trim().parse()?;
+        assert!(group.holds_loopback_listener(held)?);
         assert!(!group.holds_loopback_listener(port)?);
         // Closing the kill-on-close job ends the child.
         drop(group);

@@ -301,6 +301,7 @@ mod tests {
     const LETTER_S: u32 = 0x53;
     const LETTER_A: u32 = 0x41;
     const LEFT_SHIFT: u32 = 0xA0;
+    const MAC_LEFT_SHIFT: i64 = 56;
     const NONE_HELD: [bool; 4] = [false; 4];
 
     fn held(keys: &[u32]) -> [bool; 4] {
@@ -411,6 +412,14 @@ mod tests {
         let show = mac.observe(key(Mac::SHOW, true));
         assert!(show.swallows());
         assert_eq!(show.action, Some(Action::Show));
+        // macOS reports Shift as a flag change while Fn stays held, and it keeps the Show too.
+        let shift = mac.observe(MacEvent::FlagsChanged {
+            code: MAC_LEFT_SHIFT,
+            function: true,
+        });
+        assert!(!shift.swallows());
+        assert_eq!(shift.action, None);
+        assert_eq!(mac.observe(function(false)).action, Some(Action::Release));
     }
 
     #[test]
