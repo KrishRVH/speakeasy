@@ -52,7 +52,7 @@ impl Outcome {
     }
 }
 
-/// Status text shown unless a failure is being reported.
+/// Status text shown unless the outcome carries its own message: a failure or a copied delivery.
 enum Notice {
     LoadingModel,
     SettingsApplied,
