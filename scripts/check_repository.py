@@ -166,6 +166,7 @@ def task_reference_findings(path: str, known: set[str]) -> list[str]:
 
 
 def toml_file(path: Path) -> object:
+    """Parsed TOML as `object`, which callers may cast to a TypedDict, unlike `dict[str, Any]`."""
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
