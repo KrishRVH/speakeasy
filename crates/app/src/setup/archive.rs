@@ -4,7 +4,6 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Stdio,
 };
 
 use anyhow::{Context as _, bail};
@@ -63,12 +62,7 @@ pub(super) async fn unpack(
         PathBuf::from("/usr/bin/tar")
     };
     let mut command = hidden_command(tar);
-    command
-        .arg("-xf")
-        .arg(&file)
-        .arg("-C")
-        .arg(&staging)
-        .stdout(Stdio::null());
+    command.arg("-xf").arg(&file).arg("-C").arg(&staging);
     let (status, _) = installation.output(&mut command).await?;
     if !status.success() {
         bail!("Cannot unpack the speech engine. Check free disk space, then try again.");

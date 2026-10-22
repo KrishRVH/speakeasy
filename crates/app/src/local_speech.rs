@@ -3,12 +3,7 @@
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
-use std::{
-    net::TcpListener,
-    path::Path,
-    process::{ExitStatus, Stdio},
-    time::Duration,
-};
+use std::{net::TcpListener, path::Path, process::ExitStatus, time::Duration};
 
 use anyhow::{Context, anyhow, bail, ensure};
 use reqwest::{Client, Response, multipart};
@@ -423,8 +418,6 @@ fn server_command(config: &Config, port: u16, secret: &str, served: &Path) -> Co
             }
         },
     }
-    // Engines may print dictated text; diagnostics report only the exit status.
-    command.stdout(Stdio::null());
     #[cfg(unix)]
     command.process_group(0);
     command
