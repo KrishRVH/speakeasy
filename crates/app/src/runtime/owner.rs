@@ -290,10 +290,7 @@ impl<P: Ports> Owner<P> {
             return;
         };
         match event {
-            CaptureEvent::Ready(_) => {
-                session.audio_started.get_or_insert_with(now);
-                session.audio_ready(gesture);
-            },
+            CaptureEvent::Ready(_) => session.audio_ready(gesture, now()),
             CaptureEvent::Level(id, level) => {
                 self.meter.send_replace(Meter {
                     epoch: self.epoch,

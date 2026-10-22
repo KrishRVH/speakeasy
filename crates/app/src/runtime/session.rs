@@ -23,7 +23,7 @@ pub(super) struct Session {
     /// When the session began; a Show's timeline counts from here.
     pub started: Instant,
     /// When the microphone delivered its first audio.
-    pub audio_started: Option<Instant>,
+    audio_started: Option<Instant>,
     pub stage: Stage,
     /// The screen side of a Show; `None` while the session is plain dictation.
     pub show: Option<Screen>,
@@ -104,9 +104,11 @@ impl Session {
         }
     }
 
-    /// Starts recording once samples arrive, or stops at once when the gesture already finished.
-    pub(super) fn audio_ready(&mut self, gesture: State) {
+    /// Notes when the first samples arrived and starts recording, or stops at once when the gesture
+    /// already finished.
+    pub(super) fn audio_ready(&mut self, gesture: State, at: Instant) {
         if matches!(self.stage, Stage::Opening) {
+            self.audio_started = Some(at);
             self.stage = if gesture == State::Processing {
                 Stage::Stopping
             } else {
@@ -162,11 +164,13 @@ mod tests {
         let permit = InputSender::new(sender).begin().unwrap();
         let started = Instant::now();
         let mut session = Session::new(SessionId::FIRST, permit, started);
-        session.audio_started = started.checked_add(Duration::from_millis(1_200));
+        session.show = Some(Screen::Recording);
+        session.stage = Stage::Opening;
+        let first_audio = started.checked_add(Duration::from_millis(1_200)).unwrap();
+        session.audio_ready(State::Held, first_audio);
         session.stage = Stage::Transcribing {
             trimmed: Duration::from_millis(500),
         };
-        session.show = Some(Screen::Recording);
         let word = |at| Word {
             span: Span::new(Moment::from_millis(at), Moment::from_millis(at + 200)),
             text: "here".into(),
