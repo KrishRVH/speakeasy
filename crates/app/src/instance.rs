@@ -79,7 +79,10 @@ impl Instance {
         match lock.try_lock() {
             Ok(()) => {},
             Err(fs::TryLockError::WouldBlock) => return reveal_running(path).map(|()| None),
-            Err(error) => return Err(error.into()),
+            Err(error) => {
+                return Err(anyhow::Error::new(error)
+                    .context(format!("Cannot lock {}", lock_file.display())));
+            },
         }
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         let address = listener.local_addr()?;
