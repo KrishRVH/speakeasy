@@ -38,8 +38,8 @@ use windows_sys::{
                 QS_ALLINPUT, RegisterClassW, SetWindowsHookExW, TranslateMessage,
                 UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_APP, WM_KEYDOWN, WM_POWERBROADCAST,
                 WM_QUERYENDSESSION, WM_QUIT, WM_SYSKEYDOWN, WM_WTSSESSION_CHANGE, WNDCLASSW,
-                WTS_CONSOLE_DISCONNECT, WTS_REMOTE_DISCONNECT, WTS_SESSION_LOCK,
-                WTS_SESSION_LOGOFF,
+                WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WTS_CONSOLE_DISCONNECT,
+                WTS_REMOTE_DISCONNECT, WTS_SESSION_LOCK, WTS_SESSION_LOGOFF,
             },
         },
     },
@@ -155,7 +155,8 @@ impl Drop for KeyboardHook {
 /// A hidden window that receives session, shutdown, and power notifications.
 ///
 /// Top-level rather than message-only: message-only windows miss the `WM_QUERYENDSESSION` and
-/// `WM_POWERBROADCAST` broadcasts.
+/// `WM_POWERBROADCAST` broadcasts. The shell and window utilities sometimes show hidden top-level
+/// windows, so it is a zero-size tool popup with nothing to draw and no taskbar button.
 struct LifecycleWindow(HWND);
 
 impl LifecycleWindow {
@@ -179,10 +180,10 @@ impl LifecycleWindow {
         // SAFETY: the class is registered, and every pointer argument is static or null.
         let window = unsafe {
             CreateWindowExW(
-                0,
+                WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
                 class_name,
                 class_name,
-                0,
+                WS_POPUP,
                 0,
                 0,
                 0,
@@ -413,4 +414,45 @@ fn mask_start_menu() {
         reason = "Marking Win as used is a best-effort shell hint; blocked synthetic input must not stop dictation"
     )]
     let _ = send_input(&input);
+}
+
+#[cfg(test)]
+mod tests {
+    use windows_sys::Win32::{
+        Foundation::RECT,
+        UI::WindowsAndMessaging::{
+            GWL_EXSTYLE, GetWindowLongW, GetWindowRect, IsWindowVisible, SW_SHOWNOACTIVATE,
+            ShowWindow,
+        },
+    };
+
+    use super::*;
+
+    #[test]
+    #[ignore = "Creates an owned native window; no microphone, hook, clipboard, or injected input"]
+    fn a_shown_lifecycle_window_has_no_frame_or_taskbar_button() -> anyhow::Result<()> {
+        let window = LifecycleWindow::create()?;
+        let mut frame = RECT::default();
+        // SAFETY: this thread owns the live window, and showing it activates nothing.
+        let (visible, extended) = unsafe {
+            ShowWindow(window.0, SW_SHOWNOACTIVATE);
+            ok_or_last_error(GetWindowRect(window.0, &raw mut frame))?;
+            (
+                IsWindowVisible(window.0) != FALSE,
+                GetWindowLongW(window.0, GWL_EXSTYLE).cast_unsigned(),
+            )
+        };
+        assert!(visible, "The lifecycle window was never shown");
+        assert_eq!(
+            (frame.right - frame.left, frame.bottom - frame.top),
+            (0, 0),
+            "A shown lifecycle window draws a frame"
+        );
+        assert_ne!(
+            extended & WS_EX_TOOLWINDOW,
+            0,
+            "A shown lifecycle window gets a taskbar button"
+        );
+        Ok(())
+    }
 }
