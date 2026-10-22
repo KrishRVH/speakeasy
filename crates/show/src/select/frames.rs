@@ -131,12 +131,16 @@ impl<'a> Frames<'a> {
         })
     }
 
+    /// The frame that shows `action`'s result, once the app has responded.
+    pub(super) fn result_of(&self, action: Action) -> usize {
+        let end = action.span().end();
+        self.nearest(end.saturating_add(SETTLE)).max(self.from(end))
+    }
+
     pub(super) fn action_candidate(&self, action: Action) -> Candidate {
         let span = action.span();
         let before = self.before(span.start());
-        let after = self
-            .nearest(span.end().saturating_add(SETTLE))
-            .max(self.from(span.end()));
+        let after = self.result_of(action);
         let change = self.signature(before).change(self.signature(after));
         Candidate {
             frame: after,

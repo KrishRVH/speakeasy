@@ -69,8 +69,9 @@ pub struct Keyframe {
     /// The marks drawn on it; empty unless the reason is [`Reason::Mark`].
     #[serde(with = "crate::serde_range")]
     pub marks: Range<usize>,
-    /// The click or drag whose result it shows; on a mark's keyframe, the last one made while its
-    /// ink was drawn that no keyframe of its own shows.
+    /// The click or drag whose result it shows. On a mark's keyframe, it is the last one without a
+    /// keyframe of its own whose result showed on the mark's screen while its ink was drawn, or
+    /// close to its frame; an action two marks qualify for goes to the nearer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action: Option<Action>,
 }
@@ -110,9 +111,8 @@ impl Selection {
 /// alike screens until they fit. Clicks, scene changes, and spoken cues such as "look here" fill
 /// up to six, and long stretches of narration without a keyframe earn one from inside them.
 /// While ink is drawn, another keyframe is chosen only where the screen differs from the mark's,
-/// and the mark's keyframe reports the last click or drag made meanwhile that has no keyframe of
-/// its own. A cue never repeats a screen already chosen, so talking over a still screen yields one
-/// frame.
+/// and the nearest mark's keyframe reports the last click or drag it crowds out. A cue never
+/// repeats a screen already chosen, so talking over a still screen yields one frame.
 ///
 /// `None` only when there are no samples to choose from.
 #[must_use]
@@ -175,7 +175,7 @@ fn select_within(recording: &Recording, samples: &[Sample], budget: usize) -> Op
     chooser.drop_repeated_cues();
     let mut chosen = chooser.chosen;
     chosen.sort_by_key(|candidate| frames.at(candidate.frame));
-    fold_actions_into_marks(&mut chosen, &actions);
+    fold_actions_into_marks(&mut chosen, &actions, &frames);
 
     let anchors: Vec<Moment> = chosen
         .iter()
@@ -208,8 +208,9 @@ struct Candidate {
 /// What a candidate frame shows, which decides how it ranks and what its keyframe says.
 #[derive(Clone, Debug)]
 pub(crate) enum Basis {
-    /// The selection's marks in this range, drawn on one screen, and the last click or drag made
-    /// while they were drawn that no keyframe of its own shows, known once keyframes are chosen.
+    /// The selection's marks in this range, drawn on one screen, and the last click or drag whose
+    /// result their keyframe covers and no keyframe of its own shows, known once keyframes are
+    /// chosen.
     Mark {
         group: Range<usize>,
         during: Option<Action>,
@@ -283,6 +284,16 @@ impl Candidate {
     fn anchor(&self, frames: &Frames<'_>) -> Moment {
         self.span.start().min(frames.at(self.frame))
     }
+
+    /// Whether this chosen keyframe already stands for `frame`: it is too close in time, or it is a
+    /// mark whose ink was being drawn then on the same screen.
+    fn covers(&self, frames: &Frames<'_>, frame: usize) -> bool {
+        let at = frames.at(frame);
+        frames.at(self.frame).distance(at) < FRAME_GAP
+            || (matches!(self.basis, Basis::Mark { .. })
+                && self.span.contains(at)
+                && !frames.novel(self.frame, frame))
+    }
 }
 
 struct Chooser<'a> {
@@ -299,15 +310,11 @@ impl Chooser<'_> {
         if matches!(candidate.basis, Basis::Mark { .. }) {
             return true;
         }
-        let at = self.frames.at(candidate.frame);
-        // A mark's keyframe stands for the screen its ink was drawn on, and reports a click made
-        // meanwhile that has no keyframe of its own.
-        let crowded = self.chosen.iter().any(|other| {
-            self.frames.at(other.frame).distance(at) < FRAME_GAP
-                || (matches!(other.basis, Basis::Mark { .. })
-                    && other.span.contains(at)
-                    && !self.frames.novel(other.frame, candidate.frame))
-        });
+        // A crowded click a mark covers is reported on that mark's keyframe instead.
+        let crowded = self
+            .chosen
+            .iter()
+            .any(|other| other.covers(self.frames, candidate.frame));
         if crowded {
             return false;
         }
@@ -376,24 +383,20 @@ impl Chooser<'_> {
     }
 }
 
-/// Gives each chosen mark the last click or drag started while its ink was drawn that has no
-/// keyframe of its own.
-fn fold_actions_into_marks(chosen: &mut [Candidate], actions: &[Action]) {
-    let shown: Vec<Action> = chosen
-        .iter()
-        .filter_map(|candidate| match candidate.basis {
-            Basis::Click(action) => Some(action),
-            _ => None,
-        })
-        .collect();
-    for candidate in chosen {
-        let span = candidate.span;
-        if let Basis::Mark { during, .. } = &mut candidate.basis {
-            *during = actions
-                .iter()
-                .rev()
-                .find(|action| span.contains(action.span().start()) && !shown.contains(action))
-                .copied();
+/// Gives each chosen mark the last click or drag without a keyframe of its own whose result it
+/// covers; an action two marks cover goes to the nearer.
+fn fold_actions_into_marks(chosen: &mut [Candidate], actions: &[Action], frames: &Frames<'_>) {
+    // Marks are chosen first, so an action a mark covers never got a keyframe of its own.
+    for &action in actions {
+        let result = frames.result_of(action);
+        let nearest = chosen
+            .iter_mut()
+            .filter(|candidate| {
+                matches!(candidate.basis, Basis::Mark { .. }) && candidate.covers(frames, result)
+            })
+            .min_by_key(|candidate| frames.at(candidate.frame).distance(frames.at(result)));
+        if let Some(Basis::Mark { during, .. }) = nearest.map(|mark| &mut mark.basis) {
+            *during = Some(action);
         }
     }
 }

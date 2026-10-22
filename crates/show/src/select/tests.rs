@@ -331,6 +331,16 @@ fn only_a_different_screen_cuts_into_a_drawing() {
     let shown = select_within(&twice, &still, 12).unwrap();
     assert_eq!(times(&shown), [4_250]);
     assert_eq!(shown.keyframes()[0].action, Some(click(3_500)));
+    // So does a click made just before the drawing whose result shows while it is drawn.
+    let before = recording(strokes(), vec![click(1_800)], Narration::default());
+    let shown = select_within(&before, &still, 12).unwrap();
+    assert_eq!(times(&shown), [4_250]);
+    assert_eq!(shown.keyframes()[0].action, Some(click(1_800)));
+    // And so does a click right after it, too close to the mark's frame for one of its own.
+    let after = recording(strokes(), vec![click(4_300)], Narration::default());
+    let shown = select_within(&after, &still, 12).unwrap();
+    assert_eq!(times(&shown), [4_250]);
+    assert_eq!(shown.keyframes()[0].action, Some(click(4_300)));
 
     // A click whose result the mark's frame no longer shows keeps a keyframe of its own.
     let flash = samples(250, 10_000, |at| {
@@ -343,6 +353,38 @@ fn only_a_different_screen_cuts_into_a_drawing() {
     let shown = select_within(&clicked, &flash, 12).unwrap();
     assert_eq!(times(&shown), [2_750, 4_250]);
     assert_eq!(shown.keyframes()[1].action, None);
+}
+
+#[test]
+fn a_click_between_two_marks_is_reported_by_the_nearer() {
+    let still = samples(100, 10_000, |_| 128);
+    let shown = select_within(
+        &recording(
+            vec![dab(2_000), dab(3_350)],
+            vec![click(2_400)],
+            Narration::default(),
+        ),
+        &still,
+        12,
+    )
+    .unwrap();
+    assert_eq!(times(&shown), [2_000, 3_300]);
+    let actions: Vec<Option<Action>> = shown.keyframes().iter().map(|k| k.action).collect();
+    assert_eq!(actions, [Some(click(2_400)), None]);
+
+    // Both marks cover this click's result too, but the later one is nearer.
+    let shown = select_within(
+        &recording(
+            vec![dab(2_000), dab(3_350)],
+            vec![click(2_450)],
+            Narration::default(),
+        ),
+        &still,
+        12,
+    )
+    .unwrap();
+    let actions: Vec<Option<Action>> = shown.keyframes().iter().map(|k| k.action).collect();
+    assert_eq!(actions, [None, Some(click(2_450))]);
 }
 
 #[test]
