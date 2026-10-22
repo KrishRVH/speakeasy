@@ -34,6 +34,8 @@ use self::{
 use crate::runtime::ports::{CaptureEvent, Capturing, Sealed, SessionId};
 
 const INITIAL_RESERVATION: Duration = Duration::from_secs(10);
+/// Audio the callbacks can queue ahead of the drain loop before capture overflows.
+const RING_CAPACITY: Duration = Duration::from_secs(1);
 const METER_INTERVAL: Duration = Duration::from_millis(32);
 const DRAIN_INTERVAL: Duration = Duration::from_millis(5);
 const METER_FLOOR_DBFS: f32 = -60.0;
@@ -210,13 +212,10 @@ impl Recorder {
         let format = device.default_input_config().map_err(microphone_error)?;
         checkpoint()?;
         let (rate, channels) = rate_and_channels(&format)?;
-        let sample_rate = usize::try_from(rate)?;
-        let (producer, ring) = RingBuffer::new(sample_rate);
+        let (producer, ring) = RingBuffer::new(samples_in(RING_CAPACITY, rate));
         let (errors, stream_errors) = async_channel::bounded(1);
         let started = Instant::now();
-        let limit = sample_rate
-            .checked_mul(usize::try_from(RECORDING_LIMIT.as_secs())?)
-            .context("Microphone recording limit is unsupported")?;
+        let limit = samples_in(RECORDING_LIMIT, rate);
         let callbacks = CallbackState {
             channels,
             producer,
