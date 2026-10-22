@@ -114,11 +114,11 @@ pub(super) fn affinity(window: HWND) -> Option<u32> {
 /// Leaves `hwnd` out of all screen capture for good, marked so no capture ending restores it.
 pub(super) fn exclude_always(hwnd: HWND) -> anyhow::Result<()> {
     ensure!(exclusion_supported(), Failure::OldWindows);
-    // SAFETY: the caller passes a window this thread owns. The subclass removes the mark before the
-    // window is destroyed, as properties require.
+    // SAFETY: the caller passes a window this thread owns. The subclass is in place before the mark
+    // is set, so it removes the mark before the window is destroyed, as properties require.
     unsafe {
-        ok_or_last_error(SetPropW(hwnd, ALWAYS_EXCLUDED, hwnd.cast()))?;
         ok_or_last_error(SetWindowSubclass(hwnd, Some(always_excluded), 1, 0))?;
+        ok_or_last_error(SetPropW(hwnd, ALWAYS_EXCLUDED, hwnd.cast()))?;
         ok_or_last_error(SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE))
             .context("Cannot keep the Show overlay out of screen capture")
     }
@@ -158,4 +158,30 @@ fn windows_build() -> Option<u32> {
     // SAFETY: RtlGetVersion fills this live structure, whose size field it checks.
     let status = unsafe { RtlGetVersion(&raw mut version) };
     (status >= 0).then_some(version.dwBuildNumber)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::windows::with_foreign_window;
+
+    #[test]
+    #[ignore = "Creates an owned native window; no microphone, hook, clipboard, or injected input"]
+    fn an_exclusion_without_its_subclass_leaves_no_mark() -> anyhow::Result<()> {
+        // Subclasses work only on the thread that owns the window, so exclusion from another
+        // thread fails to install one.
+        let exclude = |hwnd| {
+            let refused = exclude_always(hwnd).is_err();
+            // SAFETY: reads a property of a window `with_foreign_window` keeps live.
+            let marked = !unsafe { GetPropW(hwnd, ALWAYS_EXCLUDED) }.is_null();
+            (refused, marked)
+        };
+        let ((), (refused, marked)) = with_foreign_window(|_| (), exclude)?;
+        assert!(refused, "A window another thread owns was subclassed");
+        assert!(
+            !marked,
+            "The mark outlives the window, with no subclass to remove it"
+        );
+        Ok(())
+    }
 }

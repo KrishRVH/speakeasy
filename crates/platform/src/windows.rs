@@ -193,8 +193,13 @@ fn to_wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain([0]).collect()
 }
 
+/// Creates a message-only window on a thread of its own and runs `on_owner` there, then runs
+/// `elsewhere` on this thread; the window stays live until both have returned.
 #[cfg(test)]
-mod tests {
+fn with_foreign_window<O: Send + 'static, T>(
+    on_owner: impl FnOnce(HWND) -> O + Send + 'static,
+    elsewhere: impl FnOnce(HWND) -> T,
+) -> anyhow::Result<(O, T)> {
     use std::{ptr::null, sync::mpsc, thread};
 
     use windows_sys::Win32::{
@@ -202,47 +207,53 @@ mod tests {
         UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, HWND_MESSAGE},
     };
 
+    let (created, window) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    let owner = thread::spawn(move || -> anyhow::Result<()> {
+        // SAFETY: STATIC is a system class, every pointer argument is static or null, and this
+        // thread destroys the message-only window below.
+        let hwnd = unsafe {
+            CreateWindowExW(
+                0,
+                w!("STATIC"),
+                null(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                HWND_MESSAGE,
+                null_mut(),
+                GetModuleHandleW(null()),
+                null(),
+            )
+        };
+        ensure!(!hwnd.is_null(), "Cannot create the test window");
+        // A failed send or receive means the calling thread is gone, so the window can go too.
+        if created.send((hwnd as isize, on_owner(hwnd))).is_ok() {
+            let _released = released.recv();
+        }
+        // SAFETY: this thread created the window and destroys it once.
+        unsafe { DestroyWindow(hwnd) };
+        Ok(())
+    });
+    let (hwnd, from_owner) = window.recv()?;
+    let from_here = elsewhere(hwnd as HWND);
+    release.send(())?;
+    owner.join().expect("The window's owner thread panicked")?;
+    Ok((from_owner, from_here))
+}
+
+#[cfg(test)]
+mod tests {
     use super::*;
 
     #[test]
     #[ignore = "Creates an owned native window; no microphone, hook, clipboard, or injected input"]
     fn a_window_another_thread_owns_is_refused() -> anyhow::Result<()> {
-        let (created, window) = mpsc::channel();
-        let (release, released) = mpsc::channel::<()>();
-        let owner = thread::spawn(move || -> anyhow::Result<()> {
-            // SAFETY: STATIC is a system class, every pointer argument is static or null, and this
-            // thread destroys the message-only window below.
-            let hwnd = unsafe {
-                CreateWindowExW(
-                    0,
-                    w!("STATIC"),
-                    null(),
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    HWND_MESSAGE,
-                    null_mut(),
-                    GetModuleHandleW(null()),
-                    null(),
-                )
-            };
-            ensure!(!hwnd.is_null(), "Cannot create the test window");
-            // SAFETY: the window stays live until this thread destroys it below.
-            let accepted_here = unsafe { native_window(hwnd) }.is_ok();
-            created.send((hwnd as isize, accepted_here))?;
-            // An error means the test thread is gone, so the window can go too.
-            let _released = released.recv();
-            // SAFETY: this thread created the window and destroys it once.
-            unsafe { DestroyWindow(hwnd) };
-            Ok(())
-        });
-        let (hwnd, accepted_on_owner) = window.recv()?;
-        // SAFETY: the owner thread keeps the window live until it is released below.
-        let accepted_elsewhere = unsafe { native_window(hwnd as HWND) }.is_ok();
-        release.send(())?;
-        owner.join().expect("The window's owner thread panicked")?;
+        // SAFETY: `with_foreign_window` keeps the window live while either check runs.
+        let accepted = |hwnd| unsafe { native_window(hwnd) }.is_ok();
+        let (accepted_on_owner, accepted_elsewhere) = with_foreign_window(accepted, accepted)?;
         assert!(
             accepted_on_owner,
             "The owning thread could not use its own window"
