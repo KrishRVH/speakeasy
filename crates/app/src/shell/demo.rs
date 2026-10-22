@@ -54,18 +54,19 @@ pub(super) async fn play(
         snapshot.phase = phase;
         present(&output, &snapshot, duration).await;
     }
-    let id = play_show(&output, &meter, &canvas, snapshot.id.wrapping_add(1)).await;
-    play_interruptions(&output, id).await;
+    let show = snapshot.id.wrapping_add(1);
+    play_show(&output, &meter, &canvas, show).await;
+    play_interruptions(&output, show).await;
 }
 
 /// A held recording that S turns into a Show, circled on the overlay, finished hands-free, and
-/// copied. Returns its id.
+/// copied.
 async fn play_show(
     output: &watch::Sender<Snapshot>,
     meter: &watch::Sender<Meter>,
     canvas: &watch::Sender<Canvas>,
     id: u64,
-) -> u64 {
+) {
     // A platform that records no Shows has no display to draw on, and the preview draws nothing.
     let display = Display::under_pointer().ok();
     let clear = Clear::new(canvas);
@@ -102,7 +103,6 @@ async fn play_show(
         snapshot.phase = phase;
         present(output, &snapshot, duration).await;
     }
-    id
 }
 
 /// Empties the overlay's canvas when made and again however the Show ends, including when a replay

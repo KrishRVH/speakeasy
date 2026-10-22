@@ -392,11 +392,8 @@ impl Services {
 }
 
 pub(crate) fn toggle_enabled(cx: &mut App) {
-    if cx.global::<Services>().mode.is_demo() {
-        return;
-    }
     cx.update_global::<Services, _>(|services, cx| {
-        if services.lifecycle.pausing() {
+        if services.mode.is_demo() {
             return;
         }
         if services.running() {
