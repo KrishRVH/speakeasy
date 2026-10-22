@@ -2,7 +2,7 @@
 
 Speakeasy is a native Rust dictation app for Windows, macOS, and Linux. Keep it fast, small, and
 usable offline with local speech engines. Before changing behavior or a module interface, find its
-row in the [change and test map](docs/architecture.md#change-and-test-map); README's
+entry in the [change and test map](docs/architecture.md#change-and-test-map); README's
 [Build and verify](README.md#build-and-verify) section lists packaging and native checks.
 
 ## Workflows

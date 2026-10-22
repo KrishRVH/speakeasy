@@ -113,7 +113,7 @@ are unsaved edits.
   cannot be inferred from submitting keystrokes.
 - Settings exposes automatic setup, manual engine/model selection, microphone selection, language
   where applicable, GPU preference, text delivery, English filler removal, reduced motion, and
-  theme. Errors remain visible there after the pill notice ends.
+  theme.
 
 ## Acceptance
 

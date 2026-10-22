@@ -105,10 +105,9 @@ speech quality and interaction policy as constraints.
 
 ## Native acceptance
 
-Default tests and `--demo` do not establish microphone quality or real editor insertion. Before
-making a native performance claim, opt in explicitly and compare live microphone onset, lost speech,
-device teardown, stop-to-editor latency, cancellation, and resource return on the target OS. Keep
-Settings and Cancel responsive under competing CPU/GPU load.
+Before making a native performance claim, opt in explicitly and compare live microphone onset, lost
+speech, device teardown, stop-to-editor latency, cancellation, and resource return on the target OS.
+Keep Settings and Cancel responsive under competing CPU/GPU load.
 
 Exercise short dictation, long recordings, the five-minute boundary, denied and revoked permissions,
 device removal, clipboard-owner changes, and focus changes. Include fullscreen apps such as games,

@@ -25,10 +25,10 @@ bindings follow the [interaction contracts](interaction-design.md#interaction-co
 bindings give hands-free only, never hold/release.
 
 Settings shows the actual accepted dictate and cancel bindings. A chord another X11 app already
-grabs stops desktop access with an error naming it. X11 releases its active keyboard grab
-immediately after a trigger, returning unrelated keys to the focused editor. Portal activations and
-deactivations are consumed in message order, with repeated activations ignored while held. Binding
-or keyboard map changes require Save and Resume.
+grabs stops desktop access with an error naming that shortcut, dictation or cancel. X11 releases its
+active keyboard grab immediately after a trigger, returning unrelated keys to the focused editor.
+Portal activations and deactivations are consumed in message order, with repeated activations
+ignored while held. Binding or keyboard map changes require Save and Resume.
 
 ## Owned preparation and insertion
 
@@ -85,13 +85,14 @@ Private-Xvfb presentation checks exercise actual Settings rendering, pill startu
 shape, and simulated show/hide without microphone, shortcuts, or clipboard access. They cover queued
 XCB startup events, which must be drained even when checked requests leave no unread bytes in the
 socket. Opt-in X11 input tests start their own Xvfb display, then check there that shortcuts survive
-a keyboard switch, which X announces as a mapping change, that an actual remap stops them, and that
-a first copy owns the clipboard. Virtual-desktop checks do not establish compositor, desktop input,
-or editor compatibility.
+a keyboard switch, which X announces as a mapping change, that an actual remap stops them, that a
+chord another client already grabs stops them with an error naming the shortcut, and that a first
+copy owns the clipboard. Virtual-desktop checks do not establish compositor, desktop input, or
+editor compatibility.
 
 The StatusNotifier/DBusMenu adapter reuses shared tray states and menu policy, with subscriptions
-limited to relevant host changes. Without a tray host, Settings remains discoverable and closing it
-quits. Linux Settings opens at startup so permission and tray state remain accessible.
+limited to relevant host changes. [Tray and Settings](interaction-design.md#tray-and-settings)
+covers Linux's Settings at startup and without a tray host.
 
 Animation follows native frames within the shared
 [frame budget](performance.md#implementation-constraints).
@@ -175,8 +176,7 @@ Wayland pill needs a pre-role construction boundary, so Linux presents through X
 [Wayland roles](https://wayland.freedesktop.org/docs/html/apa.html#protocol-spec-wl_surface), and
 [layer-shell](https://raw.githubusercontent.com/swaywm/wlr-protocols/master/unstable/wlr-layer-shell-unstable-v1.xml).
 X11 pill hints follow [EWMH](https://specifications.freedesktop.org/wm/latest/ar01s05.html) and the
-[X Shape protocol](https://xorg.freedesktop.org/archive/X11R7.7/doc/xextproto/shape.html). Keep
-Settings and relaunch usable without a tray host.
+[X Shape protocol](https://xorg.freedesktop.org/archive/X11R7.7/doc/xextproto/shape.html).
 
 Register the installed desktop identity before portal access. The
 [host Registry contract](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.host.portal.Registry.html)

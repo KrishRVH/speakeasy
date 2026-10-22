@@ -269,9 +269,9 @@ file.
     width="500">
 </p>
 
-Settings show the shortcuts and the engine and model in use, and choose the microphone, GPU use,
-filler removal, how text is delivered, reduced motion, and theme. The status line near the bottom
-says whether dictation is ready, or shows the latest error or notice.
+Settings show the shortcuts and the engine and model in use, and choose the microphone, Whisper's
+language, GPU use, filler removal, how text is delivered, reduced motion, and theme. The status line
+near the bottom says whether dictation is ready, or shows the latest error or notice.
 
 Changes apply when you save. Theme and reduced-motion changes keep a recording running; microphone,
 language, filler removal, and delivery changes end it but keep the model loaded. On Linux, Shortcuts
@@ -371,5 +371,7 @@ Live microphone, editor, and screen acceptance is tracked under
   recognition, privacy, and verification.
 - [Interaction design](docs/interaction-design.md): the brand, the pill, the tray, and interaction
   contracts.
+- [Linux implementation](docs/linux-implementation.md): desktop adapters, packaging, and the native
+  acceptance Linux still needs.
 - [Performance](docs/performance.md): constraints, profiling methods, and native measurement limits.
 - [Remote dictation](docs/remote-dictation.md): routing a remote microphone to Speakeasy.

@@ -72,7 +72,8 @@ module unless a test file is named.
   [windows.rs](../crates/platform/src/windows.rs) and [windows/](../crates/platform/src/windows),
   [macos.rs](../crates/platform/src/macos.rs), and [linux.rs](../crates/platform/src/linux.rs) with
   [linux/](../crates/platform/src/linux) observe shortcuts and present native windows. Pure key
-  decisions run on every host; native hooks need opt-in.
+  decisions run on every host; owned-window and private-Xvfb checks are opt-in, and the hooks need
+  native acceptance.
 - **Pill and motion**: [pill.rs](../crates/app/src/pill.rs) and [pill/](../crates/app/src/pill),
   [core/src/motion.rs](../crates/core/src/motion.rs), [gpui_ext.rs](../crates/app/src/gpui_ext.rs),
   [icons.rs](../crates/app/src/icons.rs), and [theme.rs](../crates/app/src/theme.rs) animate the
@@ -124,9 +125,9 @@ module unless a test file is named.
   [macos/screen.rs](../crates/platform/src/macos/screen.rs), and
   [show/overlay.rs](../crates/app/src/show/overlay.rs). Geometry and overlay timing run on every
   host; native capture is opt-in.
-- **Scripts and packaging**: [scripts/](../scripts) and [packaging/](../packaging) profile, package,
-  and launch the app, and [app/build.rs](../crates/app/build.rs) embeds the Windows resources.
-  [tests/test_profiling.py](../tests/test_profiling.py) checks the Linux profiler, and
+- **Scripts and packaging**: [scripts/](../scripts) and [packaging/](../packaging) profile, check,
+  package, and launch the app, and [app/build.rs](../crates/app/build.rs) embeds the Windows
+  resources. [tests/test_profiling.py](../tests/test_profiling.py) checks the Linux profiler, and
   [tests/test_launchers.py](../tests/test_launchers.py) the Linux demo check's process ownership,
   `AppRun`, and script arguments.
 - **Dependency patches**: the root Cargo patch selects a narrowly patched GPUI 0.2.2;
