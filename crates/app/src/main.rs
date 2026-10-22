@@ -1,4 +1,5 @@
-//! Native dictation UI and the single-owner recording runtime.
+//! Speakeasy's entry point: parses the command line, then launches the native dictation and Show
+//! app around its single-owner recording runtime, or runs a `show` command in the terminal.
 
 #![forbid(unsafe_code)]
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]

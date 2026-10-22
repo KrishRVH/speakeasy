@@ -237,7 +237,7 @@ async fn stop(capture: &ScreenCapture, pointer: &PointerMonitor) {
     tokio::join!(capture.stopped(), pointer.stopped());
 }
 
-/// Linux records no Shows yet.
+/// Linux records no Shows.
 #[cfg(all(test, any(target_os = "windows", target_os = "macos")))]
 mod tests {
     use anyhow::Context as _;
