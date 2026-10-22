@@ -272,8 +272,8 @@ impl Pill {
         moving
     }
 
-    /// Hidden native windows receive no frames, so springs settle now; the next entrance then
-    /// starts at rest instead of replaying the hidden interval as one frame.
+    /// Hidden native windows receive no frames, so springs settle now: the next entrance starts at
+    /// rest, not from wherever the fade-out left them moving.
     fn rest_while_hidden(&mut self) {
         for (spring, _) in self.capsule.springs_mut() {
             spring.snap();
