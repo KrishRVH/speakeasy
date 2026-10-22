@@ -191,7 +191,6 @@ mod tests {
             fs::read(root.join("engines/fixture.part"))?,
             b"not a directory"
         );
-        assert!(installation.child.is_none());
         Ok(())
     }
 

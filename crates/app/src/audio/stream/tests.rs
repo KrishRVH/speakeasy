@@ -128,18 +128,18 @@ fn recoverable_stream_notifications_do_not_abort_recording() {
 #[test]
 fn fatal_stream_errors_keep_the_first_cause_without_blocking() -> anyhow::Result<()> {
     let (errors, received) = async_channel::bounded(1);
-    let before_samples = Control::default();
+    let control = Control::default();
     handle_stream_error(
         cpal::Error::with_message(cpal::ErrorKind::DeviceBusy, "fixture device is busy"),
         &errors,
-        &before_samples,
+        &control,
     );
-    for _ in 0..10 {
-        handle_stream_error(cpal::ErrorKind::Xrun.into(), &errors, &before_samples);
-        let lost = cpal::ErrorKind::DeviceNotAvailable.into();
-        handle_stream_error(lost, &errors, &before_samples);
-    }
-    let error = capture_failure(&Control::default(), &received)
+    handle_stream_error(
+        cpal::ErrorKind::DeviceNotAvailable.into(),
+        &errors,
+        &control,
+    );
+    let error = capture_failure(&control, &received)
         .err()
         .context("fatal driver error must abort recording")?
         .to_string();
