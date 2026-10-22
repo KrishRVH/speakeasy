@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import time
 from collections.abc import Callable, Iterable, Mapping
+from contextlib import suppress
 from io import TextIOWrapper
 from pathlib import Path
 from types import TracebackType
@@ -112,24 +113,18 @@ def command(*args: str, env: Mapping[str, str]) -> str:
 
 def stop(process: subprocess.Popen[bytes]) -> None:
     """Reap the owned session leader and terminate its launcher descendants."""
-    try:
+    with suppress(ProcessLookupError):
         os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
     try:
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        try:
+        with suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
         process.wait()
     finally:
         # The leader can exit while a launcher child remains in the owned group.
-        try:
+        with suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
 
 
 def check(

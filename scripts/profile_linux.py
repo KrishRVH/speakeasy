@@ -9,6 +9,7 @@ import platform
 import statistics
 import time
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from pathlib import Path
 from typing import Literal, TypedDict
 
@@ -86,11 +87,11 @@ def read_process(process_id: int, proc: Path, ticks_per_second: int) -> Sample:
         "cpu_one_core_percent": None,
         "cpu_machine_percent": None,
     }
-    try:
+    # Optional metadata may be inaccessible even while the process is alive; it then stays unknown,
+    # distinct from zero.
+    with suppress(OSError):
         sample["descriptors"] = sum(1 for _ in (root / "fd").iterdir())
-    except OSError:
-        pass  # Optional metadata may be inaccessible even while the process is alive.
-    try:
+    with suppress(OSError):
         memory: dict[str, int] = {}
         for line in (root / "smaps_rollup").read_text().splitlines():
             key, _, value = line.partition(":")
@@ -100,8 +101,6 @@ def read_process(process_id: int, proc: Path, ticks_per_second: int) -> Sample:
         sample["private_bytes"] = sum(
             memory.get(key, 0) for key in ("Private_Clean", "Private_Dirty", "Private_Hugetlb")
         )
-    except OSError:
-        pass  # Keep unknown memory distinct from zero memory.
     return sample
 
 
