@@ -322,6 +322,15 @@ fn only_a_different_screen_cuts_into_a_drawing() {
         "{}",
         shown.keyframes()[0].event
     );
+    // Of two such clicks, it reports the later.
+    let twice = recording(
+        strokes(),
+        vec![click(2_500), click(3_500)],
+        Narration::default(),
+    );
+    let shown = select_within(&twice, &still, 12).unwrap();
+    assert_eq!(times(&shown), [4_250]);
+    assert_eq!(shown.keyframes()[0].action, Some(click(3_500)));
 
     // A click whose result the mark's frame no longer shows keeps a keyframe of its own.
     let flash = samples(250, 10_000, |at| {
