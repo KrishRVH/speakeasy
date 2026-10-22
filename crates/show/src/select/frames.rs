@@ -192,7 +192,7 @@ impl<'a> Frames<'a> {
 /// Consecutive frames that changed, ending on the frame where the screen settled.
 #[derive(Clone, Copy)]
 pub(super) struct Transition {
-    pub(super) frame: usize,
+    frame: usize,
     span: Span,
     strength: f32,
 }
