@@ -66,13 +66,16 @@ impl Instance {
     /// Takes the single-instance lock, or returns `None` after asking its holder to show Settings.
     pub(crate) fn acquire(path: &Path) -> anyhow::Result<Option<(Self, Receiver<Request>)>> {
         let directory = path.parent().context("Settings path has no directory")?;
-        fs::create_dir_all(directory)?;
+        fs::create_dir_all(directory)
+            .with_context(|| format!("Cannot create {}", directory.display()))?;
+        let lock_file = directory.join(LOCK_FILE);
         let lock = OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
-            .open(directory.join(LOCK_FILE))?;
+            .open(&lock_file)
+            .with_context(|| format!("Cannot open {}", lock_file.display()))?;
         match lock.try_lock() {
             Ok(()) => {},
             Err(fs::TryLockError::WouldBlock) => return reveal_running(path).map(|()| None),

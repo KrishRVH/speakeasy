@@ -252,11 +252,11 @@ fn print_help() {
         );
     } else {
         println!(
-            "Hold to dictate; add Space or double-tap for hands-free. {CANCEL_SHORTCUT} cancels."
+            "Hold to dictate; add Space or double-tap for hands-free, or S to record a Show. {CANCEL_SHORTCUT} cancels."
         );
     }
     println!(
-        "--demo uses simulated audio without microphone, hook, or clipboard access.\n--demo-tray also previews native tray, minimize, close and relaunch behavior."
+        "--demo uses simulated audio without the microphone, global shortcut, model, or clipboard.\n--demo-tray also previews native tray, minimize, close and relaunch behavior."
     );
     println!(
         "speakeasy show demo [--out NEW_DIR] writes a scripted Show bundle and prints its summary."
