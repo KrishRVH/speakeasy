@@ -12,7 +12,9 @@ use super::{connect, has_external_target, intern};
 use crate::{InputSender, InsertPermit, OwnedThread, insertion::Reply, linux::HostSession};
 
 /// Clipboard and focus calls can wait on Xwayland or another client, so they run on one owned
-/// thread behind a bounded queue, away from the desktop service's input loop.
+/// thread behind a bounded queue, away from the desktop service's input loop. Dropping it revokes
+/// the current permit and closes the queue before joining the thread, so a request still queued is
+/// answered without X calls.
 pub(in crate::linux) struct ClipboardWorker {
     _thread: OwnedThread,
     input: InputSender,
