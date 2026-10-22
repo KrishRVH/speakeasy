@@ -295,7 +295,7 @@ fn same_screen_merges_stay_balanced() {
 }
 
 #[test]
-fn nothing_cuts_into_a_drawing_session() {
+fn only_a_different_screen_cuts_into_a_drawing() {
     let still = samples(250, 10_000, |_| 128);
     let narration = words(&[(4_000, "look")]);
     let shown = select_within(
@@ -306,6 +306,34 @@ fn nothing_cuts_into_a_drawing_session() {
     .unwrap();
     assert_eq!(shown.keyframes().len(), 1);
     assert_eq!(shown.keyframes()[0].reason, Reason::Mark);
+
+    // Nor does a click between the strokes of one mark, far from the frame that shows it: the
+    // mark's keyframe reports it.
+    let strokes = || vec![dab(2_000), dab(3_100), dab(4_200)];
+    let clicked = recording(strokes(), vec![click(2_500)], Narration::default());
+    let shown = select_within(&clicked, &still, 12).unwrap();
+    assert_eq!(times(&shown), [4_250]);
+    assert_eq!(shown.keyframes()[0].marks, 0..1);
+    assert_eq!(shown.keyframes()[0].action, Some(click(2_500)));
+    assert!(
+        shown.keyframes()[0]
+            .event
+            .ends_with("; clicked (x 0.50, y 0.50)"),
+        "{}",
+        shown.keyframes()[0].event
+    );
+
+    // A click whose result the mark's frame no longer shows keeps a keyframe of its own.
+    let flash = samples(250, 10_000, |at| {
+        if (2_600..3_400).contains(&at) {
+            255
+        } else {
+            128
+        }
+    });
+    let shown = select_within(&clicked, &flash, 12).unwrap();
+    assert_eq!(times(&shown), [2_750, 4_250]);
+    assert_eq!(shown.keyframes()[1].action, None);
 }
 
 #[test]

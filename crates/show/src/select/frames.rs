@@ -124,7 +124,10 @@ impl<'a> Frames<'a> {
             frame: self.nearest(span.end()),
             span,
             score: 100.0,
-            basis: Basis::Mark(group),
+            basis: Basis::Mark {
+                group,
+                during: None,
+            },
         })
     }
 

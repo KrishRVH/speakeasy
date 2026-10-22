@@ -12,11 +12,12 @@ use crate::{
 /// What a keyframe chosen for `basis` shows, for a reader; `marks` are the selection's.
 pub(crate) fn event(basis: &Basis, marks: &[Mark]) -> String {
     match basis {
-        Basis::Mark(group) => marks
+        Basis::Mark { group, during } => marks
             .get(group.clone())
             .unwrap_or_default()
             .iter()
             .map(ToString::to_string)
+            .chain(during.map(|action| Described(action).to_string()))
             .collect::<Vec<_>>()
             .join("; "),
         Basis::Click(action) => Described(*action).to_string(),
@@ -79,7 +80,7 @@ impl Shape {
 }
 
 /// What a keyframe shows happening beside the words said over it: the click or drag whose result
-/// it shows, or what its ink does.
+/// it shows, or what its ink does and any click or drag made meanwhile.
 pub(crate) struct Marker<'a>(pub(crate) &'a Keyframe, pub(crate) &'a [Mark]);
 
 impl fmt::Display for Marker<'_> {
@@ -87,14 +88,18 @@ impl fmt::Display for Marker<'_> {
         let Self(keyframe, marks) = self;
         match (keyframe.reason, keyframe.action) {
             (Reason::Click, Some(action)) => write!(f, " [{}]", Verb(action)),
-            (Reason::Mark, _) if !marks.is_empty() => {
+            (Reason::Mark, during) if !marks.is_empty() => {
                 let mut verbs: Vec<&str> = Vec::with_capacity(marks.len());
                 for verb in marks.iter().map(|mark| mark.shape.verb()) {
                     if !verbs.contains(&verb) {
                         verbs.push(verb);
                     }
                 }
-                write!(f, " [{}]", verbs.join(", "))
+                write!(f, " [{}", verbs.join(", "))?;
+                if let Some(action) = during {
+                    write!(f, ", {}", Verb(action))?;
+                }
+                f.write_str("]")
             },
             _ => Ok(()),
         }
@@ -191,6 +196,40 @@ mod tests {
         assert_eq!(
             drag([0.51, 0.5]),
             "dragged a little (x 0.50, y 0.50 → x 0.51, y 0.50)"
+        );
+    }
+
+    #[test]
+    fn a_mark_keyframe_names_the_click_made_while_it_was_drawn() {
+        let scribble = Mark {
+            shape: Shape::Scribble,
+            strokes: 0..2,
+            span: Span::new(Moment::START, Moment::from_millis(2_000)),
+            bounds: Rect {
+                left: 0.2,
+                top: 0.2,
+                right: 0.4,
+                bottom: 0.4,
+            },
+        };
+        let keyframe = |action| Keyframe {
+            index: 1,
+            at: Moment::from_millis(2_000),
+            reason: Reason::Mark,
+            event: String::new(),
+            said: None,
+            marks: 0..1,
+            action,
+        };
+        let marks = [scribble];
+        let click = Action::Click {
+            at: Moment::from_millis(1_000),
+            point: Point::new(0.3, 0.3),
+        };
+        assert_eq!(Marker(&keyframe(None), &marks).to_string(), " [marked]");
+        assert_eq!(
+            Marker(&keyframe(Some(click)), &marks).to_string(),
+            " [marked, clicked]"
         );
     }
 }

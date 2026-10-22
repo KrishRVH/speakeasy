@@ -69,7 +69,8 @@ pub struct Keyframe {
     /// The marks drawn on it; empty unless the reason is [`Reason::Mark`].
     #[serde(with = "crate::serde_range")]
     pub marks: Range<usize>,
-    /// The click or drag whose result it shows.
+    /// The click or drag whose result it shows; on a mark's keyframe, the last one made while its
+    /// ink was drawn that no keyframe of its own shows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action: Option<Action>,
 }
@@ -106,9 +107,10 @@ impl Selection {
 /// Show earns more only as it tells more.
 ///
 /// Marks come first: every group of ink drawn on one screen gets a keyframe, merging the most
-/// alike screens until they fit. Clicks, scene changes, and spoken cues such as "look here" fill
-/// up to six, and long stretches of narration without a keyframe earn one from inside them.
-/// A cue never repeats a screen already chosen, so talking over a still screen yields one frame.
+/// alike screens until they fit, and nothing else is chosen from while its ink was drawn. Clicks,
+/// scene changes, and spoken cues such as "look here" fill up to six, and long stretches of
+/// narration without a keyframe earn one from inside them. A cue never repeats a screen already
+/// chosen, so talking over a still screen yields one frame.
 ///
 /// `None` only when there are no samples to choose from.
 #[must_use]
@@ -141,21 +143,12 @@ fn select_within(recording: &Recording, samples: &[Sample], budget: usize) -> Op
         .into_iter()
         .filter_map(|group| frames.mark_candidate(&marks, group))
         .collect();
-    let drawing: Vec<Span> = candidates.iter().map(|candidate| candidate.span).collect();
     candidates.extend(
         actions
             .iter()
             .map(|&action| frames.action_candidate(action)),
     );
-    candidates.extend(
-        transitions
-            .iter()
-            .filter(|transition| {
-                let settled = frames.at(transition.frame);
-                !drawing.iter().any(|span| span.contains(settled))
-            })
-            .map(Transition::candidate),
-    );
+    candidates.extend(transitions.iter().map(Transition::candidate));
     candidates.extend(
         recording
             .narration
@@ -180,6 +173,7 @@ fn select_within(recording: &Recording, samples: &[Sample], budget: usize) -> Op
     chooser.drop_repeated_cues();
     let mut chosen = chooser.chosen;
     chosen.sort_by_key(|candidate| frames.at(candidate.frame));
+    fold_actions_into_marks(&mut chosen, &actions);
 
     let anchors: Vec<Moment> = chosen
         .iter()
@@ -212,8 +206,12 @@ struct Candidate {
 /// What a candidate frame shows, which decides how it ranks and what its keyframe says.
 #[derive(Clone, Debug)]
 pub(crate) enum Basis {
-    /// The selection's marks in this range, drawn on one screen.
-    Mark(Range<usize>),
+    /// The selection's marks in this range, drawn on one screen, and the last click or drag made
+    /// while they were drawn that no keyframe of its own shows.
+    Mark {
+        group: Range<usize>,
+        during: Option<Action>,
+    },
     /// The result of a click or drag.
     Click(Action),
     /// The view the screen settled on after changing.
@@ -227,7 +225,7 @@ pub(crate) enum Basis {
 impl Basis {
     const fn reason(&self) -> Reason {
         match self {
-            Self::Mark(_) => Reason::Mark,
+            Self::Mark { .. } => Reason::Mark,
             Self::Click(_) => Reason::Click,
             Self::SceneChange => Reason::SceneChange,
             Self::Cue { .. } => Reason::Cue,
@@ -237,7 +235,7 @@ impl Basis {
 
     fn marks(&self) -> Range<usize> {
         match self {
-            Self::Mark(group) => group.clone(),
+            Self::Mark { group, .. } => group.clone(),
             Self::Click(_) | Self::SceneChange | Self::Cue { .. } | Self::Middle => 0..0,
         }
     }
@@ -245,7 +243,8 @@ impl Basis {
     const fn action(&self) -> Option<Action> {
         match *self {
             Self::Click(action) => Some(action),
-            Self::Mark(_) | Self::SceneChange | Self::Cue { .. } | Self::Middle => None,
+            Self::Mark { during, .. } => during,
+            Self::SceneChange | Self::Cue { .. } | Self::Middle => None,
         }
     }
 }
@@ -271,7 +270,7 @@ impl Rank {
 impl Candidate {
     fn rank(&self, frames: &Frames<'_>) -> Rank {
         Rank {
-            ordinary: !matches!(self.basis, Basis::Mark(_)),
+            ordinary: !matches!(self.basis, Basis::Mark { .. }),
             unsnapped_cue: matches!(self.basis, Basis::Cue { snapped: false, .. }),
             score: self.score,
             at: frames.at(self.frame),
@@ -295,14 +294,17 @@ struct Chooser<'a> {
 impl Chooser<'_> {
     /// Whether `candidate` adds something the chosen keyframes do not already show.
     fn admits(&self, candidate: &Candidate) -> bool {
-        if matches!(candidate.basis, Basis::Mark(_)) {
+        if matches!(candidate.basis, Basis::Mark { .. }) {
             return true;
         }
         let at = self.frames.at(candidate.frame);
+        // A mark's keyframe stands for the screen its ink was drawn on, and reports a click made
+        // meanwhile that has no keyframe of its own.
         let crowded = self.chosen.iter().any(|other| {
             self.frames.at(other.frame).distance(at) < FRAME_GAP
-                || (matches!(&other.basis, Basis::Mark(group) if group.len() > 1)
-                    && other.span.contains(at))
+                || (matches!(other.basis, Basis::Mark { .. })
+                    && other.span.contains(at)
+                    && !self.frames.novel(other.frame, candidate.frame))
         });
         if crowded {
             return false;
@@ -323,7 +325,7 @@ impl Chooser<'_> {
             if self.chosen.len() >= self.budget
                 || slot
                     .as_ref()
-                    .is_none_or(|c| !matches!(c.basis, Basis::Mark(_)))
+                    .is_none_or(|c| !matches!(c.basis, Basis::Mark { .. }))
             {
                 break;
             }
@@ -369,6 +371,28 @@ impl Chooser<'_> {
                     .iter()
                     .all(|&other| self.frames.novel(other, candidate.frame))
         });
+    }
+}
+
+/// Gives each chosen mark the last action started while its ink was drawn, unless a keyframe of
+/// that action's own shows it.
+fn fold_actions_into_marks(chosen: &mut [Candidate], actions: &[Action]) {
+    let shown: Vec<Action> = chosen
+        .iter()
+        .filter_map(|candidate| match candidate.basis {
+            Basis::Click(action) => Some(action),
+            _ => None,
+        })
+        .collect();
+    for candidate in chosen {
+        let span = candidate.span;
+        if let Basis::Mark { during, .. } = &mut candidate.basis {
+            *during = actions
+                .iter()
+                .rev()
+                .find(|action| span.contains(action.span().start()) && !shown.contains(action))
+                .copied();
+        }
     }
 }
 
