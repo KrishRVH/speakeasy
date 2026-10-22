@@ -14,7 +14,7 @@ const RIPPLE_RING: [u8; 4] = [0, 136, 255, 235];
 const WHITE: [u8; 4] = [255, 255, 255, 255];
 /// Ink lifted this recently before a keyframe without marks of its own still shows on it.
 const RECENT_INK: Duration = Duration::from_millis(1_200);
-/// A click this close to a keyframe's moment ripples on it.
+/// A keyframe without a click or drag of its own ripples at a click this close to its moment.
 const RIPPLE_REACH: Duration = Duration::from_millis(600);
 /// The top band where a badge sits; the left and right thirds decide which corner it takes.
 const BADGE_BAND: f32 = 0.18;
@@ -32,7 +32,8 @@ pub(crate) enum Corner {
 ///
 /// A keyframe made for marks, given as `marks`, shows all their ink. Any other keyframe shows the
 /// ink drawn up to its moment from strokes still in progress or lifted within [`RECENT_INK`], as
-/// the screen looked then.
+/// the screen looked then. The ripple marks the keyframe's own click or drag, which a mark's
+/// keyframe can carry too, else the click nearest its moment within [`RIPPLE_REACH`].
 pub(crate) fn annotate(
     image: &mut Image,
     keyframe: &Keyframe,

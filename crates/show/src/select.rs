@@ -107,10 +107,12 @@ impl Selection {
 /// Show earns more only as it tells more.
 ///
 /// Marks come first: every group of ink drawn on one screen gets a keyframe, merging the most
-/// alike screens until they fit, and nothing else is chosen from while its ink was drawn. Clicks,
-/// scene changes, and spoken cues such as "look here" fill up to six, and long stretches of
-/// narration without a keyframe earn one from inside them. A cue never repeats a screen already
-/// chosen, so talking over a still screen yields one frame.
+/// alike screens until they fit. Clicks, scene changes, and spoken cues such as "look here" fill
+/// up to six, and long stretches of narration without a keyframe earn one from inside them.
+/// While ink is drawn, another keyframe is chosen only where the screen differs from the mark's,
+/// and the mark's keyframe reports the last click or drag made meanwhile that has no keyframe of
+/// its own. A cue never repeats a screen already chosen, so talking over a still screen yields one
+/// frame.
 ///
 /// `None` only when there are no samples to choose from.
 #[must_use]
@@ -207,7 +209,7 @@ struct Candidate {
 #[derive(Clone, Debug)]
 pub(crate) enum Basis {
     /// The selection's marks in this range, drawn on one screen, and the last click or drag made
-    /// while they were drawn that no keyframe of its own shows.
+    /// while they were drawn that no keyframe of its own shows, known once keyframes are chosen.
     Mark {
         group: Range<usize>,
         during: Option<Action>,
@@ -374,8 +376,8 @@ impl Chooser<'_> {
     }
 }
 
-/// Gives each chosen mark the last action started while its ink was drawn, unless a keyframe of
-/// that action's own shows it.
+/// Gives each chosen mark the last click or drag started while its ink was drawn that has no
+/// keyframe of its own.
 fn fold_actions_into_marks(chosen: &mut [Candidate], actions: &[Action]) {
     let shown: Vec<Action> = chosen
         .iter()
