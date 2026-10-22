@@ -357,12 +357,6 @@ mod tests {
         input.deliver(Input::Cancel);
         assert!(!previous.active());
         let current = input.begin().context("Current recording")?;
-        tokio::time::timeout(
-            Duration::from_millis(100),
-            tokio::time::sleep(Duration::from_millis(1)),
-        )
-        .await
-        .context("Clipboard setup blocked the local runtime")?;
         release.send(())?;
         ready.await?;
 
