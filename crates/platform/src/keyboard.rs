@@ -2,8 +2,8 @@
 //! the held-modifier rules for paste and Show ink.
 //!
 //! Native callbacks report key events and deliver the decided input. Modifiers and Escape stay
-//! passive; only Space for hands-free and S for a Show are swallowed, and only during a hold.
-//! Shift never interrupts a hold, since a Show draws with it.
+//! passive; only Space for hands-free and S for a Show are swallowed, and only when pressed during
+//! a hold. Shift never interrupts a hold, since a Show draws with it.
 
 use std::mem;
 

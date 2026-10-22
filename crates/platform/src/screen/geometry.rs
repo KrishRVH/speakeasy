@@ -1,7 +1,8 @@
 //! Display rectangles, frame sizes, and pixel rows: the arithmetic native adapters share, free of
 //! native calls so every host tests it.
 
-/// A rectangle in points.
+/// A rectangle in the platform's global display space: points on macOS, physical pixels on
+/// Windows.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Bounds {
     /// The corner with the smallest coordinates.

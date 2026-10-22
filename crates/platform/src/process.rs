@@ -42,6 +42,9 @@ pub struct ProcessGroup(OwnedHandle);
 impl ProcessGroup {
     /// Attaches to a freshly spawned child, never an unrelated process.
     ///
+    /// The job holds the child and every process it starts from then on; one it started before
+    /// this call stays outside, so attach right after spawning.
+    ///
     /// # Errors
     /// Returns an error if the process identifier or native group setup is invalid.
     pub fn attach(pid: u32) -> anyhow::Result<Self> {

@@ -103,7 +103,7 @@ pub enum Inserted {
     Unavailable(&'static str),
 }
 
-/// Explicit desktop shortcut and insertion choices.
+/// Shortcut and insertion choices for the Linux desktop; Windows and macOS read none of them.
 #[derive(Clone)]
 pub struct DesktopOptions {
     /// Reserved Linux dictation chord in portal syntax.

@@ -287,7 +287,7 @@ mod tests {
                     .checked_add(Duration::from_millis(u64::from(elapsed)))
                     .expect("The generated sequence spans less than one day");
                 event.apply(&mut gesture, now);
-                // The owner ticks after every observation, including unrelated wakeups.
+                // Stands in for the owner's timer, which ticks once a deadline passes.
                 gesture.tick(now);
                 if let Some(started) = capture_start(&gesture) {
                     let limit = started.checked_add(RECORDING_LIMIT).expect("Bounded test clock");

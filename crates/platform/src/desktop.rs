@@ -52,7 +52,7 @@ impl Drop for InputMonitor {
 ///
 /// Readiness arrives on `input` as [`Input::DesktopReady`](crate::Input::DesktopReady), and a later
 /// loss of desktop access, such as a missing permission, as
-/// [`Input::Unavailable`](crate::Input::Unavailable). Only Linux reads `options`.
+/// [`Input::Unavailable`](crate::Input::Unavailable).
 ///
 /// # Errors
 /// Returns thread startup or native desktop initialization failures.
