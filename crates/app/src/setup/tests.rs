@@ -37,6 +37,24 @@ async fn cancelled_setup_remains_owned_while_cleanup_is_pending() -> anyhow::Res
 }
 
 #[test]
+fn keeping_the_chosen_engine_removes_only_the_other_builds() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let engines = root.path().join("engines");
+    for build in ["chosen", "rejected"] {
+        fs::create_dir_all(engines.join(build))?;
+    }
+    let chosen = engines.join("chosen");
+    let engine = engine::ChosenEngine {
+        directory: chosen.clone(),
+        use_gpu: false,
+    };
+    assert_eq!(engine.keep(root.path())?, chosen.join(archive::EXECUTABLE));
+    assert!(chosen.is_dir(), "The chosen build was removed");
+    assert!(!engines.join("rejected").exists(), "Another build was kept");
+    Ok(())
+}
+
+#[test]
 fn a_full_disk_asks_for_space_and_other_file_failures_for_access() {
     let message =
         |kind: io::ErrorKind| format!("{:#}", file_error(Path::new("models"))(kind.into()));

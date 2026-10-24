@@ -257,10 +257,11 @@ async fn install(
         progress,
     )
     .await?;
+    let use_gpu = engine.use_gpu;
     Ok(Installed {
-        engine_executable: engine.executable,
+        engine_executable: engine.keep(root)?,
         model,
-        use_gpu: engine.use_gpu,
+        use_gpu,
     })
 }
 

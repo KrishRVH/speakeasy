@@ -72,10 +72,31 @@ const METAL: Download = Download {
     sha256: "5cb02ba7c04f0b5585ce5cde9c830be5f0b7dfb4c83083c500109c381b4f2da9",
 };
 
-/// The engine build setup kept, and whether it should run on the GPU.
+/// The engine build setup chose, and whether it should run on the GPU. The other builds stay until
+/// the model is in place, so a setup paused before then resumes without downloading them again.
 pub(super) struct ChosenEngine {
-    pub(super) executable: PathBuf,
+    pub(super) directory: PathBuf,
     pub(super) use_gpu: bool,
+}
+
+impl ChosenEngine {
+    /// Removes every other engine build under `root` and returns this build's executable.
+    pub(super) fn keep(self, root: &Path) -> anyhow::Result<PathBuf> {
+        let engines = root.join("engines");
+        for entry in fs::read_dir(&engines)
+            .map_err(file_error(&engines))?
+            .flatten()
+        {
+            if entry.path() != self.directory {
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "Failure to prune an unused engine cache must not prevent the verified selected engine from running"
+                )]
+                let _ = fs::remove_dir_all(entry.path());
+            }
+        }
+        Ok(self.directory.join(EXECUTABLE))
+    }
 }
 
 /// Tries CUDA with an NVIDIA driver, then Vulkan, then CPU. `LocalSpeech` still transcribes silence
@@ -97,7 +118,7 @@ pub(super) async fn choose_engine(
             .is_some_and(|report| has_discrete_gpu(&report))
         {
             return Ok(ChosenEngine {
-                executable: keep_only(root, &cuda)?,
+                directory: cuda,
                 use_gpu: true,
             });
         }
@@ -105,7 +126,7 @@ pub(super) async fn choose_engine(
     let vulkan = unpack(client, &VULKAN, root, progress, installation).await?;
     if let Some(report) = doctor(&vulkan, installation, progress).await {
         return Ok(ChosenEngine {
-            executable: keep_only(root, &vulkan)?,
+            directory: vulkan,
             use_gpu: has_discrete_gpu(&report),
         });
     }
@@ -116,7 +137,7 @@ pub(super) async fn choose_engine(
         );
     }
     Ok(ChosenEngine {
-        executable: keep_only(root, &cpu)?,
+        directory: cpu,
         use_gpu: false,
     })
 }
@@ -135,7 +156,7 @@ pub(super) async fn choose_engine(
             "The speech engine cannot run on this Mac. Choose a compatible engine executable in Settings.",
         )?;
     Ok(ChosenEngine {
-        executable: keep_only(root, &metal)?,
+        directory: metal,
         use_gpu: is_accelerated(&report),
     })
 }
@@ -162,24 +183,6 @@ fn nvidia_driver() -> bool {
     } else {
         Path::new("/proc/driver/nvidia/version").is_file()
     }
-}
-
-/// Removes every other engine build and returns this build's executable.
-fn keep_only(root: &Path, directory: &Path) -> anyhow::Result<PathBuf> {
-    let engines = root.join("engines");
-    for entry in fs::read_dir(&engines)
-        .map_err(file_error(&engines))?
-        .flatten()
-    {
-        if entry.path() != directory {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "Failure to prune an unused engine cache must not prevent the verified selected engine from running"
-            )]
-            let _ = fs::remove_dir_all(entry.path());
-        }
-    }
-    Ok(directory.join(EXECUTABLE))
 }
 
 /// Asks the build at `directory` whether it runs here, which can take up to a minute on a cold GPU.
