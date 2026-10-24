@@ -95,6 +95,12 @@ impl Session {
         )
     }
 
+    /// Whether the session's audio is still to come: its microphone is queued behind the previous
+    /// one, or capturing.
+    pub(super) const fn awaits_audio(&self) -> bool {
+        matches!(self.stage, Stage::Queued) || self.is_capturing()
+    }
+
     /// Resolves once the session's insertion or publication finishes, and pends otherwise.
     /// Cancel-safe: dropped early, it leaves the task running.
     pub(super) async fn delivered(&mut self) -> Result<Delivered, JoinError> {

@@ -169,14 +169,69 @@ async fn a_screen_that_cannot_be_recorded_explains_why() -> anyhow::Result<()> {
 }
 
 #[tokio::test(start_paused = true)]
-async fn s_outside_a_hold_records_no_screen() -> anyhow::Result<()> {
+async fn s_with_no_recording_records_no_screen_then_or_later() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     h.input(Input::Show);
     h.start().await?;
-    h.input(Input::Show);
     tokio::time::advance(Duration::from_secs(1)).await;
     assert!(h.shows.try_recv().is_err());
     assert!(!h.snapshot().show);
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn s_after_space_locked_the_hold_still_starts_a_show() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    receive(&h.captures).await?;
+    h.input(Input::Lock);
+    h.observe(|snapshot| snapshot.hands_free).await?;
+    h.input(Input::Show);
+    h.observe(|snapshot| snapshot.show).await?;
+    receive(&h.shows).await?;
+    h.input(Input::Release);
+    h.input(Input::Press);
+    h.transcribe_next_as("locked").await?;
+    let (_, narration) = receive(&h.published).await?;
+    assert_eq!(narration, Narration::Text("locked".into()));
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn s_while_the_last_microphone_retires_still_starts_a_show() -> anyhow::Result<()> {
+    let (retirement, retiring) = gate(2);
+    let (screen_retirement, screen_retiring) = gate(1);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.retirement = Some(retirement);
+        ports.screen_retirement = Some(screen_retirement);
+    })?;
+    h.start().await?;
+    h.input(Input::Cancel);
+    h.phase(Phase::Cancelled).await?;
+    retiring.reached().await?;
+    // The next hold waits for that microphone, and S during the wait still makes it a Show.
+    h.input(Input::Press);
+    h.phase(Phase::Starting).await?;
+    h.input(Input::Show);
+    h.observe(|snapshot| snapshot.show && snapshot.hands_free)
+        .await?;
+    receive(&h.shows).await?;
+    assert!(
+        still_pending(screen_retiring.reached()).await,
+        "The screen stopped before the Show's narration began"
+    );
+    retiring.release().await?;
+    receive(&h.captures).await?;
+    h.input(Input::Release);
+    h.input(Input::Press);
+    h.transcribe_next_as("queued").await?;
+    let (_, narration) = receive(&h.published).await?;
+    assert_eq!(narration, Narration::Text("queued".into()));
+    for gate in [&retiring, &screen_retiring] {
+        gate.reached().await?;
+        gate.release().await?;
+    }
     h.close().await
 }
 

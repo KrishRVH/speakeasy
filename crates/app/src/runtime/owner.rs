@@ -404,13 +404,15 @@ impl<P: Ports> Owner<P> {
     }
 
     /// Turns the held recording into a Show, keeping the narration already captured, and locks it
-    /// hands-free; the next press finishes it.
+    /// hands-free; the next press finishes it. The keyboard policy sends S only for a press during
+    /// a physical hold, and its repeats, so a recording already locked hands-free with Space or a
+    /// double tap turns too, as does one still waiting for the microphone.
     fn start_show(&mut self) -> Option<Action> {
-        let held = self.gesture.state() == State::Held;
+        let held = matches!(self.gesture.state(), State::Held | State::HandsFree);
         let session = self
             .session
             .as_mut()
-            .filter(|session| held && session.is_capturing() && session.show.is_none())?;
+            .filter(|session| held && session.awaits_audio() && session.show.is_none())?;
         session.show = Some(Screen::Queued);
         self.latest_show = true;
         self.gesture.lock()
@@ -561,7 +563,7 @@ impl<P: Ports> Owner<P> {
             .record_screen(session.id, session.started, self.show_events.clone())
         {
             Ok(recorder) => {
-                if !session.is_capturing() || self.gesture.state() == State::Processing {
+                if !session.awaits_audio() || self.gesture.state() == State::Processing {
                     recorder.finish();
                 }
                 self.screen = Device::Open(recorder);
