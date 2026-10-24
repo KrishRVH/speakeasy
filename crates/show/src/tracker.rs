@@ -1,6 +1,6 @@
 //! Turning pointer samples into ink and into the clicks and drags that passed through.
 //!
-//! Holding Shift alone and moving the pointer draws; clicks keep reaching the apps underneath, so
+//! Holding Shift and moving the pointer draws; clicks keep reaching the apps underneath, so
 //! pressing a button never draws and drawing never clicks.
 
 use std::mem;

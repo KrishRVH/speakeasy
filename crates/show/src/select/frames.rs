@@ -15,7 +15,8 @@ use crate::{
 const SETTLE: Duration = Duration::from_millis(250);
 /// A transition at least this strong is a scene change.
 const SCENE: f32 = 0.08;
-/// Scene changes and spoken cues must differ at least this much from every chosen keyframe.
+/// Scene changes and spoken cues must differ at least this much from every chosen keyframe, and
+/// any keyframe during or near a mark from the mark's.
 const NOVELTY: f32 = 0.03;
 /// A spoken cue points at a transition starting from just before the word to a little after.
 const CUE_LEAD: Duration = Duration::from_millis(300);

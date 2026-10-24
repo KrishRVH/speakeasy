@@ -11,7 +11,8 @@ const COVERAGE_TIME: Duration = Duration::from_secs(35);
 
 impl Chooser<'_> {
     /// Splits stretches of narration a keyframe owns that run past [`COVERAGE_WORDS`] or
-    /// [`COVERAGE_TIME`], with a frame from inside them where the screen changed.
+    /// [`COVERAGE_TIME`], with a candidate frame from inside them, such as a click or a screen
+    /// change.
     ///
     /// The best-ranked candidate that leaves no part above three quarters of the stretch wins,
     /// else the most even split. The first keyframe also owns the lead-in before it, but a frame

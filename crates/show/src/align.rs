@@ -19,8 +19,8 @@ const ONSET_TOLERANCE: Duration = Duration::from_millis(50);
 /// the thought it opens.
 const COMMA_CLAUSE_WORDS: usize = 3;
 
-/// The words said for each keyframe, given each keyframe's anchor: the moment its action began
-/// or its cue was spoken, in keyframe order.
+/// The words said for each keyframe, given each keyframe's anchor in keyframe order: the moment
+/// its story begins, such as when its ink or action began or its cue was spoken.
 ///
 /// Each keyframe's text runs from the start of the clause in progress at its anchor until the
 /// next keyframe's text starts, so the narration is partitioned in order with nothing repeated or

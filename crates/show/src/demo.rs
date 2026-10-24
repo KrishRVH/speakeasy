@@ -391,7 +391,7 @@ fn recording() -> Recording {
     }
 }
 
-/// A circle around the theme menu, then an arrow, in three strokes, at the label under the button.
+/// A circle around the theme menu, then a three-stroke arrow at the label under the button.
 fn strokes() -> Vec<Stroke> {
     let circle = (0..=36_u8).map(|step| {
         let turn = f32::from(step) / 36.0;

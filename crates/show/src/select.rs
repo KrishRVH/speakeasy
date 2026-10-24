@@ -203,6 +203,7 @@ fn select_within(recording: &Recording, samples: &[Sample], budget: usize) -> Op
 
 struct Candidate {
     frame: usize,
+    /// When what the frame shows was under way: its ink, action, screen change, or cue.
     span: Span,
     score: f32,
     basis: Basis,
@@ -283,7 +284,7 @@ impl Candidate {
         }
     }
 
-    /// Where the keyframe's story begins: when its action started or its cue was said.
+    /// Where the keyframe's story begins: the start of its span, or its frame if that is earlier.
     fn anchor(&self, frames: &Frames<'_>) -> Moment {
         self.span.start().min(frames.at(self.frame))
     }

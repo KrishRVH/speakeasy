@@ -518,7 +518,7 @@ mod tests {
 
     #[test]
     fn each_thinning_halves_how_often_arrivals_are_admitted() {
-        // With no room past two frames, every third frame recorded thins the journal.
+        // With no room past two frames, every frame recorded after the first two thins the journal.
         let mut journal = Journal::with_budget(0);
         let mut admitted = Vec::new();
         for arrival in 0_u8..9 {
