@@ -74,7 +74,7 @@ fn setup_drop_joins_cancelled_cleanup_before_returning() -> anyhow::Result<()> {
 }
 
 #[test]
-fn setup_drop_reaps_its_child_before_releasing_the_directory() -> anyhow::Result<()> {
+fn setup_drop_reaps_its_child_and_releases_the_directory() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let root = directory.path().to_path_buf();
     let installation_root = root.clone();

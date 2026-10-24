@@ -77,10 +77,16 @@ fn callback_overflow_is_fatal_but_recording_limit_and_cancellation_do_not_overfl
         assert_eq!(capture_failure(&control, &errors).is_err(), limit == 3);
         assert_eq!(ring.pop()?, 0.25);
         assert_eq!(ring.pop()?, 0.5);
-        control.cancel();
-        data(&[1.0]);
-        assert!(ring.pop().is_err());
     }
+    let (state, mut ring, errors, control) = callback_fixture(1, 2, 10);
+    let (mut data, _) = capture_callbacks::<f32>(state);
+    data(&[0.25]);
+    control.cancel();
+    // More than the ring's one free slot: a live callback would queue one sample and overflow.
+    data(&[0.5, 0.75]);
+    assert!(capture_failure(&control, &errors).is_ok());
+    assert_eq!(ring.pop()?, 0.25);
+    assert!(ring.pop().is_err());
     Ok(())
 }
 

@@ -188,15 +188,18 @@ mod tests {
 
     #[test]
     fn final_partial_window_counts_towards_the_speech_gate() {
-        let mut speech = Audibility::new(RATE).unwrap();
-        let too_short = audio(&[(SECOND * 99 / 1000, 3000)]);
+        // At this rate the gate's 1604 samples end inside the sixth 320-sample window.
+        let rate = 16_040;
+        let millis = |millis| bytes_in(samples_in(Duration::from_millis(millis), rate));
+        let mut speech = Audibility::new(rate).unwrap();
+        let too_short = audio(&[(millis(99), 3000)]);
         speech.complete(&too_short);
         assert_eq!(speech.retained(too_short.len()), None);
 
-        let recording = audio(&[(SECOND * 101 / 1000, 3000)]);
-        let mut speech = Audibility::new(RATE).unwrap();
+        let recording = audio(&[(millis(101), 3000)]);
+        let mut speech = Audibility::new(rate).unwrap();
         speech.extend(&recording);
-        assert_eq!(speech.scanned, SECOND / 10);
+        assert_eq!(speech.retained(recording.len()), None);
         speech.complete(&recording);
         assert_eq!(speech.scanned, recording.len());
         assert_eq!(speech.retained(recording.len()), Some(0..recording.len()));
