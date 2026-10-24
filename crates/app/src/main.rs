@@ -165,7 +165,7 @@ fn launch(
     let (instance, requests) = acquired.unzip();
     // A demo is simulated, so it never reads the user's settings.
     let (config, startup) = if mode.is_demo() {
-        (Config::default(), Startup::Unconfigured)
+        (Config::first_launch(), Startup::Unconfigured)
     } else {
         Config::load(&path)
     };

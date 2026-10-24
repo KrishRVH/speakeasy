@@ -362,7 +362,7 @@ fn startup_classifies_saved_settings() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let (config, startup) = Config::load(&path);
-    assert!(matches!(startup, Startup::Unconfigured) && config == Config::default());
+    assert!(matches!(startup, Startup::Unconfigured) && config.engine == Engine::Parakeet);
 
     fs::write(&path, "{")?;
     let (config, startup) = Config::load(&path);
@@ -373,6 +373,8 @@ fn startup_classifies_saved_settings() -> anyhow::Result<()> {
     let (config, startup) = Config::load(&path);
     assert!(matches!(startup, Startup::Unconfigured));
     assert_eq!(config.theme, Theme::Iris);
+    // Files written before engines were chosen were Whisper settings, and keep reading as them.
+    assert!(config.engine == Engine::Whisper);
 
     // A failed validation leaves the draft as the user wrote it.
     valid_config(directory.path())?;

@@ -179,7 +179,7 @@ impl Config {
     /// refuses to replace that file until it parses.
     pub(crate) fn load(path: &Path) -> (Self, Startup) {
         if !path.exists() {
-            return (Self::default(), Startup::Unconfigured);
+            return (Self::first_launch(), Startup::Unconfigured);
         }
         let config = match Self::read(path) {
             Ok(config) => config,
@@ -191,6 +191,16 @@ impl Config {
         match config.validated(path) {
             Ok(valid) => (Self::clone(&valid), Startup::Configured(valid)),
             Err(error) => (config, Startup::Invalid(format!("{error:#}"))),
+        }
+    }
+
+    /// What a first launch, with no settings file, starts from. Automatic setup installs Parakeet,
+    /// so the draft names it before setup runs; a file without an engine key still reads as
+    /// [`Config::default`]'s Whisper, which such files were written for.
+    pub(crate) fn first_launch() -> Self {
+        Self {
+            engine: Engine::Parakeet,
+            ..Self::default()
         }
     }
 
