@@ -66,7 +66,16 @@ impl LocalSpeech {
         ensure!(!*cancelled.borrow(), STARTUP_CANCELLED);
         let listener = TcpListener::bind((LOOPBACK, 0))?;
         let port = listener.local_addr()?.port();
-        let directory = tempfile::Builder::new().prefix("speakeasy-").tempdir()?;
+        let directory = tempfile::Builder::new()
+            .prefix("speakeasy-")
+            .tempdir()
+            .map_err(|error| {
+                anyhow!(
+                    "Cannot use the temporary folder {}: {error}. {}",
+                    std::env::temp_dir().display(),
+                    crate::paths::remedy(&error)
+                )
+            })?;
         let secret = random_token()?;
         let mut command = server_command(&config, port, &secret, directory.path());
         let client = client_builder()?
@@ -434,7 +443,9 @@ async fn contain(child: &mut Child) -> anyhow::Result<ProcessGroup> {
         Ok(group) => Ok(group),
         Err(error) => {
             kill_and_reap(child).await;
-            Err(error)
+            Err(anyhow!(
+                "Cannot start local speech under Speakeasy's control ({error:#}). Restart Speakeasy, then try again."
+            ))
         },
     }
 }
