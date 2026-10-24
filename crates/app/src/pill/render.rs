@@ -8,8 +8,8 @@ use speakeasy_core::motion::Spring;
 
 use super::{
     DRAW_HINT, LABEL_FADE_FROM, LID_CLOSED, Pill, RECORDING_WIDTH, ROW_PADDING, SHADOW_BLUR,
-    SHADOW_OFFSET, SHADOW_ROOM, SLOT_SIDE_INSET, SLOT_VERTICAL_INSET, Scene, TRAY_HINT,
-    grille::Grille, symbol::Symbol,
+    SHADOW_OFFSET, SHADOW_ROOM, SLOT_SIDE_INSET, SLOT_VERTICAL_INSET, Scene, TRAILING_INSET,
+    TRAY_HINT, grille::Grille, symbol::Symbol,
 };
 use crate::{
     runtime::Phase,
@@ -102,9 +102,12 @@ impl Pill {
                     .text_size(px(12.0))
                     .line_height(px(16.0))
                     .child(
+                        // GPUI truncates a clamped text as one long line, so its ellipsis can hang
+                        // just past the wrap width; the padding keeps it inside the clip.
                         div()
-                            .max_h(px(32.0))
-                            .overflow_hidden()
+                            .line_clamp(2)
+                            .text_ellipsis()
+                            .pr(px(6.0))
                             .child(self.snapshot.message.clone()),
                     )
                     .when_some(footer, |message, footer| {
@@ -136,6 +139,7 @@ impl Pill {
             .px(px(ROW_PADDING))
             .flex()
             .items_center()
+            .justify_between()
             .gap(px(11.0))
             .child(
                 div()
@@ -187,12 +191,22 @@ impl Pill {
                     (scene.clock.text().into(), palette.muted)
                 };
                 // A Show is always hands-free; its mark says the screen is recording too.
-                row.map(|row| match (scene.show, scene.hands_free) {
-                    (true, _) => row.child(Symbol::Screen.element(palette.live)),
-                    (false, true) => row.child(Symbol::Lock.element(palette.muted)),
-                    (false, false) => row,
-                })
-                .child(div().text_size(px(11.0)).text_color(rgb(color)).child(text))
+                let mark = match (scene.show, scene.hands_free) {
+                    (true, _) => Some(Symbol::Screen.element(palette.live)),
+                    (false, true) => Some(Symbol::Lock.element(palette.muted)),
+                    (false, false) => None,
+                };
+                // Against the far end, whatever the text's width in this platform's font, so the
+                // capsule's two ends keep matching margins.
+                row.child(
+                    div()
+                        .pr(px(TRAILING_INSET))
+                        .flex()
+                        .items_center()
+                        .gap(px(11.0))
+                        .children(mark)
+                        .child(div().text_size(px(11.0)).text_color(rgb(color)).child(text)),
+                )
             })
     }
 }

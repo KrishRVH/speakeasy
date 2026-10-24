@@ -72,6 +72,9 @@ const ROW_PADDING: f32 = 7.0;
 const SLOT_SIDE_INSET: f32 = 2.0 * (ROW_PADDING + 1.0);
 /// The slot's total vertical inset inside the capsule.
 const SLOT_VERTICAL_INSET: f32 = 16.0;
+/// The room the mark and clock leave before the row's padding at the capsule's rounded end, which
+/// curves in closer to text than to the concentric slot.
+const TRAILING_INSET: f32 = 7.0;
 /// The window's clearance above the display's bottom edge. Windows and macOS move the pill onto
 /// their work area; GPUI's X11 display has none, so on Linux this keeps it above a bottom panel.
 const BOTTOM_CLEARANCE: f32 = 50.0;
