@@ -106,7 +106,9 @@ fn normalize_archive(staging: &Path) -> anyhow::Result<()> {
     }
     let directory = match directories.as_slice() {
         [directory] if directory.join(EXECUTABLE).is_file() => directory,
-        _ => bail!("The engine archive has an unexpected layout."),
+        _ => bail!(
+            "The engine archive has an unexpected layout. Choose an engine executable in Settings."
+        ),
     };
     let lift = || {
         for entry in fs::read_dir(directory)? {

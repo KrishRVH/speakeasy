@@ -180,7 +180,8 @@ impl LocalSpeech {
         );
         let request = match self.engine {
             Engine::Parakeet => {
-                let rate = audio::wav_sample_rate(&wav).context("Missing recording sample rate")?;
+                let rate = audio::wav_sample_rate(&wav)
+                    .context("Recording header is incomplete. Try recording again.")?;
                 ensure!(
                     (8_000..=96_000).contains(&rate),
                     "Parakeet needs 8–96 kHz audio. Set your microphone to 48 kHz in OS settings or choose Whisper."
