@@ -1,5 +1,5 @@
-//! Thread ownership and presentation interface for the dictation owner. Stop revokes authority
-//! immediately; `stopped` acknowledges owned native cleanup.
+//! Thread ownership, production ports, and presentation interface for the dictation owner. Stop
+//! revokes authority immediately; `stopped` acknowledges owned native cleanup.
 
 mod device;
 mod owner;

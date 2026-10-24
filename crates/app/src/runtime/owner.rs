@@ -363,8 +363,8 @@ impl<P: Ports> Owner<P> {
         }
     }
 
-    /// A session not yet waiting for the worker survives a failed warmup: its gesture finishes on
-    /// its own terms, and an owned microphone must be released before a retry may start.
+    /// A session that is not waiting for the worker survives a failed warmup: its gesture finishes
+    /// on its own terms, and an owned microphone must be released before a retry may start.
     fn session_survives_warmup_failure(&self) -> bool {
         self.session
             .as_ref()
