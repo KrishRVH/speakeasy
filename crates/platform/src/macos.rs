@@ -184,7 +184,7 @@ fn run_event_loop(input: &InputSender, control: &MonitorControl<CFRunLoop>) -> a
     }
     let tap = shortcut_tap(input)?;
     let source = tap.mach_port().create_runloop_source(0).map_err(|()| {
-        anyhow!("Cannot create shortcut run loop. Pause and resume dictation to try again.")
+        anyhow!("Cannot watch the dictation shortcut. Resume dictation to try again.")
     })?;
     let run_loop = CFRunLoop::get_current();
     let mut ready = RunLoopReady { control, input };
@@ -207,7 +207,7 @@ fn run_event_loop(input: &InputSender, control: &MonitorControl<CFRunLoop>) -> a
             &raw mut context,
         );
         if raw.is_null() {
-            bail!("Cannot prepare shortcut monitoring. Pause and resume dictation to try again.");
+            bail!("Cannot watch the dictation shortcut. Resume dictation to try again.");
         }
         CFRunLoopObserver::wrap_under_create_rule(raw)
     };
@@ -252,7 +252,7 @@ fn shortcut_tap(input: &InputSender) -> anyhow::Result<CGEventTap<'static>> {
     )
     .map_err(|()| {
         anyhow!(
-            "Allow Speakeasy in System Settings → Privacy & Security → Accessibility. If it is already on, remove it with − and add it again, then pause and resume dictation."
+            "Allow Speakeasy in System Settings › Privacy & Security › Accessibility. If it is already on, remove it with − and add it again, then resume dictation."
         )
     })
 }

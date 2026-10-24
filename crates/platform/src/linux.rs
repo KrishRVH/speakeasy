@@ -35,6 +35,19 @@ const NO_PASTE_BINDING: Inserted = Inserted::Copied(
 );
 /// The user chose to paste themselves, so insertion only copies.
 const COPIED_FOR_MANUAL_PASTE: Inserted = Inserted::Copied("Text copied. Paste into your editor.");
+/// A desktop-access failure whose message already says what to do, so it reaches the user as is
+/// rather than beside the general remedy for a failed desktop connection.
+#[derive(Debug)]
+struct Actionable(&'static str);
+
+impl std::fmt::Display for Actionable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::error::Error for Actionable {}
+
 /// The X11 clipboard lost the copied text before paste.
 const CLIPBOARD_CHANGED: Inserted =
     Inserted::Unavailable("Clipboard changed before paste. Dictate again.");
@@ -135,9 +148,14 @@ fn start_serving(
     let thread = OwnedThread::spawn("desktop-access", move || {
         let lane = incoming.clone();
         match serve(&input, &options, incoming, &stop_requests) {
-            Err(error) if !input.is_closed() => input.fail(format!(
-                "Linux desktop access stopped: {error}. Check desktop permissions, or choose Shortcuts: Desktop bindings, Insert: Copy for manual paste, or both in Settings, then resume."
-            )),
+            Err(error) if !input.is_closed() => {
+                input.fail(match error.downcast_ref::<Actionable>() {
+                    Some(actionable) => actionable.0.to_owned(),
+                    None => format!(
+                        "Linux desktop access stopped: {error}. Check desktop permissions, or choose Shortcuts: Desktop bindings, Insert: Copy for manual paste, or both in Settings, then resume."
+                    ),
+                });
+            },
             _ => input.close(),
         }
         abandon_queued(&lane);

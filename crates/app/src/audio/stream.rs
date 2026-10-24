@@ -164,21 +164,29 @@ pub(super) fn capture_failure(
     Ok(())
 }
 
+/// What happened to the microphone and what to do; only a failure without its own message carries
+/// the driver's words.
 pub(super) fn microphone_error(error: cpal::Error) -> anyhow::Error {
-    let guidance = match error.kind() {
+    let message = match error.kind() {
         cpal::ErrorKind::DeviceBusy => {
-            "Close other apps using the microphone or choose another microphone in Settings."
+            "Another app is using the microphone. Close it or choose another microphone in Settings."
         },
-        cpal::ErrorKind::PermissionDenied => "Check OS microphone permission and try again.",
+        cpal::ErrorKind::PermissionDenied => {
+            "Speakeasy has no microphone access. Allow it in your system's privacy settings, then try again."
+        },
         cpal::ErrorKind::DeviceNotAvailable => {
-            "Reconnect the microphone or choose another in Settings."
+            "The microphone was disconnected. Reconnect it or choose another in Settings."
         },
         cpal::ErrorKind::Xrun => {
             "Audio was interrupted during recording. Check your audio routing or reduce system load, then try again."
         },
-        _ => "Try recording again or choose another microphone in Settings.",
+        _ => {
+            return anyhow!(
+                "The microphone failed ({error}). Try recording again or choose another microphone in Settings."
+            );
+        },
     };
-    anyhow!("Microphone failed ({:?}): {error} {guidance}", error.kind())
+    anyhow!(message)
 }
 
 #[cfg(test)]

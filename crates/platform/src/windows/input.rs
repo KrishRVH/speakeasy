@@ -248,7 +248,7 @@ fn monitor(input: &InputSender, wake: &OwnedHandle) {
         && !input.is_closed()
     {
         input.deliver(Input::Unavailable(format!(
-            "Cannot monitor the dictation shortcut: {error}. Pause and resume dictation to try again."
+            "Cannot monitor the dictation shortcut ({error}). Resume dictation to try again."
         )));
     }
     drop(HOOK.take());

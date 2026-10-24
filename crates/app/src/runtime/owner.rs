@@ -238,7 +238,7 @@ impl<P: Ports> Owner<P> {
     fn handle_input(&mut self, input: Result<Input, RecvError>) -> ControlFlow<(), Option<Action>> {
         let Ok(input) = input else {
             return self.stop_with_failure(
-                "Shortcut monitoring stopped. Open Speakeasy and enable dictation again.".into(),
+                "Shortcut monitoring stopped. Resume dictation to try again.".into(),
             );
         };
         let action = match input {
@@ -611,7 +611,9 @@ impl<P: Ports> Owner<P> {
                 self.microphone = Device::Open(recording);
                 session.stage = Stage::Opening;
             },
-            Err(error) => self.fail(format!("Could not start microphone worker: {error}")),
+            Err(error) => self.fail(format!(
+                "Could not open the microphone ({error}). Try again."
+            )),
         }
     }
 

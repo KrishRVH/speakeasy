@@ -35,6 +35,8 @@ const INFERENCE_TIMEOUT: Duration = Duration::from_mins(30);
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const STOPPED: &str =
     "Local transcription stopped. Check the selected model and engine, then try again.";
+/// The engine returned word times Speakeasy cannot place on the recording.
+const INVALID_TIMINGS: &str = "Local speech returned invalid word timings. Check the selected model and engine, then try again.";
 const SIGILL: i32 = 4;
 const USAGE_ERROR: u32 = 2;
 const STATUS_ILLEGAL_INSTRUCTION: u32 = 0xC000_001D;
@@ -214,7 +216,7 @@ impl Speech for LocalSpeech {
         let body = self.request(wav, language, "json").await?;
         reply::<Transcription>(&body)?
             .text
-            .context("Local speech returned no transcript")
+            .context("Local speech returned no transcript. Check the selected model and engine, then try again.")
     }
 
     async fn transcribe_words(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<Narration> {
@@ -264,7 +266,7 @@ impl Warmup {
 fn reply<T: DeserializeOwned>(body: &[u8]) -> anyhow::Result<T> {
     serde_json::from_slice(body)
         .ok()
-        .context("Local speech returned invalid JSON")
+        .context("Local speech sent a reply Speakeasy cannot read. Check the selected model and engine, then try again.")
 }
 
 /// The part of either engine's JSON reply that Speakeasy reads.
@@ -329,10 +331,10 @@ impl Token {
             Duration::try_from_secs_f64(seconds)
                 .map(Moment::from)
                 .ok()
-                .context("Local speech returned invalid word timings")
+                .context(INVALID_TIMINGS)
         };
         let (start, end) = (time(self.start)?, time(self.end)?);
-        ensure!(start <= end, "Local speech returned invalid word timings");
+        ensure!(start <= end, INVALID_TIMINGS);
         Ok(Span::new(start, end))
     }
 }
@@ -424,7 +426,9 @@ fn server_command(config: &Config, port: u16, secret: &str, served: &Path) -> Co
 }
 
 async fn contain(child: &mut Child) -> anyhow::Result<ProcessGroup> {
-    let pid = child.id().context("Worker exited before containment")?;
+    let pid = child
+        .id()
+        .context("Local speech exited as it started. Check the selected engine, then try again.")?;
     match ProcessGroup::attach(pid) {
         Ok(group) => Ok(group),
         Err(error) => {
@@ -458,7 +462,7 @@ fn recording_form(wav: Vec<u8>, format: &str) -> reqwest::Result<multipart::Form
 /// so the transport error never reaches users.
 fn transport_error(error: reqwest::Error) -> anyhow::Error {
     if error.is_timeout() {
-        anyhow!("Transcription timed out. Try a smaller model or GPU acceleration.")
+        anyhow!("Transcription timed out. Try a smaller model, or turn on Prefer GPU in Settings.")
     } else {
         anyhow!(STOPPED)
     }
@@ -469,7 +473,7 @@ async fn read_bounded(mut response: Response) -> anyhow::Result<Vec<u8>> {
     while let Some(chunk) = response.chunk().await.map_err(transport_error)? {
         ensure!(
             chunk.len() <= MAX_RESPONSE_BYTES.saturating_sub(body.len()),
-            "Local speech response exceeded the size limit"
+            "Local speech sent a reply too large to read. Check the selected model and engine, then try again."
         );
         body.extend_from_slice(&chunk);
     }
@@ -496,13 +500,13 @@ fn exit_remedy(code: Option<i32>, signal: Option<i32>) -> &'static str {
             Some(STATUS_DLL_NOT_FOUND | STATUS_ENTRYPOINT_NOT_FOUND | STATUS_INVALID_IMAGE_FORMAT),
             _,
         ) => {
-            "This engine needs missing or incompatible native libraries. Run automatic setup or install the matching engine dependencies."
+            "This engine needs native libraries that are missing or incompatible. Install its dependencies, or choose another engine executable in Settings."
         },
         (Some(USAGE_ERROR), _) => {
-            "Check that the selected engine supports Speakeasy's server arguments. Run automatic setup to install the supported engine, or choose its executable in Settings."
+            "The selected engine does not accept Speakeasy's server arguments. Switch Engine to match it, or choose a supported engine executable in Settings."
         },
         _ => {
-            "Check the selected model and engine dependencies. Run automatic setup to install the supported engine, or choose a compatible executable in Settings."
+            "Check the selected model and the engine's dependencies, or choose a compatible engine executable in Settings."
         },
     }
 }

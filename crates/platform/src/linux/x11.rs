@@ -29,7 +29,7 @@ use xkbcommon::xkb::{KEYSYM_CASE_INSENSITIVE, Keysym, keysym_from_name};
 
 pub(super) use self::clipboard::ClipboardWorker;
 use self::paste::InsertionWorker;
-use super::{HostSession, ShortcutLabels, stopping, watch_readable};
+use super::{Actionable, HostSession, ShortcutLabels, stopping, watch_readable};
 use crate::{DesktopOptions, Input, InputSender, insertion::Insertion};
 
 const MAX_FOCUS_ANCESTRY: usize = 32;
@@ -172,7 +172,16 @@ impl Shortcuts {
         // its own grab.
         let caps = u16::from(xproto::ModMask::LOCK);
         let lock_states = [0, lock & caps, lock & !caps, lock];
-        for (binding, name) in [(self.dictate, "dictation"), (self.cancel, "cancel")] {
+        for (binding, taken) in [
+            (
+                self.dictate,
+                "Another app already uses the dictation shortcut. Free it there or choose Shortcuts: Desktop bindings in Settings, then resume dictation.",
+            ),
+            (
+                self.cancel,
+                "Another app already uses the cancel shortcut. Free it there or choose Shortcuts: Desktop bindings in Settings, then resume dictation.",
+            ),
+        ] {
             for locks in lock_states {
                 connection
                     .grab_key(
@@ -187,7 +196,7 @@ impl Shortcuts {
                     .map_err(|error| match error {
                         // The server refuses a passive grab that another client already holds.
                         ReplyError::X11Error(error) if error.error_kind == ErrorKind::Access => {
-                            anyhow!("Another app already uses the {name} shortcut; free it there")
+                            anyhow!(Actionable(taken))
                         },
                         error => error.into(),
                     })?;
@@ -226,7 +235,7 @@ impl ShortcutTracker<'_> {
     fn check_mapping(&self) -> anyhow::Result<()> {
         ensure!(
             Keyboard::load(self.connection)? == *self.keyboard,
-            "Keyboard mapping changed; resume dictation to bind the new layout"
+            Actionable("Keyboard mapping changed. Resume dictation to bind the new layout.")
         );
         Ok(())
     }

@@ -336,7 +336,8 @@ impl<P: Ports> Wiring<P> {
                 return false;
             }
             snapshot.phase = Phase::Error;
-            snapshot.message = format!("Could not start dictation worker: {error}");
+            snapshot.message =
+                format!("Could not start dictation ({error}). Quit and reopen Speakeasy.");
             true
         });
     }

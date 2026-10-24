@@ -59,7 +59,11 @@ fn startup_xrun_is_allowed_but_an_interruption_after_samples_is_fatal() -> anyho
     let failure = capture_failure(&control, &errors)
         .err()
         .context("An interruption after samples must not silently discard speech")?;
-    assert!(failure.to_string().contains("Xrun"));
+    assert!(
+        failure
+            .to_string()
+            .starts_with("Audio was interrupted during recording.")
+    );
     Ok(())
 }
 
@@ -143,9 +147,11 @@ fn fatal_stream_errors_keep_the_first_cause_without_blocking() -> anyhow::Result
         .err()
         .context("fatal driver error must abort recording")?
         .to_string();
-    assert!(error.contains("DeviceBusy"));
-    assert!(error.contains("fixture device is busy"));
-    assert!(error.contains("Close other apps"));
+    assert!(
+        error.starts_with("Another app is using the microphone."),
+        "{error}"
+    );
+    assert!(!error.contains("disconnected"));
     assert!(!error.contains("buffer"));
     Ok(())
 }
@@ -168,8 +174,21 @@ fn device_loss_and_backend_failures_abort_recording() -> anyhow::Result<()> {
             .err()
             .context("fatal driver error must abort recording")?
             .to_string();
-        assert!(error.contains(&format!("{kind:?}")));
-        assert!(error.contains("fixture driver failure"));
+        assert!(!error.contains(&format!("{kind:?}")), "{error}");
+        // A failure with its own sentence leaves the driver's words out; the rest keep them.
+        let explained = matches!(
+            kind,
+            cpal::ErrorKind::DeviceNotAvailable | cpal::ErrorKind::PermissionDenied
+        );
+        assert_eq!(
+            error.contains("fixture driver failure"),
+            !explained,
+            "{error}"
+        );
+        assert!(
+            error.ends_with(", then try again.") || error.ends_with("in Settings."),
+            "{error}"
+        );
     }
     Ok(())
 }

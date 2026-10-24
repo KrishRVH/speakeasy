@@ -238,7 +238,7 @@ impl<T: Send + 'static> Job<T> {
 fn joined<T>(result: Result<anyhow::Result<T>, JoinError>) -> anyhow::Result<T> {
     result.unwrap_or_else(|_| {
         Err(anyhow!(
-            "Transcription worker stopped unexpectedly. Try again."
+            "Local transcription stopped unexpectedly. Try again."
         ))
     })
 }

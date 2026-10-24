@@ -125,14 +125,14 @@ impl NativeInsert for Insert {
                     let _ = send_input(&[release(VK_V), release(VK_CONTROL)]);
                 }
                 Ok(Inserted::Copied(
-                    "Copied. This app blocked paste; press Ctrl+V.",
+                    "Text copied. This app blocked paste; press Ctrl+V.",
                 ))
             },
             Keys::Text(input) => {
                 let sent = send_input(&input)?;
                 if sent != input.len() {
                     return Ok(Inserted::Unavailable(
-                        "Direct input was blocked or only partly sent. Clipboard preserved.",
+                        "Typing was blocked or cut short. Dictate again, or turn off Keep clipboard in Settings to paste.",
                     ));
                 }
                 Ok(Inserted::Sent)

@@ -275,7 +275,11 @@ impl Config {
             *file = file
                 .canonicalize()
                 .map_err(|error| cannot_open(file, &error))?;
-            ensure!(file.is_file(), "Expected a file: {}", file.display());
+            ensure!(
+                file.is_file(),
+                "Not a file: {}. Choose the engine executable and model in Settings.",
+                file.display()
+            );
         }
         #[cfg(target_os = "linux")]
         {
@@ -291,11 +295,11 @@ impl Config {
         }
         ensure!(
             (1..=256).contains(&config.threads),
-            "threads must be between 1 and 256"
+            "Set threads in the settings file to a number from 1 to 256."
         );
         ensure!(
             (1..=16).contains(&config.language.len()),
-            "Set language to a language code or auto"
+            "Set language in the settings file to a language code, such as en, or to auto."
         );
         Ok(ValidConfig(config))
     }
@@ -370,9 +374,15 @@ fn link_target(path: &Path) -> io::Result<PathBuf> {
 
 fn cannot_open(file: &Path, error: &io::Error) -> anyhow::Error {
     if error.kind() == ErrorKind::NotFound {
-        anyhow!("File not found: {}", file.display())
+        anyhow!(
+            "File not found: {}. Choose it again in Settings.",
+            file.display()
+        )
     } else {
-        anyhow!("Cannot open {}: {error}", file.display())
+        anyhow!(
+            "Cannot open {} ({error}). Choose it again in Settings.",
+            file.display()
+        )
     }
 }
 

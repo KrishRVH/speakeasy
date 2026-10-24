@@ -95,7 +95,7 @@ async fn a_keyboard_switch_keeps_shortcuts_and_a_remap_stops_them() -> anyhow::R
         .await
         .context("A remap left shortcuts bound to the old mapping")?;
     ensure!(
-        matches!(&stopped, Input::Unavailable(reason) if reason.contains("Keyboard mapping changed")),
+        matches!(&stopped, Input::Unavailable(reason) if reason.starts_with("Keyboard mapping changed. Resume dictation")),
         "A remap gave {stopped:?}"
     );
     Ok(())
@@ -132,7 +132,7 @@ async fn a_shortcut_another_app_holds_stops_input_naming_the_shortcut() -> anyho
         .await?
         .context("Desktop input closed")?;
     ensure!(
-        matches!(&stopped, Input::Unavailable(reason) if reason.contains("Another app already uses the dictation shortcut")),
+        matches!(&stopped, Input::Unavailable(reason) if reason.starts_with("Another app already uses the dictation shortcut. Free it there")),
         "A held shortcut gave {stopped:?}"
     );
     Ok(())

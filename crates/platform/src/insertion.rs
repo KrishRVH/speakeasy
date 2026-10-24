@@ -254,11 +254,11 @@ impl Delivery {
 /// The clipboard no longer holds the text just written, so pasting would insert someone else's.
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 const CLIPBOARD_CHANGED: &str =
-    "Clipboard changed. New contents were preserved; paste was not sent.";
+    "Clipboard changed, so paste was not sent. New contents were preserved; dictate again.";
 /// The clipboard changed while the paste waited for focus and keys.
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 const CLIPBOARD_CHANGED_BEFORE_PASTE: &str =
-    "Clipboard changed before paste. New contents were preserved.";
+    "Clipboard changed before paste. New contents were preserved; dictate again.";
 
 /// The native steps of one Windows or macOS insertion. Implementations perform each step and
 /// decide nothing; [`insert`] owns their order.
