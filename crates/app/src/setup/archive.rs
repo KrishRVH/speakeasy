@@ -192,7 +192,7 @@ mod tests {
         let staging = root.join("engines").join("fixture.part");
         assert!(
             message.starts_with(&format!("Setup cannot use {}: ", staging.display()))
-                && message.ends_with("check the folder's permissions, then try again."),
+                && message.ends_with("check that you can write there, then try again."),
             "{message}"
         );
         assert_eq!(

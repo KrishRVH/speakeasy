@@ -20,12 +20,12 @@ pub(crate) fn data_root() -> anyhow::Result<PathBuf> {
 }
 
 /// What to do when a file operation in one of these folders fails: free space on a full disk;
-/// otherwise close what holds the files and check the folder's permissions.
+/// otherwise close what holds the files and check that the user can write to the named path.
 pub(crate) fn remedy(error: &io::Error) -> &'static str {
     match error.kind() {
         ErrorKind::StorageFull | ErrorKind::QuotaExceeded => "Free up disk space, then try again.",
         _ => {
-            "Close programs using Speakeasy's files and check the folder's permissions, then try again."
+            "Close programs using Speakeasy's files and check that you can write there, then try again."
         },
     }
 }

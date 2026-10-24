@@ -48,7 +48,7 @@ fn a_full_disk_asks_for_space_and_other_file_failures_for_access() {
     );
     let denied = message(io::ErrorKind::PermissionDenied);
     assert!(
-        denied.contains("check the folder's permissions"),
+        denied.contains("check that you can write there"),
         "{denied}"
     );
 }

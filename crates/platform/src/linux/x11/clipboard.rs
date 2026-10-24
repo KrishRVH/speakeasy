@@ -278,7 +278,10 @@ mod tests {
         assert!(holds_text(Ok("fixture".into()), "fixture")?);
         assert!(!holds_text(Ok("other".into()), "fixture")?);
         assert!(
-            !holds_text(Err(arboard::Error::ContentNotAvailable), "fixture")?,
+            matches!(
+                holds_text(Err(arboard::Error::ContentNotAvailable), "fixture"),
+                Ok(false)
+            ),
             "An image another app copied over the text failed the insertion"
         );
         assert!(

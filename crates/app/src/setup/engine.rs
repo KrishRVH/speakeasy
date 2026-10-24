@@ -79,7 +79,7 @@ pub(super) struct ChosenEngine {
 }
 
 /// Tries CUDA with an NVIDIA driver, then Vulkan, then CPU. `LocalSpeech` still transcribes silence
-/// on a GPU choice before reporting it ready.
+/// before reporting a GPU choice, or any Linux one, ready.
 #[cfg(any(
     target_os = "windows",
     all(target_os = "linux", target_arch = "x86_64")

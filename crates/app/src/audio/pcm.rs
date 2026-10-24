@@ -56,8 +56,8 @@ impl Pcm16 {
     }
 
     /// Seals a completed recording with its accumulated speech windows. Short recordings and
-    /// insufficient speech produce no WAV; the rest is trimmed to its padded speech and encoded in
-    /// place.
+    /// insufficient speech produce no WAV; the rest keeps the span [`Audibility::retained`] gives
+    /// and is encoded in place.
     pub(super) fn seal(
         mut self,
         mut speech: Audibility,
