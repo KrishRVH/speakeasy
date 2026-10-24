@@ -443,7 +443,16 @@ impl insertion::NativeInsert for Insert {
     }
 
     fn holds(&mut self, text: &str, mark: &isize) -> anyhow::Result<bool> {
-        Ok(arboard::Clipboard::new()?.get_text()? == text && clipboard_sequence() == *mark)
+        if clipboard_sequence() != *mark {
+            return Ok(false);
+        }
+        // An image or files another app copied hold no text to read; that is a change, not a fault.
+        let current = match arboard::Clipboard::new()?.get_text() {
+            Ok(current) => current,
+            Err(arboard::Error::ContentNotAvailable) => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+        Ok(current == text && clipboard_sequence() == *mark)
     }
 
     fn paste_keys(&mut self) -> anyhow::Result<Vec<CGEvent>> {

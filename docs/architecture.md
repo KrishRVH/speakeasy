@@ -65,7 +65,8 @@ module unless a test file is named.
   [macos.rs](../crates/platform/src/macos.rs), [linux/x11/](../crates/platform/src/linux/x11), and
   [linux/portal/](../crates/platform/src/linux/portal) own delivery, the permit commit, and
   clipboard checks. [insertion/tests.rs](../crates/platform/src/insertion/tests.rs) and the input,
-  X11, and portal modules test them.
+  X11, and portal modules test them; an opt-in test in windows/insertion.rs checks the Windows
+  clipboard on a private window station.
 - **Shortcuts and desktop adapters**: [keyboard.rs](../crates/platform/src/keyboard.rs),
   [desktop.rs](../crates/platform/src/desktop.rs), [monitor.rs](../crates/platform/src/monitor.rs),
   [owned_thread.rs](../crates/platform/src/owned_thread.rs),
