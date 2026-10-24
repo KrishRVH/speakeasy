@@ -184,7 +184,13 @@ previews hands-free, the countdown, submission, a Show with its ink on Windows a
 dismissal, cancellation, silence, copied text, and an error. `--demo-tray` adds the tray and the
 Settings hide-and-reopen behavior with dictation disabled. `show demo` writes a scripted Show bundle
 and prints its summary. Linux has experimental desktop support; see the Linux instructions below.
-Linux builds need ALSA, fontconfig, X11/XCB, xkbcommon, and Vulkan development packages.
+Linux builds need `pkg-config` and the ALSA, fontconfig, FreeType, X11/XCB, xkbcommon, and Vulkan
+development packages. On Ubuntu:
+
+```sh
+sudo apt-get install libasound2-dev libfontconfig1-dev libfreetype6-dev libx11-dev libxcb1-dev \
+  libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev pkg-config
+```
 
 </details>
 
