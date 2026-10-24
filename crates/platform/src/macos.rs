@@ -410,7 +410,7 @@ pub(super) fn modifiers() -> Modifiers {
         shortcut: flags.intersects(
             CGEventFlags::MaskControl | CGEventFlags::MaskAlternate | CGEventFlags::MaskCommand,
         ),
-        function: flags.contains(CGEventFlags::MaskSecondaryFn),
+        talk: flags.contains(CGEventFlags::MaskSecondaryFn),
     }
 }
 

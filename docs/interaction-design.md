@@ -102,8 +102,8 @@ are unsaved edits.
   dictation cancels and waits for release. On Windows, an unassigned mask key keeps the released Win
   key from opening Start.
 - S during a Windows/macOS hold turns the recording into a Show, locked hands-free; the pill table
-  shows what the pill presents. Shift alone draws ink that holds briefly after the pen lifts, then
-  fades; clicks pass through to the apps underneath.
+  shows what the pill presents. Shift draws ink, alone or while the shortcut is still held; the ink
+  holds briefly after the pen lifts, then fades, and clicks pass through to the apps underneath.
 - Windows/macOS Escape cancels immediately and continues to the focused app. Linux uses a reserved
   Ctrl+Super+Escape chord or an explicit command binding; bare Escape is not globally captured.
   Animation never delays cancellation or owns the microphone lifetime.

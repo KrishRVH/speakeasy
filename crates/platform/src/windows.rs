@@ -30,7 +30,7 @@ use windows_sys::{
         UI::{
             Input::KeyboardAndMouse::{
                 GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
-                SendInput, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+                SendInput, VIRTUAL_KEY,
             },
             WindowsAndMessaging::{
                 GetWindowThreadProcessId, MB_ICONERROR, MB_OK, MessageBoxW,
@@ -48,7 +48,7 @@ pub(crate) use self::{
 };
 #[cfg(test)]
 use crate::NativeWindow;
-use crate::keyboard::Modifiers;
+use crate::keyboard::{self, Modifiers};
 
 /// Tags input Speakeasy synthesizes, so its own keyboard hook ignores it.
 const OWN_INPUT: usize = 0x5350_4541;
@@ -62,13 +62,7 @@ fn is_key_down(key: VIRTUAL_KEY) -> bool {
 
 /// The modifier keys physically held now.
 pub(super) fn modifiers() -> Modifiers {
-    Modifiers {
-        shift: is_key_down(VK_SHIFT),
-        shortcut: [VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN]
-            .into_iter()
-            .any(is_key_down),
-        function: false,
-    }
+    keyboard::Windows::modifiers(is_key_down)
 }
 
 pub(crate) fn reduced_motion() -> bool {

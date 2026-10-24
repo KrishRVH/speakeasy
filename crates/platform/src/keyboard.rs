@@ -156,20 +156,22 @@ impl Decision {
 #[derive(Clone, Copy, Default)]
 pub(super) struct Modifiers {
     pub(super) shift: bool,
-    /// Control, Alt or Option, Command, or Windows: any of them makes Shift part of a shortcut.
+    /// Any other held combination, including part of the talk shortcut alone, which makes Shift
+    /// part of another shortcut.
     pub(super) shortcut: bool,
-    /// macOS Fn, the hold-to-talk key, which may be down while Shift draws; false on Windows.
-    pub(super) function: bool,
+    /// The hold-to-talk shortcut, macOS Fn or Windows Ctrl+Win, which may be down while Shift
+    /// draws.
+    pub(super) talk: bool,
 }
 
 impl Modifiers {
     /// Insertion waits while any modifier is held, so a paste never merges with the shortcut.
     pub(super) const fn any(self) -> bool {
-        self.shift || self.shortcut || self.function
+        self.shift || self.shortcut || self.talk
     }
 
-    /// Shift alone draws, so Shift shortcuts never draw; Fn does not count, since the user may
-    /// still be holding it to talk.
+    /// Shift alone draws, so Shift shortcuts never draw; the talk shortcut does not count, since
+    /// the user may still be holding it after pressing S.
     pub(super) const fn draws(self) -> bool {
         self.shift && !self.shortcut
     }
@@ -185,15 +187,33 @@ pub(super) struct Windows {
 
 #[cfg(any(target_os = "windows", test))]
 impl Windows {
+    const ALT: u16 = 0x12;
     /// Left Ctrl, right Ctrl, left Windows, and right Windows; either Ctrl with either Windows key
     /// holds the chord.
-    pub(super) const CHORD_KEYS: [u16; 4] = [0xA2, 0xA3, 0x5B, 0x5C];
+    pub(super) const CHORD_KEYS: [u16; 4] = [0xA2, 0xA3, Self::LEFT_WINDOWS, Self::RIGHT_WINDOWS];
+    const CONTROL: u16 = 0x11;
     const ESCAPE: u16 = 0x1B;
+    const LEFT_WINDOWS: u16 = 0x5B;
+    const RIGHT_WINDOWS: u16 = 0x5C;
+    const SHIFT: u16 = 0x10;
     /// Shift, left Shift, and right Shift. macOS reports them as flag changes, which never
     /// interrupt either.
-    const SHIFT_KEYS: [u16; 3] = [0x10, 0xA0, 0xA1];
+    const SHIFT_KEYS: [u16; 3] = [Self::SHIFT, 0xA0, 0xA1];
     const SHOW: u16 = 0x53;
     const SPACE: u16 = 0x20;
+
+    /// The modifiers `down` reports held, by virtual-key code. Ctrl and Windows together are the
+    /// talk shortcut; either alone, or Alt, makes Shift part of another shortcut, such as
+    /// Win+Shift+S.
+    pub(super) fn modifiers(down: impl Fn(u16) -> bool) -> Modifiers {
+        let control = down(Self::CONTROL);
+        let windows = down(Self::LEFT_WINDOWS) || down(Self::RIGHT_WINDOWS);
+        Modifiers {
+            shift: down(Self::SHIFT),
+            shortcut: down(Self::ALT) || control != windows,
+            talk: control && windows,
+        }
+    }
 
     /// Ends dictation for a session change, then waits for the chord's release.
     pub(super) fn interrupt(&mut self, input: &InputSender) {
@@ -321,10 +341,10 @@ mod tests {
 
     #[test]
     fn shift_draws_beside_fn_but_any_modifier_holds_paste() {
-        let held = |shift, shortcut, function| Modifiers {
+        let held = |shift, shortcut, talk| Modifiers {
             shift,
             shortcut,
-            function,
+            talk,
         };
         assert!(
             held(true, false, true).draws(),
@@ -347,6 +367,29 @@ mod tests {
             "A shortcut modifier must hold the paste"
         );
         assert!(!Modifiers::default().any());
+    }
+
+    #[test]
+    fn shift_draws_beside_ctrl_win_but_not_in_another_windows_shortcut() {
+        let held = |keys: &[u16]| Windows::modifiers(|key| keys.contains(&key));
+        let (shift, control) = (Windows::SHIFT, Windows::CONTROL);
+        assert!(
+            held(&[shift, control, Windows::RIGHT_WINDOWS]).draws(),
+            "Shift must draw while Ctrl+Win is still held after S"
+        );
+        assert!(
+            !held(&[shift, Windows::LEFT_WINDOWS]).draws(),
+            "Win+Shift, as in Win+Shift+S, must not draw"
+        );
+        assert!(!held(&[shift, control]).draws(), "Ctrl+Shift must not draw");
+        assert!(
+            !held(&[shift, control, Windows::LEFT_WINDOWS, Windows::ALT]).draws(),
+            "Alt beside the chord makes another shortcut"
+        );
+        assert!(
+            held(&[control, Windows::LEFT_WINDOWS]).any(),
+            "The held chord must hold the paste"
+        );
     }
 
     #[test]
