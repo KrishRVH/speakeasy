@@ -56,8 +56,16 @@ impl Settings {
         mut updates: watch::Receiver<Snapshot>,
         cx: &Context<Self>,
     ) -> Self {
-        let presentation = Presentation::new(&updates.borrow_and_update(), cx.global::<Services>());
-        let saves = SaveQueue::new(config.clone());
+        let services = cx.global::<Services>();
+        let presentation = Presentation::new(&updates.borrow_and_update(), services);
+        // A missing file holds nothing, and its keys read as the defaults; a first launch's draft
+        // differs from those only by Settings' own choices, which a save must then write.
+        let held = if services.path.exists() {
+            config.clone()
+        } else {
+            Config::default()
+        };
+        let saves = SaveQueue::new(held);
         #[cfg(target_os = "linux")]
         let desktop_command = {
             let default = crate::paths::settings_file()
