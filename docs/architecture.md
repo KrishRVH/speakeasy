@@ -62,10 +62,11 @@ module unless a test file is named.
 - **Insertion**: [platform/src/insertion.rs](../crates/platform/src/insertion.rs),
   [input.rs](../crates/platform/src/input.rs),
   [windows/insertion.rs](../crates/platform/src/windows/insertion.rs),
-  [macos.rs](../crates/platform/src/macos.rs), [linux/x11/](../crates/platform/src/linux/x11), and
-  [linux/portal/](../crates/platform/src/linux/portal) own delivery, the permit commit, and
-  clipboard checks. [insertion/tests.rs](../crates/platform/src/insertion/tests.rs) and the input,
-  X11, and portal modules test them; an opt-in test in windows/insertion.rs checks the Windows
+  [macos.rs](../crates/platform/src/macos.rs), [linux/x11/](../crates/platform/src/linux/x11),
+  [linux/portal/](../crates/platform/src/linux/portal), and
+  [linux/ei.rs](../crates/platform/src/linux/ei.rs) own delivery, the permit commit, and clipboard
+  checks. [insertion/tests.rs](../crates/platform/src/insertion/tests.rs) and the input, X11,
+  portal, and EI modules test them; an opt-in test in windows/insertion.rs checks the Windows
   clipboard on a private window station.
 - **Shortcuts and desktop adapters**: [keyboard.rs](../crates/platform/src/keyboard.rs),
   [desktop.rs](../crates/platform/src/desktop.rs), [monitor.rs](../crates/platform/src/monitor.rs),

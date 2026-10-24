@@ -98,30 +98,23 @@ refresh, competing load and settings:
 | Short and long inference         | Worker CPU/GPU memory, peak app PCM memory                   | Stop-to-insertion p50/p95 and recognition quality              |
 | Cancel, Pause and Quit           | Cleanup time, returning memory and resource counts           | No stale paste, stuck keys or surviving owned work             |
 
-Process sampling cannot measure GPU energy, displayed frames, microphone onset or editor acceptance.
-Use the native platform's frame/CPU/GPU profiler for those checks, and report live
-microphone/input/clipboard acceptance separately. Keep the frame ceiling, native display pacing,
-speech quality and interaction policy as constraints.
+Process sampling cannot measure displayed frames, driver work, power, or energy; use the native
+platform's frame/CPU/GPU profiler for those. Microphone onset and editor acceptance need the
+[native acceptance](#native-acceptance) checks.
 
 ## Native acceptance
 
 Before making a native performance claim, opt in explicitly and compare live microphone onset, lost
 speech, device teardown, stop-to-editor latency, cancellation, and resource return on the target OS.
-Keep Settings and Cancel responsive under competing CPU/GPU load.
+Keep Settings and Cancel responsive under competing CPU/GPU load, and report native verification
+limits with the exact revision and environment.
 
 Exercise short dictation, long recordings, the five-minute boundary, denied and revoked permissions,
 device removal, clipboard-owner changes, and focus changes. Include fullscreen apps such as games,
 terminals, protected fields, mixed-DPI and mixed-refresh displays, and display removal. Report
-editor acceptance separately from an OS accepting injected input. Never capture or log private
-transcript data for a benchmark. Before changing GPUI termination handling, check that forced
-termination, which still disposes synchronously, keeps the UI responsive.
-
-Use native frame/CPU/GPU profilers for displayed pacing, driver work, power, and energy. Process CPU
-counters alone do not establish those outcomes. In particular,
-[QueryProcessCycleTime](https://learn.microsoft.com/en-us/windows/win32/api/realtimeapiset/nf-realtimeapiset-queryprocesscycletime)
-counts CPU cycles, not elapsed time; frequency and core placement affect their relationship. Measure
-sustained idle periods after warmup and report native verification limits with the exact revision
-and environment.
+editor acceptance separately from an OS accepting injected input. Before changing GPUI termination
+handling, check that forced termination, which still disposes synchronously, keeps the UI
+responsive.
 
 [Verification](architecture.md#verification) states what default checks leave unproven, and the
 [Linux matrix](linux-implementation.md#native-acceptance-still-required) tracks desktop acceptance.

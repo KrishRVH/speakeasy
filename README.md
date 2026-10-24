@@ -132,9 +132,9 @@ Download the Windows or Mac zip from the
 Speakeasy. Linux's experimental AppImage and tar packages are described below.
 
 On a Mac, allow Microphone and Accessibility access when asked, and Screen & System Audio Recording
-for Shows. If macOS says it cannot verify Speakeasy, open System Settings → Privacy & Security and
-choose **Open Anyway**. After each update, macOS forgets the Accessibility and Screen & System Audio
-Recording grants: remove Speakeasy from those lists with − and add it again.
+for Shows. If macOS says it cannot verify Speakeasy, open **System Settings › Privacy & Security**
+and choose **Open Anyway**. After each update, macOS forgets the Accessibility and Screen & System
+Audio Recording grants: remove Speakeasy from those lists with − and add it again.
 
 The first launch sets everything up. Speakeasy checks the machine, downloads the matching
 [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) build and NVIDIA's Parakeet v3 model,
@@ -229,12 +229,12 @@ syntax, such as `CTRL+LOGO+space`: X11 grabs them, and Wayland requests them as 
 It also holds the `terminal_paste`, `manual_paste`, and `external_shortcut` flags that Insert and
 Shortcuts set. Save and resume after changing bindings or keyboard maps.
 
-Rendering uses X11 or Xwayland with Vulkan. A tray host is optional: without one, closing Settings
-quits and the launcher reopens the app. Configuration lives under `$XDG_CONFIG_HOME/speakeasy`,
-downloads under `$XDG_DATA_HOME/speakeasy`, and private portal restore credentials under
-`$XDG_STATE_HOME/speakeasy`, with standard home directory defaults. Some CPUs without AVX-512 cannot
-run the pinned Linux CPU engine; Speakeasy checks before readiness and explains how to choose
-another engine in Settings ([details](docs/linux-implementation.md#setup-and-distribution)).
+A tray host is optional: without one, closing Settings quits and the launcher reopens the app.
+Configuration lives under `$XDG_CONFIG_HOME/speakeasy`, downloads under `$XDG_DATA_HOME/speakeasy`,
+and private portal restore credentials under `$XDG_STATE_HOME/speakeasy`, with standard home
+directory defaults. Some CPUs without AVX-512 cannot run the pinned Linux CPU engine; Speakeasy
+checks before readiness and explains how to choose another engine in Settings
+([details](docs/linux-implementation.md#setup-and-distribution)).
 
 ## Speech engines
 

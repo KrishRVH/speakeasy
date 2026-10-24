@@ -135,9 +135,8 @@ The
 returns accepted bindings, their descriptions, and activation/deactivation events. It does not
 expose a passive Escape or physical modifier stream. Follow the
 [shortcut syntax](https://specifications.freedesktop.org/shortcuts/latest/) and probe actual
-interfaces and permissions. Shortcut deactivation alone does not prove Ctrl or Super was released.
-InputCapture's compositor-controlled pointer barriers do not satisfy passive background keyboard
-observation; see the
+interfaces and permissions. InputCapture's compositor-controlled pointer barriers do not satisfy
+passive background keyboard observation; see the
 [InputCapture interface](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.InputCapture.html).
 
 [RemoteDesktop](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html)
@@ -178,7 +177,7 @@ Wayland pill needs a pre-role construction boundary, so Linux presents through X
 X11 pill hints follow [EWMH](https://specifications.freedesktop.org/wm/latest/ar01s05.html) and the
 [X Shape protocol](https://xorg.freedesktop.org/archive/X11R7.7/doc/xextproto/shape.html).
 
-Register the installed desktop identity before portal access. The
+The
 [host Registry contract](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.host.portal.Registry.html)
 describes registration for unsandboxed applications. Package and engine ABI checks are distinct: the
 pinned
