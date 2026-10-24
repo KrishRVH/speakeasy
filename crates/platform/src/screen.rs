@@ -75,7 +75,7 @@ pub struct PointerSample {
     pub x: f32,
     /// Position normalized to the display, from its top edge.
     pub y: f32,
-    /// Shift alone was held, which draws ink.
+    /// Shift was held, alone or beside the held talk shortcut, which draws ink.
     pub drawing: bool,
     /// The primary button was down.
     pub pressed: bool,
@@ -90,8 +90,8 @@ pub struct ScreenCapture {
 impl ScreenCapture {
     /// Starts capturing the display under the pointer.
     ///
-    /// Each frame reaches `events` at most once per `interval`, halved in size until its long
-    /// edge fits `longest_edge`. No frame waits behind a full lane: Windows holds back its newest
+    /// Frames reach `events` at most once per `interval`, each halved in size until its long edge
+    /// fits `longest_edge`. No frame waits behind a full lane: Windows holds back its newest
     /// frame until there is room or a newer one replaces it, and macOS drops it. No frame shows a
     /// Speakeasy window, including one opened while capturing; they still appear in the user's own
     /// screen sharing before and after.
@@ -137,8 +137,8 @@ pub struct PointerMonitor {
 
 impl PointerMonitor {
     /// Samples the pointer over `display` every 8 ms, sending a sample whenever its position,
-    /// Shift, or primary button changes. Polling needs no input hook or permission, and never
-    /// delays the pointer.
+    /// drawing state, or primary button changes. Polling needs no input hook or permission, and
+    /// never delays the pointer.
     ///
     /// # Errors
     ///
