@@ -331,6 +331,24 @@ fn save_refuses_to_replace_a_file_that_needs_repair() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn a_save_that_cannot_write_names_the_file_and_what_to_do() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let blocked = directory.path().join("speakeasy");
+    fs::write(&blocked, b"a file where the folder belongs")?;
+    let path = blocked.join("settings.json");
+    let error = save(&Config::default(), &Config::default(), &path)
+        .err()
+        .context("Settings were saved beneath a file")?;
+    let message = error.to_string();
+    assert!(
+        message.starts_with(&format!("Cannot save settings to {}: ", path.display()))
+            && message.ends_with(", then try again."),
+        "{message}"
+    );
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn validation_requires_an_executable_engine() -> anyhow::Result<()> {

@@ -24,7 +24,9 @@ pub(crate) fn data_root() -> anyhow::Result<PathBuf> {
 pub(crate) fn remedy(error: &io::Error) -> &'static str {
     match error.kind() {
         ErrorKind::StorageFull | ErrorKind::QuotaExceeded => "Free up disk space, then try again.",
-        _ => "Close programs using its files and check its permissions, then try again.",
+        _ => {
+            "Close programs using Speakeasy's files and check the folder's permissions, then try again."
+        },
     }
 }
 

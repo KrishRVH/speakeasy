@@ -316,8 +316,13 @@ impl Config {
         validated: &ValidConfig,
         path: &Path,
     ) -> anyhow::Result<()> {
-        let cannot_save =
-            |error: io::Error| anyhow!("Cannot save settings to {}: {error}", path.display());
+        let cannot_save = |error: io::Error| {
+            anyhow!(
+                "Cannot save settings to {}: {error}. {}",
+                path.display(),
+                crate::paths::remedy(&error)
+            )
+        };
         let target = link_target(path).map_err(cannot_save)?;
         let contents = match fs::read(&target) {
             Ok(contents) => {
