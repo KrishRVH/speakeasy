@@ -270,8 +270,9 @@ file.
 </p>
 
 Settings show the shortcuts and the engine and model in use, and choose the microphone, Whisper's
-language, GPU use, filler removal, how text is delivered, reduced motion, and theme. The status line
-near the bottom says whether dictation is ready, or shows the latest error or notice.
+language, GPU use, filler removal, how text is delivered, reduced motion, and theme. The buttons and
+the status line stay at the bottom while the rest scrolls. The status says whether dictation is
+ready, or shows the latest error or notice; problems show in the attention color.
 
 Changes apply when you save. Theme and reduced-motion changes keep a recording running; microphone,
 language, filler removal, and delivery changes end it but keep the model loaded. On Linux, Shortcuts

@@ -54,9 +54,11 @@ impl TrayState {
                 label: match self.service {
                     ServiceState::Running => "Pause dictation",
                     ServiceState::Pausing => "Pausing…",
-                    ServiceState::Paused => "Resume dictation",
+                    ServiceState::Paused | ServiceState::NotSetUp => "Resume dictation",
                 },
-                enabled: self.interactive && self.service != ServiceState::Pausing,
+                // Resuming before setup would only fail validation; Settings offers setup instead.
+                enabled: self.interactive
+                    && matches!(self.service, ServiceState::Running | ServiceState::Paused),
             },
             toggle: TrayItem {
                 label: match self.activity {
@@ -186,7 +188,7 @@ mod tests {
     #[test]
     fn dictation_entries_are_enabled_only_while_their_command_can_act() {
         use Activity::{Dictating, Finishing, Idle};
-        use ServiceState::{Paused, Pausing, Running};
+        use ServiceState::{NotSetUp, Paused, Pausing, Running};
         // Service, activity, desktop ready, interactive: whether Pause, Toggle, and Cancel act.
         let table = [
             (Running, Idle, true, true, [true, true, false]),
@@ -195,6 +197,7 @@ mod tests {
             (Running, Finishing, true, true, [true, false, true]),
             (Pausing, Dictating, true, true, [false, false, false]),
             (Paused, Idle, true, true, [true, false, false]),
+            (NotSetUp, Idle, true, true, [false, false, false]),
             (Running, Dictating, true, false, [false, false, false]),
             (Paused, Idle, true, false, [false, false, false]),
         ];

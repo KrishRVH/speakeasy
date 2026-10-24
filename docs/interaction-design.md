@@ -85,9 +85,10 @@ The tray shows the Grille mark with its slot lit in the theme's lamp color and i
 Recording turns the slot red; busy, paused, and attention add a cut-jewel badge. macOS renders a
 template icon, so recording also adds a diamond badge and every state differs by shape. On Windows
 and Linux a faint keyline keeps the lamp color legible on light taskbars. The menu shows current
-status and engine, Pause/Resume, Start/Finish, Cancel, Settings, and Quit. It never animates while
-idle. Errors remain accessible in Settings after the pill's notice expires, including while there
-are unsaved edits.
+status and engine, Pause/Resume, Start/Finish, Cancel, Settings, and Quit; before any engine is set
+up, it says so and Resume waits for setup. It never animates while idle. Errors remain accessible in
+Settings after the pill's notice expires, including while there are unsaved edits: its commands and
+status line stay in view below the scrolling controls.
 
 ## Interaction contracts
 
@@ -111,9 +112,9 @@ are unsaved edits.
   that buffer can be recovered.
 - Insertion does not steal focus. OS submission is the observable result; success in every editor
   cannot be inferred from submitting keystrokes.
-- Settings exposes automatic setup, manual engine/model selection, microphone selection, language
-  where applicable, GPU preference, text delivery, English filler removal, reduced motion, and
-  theme.
+- Settings exposes automatic setup while no engine is set up, and manual engine/model selection,
+  microphone selection, language where applicable, GPU preference, text delivery, English filler
+  removal, reduced motion, and theme.
 
 ## Acceptance
 

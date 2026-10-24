@@ -6,8 +6,8 @@ use anyhow::anyhow;
 #[cfg(not(target_os = "windows"))]
 use gpui::PathPromptOptions;
 use gpui::{
-    App, AppContext, Bounds, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions,
-    px, size,
+    App, AppContext, Bounds, Pixels, Size, TitlebarOptions, Window, WindowBounds, WindowHandle,
+    WindowOptions, px, size,
 };
 
 use super::{Services, settings::Settings};
@@ -82,13 +82,28 @@ pub(super) fn open(cx: &mut App) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Settings' size where the display has room: tall enough to show every control without scrolling.
+const SETTINGS_SIZE: Size<Pixels> = size(px(560.0), px(860.0));
+/// What a smaller display keeps free around Settings, centered, for its title bar, a menu bar, and
+/// a taskbar or dock.
+const DISPLAY_CLEARANCE: Pixels = px(180.0);
+/// Settings never opens shorter than this; its controls scroll above the pinned commands.
+const MIN_HEIGHT: Pixels = px(360.0);
+
 fn window_options(cx: &App) -> WindowOptions {
+    let height = cx
+        .primary_display()
+        .map_or(SETTINGS_SIZE.height, |display| {
+            SETTINGS_SIZE
+                .height
+                .min((display.bounds().size.height - DISPLAY_CLEARANCE).max(MIN_HEIGHT))
+        });
     WindowOptions {
         #[cfg(target_os = "linux")]
         app_id: Some(speakeasy_platform::APPLICATION_ID.into()),
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
-            size(px(560.0), px(720.0)),
+            size(SETTINGS_SIZE.width, height),
             cx,
         ))),
         titlebar: Some(TitlebarOptions {

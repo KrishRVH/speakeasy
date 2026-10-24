@@ -140,7 +140,7 @@ def check(
         env.pop(name, None)
     env["XDG_SESSION_TYPE"] = "x11"
     env["XDG_RUNTIME_DIR"] = str(directory)
-    # Keep the 720-DIP Settings window within this private 720-pixel display.
+    # One pixel per DIP keeps Settings wholly on this private display, as XGetImage requires.
     env["GPUI_X11_SCALE_FACTOR"] = "1"
     # Prefer Mesa's CPU renderer so the check also works without a physical GPU.
     software_drivers = sorted(Path("/usr/share/vulkan/icd.d").glob("lvp_icd*.json"))

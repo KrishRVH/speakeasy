@@ -32,7 +32,7 @@ const PROGRESS_THROTTLE: Duration = Duration::from_millis(100);
 pub(super) struct Settings {
     config: Config,
     presentation: Presentation,
-    notice: Option<SharedString>,
+    notice: Option<Notice>,
     microphones: Vec<InputDevice>,
     file_picker: Option<Task<()>>,
     microphone_scan: Option<Task<()>>,
@@ -127,11 +127,13 @@ impl Settings {
             Engine::Whisper => Engine::Parakeet,
             Engine::Parakeet => Engine::Whisper,
         };
-        self.notice = Some("Choose the executable and model for this engine, then save.".into());
+        self.notice = Some(Notice::Note(
+            "Choose the executable and model for this engine, then save.".into(),
+        ));
     }
 
     fn mark_unsaved(&mut self) {
-        self.notice = Some("Unsaved changes".into());
+        self.notice = Some(Notice::Note("Unsaved changes".into()));
     }
 
     fn cycle_microphone(&mut self) {
@@ -194,8 +196,9 @@ impl Settings {
                 match result {
                     Ok(microphones) => view.microphones = microphones,
                     Err(_) => {
-                        view.notice =
-                            Some("Cannot list microphones. Check OS audio settings.".into());
+                        view.notice = Some(Notice::Problem(
+                            "Cannot list microphones. Check OS audio settings.".into(),
+                        ));
                     },
                 }
                 view.microphone_scan = None;
@@ -241,7 +244,11 @@ impl Settings {
                 self.mark_unsaved();
             },
             Ok(None) => {},
-            Err(_) => self.notice = Some("Could not open the file picker. Try again.".into()),
+            Err(_) => {
+                self.notice = Some(Notice::Problem(
+                    "Could not open the file picker. Try again.".into(),
+                ));
+            },
         }
         self.file_picker = None;
         cx.notify();
@@ -271,7 +278,7 @@ impl Settings {
         let setup = match Setup::start() {
             Ok(setup) => setup,
             Err(error) => {
-                self.notice = Some(error.to_string().into());
+                self.notice = Some(Notice::Problem(error.to_string().into()));
                 return;
             },
         };
@@ -303,7 +310,9 @@ impl Settings {
             });
         });
         self.retiring_setups.push((setup, retirement));
-        self.notice = Some("Setup paused. Downloads resume where they stopped.".into());
+        self.notice = Some(Notice::Note(
+            "Setup paused. Downloads resume where they stopped.".into(),
+        ));
     }
 
     fn finish_setup(&mut self, outcome: Option<anyhow::Result<Installed>>, cx: &mut Context<Self>) {
@@ -313,8 +322,13 @@ impl Settings {
                 installed.apply_to(&mut self.config);
                 self.save(cx);
             },
-            Some(Err(error)) => self.notice = Some(format!("{error:#}").into()),
-            None => self.notice = Some("Setup stopped unexpectedly. Try again.".into()),
+            // The outermost message says what failed and what to do; transport detail stays out.
+            Some(Err(error)) => self.notice = Some(Notice::Problem(error.to_string().into())),
+            None => {
+                self.notice = Some(Notice::Problem(
+                    "Setup stopped unexpectedly. Try again.".into(),
+                ));
+            },
         }
         cx.notify();
     }
@@ -336,7 +350,7 @@ impl Settings {
             epoch: services.config_epoch,
             path: services.path.clone(),
         };
-        self.notice = Some("Saving changes…".into());
+        self.notice = Some(Notice::Note("Saving changes…".into()));
         if let Some(progress) = self.saves.submit(request) {
             self.advance_save(progress, cx);
         }
@@ -380,7 +394,7 @@ impl Settings {
         cx: &mut Context<Self>,
     ) {
         let Some(saved) = saved else {
-            self.notice = error.map(SharedString::from);
+            self.notice = error.map(|error| Notice::Problem(error.into()));
             return;
         };
         let unchanged = saved.update_draft(&mut self.config);
@@ -389,7 +403,7 @@ impl Settings {
         });
         self.notice = error
             .or_else(|| applied.err().map(|error| error.to_string()))
-            .map(SharedString::from);
+            .map(|error| Notice::Problem(error.into()));
         if self.notice.is_none() && !unchanged {
             self.mark_unsaved();
         }
@@ -421,6 +435,26 @@ impl Drop for Settings {
         self.saves.flush();
         self.setup = None;
         self.retiring_setups.clear();
+    }
+}
+
+/// A message Settings shows under the session's status.
+enum Notice {
+    /// Progress or a reminder.
+    Note(SharedString),
+    /// A failure the user must act on.
+    Problem(SharedString),
+}
+
+impl Notice {
+    fn text(&self) -> SharedString {
+        match self {
+            Self::Note(text) | Self::Problem(text) => text.clone(),
+        }
+    }
+
+    const fn is_problem(&self) -> bool {
+        matches!(self, Self::Problem(_))
     }
 }
 

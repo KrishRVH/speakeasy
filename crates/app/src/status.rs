@@ -16,6 +16,8 @@ pub(crate) enum ServiceState {
     Pausing,
     /// Dictation is off.
     Paused,
+    /// Dictation is off because no speech engine is set up yet.
+    NotSetUp,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +46,9 @@ impl Status {
                     "Needs attention · Open Settings".into(),
                 ),
                 (ServiceState::Paused, ..) => (Indicator::Paused, "Dictation paused".into()),
+                (ServiceState::NotSetUp, ..) => {
+                    (Indicator::Paused, "Not set up · Open Settings".into())
+                },
                 (ServiceState::Running, _, false) => {
                     (Indicator::Busy, "Waiting for desktop access…".into())
                 },
@@ -52,19 +57,25 @@ impl Status {
                 },
                 (ServiceState::Running, Phase::Recording, true) => (
                     Indicator::Recording,
-                    if snapshot.hands_free {
-                        "Listening · Hands-free"
-                    } else {
-                        "Listening"
+                    match (snapshot.show, snapshot.hands_free) {
+                        (true, _) => "Recording a Show",
+                        (false, true) => "Listening · Hands-free",
+                        (false, false) => "Listening",
                     }
                     .into(),
                 ),
                 (ServiceState::Running, Phase::Stopping, true) => {
                     (Indicator::Recording, "Finishing capture…".into())
                 },
-                (ServiceState::Running, Phase::Processing, true) => {
-                    (Indicator::Busy, "Transcribing locally…".into())
-                },
+                (ServiceState::Running, Phase::Processing, true) => (
+                    Indicator::Busy,
+                    if snapshot.show {
+                        "Preparing the Show…"
+                    } else {
+                        "Transcribing locally…"
+                    }
+                    .into(),
+                ),
                 (
                     ServiceState::Running,
                     Phase::Idle | Phase::Done | Phase::Copied | Phase::Empty | Phase::Cancelled,
@@ -195,6 +206,37 @@ mod tests {
         assert_eq!(
             indicator(&snapshot, ServiceState::Running),
             Indicator::Ready
+        );
+    }
+
+    #[test]
+    fn a_show_and_a_missing_engine_say_so_and_errors_still_win() {
+        let mut snapshot = Snapshot {
+            phase: Phase::Recording,
+            hands_free: true,
+            show: true,
+            model: ModelState::Ready,
+            desktop_ready: true,
+            ..Snapshot::default()
+        };
+        assert_eq!(
+            description(&snapshot, ServiceState::Running),
+            "Recording a Show"
+        );
+        snapshot.phase = Phase::Processing;
+        assert_eq!(
+            description(&snapshot, ServiceState::Running),
+            "Preparing the Show…"
+        );
+        snapshot.phase = Phase::Idle;
+        assert_eq!(
+            description(&snapshot, ServiceState::NotSetUp),
+            "Not set up · Open Settings"
+        );
+        snapshot.phase = Phase::Error;
+        assert_eq!(
+            indicator(&snapshot, ServiceState::NotSetUp),
+            Indicator::Attention
         );
     }
 }

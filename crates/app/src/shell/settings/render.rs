@@ -25,20 +25,21 @@ const ROW_GAP: Pixels = px(8.0);
 const CONTROL_PAD_Y: Pixels = px(8.0);
 /// The size of control, detail and status text.
 const TEXT: Pixels = px(12.0);
+/// The margin between the window's sides and its content.
+const EDGE: Pixels = px(32.0);
 
 impl Render for Settings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = self.config.theme.palette();
         let ui = Ui { palette, cx };
         let unconfigured = !is_demo(cx) && self.config.needs_engine();
-        div()
+        let body = div()
             .id("settings")
-            .on_key_down(cycle_focus)
-            .size_full()
+            .flex_1()
+            .min_h(px(0.0))
             .overflow_y_scroll()
-            .bg(rgb(palette.room))
-            .text_color(rgb(palette.ink))
-            .p(px(32.0))
+            .p(EDGE)
+            .pb(px(24.0))
             .flex()
             .flex_col()
             .gap(px(20.0))
@@ -56,9 +57,30 @@ impl Render for Settings {
             })
             .child(self.microphone_section(&ui))
             .child(self.preferences_section(&ui))
+            .child(footer(palette, cx));
+        // The commands and the status stay in view however far the body scrolls, since the status
+        // line is where every failure and unsaved change is told once the pill has faded.
+        let bar = div()
+            .flex_none()
+            .px(EDGE)
+            .pt(px(16.0))
+            .pb(px(20.0))
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .border_t_1()
+            .border_color(alpha(palette.lamp, 0.14))
             .child(self.commands(&ui))
-            .child(self.status_line(palette))
-            .child(footer(palette, cx))
+            .child(self.status_line(palette));
+        div()
+            .on_key_down(cycle_focus)
+            .size_full()
+            .bg(rgb(palette.room))
+            .text_color(rgb(palette.ink))
+            .flex()
+            .flex_col()
+            .child(body)
+            .child(bar)
     }
 }
 
@@ -179,16 +201,15 @@ impl Settings {
     }
 
     fn microphone_section(&self, ui: &Ui<'_>) -> impl IntoElement {
+        let found = |id: &String| self.microphones.iter().find(|device| &device.id == id);
         let microphone: SharedString = match &self.config.microphone {
             None => "System default".into(),
-            Some(id) => self
-                .microphones
-                .iter()
-                .find(|device| &device.id == id)
-                .map_or_else(
-                    || "Unavailable · choose another".into(),
-                    |device| device.name.clone().into(),
-                ),
+            Some(id) => match found(id) {
+                Some(device) => device.name.clone().into(),
+                // Until the scan reports, the chosen microphone is unknown, not missing.
+                None if self.microphone_scan.is_some() => "Checking microphones…".into(),
+                None => "Unavailable · Choose another".into(),
+            },
         };
         ui.section("MICROPHONE").child(
             row()
@@ -275,7 +296,7 @@ impl Settings {
                 .into_any_element();
         }
         let label: SharedString = match self.config.language.as_str() {
-            "auto" => "Language: Auto".into(),
+            "auto" => "Language: Automatic".into(),
             "en" => "Language: English".into(),
             language => format!("Language: {language}").into(),
         };
@@ -283,13 +304,18 @@ impl Settings {
     }
 
     fn commands(&self, ui: &Ui<'_>) -> impl IntoElement {
-        let running = ui.cx.global::<Services>().running();
+        let services = ui.cx.global::<Services>();
+        let running = services.running();
+        // Remedies across the app say "Resume dictation", as the tray does, once there is an
+        // engine to resume.
         let (label, action) = if is_demo(ui.cx) {
             ("Replay preview", Action::Preview)
         } else if running {
             ("Save changes", Action::Save)
-        } else {
+        } else if services.config.needs_engine() {
             ("Enable dictation", Action::Save)
+        } else {
+            ("Resume dictation", Action::Save)
         };
         row()
             .when(!self.is_setting_up(), |row| {
@@ -299,17 +325,23 @@ impl Settings {
             .child(ui.button("Quit", Action::Quit))
     }
 
+    /// The session's status, then any local notice, each in the attention color only when it is a
+    /// problem to act on.
     fn status_line(&self, palette: &'static Palette) -> impl IntoElement {
+        let tone = |problem| rgb(if problem { palette.warn } else { palette.muted });
         div()
             .text_size(TEXT)
-            .text_color(rgb(if self.notice.is_some() {
-                palette.warn
-            } else {
-                palette.muted
-            }))
-            .child(self.presentation.message.clone())
-            .when_some(self.notice.clone(), |status, notice| {
-                status.child(div().child(notice))
+            .child(
+                div()
+                    .text_color(tone(self.presentation.indicator == Indicator::Attention))
+                    .child(self.presentation.message.clone()),
+            )
+            .when_some(self.notice.as_ref(), |status, notice| {
+                status.child(
+                    div()
+                        .text_color(tone(notice.is_problem()))
+                        .child(notice.text()),
+                )
             })
     }
 }

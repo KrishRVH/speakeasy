@@ -154,6 +154,8 @@ impl Services {
             ServiceState::Pausing
         } else if self.running() || self.mode.is_demo() {
             ServiceState::Running
+        } else if self.config.needs_engine() {
+            ServiceState::NotSetUp
         } else {
             ServiceState::Paused
         }
