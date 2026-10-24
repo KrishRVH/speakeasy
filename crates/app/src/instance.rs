@@ -29,6 +29,10 @@ const OUTDATED: &str = "Restart Speakeasy to use desktop shortcuts";
 const IO_TIMEOUT: Duration = Duration::from_millis(100);
 const REVEAL_ATTEMPTS: u32 = 25;
 const REVEAL_RETRY: Duration = Duration::from_millis(20);
+/// The pause after a failed accept: well within the `IO_TIMEOUT` a caller waits for its
+/// acknowledgement, yet long enough that a lasting failure, such as running out of file
+/// descriptors, cannot spin a core.
+const ACCEPT_RETRY: Duration = Duration::from_millis(10);
 
 /// A fixed command a later launch sends to the running instance; never text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,10 +91,11 @@ impl Instance {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         let address = listener.local_addr()?;
         let (Endpoint { nonce, .. }, port_file) = Endpoint::publish(address.port(), directory)?;
+        let accept = move || listener.accept().map(|(stream, _)| stream);
         let (requests, received) = async_channel::bounded(1);
         let server = OwnedThread::spawn("instance-server", {
             let requests = requests.clone();
-            move || serve(&listener, nonce, &requests)
+            move || serve(accept, nonce, &requests)
         })?;
         let instance = Self {
             requests,
@@ -190,11 +195,22 @@ fn reveal_running(path: &Path) -> anyhow::Result<()> {
     bail!("Speakeasy is already running. Open Settings from its tray icon.");
 }
 
-fn serve(listener: &TcpListener, nonce: u128, requests: &Sender<Request>) {
-    while let Ok((mut stream, _)) = listener.accept() {
+/// Answers callers until the owner closes `requests`. A failed accept is retried after a pause; the
+/// lane is checked after every accept, so shutdown still ends a server whose accepts keep failing.
+fn serve(
+    mut accept: impl FnMut() -> io::Result<TcpStream>,
+    nonce: u128,
+    requests: &Sender<Request>,
+) {
+    loop {
+        let accepted = accept();
         if requests.is_closed() {
             break;
         }
+        let Ok(mut stream) = accepted else {
+            thread::sleep(ACCEPT_RETRY);
+            continue;
+        };
         let Ok(Some(request)) = handshake(&mut stream, nonce) else {
             continue;
         };
@@ -403,6 +419,58 @@ mod tests {
         }
         drop(instance);
         assert!(requests.is_closed());
+        Ok(())
+    }
+
+    /// Accepts fail on both sides of one that reaches the listener: the server must answer the
+    /// caller in between, retry a lasting failure at most once per pause, and still end once its
+    /// lane closes while accepts keep failing.
+    #[test]
+    fn failed_accepts_are_retried_until_shutdown() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("settings.json");
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let (Endpoint { nonce, .. }, _port_file) =
+            Endpoint::publish(listener.local_addr()?.port(), directory.path())?;
+        let (failure, failures) = std::sync::mpsc::channel();
+        let mut reaches_listener = [false, true].into_iter();
+        let accept = move || {
+            if reaches_listener.next() == Some(true) {
+                return listener.accept().map(|(stream, _)| stream);
+            }
+            failure.send(()).unwrap();
+            Err(io::ErrorKind::ConnectionAborted.into())
+        };
+        let (requests, received) = async_channel::bounded(1);
+        let started = Instant::now();
+        let server = OwnedThread::spawn("instance-server", {
+            let requests = requests.clone();
+            move || serve(accept, nonce, &requests)
+        })?;
+        // Outcomes are collected before asserting: an early return would join a server never told
+        // to stop.
+        let delivered =
+            Instance::send(&path, Request::Toggle).and_then(|()| next_request(&received));
+        thread::sleep(ACCEPT_RETRY * 5);
+        requests.close();
+        let (finished, completion) = std::sync::mpsc::channel();
+        let cleanup = thread::spawn(move || {
+            drop(server);
+            finished.send(()).unwrap();
+        });
+        let stopped = completion.recv_timeout(PATIENCE);
+        let elapsed = started.elapsed();
+        assert_eq!(delivered?, Request::Toggle);
+        stopped.context("A server whose accepts kept failing outlived shutdown")?;
+        // A full pause follows every failure but the one that meets the closed lane; one more
+        // absorbs timer granularity.
+        let most = elapsed.as_millis() / ACCEPT_RETRY.as_millis() + 2;
+        let retried = failures.try_iter().count();
+        assert!(
+            retried <= usize::try_from(most)?,
+            "{retried} failed accepts in {elapsed:?}"
+        );
+        cleanup.join().unwrap();
         Ok(())
     }
 
