@@ -177,7 +177,7 @@ impl Settings {
         self.mark_unsaved();
         if is_demo(cx) {
             let theme = self.config.theme;
-            cx.update_global::<Services, _>(|services, _| services.config.theme = theme);
+            cx.global_mut::<Services>().config.theme = theme;
             show_theme(theme, cx);
             self.notice = None;
         }

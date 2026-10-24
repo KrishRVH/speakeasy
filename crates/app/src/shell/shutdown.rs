@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use gpui::{App, BorrowAppContext, Timer};
+use gpui::{App, Timer};
 
 use super::Services;
 use crate::gpui_ext::{AppUpdate, WindowUpdate};
@@ -17,7 +17,7 @@ pub(crate) fn request_quit(cx: &mut App) {
         cx.quit();
         return;
     }
-    let Some(stopped) = cx.update_global::<Services, _>(|services, _| services.begin_quit()) else {
+    let Some(stopped) = cx.global_mut::<Services>().begin_quit() else {
         return;
     };
     let settings = cx.global::<Services>().settings;
@@ -41,7 +41,7 @@ pub(crate) fn request_quit(cx: &mut App) {
             Timer::after(DRAIN_POLL).await;
         }
         cx.update_if_running(|cx| {
-            cx.update_global::<Services, _>(|services, _| services.finish_quit());
+            cx.global_mut::<Services>().finish_quit();
             cx.quit();
         });
     });

@@ -201,10 +201,9 @@ impl Settings {
     }
 
     fn microphone_section(&self, ui: &Ui<'_>) -> impl IntoElement {
-        let found = |id: &String| self.microphones.iter().find(|device| &device.id == id);
         let microphone: SharedString = match &self.config.microphone {
             None => "System default".into(),
-            Some(id) => match found(id) {
+            Some(id) => match self.microphones.iter().find(|device| device.id == *id) {
                 Some(device) => device.name.clone().into(),
                 // Until the scan reports, the chosen microphone is unknown, not missing.
                 None if self.microphone_scan.is_some() => "Checking microphones…".into(),
