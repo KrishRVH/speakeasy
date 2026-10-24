@@ -37,6 +37,9 @@ pub(super) struct Insertions<'a> {
     pub(super) bound: &'a mut Bound,
     pending: Option<(Insertion, Instant)>,
     selection: Option<Selection>,
+    /// The latest recording whose lost selection revoked it; its paste reports the loss instead of
+    /// a cancellation.
+    forfeited: Option<InsertPermit>,
     notices: &'a Receiver<Notice>,
     selecting: &'a Sender<SelectionHandoff>,
     worker: &'a x11::ClipboardWorker,
@@ -59,6 +62,7 @@ impl<'a> Insertions<'a> {
             bound,
             pending: None,
             selection: None,
+            forfeited: None,
             notices,
             selecting,
             worker,
@@ -87,7 +91,12 @@ impl<'a> Insertions<'a> {
     }
 
     pub(super) fn apply(&mut self, notice: Notice) {
-        apply_notice(notice, self.bound.sender_mut(), &mut self.selection);
+        apply_notice(
+            notice,
+            self.bound.sender_mut(),
+            &mut self.selection,
+            &mut self.forfeited,
+        );
     }
 
     pub(super) fn queue(&mut self, request: Insertion) {
@@ -200,12 +209,14 @@ impl<'a> Insertions<'a> {
         self.bound.dispatch()?;
         let outcome = match route {
             Route::Direct => insert_direct(self.bound, &request, external),
-            Route::Paste { owned } => {
-                if !owned && self.bound.clipboard_session().is_some() {
-                    self.selection = None;
-                }
-                finish_paste(self.bound, &request, self.options, owned, external)
-            },
+            Route::Paste { owned } => finish_paste(
+                self.bound,
+                &request,
+                self.options,
+                owned,
+                external,
+                self.forfeited.as_ref(),
+            ),
         };
         request.reply.send(Ok(outcome));
         Ok(())
@@ -387,24 +398,31 @@ const fn text_remedy(blocked: TextBlocked) -> Inserted {
     })
 }
 
+/// The portal selection was taken by another app or never confirmed as this session's, so its loss
+/// revoked the paste.
+const SELECTION_LOST: Inserted = Inserted::Unavailable(
+    "Clipboard changed or could not be confirmed before paste. Dictate again, or choose Insert: Copy for manual paste in Settings.",
+);
+
+/// Submits a prepared paste. An unconfirmed or lost portal selection has already revoked its
+/// recording, so `owned` matters only to an X11 copy.
 fn finish_paste(
     bound: &mut Bound,
     request: &Insertion,
     options: &DesktopOptions,
     owned: bool,
     external: bool,
+    forfeited: Option<&InsertPermit>,
 ) -> Inserted {
     if !request.permit.active() {
-        return Inserted::Cancelled;
+        return if forfeited.is_some_and(|lost| lost.same_recording(&request.permit)) {
+            SELECTION_LOST
+        } else {
+            Inserted::Cancelled
+        };
     }
     if !owned {
-        return if bound.clipboard_session().is_some() {
-            Inserted::Unavailable(
-                "Clipboard ownership could not be confirmed. Dictate again, or choose Insert: Copy for manual paste in Settings.",
-            )
-        } else {
-            CLIPBOARD_CHANGED
-        };
+        return CLIPBOARD_CHANGED;
     }
     if let Some(outcome) = Delivery::Paste.check_focus(external) {
         return outcome;
@@ -446,6 +464,7 @@ pub(super) fn apply_notice(
     notice: Notice,
     sender: Option<&mut ei::Sender>,
     selection: &mut Option<Selection>,
+    forfeited: &mut Option<InsertPermit>,
 ) {
     match notice {
         Notice::ModifiersChanged => {
@@ -453,12 +472,15 @@ pub(super) fn apply_notice(
                 sender.forget_modifiers();
             }
         },
-        Notice::SelectionLost(permit) => {
+        Notice::SelectionLost { permit, revoked } => {
             if selection
                 .as_ref()
                 .is_some_and(|selection| selection.serves(&permit))
             {
                 *selection = None;
+            }
+            if revoked {
+                *forfeited = Some(permit);
             }
         },
     }
@@ -466,8 +488,108 @@ pub(super) fn apply_notice(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{InputSender, linux::ShortcutLabels};
+    use zbus::zvariant::OwnedValue;
+
+    use super::{
+        super::{CLIPBOARD, DESKTOP, Results, SelectionOwnership},
+        *,
+    };
+    use crate::{Input, InputSender, linux::ShortcutLabels};
+
+    /// Applies the pump's queued notices, then finishes `permit`'s paste to an external editor as
+    /// the insertion loop does once focus is known.
+    fn paste_after_notices(
+        notices: &Receiver<Notice>,
+        forfeited: &mut Option<InsertPermit>,
+        permit: &InsertPermit,
+        owned: bool,
+    ) -> Inserted {
+        while let Ok(notice) = notices.try_recv() {
+            apply_notice(notice, None, &mut None, forfeited);
+        }
+        let (reply, _answer) = Reply::channel();
+        let request = Insertion {
+            text: "fixture".into(),
+            permit: permit.clone(),
+            delivery: Delivery::Paste,
+            reply,
+        };
+        let mut bound = Bound {
+            shortcut_session: None,
+            remote: None,
+            labels: ShortcutLabels::new(&DesktopOptions::default()),
+        };
+        let options = DesktopOptions::default();
+        finish_paste(
+            &mut bound,
+            &request,
+            &options,
+            owned,
+            true,
+            forfeited.as_ref(),
+        )
+    }
+
+    #[test]
+    fn a_lost_selection_reports_its_remedy_while_cancellation_stays_silent() -> anyhow::Result<()> {
+        let (events, _receiver) = async_channel::bounded(4);
+        let input = InputSender::new(events);
+        let (notify, notices) = async_channel::bounded(4);
+        let session: OwnedObjectPath =
+            "/org/freedesktop/portal/desktop/session/fixture".try_into()?;
+        let owner_event = |owned: bool| {
+            let values = Results::from([("session_is_owner".into(), OwnedValue::from(owned))]);
+            Ok::<_, anyhow::Error>(
+                Message::signal(DESKTOP, CLIPBOARD, "SelectionOwnerChanged")?
+                    .build(&(session.clone(), values))?,
+            )
+        };
+        let mut ownership = SelectionOwnership {
+            session: Some(session.clone()),
+            monitored: None,
+            owned: false,
+        };
+        let mut forfeited = None;
+
+        let unconfirmed = input.begin().context("Unconfirmed recording")?;
+        ownership.adopt(unconfirmed.clone(), &notify)?;
+        assert_eq!(
+            paste_after_notices(&notices, &mut forfeited, &unconfirmed, false),
+            SELECTION_LOST,
+            "Unconfirmed clipboard ownership looked like a cancellation"
+        );
+
+        ownership.observe(&owner_event(true)?, &notify)?;
+        let taken = input.begin().context("Taken recording")?;
+        ownership.adopt(taken.clone(), &notify)?;
+        ownership.observe(&owner_event(false)?, &notify)?;
+        assert_eq!(
+            paste_after_notices(&notices, &mut forfeited, &taken, true),
+            SELECTION_LOST,
+            "Another app taking the clipboard looked like a cancellation"
+        );
+
+        ownership.observe(&owner_event(true)?, &notify)?;
+        let escaped = input.begin().context("Escaped recording")?;
+        ownership.adopt(escaped.clone(), &notify)?;
+        input.deliver(Input::Cancel);
+        ownership.observe(&owner_event(false)?, &notify)?;
+        assert_eq!(
+            paste_after_notices(&notices, &mut forfeited, &escaped, true),
+            Inserted::Cancelled,
+            "A selection lost after Escape reported a remedy"
+        );
+
+        let superseded = input.begin().context("Superseded recording")?;
+        let _newer = input.begin().context("Newer recording")?;
+        ownership.adopt(superseded.clone(), &notify)?;
+        assert_eq!(
+            paste_after_notices(&notices, &mut forfeited, &superseded, false),
+            Inserted::Cancelled,
+            "A recording a newer one replaced reported a remedy"
+        );
+        Ok(())
+    }
 
     #[test]
     fn cancelled_direct_input_precedes_focus_and_capability_errors() -> anyhow::Result<()> {

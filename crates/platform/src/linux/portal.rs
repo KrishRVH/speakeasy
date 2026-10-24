@@ -241,7 +241,11 @@ enum Notice {
     /// The dictation shortcut was pressed, so libei's last modifier report is stale.
     ModifiersChanged,
     /// This session does not own the portal selection holding this recording's text.
-    SelectionLost(InsertPermit),
+    SelectionLost {
+        permit: InsertPermit,
+        /// Whether this loss is what revoked the recording, as `InsertPermit::forfeit` reports.
+        revoked: bool,
+    },
 }
 
 /// Watches shortcuts, session revocation, and clipboard ownership while insertion awaits other
@@ -789,9 +793,12 @@ fn deadline(started: Instant, wait: Duration) -> tokio::time::Sleep {
     tokio::time::sleep_until(started.checked_add(wait).unwrap_or(started).into())
 }
 
+/// Revokes `permit`, whose selection this session does not own, and tells the insertion loop. The
+/// pump shares that loop's thread and sends with no await after revoking, and the loop applies
+/// queued notices before it pastes, so a paste this loss revoked always learns why.
 fn lose_selection(permit: InsertPermit, notify: &Sender<Notice>) -> anyhow::Result<()> {
-    permit.revoke();
-    notify.try_send(Notice::SelectionLost(permit))?;
+    let revoked = permit.forfeit();
+    notify.try_send(Notice::SelectionLost { permit, revoked })?;
     Ok(())
 }
 
@@ -861,7 +868,8 @@ mod tests {
         ownership.observe(&owner_event(true)?, &notify)?;
         ownership.adopt(next.clone(), &notify)?;
         let mut payload = Some(Selection::new("fixture", next.clone()));
-        apply_notice(notices.try_recv()?, None, &mut payload);
+        let mut forfeited = None;
+        apply_notice(notices.try_recv()?, None, &mut payload, &mut forfeited);
         assert!(
             next.active(),
             "Preceding ownership loss revoked the current recording"
@@ -871,7 +879,7 @@ mod tests {
             "Preceding ownership loss discarded the current payload"
         );
         ownership.observe(&owner_event(false)?, &notify)?;
-        apply_notice(notices.try_recv()?, None, &mut payload);
+        apply_notice(notices.try_recv()?, None, &mut payload, &mut forfeited);
         assert!(!next.commit(), "Current ownership loss authorized paste");
         assert!(payload.is_none());
         let unowned = input.begin().context("Unowned recording")?;

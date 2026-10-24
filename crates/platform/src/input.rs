@@ -144,6 +144,14 @@ impl InsertPermit {
         self.gate.revoke(self.generation);
     }
 
+    /// Revokes only this recording, reporting whether this call ended its authority: false when an
+    /// earlier revocation such as Escape, a commit, or a newer recording ended it.
+    #[cfg(target_os = "linux")]
+    #[must_use]
+    pub(crate) fn forfeit(&self) -> bool {
+        self.gate.revoke(self.generation)
+    }
+
     /// Whether this recording still has insertion authority.
     #[must_use]
     pub fn active(&self) -> bool {
