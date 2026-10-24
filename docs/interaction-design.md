@@ -50,8 +50,9 @@ non-activating and click-through.
 Windows places the pill at the bottom center of the foreground window's monitor work area. macOS
 uses the screen under the pointer. Both place the capsule about 28 DIP above the work area's bottom
 edge when shown. Position stays fixed while the pill remains visible; it does not follow the caret.
-Linux uses GPUI's display placement and passive X11 hints; native monitor/fullscreen acceptance is
-pending.
+Linux uses GPUI's display placement and passive X11 hints. GPUI's X11 display is the whole X screen,
+so with several monitors the pill and Settings' opening height follow all of them together; native
+monitor/fullscreen acceptance is pending.
 
 Width, height, opacity, vertical entry, waveform presence, lid, and meter values use analytic
 critically damped springs. Changing the target preserves velocity, and meter bars rise faster than
