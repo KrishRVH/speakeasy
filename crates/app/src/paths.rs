@@ -1,7 +1,11 @@
 //! Where Speakeasy keeps its files: roaming settings and the machine-local data root, both inside
 //! the user's own folders.
 
-use std::{ffi::OsString, path::PathBuf};
+use std::{
+    ffi::OsString,
+    io::{self, ErrorKind},
+    path::PathBuf,
+};
 
 use anyhow::Context as _;
 
@@ -13,6 +17,15 @@ pub(crate) fn settings_file() -> anyhow::Result<PathBuf> {
 /// Engines, models, and Shows are machine-local, so they stay out of roaming settings.
 pub(crate) fn data_root() -> anyhow::Result<PathBuf> {
     user_folder(UserFolder::Data, std::env::var_os)
+}
+
+/// What to do when a file operation in one of these folders fails: free space on a full disk;
+/// otherwise close what holds the files and check the folder's permissions.
+pub(crate) fn remedy(error: &io::Error) -> &'static str {
+    match error.kind() {
+        ErrorKind::StorageFull | ErrorKind::QuotaExceeded => "Free up disk space, then try again.",
+        _ => "Close programs using its files and check its permissions, then try again.",
+    }
 }
 
 #[derive(Clone, Copy)]

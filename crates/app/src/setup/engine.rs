@@ -19,6 +19,7 @@ use super::{
     Installation, Progress,
     archive::{EXECUTABLE, unpack},
     download::Download,
+    file_error,
 };
 use crate::child::hidden_command;
 
@@ -91,7 +92,7 @@ pub(super) async fn choose_engine(
 ) -> anyhow::Result<ChosenEngine> {
     if nvidia_driver() {
         let cuda = unpack(client, &CUDA, root, progress, installation).await?;
-        if doctor(&cuda, installation)
+        if doctor(&cuda, installation, progress)
             .await
             .is_some_and(|report| has_discrete_gpu(&report))
         {
@@ -102,14 +103,14 @@ pub(super) async fn choose_engine(
         }
     }
     let vulkan = unpack(client, &VULKAN, root, progress, installation).await?;
-    if let Some(report) = doctor(&vulkan, installation).await {
+    if let Some(report) = doctor(&vulkan, installation, progress).await {
         return Ok(ChosenEngine {
             executable: keep_only(root, &vulkan)?,
             use_gpu: has_discrete_gpu(&report),
         });
     }
     let cpu = unpack(client, &CPU, root, progress, installation).await?;
-    if cfg!(target_os = "linux") && doctor(&cpu, installation).await.is_none() {
+    if cfg!(target_os = "linux") && doctor(&cpu, installation, progress).await.is_none() {
         bail!(
             "The downloaded engine cannot run on this Linux CPU. Choose a portable NeMo-Speech.cpp build in Settings."
         );
@@ -128,7 +129,7 @@ pub(super) async fn choose_engine(
     installation: &mut Installation,
 ) -> anyhow::Result<ChosenEngine> {
     let metal = unpack(client, &METAL, root, progress, installation).await?;
-    let report = doctor(&metal, installation)
+    let report = doctor(&metal, installation, progress)
         .await
         .context(
             "The speech engine cannot run on this Mac. Choose a compatible engine executable in Settings.",
@@ -165,7 +166,11 @@ fn nvidia_driver() -> bool {
 
 /// Removes every other engine build and returns this build's executable.
 fn keep_only(root: &Path, directory: &Path) -> anyhow::Result<PathBuf> {
-    for entry in fs::read_dir(root.join("engines"))?.flatten() {
+    let engines = root.join("engines");
+    for entry in fs::read_dir(&engines)
+        .map_err(file_error(&engines))?
+        .flatten()
+    {
         if entry.path() != directory {
             #[expect(
                 clippy::let_underscore_must_use,
@@ -177,7 +182,16 @@ fn keep_only(root: &Path, directory: &Path) -> anyhow::Result<PathBuf> {
     Ok(directory.join(EXECUTABLE))
 }
 
-async fn doctor(directory: &Path, installation: &mut Installation) -> Option<serde_json::Value> {
+/// Asks the build at `directory` whether it runs here, which can take up to a minute on a cold GPU.
+async fn doctor(
+    directory: &Path,
+    installation: &mut Installation,
+    progress: &watch::Sender<Progress>,
+) -> Option<serde_json::Value> {
+    progress.send_replace(Progress {
+        step: Some("Checking the speech engine on this machine"),
+        ..Progress::default()
+    });
     let mut command = hidden_command(directory.join(EXECUTABLE));
     command.args(["doctor", "--json"]).stdout(Stdio::piped());
     let output = timeout(Duration::from_secs(60), installation.output(&mut command)).await;

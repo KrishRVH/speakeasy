@@ -3,7 +3,7 @@
 
 use std::{
     fs::{self, File, OpenOptions},
-    io::Write,
+    io::{self, Write},
     path::{Path, PathBuf},
 };
 
@@ -12,7 +12,7 @@ use reqwest::{Client, StatusCode, header::RANGE};
 use sha2::{Digest, Sha256};
 use tokio::{io::AsyncReadExt, sync::watch};
 
-use super::Progress;
+use super::{Progress, file_error};
 
 pub(super) struct Download<'a> {
     pub(super) url: &'a str,
@@ -34,17 +34,18 @@ pub(super) async fn fetch(
     if path.is_file() {
         return Ok(path);
     }
-    fs::create_dir_all(directory)
-        .with_context(|| format!("Cannot write to {}", directory.display()))?;
+    fs::create_dir_all(directory).map_err(file_error(directory))?;
     let partial = directory.join(format!("{name}.part"));
     let mut done = fs::metadata(&partial).map_or(0, |metadata| metadata.len());
     if done == download.size {
-        let hasher = hash_partial(&partial, done, progress).await?;
+        let hasher = hash_partial(&partial, done, progress)
+            .await
+            .map_err(file_error(directory))?;
         if hex_digest(&hasher.finalize()) == download.sha256 {
-            fs::rename(&partial, &path)?;
+            fs::rename(&partial, &path).map_err(file_error(directory))?;
             return Ok(path);
         }
-        fs::remove_file(&partial)?;
+        fs::remove_file(&partial).map_err(file_error(directory))?;
         done = 0;
     } else if done > download.size {
         done = 0;
@@ -56,16 +57,27 @@ pub(super) async fn fetch(
     let mut response = request
         .send()
         .await
-        .and_then(reqwest::Response::error_for_status)
         .context("Cannot download. Check your internet connection, then try again.")?;
+    let status = response.status();
+    if !status.is_success() {
+        bail!("The download server answered {status}. Try again later.");
+    }
     let (mut hasher, mut file) = if done > 0 && response.status() == StatusCode::PARTIAL_CONTENT {
         (
-            hash_partial(&partial, done, progress).await?,
-            OpenOptions::new().append(true).open(&partial)?,
+            hash_partial(&partial, done, progress)
+                .await
+                .map_err(file_error(directory))?,
+            OpenOptions::new()
+                .append(true)
+                .open(&partial)
+                .map_err(file_error(directory))?,
         )
     } else {
         done = 0;
-        (Sha256::new(), File::create(&partial)?)
+        (
+            Sha256::new(),
+            File::create(&partial).map_err(file_error(directory))?,
+        )
     };
     progress.send_replace(Progress {
         step: Some(step),
@@ -82,18 +94,16 @@ pub(super) async fn fetch(
             break;
         }
         hasher.update(&chunk);
-        file.write_all(&chunk)?;
+        file.write_all(&chunk).map_err(file_error(directory))?;
         progress.send_modify(|progress| progress.done = done);
     }
-    file.sync_all()?;
+    file.sync_all().map_err(file_error(directory))?;
     drop(file);
     if done != download.size || hex_digest(&hasher.finalize()) != download.sha256 {
-        fs::remove_file(&partial).context(
-            "Cannot remove an invalid download. Check directory permissions, then try again.",
-        )?;
+        fs::remove_file(&partial).map_err(file_error(directory))?;
         bail!("A download did not match its published checksum. Try again.");
     }
-    fs::rename(&partial, &path)?;
+    fs::rename(&partial, &path).map_err(file_error(directory))?;
     Ok(path)
 }
 
@@ -109,7 +119,7 @@ async fn hash_partial(
     partial: &Path,
     size: u64,
     progress: &watch::Sender<Progress>,
-) -> anyhow::Result<Sha256> {
+) -> io::Result<Sha256> {
     progress.send_replace(Progress {
         step: Some("Verifying downloaded data"),
         done: 0,
@@ -126,7 +136,7 @@ async fn hash_partial(
         }
         let chunk = buffer
             .get(..count)
-            .context("Cannot verify the downloaded file: the read size is invalid")?;
+            .ok_or_else(|| io::Error::other("the read size is invalid"))?;
         hasher.update(chunk);
         progress.send_modify(|progress| {
             progress.done = progress.done.saturating_add(count as u64);

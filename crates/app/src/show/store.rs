@@ -2,7 +2,7 @@
 
 use std::{
     fs,
-    io::ErrorKind,
+    io::{self, ErrorKind},
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
@@ -47,9 +47,9 @@ fn make_private(directory: &Path) -> anyhow::Result<()> {
         .recursive(true)
         .mode(0o700)
         .create(directory)
-        .with_context(|| format!("Cannot create {}", directory.display()))?;
+        .map_err(cannot_save(directory))?;
     let linked = fs::symlink_metadata(directory)
-        .with_context(|| format!("Cannot read {}", directory.display()))?
+        .map_err(cannot_save(directory))?
         .file_type()
         .is_symlink();
     anyhow::ensure!(
@@ -58,7 +58,7 @@ fn make_private(directory: &Path) -> anyhow::Result<()> {
         directory.display()
     );
     fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
-        .with_context(|| format!("Cannot make {} private", directory.display()))
+        .map_err(cannot_save(directory))
 }
 
 /// An unused directory under `parent` named for `now` in UTC, such as `20261019T143603Z`.
@@ -83,11 +83,23 @@ pub(super) struct Staged {
 impl Staged {
     /// Moves the bundle into place.
     pub(super) fn persist(mut self) -> anyhow::Result<()> {
-        fs::rename(self.staging.path(), &self.directory)
-            .with_context(|| format!("Cannot create {}", self.directory.display()))?;
+        let parent = self.directory.parent().unwrap_or(&self.directory);
+        fs::rename(self.staging.path(), &self.directory).map_err(cannot_save(parent))?;
         // The staging directory is now the bundle.
         self.staging.disable_cleanup(true);
         Ok(())
+    }
+}
+
+/// Explains a failed write of a Show into the Shows folder `parent`, naming that folder rather than
+/// the hidden staging one, with the system's reason and what to do.
+fn cannot_save(parent: &Path) -> impl FnOnce(io::Error) -> anyhow::Error {
+    move |error| {
+        anyhow::anyhow!(
+            "Cannot save the Show in {}: {error}. {}",
+            parent.display(),
+            crate::paths::remedy(&error)
+        )
     }
 }
 
@@ -103,7 +115,7 @@ pub(super) fn stage(directory: &Path, files: &[speakeasy_show::File]) -> anyhow:
     let parent = directory
         .parent()
         .context("A Show's directory needs a parent")?;
-    fs::create_dir_all(parent).with_context(|| format!("Cannot create {}", parent.display()))?;
+    fs::create_dir_all(parent).map_err(cannot_save(parent))?;
     let mut builder = tempfile::Builder::new();
     builder.prefix(STAGING_PREFIX);
     #[cfg(unix)]
@@ -111,17 +123,13 @@ pub(super) fn stage(directory: &Path, files: &[speakeasy_show::File]) -> anyhow:
         use std::os::unix::fs::PermissionsExt as _;
         builder.permissions(fs::Permissions::from_mode(0o700));
     }
-    let staging = builder
-        .tempdir_in(parent)
-        .with_context(|| format!("Cannot write in {}", parent.display()))?;
+    let staging = builder.tempdir_in(parent).map_err(cannot_save(parent))?;
     for file in files {
         let path = staging.path().join(&file.name);
         if let Some(folder) = path.parent() {
-            fs::create_dir_all(folder)
-                .with_context(|| format!("Cannot create {}", folder.display()))?;
+            fs::create_dir_all(folder).map_err(cannot_save(parent))?;
         }
-        fs::write(&path, &file.contents)
-            .with_context(|| format!("Cannot write {}", path.display()))?;
+        fs::write(&path, &file.contents).map_err(cannot_save(parent))?;
     }
     Ok(Staged {
         staging,
@@ -404,6 +412,23 @@ mod tests {
             .map(|entry| entry.map(|entry| entry.file_name()))
             .collect::<Result<_, _>>()?;
         assert_eq!(names, ["20261019T143603Z"]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_show_that_cannot_be_saved_names_the_shows_folder_and_a_remedy() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let blocked = root.path().join("shows");
+        fs::write(&blocked, b"a file where the folder belongs")?;
+        let message = stage(&blocked.join("20261019T143603Z"), &[])
+            .err()
+            .context("A Show was staged beneath a file")?
+            .to_string();
+        assert!(
+            message.starts_with(&format!("Cannot save the Show in {}: ", blocked.display()))
+                && message.ends_with(", then try again."),
+            "{message}"
+        );
         Ok(())
     }
 

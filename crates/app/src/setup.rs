@@ -10,6 +10,7 @@ mod engine;
 use std::{
     convert::Infallible,
     fs::{self, File, OpenOptions},
+    io,
     path::{Path, PathBuf},
     process::ExitStatus,
     time::Duration,
@@ -188,16 +189,14 @@ impl Installation {
     }
 
     async fn lock(root: &Path, progress: &watch::Sender<Progress>) -> anyhow::Result<File> {
-        let cannot_prepare =
-            |error: std::io::Error| anyhow!("Cannot prepare {}: {error}", root.display());
-        fs::create_dir_all(root).map_err(cannot_prepare)?;
+        fs::create_dir_all(root).map_err(file_error(root))?;
         let lock = OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
             .open(root.join("setup.lock"))
-            .map_err(cannot_prepare)?;
+            .map_err(file_error(root))?;
         loop {
             match lock.try_lock() {
                 Ok(()) => {
@@ -211,7 +210,7 @@ impl Installation {
                     });
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 },
-                Err(fs::TryLockError::Error(error)) => return Err(cannot_prepare(error)),
+                Err(fs::TryLockError::Error(error)) => return Err(file_error(root)(error)),
             }
         }
     }
@@ -263,6 +262,18 @@ async fn install(
         model,
         use_gpu: engine.use_gpu,
     })
+}
+
+/// Explains a failed file operation in `directory`, with the system's reason and the remedy it
+/// calls for, in one message that reads whole without its source chain.
+fn file_error(directory: &Path) -> impl FnOnce(io::Error) -> anyhow::Error {
+    move |error| {
+        anyhow!(
+            "Setup cannot use {}: {error}. {}",
+            directory.display(),
+            crate::paths::remedy(&error)
+        )
+    }
 }
 
 fn system32() -> PathBuf {

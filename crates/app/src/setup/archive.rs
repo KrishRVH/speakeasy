@@ -13,7 +13,7 @@ use tokio::sync::watch;
 use super::{
     Installation, Progress,
     download::{Download, fetch, file_name},
-    system32,
+    file_error, system32,
 };
 use crate::child::hidden_command;
 
@@ -54,22 +54,27 @@ pub(super) async fn unpack(
     });
     let staging = engines.join(format!("{stem}.part"));
     remove_engine_directory(&staging)?;
-    fs::create_dir_all(&staging)?;
+    fs::create_dir_all(&staging).map_err(file_error(&engines))?;
     // The system tar reads this platform's archives; a tar earlier in PATH may not.
     let tar = if cfg!(target_os = "windows") {
         system32().join("tar.exe")
     } else {
         PathBuf::from("/usr/bin/tar")
     };
-    let mut command = hidden_command(tar);
+    let mut command = hidden_command(&tar);
     command.arg("-xf").arg(&file).arg("-C").arg(&staging);
-    let (status, _) = installation.output(&mut command).await?;
+    let (status, _) = installation.output(&mut command).await.with_context(|| {
+        format!(
+            "Cannot run {} to unpack the speech engine. Check that it exists, then try again.",
+            tar.display()
+        )
+    })?;
     if !status.success() {
         bail!("Cannot unpack the speech engine. Check free disk space, then try again.");
     }
     normalize_archive(&staging)?;
     remove_engine_directory(&directory)?;
-    fs::rename(&staging, &directory)?;
+    fs::rename(&staging, &directory).map_err(file_error(&engines))?;
     #[expect(
         clippy::let_underscore_must_use,
         reason = "The archive is only a cache after the verified engine is installed; pruning it is optional"
@@ -82,12 +87,7 @@ fn remove_engine_directory(path: &Path) -> anyhow::Result<()> {
     match fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error).with_context(|| {
-            format!(
-                "Cannot replace {}. Close programs using the speech engine and check directory permissions, then try again.",
-                path.display()
-            )
-        }),
+        Err(error) => Err(file_error(path)(error)),
     }
 }
 
@@ -98,8 +98,8 @@ fn normalize_archive(staging: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
     let mut directories = Vec::new();
-    for entry in fs::read_dir(staging)? {
-        let entry = entry?;
+    for entry in fs::read_dir(staging).map_err(file_error(staging))? {
+        let entry = entry.map_err(file_error(staging))?;
         if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
             directories.push(entry.path());
         }
@@ -108,12 +108,14 @@ fn normalize_archive(staging: &Path) -> anyhow::Result<()> {
         [directory] if directory.join(EXECUTABLE).is_file() => directory,
         _ => bail!("The engine archive has an unexpected layout."),
     };
-    for entry in fs::read_dir(directory)? {
-        let entry = entry?;
-        fs::rename(entry.path(), staging.join(entry.file_name()))?;
-    }
-    fs::remove_dir(directory)?;
-    Ok(())
+    let lift = || {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            fs::rename(entry.path(), staging.join(entry.file_name()))?;
+        }
+        fs::remove_dir(directory)
+    };
+    lift().map_err(file_error(staging))
 }
 
 #[cfg(test)]
@@ -185,8 +187,12 @@ mod tests {
             .await
             .unwrap_err();
         let message = failure.to_string();
-        assert!(message.contains("Cannot replace"));
-        assert!(message.contains("check directory permissions"));
+        let staging = root.join("engines").join("fixture.part");
+        assert!(
+            message.starts_with(&format!("Setup cannot use {}: ", staging.display()))
+                && message.ends_with("check its permissions, then try again."),
+            "{message}"
+        );
         assert_eq!(
             fs::read(root.join("engines/fixture.part"))?,
             b"not a directory"

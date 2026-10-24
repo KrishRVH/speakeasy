@@ -1,5 +1,6 @@
 //! Drives setup cancellation, the directory lock and the owned child through a test-binary
-//! fixture process, and installs and recognizes a public recording in an opt-in run.
+//! fixture process, checks what its file failures tell the user, and installs and recognizes a
+//! public recording in an opt-in run.
 
 use std::process::Stdio;
 
@@ -33,6 +34,20 @@ async fn cancelled_setup_remains_owned_while_cleanup_is_pending() -> anyhow::Res
     release.send(())?;
     timeout(Duration::from_secs(2), stopped).await?;
     Ok(())
+}
+
+#[test]
+fn a_full_disk_asks_for_space_and_other_file_failures_for_access() {
+    let message =
+        |kind: io::ErrorKind| format!("{:#}", file_error(Path::new("models"))(kind.into()));
+    let full = message(io::ErrorKind::StorageFull);
+    assert!(
+        full.starts_with("Setup cannot use models: ")
+            && full.ends_with(". Free up disk space, then try again."),
+        "{full}"
+    );
+    let denied = message(io::ErrorKind::PermissionDenied);
+    assert!(denied.contains("check its permissions"), "{denied}");
 }
 
 #[test]
@@ -226,7 +241,7 @@ async fn cancellation_while_waiting_for_setup_leaves_the_owner_locked() -> anyho
 }
 
 #[tokio::test]
-async fn setup_names_the_directory_it_cannot_prepare() -> anyhow::Result<()> {
+async fn setup_names_the_directory_it_cannot_prepare_and_what_to_do() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     fs::write(directory.path().join("file"), b"")?;
     let beneath_a_file = directory.path().join("file").join("speakeasy");
@@ -240,7 +255,8 @@ async fn setup_names_the_directory_it_cannot_prepare() -> anyhow::Result<()> {
             .context("Setup prepared a directory it cannot lock")?
             .to_string();
         assert!(
-            failure.starts_with(&format!("Cannot prepare {}: ", root.display())),
+            failure.starts_with(&format!("Setup cannot use {}: ", root.display()))
+                && failure.ends_with(", then try again."),
             "{failure}"
         );
     }
