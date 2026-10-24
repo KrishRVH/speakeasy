@@ -78,8 +78,8 @@ pub(super) struct ChosenEngine {
     pub(super) use_gpu: bool,
 }
 
-/// Tries CUDA with an NVIDIA driver, then Vulkan, then CPU. `LocalSpeech` verifies inference before
-/// reporting readiness.
+/// Tries CUDA with an NVIDIA driver, then Vulkan, then CPU. `LocalSpeech` still transcribes silence
+/// on a GPU choice before reporting it ready.
 #[cfg(any(
     target_os = "windows",
     all(target_os = "linux", target_arch = "x86_64")

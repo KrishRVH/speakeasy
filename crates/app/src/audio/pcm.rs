@@ -15,9 +15,9 @@ pub(super) const MAX_SAMPLE_RATE: u32 = 192_000;
 const MINIMUM_RECORDING: Duration = Duration::from_millis(200);
 const RECLAIM_SLACK_BYTES: usize = 8 * 1024 * 1024;
 
-/// Mono PCM16 behind a reserved WAV header, so encoding never copies the audio. Audio that is not
-/// encoded is zeroed on drop, best effort: copies in the ring, allocator, HTTP client, or engine
-/// remain.
+/// Mono PCM16 behind a reserved WAV header, so encoding never copies the audio. A recording that is
+/// not encoded is zeroed on drop, best effort: audio trimmed from an encoded one, and copies in the
+/// ring, allocator, HTTP client, or engine, remain.
 pub(super) struct Pcm16 {
     bytes: Vec<u8>,
 }
@@ -56,7 +56,8 @@ impl Pcm16 {
     }
 
     /// Seals a completed recording with its accumulated speech windows. Short recordings and
-    /// insufficient speech produce no WAV; retained audio keeps padding and checked encoding.
+    /// insufficient speech produce no WAV; the rest is trimmed to its padded speech and encoded in
+    /// place.
     pub(super) fn seal(
         mut self,
         mut speech: Audibility,

@@ -224,7 +224,7 @@ impl Installation {
             if let Some(pipe) = &mut pipe {
                 pipe.read_to_end(&mut bytes).await?;
             }
-            Ok::<_, std::io::Error>(bytes)
+            Ok::<_, io::Error>(bytes)
         })?;
         self.child = None;
         Ok(output)

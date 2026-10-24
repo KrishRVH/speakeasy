@@ -62,7 +62,7 @@ pub(super) async fn fetch(
     if !status.is_success() {
         bail!("The download server answered {status}. Try again later.");
     }
-    let (mut hasher, mut file) = if done > 0 && response.status() == StatusCode::PARTIAL_CONTENT {
+    let (mut hasher, mut file) = if done > 0 && status == StatusCode::PARTIAL_CONTENT {
         (
             hash_partial(&partial, done, progress)
                 .await
