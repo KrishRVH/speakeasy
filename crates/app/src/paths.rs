@@ -1,5 +1,5 @@
 //! Where Speakeasy keeps its files: roaming settings and the machine-local data root, both inside
-//! the user's own folders.
+//! the user's own folders, and what to do when a file operation there fails.
 
 use std::{
     ffi::OsString,

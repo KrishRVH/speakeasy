@@ -1,4 +1,5 @@
-//! Shows: screen recordings with narration and ink, written as bundles a coding agent reads.
+//! Shows: screen recordings with narration and ink, written as bundles a coding agent reads, and
+//! the `show demo` command that writes a scripted one.
 
 mod overlay;
 mod publish;
