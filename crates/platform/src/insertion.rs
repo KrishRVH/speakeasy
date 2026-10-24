@@ -362,6 +362,17 @@ pub(crate) fn wait_for_released_modifiers(
     }
 }
 
+/// Whether an arboard clipboard read found `text`. An image or files another app copied hold no
+/// text to read; that is a change, not a fault.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn holds_text(read: Result<String, arboard::Error>, text: &str) -> anyhow::Result<bool> {
+    match read {
+        Ok(current) => Ok(current == text),
+        Err(arboard::Error::ContentNotAvailable) => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// Splits `text` into runs of whole characters, closing each run once it holds at least `units`
 /// UTF-16 code units, so a surrogate pair never straddles two runs.
 #[cfg(any(target_os = "macos", test))]

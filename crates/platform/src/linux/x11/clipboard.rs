@@ -9,7 +9,11 @@ use x11rb::{
 };
 
 use super::{connect, has_external_target, intern};
-use crate::{InputSender, InsertPermit, OwnedThread, insertion::Reply, linux::HostSession};
+use crate::{
+    InputSender, InsertPermit, OwnedThread,
+    insertion::{Reply, holds_text},
+    linux::HostSession,
+};
 
 /// Clipboard and focus calls can wait on Xwayland or another client, so they run on one owned
 /// thread behind a bounded queue, away from the desktop service's input loop. Dropping it revokes
@@ -247,16 +251,6 @@ impl ClipboardAccess for Clipboard {
     }
 }
 
-/// Whether a clipboard read found `text`. An image or files another app copied hold no text to
-/// read; that is a change, not a fault.
-fn holds_text(read: Result<String, arboard::Error>, text: &str) -> anyhow::Result<bool> {
-    match read {
-        Ok(current) => Ok(current == text),
-        Err(arboard::Error::ContentNotAvailable) => Ok(false),
-        Err(error) => Err(error.into()),
-    }
-}
-
 fn serve_clipboard(mut clipboard: impl ClipboardAccess, requests: &Receiver<ClipboardRequest>) {
     while let Ok(request) = requests.recv_blocking() {
         request.perform(&mut clipboard);
@@ -272,24 +266,6 @@ mod tests {
 
     use super::*;
     use crate::Input;
-
-    #[test]
-    fn a_clipboard_that_now_holds_no_text_reads_as_changed_not_failed() -> anyhow::Result<()> {
-        assert!(holds_text(Ok("fixture".into()), "fixture")?);
-        assert!(!holds_text(Ok("other".into()), "fixture")?);
-        assert!(
-            matches!(
-                holds_text(Err(arboard::Error::ContentNotAvailable), "fixture"),
-                Ok(false)
-            ),
-            "An image another app copied over the text failed the insertion"
-        );
-        assert!(
-            holds_text(Err(arboard::Error::ClipboardOccupied), "fixture").is_err(),
-            "A clipboard fault read as an ordinary change"
-        );
-        Ok(())
-    }
 
     #[tokio::test]
     async fn blocked_focus_query_keeps_cancellation_responsive_and_never_accesses_clipboard()

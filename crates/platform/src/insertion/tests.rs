@@ -373,3 +373,22 @@ async fn a_panic_answers_a_fixed_message_and_the_next_request_is_served() -> any
     assert_eq!(next, Inserted::Sent);
     Ok(())
 }
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn a_clipboard_that_now_holds_no_text_reads_as_changed_not_failed() -> anyhow::Result<()> {
+    assert!(super::holds_text(Ok("fixture".into()), "fixture")?);
+    assert!(!super::holds_text(Ok("other".into()), "fixture")?);
+    assert!(
+        matches!(
+            super::holds_text(Err(arboard::Error::ContentNotAvailable), "fixture"),
+            Ok(false)
+        ),
+        "An image another app copied over the text failed the insertion"
+    );
+    assert!(
+        super::holds_text(Err(arboard::Error::ClipboardOccupied), "fixture").is_err(),
+        "A clipboard fault read as an ordinary change"
+    );
+    Ok(())
+}
