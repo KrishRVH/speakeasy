@@ -294,9 +294,7 @@ fn escape_during_the_final_checks_prevents_input() -> anyhow::Result<()> {
 
 #[test]
 fn modifier_wait_ends_at_release_or_revocation() -> anyhow::Result<()> {
-    let (events, _receiver) = async_channel::bounded(1);
-    let input = InputSender::new(events);
-    let permit = input.begin().context("Recording")?;
+    let permit = permit()?;
     let mut held = [true, true, false].into_iter();
     let still_held = wait_for_released_modifiers(&permit, || {
         held.next().context("Queried modifiers after their release")
