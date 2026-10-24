@@ -341,6 +341,16 @@ fn only_a_different_screen_cuts_into_a_drawing() {
     let shown = select_within(&after, &still, 12).unwrap();
     assert_eq!(times(&shown), [4_250]);
     assert_eq!(shown.keyframes()[0].action, Some(click(4_300)));
+    // Unless that click opens a different screen, which then gets a keyframe of its own.
+    let opened = samples(250, 10_000, |at| if at >= 4_500 { 255 } else { 128 });
+    let shown = select_within(&after, &opened, 12).unwrap();
+    assert_eq!(times(&shown), [4_250, 4_500]);
+    assert_eq!(shown.keyframes()[0].action, None);
+    assert_eq!(shown.keyframes()[1].action, Some(click(4_300)));
+    // With no room for that keyframe, the mark's keyframe still reports the click.
+    let shown = select_within(&after, &opened, 1).unwrap();
+    assert_eq!(times(&shown), [4_250]);
+    assert_eq!(shown.keyframes()[0].action, Some(click(4_300)));
 
     // A click whose result the mark's frame no longer shows keeps a keyframe of its own.
     let flash = samples(250, 10_000, |at| {
@@ -353,6 +363,10 @@ fn only_a_different_screen_cuts_into_a_drawing() {
     let shown = select_within(&clicked, &flash, 12).unwrap();
     assert_eq!(times(&shown), [2_750, 4_250]);
     assert_eq!(shown.keyframes()[1].action, None);
+    // With no room for it, the mark reports that click although its result was another screen.
+    let shown = select_within(&clicked, &flash, 1).unwrap();
+    assert_eq!(times(&shown), [4_250]);
+    assert_eq!(shown.keyframes()[0].action, Some(click(2_500)));
 }
 
 #[test]
