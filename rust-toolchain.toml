@@ -1,5 +1,5 @@
 [toolchain]
-channel = "nightly-2026-10-20"
+channel = "nightly-2026-10-24"
 profile = "minimal"
 components = ["rustfmt", "clippy"]
 targets = ["x86_64-pc-windows-msvc", "aarch64-apple-darwin"]
