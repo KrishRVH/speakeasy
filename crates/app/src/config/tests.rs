@@ -311,6 +311,27 @@ fn a_save_writes_through_a_linked_settings_file() -> anyhow::Result<()> {
 }
 
 #[test]
+fn a_first_launch_saves_its_engine_into_a_file_that_appears_later() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    let draft = Config::first_launch();
+    let held = Config::held_by(&path, &draft);
+    // A file without an engine key, as a restored backup might be, appears while Settings is open.
+    fs::write(&path, br#"{"theme":"iris"}"#)?;
+    save(&held, &draft, &path)?;
+    let file = saved(&path)?;
+    assert_eq!(
+        file["engine"], "parakeet",
+        "The first launch's engine was not saved"
+    );
+    assert_eq!(
+        file["theme"], "iris",
+        "A key Settings did not change was overwritten"
+    );
+    Ok(())
+}
+
+#[test]
 fn save_refuses_to_replace_a_file_that_needs_repair() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");

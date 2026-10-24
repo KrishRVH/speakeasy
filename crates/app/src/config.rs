@@ -204,6 +204,17 @@ impl Config {
         }
     }
 
+    /// What a save treats the file at `path` as holding when Settings opens on `draft`: the draft
+    /// for a file that exists, and otherwise the defaults a missing key reads as, so a save writes
+    /// every choice Settings made, a first launch's Parakeet included.
+    pub(crate) fn held_by(path: &Path, draft: &Self) -> Self {
+        if path.exists() {
+            draft.clone()
+        } else {
+            Self::default()
+        }
+    }
+
     /// Whether the user still has to choose a speech engine.
     pub(crate) fn needs_engine(&self) -> bool {
         self.engine_executable.as_os_str().is_empty()

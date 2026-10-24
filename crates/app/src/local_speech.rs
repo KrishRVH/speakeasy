@@ -70,8 +70,13 @@ impl LocalSpeech {
             .prefix("speakeasy-")
             .tempdir()
             .map_err(|error| {
+                // tempfile's error names the folder it tried, escaped; the message names it once.
+                let reason = error.raw_os_error().map_or_else(
+                    || error.kind().to_string(),
+                    |code| std::io::Error::from_raw_os_error(code).to_string(),
+                );
                 anyhow!(
-                    "Cannot use the temporary folder {}: {error}. {}",
+                    "Cannot use the temporary folder {}: {reason}. {}",
                     std::env::temp_dir().display(),
                     crate::paths::remedy(&error)
                 )
