@@ -230,20 +230,30 @@ impl ClipboardAccess for Clipboard {
         // arboard claims the selection on its own connection without waiting for the server.
         // Reading back through it waits for that claim, so the owner this connection queries next
         // is current rather than the one the copy replaced.
-        if native.get_text()? != text {
+        if !holds_text(native.get_text(), text)? {
             return Ok(None);
         }
         // Another client can take the selection as soon as the copy returns, so paste needs both
         // the payload and an owner that stays put.
         let owner = self.owner()?;
-        Ok(
-            (owner != x11rb::NONE && self.native()?.get_text()? == text && self.owns(owner)?)
-                .then_some(owner),
-        )
+        let settled = owner != x11rb::NONE
+            && holds_text(self.native()?.get_text(), text)?
+            && self.owns(owner)?;
+        Ok(settled.then_some(owner))
     }
 
     fn owns(&self, owner: Window) -> anyhow::Result<bool> {
         Ok(owner != x11rb::NONE && self.owner()? == owner)
+    }
+}
+
+/// Whether a clipboard read found `text`. An image or files another app copied hold no text to
+/// read; that is a change, not a fault.
+fn holds_text(read: Result<String, arboard::Error>, text: &str) -> anyhow::Result<bool> {
+    match read {
+        Ok(current) => Ok(current == text),
+        Err(arboard::Error::ContentNotAvailable) => Ok(false),
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -262,6 +272,21 @@ mod tests {
 
     use super::*;
     use crate::Input;
+
+    #[test]
+    fn a_clipboard_that_now_holds_no_text_reads_as_changed_not_failed() -> anyhow::Result<()> {
+        assert!(holds_text(Ok("fixture".into()), "fixture")?);
+        assert!(!holds_text(Ok("other".into()), "fixture")?);
+        assert!(
+            !holds_text(Err(arboard::Error::ContentNotAvailable), "fixture")?,
+            "An image another app copied over the text failed the insertion"
+        );
+        assert!(
+            holds_text(Err(arboard::Error::ClipboardOccupied), "fixture").is_err(),
+            "A clipboard fault read as an ordinary change"
+        );
+        Ok(())
+    }
 
     #[tokio::test]
     async fn blocked_focus_query_keeps_cancellation_responsive_and_never_accesses_clipboard()
