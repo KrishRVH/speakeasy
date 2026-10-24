@@ -382,7 +382,7 @@ impl<P: Ports> Owner<P> {
             return;
         };
         if text.is_empty() {
-            self.abandon();
+            self.end_session();
             self.gesture.complete();
             self.outcome = Outcome::Empty;
         } else {
