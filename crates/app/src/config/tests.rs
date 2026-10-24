@@ -211,7 +211,7 @@ fn engine_and_theme_spellings_are_the_wire_format() -> anyhow::Result<()> {
 }
 
 #[test]
-fn omitted_keys_read_as_new_install_defaults() -> anyhow::Result<()> {
+fn omitted_keys_read_as_the_defaults() -> anyhow::Result<()> {
     let read = serde_json::from_str::<Config>(r#"{"engine_executable":"","model":""}"#)?;
     assert!(read == Config::default());
     Ok(())

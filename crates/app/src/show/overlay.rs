@@ -277,14 +277,14 @@ pub(crate) fn attend(
                 Ok(Err(error)) => (None, (!reported).then_some(error)),
                 Err(_) => return,
             };
-            let published = canvas
+            let released = canvas
                 .wait_for(|canvas| canvas.display.is_none())
                 .await
                 .is_ok();
             if let Some(overlay) = overlay {
                 overlay.update_if_open(cx, |_, window, _| window.remove_window());
             }
-            if !published {
+            if !released {
                 return;
             }
             let Some(error) = failure else {
