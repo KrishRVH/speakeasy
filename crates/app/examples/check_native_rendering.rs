@@ -1,4 +1,4 @@
-//! Opt-in own-window rendering and frame-source acceptance, without audio, global input or
+//! Opt-in owned-window rendering and frame-source acceptance, without audio, global input or
 //! clipboard access.
 
 #[path = "../src/icons.rs"]

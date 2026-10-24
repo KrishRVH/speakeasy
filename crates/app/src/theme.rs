@@ -100,7 +100,7 @@ pub(crate) struct Palette {
     pub lamp: u32,
     /// Red, reserved for open capture.
     pub live: u32,
-    /// Attention and notices.
+    /// Attention: errors, problems to act on, and the countdown to the recording limit.
     pub warn: u32,
 }
 

@@ -140,6 +140,7 @@ impl Services {
         self.instance
     }
 
+    /// Whether dictation is on: live owners run, or a resume is checking the saved settings.
     pub(crate) fn running(&self) -> bool {
         self.runtime().is_some_and(Runtime::is_running)
             || self.lifecycle.validating(self.config_epoch)
