@@ -20,7 +20,7 @@ const MOST_PIXELS: f32 = 1_560_000.0;
 /// The most frames one row holds.
 const ROW_FRAMES: usize = 6;
 /// More frames start another sheet rather than shrinking every thumbnail.
-pub(crate) const PAGE_FRAMES: usize = 6;
+const PAGE_FRAMES: usize = 6;
 /// Layout treats frames as no narrower or wider than these aspects, so an extreme crop still gets
 /// a usable cell; the frame then keeps its own proportions inside it.
 const NARROWEST: f32 = 0.25;
@@ -47,6 +47,18 @@ struct Cell {
     top: u32,
     width: u32,
     height: u32,
+}
+
+/// Splits `keyframes`, in order, into the fewest sheets of at most six, shared evenly so no sheet
+/// is left with a frame or two.
+pub(crate) fn pages<T>(keyframes: &[T]) -> impl Iterator<Item = &[T]> {
+    let sheets = keyframes.len().div_ceil(PAGE_FRAMES);
+    let edge = move |page: usize| page.saturating_mul(keyframes.len()).div_ceil(sheets);
+    (0..sheets).map(move |page| {
+        keyframes
+            .get(edge(page)..edge(page.saturating_add(1)))
+            .unwrap_or_default()
+    })
 }
 
 /// Lays the keyframes out in justified rows and draws them, badged, on one image.

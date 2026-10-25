@@ -3,7 +3,7 @@
 mod frames;
 mod groups;
 
-use std::{ops::Range, time::Duration};
+use std::{cmp::Reverse, ops::Range, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +29,9 @@ const FRAME_GAP: Duration = Duration::from_millis(750);
 /// Clicks this close in time and place are one click.
 const DOUBLE_CLICK: Duration = Duration::from_millis(650);
 const DOUBLE_CLICK_DISTANCE: f32 = 0.03;
+/// The most keyframes any Show holds: six full contact sheets. Each keyframe costs a reading
+/// model about a thousand tokens.
+const MOST_KEYFRAMES: usize = 36;
 
 /// Why a frame became a keyframe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,24 +97,33 @@ impl Selection {
 /// order.
 ///
 /// Marks come first: every group of ink drawn on one screen gets a keyframe. Clicks, scene
-/// changes, and spoken cues such as "look here" add frames throughout the recording, without a
-/// frame-count budget. Contact sheets paginate the result to keep each image readable.
-/// The final sampled screen gets a frame if it differs from the last chosen screen, including
-/// a gradual change or return to a screen shown earlier.
-/// While ink is drawn and just after, another keyframe is chosen only where the screen differs from
-/// the mark's, and the nearest mark's keyframe reports the last click or drag then without a
-/// keyframe of its own. A cue never repeats a screen already chosen, so talking over a still screen
-/// yields one frame.
+/// changes, and spoken cues such as "look here" add keyframes anywhere in the recording, and its
+/// last screen gets one unless the latest keyframe already shows it. While ink is drawn and just
+/// after, another keyframe is chosen only where the screen differs from the mark's, and the
+/// nearest mark's keyframe reports the last click or drag then without a keyframe of its own. A
+/// cue never repeats a screen already chosen, so talking over a still screen yields one frame.
+///
+/// A Show holds at most 36 keyframes. Past that, the most alike neighboring marks merge until
+/// they fit, the last screen keeps its keyframe, and the other keyframes that stay each split the
+/// longest stretch without one, so they spread across the recording.
 ///
 /// `None` only when there are no samples to choose from.
 #[must_use]
 pub fn select(recording: &Recording, samples: &[Sample]) -> Option<Selection> {
+    select_within(recording, samples, MOST_KEYFRAMES)
+}
+
+/// [`select`] with at most `most` keyframes; `None` also when `most` is zero.
+fn select_within(recording: &Recording, samples: &[Sample], most: usize) -> Option<Selection> {
+    if most == 0 {
+        return None;
+    }
     let frames = Frames::new(samples)?;
     let marks = marks::group(&recording.strokes, recording.surface);
     let actions = settle(&recording.actions);
     let action_times: Vec<Moment> = actions.iter().map(|action| action.span().start()).collect();
     let transitions = frames.transitions();
-    let mut candidates: Vec<Candidate> = group_marks(&frames, &marks, &action_times)
+    let mut candidates: Vec<Candidate> = group_marks(&frames, &marks, &action_times, most)
         .into_iter()
         .filter_map(|group| frames.mark_candidate(&marks, group))
         .collect();
@@ -151,6 +163,7 @@ pub fn select(recording: &Recording, samples: &[Sample]) -> Option<Selection> {
             basis: Basis::SceneChange,
         });
     }
+    thin(&mut chosen, &frames, most);
     fold_actions_into_marks(&mut chosen, &actions, &frames);
 
     let anchors: Vec<Moment> = chosen
@@ -333,6 +346,78 @@ impl Chooser<'_> {
                     .all(|&other| self.frames.novel(other, candidate.frame))
         });
     }
+}
+
+/// Keeps at most `most` of `chosen`, which is in time order, spread across the recording.
+///
+/// Marks stay, since [`group_marks`] has already fit them, and so, while there is room, does the
+/// last keyframe, which shows the recording's last screen. Each other keyframe kept in turn splits
+/// the longest stretch still without one, preferring a new screen to a repeat of the screen before
+/// it, then the stretch's middle.
+fn thin(chosen: &mut Vec<Candidate>, frames: &Frames<'_>, most: usize) {
+    if chosen.len() <= most {
+        return;
+    }
+    let mut slots: Vec<Slot> = chosen
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| Slot {
+            at: frames.at(candidate.frame),
+            new_screen: index
+                .checked_sub(1)
+                .and_then(|previous| chosen.get(previous))
+                .is_none_or(|previous| frames.novel(previous.frame, candidate.frame)),
+            kept: matches!(candidate.basis, Basis::Mark { .. }),
+        })
+        .collect();
+    let mut room = most.saturating_sub(slots.iter().filter(|slot| slot.kept).count());
+    if room > 0
+        && let Some(last) = slots.last_mut()
+        && !last.kept
+    {
+        last.kept = true;
+        room = room.saturating_sub(1);
+    }
+    let end = frames.at(frames.last());
+    while room > 0
+        && let Some(slot) = widest(&slots, end).and_then(|index| slots.get_mut(index))
+    {
+        slot.kept = true;
+        room = room.saturating_sub(1);
+    }
+    let mut kept = slots.into_iter().map(|slot| slot.kept);
+    chosen.retain(|_| kept.next().unwrap_or(false));
+}
+
+/// A chosen keyframe as [`thin`] weighs it.
+struct Slot {
+    at: Moment,
+    /// Whether it shows a different screen from the keyframe chosen before it.
+    new_screen: bool,
+    kept: bool,
+}
+
+/// The slot not yet kept that best splits the longest stretch between kept slots, the
+/// recording's start, and `end`: a new screen before a repeated one, then the nearest the middle.
+fn widest(slots: &[Slot], end: Moment) -> Option<usize> {
+    let kept: Vec<Moment> = slots
+        .iter()
+        .filter(|slot| slot.kept)
+        .map(|slot| slot.at)
+        .collect();
+    slots
+        .iter()
+        .enumerate()
+        .filter(|(_, slot)| !slot.kept)
+        .min_by_key(|(_, slot)| {
+            let (before, after) = kept.split_at(kept.partition_point(|&at| at < slot.at));
+            let previous = before.last().copied().unwrap_or(Moment::START);
+            let next = after.first().copied().unwrap_or(end);
+            // Twice the distance from the stretch's middle.
+            let off_middle = slot.at.since(previous).abs_diff(next.since(slot.at));
+            (Reverse(next.since(previous)), !slot.new_screen, off_middle)
+        })
+        .map(|(index, _)| index)
 }
 
 /// Gives each chosen mark the last click or drag without a keyframe of its own whose result came

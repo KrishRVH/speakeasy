@@ -136,6 +136,57 @@ fn changed_endings_survive_without_repeating_an_unchanged_ending() {
 }
 
 #[test]
+fn a_crowded_show_keeps_its_most_keyframes_spread_out() {
+    // Five minutes of clicking once a second, on a screen that never changes and on one that
+    // changes with every click for a minute and then never again.
+    let end = 300_000;
+    let clicks = every(1_000, 1_000, 299).map(click).collect();
+    let crowded = Recording {
+        duration: Moment::from_millis(end),
+        ..recording(Vec::new(), clicks, Narration::default())
+    };
+    let still = samples(200, end, |_| 128);
+    let switching = samples(200, end, |at| match at {
+        ..60_000 if at / 1_000 % 2 == 0 => 40,
+        ..60_000 => 200,
+        _ => 128,
+    });
+    let shown = select(&crowded, &still).unwrap();
+    assert_eq!(shown.keyframes().len(), MOST_KEYFRAMES);
+    for frames in [&still, &switching] {
+        for most in [12, 24, MOST_KEYFRAMES] {
+            let at = times(&select_within(&crowded, frames, most).unwrap());
+            let edges: Vec<u64> = std::iter::once(0)
+                .chain(at.iter().copied())
+                .chain([end])
+                .collect();
+            // Splitting the longest stretch each time leaves none over twice an even share.
+            let even = end / (most as u64 + 1);
+            assert!(
+                at.len() == most && edges.windows(2).all(|pair| pair[1] - pair[0] <= 2 * even),
+                "{most}: {at:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn thinning_spares_new_screens_before_repeated_ones() {
+    // Two clicks ten seconds apart on one screen, then two new screens two seconds apart.
+    let level = |at: u64| match at {
+        ..22_000 => 40,
+        22_000..24_000 => 120,
+        _ => 200,
+    };
+    let frames = samples(250, 40_000, level);
+    let clicks = [10_000, 20_000, 22_000, 24_000].map(click).to_vec();
+    let narration = words(&[(10_000, "First"), (20_000, "again.")]);
+    let shown = select_within(&recording(Vec::new(), clicks, narration), &frames, 3).unwrap();
+    assert_eq!(times(&shown), [10_250, 22_250, 24_250]);
+    assert_eq!(said(&shown), [Some("First again."), None, None]);
+}
+
+#[test]
 fn marks_on_one_screen_share_a_keyframe() {
     let frames = [
         sample(0, 0),
@@ -319,6 +370,17 @@ fn groups_close_at_a_click_or_too_much_ink() {
 }
 
 #[test]
+fn same_screen_merges_stay_balanced() {
+    let still = samples(250, 15_000, |_| 128);
+    let strokes = every(1_000, 2_000, 6).map(dab).collect();
+    let clicks = every(2_000, 2_000, 5).map(click).collect();
+    let shown =
+        select_within(&recording(strokes, clicks, Narration::default()), &still, 3).unwrap();
+    let marks: Vec<Range<usize>> = shown.keyframes().iter().map(|k| k.marks.clone()).collect();
+    assert_eq!(marks, [0..2, 2..4, 4..6]);
+}
+
+#[test]
 fn only_a_different_screen_cuts_into_a_drawing() {
     let still = samples(250, 10_000, |_| 128);
     let narration = words(&[(4_000, "look")]);
@@ -370,6 +432,11 @@ fn only_a_different_screen_cuts_into_a_drawing() {
     assert_eq!(times(&shown), [4_250, 4_500]);
     assert_eq!(shown.keyframes()[0].action, None);
     assert_eq!(shown.keyframes()[1].action, Some(click(4_300)));
+    // With no room for that keyframe, the mark's keyframe still reports the click.
+    let shown = select_within(&after, &opened, 1).unwrap();
+    assert_eq!(times(&shown), [4_250]);
+    assert_eq!(shown.keyframes()[0].action, Some(click(4_300)));
+
     // A click whose result the mark's frame no longer shows keeps a keyframe of its own.
     let flash = samples(250, 10_000, |at| {
         if (2_600..3_400).contains(&at) {
@@ -381,6 +448,10 @@ fn only_a_different_screen_cuts_into_a_drawing() {
     let shown = select(&clicked, &flash).unwrap();
     assert_eq!(times(&shown), [2_750, 4_250]);
     assert_eq!(shown.keyframes()[1].action, None);
+    // With no room for it, the mark reports that click although its result was another screen.
+    let shown = select_within(&clicked, &flash, 1).unwrap();
+    assert_eq!(times(&shown), [4_250]);
+    assert_eq!(shown.keyframes()[0].action, Some(click(2_500)));
 }
 
 #[test]
@@ -500,6 +571,7 @@ proptest::proptest! {
         dabs in proptest::collection::vec(100_u64..60_000, 0..10),
         clicks in proptest::collection::vec(0_u64..60_000, 0..6),
         spoken in proptest::collection::vec((0_u64..60_000, 0_usize..6), 0..30),
+        most in 0_usize..16,
     ) {
         let frames: Vec<Sample> = gaps
             .iter()
@@ -522,12 +594,20 @@ proptest::proptest! {
             clicks.into_iter().map(click).collect(),
             words(&narration),
         );
-        let shown = select(&recording, &frames);
-        proptest::prop_assert!(shown.is_some());
+        let shown = select_within(&recording, &frames, most);
+        proptest::prop_assert_eq!(shown.is_some(), most > 0);
         let Some(shown) = shown else {
             return Ok(());
         };
         let keyframes = shown.keyframes();
+        proptest::prop_assert!(keyframes.len() <= most);
+        let view = Frames::new(&frames).unwrap();
+        let marked = keyframes.iter().filter(|k| !k.marks.is_empty()).count();
+        if let Some(last) = keyframes.last()
+            && marked < most
+        {
+            proptest::prop_assert!(!view.novel(view.nearest(last.at), view.last()));
+        }
         proptest::prop_assert!(keyframes.iter().map(|k| k.index).eq(1..=keyframes.len()));
         proptest::prop_assert!(keyframes.windows(2).all(|pair| pair[0].at <= pair[1].at));
         let covered: Vec<usize> = keyframes.iter().flat_map(|k| k.marks.clone()).collect();

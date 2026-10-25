@@ -15,7 +15,8 @@ const CONTACT_SHEET: &str = "contact-sheet.png";
 const SUMMARY: &str = "summary.md";
 const MANIFEST: &str = "show.json";
 
-/// Keep the first sheet's established path; later pages follow in time order.
+/// The file for contact sheet `page`, from zero: `contact-sheet.png`, then `contact-sheet-02.png`
+/// onward.
 fn sheet_file(page: usize) -> String {
     if page == 0 {
         CONTACT_SHEET.to_owned()
@@ -78,15 +79,17 @@ impl fmt::Debug for File {
     }
 }
 
-/// Loads, annotates, and encodes keyframes one contact-sheet page at a time, keeping decoded
-/// image memory bounded by the page size.
+/// Annotates each chosen frame with its ink and click ripple, lays them out on contact sheets, and
+/// badges every image with its keyframe's number and time.
 ///
-/// `frame` supplies the image at each selected moment;
-/// it may be called concurrently, on up to one thread per frame in the page.
+/// `frame` supplies the full-resolution image on screen at a keyframe's moment, and may be called
+/// on several threads at once. Frames load, compose, and encode one sheet at a time, so only one
+/// sheet's frames are ever decoded together.
 ///
 /// # Errors
 ///
-/// Fails if the provider cannot load a frame, or an image cannot be composed or encoded.
+/// Fails with the first error `frame` returns, before loading the next sheet's frames, or when an
+/// image cannot be built or encoded.
 pub fn compose<E: From<Error> + Send>(
     recording: Recording,
     selection: Selection,
@@ -95,8 +98,8 @@ pub fn compose<E: From<Error> + Send>(
 ) -> Result<Bundle, E> {
     let Selection { marks, keyframes } = selection;
     let mut sheets = Vec::new();
-    let mut images = Vec::new();
-    for (page, keyframes) in keyframes.chunks(sheet::PAGE_FRAMES).enumerate() {
+    let mut frames = Vec::with_capacity(keyframes.len());
+    for (page, keyframes) in sheet::pages(&keyframes).enumerate() {
         let annotated = parallel::map(keyframes, |keyframe| {
             let mut image = frame(keyframe.at)?;
             let corner = draw::annotate(&mut image, keyframe, &recording, shown(&marks, keyframe));
@@ -108,10 +111,10 @@ pub fn compose<E: From<Error> + Send>(
             name: sheet_file(page),
             contents: sheet::render(keyframes, &annotated, typeface)?.encode_png()?,
         });
-        let page_frames: Vec<_> = annotated
-            .into_iter()
-            .zip(keyframes)
-            .map(|((mut image, corner), keyframe)| {
+        let badged: Vec<(&Keyframe, Image)> = keyframes
+            .iter()
+            .zip(annotated)
+            .map(|(keyframe, (mut image, corner))| {
                 let (width, height) = (image.width() as f32, image.height() as f32);
                 let whole = Rect::from_origin(Point::default(), width, height);
                 draw::badge(
@@ -122,20 +125,20 @@ pub fn compose<E: From<Error> + Send>(
                     corner,
                     typeface,
                 );
-                (keyframe.file(), image)
+                (keyframe, image)
             })
             .collect();
-        let encoded = parallel::map(&page_frames, |(name, image)| {
+        let encoded = parallel::map(&badged, |(keyframe, image)| {
             image.encode_png().map(|contents| File {
-                name: name.clone(),
+                name: keyframe.file(),
                 contents,
             })
-        })
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
-        images.extend(encoded);
+        });
+        for file in encoded {
+            frames.push(file?);
+        }
     }
-    sheets.extend(images);
+    sheets.append(&mut frames);
     Ok(Bundle {
         manifest: Manifest {
             version: Manifest::VERSION,
@@ -179,19 +182,19 @@ impl Bundle {
             Count(keyframes.len(), "keyframe"),
             directory.display()
         )];
-        for (page, keyframes) in keyframes.chunks(sheet::PAGE_FRAMES).enumerate() {
+        let pages: Vec<&[Keyframe]> = sheet::pages(keyframes).collect();
+        for (page, shown) in pages.iter().enumerate() {
             let path = directory.join(sheet_file(page));
-            if keyframes.len() == self.manifest.keyframes.len() {
-                lines.push(format!("Contact sheet: {}", path.display()));
-            } else if let (Some(first), Some(last)) = (keyframes.first(), keyframes.last()) {
-                lines.push(format!(
+            lines.push(match (pages.len(), shown.first(), shown.last()) {
+                (2.., Some(first), Some(last)) => format!(
                     "Contact sheet {} (frames #{}–#{}): {}",
                     page.saturating_add(1),
                     first.index,
                     last.index,
                     path.display()
-                ));
-            }
+                ),
+                _ => format!("Contact sheet: {}", path.display()),
+            });
         }
         lines.extend(
             keyframes

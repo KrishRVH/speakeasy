@@ -89,13 +89,12 @@ same bundle.
 </p>
 
 Speakeasy picks the keyframes your ink, clicks, and words point at, annotates them, and writes a
-bundle of keyframes, contact sheets, `summary.md`, and `show.json`. Each sheet holds at most six
-frames; later actions and distinct screens continue onto more sheets. The summary lists every sheet
-and its frame numbers. The pill says **Show copied** and the summary is on the clipboard: paste it
-into your agent and it opens the frames itself. Shows record on Windows, and experimentally on Mac,
-but not on Linux. On Windows, streaming and screen-sharing apps such as Sunshine, OBS, or a
-video-call app don't see Speakeasy's windows or ink while a Show records; the keyframes still carry
-the ink.
+bundle of keyframes, contact sheets, `summary.md`, and `show.json`. A Show keeps up to 36 keyframes
+spread across the whole recording, at most six to a sheet, and the summary names each sheet's
+frames. The pill says **Show copied** and the summary is on the clipboard: paste it into your agent
+and it opens the frames itself. Shows record on Windows, and experimentally on Mac, but not on
+Linux. On Windows, streaming and screen-sharing apps such as Sunshine, OBS, or a video-call app
+don't see Speakeasy's windows or ink while a Show records; the keyframes still carry the ink.
 
 <p align="center">
   <img src="docs/assets/show-sheet.png"

@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 804881de79bf90279726c76ac11beac12a3124a07f21e1113ee0cdc5dcb06165 # shrinks to gaps = [(50, 0)], dabs = [48652, 100], clicks = [], spoken = [], budget = 2
+cc f343ef947734d0c923a22f04f5b9c8bba89a2c5407fbeba505140baeb64cb0cd # shrinks to gaps = [(1388, 0), (600, 0), (887, 170), (1393, 156), (820, 0), (862, 33), (653, 0), (1616, 39), (909, 0), (1036, 0), (1137, 0), (1634, 0), (487, 0), (1902, 6), (1317, 0), (436, 0), (1075, 0), (1275, 0), (518, 45), (1286, 0), (1506, 0), (1645, 0), (685, 71), (1134, 57), (239, 0), (303, 45), (762, 0), (480, 0), (242, 0), (1365, 0), (1140, 0), (1181, 45), (574, 77)], dabs = [31323, 19687], clicks = [25068], spoken = [(14224, 0), (5370, 0), (7262, 0)], most = 3

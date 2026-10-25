@@ -13,11 +13,14 @@ const INK_CONTEXT: f32 = 0.08;
 const GROUP_SPAN: Duration = Duration::from_secs(20);
 const GROUP_STROKES: usize = 12;
 
-/// Groups marks drawn on one screen with nothing clicked between them.
+/// Groups marks drawn on one screen with nothing clicked between them, then merges neighboring
+/// groups until at most `most` remain: same-screen pairs carrying the least ink first, else the
+/// most alike screens.
 pub(super) fn group_marks(
     frames: &Frames<'_>,
     marks: &[Mark],
     actions: &[Moment],
+    most: usize,
 ) -> Vec<Range<usize>> {
     let frame_of: Vec<usize> = marks
         .iter()
@@ -75,5 +78,45 @@ pub(super) fn group_marks(
         }
     }
 
+    if groups.len() <= most {
+        return groups;
+    }
+    // Merging group `k` into `k - 1` costs the ink they'd carry together on one screen, or how
+    // far apart their screens are; a merge across screens always costs more.
+    let cost = |groups: &[Range<usize>], k: usize| -> Option<(bool, f32)> {
+        let merged = groups.get(k.checked_sub(1)?)?.start..groups.get(k)?.end;
+        let spread = spread(merged.clone(), merged.end.saturating_sub(1));
+        Some(if spread < SAME_SCREEN {
+            (false, ink(&merged) as f32)
+        } else {
+            (true, spread)
+        })
+    };
+    let mut costs: Vec<Option<(bool, f32)>> = (0..groups.len()).map(|k| cost(&groups, k)).collect();
+    while groups.len() > most {
+        let cheapest = costs
+            .iter()
+            .enumerate()
+            .filter_map(|(k, cost)| cost.map(|cost| (k, cost)))
+            .min_by(|(_, one), (_, other)| one.0.cmp(&other.0).then(one.1.total_cmp(&other.1)))
+            .map(|(k, _)| k);
+        let Some(k) = cheapest else {
+            break;
+        };
+        let later = groups.remove(k);
+        costs.remove(k);
+        if let Some(earlier) = k
+            .checked_sub(1)
+            .and_then(|previous| groups.get_mut(previous))
+        {
+            earlier.end = later.end;
+        }
+        for neighbor in [k.saturating_sub(1), k] {
+            let refreshed = cost(&groups, neighbor);
+            if let Some(slot) = costs.get_mut(neighbor) {
+                *slot = refreshed;
+            }
+        }
+    }
     groups
 }

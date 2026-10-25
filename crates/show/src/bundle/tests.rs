@@ -170,9 +170,10 @@ fn a_provider_failure_stops_before_loading_the_next_page() {
         Recording::default(),
         selection,
         |moment| {
+            // Thirteen keyframes share three sheets as #1–#5, #6–#9, and #10–#13.
             assert!(
-                moment.as_millis() <= 12,
-                "loaded the page after a failed page"
+                moment.as_millis() <= 9,
+                "loaded the sheet after a failed sheet"
             );
             if moment.as_millis() == 7 {
                 Err(Error::unsampled())
@@ -192,7 +193,12 @@ fn a_provider_failure_stops_before_loading_the_next_page() {
 fn contact_sheets_cover_every_frame_once_in_readable_pages() {
     use crate::{Sample, select, signature::tests::signature, typeface::tests::typeface};
 
-    for count in [6_usize, 7, 12, 13] {
+    for (count, sizes) in [
+        (6_usize, &[6][..]),
+        (7, &[4, 3]),
+        (12, &[6, 6]),
+        (13, &[5, 4, 4]),
+    ] {
         let recording = Recording {
             duration: at(30_000),
             actions: (0..count)
@@ -237,8 +243,11 @@ fn contact_sheets_cover_every_frame_once_in_readable_pages() {
             .iter()
             .filter(|file| file.name.starts_with("contact-sheet"))
             .collect();
-        assert_eq!(sheets.len(), count.div_ceil(6));
-        for (page, file) in sheets.iter().enumerate() {
+        assert_eq!(sheets.len(), sizes.len());
+        let mut first = 0;
+        for (file, &size) in sheets.iter().zip(sizes) {
+            let page = first..first + size;
+            first += size;
             assert!(summary.contains(&directory.join(&file.name).display().to_string()));
             let image = Image::decode_png(&file.contents);
             assert!(image.width().max(image.height()) <= 1_600);
@@ -252,10 +261,10 @@ fn contact_sheets_cover_every_frame_once_in_readable_pages() {
                     .any(|pixel| pixel[..3] == *color);
                 assert_eq!(
                     present,
-                    index / 6 == page,
-                    "frame {} on page {} of {count} frames",
+                    page.contains(&index),
+                    "frame {} on {} of {count} frames",
                     index + 1,
-                    page + 1
+                    file.name
                 );
             }
         }
