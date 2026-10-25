@@ -94,7 +94,7 @@ impl Selection {
 }
 
 /// Chooses the keyframes that tell `recording`'s story from `samples`, which may arrive in any
-/// order.
+/// order, each at its own moment.
 ///
 /// Marks come first: every group of ink drawn on one screen gets a keyframe. Clicks, scene
 /// changes, and spoken cues such as "look here" add keyframes anywhere in the recording, and its
@@ -104,8 +104,8 @@ impl Selection {
 /// cue never repeats a screen already chosen, so talking over a still screen yields one frame.
 ///
 /// A Show holds at most 36 keyframes. Past that, the most alike neighboring marks merge until
-/// they fit, the last screen keeps its keyframe, and the other keyframes that stay each split the
-/// longest stretch without one, so they spread across the recording.
+/// they fit, the last screen keeps its keyframe while marks leave it room, and the other keyframes
+/// that stay each split the longest stretch without one, so they spread across the recording.
 ///
 /// `None` only when there are no samples to choose from.
 #[must_use]
@@ -198,9 +198,9 @@ struct Candidate {
 /// What a candidate frame shows, which decides how it ranks and what its keyframe says.
 #[derive(Clone, Debug)]
 pub(crate) enum Basis {
-    /// The selection's marks in this range, drawn on one screen, and the last click or drag
-    /// without a keyframe of its own whose result came while they were drawn, known once keyframes
-    /// are chosen.
+    /// The selection's marks in this range, and the last click or drag without a keyframe of its
+    /// own whose result came while they were drawn or close to the frame, known once keyframes are
+    /// chosen.
     Mark {
         group: Range<usize>,
         during: Option<Action>,
