@@ -41,6 +41,8 @@ impl LaunchMode {
     }
 }
 
+const PAUSED: &str = "Dictation paused";
+
 /// What starts the service again once retiring owners acknowledge.
 enum Restart {
     /// Settings a save made durable.
@@ -227,6 +229,7 @@ impl Services {
     }
 
     /// Applies `config`: reconfigures live owners, queues behind retiring ones, or starts new ones.
+    /// Services adopts `config` even when new owners fail to start, and dictation then stays off.
     /// Does nothing once Quit has begun.
     pub(crate) fn apply(&mut self, config: ValidConfig, cx: &App) -> anyhow::Result<()> {
         if self.quitting() {
@@ -244,20 +247,39 @@ impl Services {
             self.config = config.into_inner();
             return Ok(());
         }
-        if let Some(runtime) = self.runtime() {
-            runtime.configure(config.clone());
-        } else {
-            self.announce(runtime::LOADING);
-            let (runtime, monitor) = Runtime::start(
-                config.clone(),
-                self.output.clone(),
-                self.meter.clone(),
-                self.canvas.clone(),
-            )?;
-            self.lifecycle = Lifecycle::Running(Owners { runtime, monitor });
-        }
+        let started = match self.runtime() {
+            Some(runtime) => {
+                runtime.configure(config.clone());
+                Ok(())
+            },
+            None => self.start(config.clone()),
+        };
         self.config = config.into_inner();
-        Ok(())
+        started
+    }
+
+    /// Starts owners for `config` while none are live or retiring. `config` is newer than any
+    /// resume still checking the saved settings, so that check ends here even if the owners fail
+    /// to start, and a failure leaves the status paused rather than loading.
+    fn start(&mut self, config: ValidConfig) -> anyhow::Result<()> {
+        self.validation = None;
+        self.lifecycle = Lifecycle::Disabled;
+        self.announce(runtime::LOADING);
+        match Runtime::start(
+            config,
+            self.output.clone(),
+            self.meter.clone(),
+            self.canvas.clone(),
+        ) {
+            Ok((runtime, monitor)) => {
+                self.lifecycle = Lifecycle::Running(Owners { runtime, monitor });
+                Ok(())
+            },
+            Err(error) => {
+                self.announce(PAUSED);
+                Err(error)
+            },
+        }
     }
 
     /// Adopts settings that a save made durable, enabling dictation only as `save_may_enable`
@@ -335,7 +357,7 @@ impl Services {
         self.announce(if self.lifecycle.pausing() {
             "Pausing dictation…"
         } else {
-            "Dictation paused"
+            PAUSED
         });
         if !started {
             return;
@@ -366,7 +388,7 @@ impl Services {
                 }
             },
             Some(Restart::Validate) => self.resume(cx),
-            None => self.announce("Dictation paused"),
+            None => self.announce(PAUSED),
         }
     }
 
