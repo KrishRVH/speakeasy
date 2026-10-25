@@ -36,7 +36,8 @@ pub(crate) struct ScreenRecorder {
 
 impl ScreenRecorder {
     /// Starts recording the display under the pointer for session `id`, whose timeline began at
-    /// `started`, reporting the footage to `events` once finished.
+    /// `started`, publishing the display and live ink to `canvas` and the footage to `events` once
+    /// finished.
     pub(crate) fn start(
         id: SessionId,
         started: Instant,
