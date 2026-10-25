@@ -114,8 +114,10 @@ pub(super) fn affinity(window: HWND) -> Option<u32> {
 /// Leaves `hwnd` out of all screen capture for good, marked so no capture ending restores it.
 pub(super) fn exclude_always(hwnd: HWND) -> anyhow::Result<()> {
     ensure!(exclusion_supported(), Failure::OldWindows);
-    // SAFETY: the caller passes a window this thread owns. The subclass is in place before the mark
-    // is set, so it removes the mark before the window is destroyed, as properties require.
+    // SAFETY: each call takes the handle by value and fails for one that names no window. Installing
+    // the subclass, which carries no reference data, also fails for a window another thread owns,
+    // so the mark is set only once the subclass is in place to remove it before the window is
+    // destroyed, as properties require.
     unsafe {
         ok_or_last_error(SetWindowSubclass(hwnd, Some(always_excluded), 1, 0))?;
         ok_or_last_error(SetPropW(hwnd, ALWAYS_EXCLUDED, hwnd.cast()))?;
