@@ -43,7 +43,6 @@ const TRAY_HINT_FOR: Duration = Duration::from_secs(3);
 /// How long a recording that turns into a Show says how to draw, in place of its clock.
 const DRAW_HINT_FOR: Duration = Duration::from_secs(3);
 
-const CLOCK_TICK: Duration = Duration::from_secs(1);
 /// The final stretch of a recording during which the pill counts down to the limit.
 pub(crate) const COUNTDOWN: Duration = Duration::from_secs(30);
 const SWEEP_DELAY: Duration = Duration::from_millis(250);
@@ -238,7 +237,7 @@ impl Pill {
                 .and_then(|until| until.checked_duration_since(now)),
             hands_free: self.snapshot.hands_free,
             show: self.snapshot.show,
-            clock: Clock::new(now.duration_since(self.snapshot.started).as_secs()),
+            clock: Clock::new(now.duration_since(self.snapshot.started)),
         }
     }
 
@@ -483,10 +482,8 @@ impl Scene {
     fn wake_after(&self) -> Option<Duration> {
         self.feedback.or(self.tray_hint).or_else(|| {
             if self.is_capturing() {
-                Some(
-                    self.draw_hint
-                        .map_or(CLOCK_TICK, |left| left.min(CLOCK_TICK)),
-                )
+                let tick = self.clock.next_tick;
+                Some(self.draw_hint.map_or(tick, |left| left.min(tick)))
             } else if self.phase == Phase::Processing && self.since_phase < SWEEP_DELAY {
                 Some(SWEEP_DELAY.saturating_sub(self.since_phase))
             } else {
@@ -511,14 +508,20 @@ impl Scene {
 struct Clock {
     seconds: u64,
     near_limit: bool,
+    /// Until the recording's next whole second, when the shown time changes. Counting from the
+    /// recording's start, not the last wake, keeps late wakes from delaying or skipping a second.
+    next_tick: Duration,
 }
 
 impl Clock {
-    fn new(seconds: u64) -> Self {
+    fn new(elapsed: Duration) -> Self {
+        let seconds = elapsed.as_secs();
         let limit = RECORDING_LIMIT.as_secs();
         Self {
             seconds,
             near_limit: seconds >= limit.saturating_sub(COUNTDOWN.as_secs()),
+            next_tick: Duration::from_secs(1)
+                .saturating_sub(Duration::from_nanos(u64::from(elapsed.subsec_nanos()))),
         }
     }
 
@@ -697,7 +700,7 @@ mod tests {
             draw_hint,
             hands_free: true,
             show: true,
-            clock: Clock::new(seconds),
+            clock: Clock::new(Duration::from_secs(seconds)),
         };
         let left = Duration::from_millis(400);
         let hinted = show(2, Some(left));
@@ -723,6 +726,29 @@ mod tests {
         assert!(
             !stopping.shows_draw_hint(),
             "A Show that stops drops the hint with its clock"
+        );
+    }
+
+    #[test]
+    fn clock_wakes_land_on_whole_seconds_of_the_recording() {
+        let recording = |elapsed| Scene {
+            phase: Phase::Recording,
+            since_phase: Duration::ZERO,
+            feedback: None,
+            tray_hint: None,
+            draw_hint: None,
+            hands_free: true,
+            show: false,
+            clock: Clock::new(elapsed),
+        };
+        assert_eq!(
+            recording(Duration::from_millis(2_300)).wake_after(),
+            Some(Duration::from_millis(700)),
+            "A frame drawn late into a second waits only for the next one"
+        );
+        assert_eq!(
+            recording(Duration::from_secs(2)).wake_after(),
+            Some(Duration::from_secs(1))
         );
     }
 
@@ -784,7 +810,7 @@ mod tests {
     #[test]
     fn limit_countdown_is_clamped_and_only_appears_in_the_last_thirty_seconds() {
         let clock = |seconds| {
-            let clock = Clock::new(seconds);
+            let clock = Clock::new(Duration::from_secs(seconds));
             (clock.near_limit, clock.text())
         };
         assert_eq!(clock(269), (false, "4:29".into()));
