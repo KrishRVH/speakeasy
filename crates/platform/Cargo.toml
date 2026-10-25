@@ -9,7 +9,7 @@ publish.workspace = true
 anyhow.workspace = true
 async-channel.workspace = true
 raw-window-handle.workspace = true
-tokio = { workspace = true, features = ["rt", "time", "macros", "net"] }
+tokio = { workspace = true, features = ["rt", "time", "macros"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 arboard.workspace = true
@@ -20,6 +20,8 @@ x11rb = { workspace = true, features = ["allow-unsafe-code", "shape", "xinput", 
 xkbcommon.workspace = true
 serde.workspace = true
 tempfile.workspace = true
+# `net` provides `tokio::io::unix::AsyncFd`, which waits on libei and portal descriptors.
+tokio = { workspace = true, features = ["net"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 clipboard-win = { workspace = true, features = ["std"] }
