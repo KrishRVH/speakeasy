@@ -1,3 +1,6 @@
+//! Pins `show.json`, keeps file contents out of debug output, and checks that contact sheets show
+//! every keyframe once and stop loading at a failed frame.
+
 use serde_json::json;
 
 use super::*;

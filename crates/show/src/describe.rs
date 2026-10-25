@@ -80,7 +80,7 @@ impl Shape {
 }
 
 /// What a keyframe shows happening beside the words said over it: the click or drag whose result
-/// it shows, or what its ink does and any click or drag made meanwhile.
+/// it shows, or what its ink does and any click or drag it also reports.
 pub(crate) struct Marker<'a>(pub(crate) &'a Keyframe, pub(crate) &'a [Mark]);
 
 impl fmt::Display for Marker<'_> {
