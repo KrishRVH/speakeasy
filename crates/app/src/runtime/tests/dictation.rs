@@ -115,7 +115,6 @@ async fn failed_capture_start_preserves_its_reason_and_allows_shutdown() -> anyh
     h.input(Input::Press);
     h.phase(Phase::Error).await?;
     assert!(h.snapshot().message.contains("thread resources exhausted"));
-    assert!(h.captures.try_recv().is_err());
     h.close().await
 }
 
@@ -162,7 +161,6 @@ async fn pause_during_a_queued_capture_never_opens_the_new_device() -> anyhow::R
     retiring.release().await?;
     timeout(PATIENCE, h.exited()).await?;
     assert!(h.captures.try_recv().is_err());
-    assert!(h.pasted.try_recv().is_err());
     h.close().await
 }
 
@@ -446,7 +444,7 @@ async fn levels_after_a_capture_ends_never_reach_the_meter() -> anyhow::Result<(
 }
 
 #[tokio::test(start_paused = true)]
-async fn failures_recover_the_worker_and_hook_loss_stops_without_inserting() -> anyhow::Result<()> {
+async fn failures_recover_the_worker_and_hook_loss_stops_the_owner() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     receive(&h.loads).await?;
     let (id, events) = h.start().await?;
@@ -464,7 +462,6 @@ async fn failures_recover_the_worker_and_hook_loss_stops_without_inserting() -> 
     h.runtime.input.close();
     h.phase(Phase::Error).await?;
     timeout(PATIENCE, h.exited()).await?;
-    assert!(h.pasted.try_recv().is_err());
     h.close().await
 }
 

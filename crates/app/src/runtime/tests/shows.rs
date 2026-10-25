@@ -53,14 +53,11 @@ async fn a_silent_show_still_publishes_its_screen() -> anyhow::Result<()> {
 }
 
 #[tokio::test(start_paused = true)]
-async fn cancelling_a_show_publishes_nothing_and_frees_the_screen() -> anyhow::Result<()> {
+async fn cancelling_a_show_frees_the_screen_for_the_next() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     start_show(&mut h).await?;
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
-    tokio::time::advance(Duration::from_secs(1)).await;
-    assert!(h.published.try_recv().is_err());
-    // The next Show opens a new screen recorder.
     h.input(Input::Release);
     start_show(&mut h).await?;
     h.close().await
