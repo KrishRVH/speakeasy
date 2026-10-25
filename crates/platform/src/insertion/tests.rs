@@ -1,6 +1,7 @@
 //! Drives delivery choices, the pre-commit focus and modifier checks, and the paste and direct
-//! commit protocol through a recording fake adapter, plus UTF-16 chunking and the insertion thread's
-//! stop and panic answers; no test touches the clipboard or sends input.
+//! commit protocol through a recording fake adapter, plus UTF-16 chunking, how an arboard read
+//! reports a clipboard change, and the insertion thread's stop and panic answers; no test touches
+//! the clipboard or sends input.
 
 use std::{panic, time::Duration};
 
