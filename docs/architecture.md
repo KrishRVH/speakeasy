@@ -73,9 +73,9 @@ module unless a test file is named.
   [owned_thread.rs](../crates/platform/src/owned_thread.rs),
   [windows.rs](../crates/platform/src/windows.rs) and [windows/](../crates/platform/src/windows),
   [macos.rs](../crates/platform/src/macos.rs), and [linux.rs](../crates/platform/src/linux.rs) with
-  [linux/](../crates/platform/src/linux) observe shortcuts and present native windows. Pure key
-  decisions run on every host; owned-window and private-Xvfb checks are opt-in, and the hooks need
-  native acceptance.
+  [linux/](../crates/platform/src/linux) observe shortcuts and present native windows.
+  [keyboard/tests.rs](../crates/platform/src/keyboard/tests.rs) checks the pure key decisions on
+  every host; owned-window and private-Xvfb checks are opt-in, and the hooks need native acceptance.
 - **Pill and motion**: [pill.rs](../crates/app/src/pill.rs) and [pill/](../crates/app/src/pill),
   [core/src/motion.rs](../crates/core/src/motion.rs), [gpui_ext.rs](../crates/app/src/gpui_ext.rs),
   [icons.rs](../crates/app/src/icons.rs), and [theme.rs](../crates/app/src/theme.rs) animate the
