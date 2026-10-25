@@ -1,5 +1,7 @@
 //! Compact fingerprints of captured frames, compared to find where the screen changed.
 
+use std::{fmt, ops::Range};
+
 use crate::{Image, Moment, Rect, convert};
 
 const COLUMNS: usize = 128;
@@ -35,8 +37,8 @@ pub struct Signature {
     cells: Box<[u8; CELLS]>,
 }
 
-impl std::fmt::Debug for Signature {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Signature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Signature").finish_non_exhaustive()
     }
 }
@@ -107,8 +109,8 @@ impl Signature {
 
     fn region<'a>(
         &'a self,
-        rows: &std::ops::Range<usize>,
-        columns: &'a std::ops::Range<usize>,
+        rows: &Range<usize>,
+        columns: &'a Range<usize>,
     ) -> impl Iterator<Item = u8> + 'a {
         self.cells
             .as_chunks::<COLUMNS>()
@@ -134,7 +136,7 @@ impl Signature {
 
 /// Splits `length` pixels into `parts` consecutive spans of at least one pixel each, so a frame
 /// smaller than the grid repeats its pixels across cells instead of leaving cells empty.
-fn spans(length: usize, parts: usize) -> Vec<std::ops::Range<usize>> {
+fn spans(length: usize, parts: usize) -> Vec<Range<usize>> {
     let scale = length as f32 / parts as f32;
     (0..parts)
         .map(|part| {
@@ -147,7 +149,7 @@ fn spans(length: usize, parts: usize) -> Vec<std::ops::Range<usize>> {
 }
 
 /// The cells a normalized interval covers, at least one.
-fn cell_range(low: f32, high: f32, cells: usize) -> std::ops::Range<usize> {
+fn cell_range(low: f32, high: f32, cells: usize) -> Range<usize> {
     let last = cells.saturating_sub(1);
     let start = convert::count_floor(low.clamp(0.0, 1.0) * cells as f32).min(last);
     let end = convert::count_ceil(high.clamp(0.0, 1.0) * cells as f32)
@@ -156,12 +158,8 @@ fn cell_range(low: f32, high: f32, cells: usize) -> std::ops::Range<usize> {
 }
 
 /// Rec. 709 luma averaged over a grid of up to [`SAMPLES_PER_CELL_SIDE`]² pixels in the cell.
-fn mean_luma(
-    rows: &[&[[u8; 4]]],
-    cell_rows: std::ops::Range<usize>,
-    cell_columns: std::ops::Range<usize>,
-) -> u8 {
-    let step = |range: &std::ops::Range<usize>| range.len().div_ceil(SAMPLES_PER_CELL_SIDE).max(1);
+fn mean_luma(rows: &[&[[u8; 4]]], cell_rows: Range<usize>, cell_columns: Range<usize>) -> u8 {
+    let step = |range: &Range<usize>| range.len().div_ceil(SAMPLES_PER_CELL_SIDE).max(1);
     let (row_step, column_step) = (step(&cell_rows), step(&cell_columns));
     let (mut sum, mut count) = (0.0_f32, 0.0_f32);
     for row in rows

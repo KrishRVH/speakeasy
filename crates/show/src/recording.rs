@@ -1,6 +1,6 @@
 //! What a Show captured besides its frames: ink, pointer actions, and narration.
 
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
@@ -119,11 +119,13 @@ impl Stroke {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EmptyStroke;
 
-impl std::fmt::Display for EmptyStroke {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for EmptyStroke {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("a stroke needs at least one point")
     }
 }
+
+impl std::error::Error for EmptyStroke {}
 
 impl TryFrom<Vec<InkPoint>> for Stroke {
     type Error = EmptyStroke;
