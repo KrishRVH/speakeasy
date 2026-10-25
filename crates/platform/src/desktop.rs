@@ -111,7 +111,7 @@ pub fn reduced_motion() -> bool {
 ///
 /// # Errors
 /// Fails when another app holds the clipboard or refuses the text, and always on Linux, which
-/// records no Shows yet.
+/// records no Shows.
 pub fn copy_text(text: &str) -> anyhow::Result<()> {
     native::copy_text(text)
 }
