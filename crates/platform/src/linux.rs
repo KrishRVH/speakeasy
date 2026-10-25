@@ -35,6 +35,10 @@ const NO_PASTE_BINDING: Inserted = Inserted::Copied(
 );
 /// The user chose to paste themselves, so insertion only copies.
 const COPIED_FOR_MANUAL_PASTE: Inserted = Inserted::Copied("Text copied. Paste into your editor.");
+/// The X11 clipboard lost the copied text before paste.
+const CLIPBOARD_CHANGED: Inserted =
+    Inserted::Unavailable("Clipboard changed before paste. Dictate again.");
+
 /// A desktop-access failure whose message already says what to do, so it reaches the user as is
 /// rather than beside the general remedy for a failed desktop connection.
 #[derive(Debug)]
@@ -47,10 +51,6 @@ impl std::fmt::Display for Actionable {
 }
 
 impl std::error::Error for Actionable {}
-
-/// The X11 clipboard lost the copied text before paste.
-const CLIPBOARD_CHANGED: Inserted =
-    Inserted::Unavailable("Clipboard changed before paste. Dictate again.");
 
 /// What `InputMonitor` holds beside the desktop thread: the lane that asks it to stop. Insertion
 /// runs on that thread or on X11 workers it owns and joins before it exits, so nothing outlives it.

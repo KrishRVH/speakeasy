@@ -63,8 +63,13 @@ impl ProcessGroup {
             )
         })?;
         // SAFETY: a successful OpenProcess returns a fresh handle that only this function owns.
-        let process =
-            unsafe { take_handle(OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid)) }?;
+        let process = unsafe {
+            take_handle(OpenProcess(
+                PROCESS_SET_QUOTA | PROCESS_TERMINATE,
+                FALSE,
+                pid,
+            ))
+        }?;
         // SAFETY: both handles are open for this call; the job then holds only this child.
         ok_or_last_error(unsafe {
             AssignProcessToJobObject(job.as_raw_handle(), process.as_raw_handle())
@@ -99,7 +104,7 @@ impl ProcessGroup {
     fn contains(&self, pid: u32) -> bool {
         // SAFETY: a successful OpenProcess returns a fresh handle that only this function owns.
         let Ok(process) =
-            (unsafe { take_handle(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid)) })
+            (unsafe { take_handle(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) })
         else {
             return false;
         };
