@@ -1,6 +1,6 @@
 //! Opening, showing, and hiding the Settings window, and its file picker.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::anyhow;
 #[cfg(not(target_os = "windows"))]
@@ -10,7 +10,7 @@ use gpui::{
     WindowOptions, px, size,
 };
 
-use super::{Services, settings::Settings};
+use super::{LaunchMode, Services, settings::Settings};
 #[cfg(target_os = "windows")]
 use crate::gpui_ext::native_window;
 use crate::gpui_ext::{AppUpdate, WindowUpdate, defer_native};
@@ -153,12 +153,11 @@ fn hide_to_tray(cx: &mut App) {
     }
 }
 
-/// Shows the first-hide hint once. A marker file beside the settings remembers it, so the user's
-/// settings file is never rewritten for it.
+/// Shows the first-hide hint once.
 fn show_tray_hint(cx: &mut App) {
     let services = cx.global::<Services>();
-    let marker = services.path.with_file_name("tray-hint-seen");
-    if services.tray_hint_seen || marker.exists() {
+    let marker = tray_hint_marker(&services.path, services.mode);
+    if services.tray_hint_seen || marker.as_deref().is_some_and(Path::exists) {
         return;
     }
     let pill = services.pill;
@@ -167,12 +166,21 @@ fn show_tray_hint(cx: &mut App) {
         .unwrap_or(false)
     {
         cx.global_mut::<Services>().tray_hint_seen = true;
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "The hint remains dismissed in this app; persistence failure may only show it again after relaunch"
-        )]
-        let _ = std::fs::write(marker, b"");
+        if let Some(marker) = marker {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "The hint remains dismissed in this app; persistence failure may only show it again after relaunch"
+            )]
+            let _ = std::fs::write(marker, b"");
+        }
     }
+}
+
+/// The file beside `settings` that remembers the tray hint across launches, so the user's settings
+/// file is never rewritten for it. A demo is simulated and leaves the user's files alone, so it
+/// shows the hint once per launch.
+fn tray_hint_marker(settings: &Path, mode: LaunchMode) -> Option<PathBuf> {
+    (!mode.is_demo()).then(|| settings.with_file_name("tray-hint-seen"))
 }
 
 #[cfg(target_os = "windows")]
@@ -218,4 +226,23 @@ pub(super) fn choose_file(
         prompt: Some(title.into()),
     });
     async move { Ok(paths.await??.and_then(|paths| paths.into_iter().next())) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_live_launch_remembers_the_tray_hint_beside_its_settings() {
+        let settings = Path::new("/home/user/.config/speakeasy/settings.json");
+        assert_eq!(
+            tray_hint_marker(settings, LaunchMode::Live).as_deref(),
+            Some(Path::new("/home/user/.config/speakeasy/tray-hint-seen"))
+        );
+        assert_eq!(
+            tray_hint_marker(settings, LaunchMode::DemoTray),
+            None,
+            "A tray preview wrote beside the user's settings"
+        );
+    }
 }
