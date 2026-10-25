@@ -275,6 +275,8 @@ impl Recorder {
         Captured { outcome, device }
     }
 
+    /// Moves audio from the ring into PCM, reporting readiness and levels, until capture stops:
+    /// `true` once it finishes or reaches the limit, `false` once cancelled or its owner has gone.
     fn drain(
         &mut self,
         id: SessionId,
