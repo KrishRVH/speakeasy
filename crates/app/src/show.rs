@@ -64,8 +64,9 @@ impl Command {
             Some(out) => out,
             None => store::fresh_directory(&store::private_directory()?, SystemTime::now())?,
         };
-        store::stage(&directory, &bundle.files(&directory)?)?.persist()?;
-        print!("{}", bundle.summary(&directory));
+        let summary = bundle.summary(&directory);
+        store::stage(&directory, &bundle.into_files(&directory)?)?.persist()?;
+        print!("{summary}");
         Ok(())
     }
 }

@@ -1,6 +1,5 @@
 //! Choosing the frames that tell a Show's story.
 
-mod coverage;
 mod frames;
 mod groups;
 
@@ -27,14 +26,9 @@ pub const SAMPLE_INTERVAL: Duration = Duration::from_millis(200);
 /// Keyframes other than marks keep at least this far apart, and from a mark's keyframe unless the
 /// screen has changed since it.
 const FRAME_GAP: Duration = Duration::from_millis(750);
-/// Clicks, scene changes, and cues are added only while fewer keyframes than this are chosen;
-/// beyond it, only marks and long stretches of narration earn one.
-const ORDINARY: usize = 6;
 /// Clicks this close in time and place are one click.
 const DOUBLE_CLICK: Duration = Duration::from_millis(650);
 const DOUBLE_CLICK_DISTANCE: f32 = 0.03;
-/// The most keyframes any Show holds.
-const MOST_KEYFRAMES: usize = 12;
 
 /// Why a frame became a keyframe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,24 +88,16 @@ impl Selection {
     pub fn keyframes(&self) -> &[Keyframe] {
         &self.keyframes
     }
-
-    /// When each chosen frame was on screen, in keyframe order.
-    #[must_use]
-    pub fn moments(&self) -> Vec<Moment> {
-        self.keyframes.iter().map(|keyframe| keyframe.at).collect()
-    }
 }
 
 /// Chooses the keyframes that tell `recording`'s story from `samples`, which may arrive in any
 /// order.
 ///
-/// A Show shorter than 40 seconds holds up to six keyframes, and one more for each further 20
-/// seconds, up to twelve. Each keyframe costs a reading model about a thousand tokens, so a longer
-/// Show earns more only as it tells more.
-///
-/// Marks come first: every group of ink drawn on one screen gets a keyframe, merging the most
-/// alike screens until they fit. Clicks, scene changes, and spoken cues such as "look here" fill
-/// up to six, and long stretches of narration without a keyframe earn one from inside them.
+/// Marks come first: every group of ink drawn on one screen gets a keyframe. Clicks, scene
+/// changes, and spoken cues such as "look here" add frames throughout the recording, without a
+/// frame-count budget. Contact sheets paginate the result to keep each image readable.
+/// The final sampled screen gets a frame if it differs from the last chosen screen, including
+/// a gradual change or return to a screen shown earlier.
 /// While ink is drawn and just after, another keyframe is chosen only where the screen differs from
 /// the mark's, and the nearest mark's keyframe reports the last click or drag then without a
 /// keyframe of its own. A cue never repeats a screen already chosen, so talking over a still screen
@@ -120,31 +106,12 @@ impl Selection {
 /// `None` only when there are no samples to choose from.
 #[must_use]
 pub fn select(recording: &Recording, samples: &[Sample]) -> Option<Selection> {
-    select_within(
-        recording,
-        samples,
-        budget(recording.duration.since(Moment::START)),
-    )
-}
-
-/// The keyframes a Show of this length may hold, as [`select`] describes.
-fn budget(duration: Duration) -> usize {
-    const BASE: usize = 6;
-    let extra = duration.saturating_sub(Duration::from_secs(20)).as_secs() / 20;
-    BASE.saturating_add(usize::try_from(extra).unwrap_or(MOST_KEYFRAMES))
-        .min(MOST_KEYFRAMES)
-}
-
-/// [`select`] with up to `budget` keyframes, never more than twelve; `None` also when `budget` is
-/// zero.
-fn select_within(recording: &Recording, samples: &[Sample], budget: usize) -> Option<Selection> {
-    let budget = budget.min(MOST_KEYFRAMES);
-    let frames = Frames::new(samples).filter(|_| budget > 0)?;
+    let frames = Frames::new(samples)?;
     let marks = marks::group(&recording.strokes, recording.surface);
     let actions = settle(&recording.actions);
     let action_times: Vec<Moment> = actions.iter().map(|action| action.span().start()).collect();
     let transitions = frames.transitions();
-    let mut candidates: Vec<Candidate> = group_marks(&frames, &marks, &action_times, budget)
+    let mut candidates: Vec<Candidate> = group_marks(&frames, &marks, &action_times)
         .into_iter()
         .filter_map(|group| frames.mark_candidate(&marks, group))
         .collect();
@@ -168,16 +135,22 @@ fn select_within(recording: &Recording, samples: &[Sample], budget: usize) -> Op
 
     let mut chooser = Chooser {
         frames: &frames,
-        pending: candidates.into_iter().map(Some).collect(),
         chosen: Vec::new(),
-        budget,
     };
-    chooser.choose_marks();
-    chooser.cover_long_stretches(recording.narration.words());
-    chooser.fill_ordinary();
+    chooser.choose(candidates);
     chooser.drop_repeated_cues();
     let mut chosen = chooser.chosen;
     chosen.sort_by_key(|candidate| frames.at(candidate.frame));
+    if let Some(last) = chosen.last()
+        && frames.novel(last.frame, frames.last())
+    {
+        chosen.push(Candidate {
+            frame: frames.last(),
+            span: Span::at(frames.at(frames.last())),
+            score: 0.0,
+            basis: Basis::SceneChange,
+        });
+    }
     fold_actions_into_marks(&mut chosen, &actions, &frames);
 
     let anchors: Vec<Moment> = chosen
@@ -313,10 +286,7 @@ impl Candidate {
 
 struct Chooser<'a> {
     frames: &'a Frames<'a>,
-    /// Candidates in rank order; a chosen one leaves its slot empty.
-    pending: Vec<Option<Candidate>>,
     chosen: Vec<Candidate>,
-    budget: usize,
 }
 
 impl Chooser<'_> {
@@ -340,44 +310,11 @@ impl Chooser<'_> {
                 .all(|other| self.frames.novel(other.frame, candidate.frame))
     }
 
-    fn full(&self, limit: usize) -> bool {
-        self.chosen.len() >= limit.min(self.budget)
-    }
-
-    fn choose_marks(&mut self) {
-        for slot in &mut self.pending {
-            if self.chosen.len() >= self.budget
-                || slot
-                    .as_ref()
-                    .is_none_or(|c| !matches!(c.basis, Basis::Mark { .. }))
-            {
-                break;
+    fn choose(&mut self, candidates: Vec<Candidate>) {
+        for candidate in candidates {
+            if self.admits(&candidate) {
+                self.chosen.push(candidate);
             }
-            self.chosen.extend(slot.take());
-        }
-    }
-
-    fn fill_ordinary(&mut self) {
-        for index in 0..self.pending.len() {
-            if self.full(ORDINARY) {
-                break;
-            }
-            if self.pending_admitted(index) {
-                self.take(index);
-            }
-        }
-    }
-
-    fn pending_admitted(&self, index: usize) -> bool {
-        self.pending
-            .get(index)
-            .and_then(Option::as_ref)
-            .is_some_and(|candidate| self.admits(candidate))
-    }
-
-    fn take(&mut self, index: usize) {
-        if let Some(candidate) = self.pending.get_mut(index).and_then(Option::take) {
-            self.chosen.push(candidate);
         }
     }
 

@@ -116,8 +116,9 @@ module unless a test file is named.
   [select/tests.rs](../crates/show/src/select/tests.rs); `speakeasy show demo` writes a bundle to
   view.
 - **Show bundle format**: [bundle.rs](../crates/show/src/bundle.rs) and
-  [describe.rs](../crates/show/src/describe.rs). A golden `show.json` in bundle.rs and the demo's
-  summary in demo.rs pin what agents read.
+  [describe.rs](../crates/show/src/describe.rs).
+  [bundle/tests.rs](../crates/show/src/bundle/tests.rs) checks paginated sheets and pins
+  `show.json`; the demo's summary in demo.rs pins what agents read.
 - **Show store**: [show/store.rs](../crates/app/src/show/store.rs) names, writes, and expires
   bundles.
 - **Screen capture and overlay**: [platform/src/screen.rs](../crates/platform/src/screen.rs),

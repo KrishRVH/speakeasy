@@ -5,7 +5,7 @@ use std::{path::PathBuf, time::SystemTime};
 
 use anyhow::{Context as _, anyhow};
 use speakeasy_platform::InsertPermit;
-use speakeasy_show::{Image, Journal, Narration, Recording, Typeface, compose, select};
+use speakeasy_show::{Journal, Narration, Recording, Typeface, compose, select};
 
 use super::store;
 use crate::runtime::ports::{Footage, PUBLISH_STOPPED, Published};
@@ -50,22 +50,29 @@ fn write_bundle(
     let (recording, journal) = narrated(footage, narration);
     let selection = select(&recording, journal.samples())
         .context("The screen could not be recorded. Try again.")?;
-    let frames = journal
-        .frames_at(&selection.moments())
-        .into_iter()
-        .map(|frame| frame.context("A keyframe was not recorded"))
-        .collect::<anyhow::Result<Vec<Image>>>()?;
-    drop(journal);
     if cancelled() {
         return Ok(None);
     }
     let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;
-    let bundle = compose(recording, selection, frames, &typeface)?;
+    let bundle = compose(
+        recording,
+        selection,
+        |at| {
+            if cancelled() {
+                return Err(anyhow!(PUBLISH_STOPPED));
+            }
+            journal.frame_at(at).context("A keyframe was not recorded")
+        },
+        &typeface,
+    );
+    drop(journal);
     if cancelled() {
         return Ok(None);
     }
+    let bundle = bundle?;
     let directory = store::fresh_directory(&parent()?, SystemTime::now())?;
-    let files = bundle.files(&directory)?;
+    let summary = bundle.summary(&directory);
+    let files = bundle.into_files(&directory)?;
     if cancelled() {
         return Ok(None);
     }
@@ -74,7 +81,7 @@ fn write_bundle(
         return Ok(None);
     }
     staged.persist()?;
-    Ok(Some(bundle.summary(&directory)))
+    Ok(Some(summary))
 }
 
 /// The Show as composition reads it, with `narration` already on its timeline, and the journal

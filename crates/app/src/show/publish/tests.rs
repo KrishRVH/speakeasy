@@ -4,7 +4,7 @@
 use std::{fs, time::Instant};
 
 use speakeasy_platform::{InputSender, InsertPermit};
-use speakeasy_show::{Manifest, Moment, Point, Size, Span, Tracker, Word};
+use speakeasy_show::{Image, Manifest, Moment, Point, Size, Span, Tracker, Word};
 
 use super::*;
 
@@ -329,28 +329,26 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     let (recording, journal) = narrated(footage, narration);
     let selection = select(&recording, journal.samples()).context("selected")?;
     let selected = started.elapsed();
-    let frames = journal
-        .frames_at(&selection.moments())
-        .into_iter()
-        .map(|frame| frame.context("recorded"))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    let decoded = started.elapsed();
     let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;
     let keyframes = selection.keyframes().len();
-    let bundle = compose(recording, selection, frames, &typeface)?;
+    let bundle = compose(
+        recording,
+        selection,
+        |at| journal.frame_at(at).context("recorded"),
+        &typeface,
+    )?;
     let composed = started.elapsed();
     let root = tempfile::tempdir()?;
     let directory = root.path().join("show");
-    let files = bundle.files(&directory)?;
+    let files = bundle.into_files(&directory)?;
     let encoded = started.elapsed();
     store::stage(&directory, &files)?.persist()?;
     let written = started.elapsed();
     let bytes: usize = files.iter().map(|file| file.contents.len()).sum();
     eprintln!(
-        "show_publish: seconds=60 keyframes={keyframes} select_ms={:.1} decode_ms={:.1} compose_ms={:.1} encode_ms={:.1} write_ms={:.1} total_ms={:.1} bundle_mb={:.1}",
+        "show_publish: seconds=60 keyframes={keyframes} select_ms={:.1} compose_ms={:.1} files_ms={:.1} write_ms={:.1} total_ms={:.1} bundle_mb={:.1}",
         selected.as_secs_f64() * 1000.0,
-        decoded.saturating_sub(selected).as_secs_f64() * 1000.0,
-        composed.saturating_sub(decoded).as_secs_f64() * 1000.0,
+        composed.saturating_sub(selected).as_secs_f64() * 1000.0,
         encoded.saturating_sub(composed).as_secs_f64() * 1000.0,
         written.saturating_sub(encoded).as_secs_f64() * 1000.0,
         written.as_secs_f64() * 1000.0,

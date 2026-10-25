@@ -2,15 +2,14 @@
 
 use std::fmt;
 
-/// A failure to build or encode an image or manifest, to compose keyframes from the wrong number
-/// of frames, to choose keyframes without frames, or to load the badge typeface.
+/// A failure to build or encode an image or manifest, to choose keyframes without frames, or to
+/// load the badge typeface.
 #[derive(Debug)]
 pub struct Error(Kind);
 
 #[derive(Debug)]
 enum Kind {
     Dimensions { width: u32, height: u32 },
-    Frames { keyframes: usize, frames: usize },
     Unsampled,
     Manifest(serde_json::Error),
     Png(png::EncodingError),
@@ -20,10 +19,6 @@ enum Kind {
 impl Error {
     pub(crate) const fn dimensions(width: u32, height: u32) -> Self {
         Self(Kind::Dimensions { width, height })
-    }
-
-    pub(crate) const fn frames(keyframes: usize, frames: usize) -> Self {
-        Self(Kind::Frames { keyframes, frames })
     }
 
     pub(crate) const fn unsampled() -> Self {
@@ -52,12 +47,6 @@ impl fmt::Display for Error {
                     "a {width}×{height} image is empty, too large, or mismatched"
                 )
             },
-            Kind::Frames { keyframes, frames } => {
-                write!(
-                    f,
-                    "{keyframes} keyframes were chosen but {frames} frames were supplied"
-                )
-            },
             Kind::Unsampled => f.write_str("no frames were sampled to choose keyframes from"),
             Kind::Manifest(_) => f.write_str("the manifest could not be encoded"),
             Kind::Png(_) => f.write_str("the PNG could not be encoded"),
@@ -71,9 +60,7 @@ impl std::error::Error for Error {
         match &self.0 {
             Kind::Manifest(error) => Some(error),
             Kind::Png(error) => Some(error),
-            Kind::Dimensions { .. } | Kind::Frames { .. } | Kind::Unsampled | Kind::Typeface => {
-                None
-            },
+            Kind::Dimensions { .. } | Kind::Unsampled | Kind::Typeface => None,
         }
     }
 }

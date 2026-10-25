@@ -1,11 +1,11 @@
-//! The finished Show: annotated keyframes, the contact sheet, the summary, and the manifest.
+//! The finished Show: annotated keyframes, contact sheets, the summary, and the manifest.
 
 use std::{fmt, path::Path};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Error, Image, Keyframe, Mark, Point, Recording, Rect, Selection, Typeface,
+    Error, Image, Keyframe, Mark, Moment, Point, Recording, Rect, Selection, Typeface,
     describe::{Count, Marker},
     draw::{self, Corner},
     parallel, sheet,
@@ -14,6 +14,15 @@ use crate::{
 const CONTACT_SHEET: &str = "contact-sheet.png";
 const SUMMARY: &str = "summary.md";
 const MANIFEST: &str = "show.json";
+
+/// Keep the first sheet's established path; later pages follow in time order.
+fn sheet_file(page: usize) -> String {
+    if page == 0 {
+        CONTACT_SHEET.to_owned()
+    } else {
+        format!("contact-sheet-{:02}.png", page.saturating_add(1))
+    }
+}
 
 impl Keyframe {
     /// The keyframe image's path within a bundle.
@@ -47,8 +56,7 @@ impl Manifest {
 #[derive(Clone, Debug)]
 pub struct Bundle {
     manifest: Manifest,
-    frames: Vec<Image>,
-    contact_sheet: Image,
+    images: Vec<File>,
 }
 
 /// One file of a bundle, named by its path within the bundle's directory.
@@ -70,51 +78,64 @@ impl fmt::Debug for File {
     }
 }
 
-/// Annotates each chosen frame with its ink and click ripple, lays them out on a contact sheet,
-/// and badges every image with its keyframe's number and time.
+/// Loads, annotates, and encodes keyframes one contact-sheet page at a time, keeping decoded
+/// image memory bounded by the page size.
 ///
-/// `frames` holds the full-resolution image for each keyframe, in keyframe order.
+/// `frame` supplies the image at each selected moment;
+/// it may be called concurrently, on up to one thread per frame in the page.
 ///
 /// # Errors
 ///
-/// Fails when `frames` does not hold exactly one image per keyframe.
-pub fn compose(
+/// Fails if the provider cannot load a frame, or an image cannot be composed or encoded.
+pub fn compose<E: From<Error> + Send>(
     recording: Recording,
     selection: Selection,
-    frames: Vec<Image>,
+    frame: impl Fn(Moment) -> Result<Image, E> + Sync,
     typeface: &Typeface,
-) -> Result<Bundle, Error> {
+) -> Result<Bundle, E> {
     let Selection { marks, keyframes } = selection;
-    if frames.len() != keyframes.len() {
-        return Err(Error::frames(keyframes.len(), frames.len()));
-    }
-    let annotated: Vec<(Image, Corner)> = frames
-        .into_iter()
-        .zip(&keyframes)
-        .map(|(mut image, keyframe)| {
+    let mut sheets = Vec::new();
+    let mut images = Vec::new();
+    for (page, keyframes) in keyframes.chunks(sheet::PAGE_FRAMES).enumerate() {
+        let annotated = parallel::map(keyframes, |keyframe| {
+            let mut image = frame(keyframe.at)?;
             let corner = draw::annotate(&mut image, keyframe, &recording, shown(&marks, keyframe));
-            (image, corner)
+            Ok((image, corner))
         })
-        .collect();
-    let contact_sheet = sheet::render(&keyframes, &annotated, typeface)?;
-    let frames = annotated
         .into_iter()
-        .zip(&keyframes)
-        .map(|((mut image, corner), keyframe)| {
-            let (width, height) = (image.width() as f32, image.height() as f32);
-            let whole = Rect::from_origin(Point::default(), width, height);
-            let scale = draw::badge_scale(width, height);
-            draw::badge(
-                &mut image.as_mut(),
-                whole,
-                keyframe,
-                scale,
-                corner,
-                typeface,
-            );
-            image
+        .collect::<Result<Vec<(Image, Corner)>, E>>()?;
+        sheets.push(File {
+            name: sheet_file(page),
+            contents: sheet::render(keyframes, &annotated, typeface)?.encode_png()?,
+        });
+        let page_frames: Vec<_> = annotated
+            .into_iter()
+            .zip(keyframes)
+            .map(|((mut image, corner), keyframe)| {
+                let (width, height) = (image.width() as f32, image.height() as f32);
+                let whole = Rect::from_origin(Point::default(), width, height);
+                draw::badge(
+                    &mut image.as_mut(),
+                    whole,
+                    keyframe,
+                    draw::badge_scale(width, height),
+                    corner,
+                    typeface,
+                );
+                (keyframe.file(), image)
+            })
+            .collect();
+        let encoded = parallel::map(&page_frames, |(name, image)| {
+            image.encode_png().map(|contents| File {
+                name: name.clone(),
+                contents,
+            })
         })
-        .collect();
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+        images.extend(encoded);
+    }
+    sheets.extend(images);
     Ok(Bundle {
         manifest: Manifest {
             version: Manifest::VERSION,
@@ -122,8 +143,7 @@ pub fn compose(
             marks,
             keyframes,
         },
-        frames,
-        contact_sheet,
+        images: sheets,
     })
 }
 
@@ -159,10 +179,20 @@ impl Bundle {
             Count(keyframes.len(), "keyframe"),
             directory.display()
         )];
-        lines.push(format!(
-            "Contact sheet: {}",
-            directory.join(CONTACT_SHEET).display()
-        ));
+        for (page, keyframes) in keyframes.chunks(sheet::PAGE_FRAMES).enumerate() {
+            let path = directory.join(sheet_file(page));
+            if keyframes.len() == self.manifest.keyframes.len() {
+                lines.push(format!("Contact sheet: {}", path.display()));
+            } else if let (Some(first), Some(last)) = (keyframes.first(), keyframes.last()) {
+                lines.push(format!(
+                    "Contact sheet {} (frames #{}–#{}): {}",
+                    page.saturating_add(1),
+                    first.index,
+                    last.index,
+                    path.display()
+                ));
+            }
+        }
         lines.extend(
             keyframes
                 .iter()
@@ -192,33 +222,17 @@ impl Bundle {
         lines.join("\n")
     }
 
-    /// Every file of the bundle, encoding images on up to one thread per core.
+    /// Every file of the bundle, with already encoded images and the summary for `directory`.
     ///
     /// # Errors
     ///
-    /// Fails if an image or the manifest cannot be encoded, which valid input never causes.
-    pub fn files(&self, directory: &Path) -> Result<Vec<File>, Error> {
-        let images: Vec<(String, &Image)> =
-            std::iter::once((CONTACT_SHEET.to_owned(), &self.contact_sheet))
-                .chain(
-                    self.manifest
-                        .keyframes
-                        .iter()
-                        .map(Keyframe::file)
-                        .zip(&self.frames),
-                )
-                .collect();
-        let mut files = parallel::map(&images, |(name, image)| {
-            image.encode_png().map(|contents| File {
-                name: name.clone(),
-                contents,
-            })
-        })
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
+    /// Fails if the manifest cannot be encoded, which valid input never causes.
+    pub fn into_files(self, directory: &Path) -> Result<Vec<File>, Error> {
+        let summary = self.summary(directory);
+        let mut files = self.images;
         files.push(File {
             name: SUMMARY.to_owned(),
-            contents: self.summary(directory).into_bytes(),
+            contents: summary.into_bytes(),
         });
         files.push(File {
             name: MANIFEST.to_owned(),
@@ -229,156 +243,4 @@ impl Bundle {
 }
 
 #[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-    use crate::{Action, InkPoint, Moment, Narration, Reason, Shape, Size, Span, Stroke, Word};
-
-    fn at(millis: u64) -> Moment {
-        Moment::from_millis(millis)
-    }
-
-    #[test]
-    fn show_json_keeps_its_wire_format() {
-        let click = Action::Click {
-            at: at(400),
-            point: Point::new(0.5, 0.25),
-        };
-        let word = |start: u64, text: &str| Word {
-            span: Span::new(at(start), at(start + 200)),
-            text: text.to_owned(),
-        };
-        let ink = |x: f32, millis: u64| InkPoint {
-            point: Point::new(x, 0.5),
-            at: at(millis),
-        };
-        let manifest = Manifest {
-            version: Manifest::VERSION,
-            recording: Recording {
-                duration: at(2_000),
-                surface: Size {
-                    width: 800.0,
-                    height: 600.0,
-                },
-                strokes: vec![Stroke::new(vec![ink(0.25, 100), ink(0.75, 300)]).unwrap()],
-                actions: vec![
-                    click,
-                    Action::Drag {
-                        span: Span::new(at(600), at(900)),
-                        from: Point::new(0.25, 0.75),
-                        to: Point::new(0.75, 0.75),
-                    },
-                ],
-                narration: Narration::Words(vec![word(100, "Look"), word(300, "here.")]),
-            },
-            marks: vec![Mark {
-                shape: Shape::Line {
-                    from: Point::new(0.25, 0.5),
-                    to: Point::new(0.75, 0.5),
-                },
-                strokes: 0..1,
-                span: Span::new(at(100), at(300)),
-                bounds: Rect {
-                    left: 0.25,
-                    top: 0.5,
-                    right: 0.75,
-                    bottom: 0.5,
-                },
-            }],
-            keyframes: vec![
-                Keyframe {
-                    index: 1,
-                    at: at(300),
-                    reason: Reason::Mark,
-                    event: "drew a line".to_owned(),
-                    said: Some("Look here.".to_owned()),
-                    marks: 0..1,
-                    action: None,
-                },
-                Keyframe {
-                    index: 2,
-                    at: at(1_000),
-                    reason: Reason::Click,
-                    event: "clicked".to_owned(),
-                    said: None,
-                    marks: 0..0,
-                    action: Some(click),
-                },
-                Keyframe {
-                    index: 3,
-                    at: at(1_500),
-                    reason: Reason::SceneChange,
-                    event: "scene changed".to_owned(),
-                    said: None,
-                    marks: 0..0,
-                    action: None,
-                },
-            ],
-        };
-        let click = json!({"kind": "click", "at": 400, "point": [0.5, 0.25]});
-        let golden = json!({
-            "version": 1,
-            "duration": 2000,
-            "surface": {"width": 800.0, "height": 600.0},
-            "strokes": [[[0.25, 0.5, 100], [0.75, 0.5, 300]]],
-            "actions": [
-                click,
-                {"kind": "drag", "span": [600, 900], "from": [0.25, 0.75], "to": [0.75, 0.75]},
-            ],
-            "narration": {"words": [
-                {"span": [100, 300], "text": "Look"},
-                {"span": [300, 500], "text": "here."},
-            ]},
-            "marks": [{
-                "shape": "line",
-                "from": [0.25, 0.5],
-                "to": [0.75, 0.5],
-                "strokes": [0, 1],
-                "span": [100, 300],
-                "bounds": [0.25, 0.5, 0.75, 0.5],
-            }],
-            "keyframes": [
-                {
-                    "index": 1,
-                    "at": 300,
-                    "reason": "mark",
-                    "event": "drew a line",
-                    "said": "Look here.",
-                    "marks": [0, 1],
-                },
-                {
-                    "index": 2,
-                    "at": 1000,
-                    "reason": "click",
-                    "event": "clicked",
-                    "marks": [0, 0],
-                    "action": click,
-                },
-                {"index": 3, "at": 1500, "reason": "sceneChange", "event": "scene changed", "marks": [0, 0]},
-            ],
-        });
-        let changed =
-            "show.json changed; bump Manifest::VERSION if an existing reader would misread it";
-        assert_eq!(
-            serde_json::to_value(&manifest).unwrap(),
-            golden,
-            "{changed}"
-        );
-        assert_eq!(
-            serde_json::from_value::<Manifest>(golden).unwrap(),
-            manifest,
-            "{changed}"
-        );
-    }
-
-    #[test]
-    fn debugging_a_file_never_prints_its_contents() {
-        let file = File {
-            name: "frames/frame-01.png".to_owned(),
-            contents: vec![0x5A; 4_096],
-        };
-        let shown = format!("{file:?}");
-        assert!(shown.contains("frame-01") && shown.len() < 80, "{shown}");
-    }
-}
+mod tests;

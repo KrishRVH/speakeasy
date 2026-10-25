@@ -108,12 +108,12 @@ impl Demo {
         })
         .collect::<Result<Vec<_>, Error>>()?;
         let selection = select(&recording, &samples).ok_or_else(Error::unsampled)?;
-        let frames = selection
-            .moments()
-            .into_iter()
-            .map(|at| self.frame(at, keyframe.0, keyframe.1))
-            .collect::<Result<Vec<_>, _>>()?;
-        compose(recording, selection, frames, &self.typeface)
+        compose(
+            recording,
+            selection,
+            |at| self.frame(at, keyframe.0, keyframe.1),
+            &self.typeface,
+        )
     }
 }
 
@@ -497,7 +497,8 @@ Full-size keyframes: frames/frame-01.png to frames/frame-04.png. Timeline: show.
             "{:?}",
             marks[1].shape
         );
-        let files = bundle.files(&directory).unwrap();
+        let expected = bundle.manifest().clone();
+        let files = bundle.into_files(&directory).unwrap();
         let names: Vec<&str> = files.iter().map(|file| file.name.as_str()).collect();
         assert_eq!(
             names,
@@ -514,6 +515,6 @@ Full-size keyframes: frames/frame-01.png to frames/frame-04.png. Timeline: show.
         let sheet = Image::decode_png(&files[0].contents);
         assert!(sheet.width().max(sheet.height()) <= 1_600);
         let manifest: crate::Manifest = serde_json::from_slice(&files[6].contents).unwrap();
-        assert_eq!(&manifest, bundle.manifest());
+        assert_eq!(manifest, expected);
     }
 }

@@ -1,4 +1,4 @@
-//! The contact sheet: every keyframe on one image, sized for a reading model.
+//! Contact sheets: keyframes in readable pages sized for a reading model.
 
 use std::ops::Range;
 
@@ -19,6 +19,8 @@ const LONGEST_EDGE: f32 = 1_600.0;
 const MOST_PIXELS: f32 = 1_560_000.0;
 /// The most frames one row holds.
 const ROW_FRAMES: usize = 6;
+/// More frames start another sheet rather than shrinking every thumbnail.
+pub(crate) const PAGE_FRAMES: usize = 6;
 /// Layout treats frames as no narrower or wider than these aspects, so an extreme crop still gets
 /// a usable cell; the frame then keeps its own proportions inside it.
 const NARROWEST: f32 = 0.25;

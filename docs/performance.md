@@ -28,7 +28,8 @@ when the full interaction remains correct.
 - A Show's recorder keeps per-frame work to a few milliseconds and its journal under a fixed cap.
   Its overlay holds full-window path targets only while ink shows; GPUI frees them after a frame
   without paths, and the window closes when the Show ends. Publishing rebuilds, resamples, and
-  encodes keyframes on up to one thread per core.
+  encodes one contact-sheet page at a time on up to one thread per frame in the page, bounded by the
+  machine's cores. Only encoded output accumulates across pages.
 - Do not add an always-on microphone, worker pool, cache, resampler, or background service without a
   measured user benefit and explicit resource ownership.
 
@@ -49,10 +50,10 @@ trimming, capacity reclamation, and WAV encoding; it excludes microphone teardow
 insertion. The synthetic `profile_show_pipeline` probe reports the recorder's per-frame fingerprint
 and journal cost on 2560 × 1440 desktops that stay still, type, scroll, open a dialog, or play
 video, with journal megabytes per frame, and each stage of publishing a one-minute Show: selection,
-keyframe rebuilding, composition, PNG encoding, and the private write.
-`profile_real_screen_recording` records the real screen for ten seconds on Windows or Mac, keeping
-no pixels; on Windows, run the test binary directly and sample its process, not Cargo's, with
-`profile-windows.ps1`. Use ordinary native profilers rather than a permanent benchmark suite.
+page composition (including keyframe rebuilding and PNG encoding), file assembly, and the private
+write. `profile_real_screen_recording` records the real screen for ten seconds on Windows or Mac,
+keeping no pixels; on Windows, run the test binary directly and sample its process, not Cargo's,
+with `profile-windows.ps1`. Use ordinary native profilers rather than a permanent benchmark suite.
 
 ## Native process sampling
 
