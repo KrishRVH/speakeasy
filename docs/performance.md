@@ -22,7 +22,8 @@ when the full interaction remains correct.
   motion has a 200-FPS ceiling; settled and hidden views request no animation frames. Display
   refresh can impose a lower rate.
 - Speech classification runs incrementally on the capture consumer, leaving only a partial window to
-  classify at stop. [audio/speech.rs](../crates/app/src/audio/speech.rs) owns trimming, and
+  classify at stop. [audio/speech.rs](../crates/app/src/audio/speech.rs) decides which audio a
+  recording keeps, [audio/pcm.rs](../crates/app/src/audio/pcm.rs) trims to it, and
   [audio.rs](../crates/app/src/audio.rs) seals audio before driver teardown. WAV preparation reuses
   the PCM allocation, checks lengths, and rejects unsupported input.
 - A Show's recorder keeps per-frame work to a few milliseconds and its journal under a fixed cap.
