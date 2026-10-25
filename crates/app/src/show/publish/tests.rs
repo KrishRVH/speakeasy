@@ -248,19 +248,19 @@ fn a_cancelled_show_never_reaches_the_disk() -> anyhow::Result<()> {
 }
 
 #[test]
-fn a_show_cancelled_while_its_images_encode_never_writes_them() -> anyhow::Result<()> {
+fn a_show_cancelled_before_staging_never_writes_its_files() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     // A file where the Shows folder belongs, so any attempt to write the bundle fails the call.
     let blocked = directory.path().join("shows");
     fs::write(&blocked, b"")?;
     let (input, permit) = permit();
-    // The folder is prepared just before encoding begins, after the last check that precedes it.
-    let cancel_while_encoding = || {
+    // The folder is prepared once the Show is composed, so only the check before staging remains.
+    let cancel_once_composed = || {
         input.cancel();
         Ok(blocked.clone())
     };
     let (footage, narration) = rehearse(32, 20);
-    assert!(write_bundle(footage, narration, &permit, cancel_while_encoding)?.is_none());
+    assert!(write_bundle(footage, narration, &permit, cancel_once_composed)?.is_none());
     Ok(())
 }
 
@@ -341,7 +341,7 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = root.path().join("show");
     let files = bundle.into_files(&directory)?;
-    let encoded = started.elapsed();
+    let assembled = started.elapsed();
     store::stage(&directory, &files)?.persist()?;
     let written = started.elapsed();
     let bytes: usize = files.iter().map(|file| file.contents.len()).sum();
@@ -349,8 +349,8 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
         "show_publish: seconds=60 keyframes={keyframes} select_ms={:.1} compose_ms={:.1} files_ms={:.1} write_ms={:.1} total_ms={:.1} bundle_mb={:.1}",
         selected.as_secs_f64() * 1000.0,
         composed.saturating_sub(selected).as_secs_f64() * 1000.0,
-        encoded.saturating_sub(composed).as_secs_f64() * 1000.0,
-        written.saturating_sub(encoded).as_secs_f64() * 1000.0,
+        assembled.saturating_sub(composed).as_secs_f64() * 1000.0,
+        written.saturating_sub(assembled).as_secs_f64() * 1000.0,
         written.as_secs_f64() * 1000.0,
         bytes as f64 / 1e6,
     );

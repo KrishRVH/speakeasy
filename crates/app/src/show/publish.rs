@@ -34,9 +34,10 @@ pub(crate) async fn publish(
 }
 
 /// Writes a Show as a new bundle in the folder `parent` prepares and returns the summary that
-/// names its files, or nothing once `permit` is revoked. A Show cancelled before it is composed
-/// never runs `parent`, one cancelled while its images encode never writes them, and one cancelled
-/// while they are staged stops at commit and deletes them.
+/// names its files, or nothing once `permit` is revoked. A Show cancelled before or while it is
+/// composed loads no further frames and never runs `parent`, one cancelled before its files are
+/// staged never writes them, and one cancelled while they are staged stops at commit and deletes
+/// them.
 fn write_bundle(
     footage: Footage,
     narration: Narration,
@@ -50,9 +51,6 @@ fn write_bundle(
     let (recording, journal) = narrated(footage, narration);
     let selection = select(&recording, journal.samples())
         .context("The screen could not be recorded. Try again.")?;
-    if cancelled() {
-        return Ok(None);
-    }
     let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;
     let bundle = compose(
         recording,
