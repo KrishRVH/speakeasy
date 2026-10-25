@@ -71,6 +71,8 @@ impl Owners {
 
 impl Drop for Owners {
     fn drop(&mut self) {
+        // Each field's Drop asks only itself to stop before joining its threads; asking both first
+        // lets their teardowns overlap.
         self.request_stop();
     }
 }

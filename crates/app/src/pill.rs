@@ -3,6 +3,8 @@
 //! capture or insertion deadline.
 
 mod grille;
+// Clippy's `allow-*-in-tests` settings recognize only a bare `cfg(test)`, so the platform gate is
+// a separate attribute.
 #[cfg(test)]
 #[cfg(target_os = "linux")]
 mod native_tests;

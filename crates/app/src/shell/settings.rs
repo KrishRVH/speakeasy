@@ -64,7 +64,7 @@ impl Settings {
             let default = crate::paths::settings_file()
                 .ok()
                 .and_then(|path| std::path::absolute(path).ok());
-            desktop_command(&cx.global::<Services>().path, default.as_deref()).into()
+            desktop_command(&services.path, default.as_deref()).into()
         };
         let mut view = Self {
             config,

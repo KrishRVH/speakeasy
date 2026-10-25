@@ -36,7 +36,7 @@ pub(super) enum Lifecycle<Owners, Restart> {
 }
 
 impl<Owners, Restart> Lifecycle<Owners, Restart> {
-    /// Starts validating for `epoch` and returns true, unless live or retiring owners exist.
+    /// Starts validating for `epoch` and returns true, unless owners exist or Quit has begun.
     pub(super) fn validate(&mut self, epoch: ConfigEpoch) -> bool {
         if matches!(self, Self::Disabled | Self::Validating(_)) {
             *self = Self::Validating(epoch);
