@@ -37,6 +37,7 @@ pub struct Signature {
     cells: Box<[u8; CELLS]>,
 }
 
+/// Leaves out the cells, a thumbnail of the user's screen.
 impl fmt::Debug for Signature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Signature").finish_non_exhaustive()
@@ -202,6 +203,14 @@ pub(crate) mod tests {
         assert!((half - 128.0 / 255.0).abs() < 1e-3);
         assert_eq!(Signature::of(&gray(128, 1920, 1080)), signature(128));
         assert_eq!(Signature::of(&gray(128, 3, 1)), signature(128));
+    }
+
+    #[test]
+    fn debugging_a_signature_never_prints_the_screen() {
+        assert_eq!(
+            format!("{:?}", signature(0)),
+            format!("{:?}", signature(255))
+        );
     }
 
     /// A gray frame with one lighter rectangle, in pixels.

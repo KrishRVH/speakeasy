@@ -1,6 +1,6 @@
 //! Owned raster images, PNG, and area resampling.
 
-use std::borrow::Cow;
+use std::{borrow::Cow, fmt};
 
 use tiny_skia::{IntSize, Pixmap, PixmapMut, PixmapRef, PremultipliedColorU8};
 
@@ -9,9 +9,19 @@ use crate::{Error, convert};
 /// An owned image with nonzero dimensions, stored as premultiplied RGBA8 rows.
 ///
 /// Captured screens are opaque, so for them premultiplied and straight alpha coincide.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Image {
     pixmap: Pixmap,
+}
+
+/// Leaves out the pixels, which show the user's screen.
+impl fmt::Debug for Image {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Image")
+            .field("width", &self.width())
+            .field("height", &self.height())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Image {
@@ -251,6 +261,12 @@ mod tests {
         assert!(Image::from_rgba(2, 2, vec![0; 8]).is_err());
         assert!(Image::from_rgba(0, 1, Vec::new()).is_err());
         assert!(Image::filled(0, 1, [0; 3]).is_err());
+    }
+
+    #[test]
+    fn debugging_an_image_never_prints_its_pixels() {
+        let shown = |level| format!("{:?}", Image::filled(2, 2, [level; 3]).unwrap());
+        assert_eq!(shown(0), shown(255));
     }
 
     #[test]
