@@ -58,7 +58,8 @@ impl Tracker {
         }
     }
 
-    /// Observes the pointer at `at`, in time order. `point` is normalized to the surface, and may
+    /// Observes the pointer at `at`, in time order, with `drawing` while Shift is held to draw and
+    /// `pressed` while the primary button is down. `point` is normalized to the surface, and may
     /// lie outside it when the pointer is on another display.
     pub fn observe(&mut self, at: Moment, point: Point, drawing: bool, pressed: bool) {
         let inside = (0.0..=1.0).contains(&point.x) && (0.0..=1.0).contains(&point.y);
