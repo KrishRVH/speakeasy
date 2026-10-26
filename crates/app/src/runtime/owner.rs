@@ -309,9 +309,7 @@ impl<P: Ports> Owner<P> {
             },
             CaptureEvent::Finished(_, Ok(None)) => {
                 self.conclude_capture();
-                self.end_session();
-                self.gesture.complete();
-                self.outcome = Outcome::Empty;
+                self.end_session(Outcome::Empty);
             },
             // Failing retires both devices; the screen is never asked to finish footage for nobody.
             CaptureEvent::Finished(_, Err(error)) => self.fail(error.to_string()),
@@ -382,9 +380,7 @@ impl<P: Ports> Owner<P> {
             return;
         };
         if text.is_empty() {
-            self.end_session();
-            self.gesture.complete();
-            self.outcome = Outcome::Empty;
+            self.end_session(Outcome::Empty);
         } else {
             let insertion = self
                 .ports
@@ -443,9 +439,7 @@ impl<P: Ports> Owner<P> {
             .session
             .as_ref()
             .is_some_and(|session| session.show.is_some());
-        // `wait` already joined this delivery, so the session holds no work left to retire.
-        self.end_session();
-        self.outcome = match result {
+        let outcome = match result {
             Ok(Delivered::Inserted(Ok(Inserted::Sent))) => Outcome::Done,
             Ok(Delivered::Inserted(Ok(Inserted::Copied(message)))) => Outcome::Copied(message),
             Ok(
@@ -463,7 +457,8 @@ impl<P: Ports> Owner<P> {
                     .into(),
             ),
         };
-        self.gesture.complete();
+        // `wait` already joined this delivery, so the session holds no work left to retire.
+        self.end_session(outcome);
     }
 
     fn handle_action(&mut self, action: Option<Action>) -> ControlFlow<()> {
@@ -505,10 +500,14 @@ impl<P: Ports> Owner<P> {
         ControlFlow::Continue(())
     }
 
-    fn end_session(&mut self) {
+    /// Ends a session whose work has finished, so it holds nothing left to retire, and shows
+    /// `outcome`.
+    fn end_session(&mut self, outcome: Outcome) {
         if let Some(session) = self.session.take() {
             session.permit.revoke();
         }
+        self.gesture.complete();
+        self.outcome = outcome;
     }
 
     /// Revokes the session and hands its native work to cleanup without awaiting any OS call.
