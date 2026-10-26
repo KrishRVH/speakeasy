@@ -241,19 +241,17 @@ impl Services {
         }) {
             self.stop(cx);
         }
+        self.config = Config::clone(&config);
         if self.lifecycle.queue(Restart::Apply(config.clone())) {
-            self.config = config.into_inner();
             return Ok(());
         }
-        let started = match self.runtime() {
+        match self.runtime() {
             Some(runtime) => {
-                runtime.configure(config.clone());
+                runtime.configure(config);
                 Ok(())
             },
-            None => self.start(config.clone()),
-        };
-        self.config = config.into_inner();
-        started
+            None => self.start(config),
+        }
     }
 
     /// Starts owners for `config` while none are live or retiring. `config` is newer than any
