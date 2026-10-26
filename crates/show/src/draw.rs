@@ -21,7 +21,7 @@ const BADGE_BAND: f32 = 0.18;
 const BADGE_SIDE: f32 = 0.30;
 
 /// The top corner a keyframe's badge sits in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub(crate) enum Corner {
     Left,
     Right,

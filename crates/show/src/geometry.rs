@@ -157,10 +157,8 @@ impl Rect {
     pub(crate) fn bounding(points: impl IntoIterator<Item = Point>) -> Option<Self> {
         points
             .into_iter()
-            .fold(None, |bounds: Option<Self>, point| {
-                let at = Self::from_origin(point, 0.0, 0.0);
-                Some(bounds.map_or(at, |bounds| bounds.union(at)))
-            })
+            .map(|point| Self::from_origin(point, 0.0, 0.0))
+            .reduce(Self::union)
     }
 
     /// The horizontal extent.

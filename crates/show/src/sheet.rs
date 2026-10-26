@@ -41,7 +41,7 @@ const LARGE_AREA: f32 = 2.3;
 const NARROW_SHARE: f32 = 0.16;
 
 /// One keyframe's place on the sheet, in whole pixels.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 struct Cell {
     left: u32,
     top: u32,

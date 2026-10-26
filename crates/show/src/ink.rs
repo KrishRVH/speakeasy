@@ -60,17 +60,12 @@ pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
         .filter(|point| point.is_finite())
         .collect();
     input.dedup();
-    let radius = |pressure: f32| size * (0.5 + THINNING * (pressure - 0.5));
-    match *input.as_slice() {
-        [] => return Vec::new(),
-        [center] => return dot(center, radius(0.25).max(0.01)),
-        [start, end] => {
-            input = (0..=4_u8)
-                .map(|step| start.lerp(end, f32::from(step) / 4.0))
-                .collect();
-        },
-        _ => {},
+    if let [start, end] = *input.as_slice() {
+        input = (0..=4_u8)
+            .map(|step| start.lerp(end, f32::from(step) / 4.0))
+            .collect();
     }
+    let radius = |pressure: f32| size * (0.5 + THINNING * (pressure - 0.5));
     let nodes = nodes(&input, size);
     let (Some(first), Some(last)) = (nodes.first(), nodes.last()) else {
         return Vec::new();

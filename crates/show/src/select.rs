@@ -219,7 +219,6 @@ struct Candidate {
 }
 
 /// What a candidate frame shows, which decides how it ranks and what its keyframe says.
-#[derive(Clone, Debug)]
 pub(crate) enum Basis {
     /// The selection's marks in this range, and the last click or drag without a keyframe of its
     /// own whose result came while they were drawn or close to the frame, known once keyframes are

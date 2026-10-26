@@ -9,15 +9,9 @@ use crate::{Error, Point};
 ///
 /// The face borrows a font embedded in the executable. Glyphs advance without kerning, which the
 /// short labels it draws do not need.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Typeface {
     face: Face<'static>,
-}
-
-impl std::fmt::Debug for Typeface {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Typeface").finish_non_exhaustive()
-    }
 }
 
 impl Typeface {
