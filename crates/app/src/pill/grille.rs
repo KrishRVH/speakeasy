@@ -65,7 +65,7 @@ impl Grille {
     }
 
     fn paint_backlight(&self, slot: Slot, window: &mut Window) {
-        let glow = self.level_at_age(0).mul_add(0.22, 0.1) * self.waveform;
+        let glow = (0.1 + 0.22 * self.level_at_age(0)) * self.waveform;
         window.paint_quad(
             fill(slot.bounds(), alpha(self.palette.live, glow)).corner_radii(px(slot.radius())),
         );
@@ -101,10 +101,10 @@ impl Grille {
             reason = "The bar count is clamped to at least one before converting from layout coordinates"
         )]
         let count = ((width - 12.0) / BAR_PITCH).floor().max(1.0) as usize;
-        let span = (count as f32 - 1.0).mul_add(BAR_PITCH, BAR_WIDTH);
+        let span = (count as f32 - 1.0) * BAR_PITCH + BAR_WIDTH;
         let start = x + (width - span) / 2.0;
         for index in 0..count {
-            let left = (index as f32).mul_add(BAR_PITCH, start);
+            let left = start + index as f32 * BAR_PITCH;
             let center = left + BAR_WIDTH / 2.0;
             // A bar over a rounded end stays within the end's chord through the bar's center.
             let into_end = (x + radius - center)
@@ -120,7 +120,7 @@ impl Grille {
 
     fn paint_sweep(&self, slot: Slot, open: f32, position: f32, window: &mut Window) {
         let glow = rect(
-            position.mul_add(open - 18.0, slot.x + 4.0),
+            slot.x + 4.0 + position * (open - 18.0),
             slot.y + 3.0,
             10.0,
             slot.height - 6.0,
@@ -231,7 +231,7 @@ impl Slot {
 
     /// A level bar's height: two pixels when silent, two short of each edge at full level.
     fn bar_height(self, level: f32) -> f32 {
-        level.mul_add(self.height - 6.0, 2.0)
+        2.0 + level * (self.height - 6.0)
     }
 }
 
@@ -247,7 +247,7 @@ fn mirrored_age(index: usize, count: usize) -> usize {
 
 /// The length of a chord `offset` away from the center of a circle.
 fn chord(radius: f32, offset: f32) -> f32 {
-    2.0 * offset.mul_add(-offset, radius * radius).max(0.0).sqrt()
+    2.0 * (radius * radius - offset * offset).max(0.0).sqrt()
 }
 
 #[cfg(test)]
