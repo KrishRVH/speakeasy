@@ -288,6 +288,15 @@ fn releases() -> impl Strategy<Value = Releases> {
     (release.clone(), release).prop_map(|(microphone, screen)| Releases { microphone, screen })
 }
 
+/// Answers a transcription request that the owner may already have abandoned.
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "An abandoned request has nobody left to answer"
+)]
+fn answer_unless_abandoned(reply: Reply, result: anyhow::Result<String>) {
+    let _ = reply.send(result);
+}
+
 /// Resolves once every task has parked: on the paused clock, the sleep ends only when nothing else
 /// can run.
 async fn settle() {
@@ -382,8 +391,7 @@ impl Model {
                         Said::Nothing => Ok(String::new()),
                         Said::Failure => Err(anyhow!("model transcription failed")),
                     };
-                    // An abandoned request has nobody left to answer.
-                    drop(reply.send(result));
+                    answer_unless_abandoned(reply, result);
                 }
             },
         }
@@ -398,7 +406,7 @@ impl Model {
         for _ in 0..DRAIN_ROUNDS {
             let mut acted = false;
             while let Some(reply) = self.replies.pop_front() {
-                drop(reply.send(Ok("model words".to_owned())));
+                answer_unless_abandoned(reply, Ok("model words".to_owned()));
                 acted = true;
             }
             for (source, id) in self.unanswered() {
