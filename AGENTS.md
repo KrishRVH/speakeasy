@@ -12,7 +12,8 @@ Use `mise run` for project workflows; run `mise tasks` and read the task you use
 
 - `mise install` installs the pinned tools and may use the network.
 - `mise run rust:lint`, `mise run rust:test`, and `mise run rust:doc` verify Rust changes.
-- `mise run rust:lock` refreshes Cargo.lock through Cargo after dependency changes.
+- `mise run rust:lock` refreshes Cargo.lock through Cargo after dependency changes and checks that
+  packaging can cite every dependency's license.
 - `mise run standards` applies safe formatters and autofixes.
 - `mise run standards:check` is the final local gate. CI builds and publishes release packages.
 
