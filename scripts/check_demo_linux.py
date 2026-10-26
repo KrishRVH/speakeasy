@@ -14,7 +14,6 @@ from collections.abc import Callable, Iterable, Mapping
 from contextlib import suppress
 from io import TextIOWrapper
 from pathlib import Path
-from types import TracebackType
 from typing import Protocol, Self, cast
 
 
@@ -70,12 +69,7 @@ class Display:
     def __enter__(self) -> Self:
         return self
 
-    def __exit__(
-        self,
-        _: type[BaseException] | None,
-        __: BaseException | None,
-        ___: TracebackType | None,
-    ) -> None:
+    def __exit__(self, *_: object) -> None:
         self._x11.XCloseDisplay(self._display)
 
     def unmap(self, handles: Iterable[str]) -> None:
