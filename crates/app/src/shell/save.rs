@@ -133,12 +133,11 @@ impl SaveQueue {
             }
         }
         if let Some(pending) = self.pending.take() {
-            // Dropping the work joins its thread; nothing remains to report a failed start to.
-            drop(SaveWork::start(
-                self.durable.clone(),
-                pending.draft,
-                pending.path,
-            ));
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Dropping the work joins its thread; a closing view has no one to tell of a failed start"
+            )]
+            let _ = SaveWork::start(self.durable.clone(), pending.draft, pending.path);
         }
     }
 }
