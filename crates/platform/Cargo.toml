@@ -20,7 +20,8 @@ x11rb = { workspace = true, features = ["allow-unsafe-code", "shape", "xinput", 
 xkbcommon.workspace = true
 serde.workspace = true
 tempfile.workspace = true
-# `net` provides `tokio::io::unix::AsyncFd`, which waits on libei and portal descriptors.
+# `net` provides `tokio::io::unix::AsyncFd`, which waits on the X11, libei, and portal transfer
+# descriptors.
 tokio = { workspace = true, features = ["net"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
