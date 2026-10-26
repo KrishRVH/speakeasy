@@ -7,6 +7,11 @@ use crate::{
     runtime::{LOADING, ModelState, Phase, Snapshot},
 };
 
+/// The status while dictation pauses, shared by Services, Settings, and the tray.
+pub(crate) const PAUSING: &str = "Pausing dictation…";
+/// The status once dictation is paused, shared by Services, Settings, and the tray.
+pub(crate) const PAUSED: &str = "Dictation paused";
+
 /// Whether dictation runs, as the tray and Settings present it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ServiceState {
@@ -40,12 +45,12 @@ impl Status {
     pub(crate) fn new(snapshot: &Snapshot, service: ServiceState, engine: Engine) -> Self {
         let (indicator, description): (_, Cow<'static, str>) =
             match (service, snapshot.phase, snapshot.desktop_ready) {
-                (ServiceState::Pausing, ..) => (Indicator::Busy, "Pausing dictation…".into()),
+                (ServiceState::Pausing, ..) => (Indicator::Busy, PAUSING.into()),
                 (_, Phase::Error, _) => (
                     Indicator::Attention,
                     "Needs attention · Open Settings".into(),
                 ),
-                (ServiceState::Paused, ..) => (Indicator::Paused, "Dictation paused".into()),
+                (ServiceState::Paused, ..) => (Indicator::Paused, PAUSED.into()),
                 (ServiceState::NotSetUp, ..) => {
                     (Indicator::Paused, "Not set up · Open Settings".into())
                 },

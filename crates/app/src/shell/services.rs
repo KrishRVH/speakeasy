@@ -20,7 +20,7 @@ use crate::{
     pill::Pill,
     runtime::{self, Meter, Phase, Runtime, Snapshot},
     show::Canvas,
-    status::{ServiceState, Status},
+    status::{PAUSED, PAUSING, ServiceState, Status},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,8 +40,6 @@ impl LaunchMode {
         matches!(self, Self::Live | Self::DemoTray)
     }
 }
-
-const PAUSED: &str = "Dictation paused";
 
 /// What starts the service again once retiring owners acknowledge.
 enum Restart {
@@ -355,7 +353,7 @@ impl Services {
         self.validation = None;
         let started = self.lifecycle.pause();
         self.announce(if self.lifecycle.pausing() {
-            "Pausing dictation…"
+            PAUSING
         } else {
             PAUSED
         });
