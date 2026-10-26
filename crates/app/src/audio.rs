@@ -433,7 +433,7 @@ fn consume_pcm(ring: &mut Consumer<f32>, pcm: &mut Pcm16, meter: &mut LevelMeter
 
 /// Maps RMS onto the meter's dBFS span, whose top is a speech reference rather than clipping.
 fn speech_meter_level(rms: f32) -> f32 {
-    let above_floor = 20.0_f32.mul_add(rms.max(0.000_001).log10(), -METER_FLOOR_DBFS);
+    let above_floor = 20.0 * rms.max(0.000_001).log10() - METER_FLOOR_DBFS;
     (above_floor / (METER_TOP_DBFS - METER_FLOOR_DBFS)).clamp(0.0, 1.0)
 }
 

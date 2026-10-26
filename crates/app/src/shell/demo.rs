@@ -36,8 +36,7 @@ pub(super) async fn play(
     while start.elapsed() < Duration::from_secs(5) {
         let seconds = start.elapsed().as_secs_f32();
         snapshot.hands_free = seconds > 2.0;
-        let level =
-            (seconds * 7.0).sin().mul_add(0.45, 0.35).max(0.0) * (seconds * 2.1).sin().abs();
+        let level = (0.35 + 0.45 * (seconds * 7.0).sin()).max(0.0) * (seconds * 2.1).sin().abs();
         measure(&meter, &snapshot, level);
         present(&output, &snapshot, Duration::from_millis(32)).await;
     }
@@ -89,7 +88,7 @@ async fn play_show(
         }
         snapshot.show = show;
         snapshot.hands_free = show;
-        let level = (seconds * 5.0).sin().mul_add(0.3, 0.3).max(0.0);
+        let level = (0.3 + 0.3 * (seconds * 5.0).sin()).max(0.0);
         measure(meter, &snapshot, level);
         present(output, &snapshot, Duration::from_millis(32)).await;
     }
@@ -138,8 +137,8 @@ fn circle(canvas: &watch::Sender<Canvas>, display: Display, seconds: f32) -> boo
             // A little past a full turn, as a hand closes a circle.
             let turn = share * std::f32::consts::TAU * 1.08;
             Point::new(
-                (RADIUS * height / width).mul_add(turn.cos(), 0.5),
-                RADIUS.mul_add(turn.sin(), 0.45),
+                0.5 + RADIUS * height / width * turn.cos(),
+                0.45 + RADIUS * turn.sin(),
             )
         })
         .collect();

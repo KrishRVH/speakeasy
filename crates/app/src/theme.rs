@@ -116,7 +116,7 @@ pub(crate) fn mix(from: u32, to: u32, weight: f32) -> u32 {
     [16, 8, 0].into_iter().fold(0, |mixed, shift| {
         let channel = |color: u32| ((color >> shift) & 0xFF) as f32;
         let (start, end) = (channel(from), channel(to));
-        mixed | (u32::from(quantize((end - start).mul_add(weight, start))) << shift)
+        mixed | (u32::from(quantize(start + (end - start) * weight)) << shift)
     })
 }
 
