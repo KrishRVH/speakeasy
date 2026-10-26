@@ -1,0 +1,18 @@
+# Licenses cargo-about may cite for the crates a package ships, in the order it prefers them when a
+# crate offers a choice. Packaging fails on a crate whose license this list cannot satisfy.
+accepted = [
+  "MIT",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  "BSL-1.0",
+  "MPL-2.0",
+  "CC0-1.0",
+]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+# Speakeasy's own crates are covered by LICENSE.
+private = { ignore = true }

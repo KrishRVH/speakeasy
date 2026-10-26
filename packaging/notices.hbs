@@ -1,0 +1,16 @@
+Third-party notices for Speakeasy
+
+Speakeasy is under the MIT License in LICENSE. This build includes the open-source crates below.
+Each license's text follows the crates that use it.
+{{#each licenses}}
+
+================================================================================
+{{{name}}}
+
+Used by:
+{{#each used_by}}
+- {{{crate.name}}} {{{crate.version}}}{{#if crate.repository}} ({{{crate.repository}}}){{/if}}
+{{/each}}
+
+{{{text}}}
+{{/each}}

@@ -26,8 +26,9 @@ if ($image.IndexOf('VCRUNTIME140', [StringComparison]::OrdinalIgnoreCase) -ge 0)
 }
 Copy-Item 'settings.example.json' $destination
 Copy-Item 'LICENSE' $destination
-Copy-Item 'vendor/gpui/LICENSE-APACHE' (Join-Path $destination 'GPUI-LICENSE-APACHE')
+cargo about generate --locked --fail -c packaging/about.toml --target x86_64-pc-windows-msvc -o "$destination/THIRD-PARTY-NOTICES.txt" packaging/notices.hbs
+if ($LASTEXITCODE -ne 0) { throw 'Third-party notices failed' }
 Copy-Item 'crates/app/assets/JosefinSans-OFL.txt' $destination
 Copy-Item 'crates/show/NOTICE.md' $destination
-Compress-Archive -LiteralPath "$destination/speakeasy.exe", "$destination/settings.example.json", "$destination/LICENSE", "$destination/GPUI-LICENSE-APACHE", "$destination/JosefinSans-OFL.txt", "$destination/NOTICE.md" -DestinationPath 'artifacts/speakeasy-windows-x64.zip' -Force
+Compress-Archive -LiteralPath "$destination/speakeasy.exe", "$destination/settings.example.json", "$destination/LICENSE", "$destination/THIRD-PARTY-NOTICES.txt", "$destination/JosefinSans-OFL.txt", "$destination/NOTICE.md" -DestinationPath 'artifacts/speakeasy-windows-x64.zip' -Force
 Write-Host "Built $destination"
