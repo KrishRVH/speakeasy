@@ -303,21 +303,18 @@ mod tests {
             })
         })?;
         worker.ready().await?;
-        {
-            let mut target = std::pin::pin!(worker.external_target(permit.clone()));
-            tokio::select! {
-                result = &mut target => bail!("Focus did not block: {result:?}"),
-                started = tokio::time::timeout(Duration::from_secs(1), blocked.recv()) => {
-                    started??;
-                },
-            }
-            input.deliver(Input::Cancel);
-            assert!(!permit.active());
-            release.send(())?;
-            assert!(!target.await?);
-            assert!(!permit.commit());
+        let mut target = std::pin::pin!(worker.external_target(permit.clone()));
+        tokio::select! {
+            result = &mut target => bail!("Focus did not block: {result:?}"),
+            started = tokio::time::timeout(Duration::from_secs(1), blocked.recv()) => {
+                started??;
+            },
         }
-        drop(worker);
+        input.deliver(Input::Cancel);
+        assert!(!permit.active());
+        release.send(())?;
+        assert!(!target.await?);
+        assert!(!permit.commit());
         Ok(())
     }
 
