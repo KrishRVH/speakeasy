@@ -84,9 +84,11 @@ mod tests {
             slow.step(Duration::from_secs(1) / 60, OMEGA);
         }
         assert!((fast.value() - slow.value()).abs() < 0.001);
+        // Retargeted mid-flight, the spring keeps its momentum and carries on before turning back.
         let interrupted_at = fast.value();
         fast.target = 72.0;
-        assert_eq!(fast.value(), interrupted_at);
+        fast.step(Duration::from_secs(1) / 120, OMEGA);
+        assert!(fast.value() > interrupted_at, "{}", fast.value());
         fast.step(Duration::from_secs(4), OMEGA);
         assert_eq!(fast.value(), 72.0);
     }
