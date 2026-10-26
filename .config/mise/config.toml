@@ -35,7 +35,7 @@ actionlint = "1.7.12"
 description = "Refresh workspace dependency requirements and check packaging can cite their licenses"
 run = [
   "cargo update --workspace",
-  "cargo about generate --locked --fail -c packaging/about.toml --target x86_64-pc-windows-msvc --target aarch64-apple-darwin --target x86_64-unknown-linux-gnu -o target/THIRD-PARTY-NOTICES.txt packaging/notices.hbs",
+  "mkdir -p target && cargo about generate --locked --fail -c packaging/about.toml --target x86_64-pc-windows-msvc --target aarch64-apple-darwin --target x86_64-unknown-linux-gnu -o target/THIRD-PARTY-NOTICES.txt packaging/notices.hbs",
 ]
 
 [tasks."rust:fmt"]

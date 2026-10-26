@@ -19,8 +19,8 @@ Use `mise run` for project workflows; run `mise tasks` and read the task you use
 
 Run `git`, `rg`, `tokei`, and focused native commands directly. Extend an existing task before
 adding one. Measure the routine gate cost before adding checks. Mutation testing, dependency
-advisory and license enforcement, secret-scanning gates, fuzzing, coverage targets, and ADR gates
-are outside this project's profile.
+advisory gates, secret-scanning gates, fuzzing, coverage targets, and ADR gates are outside this
+project's profile; dependency licenses are checked only where packaging must cite them.
 
 ## Ownership and interfaces
 
