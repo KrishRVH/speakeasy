@@ -1,6 +1,8 @@
-//! A portal restore token is a one-use credential, separate from preferences.
+//! The remote desktop portal's restore token: a one-use credential kept apart from preferences, in
+//! a private file under the user's XDG state directory.
 
 use std::{
+    ffi::OsString,
     fs,
     io::{ErrorKind, Read, Write},
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
@@ -23,13 +25,7 @@ impl TokenStore {
     /// Opens the per-user token store, or `None` when it is unusable; without one, the portal asks
     /// for consent again on each launch.
     pub(super) fn open() -> Option<Self> {
-        let root = std::env::var_os("XDG_STATE_HOME")
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-            .or_else(|| {
-                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state"))
-            })?;
-        Self::at(&root.join("speakeasy")).ok()
+        Self::at(&state_folder(std::env::var_os)?).ok()
     }
 
     fn at(directory: &Path) -> anyhow::Result<Self> {
@@ -86,6 +82,19 @@ impl TokenStore {
     }
 }
 
+/// Speakeasy's folder under the user's XDG state directory, which `var` looks up. A base that is
+/// unset or relative is refused rather than resolved against the working directory.
+fn state_folder(var: impl Fn(&'static str) -> Option<OsString>) -> Option<PathBuf> {
+    let absolute = |name| {
+        var(name)
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+    };
+    let base = absolute("XDG_STATE_HOME")
+        .or_else(|| absolute("HOME").map(|home| home.join(".local/state")))?;
+    Some(base.join("speakeasy"))
+}
+
 fn is_well_formed(token: &str) -> bool {
     token.len() <= MAX_TOKEN_LEN && !token.contains('\0')
 }
@@ -107,5 +116,39 @@ mod tests {
         fs::set_permissions(&store.path, fs::Permissions::from_mode(0o644))?;
         assert!(store.consume().is_err());
         Ok(())
+    }
+
+    fn lookup(vars: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<OsString> {
+        move |name| {
+            vars.iter()
+                .find(|&&(key, _)| key == name)
+                .map(|&(_, value)| value.into())
+        }
+    }
+
+    #[test]
+    fn the_state_folder_never_falls_back_to_the_working_directory() {
+        let unusable: [&[(&str, &str)]; 3] = [
+            &[],
+            &[("HOME", "")],
+            &[("XDG_STATE_HOME", "state"), ("HOME", "home")],
+        ];
+        for vars in unusable {
+            assert_eq!(state_folder(lookup(vars)), None, "{vars:?}");
+        }
+        assert_eq!(
+            state_folder(lookup(&[
+                ("XDG_STATE_HOME", "state"),
+                ("HOME", "/home/user")
+            ])),
+            Some(PathBuf::from("/home/user/.local/state/speakeasy"))
+        );
+        assert_eq!(
+            state_folder(lookup(&[
+                ("XDG_STATE_HOME", "/state"),
+                ("HOME", "/home/user")
+            ])),
+            Some(PathBuf::from("/state/speakeasy"))
+        );
     }
 }
