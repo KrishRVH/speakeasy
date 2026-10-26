@@ -40,15 +40,15 @@ impl Point {
     #[must_use]
     pub(crate) fn lerp(self, other: Self, t: f32) -> Self {
         Self::new(
-            (other.x - self.x).mul_add(t, self.x),
-            (other.y - self.y).mul_add(t, self.y),
+            self.x + (other.x - self.x) * t,
+            self.y + (other.y - self.y) * t,
         )
     }
 
     /// The dot product of two vectors.
     #[must_use]
     pub(crate) fn dot(self, other: Self) -> f32 {
-        self.x.mul_add(other.x, self.y * other.y)
+        self.x * other.x + self.y * other.y
     }
 
     /// The vector turned a quarter counterclockwise on screen.
@@ -64,8 +64,8 @@ impl Point {
         let offset = self - center;
         center
             + Self::new(
-                offset.x.mul_add(cos, -offset.y * sin),
-                offset.x.mul_add(sin, offset.y * cos),
+                offset.x * cos - offset.y * sin,
+                offset.x * sin + offset.y * cos,
             )
     }
 

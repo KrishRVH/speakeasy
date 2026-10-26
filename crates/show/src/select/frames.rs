@@ -146,7 +146,7 @@ impl<'a> Frames<'a> {
         Candidate {
             frame: after,
             span,
-            score: 30.0f32.mul_add(change, 60.0),
+            score: 60.0 + 30.0 * change,
             basis: Basis::Click(action),
         }
     }
@@ -204,7 +204,7 @@ pub(super) struct Transition {
 
 impl Transition {
     fn score(self) -> f32 {
-        40.0f32.mul_add(self.strength, 40.0)
+        40.0 + 40.0 * self.strength
     }
 
     pub(super) fn candidate(&self) -> Candidate {

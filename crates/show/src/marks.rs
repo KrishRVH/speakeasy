@@ -126,9 +126,7 @@ fn shape(strokes: &[Stroke], surface: Size) -> Shape {
                 stroke,
                 shape: stroke_shape(stroke, surface),
                 bounds,
-                size: bounds
-                    .width()
-                    .mul_add(surface.width, bounds.height() * surface.height),
+                size: bounds.width() * surface.width + bounds.height() * surface.height,
             })
         })
         .collect();
@@ -208,7 +206,7 @@ fn stroke_shape(stroke: &Stroke, surface: Size) -> Shape {
     let doubled_area = path
         .iter()
         .zip(path.iter().cycle().skip(1))
-        .map(|(one, next)| one.x.mul_add(next.y, -(next.x * one.y)))
+        .map(|(one, next)| one.x * next.y - next.x * one.y)
         .sum::<f32>();
     if width.hypot(height) < TAP_PIXELS {
         Shape::Tap
@@ -279,10 +277,7 @@ mod tests {
         let loop_points: Vec<[f32; 2]> = (0..=32_u8)
             .map(|step| {
                 let angle = TAU * f32::from(step) / 32.0;
-                [
-                    0.1f32.mul_add(angle.cos(), 0.5),
-                    0.2f32.mul_add(angle.sin(), 0.5),
-                ]
+                [0.5 + 0.1 * angle.cos(), 0.5 + 0.2 * angle.sin()]
             })
             .collect();
         let half_height = Size {
@@ -293,7 +288,7 @@ mod tests {
         // A flat loop around a wide control is still a circle; a flat zigzag is not.
         let flat: Vec<[f32; 2]> = loop_points
             .iter()
-            .map(|[x, y]| [x.mul_add(2.0, -0.5), y.mul_add(0.4, 0.3)])
+            .map(|[x, y]| [x * 2.0 - 0.5, y * 0.4 + 0.3])
             .collect();
         assert_eq!(shape_of(&flat, half_height), Shape::Circle);
         let zigzag = [

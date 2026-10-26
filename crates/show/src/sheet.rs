@@ -164,7 +164,7 @@ fn layout(aspects: &[f32], widths: &[f32]) -> ((u32, u32), Vec<Cell>) {
         .map(|row| sum(widths, row) + gaps(row) as f32)
         .fold(0.0, f32::max);
     let least = if aspects.len() == 1 { 640.0 } else { 960.0 };
-    let usable = (PADDING as f32).mul_add(-2.0, LONGEST_EDGE);
+    let usable = LONGEST_EDGE - 2.0 * PADDING as f32;
     let widest = if sheet_aspect >= 1.0 {
         usable
     } else {
@@ -390,22 +390,20 @@ impl<'a> Scorer<'a> {
             for aspect in self.aspects.get(row.clone()).unwrap_or_default() {
                 let share = aspect / row_aspect * sheet_aspect.min(1.0);
                 if share < NARROW_SHARE {
-                    cramping = ((NARROW_SHARE - share) / NARROW_SHARE)
-                        .powi(2)
-                        .mul_add(8.0, cramping);
+                    cramping += ((NARROW_SHARE - share) / NARROW_SHARE).powi(2) * 8.0;
                 }
             }
             let columns = row.len() as f32;
             if self.mean_aspect > 0.75 {
-                cramping = (columns - 4.0).max(0.0).mul_add(2.0, cramping);
+                cramping += (columns - 4.0).max(0.0) * 2.0;
             }
             if self.mean_aspect > 1.15 {
-                cramping = (columns - 3.0).max(0.0).mul_add(2.0, cramping);
+                cramping += (columns - 3.0).max(0.0) * 2.0;
             }
-            tie_break = (position as f32 * 1e-4).mul_add(columns, tie_break);
+            tie_break += position as f32 * 1e-4 * columns;
         }
-        let rows = (row_variance / row_count).mul_add(0.6, row_penalty / row_count * 0.4);
-        area_variance.mul_add(8.0, sheet_penalty + outliers + rows + cramping + tie_break)
+        let rows = (row_variance * 0.6 + row_penalty * 0.4) / row_count;
+        area_variance * 8.0 + sheet_penalty + outliers + rows + cramping + tie_break
     }
 }
 

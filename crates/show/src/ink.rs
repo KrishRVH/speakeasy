@@ -60,7 +60,7 @@ pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
         .filter(|point| point.is_finite())
         .collect();
     input.dedup();
-    let radius = |pressure: f32| size * THINNING.mul_add(pressure - 0.5, 0.5);
+    let radius = |pressure: f32| size * (0.5 + THINNING * (pressure - 0.5));
     match *input.as_slice() {
         [] => return Vec::new(),
         [center] => return dot(center, radius(0.25).max(0.01)),
@@ -83,9 +83,7 @@ pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
     // Pressure follows speed: slow movement presses harder and draws wider.
     let simulate = |pressure: f32, step: f32| {
         let speed = (step / size).min(1.0);
-        (1.0 - speed - pressure)
-            .mul_add(speed * 0.275, pressure)
-            .min(1.0)
+        (pressure + (1.0 - speed - pressure) * speed * 0.275).min(1.0)
     };
     let mut pressure = nodes.iter().take(10).fold(0.25, |pressure, node| {
         f32::midpoint(pressure, simulate(pressure, node.step))
@@ -167,7 +165,7 @@ pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
 /// The streamlined center line: each point pulled toward the last, and the first pen-width of
 /// travel skipped except for its last point, so the stroke's start does not wobble.
 fn nodes(input: &[Point], size: f32) -> Vec<Node> {
-    let pull = (1.0 - STREAMLINE).mul_add(0.85, 0.15);
+    let pull = 0.15 + (1.0 - STREAMLINE) * 0.85;
     let Some((&start, rest)) = input.split_first() else {
         return Vec::new();
     };

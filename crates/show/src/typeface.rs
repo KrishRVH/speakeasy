@@ -70,7 +70,7 @@ impl Typeface {
             // A glyph without an outline, such as a space, still advances the pen.
             self.face.outline_glyph(glyph, &mut pen);
             let advance = self.face.glyph_hor_advance(glyph).map_or(0.0, f32::from);
-            pen.origin.x = advance.mul_add(pen.scale, pen.origin.x);
+            pen.origin.x += advance * pen.scale;
         }
         pen.builder.finish()
     }
@@ -86,8 +86,8 @@ struct Pen {
 impl Pen {
     fn map(&self, x: f32, y: f32) -> (f32, f32) {
         (
-            x.mul_add(self.scale, self.origin.x),
-            y.mul_add(-self.scale, self.origin.y),
+            self.origin.x + x * self.scale,
+            self.origin.y - y * self.scale,
         )
     }
 }

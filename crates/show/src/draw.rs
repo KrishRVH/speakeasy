@@ -140,11 +140,11 @@ pub(crate) fn badge(
     let height = 28.0 * scale;
     let radius = 8.5 * scale;
     let inset = 2.5 * scale;
-    let cap_height = 2.0f32.mul_add(-inset, height);
+    let cap_height = height - 2.0 * inset;
     let number_width = typeface.width(&number, number_size);
-    let cap_width = 12.0f32.mul_add(scale, number_width).max(cap_height);
+    let cap_width = (number_width + 12.0 * scale).max(cap_height);
     let time_width = typeface.width(&time, time_size);
-    let width = 9.0f32.mul_add(scale, inset + cap_width + 7.0f32.mul_add(scale, time_width));
+    let width = inset + cap_width + 7.0 * scale + time_width + 9.0 * scale;
     let margin = 7.0 * scale;
     let left = match corner {
         Corner::Left => cell.left + margin,
@@ -155,16 +155,16 @@ pub(crate) fn badge(
 
     let shadow = Rect::from_origin(
         Point::new(left - scale, top - scale),
-        2.0f32.mul_add(scale, width),
-        2.0f32.mul_add(scale, height),
+        width + 2.0 * scale,
+        height + 2.0 * scale,
     );
     fill(canvas, rounded(shadow, radius + scale), [0, 0, 0, 96]);
     fill(canvas, rounded(frame, radius), [255, 255, 255, 78]);
     let border = (1.2 * scale).max(1.0);
     let body = Rect::from_origin(
         Point::new(left + border, top + border),
-        2.0f32.mul_add(-border, width).max(0.0),
-        2.0f32.mul_add(-border, height).max(0.0),
+        (width - 2.0 * border).max(0.0),
+        (height - 2.0 * border).max(0.0),
     );
     fill(
         canvas,
@@ -188,7 +188,7 @@ pub(crate) fn badge(
         [14, 15, 18, 255],
     );
     let time_origin = Point::new(
-        7.0f32.mul_add(scale, cap.right),
+        cap.right + 7.0 * scale,
         center_line + typeface.cap_height(time_size) / 2.0,
     );
     fill(

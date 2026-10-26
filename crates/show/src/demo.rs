@@ -247,7 +247,7 @@ impl Scene<'_, '_> {
             26.0,
         );
         self.fill(rounded(knob, 13.0), [255; 4]);
-        let percent = format!("{}%", 80.0f32.mul_add(value, 80.0).round());
+        let percent = format!("{}%", (80.0 + 80.0 * value).round());
         self.text(
             &percent,
             15.0,
@@ -263,7 +263,7 @@ impl Scene<'_, '_> {
             [48, 209, 88, 255],
         ];
         for (index, color) in swatches.into_iter().enumerate() {
-            let left = 34.0f32.mul_add(index as f32, 1_080.0);
+            let left = 1_080.0 + 34.0 * index as f32;
             let swatch = Rect::from_origin(Point::new(left, row_center(3) - 12.0), 24.0, 24.0);
             self.fill(rounded(swatch, 12.0), color);
         }
@@ -339,11 +339,11 @@ impl Scene<'_, '_> {
 }
 
 fn section_center(index: usize) -> f32 {
-    44.0f32.mul_add(index as f32, 160.0)
+    160.0 + 44.0 * index as f32
 }
 
 fn row_center(row: usize) -> f32 {
-    ROW_HEIGHT.mul_add(row as f32, ROW_TOP + ROW_HEIGHT / 2.0)
+    ROW_TOP + ROW_HEIGHT * (row as f32 + 0.5)
 }
 
 fn slider_y() -> f32 {
@@ -351,15 +351,15 @@ fn slider_y() -> f32 {
 }
 
 fn slider_x(value: f32) -> f32 {
-    (CONTROL_RIGHT - SLIDER_LEFT).mul_add(value, SLIDER_LEFT)
+    SLIDER_LEFT + (CONTROL_RIGHT - SLIDER_LEFT) * value
 }
 
 /// The slider follows the drag, easing between where it started and where it was let go.
 fn slider_value(at: u64) -> f32 {
     let progress =
         (at.saturating_sub(DRAG.0) as f32 / DRAG.1.saturating_sub(DRAG.0) as f32).clamp(0.0, 1.0);
-    let eased = progress * progress * 2.0f32.mul_add(-progress, 3.0);
-    0.35f32.mul_add(1.0 - eased, 0.7 * eased)
+    let eased = progress * progress * (3.0 - 2.0 * progress);
+    0.35 * (1.0 - eased) + 0.7 * eased
 }
 
 fn normalized(x: f32, y: f32) -> Point {
@@ -395,11 +395,11 @@ fn recording() -> Recording {
 fn strokes() -> Vec<Stroke> {
     let circle = (0..=36_u8).map(|step| {
         let turn = f32::from(step) / 36.0;
-        let angle = std::f32::consts::TAU.mul_add(turn * 1.08, -1.9);
-        let wobble = 0.04f32.mul_add((turn * 9.0).sin(), 1.0);
+        let angle = std::f32::consts::TAU * turn * 1.08 - 1.9;
+        let wobble = 1.0 + 0.04 * (turn * 9.0).sin();
         let point = Point::new(
-            (170.0 * wobble).mul_add(angle.cos(), 1_100.0),
-            (40.0 * wobble).mul_add(angle.sin(), row_center(0)),
+            1_100.0 + 170.0 * wobble * angle.cos(),
+            row_center(0) + 40.0 * wobble * angle.sin(),
         );
         (
             point,

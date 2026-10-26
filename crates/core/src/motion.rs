@@ -40,12 +40,10 @@ impl Spring {
         // v(t) = (v₀ − ω·slope·t)·e^(−ωt), where slope = v₀ + ω·x₀.
         let seconds = elapsed.as_secs_f32();
         let displacement = self.value - self.target;
-        let slope = omega.mul_add(displacement, self.velocity);
+        let slope = self.velocity + omega * displacement;
         let decay = (-omega * seconds).exp();
-        self.value = slope
-            .mul_add(seconds, displacement)
-            .mul_add(decay, self.target);
-        self.velocity = (omega * slope).mul_add(-seconds, self.velocity) * decay;
+        self.value = self.target + (displacement + slope * seconds) * decay;
+        self.velocity = (self.velocity - omega * slope * seconds) * decay;
         if self.settled() {
             self.snap();
         }
