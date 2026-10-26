@@ -63,6 +63,8 @@ fn write_bundle(
         },
         &typeface,
     );
+    // The bundle holds its encoded keyframes; the recorded frames, which can run to hundreds of
+    // megabytes, are freed before it is written.
     drop(journal);
     if cancelled() {
         return Ok(None);
