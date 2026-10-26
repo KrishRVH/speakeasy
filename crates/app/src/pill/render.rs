@@ -62,16 +62,11 @@ impl Pill {
                 .child(TRAY_HINT)
                 .into_any_element()
         } else if scene.phase == Phase::Error {
-            self.render_message(
-                Symbol::Attention,
-                palette.warn,
-                Some("Details in Settings"),
-                palette,
-            )
-            .into_any_element()
+            self.render_message(palette.warn, Some("Details in Settings"), palette)
+                .into_any_element()
         } else if scene.is_notice() {
             // Neither a success nor a warning: the text reached the clipboard, not the focused app.
-            self.render_message(Symbol::Attention, palette.muted, None, palette)
+            self.render_message(palette.muted, None, palette)
                 .into_any_element()
         } else if scene.has_slot() {
             self.render_slot(scene, palette).into_any_element()
@@ -80,21 +75,16 @@ impl Pill {
         }
     }
 
-    /// The snapshot's message beside `symbol`, clipped to two lines above an optional `footer`.
-    fn render_message(
-        &self,
-        symbol: Symbol,
-        color: u32,
-        footer: Option<&'static str>,
-        palette: &Palette,
-    ) -> Div {
+    /// The snapshot's message beside an attention mark in `color`, clipped to two lines above an
+    /// optional `footer`.
+    fn render_message(&self, color: u32, footer: Option<&'static str>, palette: &Palette) -> Div {
         div()
             .w_full()
             .px(px(14.0))
             .flex()
             .items_center()
             .gap(px(10.0))
-            .child(symbol.element(color))
+            .child(Symbol::Attention.element(color))
             .child(
                 div()
                     .flex_1()
@@ -166,8 +156,8 @@ impl Pill {
                         slot.child(
                             div()
                                 .absolute()
-                                .top(px(0.0))
-                                .left(px(0.0))
+                                .top_0()
+                                .left_0()
                                 .size_full()
                                 .pl(px(10.0))
                                 .flex()
@@ -213,33 +203,28 @@ impl Pill {
 
 fn slot_label(scene: &Scene, palette: &Palette) -> Option<AnyElement> {
     match scene.phase {
-        Phase::Starting => Some(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(7.0))
-                .child(Symbol::Microphone.element(palette.muted))
-                .child(div().text_size(px(12.0)).child("Opening mic…"))
-                .into_any_element(),
-        ),
+        Phase::Starting => Some(marked(Symbol::Microphone, palette.muted, "Opening mic…")),
         Phase::Empty => Some(
             div()
                 .text_size(px(12.0))
                 .child("No speech detected")
                 .into_any_element(),
         ),
-        Phase::Copied if scene.show => Some(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(7.0))
-                .child(Symbol::Check.element(palette.lamp))
-                .child(div().text_size(px(12.0)).child("Show copied"))
-                .into_any_element(),
-        ),
+        Phase::Copied if scene.show => Some(marked(Symbol::Check, palette.lamp, "Show copied")),
         Phase::Done => Some(Symbol::Check.element(palette.lamp).into_any_element()),
         _ => None,
     }
+}
+
+/// `text` after `symbol`, which is drawn in `color`.
+fn marked(symbol: Symbol, color: u32, text: &'static str) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(7.0))
+        .child(symbol.element(color))
+        .child(div().text_size(px(12.0)).child(text))
+        .into_any_element()
 }
 
 fn idle_mark(palette: &Palette) -> Div {
@@ -253,10 +238,7 @@ fn idle_mark(palette: &Palette) -> Div {
 fn brass_inlay(height: f32, palette: &Palette) -> Div {
     div()
         .absolute()
-        .top(px(2.5))
-        .left(px(2.5))
-        .right(px(2.5))
-        .bottom(px(2.5))
+        .inset(px(2.5))
         .rounded(px(height / 2.0 - 3.5))
         .border_1()
         .border_color(alpha(palette.lamp, 0.16))
