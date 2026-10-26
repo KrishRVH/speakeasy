@@ -54,8 +54,8 @@ impl Render for Scene {
                     },
                 )
                 .absolute()
-                .top(px(0.0))
-                .left(px(0.0))
+                .top_0()
+                .left_0()
                 .size_full(),
             )
     }
@@ -219,15 +219,11 @@ mod linux {
         let started = Instant::now();
         let deadline = started.checked_add(TIMEOUT).unwrap_or(started);
         loop {
-            match verify_pixels(&connection, window, scale, draws_path) {
-                Ok(()) => return Ok(()),
-                Err(error) => {
-                    if Instant::now() >= deadline {
-                        return Err(error);
-                    }
-                    Timer::after(POLL_INTERVAL).await;
-                },
+            let verified = verify_pixels(&connection, window, scale, draws_path);
+            if verified.is_ok() || Instant::now() >= deadline {
+                return verified;
             }
+            Timer::after(POLL_INTERVAL).await;
         }
     }
 

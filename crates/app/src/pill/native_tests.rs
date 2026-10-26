@@ -186,10 +186,7 @@ async fn check_late_window(cx: &AsyncApp) -> anyhow::Result<()> {
     })??;
     let (connection, _) = XCBConnection::connect(None)?;
     let geometry = connection.get_geometry(id)?.reply()?;
-    let started = Instant::now();
-    let deadline = started
-        .checked_add(Duration::from_secs(3))
-        .unwrap_or(started);
+    let deadline = Instant::now().checked_add(Duration::from_secs(3)).unwrap();
     loop {
         Timer::after(Duration::from_millis(50)).await;
         let image = connection
