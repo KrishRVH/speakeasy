@@ -21,6 +21,8 @@ public static class DemoWindows {
     public struct Rect { public int Left, Top, Right, Bottom; }
 }
 '@ -ReferencedAssemblies System.Drawing
+# -4 is per-monitor DPI awareness (v2), so window rectangles are in the physical pixels that
+# WindowFromPhysicalPoint takes.
 $previousDpi = [DemoWindows]::SetThreadDpiAwarenessContext([IntPtr](-4))
 $process = New-Object Diagnostics.Process
 $process.StartInfo.FileName = $Executable

@@ -75,6 +75,7 @@ pub(super) struct Readback {
     pub(super) source: [u32; 2],
     /// The size delivered: that of the first mip level whose long edge fits.
     pub(super) size: [u32; 2],
+    /// That mip level, zero when the frame already fits.
     pub(super) level: u32,
     /// The frame and its halvings, while it needs halving.
     mips: Option<Mips>,
