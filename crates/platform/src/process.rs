@@ -36,6 +36,7 @@ use crate::windows::{ok_or_last_error, take_handle};
 
 /// Owns a kill-on-close job containing the local speech worker.
 #[cfg(target_os = "windows")]
+#[derive(Debug)]
 pub struct ProcessGroup(OwnedHandle);
 
 #[cfg(target_os = "windows")]
@@ -88,6 +89,14 @@ impl ProcessGroup {
 
     /// Records that the caller reaped the group leader. A job names its members by handle, not by
     /// process identifier, so it keeps terminating any surviving children; nothing changes.
+    #[expect(
+        clippy::unused_self,
+        reason = "Unix forgets the leader here; callers share one signature on every platform"
+    )]
+    #[expect(
+        clippy::needless_pass_by_ref_mut,
+        reason = "Unix forgets the leader here; callers share one signature on every platform"
+    )]
     pub fn leader_reaped(&mut self) {}
 
     /// Reports whether at least one IPv4 listener exists on 127.0.0.1:`port` and every one belongs
@@ -181,6 +190,7 @@ fn listener_owners(table: &[u32], port: u16) -> Vec<u32> {
 
 /// Owns termination of a child process group until its leader is reaped.
 #[cfg(unix)]
+#[derive(Debug)]
 pub struct ProcessGroup(Option<libc::pid_t>);
 
 #[cfg(unix)]

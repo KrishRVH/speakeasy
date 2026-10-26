@@ -183,7 +183,7 @@ impl Action {
 }
 
 /// The narration, as the recognizer reported it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Narration {
     /// Words with the moments they were spoken, in order; empty when nothing was said.
@@ -195,6 +195,16 @@ pub enum Narration {
 impl Default for Narration {
     fn default() -> Self {
         Self::Words(Vec::new())
+    }
+}
+
+/// Leaves out untimed text, which is the user's speech; timed words redact their own.
+impl fmt::Debug for Narration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Words(words) => f.debug_tuple("Words").field(words).finish(),
+            Self::Text(text) => f.debug_struct("Text").field("bytes", &text.len()).finish(),
+        }
     }
 }
 
@@ -227,12 +237,22 @@ impl Narration {
 }
 
 /// A recognized word and when it was spoken.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Word {
     /// When the word was spoken.
     pub span: Span,
     /// The word as recognized, with any attached punctuation.
     pub text: String,
+}
+
+/// Leaves out the word, which is the user's speech.
+impl fmt::Debug for Word {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { span, text: _ } = self;
+        f.debug_struct("Word")
+            .field("span", span)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Word {
@@ -265,5 +285,23 @@ mod tests {
         assert_eq!(serde_json::from_str::<Stroke>(&json).unwrap(), stroke);
         assert!(Stroke::new(Vec::new()).is_none());
         assert!(serde_json::from_str::<Stroke>("[]").is_err());
+    }
+
+    #[test]
+    fn debugging_narration_never_prints_what_was_said() {
+        let shown = |said: &str| {
+            let word = Word {
+                span: Span::new(Moment::from_millis(0), Moment::from_millis(200)),
+                text: said.to_owned(),
+            };
+            format!(
+                "{:?}",
+                [
+                    Narration::Words(vec![word]),
+                    Narration::Text(said.to_owned())
+                ]
+            )
+        };
+        assert_eq!(shown("alpha"), shown("omega"));
     }
 }

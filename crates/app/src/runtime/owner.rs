@@ -672,8 +672,8 @@ impl<P: Ports> Owner<P> {
             message: self.message().to_owned(),
             model: self.worker.model(),
             desktop_ready: self.desktop_ready,
-            shortcut: self.shortcut.clone(),
-            cancel_shortcut: self.cancel_shortcut.clone(),
+            shortcut: Arc::clone(&self.shortcut),
+            cancel_shortcut: Arc::clone(&self.cancel_shortcut),
         };
         self.snapshots.send_if_modified(|published| {
             if published.epoch != self.epoch || *published == snapshot {

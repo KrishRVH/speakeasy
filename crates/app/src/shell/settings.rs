@@ -54,7 +54,7 @@ impl Settings {
     pub(super) fn new(
         config: Config,
         mut updates: watch::Receiver<Snapshot>,
-        cx: &Context<Self>,
+        cx: &Context<'_, Self>,
     ) -> Self {
         let services = cx.global::<Services>();
         let presentation = Presentation::new(&updates.borrow_and_update(), services);
@@ -90,7 +90,7 @@ impl Settings {
         view
     }
 
-    fn apply_snapshot(&mut self, snapshot: &Snapshot, cx: &mut Context<Self>) {
+    fn apply_snapshot(&mut self, snapshot: &Snapshot, cx: &mut Context<'_, Self>) {
         let presentation = Presentation::new(snapshot, cx.global::<Services>());
         if self.presentation != presentation {
             self.presentation = presentation;
@@ -98,7 +98,7 @@ impl Settings {
         }
     }
 
-    fn act(&mut self, action: Action, window: &Window, cx: &mut Context<Self>) {
+    fn act(&mut self, action: Action, window: &Window, cx: &mut Context<'_, Self>) {
         if cx.global::<Services>().quitting() {
             return;
         }
@@ -184,7 +184,7 @@ impl Settings {
         }
     }
 
-    fn refresh_microphones(&mut self, cx: &Context<Self>) {
+    fn refresh_microphones(&mut self, cx: &Context<'_, Self>) {
         // The demo is simulated and never touches audio devices. A scan stuck in a driver keeps its
         // detached thread, so a second Refresh would only strand another.
         if is_demo(cx) || self.microphone_scan.is_some() {
@@ -208,7 +208,7 @@ impl Settings {
         }));
     }
 
-    fn choose(&mut self, file: EngineFile, window: &Window, cx: &Context<Self>) {
+    fn choose(&mut self, file: EngineFile, window: &Window, cx: &Context<'_, Self>) {
         if self.file_picker.is_some() {
             return;
         }
@@ -234,7 +234,7 @@ impl Settings {
         &mut self,
         result: anyhow::Result<Option<PathBuf>>,
         file: EngineFile,
-        cx: &mut Context<Self>,
+        cx: &mut Context<'_, Self>,
     ) {
         match result {
             Ok(Some(path)) => {
@@ -255,7 +255,7 @@ impl Settings {
         cx.notify();
     }
 
-    pub(super) fn play(&mut self, cx: &Context<Self>) {
+    pub(super) fn play(&mut self, cx: &Context<'_, Self>) {
         let services = cx.global::<Services>();
         let (output, meter, canvas) = (
             services.output.clone(),
@@ -265,14 +265,14 @@ impl Settings {
         self.preview = Some(cx.spawn(async move |_, _| demo::play(output, meter, canvas).await));
     }
 
-    fn toggle_setup(&mut self, cx: &Context<Self>) {
+    fn toggle_setup(&mut self, cx: &Context<'_, Self>) {
         match self.setup.take() {
             Some(setup) => self.pause_setup(setup, cx),
             None => self.start_setup(cx),
         }
     }
 
-    pub(super) fn start_setup(&mut self, cx: &Context<Self>) {
+    pub(super) fn start_setup(&mut self, cx: &Context<'_, Self>) {
         if cx.global::<Services>().quitting() {
             return;
         }
@@ -299,7 +299,7 @@ impl Settings {
         self.setup = Some((setup, follow_setup));
     }
 
-    fn pause_setup(&mut self, (setup, follow_setup): (Setup, Task<()>), cx: &Context<Self>) {
+    fn pause_setup(&mut self, (setup, follow_setup): (Setup, Task<()>), cx: &Context<'_, Self>) {
         drop(follow_setup);
         setup.request_stop();
         let stopped = setup.stopped();
@@ -316,7 +316,11 @@ impl Settings {
         ));
     }
 
-    fn finish_setup(&mut self, outcome: Option<anyhow::Result<Installed>>, cx: &mut Context<Self>) {
+    fn finish_setup(
+        &mut self,
+        outcome: Option<anyhow::Result<Installed>>,
+        cx: &mut Context<'_, Self>,
+    ) {
         self.setup = None;
         match outcome {
             Some(Ok(installed)) => {
@@ -340,7 +344,7 @@ impl Settings {
         }
     }
 
-    fn save(&mut self, cx: &mut Context<Self>) {
+    fn save(&mut self, cx: &mut Context<'_, Self>) {
         let services = cx.global::<Services>();
         // A demo is simulated yet keeps the real settings path, so it must never write there.
         if services.quitting() || services.mode.is_demo() {
@@ -358,7 +362,7 @@ impl Settings {
         cx.notify();
     }
 
-    fn advance_save(&mut self, progress: SaveProgress, cx: &mut Context<Self>) {
+    fn advance_save(&mut self, progress: SaveProgress, cx: &mut Context<'_, Self>) {
         match progress {
             SaveProgress::Writing(result) => self.saving = Some(Self::follow_write(result, cx)),
             SaveProgress::Finished {
@@ -372,7 +376,10 @@ impl Settings {
         }
     }
 
-    fn follow_write(result: Receiver<anyhow::Result<SavedConfig>>, cx: &Context<Self>) -> Task<()> {
+    fn follow_write(
+        result: Receiver<anyhow::Result<SavedConfig>>,
+        cx: &Context<'_, Self>,
+    ) -> Task<()> {
         cx.spawn(async move |this, cx| {
             let completed = result.recv().await.unwrap_or_else(|_| {
                 Err(anyhow::anyhow!(
@@ -392,7 +399,7 @@ impl Settings {
         saved: Option<Box<SavedConfig>>,
         error: Option<String>,
         epoch: ConfigEpoch,
-        cx: &mut Context<Self>,
+        cx: &mut Context<'_, Self>,
     ) {
         let Some(saved) = saved else {
             self.notice = error.map(|error| Notice::Problem(error.into()));
@@ -474,8 +481,8 @@ impl Presentation {
         let status = services.status(snapshot);
         Self {
             indicator: status.indicator,
-            shortcut: snapshot.shortcut.clone(),
-            cancel_shortcut: snapshot.cancel_shortcut.clone(),
+            shortcut: Arc::clone(&snapshot.shortcut),
+            cancel_shortcut: Arc::clone(&snapshot.cancel_shortcut),
             message: if snapshot.message.is_empty() {
                 status.description.into_owned()
             } else {

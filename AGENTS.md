@@ -47,9 +47,15 @@ are outside this project's profile.
 - Handle external failures with explicit errors or events. Use iterators or checked access and
   choose checked, saturating, or wrapping arithmetic according to the domain. Never let a panic
   cross FFI or include private content in errors.
+- Production code returns errors instead of asserting; it keeps only `const` assertions and
+  `debug_assert!`s on internal contracts that release builds may skip. It writes output through
+  fallible I/O, such as `writeln!` on a locked handle, and discards a `#[must_use]` value only with
+  `let _ =` under a reasoned `clippy::let_underscore_must_use` expectation: `_ =`, `drop(...)`, and
+  empty error arms hide discards from the gate.
 - Never use `#[allow]`. A necessary exception uses one lint in a reasoned
-  `#[expect(lint, reason = "...")]` on the smallest relevant item. Stale expectations fail. Tests
-  may assert and unwrap invariants they establish.
+  `#[expect(lint, reason = "...")]` on the smallest relevant item, never on a whole module, `impl`,
+  or `trait` for a panic lint outside tests. Stale expectations fail. Tests may print, and may
+  assert and unwrap invariants they establish.
 
 ## App contracts
 
@@ -62,7 +68,7 @@ upload, or silent provider switching. A Show is the one record Speakeasy keeps: 
 captured only after the user asks, frames leave out Speakeasy's windows, and bundles stay private to
 the user and expire after seven days unless pinned. Preserve user settings and edits. Keep secrets
 in ignored local `.env` files; never print keys, recorded audio, screen pixels, transcript text, or
-engine output. Models and generated artifacts stay out of Git.
+engine output, including through `Debug`. Models and generated artifacts stay out of Git.
 
 ## Tests and review
 

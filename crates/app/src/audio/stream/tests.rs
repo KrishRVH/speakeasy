@@ -23,7 +23,7 @@ fn callback_fixture(
     let state = CallbackState {
         channels: NonZeroUsize::new(channels).unwrap(),
         producer,
-        control: control.clone(),
+        control: Arc::clone(&control),
         errors,
         started: Instant::now(),
         limit,

@@ -16,14 +16,14 @@ use tokio::sync::watch;
 
 pub(crate) trait EntityUpdate<T> {
     /// The `Flatten` bound mirrors `WeakEntity::update`, so both `App` and `AsyncApp` qualify.
-    fn update_if_alive<C>(&self, cx: &mut C, update: impl FnOnce(&mut T, &mut Context<T>))
+    fn update_if_alive<C>(&self, cx: &mut C, update: impl FnOnce(&mut T, &mut Context<'_, T>))
     where
         C: AppContext,
         anyhow::Result<C::Result<()>>: Flatten<()>;
 }
 
 impl<T: 'static> EntityUpdate<T> for WeakEntity<T> {
-    fn update_if_alive<C>(&self, cx: &mut C, update: impl FnOnce(&mut T, &mut Context<T>))
+    fn update_if_alive<C>(&self, cx: &mut C, update: impl FnOnce(&mut T, &mut Context<'_, T>))
     where
         C: AppContext,
         anyhow::Result<C::Result<()>>: Flatten<()>,
@@ -40,7 +40,7 @@ pub(crate) trait WindowUpdate<V> {
     fn update_if_open<C: AppContext>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut V, &mut Window, &mut Context<V>),
+        update: impl FnOnce(&mut V, &mut Window, &mut Context<'_, V>),
     );
 }
 
@@ -48,7 +48,7 @@ impl<V: Render> WindowUpdate<V> for WindowHandle<V> {
     fn update_if_open<C: AppContext>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut V, &mut Window, &mut Context<V>),
+        update: impl FnOnce(&mut V, &mut Window, &mut Context<'_, V>),
     ) {
         #[expect(
             clippy::let_underscore_must_use,
@@ -85,9 +85,9 @@ pub(crate) fn native_window(window: &Window, name: &str) -> anyhow::Result<Nativ
 /// released before the view updates, so a publisher on another thread never waits on GPUI.
 pub(crate) fn follow<V: 'static, T: 'static, U: 'static>(
     mut updates: watch::Receiver<T>,
-    cx: &Context<V>,
+    cx: &Context<'_, V>,
     select: impl Fn(&T) -> U + 'static,
-    mut apply: impl FnMut(&mut V, U, &mut Context<V>) + 'static,
+    mut apply: impl FnMut(&mut V, U, &mut Context<'_, V>) + 'static,
 ) -> Task<()> {
     updates.mark_changed();
     cx.spawn(async move |view, cx| {

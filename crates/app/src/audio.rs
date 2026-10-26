@@ -72,7 +72,7 @@ impl Capture {
         let control = Arc::new(Control::default());
         let (exit, alive) = async_channel::bounded::<Infallible>(1);
         let thread = thread::Builder::new().name("audio-capture".into()).spawn({
-            let control = control.clone();
+            let control = Arc::clone(&control);
             move || {
                 // A panicked capture's state is discarded; only its event lane is used afterwards.
                 let result = panic::catch_unwind(AssertUnwindSafe(|| work(&events, &control)))
@@ -219,7 +219,7 @@ impl Recorder {
         let callbacks = CallbackState {
             channels,
             producer,
-            control: control.clone(),
+            control: Arc::clone(control),
             errors,
             started,
             limit,

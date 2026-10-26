@@ -66,7 +66,11 @@ zbus = { version = "5.19.0", default-features = false }
 
 [workspace.lints.rust]
 future_incompatible = { level = "deny", priority = -1 }
-# Public interfaces must be documented and reachable.
+# Borrows stay visible in paths (`Formatter<'_>`), and inferable outlives bounds go.
+rust_2018_idioms = { level = "deny", priority = -1 }
+# Public interfaces must be documented and reachable, and implement `Debug` so failures can show
+# them.
+missing_debug_implementations = "deny"
 missing_docs = "deny"
 unexpected_cfgs = "deny"
 unreachable_pub = "deny"
@@ -114,6 +118,15 @@ unwrap_used = "deny"
 let_underscore_must_use = "deny"
 map_err_ignore = "deny"
 unused_result_ok = "deny"
+
+# The print macros panic when the stream closes; program output goes through fallible I/O.
+print_stderr = "deny"
+print_stdout = "deny"
+
+# Immutable `Arc` snapshots are the permitted sharing: `Arc::clone` keeps shared ownership visible
+# at the call site, and `Arc<str>` or `Arc<[T]>` avoids a growable buffer behind a second pointer.
+clone_on_ref_ptr = "deny"
+rc_buffer = "deny"
 
 # Dependency hygiene.
 wildcard_dependencies = "deny"

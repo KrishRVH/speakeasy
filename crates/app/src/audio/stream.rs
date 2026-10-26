@@ -88,7 +88,7 @@ where
         started,
         limit,
     } = state;
-    let error_control = control.clone();
+    let error_control = Arc::clone(&control);
     let mut queued_total = 0_usize;
     (
         move |data: &[T]| {

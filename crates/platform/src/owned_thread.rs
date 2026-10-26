@@ -8,6 +8,7 @@ use std::{convert::Infallible, io, thread};
 /// Dropping it joins the thread, so the thread's captures are released before any field declared
 /// after it in the containing value. [`exited`](Self::exited) lets an async owner wait for the body
 /// to finish without blocking its executor.
+#[derive(Debug)]
 pub struct OwnedThread {
     /// Never sends; it closes once the thread drops the receiving end.
     exit: async_channel::Sender<Infallible>,
@@ -78,6 +79,7 @@ impl Drop for OwnedThread {
 ///
 /// Dropping it closes the lane before joining, so the body is asked to stop before the drop waits
 /// for it, however the containing value orders its fields.
+#[derive(Debug)]
 pub struct StoppableThread {
     /// Never sends; closing it asks the body to stop.
     stop: async_channel::Sender<Infallible>,

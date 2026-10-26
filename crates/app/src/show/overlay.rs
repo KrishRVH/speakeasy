@@ -142,7 +142,7 @@ struct Overlay {
 }
 
 impl Overlay {
-    fn new(canvas: watch::Receiver<Canvas>, window: &Window, cx: &Context<Self>) -> Self {
+    fn new(canvas: watch::Receiver<Canvas>, window: &Window, cx: &Context<'_, Self>) -> Self {
         Self {
             _updates: follow(canvas.clone(), cx, Canvas::display, Self::cover),
             canvas,
@@ -154,7 +154,7 @@ impl Overlay {
     }
 
     /// Moves onto `display` and shows, or hides when there is none, then redraws the ink.
-    fn cover(&mut self, display: Option<Display>, cx: &mut Context<Self>) {
+    fn cover(&mut self, display: Option<Display>, cx: &mut Context<'_, Self>) {
         if display != self.display {
             self.display = display;
             self.visibility = Some(defer_native(
@@ -176,7 +176,7 @@ fn place(native: &NativeWindow, display: Option<Display>) {
 }
 
 impl Render for Overlay {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let now = Instant::now();
         let ink = self.canvas.borrow().clone();
         let opacity = ink.opacity(now);

@@ -1,7 +1,7 @@
 //! The `StatusNotifierItem` tray icon and its dbusmenu, served on an owned D-Bus thread. Menu
 //! clicks reach the UI only for enabled entries, and tray failure leaves the app usable.
 
-use std::{collections::HashMap, convert::Infallible, time::Duration};
+use std::{collections::HashMap, convert::Infallible, fmt, time::Duration};
 
 use anyhow::Context;
 use async_channel::{Receiver, Sender};
@@ -53,8 +53,24 @@ pub struct TrayPresentation {
     pub menu: TrayMenu,
 }
 
+/// Leaves out the icon's 4 KiB of pixels.
+impl fmt::Debug for TrayPresentation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            rgba: _,
+            description,
+            menu,
+        } = self;
+        f.debug_struct("TrayPresentation")
+            .field("description", description)
+            .field("menu", menu)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Owns the D-Bus tray thread, which is asked to stop before it joins; its update lane closes once
 /// the thread ends.
+#[derive(Debug)]
 pub struct NativeTray {
     _thread: StoppableThread,
     updates: Sender<TrayPresentation>,

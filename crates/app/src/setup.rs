@@ -34,7 +34,7 @@ use crate::{
     http::client_builder,
 };
 
-const MODEL: Download = Download {
+const MODEL: Download<'static> = Download {
     url: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/parakeet-tdt-0.6b-v3.q8_0.gguf",
     size: 713_975_456,
     sha256: "e3880d0aaaaf2c308ea2c35016b2b895c423eb3fda924c1b463d1c19b7f4d32e",

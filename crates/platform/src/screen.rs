@@ -7,7 +7,7 @@
 pub(crate) mod geometry;
 
 use std::{
-    thread,
+    fmt, thread,
     time::{Duration, Instant},
 };
 
@@ -39,7 +39,25 @@ pub struct Frame {
     pub bgra: Vec<u8>,
 }
 
+/// Leaves out the pixels, which show the user's screen.
+impl fmt::Debug for Frame {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            captured,
+            width,
+            height,
+            bgra: _,
+        } = self;
+        f.debug_struct("Frame")
+            .field("captured", captured)
+            .field("width", width)
+            .field("height", height)
+            .finish_non_exhaustive()
+    }
+}
+
 /// What a running capture reports.
+#[derive(Debug)]
 pub enum ScreenEvent {
     /// A new image of the display.
     Frame(Frame),
@@ -82,6 +100,7 @@ pub struct PointerSample {
 }
 
 /// Captures the display under the pointer on an owned thread until stopped.
+#[derive(Debug)]
 pub struct ScreenCapture {
     display: Display,
     thread: StoppableThread,
@@ -131,6 +150,7 @@ impl ScreenCapture {
 }
 
 /// Samples the pointer over a display on an owned thread until stopped.
+#[derive(Debug)]
 pub struct PointerMonitor {
     thread: StoppableThread,
 }
@@ -231,4 +251,24 @@ mod unsupported {
     }
 
     pub(super) const fn set_overlay_visible(_: &NativeWindow, _: bool) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debugging_a_frame_never_prints_its_pixels() {
+        let captured = Instant::now();
+        let shown = |shade: u8| {
+            let frame = Frame {
+                captured,
+                width: 2,
+                height: 2,
+                bgra: vec![shade; 16],
+            };
+            format!("{frame:?}")
+        };
+        assert_eq!(shown(0x00), shown(0xFF));
+    }
 }

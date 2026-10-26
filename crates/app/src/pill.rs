@@ -126,7 +126,7 @@ impl Pill {
         reduced_motion: bool,
         theme: Theme,
         window: &Window,
-        cx: &Context<Self>,
+        cx: &Context<'_, Self>,
     ) -> Self {
         let now = Instant::now();
         Self {
@@ -161,7 +161,7 @@ impl Pill {
     }
 
     /// Shows the tray hint unless the pill is already visible; returns whether it did.
-    pub(crate) fn tray_hint(&mut self, cx: &mut Context<Self>) -> bool {
+    pub(crate) fn tray_hint(&mut self, cx: &mut Context<'_, Self>) -> bool {
         if self.visible {
             return false;
         }
@@ -172,7 +172,7 @@ impl Pill {
         true
     }
 
-    fn apply_snapshot(&mut self, snapshot: Snapshot, cx: &mut Context<Self>) {
+    fn apply_snapshot(&mut self, snapshot: Snapshot, cx: &mut Context<'_, Self>) {
         let now = Instant::now();
         let previous = &self.snapshot;
         let new_session = snapshot.id != previous.id;
@@ -202,7 +202,7 @@ impl Pill {
 
     /// Adds `meter` to the level history while the current snapshot records the session it
     /// measured; a level that arrives before its session's snapshot or after it ends is dropped.
-    fn apply_meter(&mut self, meter: Meter, cx: &mut Context<Self>) {
+    fn apply_meter(&mut self, meter: Meter, cx: &mut Context<'_, Self>) {
         let snapshot = &self.snapshot;
         if snapshot.phase != Phase::Recording
             || meter.epoch != snapshot.epoch
@@ -296,7 +296,7 @@ impl Pill {
 
     /// Redraws on the first native frame at or after `frame_due`, staying in display sync without a
     /// repeating timer or redraws between deadlines.
-    fn request_deadline_frame(&mut self, window: &Window, cx: &Context<Self>) {
+    fn request_deadline_frame(&mut self, window: &Window, cx: &Context<'_, Self>) {
         if self.frame_pending {
             return;
         }
@@ -317,7 +317,7 @@ impl Pill {
         });
     }
 
-    fn schedule_wake(&mut self, delay: Option<Duration>, cx: &Context<Self>) {
+    fn schedule_wake(&mut self, delay: Option<Duration>, cx: &Context<'_, Self>) {
         if self.wake.is_none()
             && let Some(delay) = delay
         {
@@ -333,7 +333,7 @@ impl Pill {
 }
 
 impl Render for Pill {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let now = Instant::now();
         let since_frame = if self.animating {
             now.duration_since(self.frame_at)

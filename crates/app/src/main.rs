@@ -23,7 +23,12 @@ mod theme;
 mod transcript;
 mod tray;
 
-use std::{borrow::Cow, path::PathBuf, process::ExitCode};
+use std::{
+    borrow::Cow,
+    io::{self, Write},
+    path::PathBuf,
+    process::ExitCode,
+};
 
 use anyhow::{Context as _, bail, ensure};
 use gpui::{App, Application, BorrowAppContext};
@@ -100,18 +105,8 @@ fn main() -> ExitCode {
         attach_console();
     }
     match invocation {
-        Ok(Invocation::Help) => {
-            print_help();
-            ExitCode::SUCCESS
-        },
-        // Commands report to the terminal that ran them, not in a dialog.
-        Ok(Invocation::Show(command)) => match command.and_then(show::Command::run) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                eprintln!("speakeasy: {error:#}");
-                ExitCode::FAILURE
-            },
-        },
+        Ok(Invocation::Help) => report(print_help().map_err(anyhow::Error::from)),
+        Ok(Invocation::Show(command)) => report(command.and_then(show::Command::run)),
         Ok(Invocation::App(cli)) => match run(cli) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
@@ -240,28 +235,51 @@ fn attach_console() {
     speakeasy_platform::attach_console();
 }
 
-fn print_help() {
+/// Commands report to the terminal that ran them, not in a dialog.
+fn report(outcome: anyhow::Result<()>) -> ExitCode {
+    match outcome {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "stderr is the last channel left to report a failed command"
+            )]
+            let _ = writeln!(io::stderr().lock(), "speakeasy: {error:#}");
+            ExitCode::FAILURE
+        },
+    }
+}
+
+fn print_help() -> io::Result<()> {
+    let mut out = io::stdout().lock();
     let commands = if cfg!(target_os = "linux") {
         " | --toggle | --cancel"
     } else {
         ""
     };
-    println!("speakeasy [--config PATH] [--demo | --demo-tray{commands}]\nShortcut: {SHORTCUT}");
+    writeln!(
+        out,
+        "speakeasy [--config PATH] [--demo | --demo-tray{commands}]\nShortcut: {SHORTCUT}"
+    )?;
     if cfg!(target_os = "linux") {
-        println!(
+        writeln!(
+            out,
             "Hold to dictate or double-tap for hands-free. {CANCEL_SHORTCUT} cancels. Desktop-approved bindings may differ.\n--toggle / --cancel control a running app when Desktop bindings is enabled."
-        );
+        )?;
     } else {
-        println!(
+        writeln!(
+            out,
             "Hold to dictate; add Space or double-tap for hands-free, or S to record a Show. {CANCEL_SHORTCUT} cancels."
-        );
+        )?;
     }
-    println!(
+    writeln!(
+        out,
         "--demo uses simulated audio without the microphone, global shortcut, model, or clipboard.\n--demo-tray also previews native tray, minimize, close and relaunch behavior."
-    );
-    println!(
+    )?;
+    writeln!(
+        out,
         "speakeasy show demo [--out NEW_DIR] writes a scripted Show bundle and prints its summary."
-    );
+    )
 }
 
 /// Splits the launch state into the settings to apply, if any, and the first snapshot.

@@ -19,7 +19,7 @@ pub struct DispatchRetained<T>(Arc<T>);
 
 impl<T> Clone for DispatchRetained<T> {
     fn clone(&self) -> Self {
-        Self(self.0.clone())
+        Self(Arc::clone(&self.0))
     }
 }
 

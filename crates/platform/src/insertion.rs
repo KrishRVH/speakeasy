@@ -32,7 +32,7 @@ pub(crate) const PASTE_AFTER_RELEASE: Inserted =
 ///
 /// That thread performs one insertion at a time, and each keeps its turn through its native work
 /// even if the caller stops waiting, so a cancelled request never races a newer clipboard write.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Inserter {
     requests: Sender<Insertion>,
 }

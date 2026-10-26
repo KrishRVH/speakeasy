@@ -98,7 +98,7 @@ async fn capture_retirement_signals_cancel_and_waits_for_teardown() -> anyhow::R
     let (started, starting) = async_channel::bounded(1);
     let (release, waiting) = async_channel::bounded(1);
     let capture = Capture::spawn(SessionId::FIRST, events, move |_, control| {
-        started.send_blocking(control.clone())?;
+        started.send_blocking(Arc::clone(control))?;
         waiting.recv_blocking()?;
         Ok(Captured {
             outcome: Ok(None),
@@ -149,7 +149,7 @@ async fn consumer_wakes(cancel: bool, wake_before_park: bool) -> anyhow::Result<
     let (events, audio) = async_channel::bounded(1);
     let (armed, arming) = async_channel::bounded(1);
     let gate = Arc::new((Mutex::new(!wake_before_park), Condvar::new()));
-    let waiting = gate.clone();
+    let waiting = Arc::clone(&gate);
     let capture = Capture::spawn(SessionId::FIRST, events, move |_, control| {
         // Arm after reading the control, so a lost notification cannot pass by finishing before
         // the thread enters its wait.

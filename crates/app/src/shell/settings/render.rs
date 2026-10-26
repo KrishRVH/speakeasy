@@ -29,7 +29,7 @@ const TEXT: Pixels = px(12.0);
 const EDGE: Pixels = px(32.0);
 
 impl Render for Settings {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let palette = self.config.theme.palette();
         let ui = Ui { palette, cx };
         let unconfigured = !is_demo(cx) && self.config.needs_engine();

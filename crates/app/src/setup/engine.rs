@@ -24,49 +24,49 @@ use super::{
 use crate::child::hidden_command;
 
 #[cfg(target_os = "windows")]
-const CUDA: Download = Download {
+const CUDA: Download<'static> = Download {
     url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/nemo-speech-0.2.0-windows-x86_64-cuda.zip",
     size: 102_183_465,
     sha256: "9ffe5e842c39a7d3211f3b2c3b3aa1bca8c0b2455d96d961ed5f22ec5108f98d",
 };
 
 #[cfg(target_os = "windows")]
-const VULKAN: Download = Download {
+const VULKAN: Download<'static> = Download {
     url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/nemo-speech-0.2.0-windows-x86_64-vulkan.zip",
     size: 19_302_464,
     sha256: "edf15a04ba98740aa0ab75ae4681ac7ad0a488b22b35ce2cbebd10590bb1c1e1",
 };
 
 #[cfg(target_os = "windows")]
-const CPU: Download = Download {
+const CPU: Download<'static> = Download {
     url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/nemo-speech-0.2.0-windows-x86_64-cpu.zip",
     size: 5_528_418,
     sha256: "82c80451086e86194aba9af19f800da77cd66d1c28d993d0efceffd6cdb49bb8",
 };
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const CUDA: Download = Download {
+const CUDA: Download<'static> = Download {
     url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/nemo-speech-0.2.0-linux-x86_64-cuda.tar.gz",
     size: 105_010_050,
     sha256: "aef573fcc6c2c759401d2ed03e5ca9e401ed23b0e38cb852d917080c1e2d4515",
 };
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const VULKAN: Download = Download {
+const VULKAN: Download<'static> = Download {
     url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/nemo-speech-0.2.0-linux-x86_64-vulkan.tar.gz",
     size: 16_618_142,
     sha256: "c8d0ed5b9ac5fb6d5c460015ba38ea217415c44edc1e6d49120646781009aee6",
 };
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const CPU: Download = Download {
+const CPU: Download<'static> = Download {
     url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/nemo-speech-0.2.0-linux-x86_64-cpu.tar.gz",
     size: 6_683_477,
     sha256: "f396057150f1b774935c7414fd32ebc04195a795a34120d78d8c9ecefa1b7507",
 };
 
 #[cfg(target_os = "macos")]
-const METAL: Download = Download {
+const METAL: Download<'static> = Download {
     url: "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.2.0/nemo-speech-0.2.0-macos-aarch64-metal.tar.gz",
     size: 5_031_510,
     sha256: "5cb02ba7c04f0b5585ce5cde9c830be5f0b7dfb4c83083c500109c381b4f2da9",

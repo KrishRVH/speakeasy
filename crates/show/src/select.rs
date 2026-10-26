@@ -3,7 +3,7 @@
 mod frames;
 mod groups;
 
-use std::{cmp::Reverse, ops::Range, time::Duration};
+use std::{cmp::Reverse, fmt, ops::Range, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
@@ -50,7 +50,7 @@ pub enum Reason {
 }
 
 /// A frame chosen to show, with what happened on it and what was said.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Keyframe {
     /// The keyframe's number, from one, as badged on the image and named in the bundle.
@@ -73,6 +73,29 @@ pub struct Keyframe {
     /// marks qualify for goes to the nearer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action: Option<Action>,
+}
+
+/// Leaves out what was said, which is the user's speech.
+impl fmt::Debug for Keyframe {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            index,
+            at,
+            reason,
+            event,
+            said: _,
+            marks,
+            action,
+        } = self;
+        f.debug_struct("Keyframe")
+            .field("index", index)
+            .field("at", at)
+            .field("reason", reason)
+            .field("event", event)
+            .field("marks", marks)
+            .field("action", action)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The marks a Show's ink forms and the keyframes chosen to show it.

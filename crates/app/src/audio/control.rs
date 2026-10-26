@@ -113,7 +113,7 @@ mod tests {
         let (opened, open) = mpsc::channel();
         let (close, closing) = mpsc::channel::<()>();
         let callback = thread::spawn({
-            let control = control.clone();
+            let control = Arc::clone(&control);
             move || {
                 let _publishing = control.publishing();
                 opened.send(control.mode()).unwrap();

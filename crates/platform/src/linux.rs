@@ -10,6 +10,7 @@ mod x11;
 
 use std::{
     convert::Infallible,
+    io::{self, Write},
     os::fd::{BorrowedFd, OwnedFd},
 };
 
@@ -256,7 +257,11 @@ pub(crate) fn copy_text(_: &str) -> anyhow::Result<()> {
 }
 
 pub(crate) fn show_startup_error(message: &str) {
-    eprintln!("Speakeasy: {message}");
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "stderr is the last channel left to report a failed launch"
+    )]
+    let _ = writeln!(io::stderr().lock(), "Speakeasy: {message}");
 }
 
 #[cfg(test)]

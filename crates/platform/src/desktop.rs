@@ -3,7 +3,7 @@
 //! presentation methods live beside the native code behind them: in each OS's module, and in
 //! `screen` for the Show overlay.
 
-use std::marker::PhantomData;
+use std::{fmt, marker::PhantomData};
 
 use raw_window_handle::WindowHandle;
 
@@ -39,6 +39,12 @@ impl InputMonitor {
             observation.await;
             native.await;
         }
+    }
+}
+
+impl fmt::Debug for InputMonitor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("InputMonitor").finish_non_exhaustive()
     }
 }
 
@@ -94,6 +100,12 @@ impl NativeWindow {
             native: native::Window::new(handle)?,
             _ui_thread: PhantomData,
         })
+    }
+}
+
+impl fmt::Debug for NativeWindow {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NativeWindow").finish_non_exhaustive()
     }
 }
 

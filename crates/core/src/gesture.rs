@@ -46,7 +46,7 @@ pub enum Action {
 ///
 /// Physical key state survives completion and cancellation, preventing autorepeat from starting a
 /// new session before the user releases the shortcut.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Gesture {
     phase: Phase,
     down: bool,

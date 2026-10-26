@@ -104,7 +104,7 @@ pub enum Inserted {
 }
 
 /// Shortcut and insertion choices for the Linux desktop; Windows and macOS read none of them.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DesktopOptions {
     /// Reserved Linux dictation chord in portal syntax.
     pub shortcut: String,

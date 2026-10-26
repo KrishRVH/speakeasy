@@ -144,7 +144,7 @@ fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {
 struct LateColors;
 
 impl Render for LateColors {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .size_full()
             .bg(rgb(0x11_33_55))

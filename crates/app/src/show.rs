@@ -6,7 +6,11 @@ mod publish;
 mod recorder;
 mod store;
 
-use std::{path::PathBuf, time::SystemTime};
+use std::{
+    io::{self, Write},
+    path::PathBuf,
+    time::SystemTime,
+};
 
 use anyhow::Context as _;
 use speakeasy_show::{Demo, Typeface};
@@ -66,7 +70,7 @@ impl Command {
         };
         let summary = bundle.summary(&directory);
         store::stage(&directory, &bundle.into_files(&directory)?)?.persist()?;
-        print!("{summary}");
+        write!(io::stdout().lock(), "{summary}")?;
         Ok(())
     }
 }

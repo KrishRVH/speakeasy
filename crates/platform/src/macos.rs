@@ -318,6 +318,10 @@ impl NativeWindow {
     ///
     /// # Errors
     /// `AppKit` configuration cannot fail; the `Result` matches the other platforms.
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "Windows and X11 configuration can fail; callers share one signature on every platform"
+    )]
     pub fn configure_pill(&self) -> anyhow::Result<()> {
         let window = &self.native.ns_window;
         window.setIgnoresMouseEvents(true);

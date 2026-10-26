@@ -1,11 +1,17 @@
 # Clippy reads the MSRV from Cargo.toml's `rust-version`; a second pin here
 # would override it and drift silently on a toolchain bump.
 
+# An application makes no external compatibility promise, so API-shape lints such as
+# `unnecessary_wraps`, `trivially_copy_pass_by_ref`, and `wrong_self_convention` cover `pub` items
+# too.
+avoid-breaking-exported-api = false
+
 # The panic-free wall applies to production code; tests may assert invariants
-# the test itself established.
+# the test itself established, and print to the test runner's captured output.
 allow-expect-in-tests = true
 allow-indexing-slicing-in-tests = true
 allow-panic-in-tests = true
+allow-print-in-tests = true
 allow-unwrap-in-tests = true
 
 # Shared mutable state (AGENTS.md ownership and interfaces): each value has one owner, and other
@@ -18,6 +24,8 @@ disallowed-types = [
   { path = "std::rc::Rc", reason = "shared ownership hides the owner; give the value one owner and pass it as an event or borrow (AGENTS.md ownership and interfaces)" },
   { path = "std::cell::RefCell", reason = "runtime borrow panics replace compile-time ownership; restructure so the owner mutates directly (AGENTS.md ownership and interfaces)" },
   { path = "std::cell::Cell", reason = "interior mutability hides writes; restructure so the owner mutates directly (AGENTS.md ownership and interfaces)" },
+  { path = "std::cell::OnceCell", reason = "a lazily set cell hides when state is written; compute the value where the owner is built (AGENTS.md ownership and interfaces)" },
+  { path = "std::cell::LazyCell", reason = "a lazily set cell hides when state is written; compute the value where the owner is built (AGENTS.md ownership and interfaces)" },
   { path = "std::sync::atomic::AtomicBool", reason = "ambient flags are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
   { path = "std::sync::atomic::AtomicI8", reason = "ambient counters are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
   { path = "std::sync::atomic::AtomicI16", reason = "ambient counters are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
@@ -43,8 +51,8 @@ disallowed-types = [
   { path = "portable_atomic::AtomicU64", reason = "an atomic behind a dependency is still ambient state; give the value one owner (AGENTS.md ownership and interfaces)" },
 ]
 
-# No thread_local! entry: Clippy's diagnostic for the macro ignores narrow expectations on this
-# toolchain, so the mutable types above carry the per-site reason instead.
+# No thread_local! entry: Clippy reports it on the macro call, which cannot take `expect`, so only
+# a module-wide expectation could escape it. The mutable types above carry the per-site reason.
 
 disallowed-methods = [
   { path = "std::process::abort", reason = "no unwind, no destructors, no message; return an error from main or use the panic path the doctrine already forbids you to reach (AGENTS.md ownership and interfaces)" },
@@ -54,6 +62,32 @@ disallowed-methods = [
   { path = "reqwest::Client::builder", reason = "build clients through http::client_builder; Linux reqwest has no built-in rustls provider and panics in build()" },
   { path = "reqwest::ClientBuilder::new", reason = "build clients through http::client_builder; Linux reqwest has no built-in rustls provider and panics in build()" },
   { path = "reqwest::get", reason = "build clients through http::client_builder; Linux reqwest has no built-in rustls provider and panics in build()" },
+]
+
+# Accepted identifiers for documentation prose checked by doc_markdown.
+# The ".." entry extends clippy's default list instead of replacing it.
+doc-valid-idents = [
+  "..",
+  "API",
+  "APIs",
+  "ASCII",
+  "CLI",
+  "CPU",
+  "FFI",
+  "HTTP",
+  "HTTPS",
+  "ID",
+  "IDs",
+  "IO",
+  "JSON",
+  "MSRV",
+  "OS",
+  "TLS",
+  "URI",
+  "URL",
+  "URLs",
+  "UTF-8",
+  "UUID",
 ]
 
 # enum-variant-size, bool-params, single-char, and too-many-arguments pin

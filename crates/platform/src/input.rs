@@ -38,7 +38,7 @@ pub enum Input {
 ///
 /// Clipboard preparation may block; Escape must still be able to invalidate the pending paste. A
 /// permit's successful commit is the point of no return.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct InputSender {
     sender: Sender<Input>,
     gate: Gate,
@@ -126,7 +126,7 @@ impl InputSender {
 
 /// Authorization for exactly one recording. Starting another recording never authorizes an old
 /// clipboard operation that is still preparing its input.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct InsertPermit {
     gate: Gate,
     generation: u64,
@@ -170,7 +170,7 @@ impl InsertPermit {
 ///
 /// Generations count up above two state bits. A permit holds authority only while the gate equals
 /// its authorized generation, so only one revocation of it can succeed.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 #[expect(
     clippy::disallowed_types,
     reason = "Native Escape must revoke this recording while its owner is blocked in a clipboard OS call"

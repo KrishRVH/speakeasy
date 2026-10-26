@@ -4,7 +4,10 @@
 #[path = "../src/icons.rs"]
 mod icons;
 
-use std::time::{Duration, Instant};
+use std::{
+    io::{self, Write},
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context as _, ensure};
 use gpui::{
@@ -26,7 +29,7 @@ struct Scene {
 }
 
 impl Render for Scene {
-    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<'_, Self>) -> impl IntoElement {
         self.renders = self.renders.saturating_add(1);
         let draws_path = self.draws_path;
         div()
@@ -142,14 +145,17 @@ async fn exercise(cx: &AsyncApp) -> anyhow::Result<()> {
         native.set_pill_visible(false);
         Timer::after(PRESENT_SETTLE).await;
     }
+    let mut out = io::stdout().lock();
     if cfg!(target_os = "linux") {
-        println!(
+        writeln!(
+            out,
             "PASS: SVG and path pixels verified across resize and {CYCLES} native show/hide cycles."
-        );
+        )?;
     } else {
-        println!(
+        writeln!(
+            out,
             "PASS: native render callbacks completed across SVG/path scenes, resize, and {CYCLES} show/hide cycles."
-        );
+        )?;
     }
     Ok(())
 }

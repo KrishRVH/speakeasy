@@ -623,3 +623,20 @@ proptest::proptest! {
         proptest::prop_assert_eq!(said, expected);
     }
 }
+
+#[test]
+fn debugging_a_keyframe_never_prints_what_was_said() {
+    let shown = |said: &str| {
+        let keyframe = Keyframe {
+            index: 1,
+            at: Moment::from_millis(0),
+            reason: Reason::Middle,
+            event: "clicked".to_owned(),
+            said: Some(said.to_owned()),
+            marks: 0..0,
+            action: None,
+        };
+        format!("{keyframe:?}")
+    };
+    assert_eq!(shown("alpha"), shown("omega"));
+}

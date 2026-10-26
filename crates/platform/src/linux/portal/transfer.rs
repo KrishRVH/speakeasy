@@ -40,7 +40,7 @@ impl Selection {
 
     pub(super) fn transfer(&self) -> TransferPayload {
         TransferPayload {
-            text: self.text.clone(),
+            text: Arc::clone(&self.text),
             invalidated: self.invalidated.clone(),
         }
     }
