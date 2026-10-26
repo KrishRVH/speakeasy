@@ -75,14 +75,15 @@ pub struct Keyframe {
     pub action: Option<Action>,
 }
 
-/// Leaves out what was said, which is the user's speech.
+/// Leaves out what was said, which is the user's speech, and the event, which can quote a spoken
+/// cue.
 impl fmt::Debug for Keyframe {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
             index,
             at,
             reason,
-            event,
+            event: _,
             said: _,
             marks,
             action,
@@ -91,7 +92,6 @@ impl fmt::Debug for Keyframe {
             .field("index", index)
             .field("at", at)
             .field("reason", reason)
-            .field("event", event)
             .field("marks", marks)
             .field("action", action)
             .finish_non_exhaustive()
