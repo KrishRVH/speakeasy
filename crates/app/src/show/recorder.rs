@@ -48,7 +48,7 @@ impl ScreenRecorder {
         let thread = OwnedThread::spawn("show-recorder", move || {
             let outcome = record(started, &finishing, &canvas);
             canvas.send_replace(Canvas::default());
-            if let Some(outcome) = outcome {
+            if let Some(outcome) = outcome.transpose() {
                 #[expect(
                     clippy::let_underscore_must_use,
                     reason = "A closed event lane belongs to a departed owner; retirement still observes this thread's exit"
@@ -91,15 +91,11 @@ fn record(
     started: Instant,
     finishing: &Receiver<()>,
     canvas: &watch::Sender<Canvas>,
-) -> Option<anyhow::Result<Footage>> {
-    let runtime = match tokio::runtime::Builder::new_current_thread()
+) -> anyhow::Result<Option<Footage>> {
+    tokio::runtime::Builder::new_current_thread()
         .enable_time()
-        .build()
-    {
-        Ok(runtime) => runtime,
-        Err(error) => return Some(Err(error.into())),
-    };
-    runtime.block_on(Take::run(started, finishing, canvas))
+        .build()?
+        .block_on(Take::run(started, finishing, canvas))
 }
 
 /// The thread's state while recording.
@@ -115,18 +111,12 @@ impl<'a> Take<'a> {
         started: Instant,
         finishing: &Receiver<()>,
         canvas: &'a watch::Sender<Canvas>,
-    ) -> Option<anyhow::Result<Footage>> {
+    ) -> anyhow::Result<Option<Footage>> {
         let (frames, frames_received) = async_channel::bounded(FRAME_LANE);
-        let capture = match ScreenCapture::start(SAMPLE_INTERVAL, LONGEST_EDGE, frames) {
-            Ok(capture) => capture,
-            Err(error) => return Some(Err(error)),
-        };
+        let capture = ScreenCapture::start(SAMPLE_INTERVAL, LONGEST_EDGE, frames)?;
         let display = capture.display();
         let (pointer_samples, pointer_received) = async_channel::bounded(POINTER_LANE);
-        let pointer = match PointerMonitor::start(display, pointer_samples) {
-            Ok(pointer) => pointer,
-            Err(error) => return Some(Err(error)),
-        };
+        let pointer = PointerMonitor::start(display, pointer_samples)?;
         canvas.send_replace(Canvas::covering(display));
         let [width, height] = display.size;
         let surface = Size { width, height };
@@ -145,7 +135,7 @@ impl<'a> Take<'a> {
                     if finished.is_err() {
                         // The owner retired this recording: nothing is reported.
                         stop(&capture, &pointer).await;
-                        return None;
+                        return Ok(None);
                     }
                     if !take.journal.is_empty() {
                         break Ok(());
@@ -168,7 +158,8 @@ impl<'a> Take<'a> {
             }
         };
         stop(&capture, &pointer).await;
-        Some(outcome.and_then(|()| take.into_footage(surface)))
+        outcome?;
+        take.into_footage(surface).map(Some)
     }
 
     fn moment(&self, at: Instant) -> Moment {
