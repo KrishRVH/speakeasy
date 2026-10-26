@@ -3,7 +3,11 @@
 //! profile.
 
 use super::*;
-use crate::{config::Engine, theme::Theme};
+use crate::{
+    config::Engine,
+    status::{PAUSED, PAUSING},
+    theme::Theme,
+};
 
 #[tokio::test(start_paused = true)]
 async fn desktop_readiness_blocks_capture_until_native_startup_completes() -> anyhow::Result<()> {
@@ -671,14 +675,14 @@ async fn retired_publisher_cannot_overwrite_shell_lifecycle_notice() -> anyhow::
     h.output.send_modify(|snapshot| {
         snapshot.epoch += 1;
         snapshot.phase = Phase::Idle;
-        snapshot.message = "Pausing dictation…".into();
+        snapshot.message = PAUSING.into();
     });
     h.input(Input::Toggle);
     h.transcribe_next_as("fixture").await?;
     receive(&h.pasted).await?;
     let updates = h.updates.clone();
     h.close().await?;
-    assert_eq!(updates.borrow().message, "Pausing dictation…");
+    assert_eq!(updates.borrow().message, PAUSING);
     assert_eq!(updates.borrow().phase, Phase::Idle);
     Ok(())
 }
@@ -688,11 +692,11 @@ async fn delayed_owner_start_cannot_claim_a_newer_shell_publisher() -> anyhow::R
     let h = Harness::new()?;
     h.output.send_modify(|snapshot| {
         snapshot.epoch += 1;
-        snapshot.message = "Dictation paused".into();
+        snapshot.message = PAUSED.into();
     });
     let updates = h.updates.clone();
     h.close().await?;
-    assert_eq!(updates.borrow().message, "Dictation paused");
+    assert_eq!(updates.borrow().message, PAUSED);
     Ok(())
 }
 
