@@ -383,3 +383,10 @@ Live microphone, editor, and screen acceptance is tracked under
   acceptance Linux still needs.
 - [Performance](docs/performance.md): constraints, profiling methods, and native measurement limits.
 - [Remote dictation](docs/remote-dictation.md): routing a remote microphone to Speakeasy.
+
+## License
+
+Speakeasy is free and open source under the [MIT License](LICENSE). Josefin Sans is under the
+[SIL Open Font License](crates/app/assets/JosefinSans-OFL.txt), `speakeasy-show` adapts MIT-licensed
+code credited in its [notice](crates/show/NOTICE.md), and the patched GPUI under `vendor/` keeps its
+[Apache 2.0 license](vendor/gpui/LICENSE-APACHE). Every package includes these four license files.

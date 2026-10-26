@@ -28,6 +28,8 @@ plutil -insert CFBundleShortVersionString -string "$version" "$bundle/Contents/I
 plutil -insert CFBundleVersion -string "$build" "$bundle/Contents/Info.plist"
 cp packaging/macos/Speakeasy.icns "$bundle/Contents/Resources/"
 cp settings.example.json "$bundle/Contents/Resources/"
+cp LICENSE "$bundle/Contents/Resources/"
+cp vendor/gpui/LICENSE-APACHE "$bundle/Contents/Resources/GPUI-LICENSE-APACHE"
 cp crates/app/assets/JosefinSans-OFL.txt "$bundle/Contents/Resources/"
 cp crates/show/NOTICE.md "$bundle/Contents/Resources/"
 # An ad-hoc signature's designated requirement is the binary's cdhash, so every build drops the
