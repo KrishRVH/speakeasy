@@ -12,9 +12,9 @@ when the full interaction remains correct.
 - The session owner receives completion messages and owns capture, inference, insertion,
   cancellation, and replacement. Native cleanup acknowledges before replacements open; Pause and
   application-owned Quit keep the UI responsive.
-- GPU cancellation reuses a worker only after a bounded health request succeeds. Failed checks and
-  cancelled CPU inference retire the worker. A retained worker may keep its largest model buffers
-  until Pause releases it.
+- GPU cancellation reuses a worker only after it transcribes a second of silence within two seconds.
+  Failed checks and cancelled CPU inference retire the worker. A retained worker may keep its
+  largest model buffers until Pause releases it.
 - The audio callback allocates nothing and writes to a bounded single-producer, single-consumer
   ring. Consumer-side PCM starts with a ten-second reservation and cannot grow past five minutes.
   Callback sample count, owner timer, and consumer limit defend the bound independently.

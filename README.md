@@ -348,8 +348,8 @@ global hook, or touch the clipboard. See the
   `bash scripts/package-linux.sh` package the app into `artifacts/`; `--native-tar` makes an
   unbundled Linux archive for the current machine. Each script generates the package's third-party
   notices with the `cargo about` that `mise install` provides. Packages carry no engine or model;
-  setup downloads them on first launch. The Mac bundle carries its microphone usage declaration and a
-  local signature; grant its permissions as [Get started](#get-started) describes. Distribution
+  setup downloads them on first launch. The Mac bundle carries its microphone usage declaration and
+  a local signature; grant its permissions as [Get started](#get-started) describes. Distribution
   needs Developer ID signing and notarization.
 - `scripts/check-demo-windows.ps1 -Executable <speakeasy.exe>` checks that the demo pill stays
   non-activating and passes clicks through.
@@ -390,6 +390,7 @@ Live microphone, editor, and screen acceptance is tracked under
 Speakeasy is free and open source under the [MIT License](LICENSE). Josefin Sans is under the
 [SIL Open Font License](crates/app/assets/JosefinSans-OFL.txt), `speakeasy-show` adapts MIT-licensed
 code credited in its [notice](crates/show/NOTICE.md), and the patched GPUI under `vendor/` keeps its
-[Apache 2.0 license](vendor/gpui/LICENSE-APACHE). Every package includes `LICENSE`, the font license,
-that notice, and `THIRD-PARTY-NOTICES.txt`, which packaging generates with `cargo about` from the
-crates built for that platform and the licenses [packaging/about.toml](packaging/about.toml) accepts.
+[Apache 2.0 license](vendor/gpui/LICENSE-APACHE). Every package includes `LICENSE`, the font
+license, that notice, and `THIRD-PARTY-NOTICES.txt`, which packaging generates with `cargo about`
+from the crates built for that platform and the licenses
+[packaging/about.toml](packaging/about.toml) accepts.
