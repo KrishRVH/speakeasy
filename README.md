@@ -1,14 +1,10 @@
-<p align="center">
-  <img src="docs/assets/banner.png" alt="Speakeasy. Say the word." width="760">
-</p>
+<https://github.com/user-attachments/assets/8675932e-6285-4fa8-920c-842a2ded16b7>
 
 <p align="center">
   <strong>Private dictation for Windows, macOS, and Linux.</strong><br>
   Hold a shortcut, speak, and your words appear wherever you are typing.<br>
   Local speech engines. No account, no upload, no dictation history.
 </p>
-
-<https://github.com/user-attachments/assets/8675932e-6285-4fa8-920c-842a2ded16b7>
 
 <p align="center">
   <a href="#show-your-coding-agent">Shows</a>&nbsp;&nbsp;◆&nbsp;&nbsp;

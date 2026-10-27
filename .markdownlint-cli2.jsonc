@@ -16,7 +16,7 @@
       "filter": ["README.md"],
       "combine": "merge",
       "config": {
-        // The product landing page uses an accessible banner and centered artwork.
+        // The product landing page opens with its video and centers its artwork.
         "MD041": false,
         "MD033": { "allowed_elements": ["a", "br", "details", "img", "kbd", "p", "strong", "summary"] }
       }
