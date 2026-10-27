@@ -32,9 +32,13 @@ pub const COLOR: [u8; 4] = [255, 59, 48, 255];
 
 /// The pen width for ink on a surface `width × height` pixels, alike on the overlay and in a
 /// bundle's frames.
+///
+/// It is 6 pixels on a 1080p display: thin enough to leave the text a mark points at readable, and
+/// thick enough that a fast stroke, which narrows to half, still shows on a contact sheet that
+/// scales frames down threefold.
 #[must_use]
 pub fn pen(width: f32, height: f32) -> f32 {
-    (width.min(height) * 0.0065).clamp(4.2, 6.0) * detail(width, height)
+    (width.min(height) * 0.0043).clamp(2.8, 4.0) * detail(width, height)
 }
 
 /// How much a surface `width × height` pixels scales marks up from a laptop screen's, so they keep
