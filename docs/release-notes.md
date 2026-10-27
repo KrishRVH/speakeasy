@@ -1,6 +1,6 @@
 # Release notes
 
-<https://github.com/user-attachments/assets/8675932e-6285-4fa8-920c-842a2ded16b7>
+<https://github.com/user-attachments/assets/3ccaba96-808a-4d01-891f-db7338d519c4>
 
 Speakeasy 0.5.0 confirms dictation and Shows with soft sound cues, is free software under the MIT
 License with notices for the Rust crates in every package, and opens its README with a short tour of
