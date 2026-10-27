@@ -8,6 +8,8 @@
   Local speech engines. No account, no upload, no dictation history.
 </p>
 
+<https://github.com/user-attachments/assets/8675932e-6285-4fa8-920c-842a2ded16b7>
+
 <p align="center">
   <a href="#show-your-coding-agent">Shows</a>&nbsp;&nbsp;◆&nbsp;&nbsp;
   <a href="#get-started">Get started</a>&nbsp;&nbsp;◆&nbsp;&nbsp;
