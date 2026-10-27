@@ -1,4 +1,4 @@
-//! macOS adapter: the Fn event tap, session-change cancellation, native window presentation,
+//! macOS adapter: the Fn event tap, session-change interruption, native window presentation,
 //! clipboard or direct text insertion, and Show screen capture.
 //!
 //! The tap's run-loop thread creates and removes every native resource its callbacks reach.
@@ -123,13 +123,14 @@ struct Observer {
 }
 
 impl Observer {
-    fn cancel_on(
+    fn interrupt_on(
         center: Retained<NSNotificationCenter>,
         name: &NSString,
         input: &InputSender,
     ) -> Self {
         let input = input.clone();
-        let callback = RcBlock::new(move |_: NonNull<NSNotification>| input.deliver(Input::Cancel));
+        let callback =
+            RcBlock::new(move |_: NonNull<NSNotification>| input.deliver(Input::Interrupt));
         // SAFETY: with no queue the block runs on whichever thread posts the notification; it
         // captures only an `InputSender`, which any thread may use, touches no AppKit object, and
         // the center retains it until the observer is removed.
@@ -161,9 +162,9 @@ fn lifecycle_observers(input: &InputSender) -> Vec<Observer> {
     let distributed = NSDistributedNotificationCenter::defaultCenter().into_super();
     let screen_locked = NSString::from_str("com.apple.screenIsLocked");
     vec![
-        Observer::cancel_on(workspace.clone(), will_sleep, input),
-        Observer::cancel_on(workspace, resigned, input),
-        Observer::cancel_on(distributed, &screen_locked, input),
+        Observer::interrupt_on(workspace.clone(), will_sleep, input),
+        Observer::interrupt_on(workspace, resigned, input),
+        Observer::interrupt_on(distributed, &screen_locked, input),
     ]
 }
 

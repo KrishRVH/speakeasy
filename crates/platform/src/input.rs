@@ -19,8 +19,11 @@ pub enum Input {
     Lock,
     /// S during a hold turns the recording into a Show, which also captures the screen.
     Show,
-    /// Discards the active session and revokes pending insertion.
+    /// The user discards the active session, which revokes pending insertion.
     Cancel,
+    /// Another shortcut or a session change ended the hold: discards the active session like
+    /// [`Cancel`](Self::Cancel), but the user asked for something else, not a cancel.
+    Interrupt,
     /// Starts or finishes hands-free capture.
     Toggle,
     /// Desktop access failed; the message explains how to resume.
@@ -56,10 +59,14 @@ impl InputSender {
 
     /// Queues `event` for the owner without waiting.
     ///
-    /// Cancellation and desktop failure revoke the current recording before the owner sees them. A
-    /// full queue closes the lane, disabling dictation rather than losing an Escape or a release.
+    /// Cancellation, interruption, and desktop failure revoke the current recording before the
+    /// owner sees them. A full queue closes the lane, disabling dictation rather than losing an
+    /// Escape or a release.
     pub fn deliver(&self, event: Input) {
-        if matches!(event, Input::Cancel | Input::Unavailable(_)) {
+        if matches!(
+            event,
+            Input::Cancel | Input::Interrupt | Input::Unavailable(_)
+        ) {
             self.cancel();
         }
         if self.sender.try_send(event).is_err() {

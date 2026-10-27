@@ -21,7 +21,10 @@ use super::{
     session::{Delivered, Screen, Session, Stage},
     worker::{Completion, Detail, Transcript, Worker},
 };
-use crate::config::{Change, Config};
+use crate::{
+    config::{Change, Config},
+    sounds::Cue,
+};
 
 /// What a copied Show tells the user.
 const SHOW_COPIED: &str = "Show copied. Paste it into your coding agent.";
@@ -108,6 +111,8 @@ struct Owner<P: Ports> {
     retiring: Vec<JoinHandle<Delivered>>,
     /// Whether the latest session was a Show, which the pill presents differently.
     latest_show: bool,
+    /// Whether the cue output is held open, as it is through every session while sounds are on.
+    cues_held: bool,
 
     snapshots: watch::Sender<Snapshot>,
     meter: watch::Sender<Meter>,
@@ -158,6 +163,7 @@ impl<P: Ports> Owner<P> {
             screen: Device::Free,
             retiring: Vec::new(),
             latest_show: false,
+            cues_held: false,
             snapshots,
             meter,
             epoch,
@@ -249,6 +255,14 @@ impl<P: Ports> Owner<P> {
             Input::Lock => self.gesture.lock(),
             Input::Show => self.start_show(),
             Input::Cancel => self.gesture.cancel(),
+            // Another shortcut or a session change took the keys: the recording ends without the
+            // cue that confirms a cancel the user never asked for.
+            Input::Interrupt => {
+                if self.gesture.cancel().is_some() {
+                    self.discard();
+                }
+                None
+            },
             Input::Unavailable(message) => return self.stop_with_failure(message),
             Input::DesktopReady { shortcut, cancel } => {
                 self.desktop_ready = true;
@@ -290,7 +304,19 @@ impl<P: Ports> Owner<P> {
             return;
         };
         match event {
-            CaptureEvent::Ready(_) => session.audio_ready(gesture, now()),
+            CaptureEvent::Ready(_) => {
+                session.audio_ready(gesture, now());
+                // The pill opens to listening here, so the cue sounds with it, never before the
+                // microphone listens.
+                let cue = if session.show.is_some() {
+                    Cue::Show
+                } else {
+                    Cue::Start
+                };
+                if matches!(session.stage, Stage::Recording) {
+                    self.cue_heard(cue);
+                }
+            },
             CaptureEvent::Level(id, level) => {
                 self.meter.send_replace(Meter {
                     epoch: self.epoch,
@@ -324,11 +350,14 @@ impl<P: Ports> Owner<P> {
             .filter(|session| session.id == id && session.is_capturing())
     }
 
-    /// Ends capture however it ended, finishing a Show's screen with its narration.
+    /// Ends capture however it ended, finishing a Show's screen with its narration. A capture that
+    /// ended before the gesture did sounds the stop cue the gesture would have.
     fn conclude_capture(&mut self) {
         self.microphone.retire();
         self.screen.finish();
-        self.gesture.finish();
+        if self.gesture.finish().is_some() {
+            self.cue(Cue::Stop);
+        }
     }
 
     fn handle_worker(&mut self, completion: Completion<P::Speech>) {
@@ -411,6 +440,10 @@ impl<P: Ports> Owner<P> {
             .filter(|session| held && session.awaits_audio() && session.show.is_none())?;
         session.show = Some(Screen::Queued);
         self.latest_show = true;
+        // A microphone still opening sounds the Show cue once it listens.
+        if matches!(session.stage, Stage::Recording) {
+            self.cue_heard(Cue::Show);
+        }
         self.gesture.lock()
     }
 
@@ -441,7 +474,10 @@ impl<P: Ports> Owner<P> {
             .is_some_and(|session| session.show.is_some());
         let outcome = match result {
             Ok(Delivered::Inserted(Ok(Inserted::Sent))) => Outcome::Done,
-            Ok(Delivered::Inserted(Ok(Inserted::Copied(message)))) => Outcome::Copied(message),
+            Ok(Delivered::Inserted(Ok(Inserted::Copied(message)))) => {
+                self.cue(Cue::Copied);
+                Outcome::Copied(message)
+            },
             Ok(
                 Delivered::Inserted(Ok(Inserted::Cancelled))
                 | Delivered::Published(Ok(Published::Cancelled)),
@@ -449,7 +485,10 @@ impl<P: Ports> Owner<P> {
             Ok(Delivered::Inserted(Ok(Inserted::Unavailable(message)))) => {
                 Outcome::Failed(message.into())
             },
-            Ok(Delivered::Published(Ok(Published::Copied))) => Outcome::Copied(SHOW_COPIED),
+            Ok(Delivered::Published(Ok(Published::Copied))) => {
+                self.cue(Cue::Copied);
+                Outcome::Copied(SHOW_COPIED)
+            },
             Ok(Delivered::Published(Err(error))) => Outcome::Failed(format!("{error:#}")),
             Err(_) if show => Outcome::Failed(PUBLISH_STOPPED.into()),
             Ok(Delivered::Inserted(Err(_))) | Err(_) => Outcome::Failed(
@@ -470,11 +509,12 @@ impl<P: Ports> Owner<P> {
                 if let Some(session) = &mut self.session {
                     session.finish();
                 }
+                // The microphone has stopped taking samples, so it cannot hear this.
+                self.cue(Cue::Stop);
             },
             Some(Action::Cancel) => {
-                self.abandon();
-                self.worker.revive(&self.ports, &self.config);
-                self.outcome = Outcome::Cancelled;
+                self.discard();
+                self.cue(Cue::Cancel);
             },
             Some(Action::ModeChanged) | None => {},
         }
@@ -500,6 +540,33 @@ impl<P: Ports> Owner<P> {
         ControlFlow::Continue(())
     }
 
+    /// Holds the cue output open from the moment a session begins, so its first cue never waits
+    /// for a device to open, and releases it as Speakeasy goes idle or sounds turn off, however the
+    /// session ended.
+    fn hold_cues(&mut self) {
+        let held = self.config.play_sounds && self.session.is_some();
+        if held != self.cues_held {
+            self.cues_held = held;
+            self.ports.hold_cues(held);
+        }
+    }
+
+    /// Sounds `cue` while the user wants sounds.
+    fn cue(&self, cue: Cue) {
+        if self.config.play_sounds {
+            self.ports.cue(cue);
+        }
+    }
+
+    /// Sounds `cue` where the listening microphone can hear it, telling the microphone first so
+    /// the speech gate listens beneath it.
+    fn cue_heard(&self, cue: Cue) {
+        if self.config.play_sounds {
+            self.microphone.expect_cue();
+            self.ports.cue(cue);
+        }
+    }
+
     /// Ends a session whose work has finished, so it holds nothing left to retire, and shows
     /// `outcome`.
     fn end_session(&mut self, outcome: Outcome) {
@@ -508,6 +575,13 @@ impl<P: Ports> Owner<P> {
         }
         self.gesture.complete();
         self.outcome = outcome;
+    }
+
+    /// Discards the session, its insertion and any recognition under way, and shows it cancelled.
+    fn discard(&mut self) {
+        self.abandon();
+        self.worker.revive(&self.ports, &self.config);
+        self.outcome = Outcome::Cancelled;
     }
 
     /// Revokes the session and hands its native work to cleanup without awaiting any OS call.
@@ -712,6 +786,7 @@ pub(super) async fn run<P: Ports>(wiring: Wiring<P>) {
             break;
         }
         owner.advance();
+        owner.hold_cues();
         owner.publish();
     }
     owner.shutdown().await;

@@ -1,9 +1,12 @@
 //! Speech detection that decides which audio a recording keeps. Each 20 ms window is classified
 //! once while recording, leaving only the final partial window to classify when capture stops.
+//! While one of Speakeasy's own cues may sound, a window counts only by its voice band, which a
+//! voice fills and the cues leave empty.
 
 use std::{ops::Range, time::Duration};
 
 use super::pcm::{MAX_SAMPLE_RATE, SAMPLE_BYTES, bytes_in, samples_in};
+use crate::{lowpass::Lowpass, sounds::HEARD_FOR};
 
 const WINDOW: Duration = Duration::from_millis(20);
 const MINIMUM_AUDIBLE: Duration = Duration::from_millis(100);
@@ -12,6 +15,9 @@ const QUIET_EDGE: Duration = Duration::from_secs(1);
 /// Quiet kept on each side of speech, so soft word edges survive trimming.
 const PADDING: Duration = Duration::from_millis(500);
 const AUDIBLE_RMS: f64 = 0.003;
+/// The top of the voice band in hertz. A voice's fundamental and lowest harmonics lie beneath it,
+/// while the cues a recording can hear are high-passed at 400 Hz, leaving it nearly empty.
+const VOICE_BAND: f64 = 300.0;
 
 /// Audibility of the windows classified so far. Offsets count bytes of PCM16 audio.
 pub(super) struct Audibility {
@@ -19,6 +25,13 @@ pub(super) struct Audibility {
     quiet_edge: usize,
     padding: usize,
     minimum_audible: usize,
+    /// How long a cue may be heard, in bytes.
+    cue: usize,
+    /// Windows that start before this offset may hold a cue, so they count only by their voice
+    /// band.
+    cue_until: usize,
+    /// Isolates the voice band; `None` at rates too slow to carry anything above it.
+    voice: Option<Lowpass>,
     /// Bytes classified: whole windows until the final partial one.
     scanned: usize,
     first: Option<usize>,
@@ -35,6 +48,9 @@ impl Audibility {
             quiet_edge: bytes_in(samples_in(QUIET_EDGE, rate)),
             padding: bytes_in(samples_in(PADDING, rate)),
             minimum_audible: samples_in(MINIMUM_AUDIBLE, rate).max(1),
+            cue: bytes_in(samples_in(HEARD_FOR, rate)),
+            cue_until: 0,
+            voice: Lowpass::new(VOICE_BAND, f64::from(rate)),
             scanned: 0,
             first: None,
             end: 0,
@@ -57,13 +73,34 @@ impl Audibility {
         }
     }
 
+    /// Expects a cue asked for now: the windows not yet classified count only by their voice band
+    /// through [`HEARD_FOR`] beyond the end of `audio`, the recording so far.
+    pub(super) fn expect_cue(&mut self, audio: &[u8]) {
+        self.cue_until = self.cue_until.max(audio.len().saturating_add(self.cue));
+    }
+
     fn classify(&mut self, window: &[u8]) {
-        if is_audible(window) {
+        let (mut whole, mut voice) = (0.0, 0.0);
+        // The filter runs over every sample, so it is settled whenever a cue arrives.
+        for pair in window.as_chunks::<SAMPLE_BYTES>().0 {
+            let sample = f64::from(i16::from_le_bytes(*pair)) / 32_768.0;
+            let low = self
+                .voice
+                .as_mut()
+                .map_or(sample, |band| band.filter(sample));
+            whole += sample * sample;
+            voice += low * low;
+        }
+        let energy = if self.scanned < self.cue_until {
+            voice
+        } else {
+            whole
+        };
+        let samples = window.len() / SAMPLE_BYTES;
+        if energy >= AUDIBLE_RMS.powi(2) * samples as f64 {
             self.first.get_or_insert(self.scanned);
             self.end = self.scanned.saturating_add(window.len());
-            self.audible_samples = self
-                .audible_samples
-                .saturating_add(window.len() / SAMPLE_BYTES);
+            self.audible_samples = self.audible_samples.saturating_add(samples);
         }
         self.scanned = self.scanned.saturating_add(window.len());
     }
@@ -89,27 +126,36 @@ impl Audibility {
     }
 }
 
-fn is_audible(window: &[u8]) -> bool {
-    let energy = window
-        .as_chunks::<SAMPLE_BYTES>()
-        .0
-        .iter()
-        .map(|pair| u64::from(i16::from_le_bytes(*pair).unsigned_abs()).pow(2))
-        // A 20 ms window at 192 kHz holds at most 3840 samples, whose squares sum below 2^42, so
-        // wrapping addition is exact and lets the compiler vectorize it.
-        .fold(0_u64, u64::wrapping_add);
-    let samples = window.len() / SAMPLE_BYTES;
-    energy as f64 / (32768.0 * 32768.0) >= AUDIBLE_RMS.powi(2) * samples as f64
-}
-
 #[cfg(test)]
 mod tests {
+    use std::f64::consts::TAU;
+
     use proptest::prelude::*;
 
     use super::*;
+    use crate::sounds::Cue;
 
     const RATE: u32 = 16_000;
     const SECOND: usize = 32_000;
+
+    /// A sine at `hz` on the test rate, peaking at `amplitude` between 5 ms fades, which keep a
+    /// struck note's sudden edges out of the voice band the way a cue's recording does.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "Each sample stays within the i16 range the amplitude names"
+    )]
+    fn tone(bytes: usize, hz: f64, amplitude: f64) -> Vec<u8> {
+        let samples = bytes / SAMPLE_BYTES;
+        let fade = f64::from(RATE) / 200.0;
+        (0..samples)
+            .flat_map(|index| {
+                let edge = index.min(samples.saturating_sub(index)) as f64 / fade;
+                let envelope = (edge.min(1.0) * TAU / 4.0).sin().powi(2);
+                let phase = TAU * hz * index as f64 / f64::from(RATE);
+                ((phase.sin() * amplitude * envelope) as i16).to_le_bytes()
+            })
+            .collect()
+    }
 
     fn audio(segments: &[(usize, i16)]) -> Vec<u8> {
         segments
@@ -205,6 +251,104 @@ mod tests {
         assert_eq!(speech.retained(recording.len()), Some(0..recording.len()));
         speech.complete(&recording);
         assert_eq!(speech.scanned, recording.len());
+    }
+
+    #[test]
+    fn a_cue_never_counts_as_speech_but_a_voice_beneath_it_does() {
+        let span = bytes_in(samples_in(HEARD_FOR, RATE));
+        let quiet = audio(&[(SECOND * 2, 0)]);
+        let cue = |bytes| [tone(bytes, 1_000.0, 32_767.0), quiet.clone()].concat();
+        // A full-scale 1 kHz tone counts unless it sounds where a cue may.
+        let mut unmarked = Audibility::new(RATE).unwrap();
+        unmarked.complete(&cue(span));
+        assert!(unmarked.retained(span + quiet.len()).is_some());
+        // Only the part beyond the span counts, and 100 ms of it passes the gate.
+        for (beyond, passes) in [(0, false), (SECOND * 8 / 100, false), (SECOND / 10, true)] {
+            let recording = cue(span + beyond);
+            let mut speech = Audibility::new(RATE).unwrap();
+            speech.expect_cue(&[]);
+            speech.complete(&recording);
+            assert_eq!(
+                speech.retained(recording.len()).is_some(),
+                passes,
+                "{beyond}"
+            );
+        }
+        // A word said over the cue still counts, by its voice.
+        let word = tone(SECOND / 5, 150.0, 3_000.0);
+        let both: Vec<u8> = word
+            .as_chunks::<SAMPLE_BYTES>()
+            .0
+            .iter()
+            .zip(
+                tone(SECOND / 5, 1_000.0, 20_000.0)
+                    .as_chunks::<SAMPLE_BYTES>()
+                    .0,
+            )
+            .flat_map(|(voice, cue)| {
+                i16::from_le_bytes(*voice)
+                    .saturating_add(i16::from_le_bytes(*cue))
+                    .to_le_bytes()
+            })
+            .chain(quiet.iter().copied())
+            .collect();
+        let mut speech = Audibility::new(RATE).unwrap();
+        speech.expect_cue(&[]);
+        speech.complete(&both);
+        assert!(speech.retained(both.len()).is_some());
+    }
+
+    #[test]
+    fn the_cues_a_recording_hears_stay_out_of_the_voice_band_even_at_full_scale() {
+        for cue in [Cue::Start, Cue::Show] {
+            let samples = cue.pcm().as_chunks::<SAMPLE_BYTES>().0;
+            let peak = samples
+                .iter()
+                .map(|pair| i32::from(i16::from_le_bytes(*pair)).abs())
+                .max()
+                .unwrap();
+            let loudest: Vec<u8> = samples
+                .iter()
+                .flat_map(|pair| {
+                    let sample = i32::from(i16::from_le_bytes(*pair)) * 32_767 / peak;
+                    i16::try_from(sample).unwrap().to_le_bytes()
+                })
+                .chain(std::iter::repeat_n(0, 96_000))
+                .collect();
+            let mut speech = Audibility::new(48_000).unwrap();
+            speech.expect_cue(&[]);
+            speech.complete(&loudest);
+            assert_eq!(speech.audible_samples, 0, "{cue:?}");
+        }
+    }
+
+    #[test]
+    fn a_cue_during_a_recording_counts_only_by_its_voice_band_from_where_it_was_asked_for() {
+        let recording = [
+            audio(&[(SECOND, 3000), (SECOND, 0)]),
+            tone(SECOND / 5, 1_000.0, 3_000.0),
+            audio(&[(SECOND * 9 / 5, 0)]),
+        ]
+        .concat();
+        let mut speech = Audibility::new(RATE).unwrap();
+        speech.extend(&recording[..SECOND * 2]);
+        speech.expect_cue(&recording[..SECOND * 2]);
+        speech.complete(&recording);
+        // The trailing edge follows the speech, so the cue goes with the quiet after it.
+        assert_eq!(speech.retained(recording.len()), Some(0..SECOND * 3 / 2));
+    }
+
+    #[test]
+    fn speech_after_a_cue_trims_the_quiet_before_it_cue_and_all() {
+        let recording = [
+            tone(SECOND * 3 / 10, 1_000.0, 3_000.0),
+            audio(&[(SECOND * 12 / 10, 0), (SECOND, 3000), (SECOND * 2, 0)]),
+        ]
+        .concat();
+        let mut speech = Audibility::new(RATE).unwrap();
+        speech.expect_cue(&[]);
+        speech.complete(&recording);
+        assert_eq!(speech.retained(recording.len()), Some(SECOND..SECOND * 3));
     }
 
     #[test]

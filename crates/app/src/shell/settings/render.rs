@@ -226,11 +226,12 @@ impl Settings {
                     Setting::PreferGpu,
                 )))
             })
-            .child(row().child(self.delivery_control(ui)).child(self.switch(
-                ui,
-                "Reduce motion",
-                Setting::ReduceMotion,
-            )))
+            .child(
+                row()
+                    .child(self.delivery_control(ui))
+                    .child(self.switch(ui, "Reduce motion", Setting::ReduceMotion))
+                    .child(self.switch(ui, "Play sounds", Setting::PlaySounds)),
+            )
             .child(
                 row()
                     .child(self.switch(ui, "Remove um / uh", Setting::RemoveFillers))

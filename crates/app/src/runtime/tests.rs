@@ -10,7 +10,7 @@ use speakeasy_show::{Image, Journal, Moment, Narration, Size};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 use super::{
-    ports::{Capturing, Sealed, Speech},
+    ports::{Capturing, Listening, Sealed, Speech},
     *,
 };
 
@@ -20,6 +20,15 @@ type Reply = oneshot::Sender<anyhow::Result<String>>;
 type TranscriptionJob = (String, Reply);
 type OpenedCapture = (SessionId, Sender<CaptureEvent>);
 type OpenedShow = (SessionId, Sender<ShowEvent>);
+
+/// A cue the owner played, a microphone it told to expect one, or the cue output held open or
+/// released, in the order they happened.
+#[derive(Debug, PartialEq, Eq)]
+enum Sound {
+    Played(Cue),
+    Expected(SessionId),
+    Held(bool),
+}
 
 /// Where a fake pauses for the test: it reports entry, then waits for release.
 #[derive(Clone)]
@@ -85,6 +94,7 @@ struct FakePorts {
     pasted: Sender<String>,
     published: Sender<(Footage, Narration)>,
     loads: Sender<()>,
+    sounds: Sender<Sound>,
 }
 
 /// What the fakes report back to the test.
@@ -95,6 +105,7 @@ struct Reports {
     pasted: Receiver<String>,
     published: Receiver<(Footage, Narration)>,
     loads: Receiver<()>,
+    sounds: Receiver<Sound>,
 }
 
 impl FakePorts {
@@ -105,6 +116,7 @@ impl FakePorts {
         let (pasted, submitted) = async_channel::bounded(8);
         let (published, written) = async_channel::bounded(8);
         let (loads, loaded) = async_channel::bounded(8);
+        let (sounds, played) = async_channel::unbounded();
         let ports = Self {
             desktop_pending: false,
             record_error: None,
@@ -126,6 +138,7 @@ impl FakePorts {
             pasted,
             published,
             loads,
+            sounds,
         };
         let reports = Reports {
             captures: opened,
@@ -134,6 +147,7 @@ impl FakePorts {
             pasted: submitted,
             published: written,
             loads: loaded,
+            sounds: played,
         };
         (ports, reports)
     }
@@ -178,6 +192,7 @@ impl Ports for FakePorts {
             events,
             delayed_finish: self.delayed_finish,
             retirement: self.retirement.clone(),
+            sounds: self.sounds.clone(),
         })
     }
 
@@ -274,6 +289,18 @@ impl Ports for FakePorts {
             Ok(result)
         }
     }
+
+    fn cue(&self, cue: Cue) {
+        self.sounds
+            .try_send(Sound::Played(cue))
+            .expect("the sound lane is unbounded");
+    }
+
+    fn hold_cues(&self, held: bool) {
+        self.sounds
+            .try_send(Sound::Held(held))
+            .expect("the sound lane is unbounded");
+    }
 }
 
 struct FakeMicrophone {
@@ -281,6 +308,15 @@ struct FakeMicrophone {
     events: Sender<CaptureEvent>,
     delayed_finish: bool,
     retirement: Option<Gate<()>>,
+    sounds: Sender<Sound>,
+}
+
+impl Listening for FakeMicrophone {
+    fn expect_cue(&self) {
+        self.sounds
+            .try_send(Sound::Expected(self.id))
+            .expect("the sound lane is unbounded");
+    }
 }
 
 impl Capturing for FakeMicrophone {
@@ -444,6 +480,7 @@ struct Harness<Owner = OwnedTask> {
     pasted: Receiver<String>,
     published: Receiver<(Footage, Narration)>,
     loads: Receiver<()>,
+    sounds: Receiver<Sound>,
 }
 
 impl Harness {
@@ -512,6 +549,7 @@ impl<Owner: Sync> Harness<Owner> {
             pasted: reports.pasted,
             published: reports.published,
             loads: reports.loads,
+            sounds: reports.sounds,
         })
     }
 
@@ -549,6 +587,11 @@ impl<Owner: Sync> Harness<Owner> {
 
     fn snapshot(&self) -> Snapshot {
         self.updates.borrow().clone()
+    }
+
+    /// The cues played and marked since the last call.
+    fn sounds(&self) -> Vec<Sound> {
+        std::iter::from_fn(|| self.sounds.try_recv().ok()).collect()
     }
 
     async fn start(&mut self) -> anyhow::Result<OpenedCapture> {
@@ -605,6 +648,7 @@ async fn still_pending(future: impl Future) -> bool {
     timeout(Duration::from_millis(30), future).await.is_err()
 }
 
+mod cues;
 mod dictation;
 mod model;
 mod shows;

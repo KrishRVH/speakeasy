@@ -1,6 +1,7 @@
 //! The seam between the session owner and its side effects: recording devices, speech, insertion,
-//! and publishing Shows, with the session identity and events that cross it. Tests replace the
-//! side effects at this boundary; gesture, cancellation, and delivery ordering stay real.
+//! publishing Shows, and sound cues, with the session identity and events that cross it. Tests
+//! replace the side effects at this boundary; gesture, cancellation, and delivery ordering stay
+//! real.
 
 use std::time::{Duration, Instant};
 
@@ -9,7 +10,7 @@ use speakeasy_platform::{Delivery, InsertPermit, Inserted};
 use speakeasy_show::{Action, Journal, Moment, Narration, Size, Stroke};
 use tokio::sync::watch;
 
-use crate::config::Config;
+use crate::{config::Config, sounds::Cue};
 
 /// The error a speech startup reports once cancelled.
 pub(crate) const STARTUP_CANCELLED: &str = "Local model startup cancelled";
@@ -73,6 +74,13 @@ pub(crate) trait Capturing: Send + 'static {
     fn retire(self) -> impl Future<Output = ()> + Send + 'static;
 }
 
+/// The microphone, which can hear Speakeasy's own cues.
+pub(crate) trait Listening: Capturing {
+    /// A cue is about to sound: until it has passed, only a voice beneath it counts as speech, so
+    /// a recording of nothing but the cue stays silent.
+    fn expect_cue(&self);
+}
+
 pub(crate) trait Speech: Send + Sync + 'static {
     /// Returns raw engine text. The worker applies transcript cleanup before insertion.
     fn transcribe(
@@ -118,7 +126,7 @@ pub(crate) enum Published {
 }
 
 pub(crate) trait Ports: Send + 'static {
-    type Microphone: Capturing;
+    type Microphone: Listening;
     type Screen: Capturing;
     type Speech: Speech;
 
@@ -166,4 +174,11 @@ pub(crate) trait Ports: Send + 'static {
         permit: InsertPermit,
         delivery: Delivery,
     ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static;
+
+    /// Plays `cue` now, or not at all.
+    fn cue(&self, cue: Cue);
+
+    /// Keeps the cue output open while `held`, so no cue waits for a device to open; once
+    /// released, it closes shortly after the last cue.
+    fn hold_cues(&self, held: bool);
 }

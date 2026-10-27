@@ -8,7 +8,7 @@ use speakeasy_show::Narration;
 use tokio::time::timeout;
 
 use super::{
-    ports::{Capturing, Sealed},
+    ports::{Capturing, Listening, Sealed},
     *,
 };
 use crate::local_speech::LocalSpeech;
@@ -102,6 +102,10 @@ impl Ports for Fixture {
             Ok(Inserted::Sent)
         }
     }
+
+    fn cue(&self, _: Cue) {}
+
+    fn hold_cues(&self, _: bool) {}
 }
 
 /// Replays the fixture audio when finished; a repeated finish reaches a session that is no longer
@@ -127,6 +131,10 @@ impl Capturing for FixtureDevice {
     }
 
     async fn retire(self) {}
+}
+
+impl Listening for FixtureDevice {
+    fn expect_cue(&self) {}
 }
 
 async fn wait_for_signal(

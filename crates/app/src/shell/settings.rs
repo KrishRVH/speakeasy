@@ -524,6 +524,7 @@ impl Action {
             Self::Toggle(Setting::PreferGpu) => "prefer-gpu",
             Self::Toggle(Setting::ReduceMotion) => "reduce-motion",
             Self::Toggle(Setting::RemoveFillers) => "remove-fillers",
+            Self::Toggle(Setting::PlaySounds) => "play-sounds",
             Self::Toggle(Setting::DesktopBindings) => "desktop-bindings",
             Self::Theme => "theme",
             Self::Save => "save",
@@ -545,6 +546,7 @@ enum Setting {
     PreferGpu,
     ReduceMotion,
     RemoveFillers,
+    PlaySounds,
     DesktopBindings,
 }
 
@@ -554,6 +556,7 @@ impl Setting {
             Self::PreferGpu => &mut config.use_gpu,
             Self::ReduceMotion => &mut config.reduced_motion,
             Self::RemoveFillers => &mut config.remove_fillers,
+            Self::PlaySounds => &mut config.play_sounds,
             Self::DesktopBindings => &mut config.linux.external_shortcut,
         }
     }
@@ -563,6 +566,7 @@ impl Setting {
             Self::PreferGpu => config.use_gpu,
             Self::ReduceMotion => config.reduced_motion,
             Self::RemoveFillers => config.remove_fillers,
+            Self::PlaySounds => config.play_sounds,
             Self::DesktopBindings => config.linux.external_shortcut,
         }
     }

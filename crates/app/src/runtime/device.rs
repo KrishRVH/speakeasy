@@ -6,7 +6,10 @@ use std::{future::pending, mem};
 
 use tokio::task::JoinHandle;
 
-use super::{ports::Capturing, reap};
+use super::{
+    ports::{Capturing, Listening},
+    reap,
+};
 
 #[derive(Default)]
 pub(super) enum Device<R> {
@@ -49,6 +52,14 @@ impl<R: Capturing> Device<R> {
         self.retire();
         if let Self::Retiring(task) = self {
             reap(task).await;
+        }
+    }
+}
+
+impl<R: Listening> Device<R> {
+    pub(super) fn expect_cue(&self) {
+        if let Self::Open(recording) = self {
+            recording.expect_cue();
         }
     }
 }

@@ -141,6 +141,10 @@ impl Ports for ModelPorts {
             })
         }
     }
+
+    fn cue(&self, _: Cue) {}
+
+    fn hold_cues(&self, _: bool) {}
 }
 
 struct ModelDevice {
@@ -172,6 +176,10 @@ impl Capturing for ModelDevice {
     }
 }
 
+impl Listening for ModelDevice {
+    fn expect_cue(&self) {}
+}
+
 struct ModelSpeech {
     jobs: Sender<Reply>,
 }
@@ -201,6 +209,7 @@ enum Key {
     Lock,
     Toggle,
     Cancel,
+    Interrupt,
     Show,
 }
 
@@ -212,6 +221,7 @@ impl Key {
             Self::Lock => Input::Lock,
             Self::Toggle => Input::Toggle,
             Self::Cancel => Input::Cancel,
+            Self::Interrupt => Input::Interrupt,
             Self::Show => Input::Show,
         }
     }
@@ -254,6 +264,7 @@ fn step() -> impl Strategy<Value = Step> {
         1 => Just(Key::Lock),
         1 => Just(Key::Toggle),
         2 => Just(Key::Cancel),
+        1 => Just(Key::Interrupt),
         1 => Just(Key::Show),
     ];
     // A Show starts with S during a hold; the shortcut is then let go while the Show records.
@@ -560,6 +571,13 @@ async fn run(steps: &[Step], releases: Releases) -> anyhow::Result<()> {
     model.close().await
 }
 
+fn paused() -> std::io::Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
     #[test]
@@ -567,12 +585,77 @@ proptest! {
         steps in prop::collection::vec(step(), 0..=40),
         releases in releases(),
     ) {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .start_paused(true)
-            .build()?;
-        if let Err(error) = runtime.block_on(run(&steps, releases)) {
+        if let Err(error) = paused()?.block_on(run(&steps, releases)) {
             return Err(TestCaseError::fail(format!("{error:#}")));
         }
     }
+}
+
+/// Sequences the property once shrank failures to, kept as cases of their own because any change
+/// to the strategy changes what a saved seed generates.
+#[test]
+fn the_sequences_that_once_stranded_the_owner_come_to_rest() -> anyhow::Result<()> {
+    let show = || Step::Inputs(vec![Key::Press, Key::Show, Key::Release]);
+    let keys = |keys: &[Key]| Step::Inputs(keys.to_vec());
+    let at_once = Releases {
+        microphone: Duration::ZERO,
+        screen: Duration::ZERO,
+    };
+    let unfinished = Step::Footage { complete: false };
+    let (speech, failure) = (Step::Audio(Heard::Speech), Step::Audio(Heard::Failure));
+    let cases = [
+        (vec![keys(&[Key::Toggle]), failure.clone()], at_once),
+        (vec![show(), failure.clone()], at_once),
+        (
+            vec![
+                show(),
+                show(),
+                speech.clone(),
+                unfinished.clone(),
+                Step::Advance(Duration::from_millis(141)),
+                Step::Advance(Duration::ZERO),
+                show(),
+                speech.clone(),
+            ],
+            at_once,
+        ),
+        (
+            vec![
+                show(),
+                keys(&[Key::Cancel]),
+                keys(&[Key::Press, Key::Show]),
+                speech,
+            ],
+            Releases {
+                screen: Duration::from_millis(2),
+                ..at_once
+            },
+        ),
+        (
+            vec![
+                show(),
+                show(),
+                failure.clone(),
+                show(),
+                show(),
+                keys(&[Key::Cancel]),
+                show(),
+                unfinished,
+                show(),
+                keys(&[Key::Press]),
+                failure.clone(),
+                show(),
+                show(),
+                show(),
+                failure,
+                show(),
+                show(),
+            ],
+            at_once,
+        ),
+    ];
+    for (steps, releases) in cases {
+        paused()?.block_on(run(&steps, releases))?;
+    }
+    Ok(())
 }

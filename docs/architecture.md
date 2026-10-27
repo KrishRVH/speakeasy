@@ -51,6 +51,14 @@ module unless a test file is named.
   capture, meter, and seal a trimmed WAV before driver teardown.
   [audio/tests.rs](../crates/app/src/audio/tests.rs) and
   [stream/tests.rs](../crates/app/src/audio/stream/tests.rs) use synthetic samples.
+- **Sound cues**: [sounds.rs](../crates/app/src/sounds.rs) plays the cues the owner asks for through
+  `Ports::cue` on an owned output thread, which `Ports::hold_cues` keeps open through each session,
+  and [speech.rs](../crates/app/src/audio/speech.rs) hears only the voice band beneath the cues,
+  through [lowpass.rs](../crates/app/src/lowpass.rs), while a recording may overhear one.
+  [sounds/tests.rs](../crates/app/src/sounds/tests.rs) drives the player against a fake device and,
+  opt-in, plays every cue on the default output; speech.rs runs the real cues through the gate at
+  full scale; [runtime/tests/cues.rs](../crates/app/src/runtime/tests/cues.rs) checks which moments
+  sound and when the output is held.
 - **Local recognition**: [local_speech.rs](../crates/app/src/local_speech.rs),
   [child.rs](../crates/app/src/child.rs), [http.rs](../crates/app/src/http.rs), and
   [platform/src/process.rs](../crates/platform/src/process.rs) start, query, and reap engines.

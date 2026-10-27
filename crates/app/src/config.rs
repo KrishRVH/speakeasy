@@ -62,6 +62,7 @@ pub(crate) struct Config {
     pub use_gpu: bool,
     pub reduced_motion: bool,
     pub preserve_clipboard: bool,
+    pub play_sounds: bool,
     pub theme: Theme,
 }
 
@@ -235,6 +236,7 @@ impl Config {
             use_gpu,
             reduced_motion,
             preserve_clipboard,
+            play_sounds,
             theme,
         } = next;
         [
@@ -258,6 +260,8 @@ impl Config {
                     || self.preserve_clipboard != *preserve_clipboard,
                 Change::Session,
             ),
+            // The owner sounds the cues, tells the microphone of each, and holds their output.
+            (self.play_sounds != *play_sounds, Change::Session),
             (
                 self.theme != *theme || self.reduced_motion != *reduced_motion,
                 Change::Presentation,
@@ -529,6 +533,7 @@ impl Default for Config {
             use_gpu: true,
             reduced_motion: false,
             preserve_clipboard: false,
+            play_sounds: true,
             theme: Theme::default(),
         }
     }

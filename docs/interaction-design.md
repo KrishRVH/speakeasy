@@ -70,6 +70,29 @@ supplies simulated levels. Reduced motion, from Settings or the OS, snaps transi
 level changes, uses one level bar, and keeps the processing highlight still. Capture uses a timer
 for its clock and recording-limit cue.
 
+## Sounds
+
+Short notes from a CC0 kalimba recording confirm the moments a user may not be watching: a high note
+once the microphone listens, a lower note when a recording finishes, by gesture or at the
+five-minute limit, a muted low note when the user cancels, two rising notes when a Show starts, and
+a rising chord when text or a Show waits on the clipboard. Text arriving in the editor, errors,
+hands-free locking, and a hold that another shortcut or a session change ends stay silent; the pill
+already says them. **Play sounds** in Settings turns every cue off.
+
+Each cue echoes the pill. The high note sounds as the pill opens to listening rather than at the
+press, so it never promises a microphone still opening, and a desktop shortcut that takes the keys
+before then makes no sound; S during that wait makes the first note the Show's. A cue is heard
+within 300 ms of its moment, counting the output device's reported latency, or not at all. The
+device opens with the press, alongside the microphone, so the first cue never waits for it; it stays
+open through the session and closes ten seconds after the session and its last cue, however the
+session ended, so an idle Speakeasy holds no audio stream.
+
+The microphone can overhear the start and Show cues, which are high-passed at 400 Hz. For the 600 ms
+after the microphone learns of either, the speech gate counts only sound below 300 Hz, where a
+voice's fundamental carries and the cues leave almost nothing: a recording that hears only a cue
+sends nothing, and a word said over a cue still counts, though a whisper there does not. The stop
+and cancel cues follow the end of capture and are never recorded.
+
 ## Tray and Settings
 
 Configured native launches stay in the tray/menu bar. First setup and invalid configuration open
@@ -115,7 +138,7 @@ status line stay in view below the scrolling controls.
   cannot be inferred from submitting keystrokes.
 - Settings exposes automatic setup while no engine is set up, and manual engine/model selection,
   microphone selection, language where applicable, GPU preference, text delivery, English filler
-  removal, reduced motion, and theme.
+  removal, reduced motion, sounds, and theme.
 
 ## Acceptance
 

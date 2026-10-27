@@ -22,6 +22,7 @@ use crate::{
     config::{Change, Config, ValidConfig},
     local_speech::LocalSpeech,
     show::{self, Canvas, ScreenRecorder},
+    sounds::{Cue, Sounds},
 };
 
 /// The status while a speech worker loads, shared by the owner, Settings, and the tray.
@@ -127,7 +128,11 @@ impl Runtime {
         let (input, inputs) = input_lane();
         let (monitor, inserter) =
             speakeasy_platform::prepare(input.clone(), config.desktop_options())?;
-        let ports = Desktop { inserter, canvas };
+        let ports = Desktop {
+            inserter,
+            canvas,
+            sounds: Sounds::start()?,
+        };
         let runtime = Self::host(
             config.into_inner(),
             snapshots,
@@ -169,11 +174,13 @@ impl Runtime {
     }
 }
 
-/// The production side effects: native devices, local speech, insertion, and Show publishing.
+/// The production side effects: native devices, local speech, insertion, Show publishing, and
+/// sound cues.
 struct Desktop {
     inserter: Inserter,
     /// Where a Show's live ink reaches the overlay.
     canvas: watch::Sender<Canvas>,
+    sounds: Sounds,
 }
 
 impl Ports for Desktop {
@@ -228,6 +235,14 @@ impl Ports for Desktop {
     ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static {
         let inserter = self.inserter.clone();
         async move { inserter.insert(text, permit, delivery).await }
+    }
+
+    fn cue(&self, cue: Cue) {
+        self.sounds.play(cue);
+    }
+
+    fn hold_cues(&self, held: bool) {
+        self.sounds.hold(held);
     }
 }
 

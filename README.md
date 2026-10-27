@@ -65,6 +65,12 @@ the pill shows:
   keys were still held or Speakeasy itself had focus. Paste it where you want it.
 - **Needs attention.** An error says what to do next and stays in Settings after the pill fades.
 
+Soft kalimba notes mark the moments you may not be watching: a high note once Speakeasy is
+listening, a lower one when you finish or the five-minute limit does, a muted low note when you
+cancel, two rising notes when a Show starts, and a short chord when text or a Show is copied.
+Speakeasy listens beneath its own cues, so a recording that hears only a cue sends nothing, while a
+word said over one still counts. Turn them off with **Play sounds** in Settings.
+
 ### Show your coding agent
 
 A Show is a narrated screen recording a coding agent can read. Press <kbd>S</kbd> while holding the
@@ -277,15 +283,15 @@ file.
 </p>
 
 Settings show the shortcuts and the engine and model in use, and choose the microphone, Whisper's
-language, GPU use, filler removal, how text is delivered, reduced motion, and theme. The buttons and
-the status line stay at the bottom while the rest scrolls. The status says whether dictation is
-ready, or shows the latest error or notice; problems show in the attention color.
+language, GPU use, filler removal, how text is delivered, reduced motion, sounds, and theme. The
+buttons and the status line stay at the bottom while the rest scrolls. The status says whether
+dictation is ready, or shows the latest error or notice; problems show in the attention color.
 
 Changes apply when you save. Theme and reduced-motion changes keep a recording running; microphone,
-language, filler removal, and delivery changes end it but keep the model loaded. On Linux, Shortcuts
-changes and most Insert changes restart dictation, which reloads the model. Saving stays responsive
-and preserves edits made while the save is running. Pausing during a save keeps dictation paused;
-Quit finishes requested saves.
+language, filler removal, delivery, and sound changes end it but keep the model loaded. On Linux,
+Shortcuts changes and most Insert changes restart dictation, which reloads the model. Saving stays
+responsive and preserves edits made while the save is running. Pausing during a save keeps dictation
+paused; Quit finishes requested saves.
 
 <p align="center">
   <img src="docs/assets/themes.png"
@@ -388,8 +394,10 @@ Live microphone, editor, and screen acceptance is tracked under
 ## License
 
 Speakeasy is free and open source under the [MIT License](LICENSE). Josefin Sans is under the
-[SIL Open Font License](crates/app/assets/JosefinSans-OFL.txt), `speakeasy-show` adapts MIT-licensed
-code credited in its [notice](crates/show/NOTICE.md), and the patched GPUI under `vendor/` keeps its
+[SIL Open Font License](crates/app/assets/JosefinSans-OFL.txt), the cue sounds are cut from
+hollandm's CC0 [kalimba recordings](https://freesound.org/people/hollandm/packs/38696/) on
+Freesound, `speakeasy-show` adapts MIT-licensed code credited in its
+[notice](crates/show/NOTICE.md), and the patched GPUI under `vendor/` keeps its
 [Apache 2.0 license](vendor/gpui/LICENSE-APACHE). Every package includes `LICENSE`, the font
 license, that notice, and `THIRD-PARTY-NOTICES.txt`, which packaging generates with `cargo about`
 from the crates built for that platform and the licenses

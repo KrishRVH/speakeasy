@@ -92,7 +92,7 @@ fn interruption_revokes_authority_before_delivering_release() -> anyhow::Result<
     let permit = input.begin().context("Missing permit")?;
     Decision::pass(Some(Action::Interrupt)).deliver(&input);
     assert!(!permit.active());
-    assert!(matches!(events.try_recv()?, Input::Cancel));
+    assert!(matches!(events.try_recv()?, Input::Interrupt));
     assert!(matches!(events.try_recv()?, Input::Release));
     Ok(())
 }

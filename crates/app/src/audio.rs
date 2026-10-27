@@ -1,6 +1,7 @@
 //! Microphone capture on an owned thread, from device selection through draining and metering to
 //! sealing audio before driver teardown, and the input-device list Settings offers. The real-time
-//! callbacks live in `stream`, the in-place WAV buffer in `pcm`.
+//! callbacks live in `stream`, the in-place WAV buffer in `pcm`, and the speech gate, which hears a
+//! voice beneath Speakeasy's own cues, in `speech`.
 
 mod control;
 mod pcm;
@@ -31,7 +32,7 @@ use self::{
         rate_and_channels,
     },
 };
-use crate::runtime::ports::{CaptureEvent, Capturing, Sealed, SessionId};
+use crate::runtime::ports::{CaptureEvent, Capturing, Listening, Sealed, SessionId};
 
 const INITIAL_RESERVATION: Duration = Duration::from_secs(10);
 /// Audio the callbacks can queue ahead of the drain loop before capture overflows.
@@ -45,6 +46,8 @@ const METER_TOP_DBFS: f32 = -6.0;
 /// an `OwnedThread`; the session owner retires it to await native teardown.
 pub(crate) struct Capture {
     signal: Signal,
+    /// Each message says a cue is starting, so the speech gate listens beneath it.
+    cues: Sender<()>,
     /// Never sends; it closes once the thread has torn down its stream and reported `Finished`.
     exit: Sender<Infallible>,
     thread: JoinHandle<()>,
@@ -57,25 +60,31 @@ impl Capture {
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<Self> {
         let microphone = microphone.map(str::to_owned);
-        Self::spawn(id, events, move |events, control| {
-            record(id, microphone.as_deref(), events, control)
+        Self::spawn(id, events, move |events, control, cues| {
+            record(id, microphone.as_deref(), events, control, cues)
         })
     }
 
     fn spawn<D: 'static>(
         id: SessionId,
         events: Sender<CaptureEvent>,
-        work: impl FnOnce(&Sender<CaptureEvent>, &Arc<Control>) -> anyhow::Result<Captured<D>>
+        work: impl FnOnce(
+            &Sender<CaptureEvent>,
+            &Arc<Control>,
+            &Receiver<()>,
+        ) -> anyhow::Result<Captured<D>>
         + Send
         + 'static,
     ) -> anyhow::Result<Self> {
         let control = Arc::new(Control::default());
+        let (cues, heard) = async_channel::unbounded();
         let (exit, alive) = async_channel::bounded::<Infallible>(1);
         let thread = thread::Builder::new().name("audio-capture".into()).spawn({
             let control = Arc::clone(&control);
             move || {
                 // A panicked capture's state is discarded; only its event lane is used afterwards.
-                let result = panic::catch_unwind(AssertUnwindSafe(|| work(&events, &control)))
+                let result =
+                    panic::catch_unwind(AssertUnwindSafe(|| work(&events, &control, &heard)))
                     .unwrap_or_else(|_| {
                         Err(anyhow!("Microphone stopped unexpectedly. Try recording again."))
                     });
@@ -101,6 +110,7 @@ impl Capture {
         };
         Ok(Self {
             signal,
+            cues,
             exit,
             thread,
         })
@@ -117,6 +127,7 @@ impl Capturing for Capture {
             signal,
             exit,
             thread,
+            ..
         } = self;
         // Dropping the signal cancels capture and wakes the thread.
         drop(signal);
@@ -128,6 +139,16 @@ impl Capturing for Capture {
             )]
             let _ = thread.join();
         }
+    }
+}
+
+impl Listening for Capture {
+    fn expect_cue(&self) {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "A capture that has ended has no speech left to gate"
+        )]
+        let _ = self.cues.try_send(());
     }
 }
 
@@ -252,8 +273,9 @@ impl Recorder {
         id: SessionId,
         events: &Sender<CaptureEvent>,
         control: &Control,
+        cues: &Receiver<()>,
     ) -> Captured<LiveStream> {
-        let drained = self.drain(id, events, control);
+        let drained = self.drain(id, events, control, cues);
         control.finish();
         control.quiesce();
         let Self {
@@ -282,6 +304,7 @@ impl Recorder {
         id: SessionId,
         events: &Sender<CaptureEvent>,
         control: &Control,
+        cues: &Receiver<()>,
     ) -> anyhow::Result<bool> {
         let mut meter = LevelMeter::new();
         let mut ready = false;
@@ -302,7 +325,7 @@ impl Recorder {
                 events.send_blocking(CaptureEvent::Ready(id))?;
             }
             consume_pcm(&mut self.ring, &mut self.pcm, &mut meter, self.limit);
-            self.speech.extend(self.pcm.audio());
+            classify(&mut self.speech, self.pcm.audio(), cues);
             if let Some(level) = meter.take_level() {
                 #[expect(
                     clippy::let_underscore_must_use,
@@ -367,10 +390,11 @@ fn record(
     microphone: Option<&str>,
     events: &Sender<CaptureEvent>,
     control: &Arc<Control>,
+    cues: &Receiver<()>,
 ) -> anyhow::Result<Captured<Option<LiveStream>>> {
     match Recorder::open(microphone, events, control) {
         Ok(recorder) => {
-            let Captured { outcome, device } = recorder.record(id, events, control);
+            let Captured { outcome, device } = recorder.record(id, events, control, cues);
             Ok(Captured {
                 outcome,
                 device: Some(device),
@@ -429,6 +453,15 @@ fn consume_pcm(ring: &mut Consumer<f32>, pcm: &mut Pcm16, meter: &mut LevelMeter
         pcm.push(encoded, limit);
     }
     chunk.commit_all();
+}
+
+/// Classifies the recording so far beneath every cue noticed since the last call, including the
+/// cue's first samples, which may arrive before its notice.
+fn classify(speech: &mut Audibility, audio: &[u8], cues: &Receiver<()>) {
+    while cues.try_recv().is_ok() {
+        speech.expect_cue(audio);
+    }
+    speech.extend(audio);
 }
 
 /// Maps RMS onto the meter's dBFS span, whose top is a speech reference rather than clipping.

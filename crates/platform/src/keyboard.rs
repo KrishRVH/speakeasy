@@ -12,7 +12,7 @@ use super::{Input, InputSender};
 /// Hold state for the modifier-only shortcut.
 ///
 /// Space during a hold locks hands-free, and S turns the recording into a Show; any other key
-/// belongs to a different shortcut, so it cancels dictation and waits for the chord's release.
+/// belongs to a different shortcut, so it interrupts dictation and waits for the chord's release.
 #[derive(Default)]
 struct Chord {
     hold: Hold,
@@ -93,7 +93,7 @@ enum Action {
     Lock,
     Show,
     Cancel,
-    /// Cancel, then release: another shortcut or a session change ended the hold.
+    /// Interrupt, then release: another shortcut or a session change ended the hold.
     Interrupt,
 }
 
@@ -106,7 +106,7 @@ impl Action {
             Self::Show => input.deliver(Input::Show),
             Self::Cancel => input.deliver(Input::Cancel),
             Self::Interrupt => {
-                input.deliver(Input::Cancel);
+                input.deliver(Input::Interrupt);
                 input.deliver(Input::Release);
             },
         }
