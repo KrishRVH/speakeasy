@@ -383,6 +383,33 @@ Live microphone, editor, and screen acceptance is tracked under
 
 </details>
 
+## Versions
+
+Speakeasy is a preview, versioned `0.MINOR.PATCH` under [SemVer](https://semver.org) as
+[Cargo reads](https://doc.rust-lang.org/cargo/reference/semver.html) major version zero: MINOR marks
+breaking changes. The version reaches 1.0.0 only when the maintainer declares the public surface
+stable.
+
+The public surface is what people, scripts, and coding agents rely on from one release to the next:
+
+- the gestures: hold-to-talk, double-tap hands-free, cancelling, and a Show's S, W, A, and Shift;
+- the command line: `speakeasy` options and `speakeasy show` commands;
+- saved settings and what each one means;
+- Show bundles: their files, the `show.json` format with its `version`, and their retention;
+- the supported platforms, their requirements, and the release packages.
+
+The look and sound of the app, its timings, messages, performance, and Rust crates are not part of
+it. Each release raises one number of the latest release, by its largest change since that tag:
+
+- **MINOR**, as in 0.5.2 to 0.6.0, when the surface loses something or changes meaning: a gesture,
+  option, or command is removed or does something else; a saved setting is no longer honored as
+  written; a `show.json` reader must change, which also raises the format's `version`; or a platform
+  or package is dropped or a requirement raised.
+- **PATCH**, as in 0.5.2 to 0.5.3, for every other release: added gestures, options, settings, and
+  bundle fields that existing readers can ignore, fixes, and performance.
+
+Versions carry no pre-release or build suffix, and a released version and its tag never change.
+
 ## Documentation
 
 - [Architecture](docs/architecture.md): the change and test map, cross-module invariants,

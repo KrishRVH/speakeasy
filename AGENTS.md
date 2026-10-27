@@ -60,9 +60,9 @@ project's profile; dependency licenses are checked only where packaging must cit
 
 ## App contracts
 
-Preserve hold-to-talk, double-tap hands-free, S-during-a-hold Shows, and the hard five-minute
-recording limit. Windows and macOS observe passive Escape without swallowing it; Linux uses an
-explicit reserved cancel chord or desktop command binding.
+Preserve hold-to-talk, double-tap hands-free, S, W, or A during a hold for Shows, and the hard
+five-minute recording limit. Windows and macOS observe passive Escape without swallowing it; Linux
+uses an explicit reserved cancel chord or desktop command binding.
 
 Keep errors actionable and local. Never add dictation history, accounts, telemetry, automatic
 upload, or silent provider switching. A Show is the one record Speakeasy keeps: the screen is
@@ -90,9 +90,10 @@ lockfiles, shared config, formatters, and integration. Each worktree has its own
 
 Before handoff, run `mise run standards:check` and relevant native checks. Report the checked
 revision, behavior proved, results, unavailable native verification, and unresolved findings. Push
-verified changes directly to `main`. A push that changes the root `Cargo.toml` publishes
-`[workspace.package].version` with `docs/release-notes.md` as its notes; if that version is already
-released, bump it, run `mise run rust:lock`, and rewrite the notes in the same push.
+verified changes directly to `main`; between releases it keeps the released version and its notes.
+Release only when the maintainer asks: choose the bump by [Versions](README.md#versions), set
+`[workspace.package].version`, run `mise run rust:lock`, and rewrite `docs/release-notes.md` in the
+same push. A new version on `main` publishes with those notes; no other push releases.
 
 ## Current repository
 

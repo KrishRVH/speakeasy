@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.claim.outputs.version }}
+      released: ${{ steps.claim.outputs.released }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The main-only gate stays in the step: skipping this job would skip branch packaging too.
@@ -30,13 +31,19 @@ jobs:
           [[ "$GITHUB_REF" == refs/heads/main ]] || exit 0
           test -f docs/release-notes.md
           tag="v$version"
+          # A version another commit released means this push left the version alone, so the
+          # latest release stays in place.
           if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
             git fetch origin "refs/tags/$tag:refs/tags/$tag"
-            test "$(git rev-list -n 1 "$tag")" = "$GITHUB_SHA" || { echo "Version $version already belongs to another commit; bump the version." >&2; exit 1; }
+            if [[ "$(git rev-list -n 1 "$tag")" != "$GITHUB_SHA" ]]; then
+              echo "released=true" >> "$GITHUB_OUTPUT"
+              echo "Version $version is already released; nothing to publish."
+            fi
           fi
 
   package:
     needs: version
+    if: needs.version.outputs.released != 'true'
     strategy:
       fail-fast: false
       matrix:
