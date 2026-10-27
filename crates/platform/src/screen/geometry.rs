@@ -1,6 +1,8 @@
 //! Display rectangles, frame sizes, and pixel rows: the arithmetic native adapters share, free of
 //! native calls so every host tests it.
 
+use super::Part;
+
 /// A rectangle in the platform's global display space: points on macOS, physical pixels on
 /// Windows.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -19,6 +21,27 @@ impl Bounds {
         let [width, height] = self.size;
         let share = |offset: f64, extent: f64| (extent > 0.0).then(|| narrow(offset / extent));
         Some([share(x - left, width)?, share(y - top, height)?])
+    }
+
+    /// Whether `point` lies within these bounds, counting the top and left edges but not the
+    /// bottom and right ones.
+    #[cfg(any(target_os = "macos", test))]
+    pub(crate) fn contains(self, [x, y]: [f64; 2]) -> bool {
+        let [left, top] = self.origin;
+        let [width, height] = self.size;
+        (left..left + width).contains(&x) && (top..top + height).contains(&y)
+    }
+
+    /// The part of these bounds that `other` covers, clipped to them; `None` when the two do not
+    /// overlap or these bounds are empty.
+    pub(crate) fn part_covered_by(self, other: Self) -> Option<Part> {
+        let [left, top] = other.origin;
+        let [width, height] = other.size;
+        let part = Part::between(
+            self.normalize([left, top])?,
+            self.normalize([left + width, top + height])?,
+        );
+        (part.width() > 0.0 && part.height() > 0.0).then_some(part)
     }
 
     /// The same rectangle measured from the opposite edge of a space `extent` tall, turning
@@ -40,6 +63,41 @@ impl Bounds {
 pub(crate) fn pixels(points: [f64; 2], scale: f64) -> Option<[u32; 2]> {
     let [width, height] = points.map(|extent| whole(extent * scale));
     Some([width?, height?])
+}
+
+/// The pixels of an image `size` that `part` covers, as its left, top, right, and bottom edges,
+/// rounded to whole pixels: at least one each way, unless the image is empty, and none outside it.
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn pixel_box(part: Part, [width, height]: [u32; 2]) -> [u32; 4] {
+    let (left, right) = pixel_span(part.left, part.right, width);
+    let (top, bottom) = pixel_span(part.top, part.bottom, height);
+    [left, top, right, bottom]
+}
+
+/// The pixels between shares `start` and `end` of `extent` pixels.
+#[cfg(any(target_os = "windows", test))]
+fn pixel_span(start: f32, end: f32, extent: u32) -> (u32, u32) {
+    let edge = |share: f32| whole_within(f64::from(share) * f64::from(extent), extent);
+    let first = edge(start).min(extent.saturating_sub(1));
+    (first, edge(end).max(first.saturating_add(1)).min(extent))
+}
+
+/// The part of an image `size` that `[left, top, right, bottom]`, a box of its pixels, shows.
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn part_of_box([left, top, right, bottom]: [u32; 4], [width, height]: [u32; 2]) -> Part {
+    let share = |pixels: u32, extent: u32| {
+        if extent == 0 {
+            0.0
+        } else {
+            narrow(f64::from(pixels) / f64::from(extent))
+        }
+    };
+    Part {
+        left: share(left, width),
+        top: share(top, height),
+        right: share(right, width),
+        bottom: share(bottom, height),
+    }
 }
 
 /// `size` halved until its long edge fits `longest_edge`, stopping before an axis would vanish.
@@ -98,6 +156,20 @@ fn whole(value: f64) -> Option<u32> {
     (1.0..=f64::from(u32::MAX))
         .contains(&value)
         .then_some(value as u32)
+}
+
+/// Rounds a pixel measure to the nearest count from zero to `most`.
+#[cfg(any(target_os = "windows", test))]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "The rounded value is clamped to lie within u32 range first"
+)]
+#[expect(
+    clippy::cast_sign_loss,
+    reason = "The value is clamped to be nonnegative first, and NaN casts to zero"
+)]
+fn whole_within(value: f64, most: u32) -> u32 {
+    value.round().clamp(0.0, f64::from(most)) as u32
 }
 
 #[cfg(test)]
@@ -164,6 +236,52 @@ mod tests {
         }
         assert_eq!(pixels([0.2, 900.0], 2.0), None);
         assert_eq!(pixels([1440.0, 900.0], 1e10), None);
+    }
+
+    #[test]
+    fn a_window_covers_the_part_of_its_display_it_overlaps() {
+        let window = |origin: [f64; 2], size: [f64; 2]| Bounds { origin, size };
+        assert_eq!(
+            MAIN.part_covered_by(window([360.0, 225.0], [720.0, 450.0])),
+            Some(Part::between([0.25, 0.25], [0.75, 0.75]))
+        );
+        assert_eq!(
+            MAIN.part_covered_by(window([-720.0, 450.0], [1440.0, 900.0])),
+            Some(Part::between([0.0, 0.5], [0.5, 1.0])),
+            "clipped to the display"
+        );
+        assert_eq!(
+            MAIN.part_covered_by(window([1440.0, 0.0], [800.0, 600.0])),
+            None,
+            "on the next display"
+        );
+    }
+
+    #[test]
+    fn bounds_hold_their_top_left_edges_only() {
+        assert!(MAIN.contains([0.0, 0.0]));
+        assert!(MAIN.contains([1439.5, 899.5]));
+        assert!(
+            !MAIN.contains([1440.0, 450.0]),
+            "the next display's left edge"
+        );
+        assert!(!MAIN.contains([-0.5, 450.0]));
+    }
+
+    #[test]
+    fn a_part_reads_back_whole_pixels_inside_the_image() {
+        let size = [1920, 1080];
+        assert_eq!(pixel_box(Part::WHOLE, size), [0, 0, 1920, 1080]);
+        let middle = Part::between([0.25, 0.5], [0.75, 0.75]);
+        assert_eq!(pixel_box(middle, size), [480, 540, 1440, 810]);
+        assert_eq!(part_of_box(pixel_box(middle, size), size), middle);
+        let sliver = Part::between([1.0, 0.0], [1.0, 1.0]);
+        assert_eq!(
+            pixel_box(sliver, size),
+            [1919, 0, 1920, 1080],
+            "one pixel wide"
+        );
+        assert_eq!(pixel_box(middle, [0, 0]), [0, 0, 0, 0]);
     }
 
     #[test]

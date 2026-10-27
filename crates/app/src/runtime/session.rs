@@ -8,7 +8,7 @@ use std::{
 };
 
 use speakeasy_core::gesture::State;
-use speakeasy_platform::{InsertPermit, Inserted};
+use speakeasy_platform::{InsertPermit, Inserted, Scope};
 use speakeasy_show::Narration;
 use tokio::task::{JoinError, JoinHandle};
 
@@ -31,9 +31,11 @@ pub(super) struct Session {
 
 /// A Show's screen recorder, which opens only after the previous one has retired.
 pub(super) enum Screen {
-    Queued,
+    /// Waits to record what the scope names.
+    Queued(Scope),
     Recording,
-    Recorded(Footage),
+    /// Boxed, since footage is far larger than the other states.
+    Recorded(Box<Footage>),
     /// The footage has moved into the publication.
     Spent,
 }
@@ -85,7 +87,7 @@ impl Session {
         let Screen::Recorded(footage) = mem::replace(screen, Screen::Spent) else {
             return None;
         };
-        Some((footage, mem::take(narration)))
+        Some((*footage, mem::take(narration)))
     }
 
     pub(super) const fn is_capturing(&self) -> bool {

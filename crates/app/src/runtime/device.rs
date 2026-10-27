@@ -7,7 +7,7 @@ use std::{future::pending, mem};
 use tokio::task::JoinHandle;
 
 use super::{
-    ports::{Capturing, Listening},
+    ports::{Capturing, Listening, Pinning},
     reap,
 };
 
@@ -60,6 +60,14 @@ impl<R: Listening> Device<R> {
     pub(super) fn expect_cue(&self) {
         if let Self::Open(recording) = self {
             recording.expect_cue();
+        }
+    }
+}
+
+impl<R: Pinning> Device<R> {
+    pub(super) fn pin(&self) {
+        if let Self::Open(recording) = self {
+            recording.pin();
         }
     }
 }

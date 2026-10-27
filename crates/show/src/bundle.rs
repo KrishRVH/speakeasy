@@ -50,7 +50,7 @@ pub struct Manifest {
 
 impl Manifest {
     /// The version this crate writes.
-    pub const VERSION: u32 = 1;
+    pub const VERSION: u32 = 2;
 }
 
 /// A Show ready to write: its manifest and its images, annotated and badged.
@@ -79,8 +79,8 @@ impl fmt::Debug for File {
     }
 }
 
-/// Annotates each chosen frame with its ink and click ripple, lays them out on contact sheets, and
-/// badges every image with its keyframe's number and time.
+/// Annotates each chosen frame with its ink, numbered labels, and click ripple, lays them out on
+/// contact sheets, and badges every image with its keyframe's number and time.
 ///
 /// `frame` supplies the full-resolution image on screen at a keyframe's moment, and may be called
 /// on several threads at once. Frames load, compose, and encode one sheet at a time, so only one
@@ -102,7 +102,7 @@ pub fn compose<E: From<Error> + Send>(
     for (page, keyframes) in sheet::pages(&keyframes).enumerate() {
         let annotated = parallel::map(keyframes, |keyframe| {
             let mut image = frame(keyframe.at)?;
-            let corner = draw::annotate(&mut image, keyframe, &recording, shown(&marks, keyframe));
+            let corner = draw::annotate(&mut image, keyframe, &recording, &marks, typeface);
             Ok((image, corner))
         })
         .into_iter()

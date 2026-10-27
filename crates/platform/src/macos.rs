@@ -11,6 +11,7 @@ use std::{
     panic::{self, AssertUnwindSafe},
     ptr::NonNull,
     sync::Arc,
+    time::Instant,
 };
 
 use anyhow::{Context as _, anyhow, bail, ensure};
@@ -274,7 +275,8 @@ extern "C" fn on_run_loop_entry(
     }
 }
 
-/// Fn, Fn+Space, Fn+S, and passive Escape, on the event tap's run-loop thread.
+/// Fn, Fn+Space, Fn+S, W, or A, passive Escape, and Shift taps, on the event tap's run-loop
+/// thread.
 fn observe(
     input: &InputSender,
     policy: &mut keyboard::Mac,
@@ -297,15 +299,17 @@ fn observe(
     let key_event = match kind {
         CGEventType::KeyDown => MacEvent::Key { code, down: true },
         CGEventType::KeyUp => MacEvent::Key { code, down: false },
-        CGEventType::FlagsChanged => MacEvent::FlagsChanged {
-            code,
-            function: event
-                .get_flags()
-                .contains(CGEventFlags::CGEventFlagSecondaryFn),
+        CGEventType::FlagsChanged => {
+            let flags = event.get_flags();
+            MacEvent::FlagsChanged {
+                code,
+                function: flags.contains(CGEventFlags::CGEventFlagSecondaryFn),
+                shift: flags.contains(CGEventFlags::CGEventFlagShift),
+            }
         },
         _ => return CallbackResult::Keep,
     };
-    let decision = policy.observe(key_event);
+    let decision = policy.observe(key_event, Instant::now());
     decision.deliver(input);
     if decision.swallows() {
         CallbackResult::Drop

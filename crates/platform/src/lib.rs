@@ -42,7 +42,10 @@ pub use self::{
     insertion::{Delivery, Inserter},
     owned_thread::{OwnedThread, StoppableThread},
     process::ProcessGroup,
-    screen::{Display, Frame, PointerMonitor, PointerSample, ScreenCapture, ScreenEvent},
+    screen::{
+        Display, Frame, Part, PointerMonitor, PointerSample, Scope, ScreenCapture, ScreenEvent,
+        Target,
+    },
 };
 
 /// The pill window's width in device-independent pixels.

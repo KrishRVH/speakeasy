@@ -5,8 +5,8 @@ use std::time::Duration;
 use tiny_skia::{FillRule, LinearGradient, Paint, Path, PixmapMut, SpreadMode, Transform};
 
 use crate::{
-    Action, Bundle, Error, Image, InkPoint, Moment, Narration, Point, Recording, SAMPLE_INTERVAL,
-    Size, Span, Stroke, Typeface, Word, compose,
+    Action, Bundle, Error, Image, InkPoint, Moment, Narration, Pin, Point, Recording,
+    SAMPLE_INTERVAL, Size, Span, Stroke, Typeface, Word, compose,
     draw::{paint, rounded},
     geometry::Rect,
     select,
@@ -44,6 +44,7 @@ const TRACK: [u8; 4] = [210, 210, 216, 255];
 const OPEN_APPEARANCE: u64 = 2_500;
 const APPEARANCE_SHOWN: u64 = 2_800;
 const TOGGLE_CLICK: u64 = 12_000;
+const TOGGLE_PIN: u64 = 12_600;
 const DRAG: (u64, u64) = (16_000, 17_000);
 const END: u64 = 20_000;
 
@@ -60,7 +61,7 @@ const NARRATION: [(u64, &str); 6] = [
 /// A scripted Show of a settings window, narrated throughout.
 ///
 /// A click opens a section, ink circles a menu and points at a label running under a button, a
-/// toggle ignores a click, and a slider follows a drag.
+/// toggle ignores a click and is pinned, and a slider follows a drag.
 #[derive(Clone, Debug)]
 pub struct Demo {
     typeface: Typeface,
@@ -372,6 +373,10 @@ fn recording() -> Recording {
         duration: Moment::from_millis(END),
         surface: SCENE,
         strokes: strokes(),
+        pins: vec![Pin {
+            at: Moment::from_millis(TOGGLE_PIN),
+            point: normalized(1_212.0, row_center(1)),
+        }],
         actions: vec![
             Action::Click {
                 at: Moment::from_millis(OPEN_APPEARANCE),
@@ -480,8 +485,8 @@ mod tests {
                 "Screen recording (0:20, 4 keyframes): {}
 Contact sheet: {}
 - #1 (0:02) [clicked] “Here's the settings window. When I open Appearance,”
-- #2 (0:09) [circled, drew an arrow] “the theme picker is here, but look, this label runs under the save button.”
-- #3 (0:12) [clicked] “Now I click reduce motion and nothing happens.”
+- #2 (0:09) [① circled, ② drew an arrow] “the theme picker is here, but look, this label runs under the save button.”
+- #3 (0:12) [③ pinned, clicked] “Now I click reduce motion and nothing happens.”
 - #4 (0:17) [dragged right] “Dragging the text size slider works, though.”
 Full-size keyframes: frames/frame-01.png to frames/frame-04.png. Timeline: show.json.
 ",
@@ -490,12 +495,17 @@ Full-size keyframes: frames/frame-01.png to frames/frame-04.png. Timeline: show.
             )
         );
         let marks = &bundle.manifest().marks;
-        assert_eq!(marks.len(), 2);
+        assert_eq!(marks.len(), 3);
         assert_eq!(marks[0].shape, crate::Shape::Circle);
         assert!(
             matches!(marks[1].shape, crate::Shape::Arrow { .. }),
             "{:?}",
             marks[1].shape
+        );
+        assert!(
+            matches!(marks[2].shape, crate::Shape::Pin { .. }),
+            "{:?}",
+            marks[2].shape
         );
         let expected = bundle.manifest().clone();
         let files = bundle.into_files(&directory).unwrap();

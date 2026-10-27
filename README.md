@@ -27,12 +27,12 @@ slot on screen while you speak, and keeps every word on your machine.
     width="760">
 </p>
 
-| Gesture                                        | Windows                                             | Mac                              |
-| ---------------------------------------------- | --------------------------------------------------- | -------------------------------- |
-| Dictate while held; release to type            | <kbd>Ctrl</kbd> + <kbd>Win</kbd>                    | <kbd>Fn</kbd>                    |
-| Hands-free; press the shortcut again to finish | <kbd>Ctrl</kbd> + <kbd>Win</kbd> + <kbd>Space</kbd> | <kbd>Fn</kbd> + <kbd>Space</kbd> |
-| Cancel; the key still reaches your app         | <kbd>Escape</kbd>                                   | <kbd>Escape</kbd>                |
-| Show your screen as well; see below            | <kbd>S</kbd> during the hold                        | <kbd>S</kbd> during the hold     |
+| Gesture                                          | Windows                                                     | Mac                                                         |
+| ------------------------------------------------ | ----------------------------------------------------------- | ----------------------------------------------------------- |
+| Dictate while held; release to type              | <kbd>Ctrl</kbd> + <kbd>Win</kbd>                            | <kbd>Fn</kbd>                                               |
+| Hands-free; press the shortcut again to finish   | <kbd>Ctrl</kbd> + <kbd>Win</kbd> + <kbd>Space</kbd>         | <kbd>Fn</kbd> + <kbd>Space</kbd>                            |
+| Cancel; the key still reaches your app           | <kbd>Escape</kbd>                                           | <kbd>Escape</kbd>                                           |
+| Show the screen, a window, or an area; see below | <kbd>S</kbd>, <kbd>W</kbd>, or <kbd>A</kbd> during the hold | <kbd>S</kbd>, <kbd>W</kbd>, or <kbd>A</kbd> during the hold |
 
 The shortcuts match Wispr Flow's defaults, and double-tapping the shortcut also starts hands-free.
 On Mac, set **System Settings › Keyboard › Press 🌐 key to** to **Do Nothing** so Fn only dictates.
@@ -71,18 +71,23 @@ word said over one still counts. Turn them off with **Play sounds** in Settings.
 
 ### Show your coding agent
 
-A Show is a narrated screen recording a coding agent can read. Press <kbd>S</kbd> while holding the
-shortcut, and Speakeasy records the display under the pointer along with your voice; the pill shows
-a red screen mark and **Hold Shift to draw**, then the elapsed time. Release the shortcut and keep
-talking. To draw circles and arrows, hold <kbd>Shift</kbd> and move the pointer without clicking;
-the ink fades as you go. Click through your app as usual, and press the shortcut again to finish.
+A Show is a narrated screen recording a coding agent can read. While holding the shortcut, press
+<kbd>S</kbd> to record the display under the pointer, <kbd>W</kbd> for the window under the pointer,
+followed as it moves, or <kbd>A</kbd> to drag out an area of the display. Speakeasy records it along
+with your voice, keeping what you said since you pressed the shortcut, and a thin red line marks the
+window or area while it records. The pill shows a red screen mark and **Hold Shift to draw**, then
+the elapsed time. Release the shortcut and keep talking. To draw circles and arrows, hold
+<kbd>Shift</kbd> and move the pointer without clicking; double-tap <kbd>Shift</kbd> to drop a pin
+where the pointer is. Each mark and pin is numbered ① ② ③ beside it, on screen and in the bundle, so
+you and the agent can refer to it by number. The ink fades as you go. Click through your app as
+usual, and press the shortcut again to finish.
 
 In this example, a Show reports bugs in a made-up settings app, and `speakeasy show demo` writes the
 same bundle.
 
 <p align="center">
   <img src="docs/assets/show.png"
-    alt="A Show of the made-up app: ink circles the theme picker and points at Save; the pill says Hold Shift to draw"
+    alt="A Show of the made-up app: numbered ink circles the theme picker and points at Save above the pill"
     width="760">
 </p>
 
@@ -102,7 +107,7 @@ don't see Speakeasy's windows or ink while a Show records; the keyframes still c
 
 <p align="center">
   <img src="docs/assets/show-sheet.png"
-    alt="The made-up app's contact sheet: four keyframes marked with a click, a circle and arrow, a click, and a drag"
+    alt="The made-up app's contact sheet: a click, a circle and arrow numbered 1 and 2, pin 3 and a click, and a drag"
     width="760">
 </p>
 
@@ -112,8 +117,8 @@ On Windows, the summary for that contact sheet reads as follows:
 Screen recording (0:20, 4 keyframes): …\speakeasy\shows\20261020T143205Z
 Contact sheet: …\speakeasy\shows\20261020T143205Z\contact-sheet.png
 - #1 (0:02) [clicked] “Here's the settings window. When I open Appearance,”
-- #2 (0:09) [circled, drew an arrow] “the theme picker is here, but look, this label runs under the save button.”
-- #3 (0:12) [clicked] “Now I click reduce motion and nothing happens.”
+- #2 (0:09) [① circled, ② drew an arrow] “the theme picker is here, but look, this label runs under the save button.”
+- #3 (0:12) [③ pinned, clicked] “Now I click reduce motion and nothing happens.”
 - #4 (0:17) [dragged right] “Dragging the text size slider works, though.”
 Full-size keyframes: frames/frame-01.png to frames/frame-04.png. Timeline: show.json.
 ```

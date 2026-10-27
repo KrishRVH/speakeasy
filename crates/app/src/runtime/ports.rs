@@ -6,8 +6,8 @@
 use std::time::{Duration, Instant};
 
 use async_channel::Sender;
-use speakeasy_platform::{Delivery, InsertPermit, Inserted};
-use speakeasy_show::{Action, Journal, Moment, Narration, Size, Stroke};
+use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope};
+use speakeasy_show::{Journal, Narration, Recording};
 use tokio::sync::watch;
 
 use crate::{config::Config, sounds::Cue};
@@ -81,6 +81,12 @@ pub(crate) trait Listening: Capturing {
     fn expect_cue(&self);
 }
 
+/// A Show's screen recorder, which takes numbered pins.
+pub(crate) trait Pinning: Capturing {
+    /// Drops a numbered pin where the pointer is now, if it is over what the Show records.
+    fn pin(&self);
+}
+
 pub(crate) trait Speech: Send + Sync + 'static {
     /// Returns raw engine text. The worker applies transcript cleanup before insertion.
     fn transcribe(
@@ -106,15 +112,11 @@ pub(crate) trait Speech: Send + Sync + 'static {
     fn stop(&mut self) -> impl Future<Output = ()> + Send;
 }
 
-/// What a Show's screen side recorded.
+/// What a Show's screen side recorded: everything but the narration, lasting until recording
+/// stopped, and the frames.
 pub(crate) struct Footage {
-    /// The captured display's size in logical pixels.
-    pub surface: Size,
-    /// When recording stopped, on the Show's timeline.
-    pub ended: Moment,
+    pub recording: Recording,
     pub journal: Journal,
-    pub strokes: Vec<Stroke>,
-    pub actions: Vec<Action>,
 }
 
 /// What publishing a Show did.
@@ -127,7 +129,7 @@ pub(crate) enum Published {
 
 pub(crate) trait Ports: Send + 'static {
     type Microphone: Listening;
-    type Screen: Capturing;
+    type Screen: Pinning;
     type Speech: Speech;
 
     /// Whether input must await `DesktopReady` before it can start capture.
@@ -141,12 +143,13 @@ pub(crate) trait Ports: Send + 'static {
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<Self::Microphone>;
 
-    /// Starts recording the display under the pointer for session `id`, whose timeline began at
-    /// `started`, reporting to `events`.
+    /// Starts recording what `scope` names, near the pointer, for session `id`, whose timeline
+    /// began at `started`, reporting to `events`.
     fn record_screen(
         &self,
         id: SessionId,
         started: Instant,
+        scope: Scope,
         events: Sender<ShowEvent>,
     ) -> anyhow::Result<Self::Screen>;
 

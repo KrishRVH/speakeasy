@@ -4,7 +4,7 @@
 use std::{fs, time::Instant};
 
 use speakeasy_platform::{InputSender, InsertPermit};
-use speakeasy_show::{Image, Manifest, Moment, Point, Size, Span, Tracker, Word};
+use speakeasy_show::{Image, Journal, Manifest, Moment, Point, Size, Span, Tracker, Word};
 
 use super::*;
 
@@ -101,19 +101,16 @@ fn words(spoken: &[(u64, &str)]) -> Narration {
 struct Rehearsal {
     journal: Journal,
     tracker: Tracker,
-    surface: Size,
 }
 
 impl Rehearsal {
     fn new(width: u32, height: u32) -> Self {
-        let surface = Size {
-            width: width as f32,
-            height: height as f32,
-        };
         Self {
             journal: Journal::new(),
-            tracker: Tracker::new(surface),
-            surface,
+            tracker: Tracker::new(Size {
+                width: width as f32,
+                height: height as f32,
+            }),
         }
     }
 
@@ -127,14 +124,9 @@ impl Rehearsal {
     }
 
     fn finish(self, ended: u64) -> Footage {
-        let ended = Moment::from_millis(ended);
-        let (strokes, actions) = self.tracker.finish(ended);
         Footage {
-            surface: self.surface,
-            ended,
+            recording: self.tracker.finish(Moment::from_millis(ended)),
             journal: self.journal,
-            strokes,
-            actions,
         }
     }
 }
@@ -326,7 +318,11 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
             .collect::<Vec<_>>(),
     );
     let started = Instant::now();
-    let (recording, journal) = narrated(footage, narration);
+    let Footage {
+        mut recording,
+        journal,
+    } = footage;
+    recording.narration = narration;
     let selection = select(&recording, journal.samples()).context("selected")?;
     let selected = started.elapsed();
     let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;

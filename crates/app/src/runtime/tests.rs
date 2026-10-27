@@ -5,12 +5,12 @@
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, ensure};
-use speakeasy_platform::{Delivery, InsertPermit, Inserted};
-use speakeasy_show::{Image, Journal, Moment, Narration, Size};
+use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope};
+use speakeasy_show::{Image, Journal, Moment, Narration, Recording, Size};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 use super::{
-    ports::{Capturing, Listening, Sealed, Speech},
+    ports::{Capturing, Listening, Pinning, Sealed, Speech},
     *,
 };
 
@@ -19,7 +19,7 @@ const PATIENCE: Duration = Duration::from_secs(2);
 type Reply = oneshot::Sender<anyhow::Result<String>>;
 type TranscriptionJob = (String, Reply);
 type OpenedCapture = (SessionId, Sender<CaptureEvent>);
-type OpenedShow = (SessionId, Sender<ShowEvent>);
+type OpenedShow = (SessionId, Scope, Sender<ShowEvent>);
 
 /// A cue the owner played, a microphone it told to expect one, or the cue output held open or
 /// released, in the order they happened.
@@ -90,6 +90,7 @@ struct FakePorts {
     publish_panics: bool,
     captures: Sender<OpenedCapture>,
     shows: Sender<OpenedShow>,
+    pins: Sender<SessionId>,
     jobs: Sender<TranscriptionJob>,
     pasted: Sender<String>,
     published: Sender<(Footage, Narration)>,
@@ -101,6 +102,7 @@ struct FakePorts {
 struct Reports {
     captures: Receiver<OpenedCapture>,
     shows: Receiver<OpenedShow>,
+    pins: Receiver<SessionId>,
     jobs: Receiver<TranscriptionJob>,
     pasted: Receiver<String>,
     published: Receiver<(Footage, Narration)>,
@@ -112,6 +114,7 @@ impl FakePorts {
     fn new() -> (Self, Reports) {
         let (captures, opened) = async_channel::bounded(8);
         let (shows, opened_shows) = async_channel::bounded(8);
+        let (pins, pinned) = async_channel::bounded(8);
         let (jobs, requested) = async_channel::bounded(8);
         let (pasted, submitted) = async_channel::bounded(8);
         let (published, written) = async_channel::bounded(8);
@@ -134,6 +137,7 @@ impl FakePorts {
             publish_panics: false,
             captures,
             shows,
+            pins,
             jobs,
             pasted,
             published,
@@ -143,6 +147,7 @@ impl FakePorts {
         let reports = Reports {
             captures: opened,
             shows: opened_shows,
+            pins: pinned,
             jobs: requested,
             pasted: submitted,
             published: written,
@@ -200,15 +205,17 @@ impl Ports for FakePorts {
         &self,
         id: SessionId,
         _: Instant,
+        scope: Scope,
         events: Sender<ShowEvent>,
     ) -> anyhow::Result<FakeScreen> {
         if let Some(error) = self.show_error {
             bail!(error);
         }
-        self.shows.try_send((id, events.clone()))?;
+        self.shows.try_send((id, scope, events.clone()))?;
         Ok(FakeScreen {
             id,
             events,
+            pins: self.pins.clone(),
             retirement: self.screen_retirement.clone(),
         })
     }
@@ -336,10 +343,11 @@ impl Capturing for FakeMicrophone {
     }
 }
 
-/// Reports one gray frame as its footage when finished.
+/// Reports one gray frame as its footage when finished, and each pin it takes.
 struct FakeScreen {
     id: SessionId,
     events: Sender<ShowEvent>,
+    pins: Sender<SessionId>,
     retirement: Option<Gate<()>>,
 }
 
@@ -357,6 +365,14 @@ impl Capturing for FakeScreen {
     }
 }
 
+impl Pinning for FakeScreen {
+    fn pin(&self) {
+        self.pins
+            .try_send(self.id)
+            .expect("pin lane has room for the test's pins");
+    }
+}
+
 fn sealed() -> Sealed {
     Sealed {
         wav: vec![1, 2],
@@ -369,14 +385,15 @@ fn footage() -> Footage {
     let mut journal = Journal::new();
     journal.record(Moment::START, frame);
     Footage {
-        surface: Size {
-            width: 1000.0,
-            height: 1000.0,
+        recording: Recording {
+            duration: Moment::from_millis(1_000),
+            surface: Size {
+                width: 1000.0,
+                height: 1000.0,
+            },
+            ..Recording::default()
         },
-        ended: Moment::from_millis(1_000),
         journal,
-        strokes: Vec::new(),
-        actions: Vec::new(),
     }
 }
 
@@ -476,6 +493,7 @@ struct Harness<Owner = OwnedTask> {
     levels: watch::Receiver<Meter>,
     captures: Receiver<OpenedCapture>,
     shows: Receiver<OpenedShow>,
+    pins: Receiver<SessionId>,
     jobs: Receiver<TranscriptionJob>,
     pasted: Receiver<String>,
     published: Receiver<(Footage, Narration)>,
@@ -545,6 +563,7 @@ impl<Owner: Sync> Harness<Owner> {
             levels,
             captures: reports.captures,
             shows: reports.shows,
+            pins: reports.pins,
             jobs: reports.jobs,
             pasted: reports.pasted,
             published: reports.published,

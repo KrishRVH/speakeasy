@@ -5,7 +5,7 @@ use std::{path::PathBuf, time::SystemTime};
 
 use anyhow::{Context as _, anyhow};
 use speakeasy_platform::InsertPermit;
-use speakeasy_show::{Journal, Narration, Recording, Typeface, compose, select};
+use speakeasy_show::{Narration, Typeface, compose, select};
 
 use super::store;
 use crate::runtime::ports::{Footage, PUBLISH_STOPPED, Published};
@@ -48,7 +48,11 @@ fn write_bundle(
     if cancelled() {
         return Ok(None);
     }
-    let (recording, journal) = narrated(footage, narration);
+    let Footage {
+        mut recording,
+        journal,
+    } = footage;
+    recording.narration = narration;
     let selection = select(&recording, journal.samples())
         .context("The screen could not be recorded. Try again.")?;
     let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;
@@ -82,26 +86,6 @@ fn write_bundle(
     }
     staged.persist()?;
     Ok(Some(summary))
-}
-
-/// The Show as composition reads it, with `narration` already on its timeline, and the journal
-/// its keyframes come from.
-fn narrated(footage: Footage, narration: Narration) -> (Recording, Journal) {
-    let Footage {
-        surface,
-        ended,
-        journal,
-        strokes,
-        actions,
-    } = footage;
-    let recording = Recording {
-        duration: ended,
-        surface,
-        strokes,
-        actions,
-        narration,
-    };
-    (recording, journal)
 }
 
 #[cfg(test)]

@@ -4941,7 +4941,7 @@ dependencies = [
 
 [[package]]
 name = "speakeasy"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
@@ -4969,14 +4969,14 @@ dependencies = [
 
 [[package]]
 name = "speakeasy-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "speakeasy-platform"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4990,6 +4990,7 @@ dependencies = [
  "libloading",
  "objc2",
  "objc2-app-kit",
+ "objc2-core-foundation",
  "objc2-core-graphics",
  "objc2-core-media",
  "objc2-core-video",
@@ -5009,7 +5010,7 @@ dependencies = [
 
 [[package]]
 name = "speakeasy-show"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "fdeflate",
  "png 0.18.1",

@@ -1,5 +1,5 @@
-//! Ink as the overlay and a bundle both draw it: its color, its pen, and the outline of a freehand
-//! stroke, as a pen of varying pressure would leave it.
+//! Ink as the overlay and a bundle both draw it: its color, its pen, the outline of a freehand
+//! stroke, as a pen of varying pressure would leave it, and the disc that numbers each mark.
 //!
 //! The outline is adapted from perfect-freehand 1.2.2 under the MIT License; see `NOTICE.md`.
 
@@ -30,6 +30,16 @@ struct Node {
 /// The red of ink on the overlay and in a bundle's frames.
 pub const COLOR: [u8; 4] = [255, 59, 48, 255];
 
+/// The width of a label's white ring, in the label's radii; a pin's dot has one too.
+pub const LABEL_RING: f32 = 0.14;
+/// The radius of the dot at a pin's point, in its label's radii.
+pub const PIN_DOT: f32 = 0.32;
+/// The size a label's digits are set at, in the label's radii, unless they would run wider than
+/// [`LABEL_DIGITS`].
+pub const LABEL_TYPE: f32 = 1.3;
+/// The widest a label's digits run, in the label's radii.
+pub const LABEL_DIGITS: f32 = 1.4;
+
 /// The pen width for ink on a surface `width × height` pixels, alike on the overlay and in a
 /// bundle's frames.
 ///
@@ -39,6 +49,16 @@ pub const COLOR: [u8; 4] = [255, 59, 48, 255];
 #[must_use]
 pub fn pen(width: f32, height: f32) -> f32 {
     (width.min(height) * 0.0043).clamp(2.8, 4.0) * detail(width, height)
+}
+
+/// The radius of the disc that numbers a mark on a surface `width × height` pixels, alike on the
+/// overlay and in a bundle's frames.
+///
+/// It is 18 pixels on a 1080p display: its digits read at a glance beside the ink without covering
+/// much of what the ink points at.
+#[must_use]
+pub fn label_radius(width: f32, height: f32) -> f32 {
+    12.0 * detail(width, height)
 }
 
 /// How much a surface `width × height` pixels scales marks up from a laptop screen's, so they keep

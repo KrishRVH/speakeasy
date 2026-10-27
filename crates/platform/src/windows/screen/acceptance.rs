@@ -125,7 +125,7 @@ fn capture_leaves_out_every_speakeasy_window_until_it_stops() -> anyhow::Result<
     // blacks it out, so a capture leaving out the other windows shows nothing behind them.
     set_affinity(scene.overlay, WDA_NONE)?;
     thread::sleep(COMPOSED);
-    let before = scene.unfiltered(display.native, u32::MAX)?;
+    let before = scene.unfiltered(whole(display), u32::MAX)?;
     let shown = |pattern, overlay| move |x, y| captured_color(x, y, Shown { pattern, overlay });
     assert_eq!(
         before.mismatches(shown(false, true)),
@@ -158,11 +158,11 @@ fn capture_leaves_out_every_speakeasy_window_until_it_stops() -> anyhow::Result<
     );
 
     thread::sleep(COMPOSED);
-    let after = scene.unfiltered(display.native, u32::MAX)?;
+    let after = scene.unfiltered(whole(display), u32::MAX)?;
     assert_eq!(after.mismatches(shown(true, false)), 0, "Unfiltered, after");
     let [width, height] = display.native.extent();
     let half = width.max(height).cast_unsigned() / 2;
-    let halved = scene.unfiltered(display.native, half)?;
+    let halved = scene.unfiltered(whole(display), half)?;
     assert_eq!(halved.scale, 2);
     assert_eq!(halved.mismatches(shown(true, false)), 0, "Halved, after");
 
@@ -182,6 +182,54 @@ fn capture_leaves_out_every_speakeasy_window_until_it_stops() -> anyhow::Result<
 }
 
 #[test]
+#[ignore = "Shows owned windows briefly; tallies captured pixels only where proven theirs"]
+fn a_window_or_area_capture_reads_back_only_its_part() -> anyhow::Result<()> {
+    per_monitor_aware()?;
+    let display = display_under_pointer()?;
+    let scene = Scene::open(display.native)?;
+    thread::sleep(COMPOSED);
+    set_affinity(scene.overlay, WDA_NONE)?;
+    thread::sleep(COMPOSED);
+    let area = scene.area()?;
+    let RECT {
+        left,
+        top,
+        right,
+        bottom,
+    } = area;
+    let part = display
+        .native
+        .area()
+        .part_covered_by(Bounds {
+            origin: [left, top].map(f64::from),
+            size: [right - left, bottom - top].map(f64::from),
+        })
+        .context("The scene lies off its display")?;
+    let shown = |x, y| {
+        captured_color(
+            x,
+            y,
+            Shown {
+                pattern: false,
+                overlay: true,
+            },
+        )
+    };
+    let window = super::Window(scene.backdrop as isize);
+    for region in [Region::Window(window, part), Region::Area(part)] {
+        let target = Target { display, region };
+        let crop = scene.unfiltered(target, u32::MAX)?;
+        assert_eq!(crop.mismatches(shown), 0, "{region:?}");
+        assert_eq!(crop.part, part, "{region:?}");
+        assert_eq!(
+            crop.width, crop.frame_width,
+            "{region:?} read back only its part"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 #[ignore = "Uses the GPU on synthetic frames; captures nothing"]
 fn gpu_halving_reads_back_exact_pixels() -> anyhow::Result<()> {
     // SAFETY: takes a point by value and returns the primary monitor.
@@ -189,35 +237,49 @@ fn gpu_halving_reads_back_exact_pixels() -> anyhow::Result<()> {
     let (device, context) = device_for(HMONITOR(primary))?;
     for source in [[1920, 1080], [3840, 2160]] {
         let frame = synthetic_frame(&device, source)?;
-        for longest_edge in [u32::MAX, 2560, 960] {
-            let readback = Readback::new(&device, source, longest_edge)?;
-            let bgra = readback.read(&context, &frame)?;
-            let [width, height] = readback.size;
-            let expected: Vec<u8> = (0..height)
-                .flat_map(|y| (0..width).map(move |x| [x, y]))
-                .flat_map(|[x, y]| block_color(x << readback.level, y << readback.level))
-                .collect();
-            assert!(bgra == expected, "{source:?} read back at {width}×{height}");
-            let [median, slowest] = cost(&readback, &context, &frame)?;
-            println!(
-                "{}×{} → {width}×{height}: median {median:.2} ms, slowest {slowest:.2} ms",
-                source[0], source[1],
-            );
+        // The whole frame, then a quarter of it starting on a block boundary.
+        let [width, height] = source;
+        for (origin, size) in [
+            ([0, 0], source),
+            ([width / 4, height / 4], [width / 2, height / 2]),
+        ] {
+            for longest_edge in [u32::MAX, 2560, 960] {
+                let readback = Readback::new(&device, size, longest_edge)?;
+                let bgra = readback.read(&context, &frame, origin)?;
+                let [width, height] = readback.size;
+                let [left, top] = origin;
+                let expected: Vec<u8> = (0..height)
+                    .flat_map(|y| (0..width).map(move |x| [x, y]))
+                    .flat_map(|[x, y]| {
+                        block_color(left + (x << readback.level), top + (y << readback.level))
+                    })
+                    .collect();
+                assert!(
+                    bgra == expected,
+                    "{size:?} at {origin:?} of {source:?} read back at {width}×{height}"
+                );
+                let [median, slowest] = cost(&readback, &context, &frame, origin)?;
+                println!(
+                    "{}×{} → {width}×{height}: median {median:.2} ms, slowest {slowest:.2} ms",
+                    size[0], size[1],
+                );
+            }
         }
     }
     Ok(())
 }
 
-/// The median and slowest of 30 readbacks of `frame`, in milliseconds.
+/// The median and slowest of 30 readbacks of `frame` at `origin`, in milliseconds.
 fn cost(
     readback: &Readback,
     context: &ID3D11DeviceContext,
     frame: &ID3D11Texture2D,
+    origin: [u32; 2],
 ) -> windows::core::Result<[f64; 2]> {
     let mut costs = Vec::new();
     for _ in 0..30 {
         let started = Instant::now();
-        readback.read(context, frame)?;
+        readback.read(context, frame, origin)?;
         costs.push(started.elapsed());
     }
     costs.sort();
@@ -381,13 +443,21 @@ fn set_affinity(window: HWND, affinity: u32) -> anyhow::Result<()> {
     })?)
 }
 
-/// The first frame of `display` from a capture that, unlike `ScreenCapture`, leaves no
+/// All of `display`.
+const fn whole(display: crate::screen::Display) -> Target {
+    Target {
+        display,
+        region: Region::Whole,
+    }
+}
+
+/// The first frame of `target` from a capture that, unlike `ScreenCapture`, leaves no
 /// window out.
-fn unfiltered_frame(display: Display, longest_edge: u32) -> anyhow::Result<Frame> {
+fn unfiltered_frame(target: Target, longest_edge: u32) -> anyhow::Result<Frame> {
     join_lasting_apartment()?;
     let (_stop, stopping) = async_channel::bounded::<Infallible>(1);
     let started = Instant::now();
-    let mut capture = Capture::start(display, INTERVAL, longest_edge, &stopping)?;
+    let mut capture = Capture::start(target, INTERVAL, longest_edge, &stopping)?;
     let deadline = started.checked_add(PATIENCE).unwrap();
     while Instant::now() < deadline {
         if capture.poll(started)?
@@ -425,6 +495,9 @@ struct Crop {
     width: usize,
     captured: Instant,
     bgra: Vec<[u8; 4]>,
+    /// The part of the display the frame showed, and its width in frame pixels.
+    part: Part,
+    frame_width: usize,
 }
 
 impl Crop {
@@ -434,12 +507,15 @@ impl Crop {
         reason = "Offsets within one captured display, bounded by indexing"
     )]
     fn of(frame: Frame, display: Display, area: RECT) -> anyhow::Result<Self> {
-        let [left, top, ..] = display.bounds;
-        let [width, height] = display.extent();
+        let [display_left, display_top, ..] = display.bounds;
+        let extent = display.extent().map(i32::cast_unsigned);
+        let [left, top, right, bottom] = pixel_box(frame.part, extent).map(u32::cast_signed);
+        let [left, top] = [display_left + left, display_top + top];
+        let [width, height] = [right - left + display_left, bottom - top + display_top];
         let scale = width / frame.width.cast_signed();
         ensure!(
             scale > 0 && frame.height.cast_signed() * scale == height,
-            "The frame does not match the display"
+            "The frame does not match its part of the display"
         );
         let frame_pixels = |physical: i32| (physical / scale).cast_unsigned() as usize;
         let column = frame_pixels(area.left - left);
@@ -464,6 +540,8 @@ impl Crop {
             width: crop_width,
             captured: frame.captured,
             bgra,
+            part: frame.part,
+            frame_width: frame.width as usize,
         })
     }
 
@@ -588,12 +666,13 @@ impl Scene {
         Ok(())
     }
 
-    /// One frame from a capture that leaves no window out, kept only where it shows the
-    /// backdrop, after proving before and after that nothing else covers it.
-    fn unfiltered(&self, display: Display, longest_edge: u32) -> anyhow::Result<Crop> {
+    /// One frame of `target` from a capture that leaves no window out, kept only where it
+    /// shows the backdrop, after proving before and after that nothing else covers it.
+    fn unfiltered(&self, target: Target, longest_edge: u32) -> anyhow::Result<Crop> {
         let area = self.area()?;
         self.check_owned(area)?;
-        let crop = Crop::of(unfiltered_frame(display, longest_edge)?, display, area)?;
+        let display = target.display().native;
+        let crop = Crop::of(unfiltered_frame(target, longest_edge)?, display, area)?;
         self.check_owned(area)?;
         Ok(crop)
     }
@@ -608,11 +687,12 @@ impl Scene {
         self.check_owned(area)?;
         let (events, frames) = async_channel::bounded(4);
         let started = Instant::now();
-        let capture = ScreenCapture::start(INTERVAL, u32::MAX, events)?;
+        let target = Target::screen()?;
         ensure!(
-            capture.display() == display,
+            target.display() == display,
             "The pointer moved to another display; nothing was inspected"
         );
+        let capture = ScreenCapture::start(target, INTERVAL, u32::MAX, events)?;
         let patience = started.checked_add(PATIENCE).unwrap();
         let first = next_event(&frames, patience).context("No frame arrived")?;
         let latency = started.elapsed().as_secs_f64() * 1e3;

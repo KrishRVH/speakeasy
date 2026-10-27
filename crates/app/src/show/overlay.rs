@@ -1,6 +1,7 @@
-//! The overlay: a click-through window over the display a Show records, where ink appears as it
-//! is drawn and fades soon after the pen lifts. It never takes input or focus, and it is left out
-//! of every frame, so the bundle redraws the same ink cleanly.
+//! The overlay: a window over the display a Show records, where ink and the numbers of marks
+//! appear as they are made and fade soon after the pen lifts, and where an area Show's area is
+//! dragged out. It never takes focus, takes input only while an area is being chosen, and is left
+//! out of every frame, so the bundle redraws the same ink cleanly.
 
 use std::{
     sync::Arc,
@@ -8,16 +9,19 @@ use std::{
 };
 
 use anyhow::{Context as _, anyhow};
+use async_channel::Sender;
 use gpui::{
-    AnyWindowHandle, App, AppContext, Bounds, FillOptions, FillRule, PathBuilder, PathStyle,
-    Render, Rgba, Task, Timer, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle,
-    WindowKind, WindowOptions, canvas, div, point, prelude::*, px,
+    AnyWindowHandle, App, AppContext, Bounds, Div, FillOptions, FillRule, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, PathStyle, Pixels, Render, Rgba,
+    Size, Task, Timer, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind,
+    WindowOptions, canvas, div, point, prelude::*, px, relative, white,
 };
-use speakeasy_platform::{Display, NativeWindow};
-use speakeasy_show::{Point, ink};
+use speakeasy_platform::{Display, NativeWindow, Part};
+use speakeasy_show::{Mark, Point, Shape, ink};
 use tokio::sync::watch;
 
 use crate::{
+    WORDMARK_FONT,
     gpui_ext::{EntityUpdate, WindowUpdate, defer_native, follow},
     runtime::{Phase, Snapshot},
 };
@@ -35,26 +39,75 @@ const INK: Rgba = {
         a: 1.0,
     }
 };
+/// About how wide a digit of the brand face runs, in ems, so a label's digits fit its disc as the
+/// bundle fits them.
+const DIGIT_EM: f32 = 0.6;
+/// The line just outside a window or area being recorded: the width `border_2` draws.
+const FRAME: Pixels = px(2.0);
+/// Shades the display while an area is chosen, leaving the area clear.
+const SHADE: Rgba = Rgba {
+    r: 0.0,
+    g: 0.0,
+    b: 0.0,
+    a: 0.4,
+};
+/// The smallest area a drag chooses, in logical pixels each way; a shorter drag is a stray click.
+const SMALLEST_AREA: f32 = 24.0;
+const PICK_HINT: &str = "Drag over the area to record · Esc cancels";
 
 /// What the overlay shows, published by a Show's recorder or the demo's.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct Canvas {
     /// The display to cover; `None` hides the overlay.
     display: Option<Display>,
-    /// Finished strokes, normalized to the display. Each is an immutable snapshot, so a render's
-    /// copy of the canvas copies only the stroke being drawn.
+    /// The part of the display recorded, which ink and marks are normalized to.
+    part: Part,
+    /// Set while the user drags out the area to record, which goes here.
+    picking: Option<Sender<Part>>,
+    /// Finished strokes. Each is an immutable snapshot, so a render's copy of the canvas copies
+    /// only the stroke being drawn.
     strokes: Vec<Arc<[Point]>>,
     /// The stroke being drawn.
     drawing: Vec<Point>,
-    /// When the pen last lifted.
+    /// Every mark so far, numbered from one.
+    marks: Arc<[Mark]>,
+    /// The number of the first mark made since the ink last faded; it and later ones show.
+    first: usize,
+    /// When the pen last lifted, or a pin last dropped.
     lifted: Option<Instant>,
 }
 
+impl Default for Canvas {
+    fn default() -> Self {
+        Self {
+            display: None,
+            part: Part::WHOLE,
+            picking: None,
+            strokes: Vec::new(),
+            drawing: Vec::new(),
+            marks: Arc::new([]),
+            first: 1,
+            lifted: None,
+        }
+    }
+}
+
 impl Canvas {
-    /// A clean canvas over `display`.
-    pub(crate) fn covering(display: Display) -> Self {
+    /// A clean canvas over `display`, for ink on its `part`.
+    pub(crate) fn covering(display: Display, part: Part) -> Self {
         Self {
             display: Some(display),
+            part,
+            ..Self::default()
+        }
+    }
+
+    /// A canvas over `display` on which the user drags out the part to record, which goes to
+    /// `chosen`.
+    pub(crate) fn picking(display: Display, chosen: Sender<Part>) -> Self {
+        Self {
+            display: Some(display),
+            picking: Some(chosen),
             ..Self::default()
         }
     }
@@ -64,30 +117,53 @@ impl Canvas {
         self.display
     }
 
-    /// Keeps the `finished` strokes and shows `drawing` as the stroke in progress, both normalized
-    /// to the display, at `now`. Ink arriving after earlier ink has faded starts a clean canvas,
-    /// and ink no longer being drawn starts the hold and fade; a stroke cut for length while the
-    /// pen keeps drawing does neither. Returns whether anything visible changed.
+    /// Moves the ink and marks with the part recorded, as its window moves. Returns whether it
+    /// moved.
+    pub(crate) fn track(&mut self, part: Part) -> bool {
+        let moved = part != self.part;
+        self.part = part;
+        moved
+    }
+
+    /// Keeps the `finished` strokes, shows `drawing` as the stroke in progress, both normalized to
+    /// the part recorded, and takes `marks` when they changed, at `now`. Ink or a pin arriving
+    /// after earlier ink has faded starts a clean canvas, and ink no longer being drawn or a pin
+    /// starts the hold and fade; a stroke cut for length while the pen keeps drawing does neither.
+    /// Returns whether anything visible changed.
     pub(crate) fn update(
         &mut self,
         finished: impl IntoIterator<Item = Arc<[Point]>>,
         drawing: impl IntoIterator<Item = Point>,
+        marks: Option<Arc<[Mark]>>,
         now: Instant,
     ) -> bool {
         let finished: Vec<Arc<[Point]>> = finished.into_iter().collect();
         let drawing: Vec<Point> = drawing.into_iter().collect();
         let was_drawing = !self.drawing.is_empty();
-        let inked = !finished.is_empty() || !drawing.is_empty();
+        // A new mark is a finished stroke's or a pin's, which has no ink of its own.
+        let marked = marks
+            .as_ref()
+            .is_some_and(|marks| marks.len() > self.marks.len());
+        let inked = !finished.is_empty() || !drawing.is_empty() || marked;
         if inked && self.faded(now) {
             self.strokes.clear();
+            self.first = self.marks.len().saturating_add(1);
         }
-        let changed = !finished.is_empty() || drawing != self.drawing;
-        if drawing.is_empty() && (was_drawing || !finished.is_empty()) {
+        let changed = !finished.is_empty() || drawing != self.drawing || marks.is_some();
+        if drawing.is_empty() && (was_drawing || !finished.is_empty() || marked) {
             self.lifted = Some(now);
         }
         self.strokes.extend(finished);
         self.drawing = drawing;
+        if let Some(marks) = marks {
+            self.marks = marks;
+        }
         changed
+    }
+
+    /// The marks made since the ink last faded, whose numbers show.
+    fn shown(&self) -> impl Iterator<Item = &Mark> {
+        self.marks.iter().filter(|mark| mark.number >= self.first)
     }
 
     /// How long ago the pen lifted, while no stroke is being drawn.
@@ -134,7 +210,10 @@ enum Redraw {
 struct Overlay {
     canvas: watch::Receiver<Canvas>,
     window: AnyWindowHandle,
-    display: Option<Display>,
+    /// The display covered, and whether an area is being chosen on it.
+    cover: (Option<Display>, bool),
+    /// Where a drag choosing an area began and where it is now, in window pixels.
+    drag: Option<[gpui::Point<Pixels>; 2]>,
     visibility: Option<Task<()>>,
     /// Redraws once the hold ends, so held ink costs no frames.
     wake: Option<Task<()>>,
@@ -144,43 +223,135 @@ struct Overlay {
 impl Overlay {
     fn new(canvas: watch::Receiver<Canvas>, window: &Window, cx: &Context<'_, Self>) -> Self {
         Self {
-            _updates: follow(canvas.clone(), cx, Canvas::display, Self::cover),
+            _updates: follow(
+                canvas.clone(),
+                cx,
+                |canvas| (canvas.display(), canvas.picking.is_some()),
+                Self::cover,
+            ),
             canvas,
             window: window.window_handle(),
-            display: None,
+            cover: (None, false),
+            drag: None,
             visibility: None,
             wake: None,
         }
     }
 
-    /// Moves onto `display` and shows, or hides when there is none, then redraws the ink.
-    fn cover(&mut self, display: Option<Display>, cx: &mut Context<'_, Self>) {
-        if display != self.display {
-            self.display = display;
+    /// Moves onto the display and shows, taking input while an area is chosen, or hides when there
+    /// is no display, then redraws.
+    fn cover(&mut self, cover: (Option<Display>, bool), cx: &mut Context<'_, Self>) {
+        if cover != self.cover {
+            self.cover = cover;
+            let (display, picking) = cover;
+            if !picking {
+                self.drag = None;
+            }
             self.visibility = Some(defer_native(
                 self.window,
                 "overlay",
                 cx,
-                move |native, _| place(native, display),
+                move |native, _| place(native, display, picking),
             ));
         }
         cx.notify();
     }
+
+    /// Ends a drag at `to` on an overlay `size` across, sending the area it covers to the
+    /// recorder. A chosen area stays clear until recording takes over; a stray click starts over.
+    fn pick(&mut self, to: gpui::Point<Pixels>, size: Size<Pixels>, cx: &mut Context<'_, Self>) {
+        let Some([from, _]) = self.drag else {
+            return;
+        };
+        let sent = dragged(from, to, size).is_some_and(|part| {
+            self.canvas
+                .borrow()
+                .picking
+                .as_ref()
+                .is_some_and(|chosen| chosen.try_send(part).is_ok())
+        });
+        self.drag = sent.then_some([from, to]);
+        cx.notify();
+    }
+
+    /// The display shaded around the area being dragged out, with a hint until the drag begins.
+    fn picker(&self, size: Size<Pixels>, cx: &Context<'_, Self>) -> Div {
+        let hole = self
+            .drag
+            .map(|[from, to]| Bounds::from_corners(from.min(&to), from.max(&to)));
+        let shade = |left: Pixels, top: Pixels, width: Pixels, height: Pixels| {
+            div()
+                .absolute()
+                .left(left)
+                .top(top)
+                .w(width)
+                .h(height)
+                .bg(SHADE)
+        };
+        let zero = px(0.0);
+        let shades = match hole {
+            None => vec![shade(zero, zero, size.width, size.height)],
+            Some(hole) => vec![
+                shade(zero, zero, size.width, hole.top()),
+                shade(zero, hole.bottom(), size.width, size.height - hole.bottom()),
+                shade(zero, hole.top(), hole.left(), hole.size.height),
+                shade(
+                    hole.right(),
+                    hole.top(),
+                    size.width - hole.right(),
+                    hole.size.height,
+                ),
+            ],
+        };
+        div()
+            .size_full()
+            .cursor_crosshair()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                    this.drag = Some([event.position; 2]);
+                    cx.notify();
+                }),
+            )
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                if let Some([_, to]) = &mut this.drag
+                    && event.pressed_button == Some(MouseButton::Left)
+                {
+                    *to = event.position;
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseUpEvent, window, cx| {
+                    this.pick(event.position, window.viewport_size(), cx);
+                }),
+            )
+            .children(shades)
+            .children(hole.map(frame))
+            .when(hole.is_none(), |picker| picker.child(hint()))
+    }
 }
 
-/// Covers `display` and shows the overlay, or hides it. An overlay that cannot cover the display
-/// stays hidden rather than misplaced.
-fn place(native: &NativeWindow, display: Option<Display>) {
+/// Covers `display` and shows the overlay, taking clicks only while `picking`, or hides it. An
+/// overlay that cannot cover the display stays hidden rather than misplaced.
+fn place(native: &NativeWindow, display: Option<Display>, picking: bool) {
     let covered = display.is_some_and(|display| native.configure_overlay(display).is_ok());
+    native.set_overlay_input(covered && picking);
     native.set_overlay_visible(covered);
 }
 
 impl Render for Overlay {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let sheet = self.canvas.borrow().clone();
+        let size = window.viewport_size();
+        if sheet.picking.is_some() {
+            self.wake = None;
+            return self.picker(size, cx);
+        }
         let now = Instant::now();
-        let ink = self.canvas.borrow().clone();
-        let opacity = ink.opacity(now);
-        self.wake = match ink.next_frame(now) {
+        let opacity = sheet.opacity(now);
+        self.wake = match sheet.next_frame(now) {
             Redraw::OnChange => None,
             // A wake that fires early renders once and schedules the rest of the hold.
             Redraw::After(delay) => Some(cx.spawn(async move |this, cx| {
@@ -192,32 +363,177 @@ impl Render for Overlay {
                 None
             },
         };
-        div().size_full().child(
-            canvas(
-                |_, _, _| {},
-                move |bounds, (), window, _| {
-                    // The first frame after the fade paints no path, which lets the renderer free
-                    // its full-window path targets.
-                    if opacity > 0.0 {
-                        paint(&ink, bounds, opacity, window);
-                    }
-                },
+        let area = on_overlay(sheet.part, size);
+        let labels: Vec<Div> = if opacity > 0.0 {
+            sheet.shown().map(|mark| label(mark, area)).collect()
+        } else {
+            Vec::new()
+        };
+        let framed = sheet.part != Part::WHOLE;
+        div()
+            .size_full()
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, (), window, _| {
+                        // The first frame after the fade paints no path, which lets the renderer
+                        // free its full-window path targets.
+                        if opacity > 0.0 {
+                            paint(&sheet, bounds, opacity, window);
+                        }
+                    },
+                )
+                .absolute()
+                .size_full(),
             )
-            .size_full(),
-        )
+            .when(framed, |overlay| overlay.child(frame(area)))
+            .child(
+                div()
+                    .absolute()
+                    .size_full()
+                    .opacity(opacity)
+                    .children(labels),
+            )
     }
 }
 
+/// Where `part` of the display lies on an overlay `size` across.
+fn on_overlay(part: Part, size: Size<Pixels>) -> Bounds<Pixels> {
+    Bounds::new(
+        point(size.width * part.left, size.height * part.top),
+        gpui::size(size.width * part.width(), size.height * part.height()),
+    )
+}
+
+/// The part of the display a drag from `from` to `to` covers on an overlay `size` across, or
+/// `None` for a drag too short to mean an area.
+fn dragged(from: gpui::Point<Pixels>, to: gpui::Point<Pixels>, size: Size<Pixels>) -> Option<Part> {
+    let share = |point: gpui::Point<Pixels>| {
+        [
+            f32::from(point.x) / f32::from(size.width),
+            f32::from(point.y) / f32::from(size.height),
+        ]
+    };
+    let part = Part::between(share(from), share(to));
+    let area = on_overlay(part, size).size;
+    (f32::from(area.width) >= SMALLEST_AREA && f32::from(area.height) >= SMALLEST_AREA)
+        .then_some(part)
+}
+
+/// A thin red line just outside `area`, the window or area being recorded or dragged out.
+fn frame(area: Bounds<Pixels>) -> Div {
+    div()
+        .absolute()
+        .left(area.left() - FRAME)
+        .top(area.top() - FRAME)
+        .w(area.size.width + FRAME * 2.0)
+        .h(area.size.height + FRAME * 2.0)
+        .border_2()
+        .border_color(INK)
+}
+
+fn hint() -> Div {
+    div()
+        .absolute()
+        .top(relative(0.12))
+        .left_0()
+        .w_full()
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .px_4()
+                .py_2()
+                .rounded_lg()
+                .bg(Rgba { a: 0.75, ..SHADE })
+                .text_color(white())
+                .text_size(px(15.0))
+                .child(PICK_HINT),
+        )
+}
+
+/// `mark`'s number in white on a red disc ringed in white beside what it numbers, with a dot at
+/// the point a pin marks, as the bundle draws them; `area` is the part recorded.
+fn label(mark: &Mark, area: Bounds<Pixels>) -> Div {
+    let (width, height) = (f32::from(area.size.width), f32::from(area.size.height));
+    let radius = ink::label_radius(width, height);
+    let center = mark.label(width, height, radius);
+    let digits = mark.number.to_string();
+    let size = (ink::LABEL_TYPE * radius)
+        .min(ink::LABEL_DIGITS * radius / (DIGIT_EM * digits.len() as f32));
+    let number = disc(
+        center,
+        radius,
+        radius * (1.0 - ink::LABEL_RING),
+        Some(
+            div()
+                .font_family(WORDMARK_FONT)
+                .text_size(px(size))
+                .line_height(px(size))
+                .text_color(white())
+                .child(digits),
+        ),
+    );
+    let pin = match mark.shape {
+        Shape::Pin { point } => {
+            let dot = ink::PIN_DOT * radius;
+            Some(disc(
+                point.scaled(width, height),
+                dot,
+                dot * (1.0 - 2.0 * ink::LABEL_RING),
+                None,
+            ))
+        },
+        _ => None,
+    };
+    div()
+        .absolute()
+        .left(area.left())
+        .top(area.top())
+        .children(pin)
+        .child(number)
+}
+
+/// A white disc of `radius` centered at `center`, in pixels from the corner of what it labels,
+/// holding a red one of radius `inner` around `content`.
+fn disc(center: Point, radius: f32, inner: f32, content: Option<Div>) -> Div {
+    div()
+        .absolute()
+        .left(px(center.x - radius))
+        .top(px(center.y - radius))
+        .size(px(2.0 * radius))
+        .rounded_full()
+        .bg(white())
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .size(px(2.0 * inner))
+                .rounded_full()
+                .bg(INK)
+                .flex()
+                .items_center()
+                .justify_center()
+                .children(content),
+        )
+}
+
 /// Paints every stroke as the pen outline the bundle draws, at a width that reads on screen.
-fn paint(canvas: &Canvas, bounds: Bounds<gpui::Pixels>, opacity: f32, window: &mut Window) {
-    let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+fn paint(sheet: &Canvas, bounds: Bounds<Pixels>, opacity: f32, window: &mut Window) {
+    let area = on_overlay(sheet.part, bounds.size);
+    let origin = point(
+        bounds.origin.x + area.origin.x,
+        bounds.origin.y + area.origin.y,
+    );
+    let (width, height) = (f32::from(area.size.width), f32::from(area.size.height));
     let pen = ink::pen(width, height);
     let color = Rgba { a: opacity, ..INK };
-    for stroke in canvas
+    for stroke in sheet
         .strokes
         .iter()
         .map(Arc::as_ref)
-        .chain(std::iter::once(canvas.drawing.as_slice()))
+        .chain(std::iter::once(sheet.drawing.as_slice()))
     {
         let pixels: Vec<Point> = stroke
             .iter()
@@ -228,12 +544,9 @@ fn paint(canvas: &Canvas, bounds: Bounds<gpui::Pixels>, opacity: f32, window: &m
         let mut path = PathBuilder::fill().with_style(PathStyle::Fill(
             FillOptions::default().with_fill_rule(FillRule::NonZero),
         ));
-        let mut corners = outline.iter().map(|corner| {
-            point(
-                bounds.origin.x + px(corner.x),
-                bounds.origin.y + px(corner.y),
-            )
-        });
+        let mut corners = outline
+            .iter()
+            .map(|corner| point(origin.x + px(corner.x), origin.y + px(corner.y)));
         let Some(first) = corners.next() else {
             continue;
         };
@@ -338,6 +651,8 @@ fn open(canvas: watch::Receiver<Canvas>, cx: &mut App) -> anyhow::Result<WindowH
 
 #[cfg(test)]
 mod tests {
+    use speakeasy_show::{Moment, Rect, Span};
+
     use super::*;
 
     /// A distinct stroke of `points` points across the display.
@@ -361,14 +676,14 @@ mod tests {
     fn ink_holds_while_drawing_then_fades_out_after_the_pen_lifts() {
         let at = clock();
         let mut canvas = Canvas::default();
-        assert!(canvas.update([], stroke(3), at(0)));
-        assert!(canvas.update([stroke(3).into()], [], at(0)));
+        assert!(canvas.update([], stroke(3), None, at(0)));
+        assert!(canvas.update([stroke(3).into()], [], None, at(0)));
         assert!(whole(&canvas, at(600)));
         let midway = canvas.opacity(at(975));
         assert!(midway > 0.2 && midway < 0.3, "{midway}");
         assert!(canvas.faded(at(1_300)));
         // Drawing again keeps every mark whole for as long as the stroke takes.
-        assert!(canvas.update([], stroke(4), at(600)));
+        assert!(canvas.update([], stroke(4), None, at(600)));
         assert!(whole(&canvas, at(5_000)));
     }
 
@@ -376,9 +691,9 @@ mod tests {
     fn held_ink_draws_no_frames_until_it_fades() {
         let at = clock();
         let mut canvas = Canvas::default();
-        canvas.update([], stroke(3), at(0));
+        canvas.update([], stroke(3), None, at(0));
         assert_eq!(canvas.next_frame(at(0)), Redraw::OnChange);
-        canvas.update([stroke(3).into()], [], at(0));
+        canvas.update([stroke(3).into()], [], None, at(0));
         let left = Duration::from_millis(50);
         assert_eq!(canvas.next_frame(at(600)), Redraw::After(left));
         assert_eq!(canvas.next_frame(at(975)), Redraw::Animate);
@@ -389,24 +704,91 @@ mod tests {
     fn marks_drawn_before_the_fade_ends_stay_and_later_ink_starts_clean() {
         let at = clock();
         let mut canvas = Canvas::default();
-        canvas.update([], stroke(3), at(0));
-        canvas.update([stroke(3).into()], [], at(100));
+        canvas.update([], stroke(3), None, at(0));
+        canvas.update([stroke(3).into()], [], None, at(100));
         // An arrow drawn while the circle fades keeps it.
-        canvas.update([], stroke(4), at(1_000));
-        canvas.update([stroke(4).into()], [], at(1_100));
+        canvas.update([], stroke(4), None, at(1_000));
+        canvas.update([stroke(4).into()], [], None, at(1_100));
         assert_eq!(canvas.strokes.len(), 2);
         // A stroke cut for length while the pen keeps drawing stays whole.
-        canvas.update([], stroke(5), at(1_150));
-        assert!(canvas.update([stroke(5).into()], stroke(2), at(1_200)));
+        canvas.update([], stroke(5), None, at(1_150));
+        assert!(canvas.update([stroke(5).into()], stroke(2), None, at(1_200)));
         assert!(whole(&canvas, at(9_000)));
         assert_eq!(canvas.strokes.len(), 3);
         // A pointer that moved too little to add ink changes nothing.
-        assert!(!canvas.update([], stroke(2), at(1_300)));
-        canvas.update([stroke(2).into()], [], at(1_400));
+        assert!(!canvas.update([], stroke(2), None, at(1_300)));
+        canvas.update([stroke(2).into()], [], None, at(1_400));
         assert_eq!(canvas.next_frame(at(1_400)), Redraw::After(HOLD));
         // Ink once everything has faded starts a clean canvas.
-        assert!(canvas.update([], stroke(3), at(2_800)));
+        assert!(canvas.update([], stroke(3), None, at(2_800)));
         assert_eq!(canvas.strokes, Vec::<Arc<[Point]>>::new());
-        assert!(!Canvas::default().update([], [], at(0)));
+        assert!(!Canvas::default().update([], [], None, at(0)));
+    }
+
+    /// The first `count` marks, numbered from one.
+    fn marks(count: usize) -> Arc<[Mark]> {
+        let tap = |number| Mark {
+            number,
+            shape: Shape::Tap,
+            strokes: 0..0,
+            span: Span::at(Moment::START),
+            bounds: Rect {
+                left: 0.5,
+                top: 0.5,
+                right: 0.5,
+                bottom: 0.5,
+            },
+        };
+        (1..=count).map(tap).collect()
+    }
+
+    fn shown(canvas: &Canvas) -> Vec<usize> {
+        canvas.shown().map(|mark| mark.number).collect()
+    }
+
+    #[test]
+    fn numbers_show_beside_their_marks_until_the_ink_fades() {
+        let at = clock();
+        let mut canvas = Canvas::default();
+        canvas.update([], stroke(3), None, at(0));
+        assert!(canvas.update([stroke(3).into()], [], Some(marks(1)), at(100)));
+        assert_eq!(shown(&canvas), [1]);
+        // A pin keeps the ink before it and holds it again.
+        assert!(canvas.update([], [], Some(marks(2)), at(700)));
+        assert_eq!(shown(&canvas), [1, 2]);
+        assert_eq!(canvas.next_frame(at(700)), Redraw::After(HOLD));
+        // Once everything has faded, a pin starts clean, numbered on from the last mark.
+        assert!(canvas.update([], [], Some(marks(3)), at(2_100)));
+        assert_eq!(shown(&canvas), [3]);
+        assert_eq!(canvas.strokes, Vec::<Arc<[Point]>>::new());
+        assert!(whole(&canvas, at(2_100)));
+        // So does a stroke.
+        canvas.update([], stroke(4), None, at(4_000));
+        canvas.update([stroke(4).into()], [], Some(marks(4)), at(4_100));
+        assert_eq!(shown(&canvas), [4]);
+    }
+
+    #[test]
+    fn a_drag_chooses_the_area_it_covers_and_a_stray_click_chooses_nothing() {
+        let size = gpui::size(px(1_000.0), px(500.0));
+        let at = |x, y| point(px(x), px(y));
+        let part = |left, top, right, bottom| Part {
+            left,
+            top,
+            right,
+            bottom,
+        };
+        // Dragged up and to the left.
+        assert_eq!(
+            dragged(at(300.0, 200.0), at(100.0, 100.0), size),
+            Some(part(0.1, 0.2, 0.3, 0.4))
+        );
+        // Past the display's edge, the area stops at it.
+        assert_eq!(
+            dragged(at(900.0, 400.0), at(1_200.0, 600.0), size),
+            Some(part(0.9, 0.8, 1.0, 1.0))
+        );
+        assert_eq!(dragged(at(100.0, 100.0), at(110.0, 300.0), size), None);
+        assert_eq!(dragged(at(100.0, 100.0), at(100.0, 100.0), size), None);
     }
 }

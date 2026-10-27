@@ -1,4 +1,4 @@
-//! What a Show captured besides its frames: ink, pointer actions, and narration.
+//! What a Show captured besides its frames: ink, pins, pointer actions, and narration.
 
 use std::{fmt, time::Duration};
 
@@ -16,6 +16,8 @@ pub struct Recording {
     pub surface: Size,
     /// Ink in the order it was drawn.
     pub strokes: Vec<Stroke>,
+    /// Numbered pins in the order they were dropped.
+    pub pins: Vec<Pin>,
     /// Clicks and drags that passed through to the apps underneath.
     pub actions: Vec<Action>,
     /// The narration.
@@ -139,6 +141,15 @@ impl From<Stroke> for Vec<InkPoint> {
     fn from(stroke: Stroke) -> Self {
         stroke.points
     }
+}
+
+/// A pin dropped where the pointer was, numbered in sequence with the marks ink makes.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Pin {
+    /// When it was dropped.
+    pub at: Moment,
+    /// Where, normalized to the surface.
+    pub point: Point,
 }
 
 /// A pointer action that passed through to the app underneath.

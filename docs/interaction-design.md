@@ -81,8 +81,8 @@ already says them. **Play sounds** in Settings turns every cue off.
 
 Each cue echoes the pill. The high note sounds as the pill opens to listening rather than at the
 press, so it never promises a microphone still opening, and a desktop shortcut that takes the keys
-before then makes no sound; S during that wait makes the first note the Show's. A cue is heard
-within 300 ms of its moment, counting the output device's reported latency, or not at all. The
+before then makes no sound; S, W, or A during that wait makes the first note the Show's. A cue is
+heard within 300 ms of its moment, counting the output device's reported latency, or not at all. The
 device opens with the press, alongside the microphone, so the first cue never waits for it; it stays
 open through the session and closes ten seconds after the session and its last cue, however the
 session ended, so an idle Speakeasy holds no audio stream.
@@ -122,13 +122,24 @@ status line stay in view below the scrolling controls.
 - Linux holds Ctrl+Super+Space or double-taps it for hands-free; its accepted binding is shown in
   Settings. Desktop command bindings start/finish hands-free.
 - On Windows/macOS, the shortcut's modifiers are observed, never swallowed. Only the Space that
-  locks hands-free and the S that starts a Show are withheld from the focused app. Shift stays
-  passive so a Show can draw with it; any other key during a hold belongs to a different shortcut:
-  dictation cancels and waits for release. On Windows, an unassigned mask key keeps the released Win
-  key from opening Start.
-- S during a Windows/macOS hold turns the recording into a Show, locked hands-free; the pill table
-  shows what the pill presents. Shift draws ink, alone or while the shortcut is still held; the ink
-  holds briefly after the pen lifts, then fades, and clicks pass through to the apps underneath.
+  locks hands-free and the S, W, or A that starts a Show are withheld from the focused app. Shift
+  stays passive so a Show can draw and pin with it, and another app's double Shift still works; any
+  other key during a hold belongs to a different shortcut: dictation cancels and waits for release.
+  On Windows, an unassigned mask key keeps the released Win key from opening Start.
+- During a Windows/macOS hold, S, W, or A turns the recording into a Show, locked hands-free and
+  keeping the narration since the press; the pill table shows what the pill presents. S records the
+  display under the pointer and W the window under it, cropped from the display and followed as it
+  moves; over the desktop, the taskbar, or a Speakeasy window, W records the display. A shades that
+  display until the user drags out an area of at least 24 px each way; finishing first records the
+  whole display, and Escape cancels. A thin red line outside a window or area marks it while it
+  records, and no frame shows it.
+- Shift draws ink, alone or while the shortcut is still held; the ink holds briefly after the pen
+  lifts, then fades, and clicks pass through to the apps underneath. Two taps of Shift alone, each
+  released within 300 ms and the second pressed within 400 ms of the first's release, drop a pin at
+  the pointer, unless a click came with Shift in the second before; a pin off the recorded window or
+  area is dropped. Marks and pins share one numbering in the order they began, ① ② ③; each number
+  sits beside what it numbers on the overlay, fading with the ink, and in the bundle's keyframes and
+  summary.
 - Windows/macOS Escape cancels immediately and continues to the focused app. Linux uses a reserved
   Ctrl+Super+Escape chord or an explicit command binding; bare Escape is not globally captured.
   Animation never delays cancellation or owns the microphone lifetime.

@@ -5,7 +5,7 @@ use std::{convert::Infallible, mem, ops::ControlFlow, sync::Arc, time::Instant};
 
 use async_channel::{Receiver, RecvError, Sender};
 use speakeasy_core::gesture::{Action, Gesture, State};
-use speakeasy_platform::{Input, InputSender, Inserted};
+use speakeasy_platform::{Input, InputSender, Inserted, Scope};
 use speakeasy_show::Narration;
 use tokio::{
     sync::watch,
@@ -253,7 +253,11 @@ impl<P: Ports> Owner<P> {
             Input::Press | Input::Toggle => None,
             Input::Release => self.gesture.release(now()),
             Input::Lock => self.gesture.lock(),
-            Input::Show => self.start_show(),
+            Input::Show(scope) => self.start_show(scope),
+            Input::Pin => {
+                self.screen.pin();
+                None
+            },
             Input::Cancel => self.gesture.cancel(),
             // Another shortcut or a session change took the keys: the recording ends without the
             // cue that confirms a cancel the user never asked for.
@@ -428,17 +432,18 @@ impl<P: Ports> Owner<P> {
         }
     }
 
-    /// Turns the held recording into a Show, keeping the narration already captured, and locks it
-    /// hands-free; the next press finishes it. The keyboard policy sends S only for a press during
-    /// a physical hold, and its repeats, so a recording already locked hands-free with Space or a
-    /// double tap turns too, as does one still waiting for the microphone.
-    fn start_show(&mut self) -> Option<Action> {
+    /// Turns the held recording into a Show of what `scope` names, keeping the narration already
+    /// captured, and locks it hands-free; the next press finishes it. The keyboard policy sends a
+    /// Show only for a press during a physical hold, and its repeats, so a recording already locked
+    /// hands-free with Space or a double tap turns too, as does one still waiting for the
+    /// microphone.
+    fn start_show(&mut self, scope: Scope) -> Option<Action> {
         let held = matches!(self.gesture.state(), State::Held | State::HandsFree);
         let session = self
             .session
             .as_mut()
             .filter(|session| held && session.awaits_audio() && session.show.is_none())?;
-        session.show = Some(Screen::Queued);
+        session.show = Some(Screen::Queued(scope));
         self.latest_show = true;
         // A microphone still opening sounds the Show cue once it listens.
         if matches!(session.stage, Stage::Recording) {
@@ -459,7 +464,7 @@ impl<P: Ports> Owner<P> {
         };
         match footage {
             Ok(footage) => {
-                *screen = Screen::Recorded(footage);
+                *screen = Screen::Recorded(Box::new(footage));
                 self.screen.retire();
             },
             Err(error) => self.fail(format!("{error:#}")),
@@ -624,16 +629,15 @@ impl<P: Ports> Owner<P> {
         if self.permits.is_closed() || !self.screen.is_free() {
             return;
         }
-        let Some(session) = self
-            .session
-            .as_mut()
-            .filter(|session| matches!(session.show, Some(Screen::Queued)))
-        else {
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        let Some(Screen::Queued(scope)) = session.show else {
             return;
         };
         match self
             .ports
-            .record_screen(session.id, session.started, self.show_events.clone())
+            .record_screen(session.id, session.started, scope, self.show_events.clone())
         {
             Ok(recorder) => {
                 if !session.awaits_audio() || self.gesture.state() == State::Processing {

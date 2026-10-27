@@ -10,7 +10,7 @@ async fn record_a_show(h: &mut Harness) -> anyhow::Result<SessionId> {
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     let (id, _) = receive(&h.captures).await?;
-    h.input(Input::Show);
+    h.input(Input::Show(Scope::Screen));
     receive(&h.shows).await?;
     h.input(Input::Release);
     h.input(Input::Press);
@@ -131,7 +131,7 @@ async fn a_microphone_still_opening_sounds_its_cue_once_it_listens() -> anyhow::
     // a Show, still unheard.
     h.input(Input::Press);
     h.phase(Phase::Starting).await?;
-    h.input(Input::Show);
+    h.input(Input::Show(Scope::Screen));
     receive(&h.shows).await?;
     assert_eq!(h.sounds(), [Sound::Held(true)]);
     retiring.release().await?;

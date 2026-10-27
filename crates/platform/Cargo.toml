@@ -38,7 +38,8 @@ core-foundation.workspace = true
 core-graphics.workspace = true
 objc2.workspace = true
 objc2-app-kit = { workspace = true, features = ["NSAccessibility", "NSAlert", "NSApplication", "NSEvent", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSScreen", "NSView", "NSWindow", "NSWorkspace", "libc"] }
-objc2-core-graphics = { workspace = true, features = ["CGColorSpace", "CGDirectDisplay", "CGError", "CGEvent", "CGEventSource", "CGEventTypes"] }
+objc2-core-foundation = { workspace = true, features = ["CFArray", "CFDictionary", "CFNumber", "CFString"] }
+objc2-core-graphics = { workspace = true, features = ["CGColorSpace", "CGDirectDisplay", "CGError", "CGEvent", "CGEventSource", "CGEventTypes", "CGGeometry", "CGWindow"] }
 objc2-core-media = { workspace = true, features = ["CMSampleBuffer", "objc2", "objc2-core-video"] }
 objc2-core-video = { workspace = true, features = ["CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVReturn"] }
 objc2-foundation.workspace = true

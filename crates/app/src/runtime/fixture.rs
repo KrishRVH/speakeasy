@@ -8,7 +8,7 @@ use speakeasy_show::Narration;
 use tokio::time::timeout;
 
 use super::{
-    ports::{Capturing, Listening, Sealed},
+    ports::{Capturing, Listening, Pinning, Sealed},
     *,
 };
 use crate::local_speech::LocalSpeech;
@@ -52,6 +52,7 @@ impl Ports for Fixture {
         &self,
         _: SessionId,
         _: Instant,
+        _: Scope,
         _: Sender<ShowEvent>,
     ) -> anyhow::Result<FixtureDevice> {
         anyhow::bail!("The dictation fixture records no Shows")
@@ -135,6 +136,11 @@ impl Capturing for FixtureDevice {
 
 impl Listening for FixtureDevice {
     fn expect_cue(&self) {}
+}
+
+/// No fixture device records a Show, so none takes a pin.
+impl Pinning for FixtureDevice {
+    fn pin(&self) {}
 }
 
 async fn wait_for_signal(

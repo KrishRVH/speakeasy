@@ -9,8 +9,8 @@ use std::{
 
 use gpui::Timer;
 use speakeasy_core::gesture::RECORDING_LIMIT;
-use speakeasy_platform::Display;
-use speakeasy_show::Point;
+use speakeasy_platform::{Display, Part};
+use speakeasy_show::{Mark, Moment, Point, Rect, Shape, Span};
 use tokio::sync::watch;
 
 use crate::{
@@ -80,7 +80,7 @@ async fn play_show(
         let show = seconds > 0.8;
         if let Some(display) = display.filter(|_| show) {
             if !snapshot.show {
-                canvas.send_replace(Canvas::covering(display));
+                canvas.send_replace(Canvas::covering(display, Part::WHOLE));
             }
             if !lifted {
                 lifted = circle(canvas, display, seconds);
@@ -122,13 +122,15 @@ impl Drop for Clear<'_> {
 }
 
 /// Draws a circle on `display` from one second into the recording, lifting the pen as the circle
-/// closes so the ink holds and fades as it does in a real Show. Returns whether the pen lifted.
+/// closes so the ink and its number hold and fade as they do in a real Show. Returns whether the
+/// pen lifted.
 fn circle(canvas: &watch::Sender<Canvas>, display: Display, seconds: f32) -> bool {
     const DRAWN_FROM: f32 = 1.0;
     const LIFTED_AT: f32 = 1.8;
     const RADIUS: f32 = 0.1;
     let progress = (seconds - DRAWN_FROM) / (LIFTED_AT - DRAWN_FROM);
     let [width, height] = display.size;
+    let across = RADIUS * height / width;
     // As densely as the pointer is sampled.
     let points: Vec<Point> = (0..=100_u16)
         .map(|step| f32::from(step) / 100.0)
@@ -136,18 +138,27 @@ fn circle(canvas: &watch::Sender<Canvas>, display: Display, seconds: f32) -> boo
         .map(|share| {
             // A little past a full turn, as a hand closes a circle.
             let turn = share * std::f32::consts::TAU * 1.08;
-            Point::new(
-                0.5 + RADIUS * height / width * turn.cos(),
-                0.45 + RADIUS * turn.sin(),
-            )
+            Point::new(0.5 + across * turn.cos(), 0.45 + RADIUS * turn.sin())
         })
         .collect();
     let (lifted, now) = (progress >= 1.0, Instant::now());
     canvas.send_if_modified(|canvas| {
         if lifted {
-            canvas.update([Arc::from(points)], [], now)
+            let mark = Mark {
+                number: 1,
+                shape: Shape::Circle,
+                strokes: 0..1,
+                span: Span::at(Moment::START),
+                bounds: Rect {
+                    left: 0.5 - across,
+                    top: 0.45 - RADIUS,
+                    right: 0.5 + across,
+                    bottom: 0.45 + RADIUS,
+                },
+            };
+            canvas.update([Arc::from(points)], [], Some(Arc::new([mark])), now)
         } else {
-            canvas.update([], points, now)
+            canvas.update([], points, None, now)
         }
     });
     lifted

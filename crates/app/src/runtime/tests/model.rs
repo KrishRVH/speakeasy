@@ -30,6 +30,7 @@ enum Log {
     /// The owner asked for the device's release, which takes its generated time.
     Retiring(Source, SessionId),
     Retired(Source, SessionId),
+    Pinned(Source, SessionId),
 }
 
 /// Ports with no gates: devices log and report nothing on their own beyond the microphone's
@@ -87,6 +88,7 @@ impl Ports for ModelPorts {
         &self,
         id: SessionId,
         _: Instant,
+        _: Scope,
         events: Sender<ShowEvent>,
     ) -> anyhow::Result<ModelDevice> {
         self.log.try_send(Log::Screen(id, events))?;
@@ -180,6 +182,12 @@ impl Listening for ModelDevice {
     fn expect_cue(&self) {}
 }
 
+impl Pinning for ModelDevice {
+    fn pin(&self) {
+        self.log(Log::Pinned(self.source, self.id));
+    }
+}
+
 struct ModelSpeech {
     jobs: Sender<Reply>,
 }
@@ -211,6 +219,7 @@ enum Key {
     Cancel,
     Interrupt,
     Show,
+    Pin,
 }
 
 impl Key {
@@ -222,7 +231,8 @@ impl Key {
             Self::Toggle => Input::Toggle,
             Self::Cancel => Input::Cancel,
             Self::Interrupt => Input::Interrupt,
-            Self::Show => Input::Show,
+            Self::Show => Input::Show(Scope::Screen),
+            Self::Pin => Input::Pin,
         }
     }
 }
@@ -266,6 +276,7 @@ fn step() -> impl Strategy<Value = Step> {
         2 => Just(Key::Cancel),
         1 => Just(Key::Interrupt),
         1 => Just(Key::Show),
+        1 => Just(Key::Pin),
     ];
     // A Show starts with S during a hold; the shortcut is then let go while the Show records.
     let inputs = prop_oneof![
@@ -491,6 +502,10 @@ impl Model {
                 Log::Retired(source, id) => match self.open.remove(&source) {
                     Some(open) if open.id == id && open.retiring => {},
                     _ => bail!("{source:?} {id:?} released without being retired"),
+                },
+                Log::Pinned(source, id) => match self.open.get(&source) {
+                    Some(open) if source == Source::Screen && open.id == id && !open.retiring => {},
+                    _ => bail!("{source:?} {id:?} took a pin while not recording a Show"),
                 },
             }
         }

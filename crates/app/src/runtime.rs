@@ -12,6 +12,7 @@ use std::{convert::Infallible, io, sync::Arc, time::Instant};
 use async_channel::{Receiver, Sender, TrySendError};
 use speakeasy_platform::{
     Delivery, Input, InputMonitor, InputSender, InsertPermit, Inserted, Inserter, OwnedThread,
+    Scope,
 };
 use speakeasy_show::Narration;
 use tokio::{sync::watch, task::JoinError};
@@ -205,9 +206,10 @@ impl Ports for Desktop {
         &self,
         id: SessionId,
         started: Instant,
+        scope: Scope,
         events: Sender<ShowEvent>,
     ) -> anyhow::Result<ScreenRecorder> {
-        ScreenRecorder::start(id, started, events, self.canvas.clone())
+        ScreenRecorder::start(id, started, scope, events, self.canvas.clone())
     }
 
     fn publish(

@@ -142,7 +142,7 @@ fn select_within(recording: &Recording, samples: &[Sample], most: usize) -> Opti
         return None;
     }
     let frames = Frames::new(samples)?;
-    let marks = marks::group(&recording.strokes, recording.surface);
+    let marks = marks::group(&recording.strokes, &recording.pins, recording.surface);
     let actions = settle(&recording.actions);
     let action_times: Vec<Moment> = actions.iter().map(|action| action.span().start()).collect();
     let transitions = frames.transitions();

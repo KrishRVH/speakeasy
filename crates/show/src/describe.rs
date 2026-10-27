@@ -34,7 +34,7 @@ pub(crate) fn event(basis: &Basis, marks: &[Mark]) -> String {
     }
 }
 
-/// Describes the mark for a reader, with positions as fractions of the surface.
+/// Describes the mark for a reader after its number, with positions as fractions of the surface.
 impl fmt::Display for Mark {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Rect {
@@ -49,6 +49,7 @@ impl fmt::Display for Mark {
             count => format!(" ({count} strokes)"),
         };
         let verb = self.shape.verb();
+        write!(f, "{} ", Numeral(self.number))?;
         match self.shape {
             Shape::Circle | Shape::Scribble => write!(f, "{verb} region {region}{strokes}"),
             Shape::Underline => write!(
@@ -61,6 +62,7 @@ impl fmt::Display for Mark {
                 write!(f, "{verb} from {} pointing to {}", At(from), At(to))
             },
             Shape::Tap => write!(f, "{verb} {}{strokes}", At(self.bounds.center())),
+            Shape::Pin { point } => write!(f, "{verb} {}", At(point)),
         }
     }
 }
@@ -75,12 +77,36 @@ impl Shape {
             Self::Line { .. } => "drew a line",
             Self::Arrow { .. } => "drew an arrow",
             Self::Scribble => "marked",
+            Self::Pin { .. } => "pinned",
+        }
+    }
+}
+
+/// A mark's number as a circled numeral, ① through ㊿, then in parentheses.
+struct Numeral(usize);
+
+impl fmt::Display for Numeral {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Unicode circles each run of numbers in its own block, from the code point `glyph`.
+        let circled = |glyph: u32, from: usize| {
+            let offset = u32::try_from(self.0.checked_sub(from)?).ok()?;
+            char::from_u32(glyph.checked_add(offset)?)
+        };
+        let glyph = match self.0 {
+            1..=20 => circled(0x2460, 1),
+            21..=35 => circled(0x3251, 21),
+            36..=50 => circled(0x32B1, 36),
+            _ => None,
+        };
+        match glyph {
+            Some(glyph) => write!(f, "{glyph}"),
+            None => write!(f, "({})", self.0),
         }
     }
 }
 
 /// What a keyframe shows happening beside the words said over it: the click or drag whose result
-/// it shows, or what its ink does and any click or drag it also reports.
+/// it shows, or what each of its numbered marks does and any click or drag it also reports.
 pub(crate) struct Marker<'a>(pub(crate) &'a Keyframe, pub(crate) &'a [Mark]);
 
 impl fmt::Display for Marker<'_> {
@@ -89,17 +115,12 @@ impl fmt::Display for Marker<'_> {
         match (keyframe.reason, keyframe.action) {
             (Reason::Click, Some(action)) => write!(f, " [{}]", Verb(action)),
             (Reason::Mark, during) if !marks.is_empty() => {
-                let mut verbs: Vec<&str> = Vec::with_capacity(marks.len());
-                for verb in marks.iter().map(|mark| mark.shape.verb()) {
-                    if !verbs.contains(&verb) {
-                        verbs.push(verb);
-                    }
-                }
-                write!(f, " [{}", verbs.join(", "))?;
-                if let Some(action) = during {
-                    write!(f, ", {}", Verb(action))?;
-                }
-                f.write_str("]")
+                let marks = marks
+                    .iter()
+                    .map(|mark| format!("{} {}", Numeral(mark.number), mark.shape.verb()));
+                let action = during.map(|action| Verb(action).to_string());
+                let parts: Vec<String> = marks.chain(action).collect();
+                write!(f, " [{}]", parts.join(", "))
             },
             _ => Ok(()),
         }
@@ -200,8 +221,9 @@ mod tests {
     }
 
     #[test]
-    fn a_mark_keyframe_names_the_click_made_while_it_was_drawn() {
+    fn a_mark_keyframe_names_each_numbered_mark_and_the_click_made_while_it_was_drawn() {
         let scribble = Mark {
+            number: 3,
             shape: Shape::Scribble,
             strokes: 0..2,
             span: Span::new(Moment::START, Moment::from_millis(2_000)),
@@ -212,24 +234,53 @@ mod tests {
                 bottom: 0.4,
             },
         };
+        let pin = Mark {
+            number: 4,
+            shape: Shape::Pin {
+                point: Point::new(0.6, 0.25),
+            },
+            strokes: 2..2,
+            span: Span::at(Moment::from_millis(2_000)),
+            bounds: Rect::from_origin(Point::new(0.6, 0.25), 0.0, 0.0),
+        };
         let keyframe = |action| Keyframe {
             index: 1,
             at: Moment::from_millis(2_000),
             reason: Reason::Mark,
             event: String::new(),
             said: None,
-            marks: 0..1,
+            marks: 0..2,
             action,
         };
-        let marks = [scribble];
         let click = Action::Click {
             at: Moment::from_millis(1_000),
             point: Point::new(0.3, 0.3),
         };
-        assert_eq!(Marker(&keyframe(None), &marks).to_string(), " [marked]");
         assert_eq!(
-            Marker(&keyframe(Some(click)), &marks).to_string(),
-            " [marked, clicked]"
+            Marker(&keyframe(None), std::slice::from_ref(&scribble)).to_string(),
+            " [③ marked]"
         );
+        assert_eq!(
+            Marker(&keyframe(Some(click)), &[scribble.clone(), pin.clone()]).to_string(),
+            " [③ marked, ④ pinned, clicked]"
+        );
+        assert_eq!(pin.to_string(), "④ pinned x 0.60, y 0.25");
+        let twin = Mark {
+            number: 5,
+            ..scribble
+        };
+        assert_eq!(
+            Marker(&keyframe(None), &[twin.clone(), Mark { number: 6, ..twin }]).to_string(),
+            " [⑤ marked, ⑥ marked]"
+        );
+    }
+
+    #[test]
+    fn numerals_are_circled_through_fifty() {
+        let numerals: Vec<String> = [1, 20, 21, 35, 36, 50, 51, 0]
+            .into_iter()
+            .map(|number| Numeral(number).to_string())
+            .collect();
+        assert_eq!(numerals, ["①", "⑳", "㉑", "㉟", "㊱", "㊿", "(51)", "(0)"]);
     }
 }

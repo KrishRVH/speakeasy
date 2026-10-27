@@ -67,6 +67,7 @@ fn recording(strokes: Vec<Stroke>, actions: Vec<Action>, narration: Narration) -
             height: 1000.0,
         },
         strokes,
+        pins: Vec::new(),
         actions,
         narration,
     }
@@ -534,7 +535,7 @@ fn each_event_says_why_its_frame_was_chosen() {
     );
     assert_eq!(
         event(select(&drawn, &still)),
-        "tapped x 0.50, y 0.50; tapped x 0.50, y 0.50"
+        "① tapped x 0.50, y 0.50; ② tapped x 0.50, y 0.50"
     );
     let looked = recording(Vec::new(), Vec::new(), words(&[(3_000, "Look")]));
     assert_eq!(event(select(&looked, &still)), "said “look”");

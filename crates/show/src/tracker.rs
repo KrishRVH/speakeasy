@@ -1,13 +1,13 @@
-//! Turning pointer samples into ink and into the clicks and drags that passed through.
+//! Turning pointer samples into ink, pins, and the clicks and drags that passed through.
 //!
 //! Holding Shift and moving the pointer draws; clicks keep reaching the apps underneath, so
 //! pressing a button never draws and drawing never clicks.
 
-use std::mem;
+use std::{mem, time::Duration};
 
 use crate::{
-    Moment, Point, Span,
-    recording::{Action, InkPoint, Size, Stroke},
+    Mark, Moment, Point, Recording, Span, marks,
+    recording::{Action, InkPoint, Pin, Size, Stroke},
 };
 
 /// A press that moves further than this many pixels before release is a drag.
@@ -18,16 +18,24 @@ const INK_SPACING_PIXELS: f32 = 1.5;
 const SHORTEST_STROKE_PIXELS: f32 = 6.0;
 /// A stroke this long is cut, and drawing continues in a new one.
 const MOST_STROKE_POINTS: usize = 2_400;
+/// A pin this soon after Shift and a button were down together is Shift-clicking, which taps Shift
+/// as fast as a double tap does; two taps span at most a second.
+const SHIFT_CLICK_SPAN: Duration = Duration::from_secs(1);
 
-/// Follows the pointer over the captured surface and keeps what it drew and did.
+/// Follows the pointer over the captured surface and keeps what it drew, pinned, and did.
 #[derive(Debug)]
 pub struct Tracker {
     surface: Size,
+    /// Where the pointer was last seen.
+    pointer: Option<Point>,
     drawing: Vec<InkPoint>,
     /// Whether the stroke being drawn has spanned enough to be ink.
     deliberate: bool,
     press: Option<Press>,
+    /// When Shift and a button were last seen down together.
+    shift_clicked: Option<Moment>,
     strokes: Vec<Stroke>,
+    pins: Vec<Pin>,
     actions: Vec<Action>,
 }
 
@@ -50,10 +58,13 @@ impl Tracker {
     pub const fn new(surface: Size) -> Self {
         Self {
             surface,
+            pointer: None,
             drawing: Vec::new(),
             deliberate: false,
             press: None,
+            shift_clicked: None,
             strokes: Vec::new(),
+            pins: Vec::new(),
             actions: Vec::new(),
         }
     }
@@ -62,7 +73,11 @@ impl Tracker {
     /// `pressed` while the primary button is down. `point` is normalized to the surface, and may
     /// lie outside it when the pointer is on another display.
     pub fn observe(&mut self, at: Moment, point: Point, drawing: bool, pressed: bool) {
-        let inside = (0.0..=1.0).contains(&point.x) && (0.0..=1.0).contains(&point.y);
+        self.pointer = Some(point);
+        if drawing && pressed {
+            self.shift_clicked = Some(at);
+        }
+        let inside = inside(point);
         if drawing && inside {
             self.draw(InkPoint { point, at });
         } else {
@@ -102,14 +117,45 @@ impl Tracker {
         &self.strokes
     }
 
-    /// Ends any stroke or press in progress at `at` and returns the ink and actions recorded.
+    /// Drops a pin at `at` where the pointer was last seen, unless it is off the surface, has not
+    /// been seen, or the Shift taps were Shift-clicks. Returns whether a pin was dropped.
+    pub fn pin(&mut self, at: Moment) -> bool {
+        let shift_clicking = self
+            .shift_clicked
+            .is_some_and(|clicked| at.since(clicked) <= SHIFT_CLICK_SPAN);
+        let Some(point) = self
+            .pointer
+            .filter(|&point| !shift_clicking && inside(point))
+        else {
+            return false;
+        };
+        self.pins.push(Pin { at, point });
+        true
+    }
+
+    /// The marks the finished strokes and pins make so far, numbered as the bundle will number
+    /// them: a later stroke or pin never renumbers an earlier mark.
     #[must_use]
-    pub fn finish(mut self, at: Moment) -> (Vec<Stroke>, Vec<Action>) {
+    pub fn marks(&self) -> Vec<Mark> {
+        marks::group(&self.strokes, &self.pins, self.surface)
+    }
+
+    /// Ends any stroke or press in progress at `at` and returns what was recorded, lasting until
+    /// `at` and not yet narrated.
+    #[must_use]
+    pub fn finish(mut self, at: Moment) -> Recording {
         self.lift();
         if let Some(press) = self.press {
             self.release(at, press.to);
         }
-        (self.strokes, self.actions)
+        Recording {
+            duration: at,
+            surface: self.surface,
+            strokes: self.strokes,
+            pins: self.pins,
+            actions: self.actions,
+            ..Recording::default()
+        }
     }
 
     fn draw(&mut self, ink: InkPoint) {
@@ -166,6 +212,11 @@ impl Tracker {
     }
 }
 
+/// Whether a normalized point lies on the surface.
+fn inside(point: Point) -> bool {
+    (0.0..=1.0).contains(&point.x) && (0.0..=1.0).contains(&point.y)
+}
+
 /// The distance between two normalized points, in pixels of `surface`.
 fn pixels(surface: Size, one: Point, other: Point) -> f32 {
     (one - other).scaled(surface.width, surface.height).length()
@@ -180,7 +231,8 @@ mod tests {
         height: 500.0,
     };
 
-    /// Replays `(milliseconds, x, y, drawing, pressed)` samples, finishing after the last.
+    /// Replays `(milliseconds, x, y, drawing, pressed)` samples, finishing after the last, and
+    /// returns the strokes and actions recorded.
     fn replay(samples: &[(u64, f32, f32, bool, bool)]) -> (Vec<Stroke>, Vec<Action>) {
         let mut tracker = Tracker::new(SURFACE);
         let mut end = Moment::START;
@@ -188,7 +240,8 @@ mod tests {
             end = Moment::from_millis(millis);
             tracker.observe(end, Point::new(x, y), drawing, pressed);
         }
-        tracker.finish(end)
+        let recording = tracker.finish(end);
+        (recording.strokes, recording.actions)
     }
 
     #[test]
@@ -240,9 +293,43 @@ mod tests {
         let ended = tracker.strokes()[0].points().last().copied();
         assert_eq!(tracker.drawing().first().copied(), ended);
         draw(&mut tracker, cut + 1);
-        let (strokes, _) = tracker.finish(Moment::from_millis(2_402));
+        let strokes = tracker.finish(Moment::from_millis(2_402)).strokes;
         assert_eq!(strokes.len(), 2);
         assert_eq!(strokes[0].points().last(), strokes[1].points().first());
+    }
+
+    #[test]
+    fn pins_drop_where_the_pointer_was_last_seen_on_the_surface_unless_shift_clicking() {
+        let mut tracker = Tracker::new(SURFACE);
+        assert!(!tracker.pin(Moment::START), "the pointer has not been seen");
+        tracker.observe(Moment::from_millis(10), Point::new(0.3, 0.4), false, false);
+        assert!(tracker.pin(Moment::from_millis(500)));
+        tracker.observe(Moment::from_millis(600), Point::new(1.3, 0.4), false, false);
+        assert!(!tracker.pin(Moment::from_millis(700)), "on another display");
+        tracker.observe(Moment::from_millis(1_000), Point::new(0.6, 0.4), true, true);
+        tracker.observe(
+            Moment::from_millis(1_100),
+            Point::new(0.6, 0.4),
+            false,
+            false,
+        );
+        assert!(!tracker.pin(Moment::from_millis(2_000)), "Shift-clicking");
+        assert!(tracker.pin(Moment::from_millis(2_100)));
+        let recording = tracker.finish(Moment::from_millis(2_200));
+        assert_eq!(
+            recording.pins,
+            [
+                Pin {
+                    at: Moment::from_millis(500),
+                    point: Point::new(0.3, 0.4)
+                },
+                Pin {
+                    at: Moment::from_millis(2_100),
+                    point: Point::new(0.6, 0.4)
+                }
+            ]
+        );
+        assert_eq!(recording.duration, Moment::from_millis(2_200));
     }
 
     #[test]

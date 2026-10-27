@@ -6,6 +6,9 @@
 //! While a capture runs it leaves every Speakeasy window out of capture, and afterwards shows them
 //! to capture again, so they still appear in the user's own screen sharing.
 //!
+//! A Show of part of the display reads only that part of each frame back, following a window's
+//! frame bounds from frame to frame.
+//!
 //! Every position is in physical pixels: the manifest makes Speakeasy per-monitor DPI aware, so the
 //! cursor, monitor bounds, and window placement share one coordinate space.
 
@@ -50,18 +53,24 @@ use windows::{
 };
 use windows_future::{AsyncStatus, IAsyncOperation};
 use windows_sys::Win32::{
-    Foundation::{FALSE, POINT, RECT},
-    Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint},
+    Foundation::{FALSE, HWND, POINT, RECT},
+    Graphics::{
+        Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute},
+        Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint},
+    },
     System::{
         Com::CoIncrementMTAUsage,
         Performance::{QueryPerformanceCounter, QueryPerformanceFrequency},
+        Threading::GetCurrentProcessId,
     },
     UI::{
         HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI},
         Input::KeyboardAndMouse::{VK_LBUTTON, VK_RBUTTON},
         WindowsAndMessaging::{
-            GetCursorPos, GetSystemMetrics, HWND_TOPMOST, SM_SWAPBUTTON, SW_HIDE,
-            SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, ShowWindow,
+            GA_ROOT, GWL_EXSTYLE, GetAncestor, GetClassNameW, GetCursorPos, GetSystemMetrics,
+            GetWindowLongPtrW, GetWindowThreadProcessId, HWND_TOPMOST, IsIconic, IsWindow,
+            SM_SWAPBUTTON, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+            SetWindowLongPtrW, SetWindowPos, ShowWindow, WS_EX_TRANSPARENT, WindowFromPoint,
         },
     },
 };
@@ -73,7 +82,10 @@ use self::{
 use super::{BASE_DPI, is_key_down, ok_or_last_error};
 use crate::{
     NativeWindow,
-    screen::{Frame, PointerSample, ScreenEvent, geometry::Bounds},
+    screen::{
+        Frame, Part, PointerSample, Region, ScreenEvent, Target,
+        geometry::{Bounds, part_of_box, pixel_box},
+    },
 };
 
 /// How often the capture thread drains the frame pool and checks for a stop.
@@ -89,6 +101,13 @@ const TICKS_PER_SECOND: i128 = 10_000_000;
 /// A frame's timestamp may mark when it was presented rather than when its composition began, a
 /// refresh later at most; frames stamped this soon after an exclusion may predate it.
 const COMPOSITION_MARGIN: Duration = Duration::from_millis(50);
+/// The window classes of the desktop and the taskbars, which a Show of a window passes over.
+const SHELL_CLASSES: [&str; 4] = [
+    "Progman",
+    "WorkerW",
+    "Shell_TrayWnd",
+    "Shell_SecondaryTrayWnd",
+];
 
 /// A monitor and where it sits on the desktop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,6 +136,88 @@ impl Display {
             size: [right - left, bottom - top],
         }
     }
+}
+
+/// A top-level window, kept as an integer because handles are not `Send`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Window(isize);
+
+impl Window {
+    fn handle(self) -> HWND {
+        self.0 as HWND
+    }
+}
+
+/// The top-level window under the pointer and the part of `display` it covers, unless it is the
+/// desktop, a taskbar, or Speakeasy's own.
+pub(crate) fn window_under_pointer(display: Display) -> Option<(Window, Part)> {
+    // SAFETY: both calls take values and answer null when no window qualifies.
+    let window = unsafe { GetAncestor(WindowFromPoint(cursor()?), GA_ROOT) };
+    if window.is_null() || shell_or_own(window) {
+        return None;
+    }
+    let window = Window(window as isize);
+    Some((window, window_part(display, window)?))
+}
+
+/// Whether `window` is the desktop, a taskbar, or one of Speakeasy's.
+fn shell_or_own(window: HWND) -> bool {
+    let mut process = 0;
+    let mut class = [0_u16; 32];
+    // SAFETY: each out-parameter is a live local, the class buffer of the length given; a stale
+    // handle reports no process and no class.
+    let (length, own) = unsafe {
+        GetWindowThreadProcessId(window, &raw mut process);
+        (
+            GetClassNameW(
+                window,
+                class.as_mut_ptr(),
+                i32::try_from(class.len()).unwrap_or_default(),
+            ),
+            GetCurrentProcessId(),
+        )
+    };
+    let class = class
+        .get(..usize::try_from(length).unwrap_or_default())
+        .unwrap_or_default();
+    process == own
+        || SHELL_CLASSES
+            .iter()
+            .any(|shell| shell.encode_utf16().eq(class.iter().copied()))
+}
+
+/// The part of `display` that `window` covers now, by its visible frame without the resize
+/// border; `None` once it is closed, minimized, or off the display.
+fn window_part(display: Display, window: Window) -> Option<Part> {
+    let window = window.handle();
+    let mut frame = RECT::default();
+    // SAFETY: each call tolerates a stale handle; the frame bounds land in a live local of the
+    // size given.
+    let placed = unsafe {
+        IsWindow(window) != FALSE
+            && IsIconic(window) == FALSE
+            && DwmGetWindowAttribute(
+                window,
+                DWMWA_EXTENDED_FRAME_BOUNDS.cast_unsigned(),
+                (&raw mut frame).cast(),
+                u32::try_from(size_of::<RECT>()).ok()?,
+            ) >= 0
+    };
+    let RECT {
+        left,
+        top,
+        right,
+        bottom,
+    } = frame;
+    let [left, top, right, bottom] = [left, top, right, bottom].map(f64::from);
+    placed
+        .then(|| {
+            display.area().part_covered_by(Bounds {
+                origin: [left, top],
+                size: [right - left, bottom - top],
+            })
+        })
+        .flatten()
 }
 
 pub(crate) fn display_under_pointer() -> anyhow::Result<crate::screen::Display> {
@@ -193,13 +294,13 @@ fn primary_button_down() -> bool {
 }
 
 pub(crate) fn capture(
-    display: crate::screen::Display,
+    target: Target,
     interval: Duration,
     longest_edge: u32,
     events: &Sender<ScreenEvent>,
     stopping: &Receiver<Infallible>,
 ) {
-    if let Err(failure) = record(display.native, interval, longest_edge, events, stopping)
+    if let Err(failure) = record(target, interval, longest_edge, events, stopping)
         && !stopping.is_closed()
     {
         // A full lane gives up its oldest frame so that the failure always arrives.
@@ -212,7 +313,7 @@ pub(crate) fn capture(
 }
 
 fn record(
-    display: Display,
+    target: Target,
     interval: Duration,
     longest_edge: u32,
     events: &Sender<ScreenEvent>,
@@ -226,7 +327,7 @@ fn record(
     exclusions.refresh()?;
     // Frames composed before a Speakeasy window was left out may show it.
     let mut clean_from = clean_after_now();
-    let mut capture = Capture::start(display, interval, longest_edge, stopping)?;
+    let mut capture = Capture::start(target, interval, longest_edge, stopping)?;
     let mut pacer = Pacer::new(interval);
     while !stopping.is_closed() && !events.is_closed() {
         // A window opened since the last check is in the first frame Windows composes with it.
@@ -278,8 +379,14 @@ impl Pacer {
     }
 }
 
-/// A capture of one display, polled on the capture thread.
+/// A capture of one display, all of it or a part, polled on the capture thread.
 struct Capture {
+    display: Display,
+    region: Region,
+    /// The part of the display frames show: fixed for an area, following a window.
+    part: Part,
+    /// The size Windows composes the display at.
+    content: [u32; 2],
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     /// The same device as the Windows Runtime sees it, for recreating the pool.
@@ -291,7 +398,7 @@ struct Capture {
     item_closed: Receiver<Infallible>,
     closed_handler: i64,
     longest_edge: u32,
-    /// Reads frames of the size Windows delivers.
+    /// Reads back the part of each frame shown, at that part's size.
     readback: Readback,
     /// The newest frame not yet read, and when it was on screen.
     pending: Option<(Direct3D11CaptureFrame, Instant)>,
@@ -299,11 +406,12 @@ struct Capture {
 
 impl Capture {
     fn start(
-        display: Display,
+        target: Target,
         interval: Duration,
         longest_edge: u32,
         stopping: &Receiver<Infallible>,
     ) -> Result<Self, Failure> {
+        let display = target.display().native;
         // Asked first, so Windows answers while the device is made.
         let access =
             GraphicsCaptureAccess::RequestAccessAsync(GraphicsCaptureAccessKind::Borderless);
@@ -329,7 +437,9 @@ impl Capture {
         best_effort(session.SetIsCursorCaptureEnabled(false));
         // Builds without the setting deliver every change; `record` paces those itself.
         best_effort(session.SetMinUpdateInterval(time_span(interval)));
-        let readback = Readback::new(&device, pixels(size), longest_edge)?;
+        let composed = pixels(size);
+        let part = target.part();
+        let readback = Readback::new(&device, crop_size(pixel_box(part, composed)), longest_edge)?;
         session.StartCapture()?;
         if let Ok(access) = &access {
             settle(access, stopping);
@@ -337,6 +447,10 @@ impl Capture {
         // Windows refuses this before capture starts, even with access granted.
         best_effort(session.SetIsBorderRequired(false));
         Ok(Self {
+            display,
+            region: target.region,
+            part,
+            content: composed,
             device,
             context,
             direct3d,
@@ -369,13 +483,13 @@ impl Capture {
             return Ok(false);
         };
         let content = frame.ContentSize()?;
-        if pixels(content) != self.readback.source {
+        if pixels(content) != self.content {
             // The display changed resolution or rotation: this frame fills only part of its
             // surface, and the pending one belongs to the pool being replaced.
             self.pending = None;
             self.pool
                 .Recreate(&self.direct3d, POOL_FORMAT, BUFFERS, content)?;
-            self.readback = Readback::new(&self.device, pixels(content), self.longest_edge)?;
+            self.content = pixels(content);
             return Ok(false);
         }
         let captured = composed_at(frame.SystemRelativeTime()?);
@@ -411,15 +525,37 @@ impl Capture {
                 .cast::<IDirect3DDxgiInterfaceAccess>()?
                 .GetInterface()?
         };
-        let bgra = self.readback.read(&self.context, &texture)?;
+        let crop = pixel_box(self.follow(), self.content);
+        if crop_size(crop) != self.readback.source {
+            self.readback = Readback::new(&self.device, crop_size(crop), self.longest_edge)?;
+        }
+        let [left, top, ..] = crop;
+        let bgra = self.readback.read(&self.context, &texture, [left, top])?;
         let [width, height] = self.readback.size;
         Ok(Some(Frame {
             captured,
             width,
             height,
             bgra,
+            part: part_of_box(crop, self.content),
         }))
     }
+
+    /// The part of the display to read: a window's place now, or its last place while it is
+    /// minimized, closed, or off the display.
+    fn follow(&mut self) -> Part {
+        if let Region::Window(window, _) = self.region
+            && let Some(part) = window_part(self.display, window)
+        {
+            self.part = part;
+        }
+        self.part
+    }
+}
+
+/// The width and height of a box of pixels given by its edges.
+const fn crop_size([left, top, right, bottom]: [u32; 4]) -> [u32; 2] {
+    [right.saturating_sub(left), bottom.saturating_sub(top)]
 }
 
 impl Drop for Capture {
@@ -581,6 +717,22 @@ pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyh
         place()?;
     }
     Ok(())
+}
+
+pub(crate) fn set_overlay_input(window: &NativeWindow, takes_input: bool) {
+    let hwnd = window.native.hwnd;
+    let transparent = WS_EX_TRANSPARENT.cast_signed() as isize;
+    // SAFETY: this thread owns the window. Without WS_EX_TRANSPARENT the layered overlay takes
+    // every click over it; WS_EX_NOACTIVATE still keeps those clicks from activating it.
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let style = if takes_input {
+            style & !transparent
+        } else {
+            style | transparent
+        };
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
+    }
 }
 
 pub(crate) fn set_overlay_visible(window: &NativeWindow, visible: bool) {

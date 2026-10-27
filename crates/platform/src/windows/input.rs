@@ -11,6 +11,7 @@ use std::{
     panic,
     ptr::{null, null_mut},
     sync::Arc,
+    time::Instant,
 };
 
 use windows_sys::{
@@ -111,7 +112,9 @@ impl HookState {
     fn observe(&mut self, key: u32, down: bool) -> bool {
         // GetAsyncKeyState does not reflect this event until the hook returns.
         let physical_before_event = keyboard::Windows::CHORD_KEYS.map(is_key_down);
-        let decision = self.policy.observe(key, down, physical_before_event);
+        let decision = self
+            .policy
+            .observe(key, down, physical_before_event, Instant::now());
         decision.deliver(&self.input);
         if decision.starts() {
             // SAFETY: posts a value-only message to this hook's own thread.

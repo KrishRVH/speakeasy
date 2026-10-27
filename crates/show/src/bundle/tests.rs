@@ -4,7 +4,7 @@
 use serde_json::json;
 
 use super::*;
-use crate::{Action, InkPoint, Moment, Narration, Reason, Shape, Size, Span, Stroke, Word};
+use crate::{Action, InkPoint, Moment, Narration, Pin, Reason, Shape, Size, Span, Stroke, Word};
 
 fn at(millis: u64) -> Moment {
     Moment::from_millis(millis)
@@ -33,6 +33,10 @@ fn show_json_keeps_its_wire_format() {
                 height: 600.0,
             },
             strokes: vec![Stroke::new(vec![ink(0.25, 100), ink(0.75, 300)]).unwrap()],
+            pins: vec![Pin {
+                at: at(1_200),
+                point: Point::new(0.5, 0.25),
+            }],
             actions: vec![
                 click,
                 Action::Drag {
@@ -43,20 +47,32 @@ fn show_json_keeps_its_wire_format() {
             ],
             narration: Narration::Words(vec![word(100, "Look"), word(300, "here.")]),
         },
-        marks: vec![Mark {
-            shape: Shape::Line {
-                from: Point::new(0.25, 0.5),
-                to: Point::new(0.75, 0.5),
+        marks: vec![
+            Mark {
+                number: 1,
+                shape: Shape::Line {
+                    from: Point::new(0.25, 0.5),
+                    to: Point::new(0.75, 0.5),
+                },
+                strokes: 0..1,
+                span: Span::new(at(100), at(300)),
+                bounds: Rect {
+                    left: 0.25,
+                    top: 0.5,
+                    right: 0.75,
+                    bottom: 0.5,
+                },
             },
-            strokes: 0..1,
-            span: Span::new(at(100), at(300)),
-            bounds: Rect {
-                left: 0.25,
-                top: 0.5,
-                right: 0.75,
-                bottom: 0.5,
+            Mark {
+                number: 2,
+                shape: Shape::Pin {
+                    point: Point::new(0.5, 0.25),
+                },
+                strokes: 1..1,
+                span: Span::at(at(1_200)),
+                bounds: Rect::from_origin(Point::new(0.5, 0.25), 0.0, 0.0),
             },
-        }],
+        ],
         keyframes: vec![
             Keyframe {
                 index: 1,
@@ -89,10 +105,11 @@ fn show_json_keeps_its_wire_format() {
     };
     let click = json!({"kind": "click", "at": 400, "point": [0.5, 0.25]});
     let golden = json!({
-        "version": 1,
+        "version": 2,
         "duration": 2000,
         "surface": {"width": 800.0, "height": 600.0},
         "strokes": [[[0.25, 0.5, 100], [0.75, 0.5, 300]]],
+        "pins": [{"at": 1200, "point": [0.5, 0.25]}],
         "actions": [
             click,
             {"kind": "drag", "span": [600, 900], "from": [0.25, 0.75], "to": [0.75, 0.75]},
@@ -101,14 +118,25 @@ fn show_json_keeps_its_wire_format() {
             {"span": [100, 300], "text": "Look"},
             {"span": [300, 500], "text": "here."},
         ]},
-        "marks": [{
-            "shape": "line",
-            "from": [0.25, 0.5],
-            "to": [0.75, 0.5],
-            "strokes": [0, 1],
-            "span": [100, 300],
-            "bounds": [0.25, 0.5, 0.75, 0.5],
-        }],
+        "marks": [
+            {
+                "number": 1,
+                "shape": "line",
+                "from": [0.25, 0.5],
+                "to": [0.75, 0.5],
+                "strokes": [0, 1],
+                "span": [100, 300],
+                "bounds": [0.25, 0.5, 0.75, 0.5],
+            },
+            {
+                "number": 2,
+                "shape": "pin",
+                "point": [0.5, 0.25],
+                "strokes": [1, 1],
+                "span": [1200, 1200],
+                "bounds": [0.5, 0.25, 0.5, 0.25],
+            },
+        ],
         "keyframes": [
             {
                 "index": 1,

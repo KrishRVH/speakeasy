@@ -8,6 +8,8 @@ use std::sync::{
 
 use async_channel::Sender;
 
+use crate::Scope;
+
 /// Desktop observations and explicit dictation commands sent to the owner.
 #[derive(Debug, Clone)]
 pub enum Input {
@@ -17,8 +19,11 @@ pub enum Input {
     Release,
     /// Space during a hold requests hands-free capture.
     Lock,
-    /// S during a hold turns the recording into a Show, which also captures the screen.
-    Show,
+    /// S, W, or A during a hold turns the recording into a Show, which also records the screen,
+    /// the window under the pointer, or an area dragged out next.
+    Show(Scope),
+    /// Shift tapped twice alone: a Show being recorded drops a numbered pin at the pointer.
+    Pin,
     /// The user discards the active session, which revokes pending insertion.
     Cancel,
     /// Another shortcut or a session change ended the hold: discards the active session like

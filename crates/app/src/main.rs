@@ -271,7 +271,7 @@ fn print_help() -> io::Result<()> {
     } else {
         writeln!(
             out,
-            "Hold to dictate; add Space or double-tap for hands-free, or S to record a Show. {CANCEL_SHORTCUT} cancels."
+            "Hold to dictate; add Space or double-tap for hands-free, or S, W, or A to Show the screen, a window, or an area. {CANCEL_SHORTCUT} cancels."
         )?;
     }
     writeln!(

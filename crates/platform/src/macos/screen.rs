@@ -1,9 +1,11 @@
 //! Screen capture, pointer sampling, and the Show overlay on macOS.
 //!
 //! Capture polls `ScreenCaptureKit` for stills of one display with Speakeasy's own application
-//! filtered out, so neither the pill nor the overlay ever appears in a frame. `ScreenCaptureKit`
-//! answers on queues of its own: each answer is read where it arrives and crosses to the capture
-//! thread over a channel, and the capture thread stops waiting the moment the Show stops.
+//! filtered out, so neither the pill nor the overlay ever appears in a frame. A Show of part of the
+//! display asks each still for that part only, looking up a window's place in Core Graphics' window
+//! list before each still. `ScreenCaptureKit` answers on queues of its own: each answer is read
+//! where it arrives and crosses to the capture thread over a channel, and the capture thread stops
+//! waiting the moment the Show stops.
 
 use std::{
     convert::Infallible,
@@ -22,10 +24,16 @@ use objc2::{
 use objc2_app_kit::{
     NSStatusWindowLevel, NSWindowCollectionBehavior, NSWindowSharingType, NSWindowStyleMask,
 };
+use objc2_core_foundation::{
+    CFArray, CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType, CGPoint, CGRect,
+    CGSize,
+};
 use objc2_core_graphics::{
     CGDirectDisplayID, CGDisplayBounds, CGError, CGEvent, CGEventSource, CGEventSourceStateID,
-    CGGetDisplaysWithPoint, CGMainDisplayID, CGMouseButton, kCGColorSpaceSRGB,
-    kCGNullDirectDisplay,
+    CGGetDisplaysWithPoint, CGMainDisplayID, CGMouseButton, CGRectMakeWithDictionaryRepresentation,
+    CGWindowID, CGWindowListCopyWindowInfo, CGWindowListOption, kCGColorSpaceSRGB,
+    kCGNullDirectDisplay, kCGNullWindowID, kCGWindowAlpha, kCGWindowBounds, kCGWindowIsOnscreen,
+    kCGWindowLayer, kCGWindowNumber, kCGWindowOwnerPID,
 };
 use objc2_core_media::CMSampleBuffer;
 use objc2_core_video::{
@@ -44,7 +52,7 @@ use tokio::{runtime, time};
 use crate::{
     NativeWindow,
     screen::{
-        self, Frame, PointerSample, ScreenEvent,
+        self, Frame, Part, PointerSample, Region, ScreenEvent, Target,
         geometry::{Bounds, fit, narrow, pack_rows, pixels},
     },
 };
@@ -68,6 +76,97 @@ pub(crate) struct Display {
     bounds: Bounds,
 }
 
+/// A window by its number in Core Graphics' window list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Window(CGWindowID);
+
+/// One window as Core Graphics' window list describes it.
+struct Described {
+    number: CGWindowID,
+    owner: i64,
+    /// The window's level: zero for ordinary app windows; the Dock, menus, and the menu bar sit
+    /// higher.
+    layer: i64,
+    alpha: f64,
+    on_screen: bool,
+    bounds: Bounds,
+}
+
+/// The frontmost visible app window under the pointer and the part of `display` it covers, unless
+/// it is Speakeasy's own. Windows above app windows, such as the Dock, menus, and the menu bar, and
+/// invisible windows are passed over.
+pub(crate) fn window_under_pointer(display: Display) -> Option<(Window, Part)> {
+    let [x, y] = pointer_location()?;
+    let options =
+        CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements;
+    let front = windows(options, kCGNullWindowID)
+        .into_iter()
+        .find(|window| window.layer == 0 && window.alpha > 0.0 && window.bounds.contains([x, y]))
+        .filter(|window| window.owner != i64::from(process::id()))?;
+    Some((
+        Window(front.number),
+        display.bounds.part_covered_by(front.bounds)?,
+    ))
+}
+
+/// The part of `display` that `window` covers now; `None` once it is closed, minimized, hidden,
+/// or off the display.
+fn window_part(display: Display, window: Window) -> Option<Part> {
+    let described = windows(CGWindowListOption::OptionIncludingWindow, window.0)
+        .into_iter()
+        .find(|described| described.number == window.0 && described.on_screen)?;
+    display.bounds.part_covered_by(described.bounds)
+}
+
+/// The windows Core Graphics lists for `options` relative to `window`, front to back.
+fn windows(options: CGWindowListOption, window: CGWindowID) -> Vec<Described> {
+    let Some(list) = CGWindowListCopyWindowInfo(options, window) else {
+        return Vec::new();
+    };
+    // SAFETY: Core Graphics documents the window list as an array of dictionaries keyed by
+    // strings, and the retained array keeps its elements alive.
+    let list =
+        unsafe { CFRetained::cast_unchecked::<CFArray<CFDictionary<CFString, CFType>>>(list) };
+    list.iter().filter_map(|window| describe(&window)).collect()
+}
+
+fn describe(window: &CFDictionary<CFString, CFType>) -> Option<Described> {
+    // SAFETY: the keys are immutable constants Core Graphics exports.
+    let [id, owner, layer, alpha, on_screen, bounds] = unsafe {
+        [
+            kCGWindowNumber,
+            kCGWindowOwnerPID,
+            kCGWindowLayer,
+            kCGWindowAlpha,
+            kCGWindowIsOnscreen,
+            kCGWindowBounds,
+        ]
+    }
+    .map(|key| window.get(key));
+    let numeric = |value: Option<CFRetained<CFType>>| value?.downcast::<CFNumber>().ok();
+    let mut rect = CGRect::default();
+    let bounds = bounds?.downcast::<CFDictionary>().ok()?;
+    // SAFETY: the dictionary is alive for the call, and the rectangle is a live local.
+    if !unsafe { CGRectMakeWithDictionaryRepresentation(Some(&bounds), &raw mut rect) } {
+        return None;
+    }
+    Some(Described {
+        number: u32::try_from(numeric(id)?.as_i64()?).ok()?,
+        owner: numeric(owner)?.as_i64()?,
+        layer: numeric(layer)?.as_i64()?,
+        alpha: numeric(alpha)
+            .and_then(|alpha| alpha.as_f64())
+            .unwrap_or(1.0),
+        on_screen: on_screen
+            .and_then(|value| value.downcast::<CFBoolean>().ok())
+            .is_some_and(|value| value.as_bool()),
+        bounds: Bounds {
+            origin: [rect.origin.x, rect.origin.y],
+            size: [rect.size.width, rect.size.height],
+        },
+    })
+}
+
 pub(crate) fn display_under_pointer() -> anyhow::Result<screen::Display> {
     let [x, y] = pointer_location().context("Cannot read the pointer position. Try again.")?;
     let mut id = kCGNullDirectDisplay;
@@ -86,7 +185,7 @@ pub(crate) fn display_under_pointer() -> anyhow::Result<screen::Display> {
 }
 
 pub(crate) fn capture(
-    display: screen::Display,
+    target: Target,
     interval: Duration,
     longest_edge: u32,
     events: &Sender<ScreenEvent>,
@@ -103,7 +202,7 @@ pub(crate) fn capture(
     };
     runtime.block_on(async {
         let failed = async {
-            let Err(failure) = capture_stills(display.native, interval, longest_edge, events).await;
+            let Err(failure) = capture_stills(target, interval, longest_edge, events).await;
             // Unlike a frame, the failure waits for room: it is the capture's last word.
             events.send(ScreenEvent::Failed(failure.to_owned())).await
         };
@@ -115,20 +214,28 @@ pub(crate) fn capture(
     });
 }
 
-/// Captures stills of `display` until capture fails, returning what the user can do about it.
+/// Captures stills of `target` until capture fails, returning what the user can do about it.
 async fn capture_stills(
-    display: Display,
+    target: Target,
     interval: Duration,
     longest_edge: u32,
     events: &Sender<ScreenEvent>,
 ) -> Result<Infallible, &'static str> {
+    let display = target.display().native;
     let source = answer(Source::fetch(display.id, longest_edge))
         .await
         .unwrap_or(Err(STALLED))?;
+    let mut part = target.part();
     let mut last_frame = Instant::now();
     loop {
+        // A window keeps its last place while it is minimized, closed, or off the display.
+        if let Region::Window(window, _) = target.region
+            && let Some(now) = window_part(display, window)
+        {
+            part = now;
+        }
         // An unanswered request is a missed still, and a long enough run of misses is a stall.
-        match answer(source.still()).await.unwrap_or(Ok(None))? {
+        match answer(source.still(part)?).await.unwrap_or(Ok(None))? {
             Some(frame) => {
                 last_frame = frame.captured;
                 #[expect(
@@ -146,20 +253,22 @@ async fn capture_stills(
     }
 }
 
-/// What to capture and how: the display without Speakeasy's own application, at the Show's frame
-/// size.
+/// What to capture: the display without Speakeasy's own application, with its size in points and
+/// pixels per point, which size each still to fit the longest edge.
 struct Source {
     filter: Retained<SCContentFilter>,
-    configuration: Retained<SCStreamConfiguration>,
+    points: [f64; 2],
+    scale: f64,
+    longest_edge: u32,
 }
 
 #[expect(
     clippy::non_send_fields_in_send_ty,
     reason = "objc2 cannot know ScreenCaptureKit objects lack thread affinity; the SAFETY note explains why moving them is sound"
 )]
-// SAFETY: ScreenCaptureKit's filters and configurations have no thread affinity; its own API builds
-// them on one queue and reads them on others. A `Source` never changes them once built, so the
-// thread it moves to may use them while ScreenCaptureKit reads them too.
+// SAFETY: ScreenCaptureKit's filters have no thread affinity; its own API builds them on one queue
+// and reads them on others. A `Source` never changes its filter once built, so the thread it moves
+// to may use it while ScreenCaptureKit reads it too.
 unsafe impl Send for Source {}
 
 impl Source {
@@ -212,13 +321,32 @@ impl Source {
         };
         // SAFETY: a filter's content rectangle and scale are plain reads.
         let (points, scale) = unsafe { (filter.contentRect().size, filter.pointPixelScale()) };
-        let [width, height] = pixels([points.width, points.height], f64::from(scale))
-            .map(|size| fit(size, longest_edge))
-            .ok_or(DISPLAY_GONE)?;
+        Ok(Self {
+            filter,
+            points: [points.width, points.height],
+            scale: f64::from(scale),
+            longest_edge,
+        })
+    }
+
+    /// How to capture `part` of the display: at its size in pixels, halved until it fits the
+    /// longest edge. `None` when the part comes to no pixels, as when the display is gone.
+    fn configuration(&self, part: Part) -> Option<Retained<SCStreamConfiguration>> {
+        let [width, height] = self.points;
+        let [left, top, right, bottom] =
+            [part.left, part.top, part.right, part.bottom].map(f64::from);
+        let area = CGRect::new(
+            CGPoint::new(left * width, top * height),
+            CGSize::new((right - left) * width, (bottom - top) * height),
+        );
+        let [width, height] = pixels([area.size.width, area.size.height], self.scale)
+            .map(|size| fit(size, self.longest_edge))?;
         // SAFETY: a new configuration's setters take plain values and a color space name that
         // lives as long as the process.
         let configuration = unsafe {
             let configuration = SCStreamConfiguration::new();
+            // In points from the display's top-left corner.
+            configuration.setSourceRect(area);
             configuration.setWidth(width as usize);
             configuration.setHeight(height as usize);
             configuration.setPixelFormat(kCVPixelFormatType_32BGRA);
@@ -232,32 +360,37 @@ impl Source {
             configuration.setPreservesAspectRatio(false);
             configuration
         };
-        Ok(Self {
-            filter,
-            configuration,
-        })
+        Some(configuration)
     }
 
-    /// Asks for one still of the display; `None` when `ScreenCaptureKit` misses it.
-    fn still(&self) -> Receiver<Result<Option<Frame>, &'static str>> {
-        ask(
+    /// Asks for one still of `part` of the display; `None` when `ScreenCaptureKit` misses it.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the part comes to no pixels, as when the display is gone.
+    fn still(
+        &self,
+        part: Part,
+    ) -> Result<Receiver<Result<Option<Frame>, &'static str>>, &'static str> {
+        let configuration = self.configuration(part).ok_or(DISPLAY_GONE)?;
+        Ok(ask(
             |handler| {
                 // SAFETY: the filter and configuration are alive for the call, which retains them,
                 // and the handler has the documented signature and captures only sendable values.
                 unsafe {
                     SCScreenshotManager::captureSampleBufferWithFilter_configuration_completionHandler(
                         &self.filter,
-                        &self.configuration,
+                        &configuration,
                         Some(handler),
                     );
                 };
             },
-            |sample: Option<&CMSampleBuffer>, error: Option<&NSError>| match sample {
-                Some(sample) => Ok(frame(sample)),
+            move |sample: Option<&CMSampleBuffer>, error: Option<&NSError>| match sample {
+                Some(sample) => Ok(frame(sample, part)),
                 None if error.is_some_and(refused) => Err(PERMISSION),
                 None => Ok(None),
             },
-        )
+        ))
     }
 }
 
@@ -299,10 +432,10 @@ async fn answer<O>(replies: Receiver<O>) -> Option<O> {
     time::timeout(PATIENCE, replies.recv()).await.ok()?.ok()
 }
 
-/// Copies the pixels out of a `ScreenCaptureKit` still, which carries a pixel buffer in the
-/// configured format; reading it in place costs one copy, where a still image would first be copied
-/// whole by its data provider.
-fn frame(sample: &CMSampleBuffer) -> Option<Frame> {
+/// Copies the pixels out of a `ScreenCaptureKit` still of `part` of the display, which carries a
+/// pixel buffer in the configured format; reading it in place costs one copy, where a still image
+/// would first be copied whole by its data provider.
+fn frame(sample: &CMSampleBuffer, part: Part) -> Option<Frame> {
     let captured = Instant::now();
     // SAFETY: ScreenCaptureKit keeps the sample alive for its completion handler, which calls this.
     let buffer = unsafe { sample.image_buffer() }?;
@@ -323,6 +456,7 @@ fn frame(sample: &CMSampleBuffer) -> Option<Frame> {
         width: width.try_into().ok()?,
         height: height.try_into().ok()?,
         bgra,
+        part,
     })
 }
 
@@ -429,6 +563,11 @@ pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyh
         false,
     );
     Ok(())
+}
+
+pub(crate) fn set_overlay_input(window: &NativeWindow, takes_input: bool) {
+    // A nonactivating panel takes clicks without activating Speakeasy.
+    window.native.ns_window.setIgnoresMouseEvents(!takes_input);
 }
 
 pub(crate) fn set_overlay_visible(window: &NativeWindow, visible: bool) {

@@ -8,7 +8,7 @@ async fn start_show(h: &mut Harness) -> anyhow::Result<OpenedShow> {
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     receive(&h.captures).await?;
-    h.input(Input::Show);
+    h.input(Input::Show(Scope::Screen));
     h.observe(|snapshot| snapshot.show && snapshot.hands_free)
         .await?;
     receive(&h.shows).await
@@ -35,12 +35,38 @@ async fn s_during_a_hold_turns_the_recording_into_a_show_and_publishes_it() -> a
 }
 
 #[tokio::test(start_paused = true)]
+async fn w_and_a_record_the_window_or_area_they_name() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    for scope in [Scope::Window, Scope::Area] {
+        h.input(Input::Press);
+        h.phase(Phase::Recording).await?;
+        receive(&h.captures).await?;
+        h.input(Input::Show(scope));
+        let (_, recorded, _) = receive(&h.shows).await?;
+        assert_eq!(recorded, scope);
+        h.input(Input::Cancel);
+        h.phase(Phase::Cancelled).await?;
+        h.input(Input::Release);
+    }
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_pin_during_a_show_reaches_its_screen_recorder() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    let (id, ..) = start_show(&mut h).await?;
+    h.input(Input::Pin);
+    assert_eq!(receive(&h.pins).await?, id);
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_silent_show_still_publishes_its_screen() -> anyhow::Result<()> {
     let mut h = Harness::with_ports(Config::default(), |ports| ports.delayed_finish = true)?;
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     let (id, events) = receive(&h.captures).await?;
-    h.input(Input::Show);
+    h.input(Input::Show(Scope::Screen));
     receive(&h.shows).await?;
     h.input(Input::Release);
     h.input(Input::Press);
@@ -159,7 +185,7 @@ async fn a_screen_that_cannot_be_recorded_explains_why() -> anyhow::Result<()> {
     })?;
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
-    h.input(Input::Show);
+    h.input(Input::Show(Scope::Screen));
     h.phase(Phase::Error).await?;
     assert!(h.snapshot().message.contains("screen recording denied"));
     h.close().await
@@ -168,7 +194,7 @@ async fn a_screen_that_cannot_be_recorded_explains_why() -> anyhow::Result<()> {
 #[tokio::test(start_paused = true)]
 async fn s_with_no_recording_records_no_screen_then_or_later() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
-    h.input(Input::Show);
+    h.input(Input::Show(Scope::Screen));
     h.start().await?;
     tokio::time::advance(Duration::from_secs(1)).await;
     assert!(h.shows.try_recv().is_err());
@@ -184,7 +210,7 @@ async fn s_after_space_locked_the_hold_still_starts_a_show() -> anyhow::Result<(
     receive(&h.captures).await?;
     h.input(Input::Lock);
     h.observe(|snapshot| snapshot.hands_free).await?;
-    h.input(Input::Show);
+    h.input(Input::Show(Scope::Screen));
     h.observe(|snapshot| snapshot.show).await?;
     receive(&h.shows).await?;
     h.input(Input::Release);
@@ -210,7 +236,7 @@ async fn s_while_the_last_microphone_retires_still_starts_a_show() -> anyhow::Re
     // The next hold waits for that microphone, and S during the wait still makes it a Show.
     h.input(Input::Press);
     h.phase(Phase::Starting).await?;
-    h.input(Input::Show);
+    h.input(Input::Show(Scope::Screen));
     h.observe(|snapshot| snapshot.show && snapshot.hands_free)
         .await?;
     receive(&h.shows).await?;
@@ -238,7 +264,7 @@ async fn a_microphone_failure_ends_the_show_and_frees_the_screen() -> anyhow::Re
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     let (id, events) = receive(&h.captures).await?;
-    h.input(Input::Show);
+    h.input(Input::Show(Scope::Screen));
     receive(&h.shows).await?;
     events
         .send(CaptureEvent::Finished(
@@ -257,7 +283,7 @@ async fn a_microphone_failure_ends_the_show_and_frees_the_screen() -> anyhow::Re
 async fn a_screen_that_stops_recording_explains_why_and_frees_the_microphone() -> anyhow::Result<()>
 {
     let mut h = Harness::new()?;
-    let (id, events) = start_show(&mut h).await?;
+    let (id, _, events) = start_show(&mut h).await?;
     events
         .send(ShowEvent::Finished(
             id,
@@ -275,13 +301,13 @@ async fn a_screen_that_stops_recording_explains_why_and_frees_the_microphone() -
 #[tokio::test(start_paused = true)]
 async fn footage_from_an_earlier_show_never_reaches_a_later_one() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
-    let (earlier, stale) = start_show(&mut h).await?;
+    let (earlier, _, stale) = start_show(&mut h).await?;
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
     h.input(Input::Release);
     start_show(&mut h).await?;
     let mut late = footage();
-    late.ended = Moment::from_millis(9_999);
+    late.recording.duration = Moment::from_millis(9_999);
     stale.send(ShowEvent::Finished(earlier, Ok(late))).await?;
     // The owner takes the stale footage while this Show is still recording its own.
     assert!(still_pending(h.published.recv()).await);
@@ -289,7 +315,7 @@ async fn footage_from_an_earlier_show_never_reaches_a_later_one() -> anyhow::Res
     h.input(Input::Press);
     h.transcribe_next_as("this one").await?;
     let (published, _) = receive(&h.published).await?;
-    assert_eq!(published.ended, footage().ended);
+    assert_eq!(published.recording, footage().recording);
     h.close().await
 }
 
@@ -310,7 +336,7 @@ async fn a_show_queued_behind_a_retiring_screen_still_records_it() -> anyhow::Re
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     receive(&h.captures).await?;
-    h.input(Input::Show);
+    h.input(Input::Show(Scope::Screen));
     h.observe(|snapshot| snapshot.show && snapshot.hands_free)
         .await?;
     h.input(Input::Release);

@@ -1,4 +1,4 @@
-//! Strokes drawn together, and what they look like.
+//! Strokes drawn together and pins dropped, numbered in one sequence, and what they look like.
 
 use std::{ops::Range, time::Duration};
 
@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Point, Rect, Span,
-    recording::{Size, Stroke},
+    recording::{Pin, Size, Stroke},
 };
 
 /// A pause longer than this between strokes starts a new mark.
@@ -32,6 +32,11 @@ const STRAIGHTNESS: f32 = 0.88;
 const UNDERLINE_ASPECT: f32 = 2.5;
 /// An arrowhead's strokes cluster within this share of the shaft's length from its tip.
 const ARROWHEAD_REACH: f32 = 0.35;
+/// How far a number sits from what it labels, in its disc's radii: diagonally out from a pinned
+/// point or a corner of the ink, and straight out past an underline's end or a line's tail.
+const PIN_REACH: f32 = 0.9;
+const CORNER_REACH: f32 = 0.5;
+const END_REACH: f32 = 1.6;
 
 /// What a mark looks like, which tells a reader what the user meant by it.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -59,27 +64,77 @@ pub enum Shape {
     },
     /// Any other scribble.
     Scribble,
+    /// A pin dropped without ink.
+    Pin {
+        /// Where it was dropped.
+        point: Point,
+    },
 }
 
-/// Strokes drawn in quick succession, read as one gesture.
+/// Strokes drawn in quick succession and read as one gesture, or a pin.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Mark {
+    /// The mark's place in the Show's sequence of marks, from one, as its label shows it.
+    pub number: usize,
     /// What the strokes look like together.
     #[serde(flatten)]
     pub shape: Shape,
-    /// The recording's strokes that make up the mark.
+    /// The recording's strokes that make up the mark; a pin's range is empty, placed after the
+    /// strokes begun before it.
     #[serde(with = "crate::serde_range")]
     pub strokes: Range<usize>,
-    /// From the first stroke's start to the last stroke's end.
+    /// From the first stroke's start to the last stroke's end, or the moment of a pin.
     pub span: Span,
-    /// The smallest normalized rectangle holding the ink.
+    /// The smallest normalized rectangle holding the ink, or a pin's point.
     pub bounds: Rect,
 }
 
-/// Groups strokes drawn within [`MARK_GAP`] of each other, up to [`MARK_STROKES`] apiece, and
-/// reads each group's shape in the pixels of `surface`.
-pub(crate) fn group(strokes: &[Stroke], surface: Size) -> Vec<Mark> {
+impl Mark {
+    /// Where the center of the mark's number goes on a surface `width × height` pixels, in its
+    /// pixels, for a disc `radius` pixels in radius: beside the mark rather than over what it
+    /// points at, and on the surface wherever the disc fits.
+    #[must_use]
+    pub fn label(&self, width: f32, height: f32, radius: f32) -> Point {
+        let pixels = |point: Point| point.scaled(width, height);
+        let Rect {
+            top, right, bottom, ..
+        } = self.bounds;
+        let up_right = Point::new(radius, -radius);
+        let center = match self.shape {
+            Shape::Pin { point } => pixels(point) + up_right * PIN_REACH,
+            Shape::Tap | Shape::Circle | Shape::Scribble => {
+                pixels(Point::new(right, top)) + up_right * CORNER_REACH
+            },
+            Shape::Underline => {
+                pixels(Point::new(right, top.midpoint(bottom)))
+                    + Point::new(radius * END_REACH, 0.0)
+            },
+            Shape::Line { from, to } | Shape::Arrow { from, to } => {
+                let (tail, head) = (pixels(from), pixels(to));
+                let length = tail.distance(head);
+                let away = if length > f32::EPSILON {
+                    (tail - head) * length.recip()
+                } else {
+                    Point::new(-1.0, 0.0)
+                };
+                tail + away * (radius * END_REACH)
+            },
+        };
+        let margin = radius + 1.0;
+        Point::new(
+            center.x.min(width - margin).max(margin),
+            center.y.min(height - margin).max(margin),
+        )
+    }
+}
+
+/// The marks `strokes` and `pins` make, in the order they began, numbered from one.
+///
+/// Strokes drawn within [`MARK_GAP`] of each other form one mark, up to [`MARK_STROKES`] apiece,
+/// whose shape is read in the pixels of `surface`; each pin is a mark of its own. Strokes and pins
+/// arrive in time order, so a later one never renumbers an earlier mark.
+pub(crate) fn group(strokes: &[Stroke], pins: &[Pin], surface: Size) -> Vec<Mark> {
     let mut groups: Vec<Range<usize>> = Vec::new();
     let mut previous_end = None;
     for (index, stroke) in strokes.iter().enumerate() {
@@ -93,20 +148,37 @@ pub(crate) fn group(strokes: &[Stroke], surface: Size) -> Vec<Mark> {
         }
         previous_end = Some(stroke.span().end());
     }
-    groups
+    let mut marks: Vec<Mark> = groups
         .into_iter()
         .filter_map(|range| {
             let members = strokes.get(range.clone())?;
             let span = members.iter().map(Stroke::span).reduce(Span::union)?;
             let bounds = Rect::bounding(members.iter().flat_map(Stroke::path))?;
             Some(Mark {
+                number: 0,
                 shape: shape(members, surface),
                 strokes: range,
                 span,
                 bounds,
             })
         })
-        .collect()
+        .collect();
+    marks.extend(pins.iter().map(|pin| {
+        let before = strokes.partition_point(|stroke| stroke.span().start() <= pin.at);
+        Mark {
+            number: 0,
+            shape: Shape::Pin { point: pin.point },
+            strokes: before..before,
+            span: Span::at(pin.at),
+            bounds: Rect::from_origin(pin.point, 0.0, 0.0),
+        }
+    }));
+    // Stable, so ink begun at a pin's moment keeps its place before the pin.
+    marks.sort_by_key(|mark| mark.span.start());
+    for (position, mark) in marks.iter_mut().enumerate() {
+        mark.number = position.saturating_add(1);
+    }
+    marks
 }
 
 /// One stroke measured in pixels.
@@ -257,7 +329,7 @@ mod tests {
     }
 
     fn shape_of(points: &[[f32; 2]], surface: Size) -> Shape {
-        group(&[stroke(points, 0)], surface)[0].shape
+        group(&[stroke(points, 0)], &[], surface)[0].shape
     }
 
     #[test]
@@ -315,6 +387,7 @@ mod tests {
                     stroke(&shaft, 0),
                     stroke(&[[0.42, 0.5], [0.5, 0.5], [0.5, 0.58]], 200),
                 ],
+                &[],
                 SURFACE,
             );
             assert_eq!(marks.len(), 1);
@@ -327,7 +400,7 @@ mod tests {
             );
             assert_eq!(
                 marks[0].to_string(),
-                "drew an arrow from x 0.20, y 0.80 pointing to x 0.50, y 0.50"
+                "① drew an arrow from x 0.20, y 0.80 pointing to x 0.50, y 0.50"
             );
         }
     }
@@ -338,10 +411,78 @@ mod tests {
             .into_iter()
             .map(|at| stroke(&[[0.5, 0.5]], at))
             .collect();
-        let marks = group(&strokes, SURFACE);
+        let marks = group(&strokes, &[], SURFACE);
         let ranges: Vec<_> = marks.iter().map(|mark| mark.strokes.clone()).collect();
         assert_eq!(ranges, [0..6, 6..7, 7..8]);
-        assert_eq!(marks[0].to_string(), "tapped x 0.50, y 0.50 (6 strokes)");
+        assert_eq!(marks[0].to_string(), "① tapped x 0.50, y 0.50 (6 strokes)");
+    }
+
+    #[test]
+    fn pins_and_ink_share_one_sequence_in_the_order_they_began() {
+        let strokes = [
+            stroke(&[[0.1, 0.1], [0.3, 0.1]], 0),
+            stroke(&[[0.5, 0.5], [0.7, 0.5]], 5_000),
+        ];
+        let pin = |at: u64, x: f32| Pin {
+            at: Moment::from_millis(at),
+            point: Point::new(x, 0.4),
+        };
+        let pins = [pin(2_000, 0.4), pin(9_000, 0.8)];
+        let marks = group(&strokes, &pins, SURFACE);
+        let sequence: Vec<_> = marks
+            .iter()
+            .map(|mark| (mark.number, mark.strokes.clone()))
+            .collect();
+        assert_eq!(sequence, [(1, 0..1), (2, 1..1), (3, 1..2), (4, 2..2)]);
+        assert_eq!(
+            marks[1].shape,
+            Shape::Pin {
+                point: Point::new(0.4, 0.4)
+            }
+        );
+        assert_eq!(marks[3].to_string(), "④ pinned x 0.80, y 0.40");
+        // Marks made later never renumber earlier ones, so live labels match the bundle's.
+        assert_eq!(group(&strokes[..1], &pins[..1], SURFACE), marks[..2]);
+    }
+
+    #[test]
+    fn labels_sit_beside_what_they_number_and_stay_on_the_surface() {
+        let label = |shape: Shape, bounds: [f32; 4]| {
+            Mark {
+                number: 1,
+                shape,
+                strokes: 0..1,
+                span: Span::at(Moment::START),
+                bounds: bounds.into(),
+            }
+            .label(1000.0, 500.0, 10.0)
+        };
+        let pin = label(
+            Shape::Pin {
+                point: Point::new(0.5, 0.5),
+            },
+            [0.5, 0.5, 0.5, 0.5],
+        );
+        assert!(pin.x > 505.0 && pin.y < 245.0, "{pin:?}");
+        let arrow = label(
+            Shape::Arrow {
+                from: Point::new(0.2, 0.5),
+                to: Point::new(0.6, 0.5),
+            },
+            [0.2, 0.5, 0.6, 0.5],
+        );
+        assert_eq!(arrow, Point::new(184.0, 250.0), "past the tail");
+        let underline = label(Shape::Underline, [0.2, 0.5, 0.6, 0.52]);
+        assert_eq!(underline, Point::new(616.0, 255.0), "past the right end");
+        let circle = label(Shape::Circle, [0.2, 0.2, 0.6, 0.8]);
+        assert!(circle.x > 600.0 && circle.y < 100.0, "{circle:?}");
+        let cornered = label(
+            Shape::Pin {
+                point: Point::new(1.0, 0.0),
+            },
+            [1.0, 0.0, 1.0, 0.0],
+        );
+        assert_eq!(cornered, Point::new(989.0, 11.0), "kept on the surface");
     }
 
     #[test]
@@ -351,11 +492,12 @@ mod tests {
                 stroke(&[[0.1, 0.5], [0.8, 0.5]], 0),
                 stroke(&[[0.2, 0.52], [0.7, 0.52]], 200),
             ],
+            &[],
             SURFACE,
         );
         assert_eq!(
             marks[0].to_string(),
-            "underlined x 0.10–0.80 at y 0.51 (2 strokes)"
+            "① underlined x 0.10–0.80 at y 0.51 (2 strokes)"
         );
     }
 }

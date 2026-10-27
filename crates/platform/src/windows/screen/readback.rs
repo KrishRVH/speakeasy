@@ -69,9 +69,9 @@ pub(super) fn device_for(
     Ok((created(device)?, created(context)?))
 }
 
-/// Reads frames of one size back to memory, halved on the GPU until they fit.
+/// Reads one size of box out of frames back to memory, halved on the GPU until it fits.
 pub(super) struct Readback {
-    /// The size of the frames read.
+    /// The size of the box read.
     pub(super) source: [u32; 2],
     /// The size delivered: that of the first mip level whose long edge fits.
     pub(super) size: [u32; 2],
@@ -118,17 +118,20 @@ impl Readback {
         })
     }
 
-    /// Copies `frame`, which must be of the source size, to memory as tightly packed BGRA rows of
-    /// the delivered size.
+    /// Copies the box of the source size at `origin` in `frame`, which must lie within it, to
+    /// memory as tightly packed BGRA rows of the delivered size.
     pub(super) fn read(
         &self,
         context: &ID3D11DeviceContext,
         frame: &ID3D11Texture2D,
+        [left, top]: [u32; 2],
     ) -> windows::core::Result<Vec<u8>> {
         let [width, height] = self.source;
         let region = D3D11_BOX {
-            right: width,
-            bottom: height,
+            left,
+            top,
+            right: left.saturating_add(width),
+            bottom: top.saturating_add(height),
             back: 1,
             ..Default::default()
         };
@@ -137,7 +140,7 @@ impl Readback {
             .as_ref()
             .map_or(&self.staging, |mips| &mips.texture);
         // SAFETY: every texture belongs to this context's device and shares the frame's format,
-        // and the region spans the frame, whose size is the source size.
+        // and the region lies within the frame, as the caller ensures.
         unsafe {
             context.CopySubresourceRegion(first, 0, 0, 0, 0, frame, 0, Some(&raw const region));
             if let Some(mips) = &self.mips {
