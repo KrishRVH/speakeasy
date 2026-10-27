@@ -1,27 +1,32 @@
 # Release notes
 
-Speakeasy 0.4.1 makes a Show cover the whole recording, keeps the recording clock on time, and keeps
-saved settings when dictation cannot start.
+<https://github.com/user-attachments/assets/8675932e-6285-4fa8-920c-842a2ded16b7>
 
-- **Shows.** A Show keeps up to 36 keyframes spread across the recording, where it could stop
-  partway through, and its last screen gets a keyframe unless drawings fill all 36. Each contact
-  sheet holds at most six frames, a longer Show divides its frames evenly across sheets, and the
-  summary names every sheet and the frames on it. Publishing loads one sheet's frames at a time, so
-  a long Show's memory use stays bounded.
-- **The pill.** The recording clock ticks on the recording's whole seconds, so it no longer lags or
-  skips a second while the microphone is silent, and the countdown to the five-minute limit starts
-  on time.
-- **Settings.** When dictation cannot start after a save, Speakeasy keeps the saved settings, the
-  status says dictation is paused, and **Resume dictation** starts what was saved.
-- **Tray preview.** `--demo-tray` leaves the user's settings folder alone, where it could stop the
-  real app from showing its first-hide hint.
-- **Errors.** When Speakeasy cannot lock its instance file at startup, the error names the system's
-  reason.
-- **Under the hood.** Windows and macOS builds leave out networking code only the Linux adapters
-  use, and comments, tests, and docs across the tree are tightened.
+Speakeasy 0.5.0 confirms dictation and Shows with soft sound cues, is free software under the MIT
+License with notices for the Rust crates in every package, and opens its README with a short tour of
+Shows.
 
-Dictation, models, filler removal, and gestures are otherwise unchanged. Recordings retain the
-five-minute limit. Audio and recognition stay local, with no dictation history or uploads; Shows
+- **Sounds.** Soft kalimba notes mark the microphone listening, a recording finishing, including at
+  the five-minute limit, a cancel, a Show starting, and text or a Show copied. Speakeasy listens
+  beneath its own cues, so a recording that hears only a cue sends nothing, while a word said over
+  one still counts. Turn them off with **Play sounds** in Settings.
+- **License.** Speakeasy is open source under the MIT License. Every package includes `LICENSE` and
+  `THIRD-PARTY-NOTICES.txt`, which lists the Rust crates built into that platform's app with their
+  license texts, beside the font license and the Show notice.
+- **Shows explained.** The README opens with a 29-second video of a Show: hold the shortcut, tap S,
+  talk and draw over the app, and paste the keyframes and summary into a coding agent.
+- **Finer ink.** Show ink draws a third thinner, on screen and in keyframes, so a mark leaves the
+  text it points at readable while still standing out on a contact sheet.
+- **Linux.** With an empty or relative `HOME` and no absolute `XDG_STATE_HOME`, Speakeasy keeps the
+  desktop portal's restore token out of the working directory, and the portal asks for consent on
+  each launch.
+- **Privacy.** Diagnostic output never includes screen pixels, narration, or a Show's spoken cue
+  words.
+- **Under the hood.** The pinned nightly Rust toolchain moves to 2026-10-26 with stricter lints, and
+  code, tests, and comments across the tree are tightened without changing behavior.
+
+Dictation, models, filler removal, gestures, and Shows are otherwise unchanged. Recordings retain
+the five-minute limit. Audio and recognition stay local, with no dictation history or uploads; Shows
 stay private and expire after seven days unless pinned.
 
 Windows x64 and Apple silicon macOS zip packages, plus experimental Linux x86_64 AppImage and
