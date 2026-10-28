@@ -359,9 +359,7 @@ fn observe(
         kind,
         CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
     ) {
-        // Key events went by unseen while the tap was off, so the owner cannot trust the hold's
-        // edges: dictation ends and the chord waits for its release while the tap watches again.
-        policy.interrupt(input);
+        policy.missed_events(input);
         if !port.reenable() {
             input.close();
         }

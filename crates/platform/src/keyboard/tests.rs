@@ -534,6 +534,53 @@ fn a_posted_event_without_fn_ends_no_hold_the_keyboard_still_makes() {
 }
 
 #[test]
+fn a_tap_outage_ends_a_hold_but_not_a_released_dictation() -> anyhow::Result<()> {
+    let (sender, events) = async_channel::bounded(4);
+    let input = InputSender::new(sender);
+    let mut mac = Mac::default();
+    assert!(mac.observe(function(true), keyboard_fn_up, now()).starts());
+    assert_eq!(
+        delivered(&mac.observe(function(false), keyboard_fn_up, now())),
+        [Action::Release]
+    );
+    let permit = input.begin().context("Missing permit")?;
+    mac.missed_events(&input);
+    assert!(
+        permit.active(),
+        "A tap outage after Fn's release cancelled the paste"
+    );
+    assert!(events.try_recv().is_err());
+
+    // A Shift tap on each side of the outage is no double tap.
+    let shift = |down| MacEvent::FlagsChanged {
+        code: MAC_LEFT_SHIFT,
+        held: Modifiers {
+            shift: down,
+            ..Modifiers::default()
+        },
+    };
+    mac.observe(shift(true), keyboard_fn_up, now());
+    mac.observe(shift(false), keyboard_fn_up, now());
+    mac.missed_events(&input);
+    mac.observe(shift(true), keyboard_fn_up, now());
+    assert_eq!(
+        delivered(&mac.observe(shift(false), keyboard_fn_up, now())),
+        [],
+        "Shift taps across the outage pinned"
+    );
+
+    assert!(mac.observe(function(true), keyboard_fn_up, now()).starts());
+    mac.missed_events(&input);
+    assert!(matches!(events.try_recv()?, Input::Interrupt));
+    assert!(matches!(events.try_recv()?, Input::Release));
+    assert_eq!(
+        delivered(&mac.observe(function(false), keyboard_fn_up, now())),
+        []
+    );
+    Ok(())
+}
+
+#[test]
 fn command_option_or_control_during_fn_is_another_shortcut() {
     let shortcut = Modifiers {
         shortcut: true,

@@ -103,10 +103,19 @@ impl Chord {
         held
     }
 
-    /// Ends dictation for a session change or lost key events, then waits for the chord's release.
+    /// Ends dictation for a session change, then waits for the chord's release.
     fn interrupt_dictation(&mut self, input: &InputSender) {
         Action::Interrupt.deliver(input);
         self.interrupt();
+    }
+
+    /// Ends a hold whose key edges went unseen, then waits for the chord's release. A dictation
+    /// already released lost nothing the owner relies on, so it still delivers.
+    #[cfg(any(target_os = "macos", test))]
+    fn interrupt_hold(&mut self, input: &InputSender) {
+        if self.interrupt() {
+            Action::Interrupt.deliver(input);
+        }
     }
 
     /// Whether the chord went down and has not been seen to come up.
@@ -487,9 +496,16 @@ impl Mac {
     const SPACE: i64 = 49;
     const WINDOW: i64 = 13;
 
-    /// Ends dictation for a session change or lost key events, then waits for Fn's release.
+    /// Ends dictation for a session change, then waits for Fn's release.
     pub(super) fn interrupt(&mut self, input: &InputSender) {
         self.chord.interrupt_dictation(input);
+    }
+
+    /// Key events went by unseen while the tap was off: a hold, whose edges the owner can no
+    /// longer trust, ends and waits for Fn's release, and no Shift tap pairs across the gap.
+    pub(super) fn missed_events(&mut self, input: &InputSender) {
+        self.taps.interrupt();
+        self.chord.interrupt_hold(input);
     }
 
     /// Decides one event-tap event at `at`. A hold whose Fn release the tap missed ends once both
