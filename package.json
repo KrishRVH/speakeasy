@@ -1,7 +1,6 @@
 {
   "name": "speakeasy-docs",
   "private": true,
-  "type": "module",
   "packageManager": "bun@1.4.4",
   "devDependencies": {
     "markdownlint-cli2": "^0.24.0",

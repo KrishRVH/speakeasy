@@ -31,22 +31,11 @@ Desktop.ini
 /.claude/worktrees/
 node_modules/
 /.cache/
-/.gstack/
-/.lycheecache
-.basedpyright/
-.coverage
-.coverage.*
-.hypothesis/
-.mypy_cache/
 .pytest_cache/
 .ruff_cache/
 .venv/
 __pycache__/
-*.py[codz]
-*.egg-info/
 /target/
-**/target/
-**/*.rs.bk
 
 # Native build output outside target/
 *.dll
@@ -69,10 +58,8 @@ mise.*.local.lock
 .mise.local.lock
 .mise.*.local.lock
 
-# Speakeasy local files and native assets
+# A run with `--config settings.json` keeps these beside its settings file
 /settings.json
 /instance.lock
 /instance.port
 /tray-hint-seen
-/models/
-/tools/

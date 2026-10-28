@@ -10,11 +10,4 @@
 *.ico binary
 *.png binary
 *.ttf binary
-*.gz binary
-*.tar binary
-*.zip binary
-
-# Speakeasy local files and native assets
-*.bin binary
-*.gguf binary
 *.wav binary

@@ -13,7 +13,6 @@ package = false
 [tool.ruff]
 line-length = 100
 required-version = ">=0.17.2"
-target-version = "py315"
 unsafe-fixes = false
 
 [tool.ruff.per-file-target-version]
@@ -50,8 +49,10 @@ reportIgnoreCommentWithoutRule = "error"
 reportUnnecessaryTypeIgnoreComment = "error"
 reportUnusedCallResult = "none"
 
-[tool.pytest.ini_options]
-addopts = ["--strict-config", "--strict-markers", "--import-mode=importlib"]
+[tool.pytest]
+addopts = ["--import-mode=importlib"]
+strict_config = true
+strict_markers = true
 filterwarnings = ["error"]
 testpaths = ["tests"]
 pythonpath = ["."]

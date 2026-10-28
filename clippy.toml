@@ -1,13 +1,13 @@
-# Clippy reads the MSRV from Cargo.toml's `rust-version`; a second pin here
-# would override it and drift silently on a toolchain bump.
+# Clippy reads the MSRV from Cargo.toml's `rust-version`; a second pin here would override it and
+# drift silently on a toolchain bump.
 
 # An application makes no external compatibility promise, so API-shape lints such as
 # `unnecessary_wraps`, `trivially_copy_pass_by_ref`, and `wrong_self_convention` cover `pub` items
 # too.
 avoid-breaking-exported-api = false
 
-# The panic-free wall applies to production code; tests may assert invariants
-# the test itself established, and print to the test runner's captured output.
+# The panic-free wall applies to production code; tests may assert invariants the test itself
+# established, and print to the test runner's captured output.
 allow-expect-in-tests = true
 allow-indexing-slicing-in-tests = true
 allow-panic-in-tests = true
@@ -38,10 +38,9 @@ disallowed-types = [
   { path = "std::sync::atomic::AtomicU32", reason = "ambient counters are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
   { path = "std::sync::atomic::AtomicU64", reason = "ambient counters are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
   { path = "std::sync::atomic::AtomicUsize", reason = "ambient counters are state; give the value one owner and send it events (AGENTS.md ownership and interfaces)" },
-  # Ecosystem equivalents inherit the doctrine unchanged: routing around a
-  # disallowed std primitive through a dependency is a violation, not an
-  # escape. These entries are inert until the crate enters the graph; the
-  # tokio entries also accept a graph whose tokio lacks the `sync` feature.
+  # Ecosystem equivalents inherit the doctrine unchanged: routing around a disallowed std primitive
+  # through a dependency is a violation, not an escape. These entries are inert until the crate
+  # enters the graph; the tokio entries also accept a graph whose tokio lacks the `sync` feature.
   { path = "tokio::sync::Mutex", reason = "send the event to the task that owns the state over a channel instead of reaching into state through a lock (AGENTS.md ownership and interfaces)", allow-invalid = true },
   { path = "tokio::sync::RwLock", reason = "send the event to the task that owns the state over a channel instead of reaching into state through a lock (AGENTS.md ownership and interfaces)", allow-invalid = true },
   { path = "parking_lot::Mutex", reason = "send the event to the state's owning thread over a channel instead of reaching into state through a lock (AGENTS.md ownership and interfaces)" },
@@ -64,8 +63,8 @@ disallowed-methods = [
   { path = "reqwest::get", reason = "build clients through http::client_builder; Linux reqwest has no built-in rustls provider and panics in build()" },
 ]
 
-# Accepted identifiers for documentation prose checked by doc_markdown.
-# The ".." entry extends clippy's default list instead of replacing it.
+# Accepted identifiers for documentation prose checked by doc_markdown. The ".." entry extends
+# clippy's default list instead of replacing it.
 doc-valid-idents = [
   "..",
   "API",
@@ -90,16 +89,16 @@ doc-valid-idents = [
   "UUID",
 ]
 
-# enum-variant-size, bool-params, single-char, and too-many-arguments pin
-# Clippy's current defaults so an upstream change cannot silently loosen the
-# wall; the nesting threshold tightens the default.
+# enum-variant-size, bool-params, single-char, and too-many-arguments pin Clippy's current defaults
+# so an upstream change cannot silently loosen the wall. The nesting threshold turns on
+# `excessive_nesting`, which Clippy's default threshold of 0 leaves off.
 enum-variant-size-threshold = 200
 excessive-nesting-threshold = 5
 max-fn-params-bools = 3
 single-char-binding-names-threshold = 4
 too-many-arguments-threshold = 7
 
-# GPUI's and Show's f32 coordinate types have the same non-panicking
-# arithmetic as primitive floats; integer sizes, counters and deadlines do not.
-# Clippy names a type from the crate being linted by its path within that crate.
+# GPUI's and Show's f32 coordinate types have the same non-panicking arithmetic as primitive floats;
+# integer sizes, counters and deadlines do not. Clippy names a type from the crate being linted by
+# its path within that crate.
 arithmetic-side-effects-allowed = ["gpui::Pixels", "geometry::Point"]

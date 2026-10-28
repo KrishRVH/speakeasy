@@ -108,7 +108,7 @@ run = "uv run --no-sync ruff check --quiet scripts tests"
 [tasks."py:type"]
 description = "Type-check Python with basedpyright"
 depends = ["py:install"]
-run = "uv run --no-sync basedpyright --warnings"
+run = "uv run --no-sync basedpyright"
 
 [tasks."py:test"]
 description = "Run the Python tests"
