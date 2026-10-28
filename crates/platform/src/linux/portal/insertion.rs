@@ -440,7 +440,7 @@ fn finish_paste(
     if !request.permit.commit() {
         return Inserted::Cancelled;
     }
-    ready.send(options.terminal_paste);
+    ready.send();
     Inserted::Sent
 }
 

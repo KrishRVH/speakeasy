@@ -18,6 +18,7 @@ use anyhow::bail;
 use async_channel::{Receiver, Sender};
 use raw_window_handle::{RawWindowHandle, WindowHandle};
 use tokio::io::{Interest, unix::AsyncFd};
+use xkbcommon::xkb::Keysym;
 use zbus::MatchRule;
 
 pub use self::tray::{NativeTray, TrayAction, TrayPresentation};
@@ -39,6 +40,38 @@ const COPIED_FOR_MANUAL_PASTE: Inserted = Inserted::Copied("Text copied. Paste i
 /// The X11 clipboard lost the copied text before paste.
 const CLIPBOARD_CHANGED: Inserted =
     Inserted::Unavailable("Clipboard changed before paste. Dictate again.");
+
+/// The keys of the paste shortcut: Control and V, with Shift only for terminal paste, so a layout
+/// without Shift still pastes everywhere else. X11 and libei resolve it the same way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PasteChord<K> {
+    control: K,
+    shift: Option<K>,
+    v: K,
+}
+
+impl<K: Copy> PasteChord<K> {
+    /// Resolves the chord through `key`, which finds the key that types a symbol in the layout paste
+    /// types through; none when that layout lacks a key the chord needs.
+    fn resolve(terminal: bool, mut key: impl FnMut(Keysym) -> Option<K>) -> Option<Self> {
+        Some(Self {
+            control: key(Keysym::Control_L)?,
+            shift: if terminal {
+                Some(key(Keysym::Shift_L)?)
+            } else {
+                None
+            },
+            v: key(Keysym::v)?,
+        })
+    }
+
+    /// The keys in press order; releases run in reverse.
+    fn presses(self) -> impl DoubleEndedIterator<Item = K> {
+        [Some(self.control), self.shift, Some(self.v)]
+            .into_iter()
+            .flatten()
+    }
+}
 
 /// A desktop-access failure whose message already says what to do, so it reaches the user as is
 /// rather than beside the general remedy for a failed desktop connection.
@@ -304,6 +337,29 @@ mod tests {
             assert!(answer.is_err());
         }
         Ok(())
+    }
+
+    #[test]
+    fn paste_chords_need_shift_only_for_terminal_paste() {
+        let without_shift = |symbol| (symbol != Keysym::Shift_L).then_some(symbol);
+        assert_eq!(
+            PasteChord::resolve(false, without_shift),
+            Some(PasteChord {
+                control: Keysym::Control_L,
+                shift: None,
+                v: Keysym::v,
+            }),
+            "A layout without Shift refused Ctrl+V"
+        );
+        assert!(PasteChord::resolve(true, without_shift).is_none());
+        let terminal = PasteChord::resolve(true, Some);
+        assert_eq!(
+            terminal.map(|chord| chord.presses().collect::<Vec<_>>()),
+            Some(vec![Keysym::Control_L, Keysym::Shift_L, Keysym::v])
+        );
+        assert!(
+            PasteChord::resolve(false, |symbol| (symbol != Keysym::v).then_some(symbol)).is_none()
+        );
     }
 
     #[test]

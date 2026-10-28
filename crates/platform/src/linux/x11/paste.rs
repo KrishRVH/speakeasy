@@ -17,7 +17,6 @@ use x11rb::{
     },
     xcb_ffi::XCBConnection,
 };
-use xkbcommon::xkb::Keysym;
 
 use super::{
     Keyboard,
@@ -29,7 +28,9 @@ use crate::{
     insertion::{
         Insertion, PASTE_AFTER_RELEASE, Reply, abandon_queued, wait_for_released_modifiers,
     },
-    linux::{CLIPBOARD_CHANGED, COPIED_FOR_MANUAL_PASTE, HostSession, NO_PASTE_BINDING},
+    linux::{
+        CLIPBOARD_CHANGED, COPIED_FOR_MANUAL_PASTE, HostSession, NO_PASTE_BINDING, PasteChord,
+    },
 };
 
 /// Serializes X11 insertion on its own thread. Dropping it revokes the current permit and closes its
@@ -200,7 +201,10 @@ fn paste_copied(
     options: &DesktopOptions,
     owner: Window,
 ) -> anyhow::Result<Inserted> {
-    let Some((control, shift, v)) = paste_keys(keyboard, options.terminal_paste) else {
+    // The first layout is the only one XTEST types through.
+    let Some(chord) = PasteChord::resolve(options.terminal_paste, |symbol| {
+        keyboard.unshifted_keycode(symbol)
+    }) else {
         return Ok(NO_PASTE_BINDING);
     };
     if !uses_first_layout(&clipboard.connection).unwrap_or(false) {
@@ -223,9 +227,7 @@ fn paste_copied(
     // Once committed, the key sequence completes even if cancellation arrives.
     let connection = &clipboard.connection;
     if submit_paste(
-        control,
-        shift,
-        v,
+        chord,
         |kind, code| Ok(connection.xtest_fake_input(kind, code, 0, 0, 0, 0, 0)?),
         || {
             connection.get_input_focus()?.reply()?;
@@ -242,21 +244,6 @@ fn paste_copied(
     Ok(Inserted::Sent)
 }
 
-/// The paste chord's keycodes in the first layout, the only one XTEST types through: Control, Shift
-/// for terminal paste, and V.
-fn paste_keys(keyboard: &Keyboard, terminal_paste: bool) -> Option<(u8, Option<u8>, u8)> {
-    let shift = if terminal_paste {
-        Some(keyboard.unshifted_keycode(Keysym::Shift_L)?)
-    } else {
-        None
-    };
-    Some((
-        keyboard.unshifted_keycode(Keysym::Control_L)?,
-        shift,
-        keyboard.unshifted_keycode(Keysym::v)?,
-    ))
-}
-
 fn uses_first_layout(connection: &XCBConnection) -> anyhow::Result<bool> {
     ensure!(
         connection.xkb_use_extension(1, 0)?.reply()?.supported,
@@ -269,16 +256,14 @@ fn uses_first_layout(connection: &XCBConnection) -> anyhow::Result<bool> {
 }
 
 fn submit_paste<C>(
-    control: u8,
-    shift: Option<u8>,
-    v: u8,
+    chord: PasteChord<u8>,
     mut enqueue: impl FnMut(u8, u8) -> anyhow::Result<C>,
     synchronize: impl FnOnce() -> anyhow::Result<()>,
     mut check: impl FnMut(C) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let mut cookies = Vec::with_capacity(6);
     let mut failed = false;
-    for code in [Some(control), shift, Some(v)].into_iter().flatten() {
+    for code in chord.presses() {
         let Ok(cookie) = enqueue(xproto::KEY_PRESS_EVENT, code) else {
             failed = true;
             break;
@@ -287,7 +272,7 @@ fn submit_paste<C>(
     }
     // Releases follow even a failed press. Checks wait for the barrier: a round trip per event
     // would hold synthetic modifiers down.
-    for code in [Some(v), shift, Some(control)].into_iter().flatten() {
+    for code in chord.presses().rev() {
         match enqueue(xproto::KEY_RELEASE_EVENT, code) {
             Ok(cookie) => cookies.push(cookie),
             Err(_) => failed = true,
@@ -336,9 +321,11 @@ mod tests {
         let mut positions = 0..;
         let mut reject_check = reject_first_check;
         let result = submit_paste(
-            1,
-            shift,
-            3,
+            PasteChord {
+                control: 1,
+                shift,
+                v: 3,
+            },
             move |kind, code| {
                 let accepted = positions.next() != fail_at;
                 enqueue_log.send(Step::Enqueue {
@@ -385,30 +372,6 @@ mod tests {
             enqueued,
             checks: checks.len(),
         }
-    }
-
-    #[test]
-    fn terminal_paste_needs_shift_in_the_first_layout() {
-        let keyboard = |shift: Keysym| Keyboard {
-            first_keycode: 8,
-            symbols_per_key: 2,
-            symbols: vec![
-                Keysym::Control_L.raw(),
-                0,
-                shift.raw(),
-                0,
-                Keysym::v.raw(),
-                Keysym::V.raw(),
-            ],
-            modifier_keys: Vec::new(),
-            keys_per_modifier: 0,
-        };
-        let shift = keyboard(Keysym::Shift_L);
-        let no_shift = keyboard(Keysym::NoSymbol);
-        assert_eq!(paste_keys(&shift, true), Some((8, Some(9), 10)));
-        assert_eq!(paste_keys(&shift, false), Some((8, None, 10)));
-        assert_eq!(paste_keys(&no_shift, false), Some((8, None, 10)));
-        assert_eq!(paste_keys(&no_shift, true), None);
     }
 
     #[test]

@@ -16,6 +16,8 @@ use libloading::os::unix::{Library, RTLD_LAZY, RTLD_LOCAL};
 use tokio::io::unix::AsyncFd;
 use xkbcommon::xkb::{self, Keysym};
 
+use super::PasteChord;
+
 // Values from libei.h; they are ABI and must not be renumbered.
 const EVENT_DISCONNECT: i32 = 2;
 const EVENT_SEAT_ADDED: i32 = 3;
@@ -105,12 +107,16 @@ pub(super) struct Sender {
     text: Option<Device>,
     context: EiContext,
     api: Api,
+    /// Whether paste presses Ctrl+Shift+V, so a layout needs Shift to paste.
+    terminal: bool,
     sequence: u32,
     readiness: AsyncFd<OwnedFd>,
 }
 
 impl Sender {
-    pub(super) fn connect(api: Api, fd: OwnedFd) -> anyhow::Result<Self> {
+    /// Connects to the EIS descriptor for keyboard input that pastes with Ctrl+Shift+V when
+    /// `terminal`, or Ctrl+V otherwise.
+    pub(super) fn connect(api: Api, fd: OwnedFd, terminal: bool) -> anyhow::Result<Self> {
         let context = EiContext::new_sender(&api)?;
         // SAFETY: libei takes ownership of the descriptor, including its teardown.
         let status = unsafe { (api.ei_setup_backend_fd)(context.as_ptr(), fd.into_raw_fd()) };
@@ -122,6 +128,7 @@ impl Sender {
             text: None,
             context,
             api,
+            terminal,
             sequence: 0,
             readiness,
         })
@@ -157,7 +164,7 @@ impl Sender {
         })
     }
 
-    fn paste_target(&self) -> Result<(Pointer, PasteKeys), PasteBlocked> {
+    fn paste_target(&self) -> Result<(Pointer, PasteChord<u32>), PasteBlocked> {
         let keyboard = self.keyboard.as_ref().ok_or(PasteBlocked::NoKeyboard)?;
         let keys = paste_readiness(
             keyboard.device.resumed,
@@ -272,7 +279,7 @@ impl Sender {
             if (self.api.ei_device_has_capability)(device.as_ptr(), CAPABILITY_KEYBOARD) {
                 self.keyboard = Some(Keyboard {
                     device: Device::acquire(&self.api, device),
-                    layouts: device_keymap(&self.api, device.as_ptr()).ok(),
+                    layouts: device_keymap(&self.api, device.as_ptr(), self.terminal).ok(),
                     state: PasteState::Unknown,
                 });
             }
@@ -364,7 +371,7 @@ fn paste_readiness(
     resumed: bool,
     layouts: Option<&PasteLayouts>,
     state: PasteState,
-) -> Result<PasteKeys, PasteBlocked> {
+) -> Result<PasteChord<u32>, PasteBlocked> {
     if !resumed {
         return Err(PasteBlocked::NoKeyboard);
     }
@@ -384,12 +391,12 @@ fn paste_readiness(
 pub(super) struct ReadyPaste<'a> {
     sender: &'a mut Sender,
     keyboard: Pointer,
-    keys: PasteKeys,
+    keys: PasteChord<u32>,
 }
 
 impl ReadyPaste<'_> {
-    /// Presses and releases the paste shortcut, with Shift for a terminal.
-    pub(super) fn send(self, terminal: bool) {
+    /// Presses and releases the paste shortcut.
+    pub(super) fn send(self) {
         let Self {
             sender,
             keyboard,
@@ -403,17 +410,13 @@ impl ReadyPaste<'_> {
         // every injected key before stopping.
         unsafe {
             (api.ei_device_start_emulating)(keyboard, sequence);
-            (api.ei_device_keyboard_key)(keyboard, keys.control, true);
-            if terminal {
-                (api.ei_device_keyboard_key)(keyboard, keys.shift, true);
+            for key in keys.presses() {
+                (api.ei_device_keyboard_key)(keyboard, key, true);
             }
-            (api.ei_device_keyboard_key)(keyboard, keys.v, true);
             (api.ei_device_frame)(keyboard, (api.ei_now)(context));
-            (api.ei_device_keyboard_key)(keyboard, keys.v, false);
-            if terminal {
-                (api.ei_device_keyboard_key)(keyboard, keys.shift, false);
+            for key in keys.presses().rev() {
+                (api.ei_device_keyboard_key)(keyboard, key, false);
             }
-            (api.ei_device_keyboard_key)(keyboard, keys.control, false);
             (api.ei_device_frame)(keyboard, (api.ei_now)(context));
             (api.ei_device_stop_emulating)(keyboard);
         }
@@ -487,7 +490,7 @@ enum PasteState {
     Blocked,
     /// Modifiers are released, but the active layout cannot type the paste shortcut.
     NoKeys,
-    Ready(PasteKeys),
+    Ready(PasteChord<u32>),
 }
 
 /// The sender's owning reference to its libei context.
@@ -579,73 +582,72 @@ impl Drop for Event {
 struct PasteLayouts {
     /// The modifier mask that changes what the paste shortcut means.
     blockers: u32,
-    /// Each layout's paste keys, indexed by XKB group.
-    keys: Vec<Option<PasteKeys>>,
+    /// Each layout's paste keys as evdev codes, indexed by XKB group.
+    keys: Vec<Option<PasteChord<u32>>>,
 }
 
 impl PasteLayouts {
-    fn new(keymap: &xkb::Keymap) -> anyhow::Result<Self> {
-        // Omits Lock (Caps) and Mod2 (Num Lock): locked modifiers count as active, yet they do not
-        // change Ctrl+V, so blocking on them would disable paste while either lock is on.
+    /// Reads `keymap` for a paste that presses Ctrl+Shift+V when `terminal`, or Ctrl+V otherwise.
+    fn new(keymap: &xkb::Keymap, terminal: bool) -> anyhow::Result<Self> {
+        // Locked modifiers count as active, yet neither lock changes Ctrl+V: Caps Lock is always
+        // Lock, and Num Lock is whatever the keymap's Num Lock key locks. Blocking on either would
+        // disable paste while it is on.
         let mut blockers = 0;
-        for name in ["Shift", "Control", "Mod1", "Mod3", "Mod4", "Mod5"] {
+        for name in ["Shift", "Control", "Mod1", "Mod2", "Mod3", "Mod4", "Mod5"] {
             let index = keymap.mod_get_index(name);
             if index < u32::BITS {
                 blockers |= 1 << index;
             }
         }
+        blockers &= !num_lock_modifiers(keymap);
         ensure!(blockers != 0, "Missing paste modifier mapping");
         Ok(Self {
             blockers,
             keys: (0..keymap.num_layouts())
-                .map(|group| paste_keys(keymap, group))
+                .map(|group| {
+                    PasteChord::resolve(terminal, |symbol| {
+                        layout_key(keymap, group, symbol)?
+                            .raw()
+                            .checked_sub(XKB_KEYCODE_OFFSET)
+                    })
+                })
                 .collect(),
         })
     }
 
     /// The paste keys of layout `group`; none for a group past the last layout, which never
     /// wraps to another layout's keys.
-    fn keys(&self, group: u32) -> Option<PasteKeys> {
+    fn keys(&self, group: u32) -> Option<PasteChord<u32>> {
         *self.keys.get(usize::try_from(group).ok()?)?
     }
 }
 
-/// The keys that type the paste shortcuts in layout `group`. A key with fewer layouts than the
-/// keymap wraps the group, as XKB does.
-fn paste_keys(keymap: &xkb::Keymap, group: u32) -> Option<PasteKeys> {
-    let mut control = None;
-    let mut shift = None;
-    let mut v = None;
-    keymap.key_for_each(|keymap, key| {
-        let Some(layout) = group.checked_rem(keymap.num_layouts_for_key(key)) else {
-            return;
-        };
-        let symbols = keymap.key_get_syms_by_level(key, layout, 0);
-        let Some(code) = key.raw().checked_sub(XKB_KEYCODE_OFFSET) else {
-            return;
-        };
-        if symbols.contains(&Keysym::Control_L) {
-            control = Some(code);
-        }
-        if symbols.contains(&Keysym::Shift_L) {
-            shift = Some(code);
-        }
-        if symbols.contains(&Keysym::v) {
-            v = Some(code);
-        }
-    });
-    Some(PasteKeys {
-        control: control?,
-        shift: shift?,
-        v: v?,
-    })
+/// The first key whose base level types `symbol` in layout `group`. A key with fewer layouts than
+/// the keymap wraps the group, as XKB does.
+fn layout_key(keymap: &xkb::Keymap, group: u32, symbol: Keysym) -> Option<xkb::Keycode> {
+    (keymap.min_keycode().raw()..=keymap.max_keycode().raw())
+        .map(xkb::Keycode::new)
+        .find(|&key| {
+            group
+                .checked_rem(keymap.num_layouts_for_key(key))
+                .is_some_and(|layout| {
+                    keymap
+                        .key_get_syms_by_level(key, layout, 0)
+                        .contains(&symbol)
+                })
+        })
 }
 
-#[derive(Clone, Copy)]
-struct PasteKeys {
-    control: u32,
-    shift: u32,
-    v: u32,
+/// The modifiers the keymap's Num Lock key locks, in the masks libei reports; none without that
+/// key.
+fn num_lock_modifiers(keymap: &xkb::Keymap) -> u32 {
+    let Some(key) = layout_key(keymap, 0, Keysym::Num_Lock) else {
+        return 0;
+    };
+    let mut state = xkb::State::new(keymap);
+    state.update_key(key, xkb::KeyDirection::Down);
+    state.update_key(key, xkb::KeyDirection::Up);
+    state.serialize_mods(xkb::STATE_MODS_LOCKED)
 }
 
 /// Watches a duplicate of libei's descriptor for readability.
@@ -658,11 +660,15 @@ unsafe fn register_readiness(fd: RawFd) -> anyhow::Result<AsyncFd<OwnedFd>> {
     super::watch_readable(unsafe { BorrowedFd::borrow_raw(fd) })
 }
 
-/// Compiles the XKB keymap libei advertises for `device`.
+/// Compiles the XKB keymap libei advertises for `device`, for terminal paste when `terminal`.
 ///
 /// # Safety
 /// `device` must be a live keyboard-capable libei device.
-unsafe fn device_keymap(api: &Api, device: Pointer) -> anyhow::Result<PasteLayouts> {
+unsafe fn device_keymap(
+    api: &Api,
+    device: Pointer,
+    terminal: bool,
+) -> anyhow::Result<PasteLayouts> {
     // SAFETY: the caller keeps the device live, so its borrowed keymap and descriptor are too.
     let (fd, size) = unsafe {
         let keymap = (api.ei_device_keyboard_get_keymap)(device);
@@ -693,7 +699,7 @@ unsafe fn device_keymap(api: &Api, device: Pointer) -> anyhow::Result<PasteLayou
         xkb::KEYMAP_COMPILE_NO_FLAGS,
     )
     .context("Invalid XKB keymap")?;
-    PasteLayouts::new(&keymap)
+    PasteLayouts::new(&keymap, terminal)
 }
 
 fn utf8_chunks(mut text: &str) -> impl Iterator<Item = &str> {
@@ -729,19 +735,81 @@ mod tests {
                 xkb::KEYMAP_COMPILE_NO_FLAGS,
             )
             .context("Fixture keymap")?;
-            let layouts = PasteLayouts::new(&keymap)?;
-            let keys = layouts.keys(group).context("Fixture paste binding")?;
-            assert_eq!((keys.control, keys.shift, keys.v), (29, 42, expected));
+            let layouts = PasteLayouts::new(&keymap, true)?;
+            assert_eq!(
+                layouts.keys(group),
+                Some(PasteChord {
+                    control: 29,
+                    shift: Some(42),
+                    v: expected,
+                })
+            );
             assert!(layouts.keys(keymap.num_layouts()).is_none());
+            assert_eq!(
+                layouts.blockers & (1 << keymap.mod_get_index("Mod2")),
+                0,
+                "Num Lock blocks paste in {layout}"
+            );
         }
         Ok(())
     }
 
     #[test]
+    fn plain_paste_needs_no_shift_and_num_lock_never_blocks_wherever_it_maps() -> anyhow::Result<()>
+    {
+        let mask = |keymap: &xkb::Keymap, name: &str| 1_u32 << keymap.mod_get_index(name);
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let keymap = xkb::Keymap::new_from_string(
+            &context,
+            r#"xkb_keymap {
+                xkb_keycodes { include "evdev" };
+                xkb_types { include "complete" };
+                xkb_compat { include "complete" };
+                xkb_symbols {
+                    key <LCTL> { [ Control_L ] };
+                    key <AB04> { [ v, V ] };
+                    key <CAPS> { [ Caps_Lock ] };
+                    key <NMLK> { [ Num_Lock ] };
+                    modifier_map Control { <LCTL> };
+                    modifier_map Lock { <CAPS> };
+                    modifier_map Mod3 { <NMLK> };
+                };
+            };"#
+            .to_owned(),
+            xkb::KEYMAP_FORMAT_TEXT_V1,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )
+        .context("Fixture keymap")?;
+        assert_eq!(
+            PasteLayouts::new(&keymap, false)?.keys(0),
+            Some(PasteChord {
+                control: 29,
+                shift: None,
+                v: 47,
+            }),
+            "A layout without Shift refused Ctrl+V"
+        );
+        let terminal = PasteLayouts::new(&keymap, true)?;
+        assert!(terminal.keys(0).is_none());
+        assert_eq!(
+            terminal.blockers & mask(&keymap, "Mod3"),
+            0,
+            "Num Lock blocks paste"
+        );
+        assert_eq!(
+            terminal.blockers & mask(&keymap, "Lock"),
+            0,
+            "Caps Lock blocks paste"
+        );
+        assert_ne!(terminal.blockers & mask(&keymap, "Mod2"), 0);
+        Ok(())
+    }
+
+    #[test]
     fn paste_readiness_names_the_root_blocker_first() {
-        let keys = PasteKeys {
+        let keys = PasteChord {
             control: 29,
-            shift: 42,
+            shift: None,
             v: 47,
         };
         let layouts = PasteLayouts {

@@ -494,7 +494,7 @@ async fn bind(portal: &mut Portal, options: &DesktopOptions) -> anyhow::Result<B
         Some(bind_shortcuts(portal, options, &mut labels).await?)
     };
     let remote = match libei {
-        Some(libei) => Some(start_remote_desktop(portal, libei).await?),
+        Some(libei) => Some(start_remote_desktop(portal, libei, options.terminal_paste).await?),
         None => None,
     };
     Ok(Bound {
@@ -557,7 +557,11 @@ async fn bind_shortcuts(
     Ok(session)
 }
 
-async fn start_remote_desktop(portal: &mut Portal, libei: ei::Api) -> anyhow::Result<Remote> {
+async fn start_remote_desktop(
+    portal: &mut Portal,
+    libei: ei::Api,
+    terminal_paste: bool,
+) -> anyhow::Result<Remote> {
     let tokens = TokenStore::open();
     let session = portal.create_session(REMOTE).await?;
     let handle = portal.next_token();
@@ -617,7 +621,7 @@ async fn start_remote_desktop(portal: &mut Portal, libei: ei::Api) -> anyhow::Re
         .call("ConnectToEIS", &(session.clone(), Options::new()))
         .await?;
     Ok(Remote {
-        sender: ei::Sender::connect(libei, OwnedFd::from(descriptor))?,
+        sender: ei::Sender::connect(libei, OwnedFd::from(descriptor), terminal_paste)?,
         session,
         shares_clipboard,
     })
