@@ -101,7 +101,7 @@ pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
         f32::midpoint(pressure, simulate(pressure, node.step))
     });
 
-    let min_spacing = size * SMOOTHING;
+    let min_spacing_squared = (size * SMOOTHING).powi(2);
     let (mut left, mut right) = (Vec::new(), Vec::new());
     let mut previous_direction = first.direction;
     let mut rounding = false;
@@ -143,7 +143,10 @@ pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
             (&mut left, node.point - offset),
             (&mut right, node.point + offset),
         ] {
-            let spaced = |previous: &Point| previous.distance(point) > min_spacing;
+            let spaced = |&previous: &Point| {
+                let gap = previous - point;
+                gap.dot(gap) > min_spacing_squared
+            };
             if forced || side.last().is_none_or(spaced) {
                 side.push(point);
             }
