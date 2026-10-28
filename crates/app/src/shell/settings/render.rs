@@ -244,15 +244,11 @@ impl Settings {
                 div()
                     .text_size(TEXT)
                     .text_color(rgb(ui.palette.muted))
-                    .child(
-                        if self.config.engine == Engine::Whisper
-                            && !self.config.language.eq_ignore_ascii_case("en")
-                        {
-                            "Select English to remove um / uh."
-                        } else {
-                            "English fillers. Turn off when dictating other languages."
-                        },
-                    ),
+                    .child(if self.config.fillers_apply() {
+                        "English fillers. Turn off when dictating other languages."
+                    } else {
+                        "Select English to remove um / uh."
+                    }),
             )
     }
 

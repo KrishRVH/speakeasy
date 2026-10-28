@@ -133,18 +133,22 @@ impl Config {
         }
     }
 
-    /// Whether a request removes English hesitations. Parakeet detects the language without
-    /// reporting it, so the user's switch decides. Whisper removes them only for an explicit English
-    /// request, because "um" is a word in languages such as German and Portuguese, and `auto`
-    /// names no language to check.
+    /// Whether a request removes English hesitations: the user's switch, where
+    /// [`Config::fillers_apply`] allows it.
     pub(crate) fn fillers(&self) -> Fillers {
-        if self.remove_fillers
-            && (self.engine == Engine::Parakeet || self.language.eq_ignore_ascii_case("en"))
-        {
+        if self.remove_fillers && self.fillers_apply() {
             Fillers::Remove
         } else {
             Fillers::Preserve
         }
+    }
+
+    /// Whether the engine and language let the switch remove English hesitations. Parakeet detects
+    /// the language without reporting it, so the user's switch decides. Whisper removes them only
+    /// for an explicit English request, because "um" is a word in languages such as German and
+    /// Portuguese, and `auto` names no language to check.
+    pub(crate) fn fillers_apply(&self) -> bool {
+        self.engine == Engine::Parakeet || self.language.eq_ignore_ascii_case("en")
     }
 
     pub(crate) fn delivery(&self) -> Delivery {
