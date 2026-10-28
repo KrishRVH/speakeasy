@@ -156,7 +156,7 @@ fn windows(options: CGWindowListOption, window: CGWindowID) -> Vec<Described> {
 
 fn describe(window: &CFDictionary<CFString, CFType>) -> Option<Described> {
     // SAFETY: the keys are immutable constants Core Graphics exports.
-    let [id, owner, layer, alpha, on_screen, bounds] = unsafe {
+    let [number, owner, layer, alpha, on_screen, bounds] = unsafe {
         [
             kCGWindowNumber,
             kCGWindowOwnerPID,
@@ -175,7 +175,7 @@ fn describe(window: &CFDictionary<CFString, CFType>) -> Option<Described> {
         return None;
     }
     Some(Described {
-        number: u32::try_from(numeric(id)?.as_i64()?).ok()?,
+        number: u32::try_from(numeric(number)?.as_i64()?).ok()?,
         owner: numeric(owner)?.as_i64()?,
         layer: numeric(layer)?.as_i64()?,
         alpha: numeric(alpha)
@@ -194,7 +194,7 @@ pub(crate) fn display_under_pointer() -> anyhow::Result<screen::Display> {
     let mut found = 0;
     // SAFETY: both out-pointers name live locals, with room for the one display requested.
     let status =
-        unsafe { CGGetDisplaysWithPoint(NSPoint::new(x, y), 1, &raw mut id, &raw mut found) };
+        unsafe { CGGetDisplaysWithPoint(CGPoint::new(x, y), 1, &raw mut id, &raw mut found) };
     if status != CGError::Success || found == 0 {
         bail!("No display is under the pointer. Move it onto a screen and try again.");
     }
@@ -249,10 +249,8 @@ async fn capture_stills(
     let mut part = target.part();
     let mut last_frame = Instant::now();
     loop {
-        if let Region::Window(window, _) = target.region
-            && let Some(now) = window_part(display, window)
-        {
-            part = now;
+        if let Region::Window(window, _) = target.region {
+            part = window_part(display, window).unwrap_or(part);
         }
         // An unanswered request is a missed still, and a long enough run of misses is a stall.
         match answer(source.still(part)?).await.unwrap_or(Ok(None))? {
@@ -293,7 +291,7 @@ unsafe impl Send for Source {}
 
 impl Source {
     /// Lists the shareable content, which prompts for Screen Recording the first time, and builds
-    /// the capture of `display` from it.
+    /// the capture of display `id` from it.
     fn fetch(id: CGDirectDisplayID, longest_edge: u32) -> Receiver<Result<Self, Failure>> {
         ask(
             |handler| {
@@ -484,11 +482,11 @@ fn frame(sample: &CMSampleBuffer, part: Part) -> Option<Frame> {
 struct Locked<'a>(&'a CVPixelBuffer);
 
 impl<'a> Locked<'a> {
-    fn new(pixels: &'a CVPixelBuffer) -> Option<Self> {
+    fn new(buffer: &'a CVPixelBuffer) -> Option<Self> {
         // SAFETY: the buffer is alive, and `Drop` releases this lock with the same flags.
         let status =
-            unsafe { CVPixelBufferLockBaseAddress(pixels, CVPixelBufferLockFlags::ReadOnly) };
-        (status == kCVReturnSuccess).then_some(Self(pixels))
+            unsafe { CVPixelBufferLockBaseAddress(buffer, CVPixelBufferLockFlags::ReadOnly) };
+        (status == kCVReturnSuccess).then_some(Self(buffer))
     }
 
     /// The buffer's memory: `height` rows of `bytesPerRow` bytes each.
@@ -554,7 +552,7 @@ impl From<CGRect> for Bounds {
 
 #[expect(
     clippy::unnecessary_wraps,
-    reason = "Overlay configuration can fail on Windows and Linux, and the facade returns one type"
+    reason = "Overlay configuration can fail on Windows and Linux; callers share one signature on every platform"
 )]
 pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyhow::Result<()> {
     let window = &window.native.ns_window;

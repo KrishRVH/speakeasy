@@ -25,8 +25,8 @@ use crate::{NativeWindow, StoppableThread};
 
 /// How often the pointer is sampled.
 const POINTER_INTERVAL: Duration = Duration::from_millis(8);
+
 /// What the user asks a Show to record, before it is resolved into a [`Target`].
-/// What the user asks a Show to record, which becomes a [`Target`] once found under the pointer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
     /// The display under the pointer.

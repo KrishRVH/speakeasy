@@ -38,6 +38,7 @@ use objc2_app_kit::{
     NSWindowStyleMask, NSWorkspace, NSWorkspaceSessionDidResignActiveNotification,
     NSWorkspaceWillSleepNotification,
 };
+use objc2_core_graphics as cg;
 use objc2_foundation::{
     NSDistributedNotificationCenter, NSNotification, NSNotificationCenter, NSObjectProtocol,
     NSPoint, NSString,
@@ -291,8 +292,8 @@ impl TapPort {
                 .as_concrete_TypeRef()
                 .cast::<objc2_core_foundation::CFMachPort>()
         };
-        objc2_core_graphics::CGEvent::tap_enable(port, true);
-        objc2_core_graphics::CGEvent::tap_is_enabled(port)
+        cg::CGEvent::tap_enable(port, true);
+        cg::CGEvent::tap_is_enabled(port)
     }
 }
 
@@ -373,7 +374,7 @@ fn observe(
     }
     let code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
     // Both crates mirror the same CGEventFlags bits.
-    let held = modifiers_in(objc2_core_graphics::CGEventFlags(event.get_flags().bits()));
+    let held = modifiers_in(cg::CGEventFlags(event.get_flags().bits()));
     let key_event = match kind {
         CGEventType::KeyDown => MacEvent::Key {
             code,
@@ -486,32 +487,28 @@ impl Window {
 
 /// The modifier keys held now, as the session's combined input state reports them.
 pub(super) fn modifiers() -> Modifiers {
-    use objc2_core_graphics::{CGEventSource, CGEventSourceStateID};
-
-    modifiers_in(CGEventSource::flags_state(
-        CGEventSourceStateID::CombinedSessionState,
+    modifiers_in(cg::CGEventSource::flags_state(
+        cg::CGEventSourceStateID::CombinedSessionState,
     ))
 }
 
 /// Whether the keyboard itself holds Fn, whatever the flags of an event another process posted
 /// claim.
 fn keyboard_holds_fn() -> bool {
-    use objc2_core_graphics::{CGEventFlags, CGEventSource, CGEventSourceStateID};
-
-    CGEventSource::flags_state(CGEventSourceStateID::HIDSystemState)
-        .contains(CGEventFlags::MaskSecondaryFn)
+    cg::CGEventSource::flags_state(cg::CGEventSourceStateID::HIDSystemState)
+        .contains(cg::CGEventFlags::MaskSecondaryFn)
 }
 
 /// The modifier keys `flags` report held.
-fn modifiers_in(flags: objc2_core_graphics::CGEventFlags) -> Modifiers {
-    use objc2_core_graphics::CGEventFlags;
-
+fn modifiers_in(flags: cg::CGEventFlags) -> Modifiers {
     Modifiers {
-        shift: flags.contains(CGEventFlags::MaskShift),
+        shift: flags.contains(cg::CGEventFlags::MaskShift),
         other_shortcut: flags.intersects(
-            CGEventFlags::MaskControl | CGEventFlags::MaskAlternate | CGEventFlags::MaskCommand,
+            cg::CGEventFlags::MaskControl
+                | cg::CGEventFlags::MaskAlternate
+                | cg::CGEventFlags::MaskCommand,
         ),
-        talk: flags.contains(CGEventFlags::MaskSecondaryFn),
+        talk: flags.contains(cg::CGEventFlags::MaskSecondaryFn),
     }
 }
 
@@ -550,13 +547,13 @@ impl insertion::NativeInsert for Insert {
     }
 
     fn mark(&mut self) -> isize {
-        clipboard_sequence()
+        change_count()
     }
 
     fn holds(&mut self, text: &str, mark: &isize) -> anyhow::Result<bool> {
-        Ok(clipboard_sequence() == *mark
+        Ok(change_count() == *mark
             && insertion::holds_text(arboard::Clipboard::new()?.get_text(), text)?
-            && clipboard_sequence() == *mark)
+            && change_count() == *mark)
     }
 
     fn paste_keys(&mut self) -> anyhow::Result<Vec<CGEvent>> {
@@ -619,7 +616,7 @@ fn is_own_process(pid: i64) -> bool {
     pid == i64::from(std::process::id())
 }
 
-fn clipboard_sequence() -> isize {
+fn change_count() -> isize {
     NSPasteboard::generalPasteboard().changeCount()
 }
 

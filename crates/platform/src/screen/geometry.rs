@@ -23,8 +23,8 @@ impl Bounds {
         Some([share(x - left, width)?, share(y - top, height)?])
     }
 
-    /// Whether `point` lies within these bounds, counting the top and left edges but not the
-    /// bottom and right ones.
+    /// Whether `point` lies within these bounds, counting the edges through `origin` but not the
+    /// opposite ones, so a point on an edge two adjoining bounds share lies in exactly one of them.
     #[cfg(any(target_os = "macos", test))]
     pub(crate) fn contains(self, [x, y]: [f64; 2]) -> bool {
         let [left, top] = self.origin;
@@ -65,8 +65,9 @@ pub(crate) fn pixels(points: [f64; 2], scale: f64) -> Option<[u32; 2]> {
     Some([width?, height?])
 }
 
-/// The pixels of an image `size` that `part` covers, as its left, top, right, and bottom edges,
-/// rounded to whole pixels: at least one each way, unless the image is empty, and none outside it.
+/// The pixels of a `[width, height]` image that `part` covers, as its left, top, right, and
+/// bottom edges, rounded to whole pixels: at least one each way, unless the image is empty, and
+/// none outside it.
 #[cfg(any(target_os = "windows", test))]
 pub(crate) fn pixel_box(part: Part, [width, height]: [u32; 2]) -> [u32; 4] {
     let (left, right) = pixel_span(part.left, part.right, width);
@@ -82,7 +83,8 @@ fn pixel_span(start: f32, end: f32, extent: u32) -> (u32, u32) {
     (first, edge(end).max(first.saturating_add(1)).min(extent))
 }
 
-/// The part of an image `size` that `[left, top, right, bottom]`, a box of its pixels, shows.
+/// The part of a `[width, height]` image that `[left, top, right, bottom]`, a box of its pixels,
+/// shows.
 #[cfg(any(target_os = "windows", test))]
 pub(crate) fn part_of_box([left, top, right, bottom]: [u32; 4], [width, height]: [u32; 2]) -> Part {
     let share = |pixels: u32, extent: u32| {
