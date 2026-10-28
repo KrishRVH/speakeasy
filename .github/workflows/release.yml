@@ -108,11 +108,8 @@ jobs:
           tag="v$VERSION"
           notes="docs/release-notes.md"
           assets=(speakeasy-windows-x64.zip speakeasy-macos.zip speakeasy-linux-x86_64.AppImage speakeasy-linux-x86_64.tar.gz)
-          cd artifacts
-          sha256sum "${assets[@]}" > SHA256SUMS
-          cd ..
-          for index in "${!assets[@]}"; do assets[index]="artifacts/${assets[index]}"; done
-          assets+=(artifacts/SHA256SUMS)
+          (cd artifacts && sha256sum "${assets[@]}" > SHA256SUMS)
+          assets=("${assets[@]/#/artifacts/}" artifacts/SHA256SUMS)
           # Git refuses to move an existing tag, so a version another commit claimed after the
           # version job fails here, before --clobber. A rejected push is fine only when the remote
           # tag, lightweight or annotated, already points at this commit.
