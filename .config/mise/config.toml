@@ -39,25 +39,30 @@ run = [
 ]
 
 [tasks."rust:fmt"]
+description = "Format Rust code"
 run = "cargo fmt --all"
 
 [tasks."rust:fmt:check"]
+description = "Check Rust formatting"
 run = "cargo fmt --all --check"
 
 # The cross-target run type-checks the native adapters, which need no SDK; the app's Windows
 # resource build and macOS GPUI build do, so they stay with native checks.
 [tasks."rust:lint"]
+description = "Run Clippy on the workspace, and on the platform crate for Windows and macOS"
 run = [
   "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
   "cargo clippy -p speakeasy-platform --all-targets --all-features --locked --target x86_64-pc-windows-msvc --target aarch64-apple-darwin -- -D warnings",
 ]
 
 [tasks."rust:doc"]
+description = "Build the workspace docs with warnings denied"
 wait_for = ["rust:lint"]
 env = { RUSTDOCFLAGS = "-D warnings" }
 run = "cargo doc --workspace --all-features --no-deps --locked"
 
 [tasks."rust:test"]
+description = "Run Rust unit, integration, and doc tests"
 wait_for = ["rust:doc"]
 run = [
   "cargo nextest run --workspace --lib --bins --tests --all-features --locked",
@@ -65,6 +70,7 @@ run = [
 ]
 
 [tasks."rust:machete"]
+description = "Find unused Rust dependencies"
 depends = ["rust:fetch"]
 env = { CARGO_NET_OFFLINE = "true" }
 run = "cargo machete --with-metadata --skip-target-dir crates"
@@ -74,9 +80,11 @@ description = "Fetch every platform's locked dependency sources for offline anal
 run = "cargo fetch --locked"
 
 [tasks."rust:standards"]
+description = "Apply Rust formatting"
 depends = ["rust:fmt"]
 
 [tasks."rust:standards:check"]
+description = "Run every Rust check"
 depends = ["rust:fmt:check", "rust:lint", "rust:doc", "rust:test", "rust:machete"]
 
 [tasks."py:lock"]
@@ -84,46 +92,57 @@ description = "Refresh uv.lock after Python tool requirements change"
 run = "uv lock"
 
 [tasks."py:install"]
+description = "Install the locked Python tools"
 run = "uv sync --locked --quiet"
 
 [tasks."py:fmt:check"]
+description = "Check Python formatting"
 depends = ["py:install"]
 run = "uv run --no-sync ruff format --check --quiet scripts tests"
 
 [tasks."py:lint"]
+description = "Lint Python with Ruff"
 depends = ["py:install"]
 run = "uv run --no-sync ruff check --quiet scripts tests"
 
 [tasks."py:type"]
+description = "Type-check Python with basedpyright"
 depends = ["py:install"]
 run = "uv run --no-sync basedpyright --warnings"
 
 [tasks."py:test"]
+description = "Run the Python tests"
 depends = ["py:install"]
 run = "uv run --no-sync pytest -q"
 
 [tasks."py:standards"]
+description = "Apply Ruff fixes and formatting to Python"
 depends = ["py:install"]
 run = ["uv run --no-sync ruff check --fix --quiet scripts tests", "uv run --no-sync ruff format --quiet scripts tests"]
 
 [tasks."py:standards:check"]
+description = "Run every Python check"
 depends = ["py:fmt:check", "py:lint", "py:type", "py:test"]
 
 # shfmt reads .editorconfig only when no parser or printer flags are passed.
 [tasks."shell:fmt"]
+description = "Format shell scripts"
 run = "shfmt -w scripts/*.sh packaging/linux/AppRun"
 
 [tasks."shell:fmt:check"]
+description = "Check shell formatting"
 run = "shfmt -d scripts/*.sh packaging/linux/AppRun"
 
 [tasks."shell:lint"]
+description = "Lint shell scripts with ShellCheck"
 run = "shellcheck --severity=style scripts/*.sh packaging/linux/AppRun"
 
 [tasks."shell:standards"]
+description = "Apply shell formatting"
 depends = ["shell:fmt"]
 
-# The launcher tests exercise the shell scripts, so shell checks run them too.
 [tasks."shell:standards:check"]
+description = "Run every shell check, including the Python tests that run the scripts"
 depends = ["shell:fmt:check", "shell:lint", "py:test"]
 
 [tasks."md:lock"]
@@ -131,29 +150,35 @@ description = "Refresh bun.lock after Markdown tool requirements change"
 run = "bun install"
 
 [tasks."md:install"]
+description = "Install the locked Markdown tools"
 run = "bun install --frozen-lockfile --no-summary"
 
 [tasks."md:fmt:check"]
+description = "Check Markdown formatting"
 depends = ["md:install"]
 shell = "bash -o errexit -o pipefail -c"
 run = "{{vars.md_files}} | xargs -0 bun run prettier --check --no-error-on-unmatched-pattern --log-level warn"
 
 [tasks."md:lint"]
+description = "Lint Markdown"
 depends = ["md:install"]
 shell = "bash -o errexit -o pipefail -c"
 run = "{{vars.md_files}} | xargs -0 bun run markdownlint-cli2"
 
 [tasks."md:links"]
+description = "Check Markdown links to repository files and anchors, offline"
 run = "lychee --config lychee.toml --root-dir \"$PWD\" --offline --extensions md ."
 
 [tasks."md:links:deep"]
 description = "Check Markdown links, including external URLs, over the network"
-run ="lychee --config lychee.toml --root-dir \"$PWD\" --extensions md ."
+run = "lychee --config lychee.toml --root-dir \"$PWD\" --extensions md ."
 
 [tasks."md:typos"]
+description = "Check spelling in file contents and names"
 run = "typos --config typos.toml ."
 
 [tasks."md:standards"]
+description = "Apply Prettier and markdownlint fixes to Markdown"
 depends = ["md:install"]
 shell = "bash -o errexit -o pipefail -c"
 run = [
@@ -162,15 +187,19 @@ run = [
 ]
 
 [tasks."md:standards:check"]
+description = "Run every Markdown check"
 depends = ["md:fmt:check", "md:lint", "md:links", "md:typos"]
 
 [tasks.standards]
+description = "Apply every safe formatter and autofix"
 depends = ["rust:standards", "py:standards", "shell:standards", "md:standards"]
 
 [tasks."standards:check"]
+description = "Run the final local gate"
 depends = ["rust:standards:check", "py:standards:check", "shell:standards:check", "md:standards:check", "ci:lint", "hygiene"]
 
 [tasks."ci:lint"]
+description = "Lint the GitHub Actions workflows"
 run = "actionlint"
 
 [tasks."ps:syntax"]
