@@ -6,7 +6,7 @@ use std::{
     panic::{self, AssertUnwindSafe},
 };
 
-use anyhow::ensure;
+use anyhow::{Context as _, ensure};
 use async_channel::Receiver;
 use x11rb::{
     protocol::{
@@ -26,7 +26,9 @@ use super::{
 };
 use crate::{
     Delivery, DesktopOptions, InputSender, Inserted, OwnedThread,
-    insertion::{Insertion, PASTE_AFTER_RELEASE, abandon_queued, wait_for_released_modifiers},
+    insertion::{
+        Insertion, PASTE_AFTER_RELEASE, Reply, abandon_queued, wait_for_released_modifiers,
+    },
     linux::{CLIPBOARD_CHANGED, COPIED_FOR_MANUAL_PASTE, HostSession, NO_PASTE_BINDING},
 };
 
@@ -41,6 +43,7 @@ pub(super) struct InsertionWorker {
     _thread: OwnedThread,
     input: InputSender,
     requests: Receiver<Insertion>,
+    ready: Receiver<()>,
 }
 
 impl InsertionWorker {
@@ -49,21 +52,34 @@ impl InsertionWorker {
         options: DesktopOptions,
         requests: Receiver<Insertion>,
     ) -> anyhow::Result<Self> {
-        Self::spawn_with(input, requests, move |requests| {
-            serve_insertions(requests, &options)
+        Self::spawn_with(input, requests, open_insertion, move |opened, requests| {
+            serve_insertions(opened, requests, &options);
         })
     }
 
-    fn spawn_with(
+    /// Runs `open` on the worker thread, then `serve` with what it opened.
+    fn spawn_with<S>(
         input: InputSender,
         requests: Receiver<Insertion>,
-        serve: impl FnOnce(&Receiver<Insertion>) -> anyhow::Result<()> + Send + 'static,
+        open: impl FnOnce() -> anyhow::Result<S> + Send + 'static,
+        serve: impl FnOnce(S, &Receiver<Insertion>) + Send + 'static,
     ) -> anyhow::Result<Self> {
+        let (opened, ready) = Reply::channel();
         let thread = OwnedThread::spawn("x11-insertion", {
             let (input, requests) = (input.clone(), requests.clone());
             move || {
-                // Unwinding drops the request in hand, which answers its caller.
-                match panic::catch_unwind(AssertUnwindSafe(|| serve(&requests))) {
+                // Unwinding drops the request in hand, which answers its caller. `opened` drops
+                // only after a failed setup is reported, so that report precedes the desktop loop's
+                // generic setup failure.
+                let served = match panic::catch_unwind(AssertUnwindSafe(open)) {
+                    Ok(Ok(state)) => {
+                        opened.send(());
+                        panic::catch_unwind(AssertUnwindSafe(|| serve(state, &requests))).map(Ok)
+                    },
+                    Ok(Err(error)) => Ok(Err(error)),
+                    Err(panic) => Err(panic),
+                };
+                match served {
                     Ok(Ok(())) => {},
                     Ok(Err(error)) => input.fail(format!(
                         "X11 input is unavailable: {error}. Check your desktop connection, then resume."
@@ -80,7 +96,16 @@ impl InsertionWorker {
             _thread: thread,
             input,
             requests,
+            ready,
         })
+    }
+
+    /// Resolves once the worker has opened its connection and read the keyboard mapping.
+    ///
+    /// # Errors
+    /// Fails when setup failed, after the worker has reported why.
+    pub(super) async fn ready(&self) -> anyhow::Result<()> {
+        self.ready.recv().await.context("X11 input setup stopped")
     }
 }
 
@@ -91,17 +116,21 @@ impl Drop for InsertionWorker {
     }
 }
 
+fn open_insertion() -> anyhow::Result<(Clipboard, Keyboard)> {
+    let clipboard = Clipboard::open()?;
+    let keyboard = Keyboard::load(&clipboard.connection)?;
+    Ok((clipboard, keyboard))
+}
+
 fn serve_insertions(
+    (mut clipboard, keyboard): (Clipboard, Keyboard),
     requests: &Receiver<Insertion>,
     options: &DesktopOptions,
-) -> anyhow::Result<()> {
-    let mut clipboard = Clipboard::open()?;
-    let keyboard = Keyboard::load(&clipboard.connection)?;
+) {
     while let Ok(request) = requests.recv_blocking() {
         let outcome = paste(&keyboard, &mut clipboard, &request, options);
         request.reply.send(outcome);
     }
-    Ok(())
 }
 
 fn paste(
@@ -430,24 +459,79 @@ mod tests {
         }
     }
 
-    /// Runs an insertion thread that takes one request, waits until a second queues behind it,
-    /// then fails or panics. Returns the reason it reported once both requests were answered.
-    async fn stop_insertion_thread(panics: bool) -> anyhow::Result<String> {
+    #[tokio::test]
+    async fn readiness_waits_for_insertion_setup_and_follows_its_failure_report()
+    -> anyhow::Result<()> {
+        let (events, received) = async_channel::bounded(4);
+        let input = InputSender::new(events);
+        let (inserter, requests) = crate::Inserter::lane();
+        let (entered, opening) = async_channel::bounded(1);
+        let (release, released) = mpsc::channel();
+        let worker = InsertionWorker::spawn_with(
+            input.clone(),
+            requests,
+            move || -> anyhow::Result<()> {
+                entered.try_send(())?;
+                released.recv_timeout(Duration::from_secs(2))?;
+                bail!("Synthetic setup failure")
+            },
+            |(), _| {},
+        )?;
+        tokio::time::timeout(Duration::from_secs(1), opening.recv()).await??;
+        let mut ready = Box::pin(worker.ready());
+        assert!(
+            ready.as_mut().now_or_never().is_none(),
+            "Desktop readiness preceded insertion setup"
+        );
+        let permit = input.begin().context("Recording")?;
+        let mut queued = Box::pin(inserter.insert("fixture".into(), permit, Delivery::Paste));
+        assert!(queued.as_mut().now_or_never().is_none());
+        release.send(())?;
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), ready)
+                .await?
+                .is_err(),
+            "A failed setup reported readiness"
+        );
+        match received.try_recv() {
+            Ok(Input::Unavailable(reason)) => assert!(
+                reason.starts_with("X11 input is unavailable: Synthetic setup failure."),
+                "{reason}"
+            ),
+            other => bail!("Readiness failed before setup reported why: {other:?}"),
+        }
+        let answer = tokio::time::timeout(Duration::from_secs(2), queued)
+            .await
+            .context("A queued insertion was left waiting")?;
+        assert!(answer.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_panicking_insertion_thread_answers_the_request_in_hand_and_every_queued_one()
+    -> anyhow::Result<()> {
         let (events, received) = async_channel::bounded(4);
         let input = InputSender::new(events);
         let (inserter, requests) = crate::Inserter::lane();
         let (taken, holding) = async_channel::bounded(1);
         let (release, released) = mpsc::channel();
-        let _worker = InsertionWorker::spawn_with(input.clone(), requests, move |requests| {
-            let _in_hand = requests.recv_blocking()?;
-            taken.try_send(())?;
-            released.recv_timeout(Duration::from_secs(2))?;
-            if panics {
+        let worker = InsertionWorker::spawn_with(
+            input.clone(),
+            requests,
+            || Ok(()),
+            move |(), requests| {
+                let _in_hand = requests.recv_blocking();
+                taken
+                    .try_send(())
+                    .expect("The test awaits the request in hand");
+                released
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("The test queues a second request");
                 // Unwinds without the panic hook, so the payload never reaches test output.
                 panic::resume_unwind(Box::new("private payload"));
-            }
-            bail!("Synthetic setup failure")
-        })?;
+            },
+        )?;
+        worker.ready().await?;
         let permit = input.begin().context("Recording")?;
         let mut in_hand =
             Box::pin(inserter.insert("fixture".into(), permit.clone(), Delivery::Paste));
@@ -463,24 +547,9 @@ mod tests {
             assert!(answer.is_err());
         }
         match received.try_recv() {
-            Ok(Input::Unavailable(reason)) => Ok(reason),
-            _ => bail!("The stopped insertion thread did not report why"),
+            Ok(Input::Unavailable(reason)) => assert!(!reason.contains("private payload")),
+            other => bail!("The stopped insertion thread did not report why: {other:?}"),
         }
-    }
-
-    #[tokio::test]
-    async fn a_stopped_insertion_thread_answers_the_request_in_hand_and_every_queued_one()
-    -> anyhow::Result<()> {
-        assert!(
-            stop_insertion_thread(false)
-                .await?
-                .starts_with("X11 input is unavailable: Synthetic setup failure.")
-        );
-        assert!(
-            !stop_insertion_thread(true)
-                .await?
-                .contains("private payload")
-        );
         Ok(())
     }
 }

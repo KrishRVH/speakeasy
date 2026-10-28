@@ -292,12 +292,19 @@ pub(super) async fn run(
         Some(Shortcuts::bind(&keyboard, options)?)
     };
     let lock = keyboard.lock_modifiers();
+    // The grabs wait for the worker: a chord pressed before this loop runs would hold the keyboard
+    // grabbed until it does.
+    let worker = InsertionWorker::spawn(input.clone(), options.clone(), requests)?;
+    tokio::select! {
+        biased;
+        () = stopping(stop, input) => return Ok(()),
+        ready = worker.ready() => ready?,
+    }
     if let Some(shortcuts) = shortcuts {
         shortcuts.grab(&connection, root, lock)?;
         observe_releases(&connection, root)?;
     }
     let readiness = watch_readable(connection.as_fd())?;
-    let _worker = InsertionWorker::spawn(input.clone(), options.clone(), requests)?;
     input.deliver(ShortcutLabels::new(options).into_desktop_ready());
     let mut tracker = ShortcutTracker {
         connection: &connection,
