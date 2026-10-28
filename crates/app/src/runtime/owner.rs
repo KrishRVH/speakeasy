@@ -1,5 +1,5 @@
 //! The single session authority. Each wake handles one message, advances work whose prerequisites
-//! are satisfied, then publishes a projection of owned state.
+//! are satisfied, then presents a projection of owned state.
 
 use std::{convert::Infallible, ops::ControlFlow, sync::Arc, time::Instant};
 
@@ -16,7 +16,7 @@ use super::{
     LOADING, Meter, Phase, Snapshot, Wiring,
     device::Device,
     now,
-    ports::{CaptureEvent, Capturing, PUBLISH_STOPPED, Ports, Published, SessionId, ShowEvent},
+    ports::{CaptureEvent, PUBLISH_STOPPED, Ports, Published, SessionId, ShowEvent},
     reap,
     session::{Delivered, Session},
     worker::{Completion, Detail, Transcript, Worker},
@@ -75,14 +75,22 @@ impl Notice {
 enum Wake<W> {
     Stop,
     Input(Result<Input, RecvError>),
-    Report(Result<String, RecvError>),
-    Configuration(Result<(), watch::error::RecvError>),
-    Capture(Result<CaptureEvent, RecvError>),
-    Show(Result<ShowEvent, RecvError>),
+    Report(String),
+    Configuration,
+    Capture(CaptureEvent),
+    Show(ShowEvent),
     Worker(Completion<W>),
     Delivered(Result<Delivered, JoinError>),
     Retired,
     Timer,
+}
+
+/// The latest session as the snapshot presents it, during the session and after it ends.
+struct Latest {
+    id: SessionId,
+    started: Instant,
+    /// Whether it became a Show, which the pill presents differently.
+    show: bool,
 }
 
 struct Owner<P: Ports> {
@@ -93,7 +101,7 @@ struct Owner<P: Ports> {
     inputs: Receiver<Input>,
     reports: Receiver<String>,
     stopping: Receiver<Infallible>,
-    events: Sender<CaptureEvent>,
+    capture_events: Sender<CaptureEvent>,
     captures: Receiver<CaptureEvent>,
     show_events: Sender<ShowEvent>,
     shows: Receiver<ShowEvent>,
@@ -101,16 +109,13 @@ struct Owner<P: Ports> {
     permits: InputSender,
     gesture: Gesture,
     session: Option<Session>,
-    latest_id: SessionId,
-    latest_started: Instant,
+    latest: Latest,
 
     worker: Worker<P::Speech>,
     microphone: Device<P::Microphone>,
     screen: Device<P::Screen>,
     /// Abandoned insertions and publications, kept until they finish their own cleanup.
     retiring: Vec<JoinHandle<Delivered>>,
-    /// Whether the latest session was a Show, which the pill presents differently.
-    latest_show: bool,
     /// Whether the cue output is held open, as it is through every session while sounds are on.
     cues_held: bool,
 
@@ -138,7 +143,7 @@ impl<P: Ports> Owner<P> {
             epoch,
         } = wiring;
         let config = changes.borrow_and_update().clone();
-        let (events, captures) = async_channel::bounded(64);
+        let (capture_events, captures) = async_channel::bounded(64);
         let (show_events, shows) = async_channel::bounded(4);
         let desktop_ready = !ports.prepares_desktop();
         let worker = Worker::load(&ports, &config);
@@ -149,20 +154,22 @@ impl<P: Ports> Owner<P> {
             inputs,
             reports,
             stopping,
-            events,
+            capture_events,
             captures,
             show_events,
             shows,
             permits,
             gesture: Gesture::default(),
             session: None,
-            latest_id: SessionId::default(),
-            latest_started: now(),
+            latest: Latest {
+                id: SessionId::default(),
+                started: now(),
+                show: false,
+            },
             worker,
             microphone: Device::Free,
             screen: Device::Free,
             retiring: Vec::new(),
-            latest_show: false,
             cues_held: false,
             snapshots,
             meter,
@@ -188,10 +195,11 @@ impl<P: Ports> Owner<P> {
             biased;
             _ = self.stopping.recv() => Wake::Stop,
             input = self.inputs.recv() => Wake::Input(input),
-            report = self.reports.recv() => Wake::Report(report),
-            changed = self.changes.changed() => Wake::Configuration(changed),
-            event = self.captures.recv() => Wake::Capture(event),
-            event = self.shows.recv() => Wake::Show(event),
+            // Only `Runtime` sends reports and changes, and dropping it stops first.
+            report = self.reports.recv() => report.map_or(Wake::Stop, Wake::Report),
+            change = self.changes.changed() => change.map_or(Wake::Stop, |()| Wake::Configuration),
+            Ok(event) = self.captures.recv() => Wake::Capture(event),
+            Ok(event) = self.shows.recv() => Wake::Show(event),
             () = self.microphone.retired() => Wake::Retired,
             () = self.screen.retired() => Wake::Retired,
             completion = self.worker.completed() => Wake::Worker(completion),
@@ -202,12 +210,9 @@ impl<P: Ports> Owner<P> {
 
     fn handle(&mut self, wake: Wake<P::Speech>) -> ControlFlow<()> {
         let action = match wake {
-            // Only `Runtime` holds the report and configuration senders, and dropping it stops first.
-            Wake::Stop | Wake::Report(Err(_)) | Wake::Configuration(Err(_)) => {
-                return ControlFlow::Break(());
-            },
+            Wake::Stop => return ControlFlow::Break(()),
             Wake::Input(input) => self.handle_input(input)?,
-            Wake::Report(Ok(message)) => {
+            Wake::Report(message) => {
                 // The owner's own state, not a published copy, decides idleness, so a session that
                 // started meanwhile is never overwritten.
                 if self.session.is_none() {
@@ -215,19 +220,19 @@ impl<P: Ports> Owner<P> {
                 }
                 None
             },
-            Wake::Configuration(Ok(())) => {
+            Wake::Configuration => {
                 self.configure();
                 None
             },
-            Wake::Capture(Ok(event)) => {
+            Wake::Capture(event) => {
                 self.handle_capture(event);
                 None
             },
-            Wake::Show(Ok(event)) => {
+            Wake::Show(event) => {
                 self.handle_show(event);
                 None
             },
-            Wake::Capture(Err(_)) | Wake::Show(Err(_)) | Wake::Retired => None,
+            Wake::Retired => None,
             Wake::Worker(completion) => {
                 self.handle_worker(completion);
                 None
@@ -259,8 +264,7 @@ impl<P: Ports> Owner<P> {
                 None
             },
             Input::Cancel => self.gesture.cancel(),
-            // Another shortcut, a session change, or a macOS key-tap outage ended dictation: the
-            // recording ends without the cue that confirms a cancel the user never asked for.
+            // Unlike `Cancel`, no cue: the user never asked to cancel.
             Input::Interrupt => {
                 if self.gesture.cancel().is_some() {
                     self.discard();
@@ -280,7 +284,7 @@ impl<P: Ports> Owner<P> {
 
     fn stop_with_failure<T>(&mut self, message: String) -> ControlFlow<(), T> {
         self.fail(message);
-        self.publish();
+        self.present();
         ControlFlow::Break(())
     }
 
@@ -408,8 +412,7 @@ impl<P: Ports> Owner<P> {
         if text.is_empty() {
             self.end_session(Outcome::Empty);
         } else {
-            let (ports, delivery) = (&self.ports, self.config.delivery());
-            session.insert(|permit| ports.insert(text, permit, delivery));
+            session.insert(|permit| self.ports.insert(text, permit, self.config.delivery()));
         }
     }
 
@@ -427,11 +430,11 @@ impl<P: Ports> Owner<P> {
     /// microphone.
     fn start_show(&mut self, scope: Scope) -> Option<Action> {
         let held = matches!(self.gesture.state(), State::Held | State::HandsFree);
-        let session = self.session.as_mut().filter(|_| held)?;
-        if !session.turn_into_show(scope) {
+        let session = self.session.as_mut()?;
+        if !held || !session.turn_into_show(scope) {
             return None;
         }
-        self.latest_show = true;
+        self.latest.show = true;
         // A microphone still opening sounds the Show cue once it listens.
         if session.is_recording() {
             self.cue_heard(Cue::Show);
@@ -450,7 +453,7 @@ impl<P: Ports> Owner<P> {
         };
         match footage {
             Ok(footage) => {
-                session.footage(footage);
+                session.screen_recorded(footage);
                 self.screen.retire();
             },
             Err(error) => self.fail(format!("{error:#}")),
@@ -462,20 +465,14 @@ impl<P: Ports> Owner<P> {
         let show = self.session.as_ref().is_some_and(Session::is_show);
         let outcome = match result {
             Ok(Delivered::Inserted(Ok(Inserted::Sent))) => Outcome::Done,
-            Ok(Delivered::Inserted(Ok(Inserted::Copied(message)))) => {
-                self.cue(Cue::Copied);
-                Outcome::Copied(message)
-            },
+            Ok(Delivered::Inserted(Ok(Inserted::Copied(message)))) => Outcome::Copied(message),
+            Ok(Delivered::Published(Ok(Published::Copied))) => Outcome::Copied(SHOW_COPIED),
             Ok(
                 Delivered::Inserted(Ok(Inserted::Cancelled))
                 | Delivered::Published(Ok(Published::Cancelled)),
             ) => Outcome::Cancelled,
             Ok(Delivered::Inserted(Ok(Inserted::Unavailable(message)))) => {
                 Outcome::Failed(message.into())
-            },
-            Ok(Delivered::Published(Ok(Published::Copied))) => {
-                self.cue(Cue::Copied);
-                Outcome::Copied(SHOW_COPIED)
             },
             Ok(Delivered::Published(Err(error))) => Outcome::Failed(format!("{error:#}")),
             Err(_) if show => Outcome::Failed(PUBLISH_STOPPED.into()),
@@ -484,6 +481,9 @@ impl<P: Ports> Owner<P> {
                     .into(),
             ),
         };
+        if matches!(outcome, Outcome::Copied(_)) {
+            self.cue(Cue::Copied);
+        }
         // `wait` already joined this delivery, so the session holds no work left to retire.
         self.end_session(outcome);
     }
@@ -516,15 +516,17 @@ impl<P: Ports> Owner<P> {
             self.gesture.cancel();
             return ControlFlow::Continue(());
         };
-        let Some(id) = self.latest_id.next() else {
+        let Some(id) = self.latest.id.next() else {
             return ControlFlow::Break(());
         };
-        self.latest_id = id;
-        self.latest_started = now();
-        self.latest_show = false;
+        self.latest = Latest {
+            id,
+            started: now(),
+            show: false,
+        };
         self.outcome = Outcome::Idle;
         self.notice = None;
-        self.session = Some(Session::new(id, permit, self.latest_started));
+        self.session = Some(Session::new(id, permit, self.latest.started));
         ControlFlow::Continue(())
     }
 
@@ -606,6 +608,28 @@ impl<P: Ports> Owner<P> {
         self.reap_retired_work();
     }
 
+    fn open_queued_capture(&mut self) {
+        if self.permits.is_closed() || !self.microphone.is_free() {
+            return;
+        }
+        let Some(session) = self.session.as_mut().filter(|session| session.is_queued()) else {
+            return;
+        };
+        let microphone = self.config.microphone.as_deref();
+        match self
+            .ports
+            .record_microphone(session.id, microphone, self.capture_events.clone())
+        {
+            Ok(recording) => {
+                self.microphone.open(recording, self.gesture.state());
+                session.opened();
+            },
+            Err(error) => self.fail(format!(
+                "Could not open the microphone ({error}). Try again."
+            )),
+        }
+    }
+
     /// Opens a Show's screen recorder once any previous one has retired, even after its narration
     /// ended, so the Show still gets the screen as it was then.
     fn open_queued_screen(&mut self) {
@@ -623,46 +647,10 @@ impl<P: Ports> Owner<P> {
             .record_screen(session.id, session.started, scope, self.show_events.clone())
         {
             Ok(recorder) => {
-                if self.gesture.state() == State::Processing {
-                    recorder.finish();
-                }
-                self.screen = Device::Open(recorder);
+                self.screen.open(recorder, self.gesture.state());
                 session.screen_opened();
             },
             Err(error) => self.fail(format!("Could not record the screen: {error}")),
-        }
-    }
-
-    /// Publishes a Show once its narration and screen recording are both in.
-    fn start_publishing(&mut self) {
-        if let Some(session) = &mut self.session {
-            let ports = &self.ports;
-            session.publish(|footage, narration, permit| ports.publish(footage, narration, permit));
-        }
-    }
-
-    fn open_queued_capture(&mut self) {
-        if self.permits.is_closed() || !self.microphone.is_free() {
-            return;
-        }
-        let Some(session) = self.session.as_mut().filter(|session| session.is_queued()) else {
-            return;
-        };
-        let microphone = self.config.microphone.as_deref();
-        match self
-            .ports
-            .record_microphone(session.id, microphone, self.events.clone())
-        {
-            Ok(recording) => {
-                if self.gesture.state() == State::Processing {
-                    recording.finish();
-                }
-                self.microphone = Device::Open(recording);
-                session.opened();
-            },
-            Err(error) => self.fail(format!(
-                "Could not open the microphone ({error}). Try again."
-            )),
         }
     }
 
@@ -682,8 +670,16 @@ impl<P: Ports> Owner<P> {
         if self.worker.revive(&self.ports, &self.config) {
             self.notice = Some(Notice::LoadingModel);
         }
-        let (worker, config) = (&mut self.worker, &self.config);
-        session.transcribe(|wav| worker.transcribe(wav, detail, config));
+        session.transcribe(|wav| self.worker.transcribe(wav, detail, &self.config));
+    }
+
+    /// Publishes a Show once its narration and screen recording are both in.
+    fn start_publishing(&mut self) {
+        if let Some(session) = &mut self.session {
+            session.publish(|footage, narration, permit| {
+                self.ports.publish(footage, narration, permit)
+            });
+        }
     }
 
     /// Obsolete insertions and publications finish their own cleanup; they are never aborted, and
@@ -703,16 +699,16 @@ impl<P: Ports> Owner<P> {
         }
     }
 
-    fn publish(&self) {
+    fn present(&self) {
         debug_assert_eq!(self.gesture.state() == State::Idle, self.session.is_none());
         let session = self.session.as_ref();
         let snapshot = Snapshot {
             epoch: self.epoch,
-            id: self.latest_id.into(),
+            id: self.latest.id.into(),
             phase: session.map_or_else(|| self.outcome.phase(), Session::phase),
             hands_free: self.gesture.state() == State::HandsFree,
-            show: self.latest_show,
-            started: self.latest_started,
+            show: self.latest.show,
+            started: self.latest.started,
             message: self.message().to_owned(),
             model: self.worker.model(),
             desktop_ready: self.desktop_ready,
@@ -750,7 +746,7 @@ impl<P: Ports> Owner<P> {
 
 pub(super) async fn run<P: Ports>(wiring: Wiring<P>) {
     let mut owner = Owner::new(wiring);
-    owner.publish();
+    owner.present();
     loop {
         let wake = owner.wait().await;
         if owner.handle(wake).is_break() {
@@ -758,7 +754,7 @@ pub(super) async fn run<P: Ports>(wiring: Wiring<P>) {
         }
         owner.advance();
         owner.hold_cues();
-        owner.publish();
+        owner.present();
     }
     owner.shutdown().await;
 }

@@ -46,11 +46,6 @@ pub(crate) enum CaptureEvent {
     Finished(SessionId, anyhow::Result<Option<Sealed>>),
 }
 
-/// A Show recorder's report about the session that opened it.
-pub(crate) enum ShowEvent {
-    Finished(SessionId, anyhow::Result<Footage>),
-}
-
 impl CaptureEvent {
     pub(super) const fn session(&self) -> SessionId {
         match self {
@@ -71,6 +66,26 @@ impl Drop for Sealed {
     fn drop(&mut self) {
         self.wav.zeroize();
     }
+}
+
+/// A Show recorder's report about the session that opened it.
+pub(crate) enum ShowEvent {
+    Finished(SessionId, anyhow::Result<Footage>),
+}
+
+/// What a Show's screen side recorded: everything but the narration, lasting until recording
+/// stopped, and the frames.
+pub(crate) struct Footage {
+    pub recording: Recording,
+    pub journal: Journal,
+}
+
+/// What publishing a Show did.
+pub(crate) enum Published {
+    /// The bundle was written and its summary copied.
+    Copied,
+    /// Cancellation came first; no bundle appeared and nothing was copied.
+    Cancelled,
 }
 
 /// A recording device the owner opens, finishes, and retires: the microphone or a Show's
@@ -119,21 +134,6 @@ pub(crate) trait Speech: Send + Sync + 'static {
 
     /// Terminates the engine; resolves only once its process has been reaped.
     fn stop(&mut self) -> impl Future<Output = ()> + Send;
-}
-
-/// What a Show's screen side recorded: everything but the narration, lasting until recording
-/// stopped, and the frames.
-pub(crate) struct Footage {
-    pub recording: Recording,
-    pub journal: Journal,
-}
-
-/// What publishing a Show did.
-pub(crate) enum Published {
-    /// The bundle was written and its summary copied.
-    Copied,
-    /// Cancellation came first; no bundle appeared and nothing was copied.
-    Cancelled,
 }
 
 pub(crate) trait Ports: Send + 'static {

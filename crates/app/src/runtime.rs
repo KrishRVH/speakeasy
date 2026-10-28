@@ -175,6 +175,75 @@ impl Runtime {
     }
 }
 
+impl<Owner> Runtime<Owner> {
+    /// Wires the owner's lanes and hands its loop to `run`, which decides where it executes.
+    fn host<P: Ports>(
+        config: Config,
+        snapshots: watch::Sender<Snapshot>,
+        meter: watch::Sender<Meter>,
+        ports: P,
+        input: InputSender,
+        inputs: Receiver<Input>,
+        run: impl FnOnce(Wiring<P>) -> io::Result<Owner>,
+    ) -> anyhow::Result<Self> {
+        let epoch = snapshots.borrow().epoch;
+        let (configuration, changes) = watch::channel(config);
+        // One report waits for the owner's next wake, and one arriving meanwhile is dropped. The
+        // retention sweep repeats its own; a Settings or overlay failure is not repeated.
+        let (reports, reported) = async_channel::bounded(1);
+        let (stop, stopping) = async_channel::bounded(1);
+        let owner = run(Wiring {
+            changes,
+            inputs,
+            reports: reported,
+            snapshots,
+            meter,
+            permits: input.clone(),
+            stopping,
+            ports,
+            epoch,
+        })?;
+        Ok(Self {
+            owner,
+            input,
+            configuration,
+            reports,
+            stop,
+        })
+    }
+
+    /// Shows `message` as a failure unless a session is under way, which it must not interrupt.
+    /// A report already waiting absorbs this one; a stopped owner hands `message` back.
+    pub(crate) fn report(&self, message: String) -> Result<(), String> {
+        match self.reports.try_send(message) {
+            Ok(()) | Err(TrySendError::Full(_)) => Ok(()),
+            Err(TrySendError::Closed(message)) => Err(message),
+        }
+    }
+
+    pub(crate) fn configure(&self, config: ValidConfig) {
+        if self.configuration.borrow().change_to(&config) < Change::Session {
+            return;
+        }
+        // Revoke now, so a preparing insertion cannot commit before the owner applies the change.
+        self.input.cancel();
+        self.configuration.send_replace(config.into_inner());
+    }
+
+    /// Wakes the owner on its stop lane before closing input, so a normal pause never reports a
+    /// shortcut failure or drains queued presses.
+    pub(crate) fn request_stop(&self) {
+        self.stop.close();
+        self.input.close();
+    }
+}
+
+impl<Owner> Drop for Runtime<Owner> {
+    fn drop(&mut self) {
+        self.request_stop();
+    }
+}
+
 /// The production side effects: native devices, local speech, insertion, Show publishing, and
 /// sound cues.
 struct Desktop {
@@ -245,76 +314,6 @@ impl Ports for Desktop {
 
     fn hold_cues(&self, held: bool) {
         self.sounds.hold(held);
-    }
-}
-
-impl<Owner> Runtime<Owner> {
-    /// Wires the owner's lanes and hands its loop to `run`, which decides where it executes.
-    fn host<P: Ports>(
-        config: Config,
-        snapshots: watch::Sender<Snapshot>,
-        meter: watch::Sender<Meter>,
-        ports: P,
-        input: InputSender,
-        inputs: Receiver<Input>,
-        run: impl FnOnce(Wiring<P>) -> io::Result<Owner>,
-    ) -> anyhow::Result<Self> {
-        let epoch = snapshots.borrow().epoch;
-        let (configuration, changes) = watch::channel(config);
-        // One report waits for the owner's next wake, and one arriving meanwhile is dropped. The
-        // retention sweep repeats its own; a Settings or overlay failure is not repeated.
-        let (reports, reported) = async_channel::bounded(1);
-        let (stop, stopping) = async_channel::bounded(1);
-        let owner = run(Wiring {
-            changes,
-            inputs,
-            reports: reported,
-            snapshots,
-            meter,
-            permits: input.clone(),
-            stopping,
-            ports,
-            epoch,
-        })?;
-        Ok(Self {
-            owner,
-            input,
-            configuration,
-            reports,
-            stop,
-        })
-    }
-
-    /// Shows `message` as a failure unless a session is under way, which it must not interrupt.
-    /// A report already waiting absorbs this one; a stopped owner hands `message` back.
-    pub(crate) fn report(&self, message: String) -> Result<(), String> {
-        match self.reports.try_send(message) {
-            Ok(()) | Err(TrySendError::Full(_)) => Ok(()),
-            Err(TrySendError::Closed(message)) => Err(message),
-        }
-    }
-
-    pub(crate) fn configure(&self, config: ValidConfig) {
-        // The owner never reads presentation settings, so they cannot disturb a session.
-        if self.configuration.borrow().change_to(&config) < Change::Session {
-            return;
-        }
-        // Revoke now, so a preparing insertion cannot commit before the owner applies the change.
-        self.input.cancel();
-        self.configuration.send_replace(config.into_inner());
-    }
-
-    /// Wakes the owner on its stop lane before closing input, so a normal pause never reports a
-    /// shortcut failure or drains queued presses.
-    pub(crate) fn request_stop(&self) {
-        self.stop.close();
-        self.input.close();
-    }
-}
-
-impl<Owner> Drop for Runtime<Owner> {
-    fn drop(&mut self) {
-        self.request_stop();
     }
 }
 
