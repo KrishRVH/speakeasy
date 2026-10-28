@@ -14,9 +14,17 @@ if [[ "$(uname -s)" != Linux || "$(uname -m)" != x86_64 ]]; then
   echo "Linux packaging requires an x86_64 Linux builder." >&2
   exit 1
 fi
+# Distribution packages run on Ubuntu 22.04's glibc and later.
+glibc_floor=GLIBC_2.35
+newest_glibc() {
+  readelf --version-info "$1" | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -1
+}
+above_floor() {
+  [[ "$(printf '%s\n' "$glibc_floor" "$1" | sort -V | tail -1)" != "$glibc_floor" ]]
+}
 cargo build --release --locked -p speakeasy
-required=$(readelf --version-info target/release/speakeasy | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -1)
-if [[ "$native" == false && "$(printf '%s\n' GLIBC_2.35 "$required" | sort -V | tail -1)" != GLIBC_2.35 ]]; then
+required=$(newest_glibc target/release/speakeasy)
+if [[ "$native" == false ]] && above_floor "$required"; then
   echo "Binary requires $required. Build distribution packages on Ubuntu 22.04 (glibc 2.35), or use --native-tar for this machine." >&2
   exit 1
 fi
@@ -59,9 +67,9 @@ fi
 # Check bundled ELF dependencies as well as the app against the same ABI floor. find lists every
 # file; rg would apply the repository's .gitignore, whose `*.so` hides unversioned libraries.
 while IFS= read -r -d '' library; do
-  versions=$(readelf --version-info "$library" 2> /dev/null | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -1 || true)
-  if [[ -n "$versions" && "$(printf '%s\n' GLIBC_2.35 "$versions" | sort -V | tail -1)" != GLIBC_2.35 ]]; then
-    echo "Bundled library requires $versions: $library" >&2
+  needed=$(newest_glibc "$library" 2> /dev/null || true)
+  if [[ -n "$needed" ]] && above_floor "$needed"; then
+    echo "Bundled library requires $needed: $library" >&2
     exit 1
   fi
 done < <(find "$app_dir/usr/lib" -type f -print0)
