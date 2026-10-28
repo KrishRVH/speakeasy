@@ -15,7 +15,7 @@ use crate::{
     icons::KEYSTONE,
     setup::Progress,
     shell::Services,
-    status::Indicator,
+    status::{Indicator, ServiceState},
     theme::{Palette, alpha, mix},
 };
 
@@ -71,7 +71,7 @@ impl Render for Settings {
             .gap(px(12.0))
             .border_t_1()
             .border_color(alpha(palette.lamp, 0.14))
-            .child(self.commands(&ui))
+            .child(self.commands(&ui, unsaved))
             .child(self.status_line(palette, unsaved));
         div()
             .on_key_down(cycle_focus)
@@ -300,22 +300,13 @@ impl Settings {
         ui.button(label, Action::Language).into_any_element()
     }
 
-    fn commands(&self, ui: &Ui<'_>) -> impl IntoElement {
+    fn commands(&self, ui: &Ui<'_>, unsaved: bool) -> impl IntoElement {
         let services = ui.cx.global::<Services>();
         let running = services.running();
-        // Remedies across the app say "Resume dictation", as the tray does, once there is an
-        // engine to resume.
-        let (label, action) = if is_demo(ui.cx) {
-            ("Replay preview", Action::Preview)
-        } else if running {
-            ("Save changes", Action::Save)
-        } else if services.config.needs_engine() {
-            ("Enable dictation", Action::Save)
-        } else {
-            ("Resume dictation", Action::Save)
-        };
+        let primary = primary_command(is_demo(ui.cx), services.service_state(), unsaved)
+            .filter(|_| !self.is_setting_up());
         row()
-            .when(!self.is_setting_up(), |row| {
+            .when_some(primary, |row, (label, action)| {
                 row.child(ui.button(label, action))
             })
             .when(running, |row| row.child(ui.button("Pause", Action::Pause)))
@@ -425,6 +416,29 @@ impl Ui<'_> {
 /// Controls side by side.
 fn row() -> Div {
     div().flex().gap(ROW_GAP)
+}
+
+/// The command that saves or resumes, labeled with what it does. Remedies across the app say
+/// "Resume dictation", which resumes the saved settings as the tray does once there is an engine to
+/// resume; edits the file does not hold save first.
+fn primary_command(
+    demo: bool,
+    service: ServiceState,
+    unsaved: bool,
+) -> Option<(&'static str, Action)> {
+    if demo {
+        return Some(("Replay preview", Action::Preview));
+    }
+    match service {
+        ServiceState::Running => Some(("Save changes", Action::Save)),
+        ServiceState::NotSetUp => Some(("Enable dictation", Action::Save)),
+        ServiceState::Paused | ServiceState::Pausing if unsaved => {
+            Some(("Save and resume", Action::Save))
+        },
+        ServiceState::Paused => Some(("Resume dictation", Action::Resume)),
+        // As in the tray, nothing resumes until pausing ends.
+        ServiceState::Pausing | ServiceState::Quitting => None,
+    }
 }
 
 fn setup_detail(progress: Option<Progress>) -> String {
@@ -546,4 +560,39 @@ fn keystone_rule(palette: &'static Palette) -> impl IntoElement {
         .child(rule())
         .child(jewel(palette.lamp, 6.0))
         .child(rule())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resume_dictation_resumes_and_only_unsaved_edits_save_first() {
+        // Each label, and whether its command saves the draft.
+        let command = |service, unsaved| {
+            primary_command(false, service, unsaved)
+                .map(|(label, action)| (label, matches!(action, Action::Save)))
+        };
+        assert_eq!(
+            command(ServiceState::Paused, false),
+            Some(("Resume dictation", false))
+        );
+        assert_eq!(
+            command(ServiceState::Paused, true),
+            Some(("Save and resume", true))
+        );
+        assert_eq!(
+            command(ServiceState::Pausing, true),
+            Some(("Save and resume", true))
+        );
+        assert_eq!(command(ServiceState::Pausing, false), None);
+        assert_eq!(
+            command(ServiceState::Running, false),
+            Some(("Save changes", true))
+        );
+        assert_eq!(
+            command(ServiceState::NotSetUp, true),
+            Some(("Enable dictation", true))
+        );
+    }
 }

@@ -113,6 +113,10 @@ impl Settings {
             Action::Toggle(setting) => self.toggle(setting, cx),
             Action::Theme => self.cycle_theme(cx),
             Action::Save => self.save(cx),
+            Action::Resume => {
+                cx.update_global::<Services, _>(|services, cx| services.resume(cx));
+                self.notice = None;
+            },
             Action::Pause => {
                 cx.update_global::<Services, _>(|services, cx| services.stop(cx));
                 self.notice = None;
@@ -505,13 +509,15 @@ enum Action {
     Toggle(Setting),
     Theme,
     Save,
+    Resume,
     Pause,
     Preview,
     Quit,
 }
 
 impl Action {
-    /// A stable element id, so a button keeps keyboard focus when its label changes.
+    /// A stable element id, so a button keeps keyboard focus when its label changes. Saving and
+    /// resuming share the primary button, which keeps focus as it turns from one to the other.
     const fn element_id(self) -> &'static str {
         match self {
             Self::Setup => "setup",
@@ -528,7 +534,7 @@ impl Action {
             Self::Toggle(Setting::PlaySounds) => "play-sounds",
             Self::Toggle(Setting::DesktopBindings) => "desktop-bindings",
             Self::Theme => "theme",
-            Self::Save => "save",
+            Self::Save | Self::Resume => "primary",
             Self::Pause => "pause",
             Self::Preview => "preview",
             Self::Quit => "quit",

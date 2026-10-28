@@ -290,8 +290,10 @@ impl Services {
         }
     }
 
-    fn resume(&mut self, cx: &App) {
-        if self.lifecycle.pausing() {
+    /// Checks the saved settings off the UI thread, then enables dictation with them, unless
+    /// dictation is on, pausing, or quitting. A dead runtime retires first.
+    pub(super) fn resume(&mut self, cx: &App) {
+        if self.running() || self.lifecycle.pausing() {
             return;
         }
         if self.runtime().is_some() {
