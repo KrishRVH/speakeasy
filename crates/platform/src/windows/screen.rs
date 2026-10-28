@@ -132,8 +132,23 @@ impl Display {
     }
 
     fn area(self) -> Bounds {
-        let [left, top, right, bottom] = self.bounds.map(f64::from);
-        Bounds {
+        let [left, top, right, bottom] = self.bounds;
+        Bounds::from(RECT {
+            left,
+            top,
+            right,
+            bottom,
+        })
+    }
+}
+
+/// A rectangle of desktop pixels, measured in `f64` so a span across the whole coordinate range
+/// cannot overflow.
+impl From<RECT> for Bounds {
+    fn from(rect: RECT) -> Self {
+        let [left, top, right, bottom] =
+            [rect.left, rect.top, rect.right, rect.bottom].map(f64::from);
+        Self {
             origin: [left, top],
             size: [right - left, bottom - top],
         }
@@ -205,21 +220,10 @@ fn window_part(display: Display, window: Window) -> Option<Part> {
                 u32::try_from(size_of::<RECT>()).ok()?,
             ) >= 0
     };
-    let RECT {
-        left,
-        top,
-        right,
-        bottom,
-    } = frame;
-    let [left, top, right, bottom] = [left, top, right, bottom].map(f64::from);
-    placed
-        .then(|| {
-            display.area().part_covered_by(Bounds {
-                origin: [left, top],
-                size: [right - left, bottom - top],
-            })
-        })
-        .flatten()
+    if !placed {
+        return None;
+    }
+    display.area().part_covered_by(Bounds::from(frame))
 }
 
 pub(crate) fn display_under_pointer() -> anyhow::Result<crate::screen::Display> {

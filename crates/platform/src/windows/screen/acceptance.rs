@@ -191,20 +191,10 @@ fn a_window_or_area_capture_reads_back_only_its_part() -> anyhow::Result<()> {
     thread::sleep(COMPOSED);
     set_affinity(scene.overlay, WDA_NONE)?;
     thread::sleep(COMPOSED);
-    let area = scene.area()?;
-    let RECT {
-        left,
-        top,
-        right,
-        bottom,
-    } = area;
     let part = display
         .native
         .area()
-        .part_covered_by(Bounds {
-            origin: [left, top].map(f64::from),
-            size: [right - left, bottom - top].map(f64::from),
-        })
+        .part_covered_by(Bounds::from(scene.area()?))
         .context("The scene lies off its display")?;
     let shown = |x, y| {
         captured_color(
