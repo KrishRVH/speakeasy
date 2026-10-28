@@ -111,15 +111,6 @@ impl Chord {
         self.interrupt();
     }
 
-    /// Ends a hold whose key edges went unseen, then waits for the chord's release. A dictation
-    /// already released lost nothing the owner relies on, so it still delivers.
-    #[cfg(any(target_os = "macos", test))]
-    fn interrupt_hold(&mut self, input: &InputSender) {
-        if self.interrupt() {
-            Action::Interrupt.deliver(input);
-        }
-    }
-
     /// Whether the chord went down and has not been seen to come up.
     #[cfg(any(target_os = "macos", test))]
     fn awaits_release(&self) -> bool {
@@ -211,7 +202,8 @@ enum Action {
     Show(Scope),
     Pin(Taps),
     Cancel,
-    /// Interrupt, then release: another shortcut or a session change ended the hold.
+    /// Interrupt, then release: another shortcut, a session change, or unseen key events ended
+    /// dictation.
     Interrupt,
 }
 
@@ -291,7 +283,8 @@ impl Decision {
     }
 }
 
-/// Modifier keys held right now, as the paste wait and Show ink read them.
+/// Modifier keys held, as the paste wait and Show ink read them now or a macOS key event's flags
+/// report them.
 #[derive(Clone, Copy, Default)]
 pub(super) struct Modifiers {
     pub(super) shift: bool,
@@ -503,25 +496,27 @@ impl Mac {
         self.chord.interrupt_dictation(input);
     }
 
-    /// Key events went by unseen while the tap was off: a hold, whose edges the owner can no
-    /// longer trust, ends and waits for Fn's release, and no Shift tap pairs across the gap.
+    /// Key events went by unseen while the tap was off, so no Shift tap pairs across the gap, and a
+    /// hold, whose edges the owner can no longer trust, ends and waits for Fn's release. A dictation
+    /// already released needs no more key edges, so it keeps its paste.
     pub(super) fn missed_events(&mut self, input: &InputSender) {
         self.taps.interrupt();
-        self.chord.interrupt_hold(input);
+        if self.chord.interrupt() {
+            Action::Interrupt.deliver(input);
+        }
     }
 
-    /// Decides one event-tap event at `at`. A hold whose Fn release the tap missed ends once both
-    /// the event's flags and `keyboard_fn`, whether the keyboard itself holds Fn, show Fn up.
-    /// `keyboard_fn` is asked only then, and only during a hold.
+    /// Decides one event-tap event at `at`, first ending a hold whose Fn release the tap missed, as
+    /// the event shows. `keyboard_fn` reports whether the keyboard itself holds Fn; it is asked only
+    /// during a hold, to confirm event flags that leave Fn out.
     pub(super) fn observe(
         &mut self,
         event: MacEvent,
         keyboard_fn: impl FnOnce() -> bool,
         at: Instant,
     ) -> Decision {
-        let holding = self.chord.awaits_release();
-        let fn_held = event.fn_held_before(|| holding && keyboard_fn());
-        let missed_release = self.chord.reconcile(fn_held);
+        let missed_release =
+            self.chord.awaits_release() && self.chord.reconcile(event.fn_held_before(keyboard_fn));
         self.decide(event, at).after_missed_release(missed_release)
     }
 

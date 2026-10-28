@@ -29,8 +29,8 @@ pub enum Input {
     Pin(Taps),
     /// The user discards the active session, which revokes pending insertion.
     Cancel,
-    /// Another shortcut or a session change ended the hold: discards the active session like
-    /// [`Cancel`](Self::Cancel), but the user asked for something else, not a cancel.
+    /// Another shortcut, a session change, or unseen key events ended dictation: discards the
+    /// active session like [`Cancel`](Self::Cancel), though the user never asked to cancel.
     Interrupt,
     /// Starts or finishes hands-free capture.
     Toggle,
