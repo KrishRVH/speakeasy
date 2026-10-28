@@ -6,6 +6,7 @@
 pub(crate) mod screen;
 
 use std::{
+    cell::OnceCell,
     ffi::c_void,
     panic::{self, AssertUnwindSafe},
     ptr::NonNull,
@@ -17,6 +18,7 @@ use anyhow::{Context as _, anyhow, bail, ensure};
 use block2::RcBlock;
 use core_foundation::{
     base::{TCFType, kCFAllocatorDefault},
+    mach_port::CFMachPort,
     runloop::{
         CFRunLoop, CFRunLoopActivity, CFRunLoopObserver, CFRunLoopObserverContext,
         CFRunLoopObserverCreate, CFRunLoopObserverRef, kCFRunLoopCommonModes, kCFRunLoopEntry,
@@ -84,7 +86,7 @@ pub(super) fn start(
     let control = Arc::new(MonitorControl::default());
     let thread = OwnedThread::spawn("input-monitor", {
         let control = Arc::clone(&control);
-        move || monitor(&input, &control, policy)
+        move || monitor(&input, &control, &policy)
     })?;
     let monitor = Monitor {
         control,
@@ -196,7 +198,7 @@ fn lifecycle_observers(input: &InputSender, policy: &Arc<SharedPolicy>) -> Vec<O
     ]
 }
 
-fn monitor(input: &InputSender, control: &MonitorControl<CFRunLoop>, policy: Arc<SharedPolicy>) {
+fn monitor(input: &InputSender, control: &MonitorControl<CFRunLoop>, policy: &SharedPolicy) {
     if let Err(error) = run_event_loop(input, control, policy)
         && !control.stopping()
         && !input.is_closed()
@@ -210,12 +212,14 @@ fn monitor(input: &InputSender, control: &MonitorControl<CFRunLoop>, policy: Arc
 fn run_event_loop(
     input: &InputSender,
     control: &MonitorControl<CFRunLoop>,
-    policy: Arc<SharedPolicy>,
+    policy: &SharedPolicy,
 ) -> anyhow::Result<()> {
     if control.stopping() {
         return Ok(());
     }
-    let tap = shortcut_tap(input, policy)?;
+    let port = TapPort::default();
+    let tap = shortcut_tap(input, policy, &port)?;
+    port.publish(tap.mach_port());
     let source = tap.mach_port().create_runloop_source(0).map_err(|()| {
         anyhow!("Cannot watch the dictation shortcut. Resume dictation to try again.")
     })?;
@@ -255,32 +259,69 @@ fn run_event_loop(
     Ok(())
 }
 
-fn shortcut_tap(
-    input: &InputSender,
-    policy: Arc<SharedPolicy>,
-) -> anyhow::Result<CGEventTap<'static>> {
-    let input = input.clone();
-    CGEventTap::new(
-        CGEventTapLocation::Session,
-        CGEventTapPlacement::HeadInsertEventTap,
-        CGEventTapOptions::Default,
-        vec![
-            CGEventType::KeyDown,
-            CGEventType::KeyUp,
-            CGEventType::FlagsChanged,
-        ],
-        move |_, kind, event| {
-            // A panic must not unwind into the OS. Closing the input makes the owner cancel rather
-            // than continue with lost key edges.
-            panic::catch_unwind(AssertUnwindSafe(|| {
-                observe(&input, &mut policy.lock(), kind, event)
-            }))
-            .unwrap_or_else(|_| {
-                input.close();
-                CallbackResult::Keep
-            })
-        },
-    )
+/// The event tap's port, which the tap's own callback needs to turn the tap back on.
+#[derive(Default)]
+struct TapPort {
+    #[expect(
+        clippy::disallowed_types,
+        reason = "macOS returns the tap's port only once the callback that needs it is registered"
+    )]
+    port: OnceCell<CFMachPort>,
+}
+
+impl TapPort {
+    /// Records the port before the run loop can deliver any event to the tap.
+    fn publish(&self, port: &CFMachPort) {
+        self.port.get_or_init(|| port.clone());
+    }
+
+    /// Turns the tap back on after macOS turned it off; returns whether it is on.
+    fn reenable(&self) -> bool {
+        let Some(port) = self.port.get() else {
+            return false;
+        };
+        // SAFETY: both crates name the same Core Foundation port, which `self` keeps alive
+        // throughout this borrow.
+        let port = unsafe {
+            &*port
+                .as_concrete_TypeRef()
+                .cast::<objc2_core_foundation::CFMachPort>()
+        };
+        objc2_core_graphics::CGEvent::tap_enable(port, true);
+        objc2_core_graphics::CGEvent::tap_is_enabled(port)
+    }
+}
+
+fn shortcut_tap<'tap>(
+    input: &'tap InputSender,
+    policy: &'tap SharedPolicy,
+    port: &'tap TapPort,
+) -> anyhow::Result<CGEventTap<'tap>> {
+    // SAFETY: run_event_loop drops the tap before the state it borrows and adds the tap's source
+    // only to this thread's run loop, so the callback runs only here while that state lives.
+    unsafe {
+        CGEventTap::new_unchecked(
+            CGEventTapLocation::Session,
+            CGEventTapPlacement::HeadInsertEventTap,
+            CGEventTapOptions::Default,
+            vec![
+                CGEventType::KeyDown,
+                CGEventType::KeyUp,
+                CGEventType::FlagsChanged,
+            ],
+            move |_, kind, event| {
+                // A panic must not unwind into the OS. Closing the input makes the owner cancel
+                // rather than continue with lost key edges.
+                panic::catch_unwind(AssertUnwindSafe(|| {
+                    observe(input, &mut policy.lock(), port, kind, event)
+                }))
+                .unwrap_or_else(|_| {
+                    input.close();
+                    CallbackResult::Keep
+                })
+            },
+        )
+    }
     .map_err(|()| {
         anyhow!(
             "Allow Speakeasy in System Settings › Privacy & Security › Accessibility. If it is already on, remove it with − and add it again, then resume dictation."
@@ -309,6 +350,7 @@ extern "C" fn on_run_loop_entry(
 fn observe(
     input: &InputSender,
     policy: &mut keyboard::Mac,
+    port: &TapPort,
     kind: CGEventType,
     event: &CGEvent,
 ) -> CallbackResult {
@@ -316,9 +358,12 @@ fn observe(
         kind,
         CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
     ) {
-        // macOS dropped key events while the tap was disabled; closing makes the owner cancel
-        // instead of trusting lost key edges.
-        input.close();
+        // Key events went by unseen while the tap was off, so the owner cannot trust the hold's
+        // edges: dictation ends and the chord waits for its release while the tap watches again.
+        policy.interrupt(input);
+        if !port.reenable() {
+            input.close();
+        }
         return CallbackResult::Keep;
     }
     if event.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA) == OWN_INPUT {

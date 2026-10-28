@@ -27,7 +27,8 @@ use windows_sys::{
                 WTSUnRegisterSessionNotification,
             },
             Threading::{
-                CreateEventW, GetCurrentThreadId, INFINITE, SetEvent, WaitForSingleObject,
+                CreateEventW, GetCurrentThread, GetCurrentThreadId, INFINITE, SetEvent,
+                SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL, WaitForSingleObject,
             },
         },
         UI::{
@@ -265,6 +266,13 @@ fn run_event_loop(input: &InputSender, wake: &OwnedHandle) -> io::Result<()> {
     // A stop that came first never installs the hook.
     if stop_requested(wake) {
         return Ok(());
+    }
+    // Windows silently removes a low-level hook whose callback misses LowLevelHooksTimeout, as a
+    // starved thread does on a busy system. This thread only decides key events and waits, so it
+    // may preempt other work.
+    // SAFETY: the pseudo-handle names this thread, and the call takes values only.
+    unsafe {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
     }
     create_message_queue();
     let _hook = KeyboardHook::install()?;
