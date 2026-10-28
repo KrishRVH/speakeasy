@@ -33,9 +33,10 @@ use core_graphics::{
 };
 use objc2::{MainThreadMarker, rc::Retained, runtime::ProtocolObject};
 use objc2_app_kit::{
-    NSAlert, NSEvent, NSFloatingWindowLevel, NSPasteboard, NSScreen, NSView, NSWindow,
-    NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
-    NSWorkspaceSessionDidResignActiveNotification, NSWorkspaceWillSleepNotification,
+    NSAlert, NSEvent, NSFloatingWindowLevel, NSPasteboard, NSPasteboardContentsOptions,
+    NSPasteboardTypeString, NSScreen, NSView, NSWindow, NSWindowCollectionBehavior,
+    NSWindowStyleMask, NSWorkspace, NSWorkspaceSessionDidResignActiveNotification,
+    NSWorkspaceWillSleepNotification,
 };
 use objc2_foundation::{
     NSDistributedNotificationCenter, NSNotification, NSNotificationCenter, NSObjectProtocol,
@@ -519,16 +520,27 @@ pub(super) struct Insert;
 impl insertion::NativeInsert for Insert {
     /// Every event is created before commit, so a failed creation cannot leave partial input.
     type Keys = Vec<CGEvent>;
-    type Lease = arboard::Clipboard;
+    type Lease = Retained<NSPasteboard>;
     /// The pasteboard change count, which every change advances.
     type Mark = isize;
 
-    fn acquire(&mut self) -> anyhow::Result<arboard::Clipboard> {
-        Ok(arboard::Clipboard::new()?)
+    fn acquire(&mut self) -> anyhow::Result<Retained<NSPasteboard>> {
+        Ok(NSPasteboard::generalPasteboard())
     }
 
-    fn write(&mut self, mut lease: arboard::Clipboard, text: &str) -> anyhow::Result<()> {
-        lease.set_text(text)?;
+    /// Keeps the text on this Mac, out of Universal Clipboard, and marks it transient before it
+    /// arrives, so clipboard managers that follow nspasteboard.org never see it unmarked.
+    fn write(&mut self, pasteboard: Retained<NSPasteboard>, text: &str) -> anyhow::Result<()> {
+        pasteboard.prepareForNewContentsWithOptions(NSPasteboardContentsOptions::CurrentHostOnly);
+        // SAFETY: AppKit's exported pasteboard type is an immutable constant.
+        let string = unsafe { NSPasteboardTypeString };
+        ensure!(
+            pasteboard.setString_forType(
+                &NSString::new(),
+                &NSString::from_str("org.nspasteboard.TransientType")
+            ) && pasteboard.setString_forType(&NSString::from_str(text), string),
+            "Cannot place the text on the clipboard"
+        );
         Ok(())
     }
 

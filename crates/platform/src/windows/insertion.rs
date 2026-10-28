@@ -6,6 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::Context as _;
 use windows_sys::Win32::{
     System::Threading::GetCurrentProcessId,
     UI::{
@@ -16,6 +17,10 @@ use windows_sys::Win32::{
 
 use super::{modifiers, send_input, synthetic_key};
 use crate::{Inserted, insertion::NativeInsert};
+
+/// Registered clipboard formats whose zero `DWORD` keeps a paste's text out of Windows clipboard
+/// history and cloud sync. Apps still paste it, and it stays on the clipboard.
+const PRIVATE_FORMATS: [&str; 2] = ["CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"];
 
 pub(crate) fn copy_text(text: &str) -> anyhow::Result<()> {
     let text = windows_line_endings(text);
@@ -45,8 +50,19 @@ impl NativeInsert for Insert {
         open_clipboard()
     }
 
+    /// Marks the clipboard private before the text arrives, so no failure leaves the text
+    /// unmarked.
     fn write(&mut self, lease: clipboard_win::Clipboard, text: &str) -> anyhow::Result<()> {
-        clipboard_win::raw::set_string(&windows_line_endings(text))?;
+        clipboard_win::raw::empty()?;
+        for name in PRIVATE_FORMATS {
+            let format = clipboard_win::raw::register_format(name)
+                .context("Cannot register a clipboard format")?;
+            clipboard_win::raw::set_without_clear(format.get(), &0_u32.to_ne_bytes())?;
+        }
+        clipboard_win::raw::set_string_with(
+            &windows_line_endings(text),
+            clipboard_win::options::NoClear,
+        )?;
         drop(lease);
         Ok(())
     }
@@ -165,7 +181,7 @@ fn open_clipboard() -> anyhow::Result<clipboard_win::Clipboard> {
 mod tests {
     use std::{process::Command, ptr::null};
 
-    use anyhow::{Context as _, ensure};
+    use anyhow::ensure;
     use windows_sys::Win32::{
         Foundation::GENERIC_ALL,
         System::StationsAndDesktops::{
@@ -222,6 +238,16 @@ mod tests {
             insert.holds(TEXT, &mark)?,
             "The clipboard lost the text just written"
         );
+        {
+            let _clipboard = open_clipboard()?;
+            for name in PRIVATE_FORMATS {
+                let format = clipboard_win::raw::register_format(name)
+                    .context("Cannot register a clipboard format")?;
+                let mut value = [u8::MAX; 4];
+                clipboard_win::raw::get(format.get(), &mut value)?;
+                assert_eq!(value, [0; 4], "{name} lets the pasted text into history");
+            }
+        }
         copy_without_text()?;
         assert!(
             !insert.holds(TEXT, &mark)?,

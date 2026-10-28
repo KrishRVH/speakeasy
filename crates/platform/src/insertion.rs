@@ -273,7 +273,8 @@ pub(crate) trait NativeInsert {
 
     /// Takes the clipboard; this may block while another application holds it.
     fn acquire(&mut self) -> anyhow::Result<Self::Lease>;
-    /// Places `text` on the clipboard, then releases the lease.
+    /// Places `text` on the clipboard, marked to stay out of clipboard history and other devices,
+    /// then releases the lease.
     fn write(&mut self, lease: Self::Lease, text: &str) -> anyhow::Result<()>;
     /// The clipboard's current state.
     fn mark(&mut self) -> Self::Mark;

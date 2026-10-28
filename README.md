@@ -328,9 +328,11 @@ releases the shortcut and the model until you resume.
 
 ### Text delivery
 
-By default the text is pasted through the clipboard and stays there. **Keep clipboard** types it as
-direct input instead, which some editors reject. Protected fields and elevated Windows apps may
-refuse either method, and no OS submission can confirm that an editor accepted the text.
+By default the text is pasted through the clipboard and stays there. Windows clipboard history and
+cloud clipboard skip it, as do Universal Clipboard and Mac clipboard managers that honor transient
+data; a copied Show summary is ordinary clipboard text. **Keep clipboard** types the text as direct
+input instead, which some editors reject. Protected fields and elevated Windows apps may refuse
+either method, and no OS submission can confirm that an editor accepted the text.
 
 ## Build and verify
 
