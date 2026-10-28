@@ -1,5 +1,4 @@
 #!/bin/sh
 set -eu
 app_path=$(readlink -f -- "$0")
-app_dir=$(CDPATH='' cd -- "$(dirname -- "$app_path")" && pwd)
-exec "$app_dir/usr/bin/speakeasy" "$@"
+exec "$(dirname -- "$app_path")/usr/bin/speakeasy" "$@"
