@@ -259,7 +259,8 @@ struct Overlay {
     misplaced: Sender<anyhow::Error>,
     /// Where a drag choosing an area began and where it is now, in window pixels.
     drag: Option<[gpui::Point<Pixels>; 2]>,
-    visibility: Option<Task<()>>,
+    /// Runs [`place`] for the latest cover; replacing it cancels a placement not yet run.
+    placement: Option<Task<()>>,
     /// Redraws once the hold ends, so held ink costs no frames.
     wake: Option<Task<()>>,
     _updates: Task<()>,
@@ -279,7 +280,7 @@ impl Overlay {
             cover: None,
             misplaced,
             drag: None,
-            visibility: None,
+            placement: None,
             wake: None,
         }
     }
@@ -294,7 +295,7 @@ impl Overlay {
             }
             let chosen = self.canvas.borrow().chosen().cloned();
             let misplaced = self.misplaced.clone();
-            self.visibility = Some(defer_native(
+            self.placement = Some(defer_native(
                 self.window,
                 "overlay",
                 cx,
