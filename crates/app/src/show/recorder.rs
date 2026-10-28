@@ -32,6 +32,8 @@ const FRAME_LANE: usize = 2;
 const POINTER_LANE: usize = 256;
 /// How many pins wait for the recorder. A pin that finds the lane full is dropped.
 const PIN_LANE: usize = 8;
+/// The failure a recording reports when capture or the recorder itself stops without an outcome.
+const CAPTURE_STOPPED: &str = "Screen capture stopped unexpectedly. Try again.";
 
 /// A Show's screen recording; the session owner finishes or retires it like a microphone.
 pub(crate) struct ScreenRecorder {
@@ -61,15 +63,13 @@ impl ScreenRecorder {
                 pinned,
                 canvas: &canvas,
             };
-            let outcome = record(started, scope, &lanes);
-            canvas.send_replace(Canvas::default());
-            if let Some(outcome) = outcome.transpose() {
-                #[expect(
-                    clippy::let_underscore_must_use,
-                    reason = "A closed event lane belongs to a departed owner; retirement still observes this thread's exit"
-                )]
-                let _ = events.send_blocking(ShowEvent::Finished(id, outcome));
-            }
+            let mut ending = Ending {
+                id,
+                events,
+                canvas: &canvas,
+                outcome: None,
+            };
+            ending.outcome = Some(record(started, scope, &lanes));
         })?;
         Ok(Self {
             finish,
@@ -112,6 +112,36 @@ impl Pinning for ScreenRecorder {
 impl Drop for ScreenRecorder {
     fn drop(&mut self) {
         self.finish.close();
+    }
+}
+
+/// Ends a recording however its thread leaves it: when dropped, it hides the overlay and reports
+/// `outcome` to the owner, or a fixed failure once recording unwinds without one, since a panic's
+/// message could carry private text. A cancelled recording reports nothing.
+struct Ending<'a> {
+    id: SessionId,
+    events: Sender<ShowEvent>,
+    canvas: &'a watch::Sender<Canvas>,
+    /// How recording ended; `None` while it runs.
+    outcome: Option<anyhow::Result<Option<Footage>>>,
+}
+
+impl Drop for Ending<'_> {
+    fn drop(&mut self) {
+        self.canvas.send_replace(Canvas::Hidden);
+        let outcome = self
+            .outcome
+            .take()
+            .unwrap_or_else(|| Err(anyhow!(CAPTURE_STOPPED)));
+        if let Some(outcome) = outcome.transpose() {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A closed event lane belongs to a departed owner; retirement still observes this thread's exit"
+            )]
+            let _ = self
+                .events
+                .send_blocking(ShowEvent::Finished(self.id, outcome));
+        }
     }
 }
 
@@ -230,7 +260,7 @@ impl<'a> Take<'a> {
                         }
                     },
                     Ok(ScreenEvent::Failed(message)) => break Err(anyhow!(message)),
-                    Err(_) => break Err(anyhow!("Screen capture stopped unexpectedly. Try again.")),
+                    Err(_) => break Err(anyhow!(CAPTURE_STOPPED)),
                 },
                 // Samples first, so a pin lands where the pointer is and sees the taps that asked
                 // for it.
@@ -367,6 +397,35 @@ mod tests {
         );
         finish.close();
         assert_eq!(pick(&choice, &lanes).await, None, "cancelled");
+        Ok(())
+    }
+
+    #[test]
+    fn a_recording_that_unwinds_hides_the_overlay_and_reports_a_fixed_failure() -> anyhow::Result<()>
+    {
+        let (events, reported) = async_channel::bounded(1);
+        let (canvas, overlay) = watch::channel(Canvas::default());
+        let unwound = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let _ending = Ending {
+                        id: SessionId::FIRST,
+                        events,
+                        canvas: &canvas,
+                        outcome: None,
+                    };
+                    panic!("a recording bug");
+                })
+                .join()
+        });
+        assert!(unwound.is_err());
+        assert!(overlay.has_changed()?, "the overlay was told to hide");
+        let ShowEvent::Finished(id, outcome) = reported.try_recv()?;
+        assert_eq!(id, SessionId::FIRST);
+        assert_eq!(
+            outcome.err().map(|error| error.to_string()).as_deref(),
+            Some(CAPTURE_STOPPED)
+        );
         Ok(())
     }
 }
