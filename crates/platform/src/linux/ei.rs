@@ -41,9 +41,13 @@ type TextInput = unsafe extern "C" fn(Pointer, *const u8, usize);
 macro_rules! api {
     ($($name:ident: $kind:ty),+ $(,)?) => {
         /// libei's entry points; `text_utf8` is newer than libei 1.5, so it alone is optional.
-        struct Api { $($name: $kind,)+ text_utf8: Option<TextInput> }
+        pub(super) struct Api { $($name: $kind,)+ text_utf8: Option<TextInput> }
         impl Api {
-            fn load() -> anyhow::Result<Self> {
+            /// Loads libei, which keyboard input needs before the user is asked to allow it.
+            ///
+            /// # Errors
+            /// Fails when libei or one of its required entry points is missing.
+            pub(super) fn load() -> anyhow::Result<Self> {
                 // SAFETY: each type is the symbol's C signature in libei's public ABI. RTLD_NODELETE
                 // keeps libei mapped for the life of the process, so the copied function pointers
                 // stay valid after the handle drops here.
@@ -106,8 +110,7 @@ pub(super) struct Sender {
 }
 
 impl Sender {
-    pub(super) fn connect(fd: OwnedFd) -> anyhow::Result<Self> {
-        let api = Api::load()?;
+    pub(super) fn connect(api: Api, fd: OwnedFd) -> anyhow::Result<Self> {
         let context = EiContext::new_sender(&api)?;
         // SAFETY: libei takes ownership of the descriptor, including its teardown.
         let status = unsafe { (api.ei_setup_backend_fd)(context.as_ptr(), fd.into_raw_fd()) };

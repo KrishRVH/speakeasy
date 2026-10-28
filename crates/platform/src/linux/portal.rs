@@ -485,16 +485,17 @@ pub(super) async fn run(
 }
 
 async fn bind(portal: &mut Portal, options: &DesktopOptions) -> anyhow::Result<Bound> {
+    // A host without libei fails here, before the user is asked for permissions it cannot use.
+    let libei = (!options.manual_paste).then(ei::Api::load).transpose()?;
     let mut labels = ShortcutLabels::new(options);
     let shortcut_session = if options.external_shortcut {
         None
     } else {
         Some(bind_shortcuts(portal, options, &mut labels).await?)
     };
-    let remote = if options.manual_paste {
-        None
-    } else {
-        Some(start_remote_desktop(portal).await?)
+    let remote = match libei {
+        Some(libei) => Some(start_remote_desktop(portal, libei).await?),
+        None => None,
     };
     Ok(Bound {
         shortcut_session,
@@ -556,7 +557,7 @@ async fn bind_shortcuts(
     Ok(session)
 }
 
-async fn start_remote_desktop(portal: &mut Portal) -> anyhow::Result<Remote> {
+async fn start_remote_desktop(portal: &mut Portal, libei: ei::Api) -> anyhow::Result<Remote> {
     let tokens = TokenStore::open();
     let session = portal.create_session(REMOTE).await?;
     let handle = portal.next_token();
@@ -616,7 +617,7 @@ async fn start_remote_desktop(portal: &mut Portal) -> anyhow::Result<Remote> {
         .call("ConnectToEIS", &(session.clone(), Options::new()))
         .await?;
     Ok(Remote {
-        sender: ei::Sender::connect(OwnedFd::from(descriptor))?,
+        sender: ei::Sender::connect(libei, OwnedFd::from(descriptor))?,
         session,
         shares_clipboard,
     })
