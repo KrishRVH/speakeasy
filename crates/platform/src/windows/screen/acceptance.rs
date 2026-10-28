@@ -50,6 +50,8 @@ use crate::{ScreenCapture, windows::native_window};
 
 const PATTERN_WIDTH: i32 = 640;
 const PATTERN_HEIGHT: i32 = 400;
+/// The first row of the checkerboard band beneath the pattern's quadrants.
+const BAND_TOP: i32 = 320;
 /// The backdrop's border around the pattern; even, so halved frames keep its edges.
 const MARGIN: i32 = 32;
 /// The overlay's place on the pattern: left, top, right, bottom.
@@ -75,18 +77,21 @@ const BACKDROP_CLASS: PCWSTR = w!("SpeakeasyCaptureBackdrop");
 const PATTERN_CLASS: PCWSTR = w!("SpeakeasyCapturePattern");
 const OVERLAY_CLASS: PCWSTR = w!("SpeakeasyCaptureOverlay");
 const RESCALING_CLASS: PCWSTR = w!("SpeakeasyRescalingOverlay");
+/// GPUI's client-area insets, left, top, right, and bottom, for a window without a title bar on
+/// Windows 11 at 96 DPI: its resize frame on three sides and one pixel on top.
+const GPUI_INSETS: [i32; 4] = [8, 1, 8, 8];
 
 /// The pattern's RGB color at `[x, y]`: four quadrants above a checkerboard band. Every
 /// edge falls on an even pixel, so halving reproduces it exactly.
 fn pattern(x: i32, y: i32) -> [u8; 3] {
-    if y >= 320 {
+    if y >= BAND_TOP {
         return if ((x >> 3) ^ (y >> 3)) & 1 == 0 {
             [255; 3]
         } else {
             BLACK
         };
     }
-    match (x < PATTERN_WIDTH / 2, y < 160) {
+    match (x < PATTERN_WIDTH / 2, y < BAND_TOP / 2) {
         (true, true) => [220, 40, 40],
         (false, true) => [40, 180, 60],
         (true, false) => [40, 80, 220],
@@ -377,8 +382,8 @@ fn displays() -> anyhow::Result<Vec<screen::Display>> {
     monitors.into_iter().map(describe).collect()
 }
 
-/// Answers a DPI change as GPUI does, by taking the size and place Windows suggests, and keeps a
-/// border out of the client area, as GPUI does for a window without a title bar.
+/// Answers a DPI change as GPUI does, by taking the size and place Windows suggests, and keeps
+/// `GPUI_INSETS` out of the client area.
 unsafe extern "system" fn rescale_like_gpui(
     hwnd: HWND,
     message: u32,
@@ -390,10 +395,11 @@ unsafe extern "system" fn rescale_like_gpui(
             // SAFETY: for WM_NCCALCSIZE with wparam set, lparam points to this call's
             // NCCALCSIZE_PARAMS, whose first rectangle is the proposed window rectangle.
             let proposed = unsafe { &mut (*(lparam as *mut NCCALCSIZE_PARAMS)).rgrc[0] };
-            proposed.left = proposed.left.saturating_add(8);
-            proposed.top = proposed.top.saturating_add(1);
-            proposed.right = proposed.right.saturating_sub(8);
-            proposed.bottom = proposed.bottom.saturating_sub(8);
+            let [left, top, right, bottom] = GPUI_INSETS;
+            proposed.left = proposed.left.saturating_add(left);
+            proposed.top = proposed.top.saturating_add(top);
+            proposed.right = proposed.right.saturating_sub(right);
+            proposed.bottom = proposed.bottom.saturating_sub(bottom);
             0
         },
         WM_DPICHANGED => {
@@ -568,7 +574,7 @@ fn near([blue, green, red, _]: [u8; 4], [r, g, b]: [u8; 3]) -> bool {
 struct Scene {
     backdrop: HWND,
     overlay: HWND,
-    overlay_bounds: [i32; 4],
+    overlay_edges: [i32; 4],
     pattern: Option<HWND>,
     requests: Sender<()>,
     replies: Receiver<anyhow::Result<isize>>,
@@ -588,7 +594,7 @@ impl Scene {
         Ok(Self {
             backdrop: backdrop as HWND,
             overlay: overlay as HWND,
-            overlay_bounds: layout.overlay.edges,
+            overlay_edges: layout.overlay.edges,
             pattern: None,
             requests,
             replies,
@@ -615,7 +621,7 @@ impl Scene {
         // SAFETY: reads a window by handle into a live local; a window the painter has
         // destroyed fails the call.
         ok_or_last_error(unsafe { GetWindowRect(self.overlay, &raw mut bounds) })?;
-        assert_eq!(edges(bounds), self.overlay_bounds);
+        assert_eq!(edges(bounds), self.overlay_edges);
         assert_eq!(affinity(self.overlay), Some(WDA_EXCLUDEFROMCAPTURE));
         // SAFETY: both calls read a window by handle.
         let (styles, visible) = unsafe {
@@ -662,8 +668,8 @@ impl Scene {
             "The pointer moved to another display; nothing was inspected"
         );
         let capture = ScreenCapture::start(target, INTERVAL, u32::MAX, events)?;
-        let patience = started.checked_add(PATIENCE).unwrap();
-        let first = next_event(&frames, patience).context("No frame arrived")?;
+        let deadline = started.checked_add(PATIENCE).unwrap();
+        let first = next_event(&frames, deadline).context("No frame arrived")?;
         println!("First frame {:.1?} after start", started.elapsed());
         let mut crops = vec![Crop::of(frame_of(first)?, display.native, area)?];
         let opened = Instant::now();
@@ -816,9 +822,11 @@ fn paint_scene(
     requests: &Receiver<()>,
     closing: &Receiver<Infallible>,
 ) -> anyhow::Result<()> {
-    // SAFETY: each brush becomes its class's, which Windows deletes on unregistering.
-    let [gray, magenta] =
-        [0x0060_6060, 0x00FF_00FF].map(|color| unsafe { CreateSolidBrush(color) });
+    // SAFETY: takes a color by value; each brush becomes its class's, which Windows deletes on
+    // unregistering.
+    let [gray, magenta] = [[0x60; 3], MAGENTA].map(|[red, green, blue]| unsafe {
+        CreateSolidBrush(u32::from_le_bytes([red, green, blue, 0]))
+    });
     let _classes = [
         Class::register(BACKDROP_CLASS, Some(DefWindowProcW), gray)?,
         Class::register(OVERLAY_CLASS, Some(DefWindowProcW), magenta)?,
@@ -835,9 +843,9 @@ fn paint_scene(
         [0, 0, 1, 1],
     )?;
     // SAFETY: this thread owns the live window until `overlay` drops.
-    let handle = unsafe { native_window(overlay.0) }?;
-    configure_overlay(&handle, layout.overlay)?;
-    set_overlay_visible(&handle, true);
+    let native = unsafe { native_window(overlay.0) }?;
+    configure_overlay(&native, layout.overlay)?;
+    set_overlay_visible(&native, true);
     replies.try_send(Ok(overlay.0 as isize))?;
     let mut pattern = None;
     let deadline = Instant::now().checked_add(ON_SCREEN).unwrap();
@@ -847,7 +855,7 @@ fn paint_scene(
             let window = Popup::create(PATTERN_CLASS, topmost, layout.pattern)?;
             window.show();
             // Back above the pattern, as the overlay stays above everything it inks.
-            set_overlay_visible(&handle, true);
+            set_overlay_visible(&native, true);
             replies.try_send(Ok(window.0 as isize))?;
             pattern = Some(window);
         }

@@ -33,6 +33,7 @@ use windows::{
             GraphicsCaptureAccessKind, GraphicsCaptureItem, GraphicsCaptureSession,
         },
         DirectX::{Direct3D11::IDirect3DDevice, DirectXPixelFormat},
+        SizeInt32,
     },
     Security::Authorization::AppCapabilityAccess::AppCapabilityAccessStatus,
     Win32::{
@@ -196,11 +197,8 @@ fn class_name(window: HWND) -> String {
             i32::try_from(class.len()).unwrap_or_default(),
         )
     };
-    String::from_utf16_lossy(
-        class
-            .get(..usize::try_from(length).unwrap_or_default())
-            .unwrap_or_default(),
-    )
+    let length = usize::try_from(length).unwrap_or_default();
+    String::from_utf16_lossy(class.get(..length).unwrap_or_default())
 }
 
 /// The part of `display` that `window` covers now, by its visible frame without the resize
@@ -440,9 +438,9 @@ impl Capture {
         best_effort(session.SetIsCursorCaptureEnabled(false));
         // Builds without the setting deliver every change; `record` paces those itself.
         best_effort(session.SetMinUpdateInterval(time_span(interval)));
-        let composed = pixels(size);
+        let extent = pixels(size);
         let part = target.part();
-        let readback = Readback::new(&device, crop_size(pixel_box(part, composed)), longest_edge)?;
+        let readback = Readback::new(&device, crop_size(pixel_box(part, extent)), longest_edge)?;
         session.StartCapture()?;
         if let Ok(access) = &access {
             settle(access, stopping);
@@ -457,7 +455,7 @@ impl Capture {
             display,
             followed,
             part,
-            content: composed,
+            content: extent,
             device,
             context,
             direct3d,
@@ -572,7 +570,7 @@ const fn crop_size([left, top, right, bottom]: [u32; 4]) -> [u32; 2] {
     [right.saturating_sub(left), bottom.saturating_sub(top)]
 }
 
-fn pixels(size: windows::Graphics::SizeInt32) -> [u32; 2] {
+fn pixels(size: SizeInt32) -> [u32; 2] {
     // A negative size cannot occur; zero makes texture creation report the problem.
     [size.Width, size.Height].map(|edge| u32::try_from(edge).unwrap_or_default())
 }
