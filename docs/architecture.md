@@ -43,8 +43,8 @@ module unless a test file is named.
   [worker.rs](../crates/app/src/runtime/worker.rs), and the
   [ports.rs](../crates/app/src/runtime/ports.rs) seam own a session's authority, devices, and
   worker. [runtime/tests.rs](../crates/app/src/runtime/tests.rs) hosts the owner on fakes;
-  [tests/model.rs](../crates/app/src/runtime/tests/model.rs) checks device release over generated
-  input.
+  [tests/model.rs](../crates/app/src/runtime/tests/model.rs) checks device and worker release over
+  generated input, settings changes included.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
   [pcm.rs](../crates/app/src/audio/pcm.rs), and [speech.rs](../crates/app/src/audio/speech.rs)

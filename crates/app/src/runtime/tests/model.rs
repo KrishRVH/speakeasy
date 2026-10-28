@@ -1,8 +1,10 @@
-//! Generated sequences of input bursts, clock jumps, audio, footage, and transcripts drive the
-//! production owner through gate-free fakes whose devices take generated time to release. After
-//! every step the owner still runs, never reopens a device before its release, and has retired
-//! every device once no session is active; a final drain must bring every session to rest with
-//! every device released. Gated windows stay with the scripted scenarios.
+//! Generated sequences of input bursts, clock jumps, audio, footage, transcripts, and settings
+//! changes drive the production owner through gate-free fakes whose devices and workers take
+//! generated time to release. After every step the owner still runs, never reopens a device before
+//! its release, never loads a worker before the previous one has stopped or drops one unstopped,
+//! and has retired every device once no session is active; a final drain must bring every session
+//! to rest with every device released, and shutdown must stop the last worker. Gated windows stay
+//! with the scripted scenarios.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -31,22 +33,31 @@ enum Log {
     Retiring(Source, SessionId),
     Retired(Source, SessionId),
     Pinned(Source, SessionId),
+    /// A speech worker started.
+    Loaded,
+    /// A speech worker finished stopping.
+    Stopped,
+    /// A speech worker was dropped without being stopped.
+    Abandoned,
 }
 
 /// Ports with no gates: devices log and report nothing on their own beyond the microphone's
-/// `Ready`, the worker is ready at once, and transcription waits for the test's answer.
+/// `Ready`, a worker logs its start and stop and is ready at once, and transcription waits for the
+/// test's answer.
 struct ModelPorts {
     log: Sender<Log>,
     jobs: Sender<Reply>,
-    /// How long each device takes to release once retired, on the paused clock.
+    /// How long each device or worker takes to release once retired or stopped, on the paused
+    /// clock.
     releases: Releases,
 }
 
-/// How long the microphone and the screen recorder take to release.
+/// How long the microphone, the screen recorder, and a speech worker take to release.
 #[derive(Clone, Copy, Debug)]
 struct Releases {
     microphone: Duration,
     screen: Duration,
+    worker: Duration,
 }
 
 impl ModelPorts {
@@ -120,9 +131,17 @@ impl Ports for ModelPorts {
         _: Config,
         _: watch::Receiver<bool>,
     ) -> impl Future<Output = anyhow::Result<ModelSpeech>> + Send + 'static {
-        std::future::ready(Ok(ModelSpeech {
-            jobs: self.jobs.clone(),
-        }))
+        let (jobs, log, release) = (self.jobs.clone(), self.log.clone(), self.releases.worker);
+        // Starts once polled, as the port promises.
+        async move {
+            log.try_send(Log::Loaded)?;
+            Ok(ModelSpeech {
+                jobs,
+                log,
+                release,
+                stopped: false,
+            })
+        }
     }
 
     #[expect(
@@ -190,6 +209,22 @@ impl Pinning for ModelDevice {
 
 struct ModelSpeech {
     jobs: Sender<Reply>,
+    log: Sender<Log>,
+    /// How long stopping takes; a successor that loads meanwhile overlaps this worker.
+    release: Duration,
+    stopped: bool,
+}
+
+impl Drop for ModelSpeech {
+    fn drop(&mut self) {
+        if !self.stopped {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A case that already failed may have closed the log; a destructor must not panic"
+            )]
+            let _ = self.log.try_send(Log::Abandoned);
+        }
+    }
 }
 
 impl Speech for ModelSpeech {
@@ -207,7 +242,13 @@ impl Speech for ModelSpeech {
         std::future::ready(Ok(()))
     }
 
-    async fn stop(&mut self) {}
+    async fn stop(&mut self) {
+        tokio::time::sleep(self.release).await;
+        self.stopped = true;
+        self.log
+            .try_send(Log::Stopped)
+            .expect("the model log stays open for the whole case");
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -253,6 +294,17 @@ enum Said {
     Failure,
 }
 
+/// Which setting a change flips.
+#[derive(Clone, Copy, Debug)]
+enum Setting {
+    /// Read per session, so a session in progress ends and a cancelled transcription's worker is
+    /// probed or replaced.
+    Fillers,
+    /// Read by the engine, so the worker reloads; flipping it also switches recovery between
+    /// probing and replacing.
+    Gpu,
+}
+
 #[derive(Clone, Debug)]
 enum Step {
     /// Delivered back to back, so the owner takes them all before any release that lands meanwhile.
@@ -265,6 +317,7 @@ enum Step {
         complete: bool,
     },
     Answer(Said),
+    Configure(Setting),
 }
 
 fn step() -> impl Strategy<Value = Step> {
@@ -293,12 +346,14 @@ fn step() -> impl Strategy<Value = Step> {
         Just(Heard::Failure)
     ];
     let said = prop_oneof![Just(Said::Words), Just(Said::Nothing), Just(Said::Failure)];
+    let setting = prop_oneof![Just(Setting::Fillers), Just(Setting::Gpu)];
     prop_oneof![
         4 => inputs.prop_map(Step::Inputs),
         2 => advance.prop_map(Step::Advance),
         2 => heard.prop_map(Step::Audio),
         2 => any::<bool>().prop_map(|complete| Step::Footage { complete }),
         2 => said.prop_map(Step::Answer),
+        1 => setting.prop_map(Step::Configure),
     ]
 }
 
@@ -307,7 +362,11 @@ fn releases() -> impl Strategy<Value = Releases> {
         Just(Duration::ZERO),
         (1_u64..400).prop_map(Duration::from_millis),
     ];
-    (release.clone(), release).prop_map(|(microphone, screen)| Releases { microphone, screen })
+    (release.clone(), release.clone(), release).prop_map(|(microphone, screen, worker)| Releases {
+        microphone,
+        screen,
+        worker,
+    })
 }
 
 /// Answers a transcription request that the owner may already have abandoned.
@@ -345,6 +404,8 @@ struct Model {
     open: HashMap<Source, Open>,
     /// Devices asked to finish, and whether the test has sent what they recorded.
     finished: Vec<(Source, SessionId, bool)>,
+    /// Whether a speech worker has started and not yet stopped.
+    worker: bool,
 }
 
 impl Model {
@@ -372,6 +433,7 @@ impl Model {
             screen: None,
             open: HashMap::new(),
             finished: Vec::new(),
+            worker: false,
         })
     }
 
@@ -415,6 +477,14 @@ impl Model {
                     };
                     answer_unless_abandoned(reply, result);
                 }
+            },
+            Step::Configure(setting) => {
+                let mut config = self.runtime.configuration.borrow().clone();
+                match setting {
+                    Setting::Fillers => config.remove_fillers = !config.remove_fillers,
+                    Setting::Gpu => config.use_gpu = !config.use_gpu,
+                }
+                self.runtime.configure(ValidConfig::assume(config));
             },
         }
         settle().await;
@@ -467,16 +537,19 @@ impl Model {
         Ok(())
     }
 
-    /// Stops the owner at rest and joins it, surfacing any panic or a release of a device that was
-    /// not open. The scripted scenarios cover what shutdown releases from a live session.
+    /// Stops the owner at rest and joins it, surfacing any panic, a release of a device that was
+    /// not open, or a worker left running. The scripted scenarios cover what shutdown releases from
+    /// a live session.
     async fn close(mut self) -> anyhow::Result<()> {
         self.runtime.close().await?;
         self.absorb()?;
+        ensure!(!self.worker, "Shutdown left a worker running");
         Ok(())
     }
 
     /// Takes in what the ports logged, checking that a device opens only once its previous session
-    /// released it and releases only after the owner retired it; returns whether anything arrived.
+    /// released it and releases only after the owner retired it, and that a worker starts only once
+    /// the previous one stopped and is never dropped unstopped; returns whether anything arrived.
     fn absorb(&mut self) -> anyhow::Result<bool> {
         let mut arrived = false;
         while let Ok(entry) = self.log.try_recv() {
@@ -507,6 +580,18 @@ impl Model {
                     Some(open) if source == Source::Screen && open.id == id && !open.retiring => {},
                     _ => bail!("{source:?} {id:?} took a pin while not recording a Show"),
                 },
+                Log::Loaded => {
+                    ensure!(
+                        !self.worker,
+                        "A worker started before the previous one stopped"
+                    );
+                    self.worker = true;
+                },
+                Log::Stopped => {
+                    ensure!(self.worker, "A worker stopped without having started");
+                    self.worker = false;
+                },
+                Log::Abandoned => bail!("A worker was dropped without being stopped"),
             }
         }
         while let Ok(reply) = self.jobs.try_recv() {
@@ -615,6 +700,7 @@ fn the_sequences_that_once_stranded_the_owner_come_to_rest() -> anyhow::Result<(
     let at_once = Releases {
         microphone: Duration::ZERO,
         screen: Duration::ZERO,
+        worker: Duration::ZERO,
     };
     let unfinished = Step::Footage { complete: false };
     let (speech, failure) = (Step::Audio(Heard::Speech), Step::Audio(Heard::Failure));
