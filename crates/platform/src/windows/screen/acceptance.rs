@@ -28,7 +28,7 @@ use windows_sys::{
             },
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWL_EXSTYLE,
-                GetClientRect, GetPropW, GetWindowLongPtrW, GetWindowRect, IsWindowVisible, MSG,
+                GetClientRect, GetWindowLongW, GetWindowRect, IsWindowVisible, MSG,
                 NCCALCSIZE_PARAMS, PM_REMOVE, PeekMessageW, RegisterClassW, SWP_NOZORDER,
                 SetWindowDisplayAffinity, TranslateMessage, UnregisterClassW,
                 WDA_EXCLUDEFROMCAPTURE, WDA_MONITOR, WDA_NONE, WM_DPICHANGED, WM_NCCALCSIZE,
@@ -42,7 +42,7 @@ use windows_sys::{
 };
 
 use super::{
-    exclusion::{ALWAYS_EXCLUDED, affinity, owned, top_level_windows},
+    exclusion::{affinity, excluded_for_good, top_level_windows},
     readback::{BYTES_PER_PIXEL, created, texture_description},
     *,
 };
@@ -165,7 +165,7 @@ fn capture_leaves_out_every_speakeasy_window_until_it_stops() -> anyhow::Result<
 
     let own = top_level_windows()?
         .into_iter()
-        .filter(|&window| owned(window))
+        .filter(|&window| is_own_window(window))
         .count();
     let mut exclusions = Exclusions::default();
     exclusions.refresh()?;
@@ -221,8 +221,8 @@ fn gpu_halving_reads_back_exact_pixels() -> anyhow::Result<()> {
             for longest_edge in [u32::MAX, 2560, 960] {
                 let readback = Readback::new(&device, size, longest_edge)?;
                 let bgra = readback.read(&context, &frame, origin)?;
-                let [width, height] = readback.size;
-                let level = readback.level;
+                let [width, height] = readback.size();
+                let level = readback.level();
                 let expected: Vec<u8> = (0..height)
                     .flat_map(|y| (0..width).map(move |x| [x, y]))
                     .flat_map(|[x, y]| block_color(left + (x << level), top + (y << level)))
@@ -230,12 +230,12 @@ fn gpu_halving_reads_back_exact_pixels() -> anyhow::Result<()> {
                 assert!(
                     bgra == expected,
                     "{size:?} at {origin:?} of {source:?} read back at {:?}",
-                    readback.size
+                    readback.size()
                 );
                 let [median, slowest] = cost(&readback, &context, &frame, origin)?;
                 println!(
                     "{size:?} → {:?}: median {median:.2?}, slowest {slowest:.2?}",
-                    readback.size
+                    readback.size()
                 );
             }
         }
@@ -616,20 +616,19 @@ impl Scene {
         ok_or_last_error(unsafe { GetWindowRect(self.overlay, &raw mut bounds) })?;
         assert_eq!(edges(bounds), self.overlay_bounds);
         assert_eq!(affinity(self.overlay), Some(WDA_EXCLUDEFROMCAPTURE));
-        // SAFETY: each call reads a window by handle.
-        let (styles, visible, marked) = unsafe {
+        // SAFETY: both calls read a window by handle.
+        let (styles, visible) = unsafe {
             (
-                GetWindowLongPtrW(self.overlay, GWL_EXSTYLE),
+                GetWindowLongW(self.overlay, GWL_EXSTYLE).cast_unsigned(),
                 IsWindowVisible(self.overlay) != FALSE,
-                !GetPropW(self.overlay, ALWAYS_EXCLUDED).is_null(),
             )
         };
         let wanted =
             WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST;
-        assert_eq!(u32::try_from(styles)? & wanted, wanted);
+        assert_eq!(styles & wanted, wanted);
         assert!(visible, "The overlay is hidden");
         assert!(
-            marked,
+            excluded_for_good(self.overlay),
             "The overlay lacks the mark that keeps every capture from restoring it"
         );
         Ok(())

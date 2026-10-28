@@ -4,7 +4,7 @@
 //! This module serves `desktop`'s reduced-motion query and startup error dialog, attaches the
 //! launching console for the crate root's Windows-only export, and keeps what the Windows code
 //! shares: held modifiers, synthetic input tagged so the hook ignores it, the thread-checked window
-//! behind `NativeWindow`, and handle and string conversions.
+//! behind `NativeWindow`, which process owns a window, and handle and string conversions.
 
 mod dialog;
 mod input;
@@ -195,6 +195,19 @@ impl Window {
             SetWindowLongW(self.hwnd, index, change(style).cast_signed());
         }
     }
+}
+
+/// The process that owns `window`, or `None` for a handle that names no window.
+fn window_process(window: HWND) -> Option<u32> {
+    let mut process = 0;
+    // SAFETY: writes only the live local; a null or stale handle reports no thread.
+    let thread = unsafe { GetWindowThreadProcessId(window, &raw mut process) };
+    (thread != 0).then_some(process)
+}
+
+/// Whether `window` belongs to this process.
+fn is_own_window(window: HWND) -> bool {
+    window_process(window) == Some(std::process::id())
 }
 
 /// The `NativeWindow` for a window a test created.

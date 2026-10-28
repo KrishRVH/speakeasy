@@ -8,13 +8,12 @@ use windows_sys::{
     Wdk::System::SystemServices::RtlGetVersion,
     Win32::{
         Foundation::{FALSE, HWND, LPARAM, LRESULT, TRUE, WPARAM},
-        System::{SystemInformation::OSVERSIONINFOW, Threading::GetCurrentProcessId},
+        System::SystemInformation::OSVERSIONINFOW,
         UI::{
             Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
             WindowsAndMessaging::{
-                EnumWindows, GetPropW, GetWindowDisplayAffinity, GetWindowThreadProcessId,
-                IsWindowVisible, RemovePropW, SetPropW, SetWindowDisplayAffinity,
-                WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WM_NCDESTROY,
+                EnumWindows, GetPropW, GetWindowDisplayAffinity, IsWindowVisible, RemovePropW,
+                SetPropW, SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WM_NCDESTROY,
             },
         },
     },
@@ -23,13 +22,13 @@ use windows_sys::{
 };
 
 use super::Failure;
-use crate::windows::ok_or_last_error;
+use crate::windows::{is_own_window, ok_or_last_error};
 
 /// The first build that leaves excluded windows out of capture; earlier builds black them out.
 const EXCLUSION_BUILD: u32 = 19_041;
 /// Marks a window `configure_overlay` left out of all screen capture, so that a capture ending
 /// never shows it to capture again.
-pub(super) const ALWAYS_EXCLUDED: PCWSTR = w!("SpeakeasyAlwaysExcluded");
+const ALWAYS_EXCLUDED: PCWSTR = w!("SpeakeasyAlwaysExcluded");
 
 /// The Speakeasy windows one capture has left out, shown to capture again when it ends.
 #[derive(Default)]
@@ -45,7 +44,7 @@ impl Exclusions {
         let before = self.left_out.len();
         let capturable = top_level_windows()?
             .into_iter()
-            .filter(|&window| owned(window) && affinity(window) == Some(WDA_NONE));
+            .filter(|&window| is_own_window(window) && affinity(window) == Some(WDA_NONE));
         for window in capturable {
             // SAFETY: both calls take a window of this process by value.
             let (excluded, visible) = unsafe {
@@ -93,15 +92,6 @@ pub(super) fn top_level_windows() -> windows::core::Result<Vec<HWND>> {
     Ok(found)
 }
 
-pub(super) fn owned(window: HWND) -> bool {
-    let mut process = 0;
-    // SAFETY: writes only the live local; neither call retains anything.
-    unsafe {
-        GetWindowThreadProcessId(window, &raw mut process);
-        process == GetCurrentProcessId()
-    }
-}
-
 pub(super) fn affinity(window: HWND) -> Option<u32> {
     let mut affinity = 0;
     // SAFETY: writes only the live local.
@@ -124,7 +114,7 @@ pub(super) fn exclude_always(hwnd: HWND) -> anyhow::Result<()> {
 }
 
 /// Whether `exclude_always` left `window` out of capture for good.
-fn excluded_for_good(window: HWND) -> bool {
+pub(super) fn excluded_for_good(window: HWND) -> bool {
     // SAFETY: reads a property by handle; a destroyed window has none.
     !unsafe { GetPropW(window, ALWAYS_EXCLUDED) }.is_null()
 }

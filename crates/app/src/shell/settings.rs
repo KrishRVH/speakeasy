@@ -8,6 +8,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use async_channel::Receiver;
 use gpui::{App, BorrowAppContext, Context, SharedString, Task, Timer, Window};
+use speakeasy_platform::FileFilter;
 use tokio::sync::watch;
 
 use super::{
@@ -227,9 +228,18 @@ impl Settings {
             (Engine::Whisper, EngineFile::Model) => "Choose a Whisper GGML model",
         };
         let filter = match (self.config.engine, file) {
-            (_, EngineFile::Executable) => ["Programs", "*.exe"],
-            (Engine::Parakeet, EngineFile::Model) => ["Parakeet models", "*.gguf"],
-            (Engine::Whisper, EngineFile::Model) => ["Whisper models", "*.bin"],
+            (_, EngineFile::Executable) => FileFilter {
+                name: "Programs",
+                pattern: "*.exe",
+            },
+            (Engine::Parakeet, EngineFile::Model) => FileFilter {
+                name: "Parakeet models",
+                pattern: "*.gguf",
+            },
+            (Engine::Whisper, EngineFile::Model) => FileFilter {
+                name: "Whisper models",
+                pattern: "*.bin",
+            },
         };
         let picker = choose_file(window, title, filter, cx);
         self.file_picker = Some(cx.spawn(async move |this, cx| {

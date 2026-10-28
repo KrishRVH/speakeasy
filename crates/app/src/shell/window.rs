@@ -9,6 +9,7 @@ use gpui::{
     App, AppContext, Bounds, Pixels, Size, TitlebarOptions, Window, WindowBounds, WindowHandle,
     WindowOptions, px, size,
 };
+use speakeasy_platform::FileFilter;
 
 use super::{LaunchMode, Services, settings::Settings};
 #[cfg(target_os = "windows")]
@@ -194,7 +195,7 @@ fn minimize_to_tray(window: &Window, cx: &App) -> anyhow::Result<gpui::Task<()>>
     }))
 }
 
-/// Asks for one file; `filter` is a (label, pattern) pair such as `["Programs", "*.exe"]`.
+/// Asks for one file of the type `filter` describes.
 ///
 /// Windows gets the platform dialog: GPUI shows its picker inside the UI thread's message loop,
 /// where it stays unpainted while GPUI is idle.
@@ -202,7 +203,7 @@ fn minimize_to_tray(window: &Window, cx: &App) -> anyhow::Result<gpui::Task<()>>
 pub(super) fn choose_file(
     window: &Window,
     title: &'static str,
-    filter: [&'static str; 2],
+    filter: FileFilter<'static>,
     _: &App,
 ) -> impl Future<Output = anyhow::Result<Option<PathBuf>>> + use<> {
     let picker = native_window(window, WINDOW_NAME).map(|owner| owner.choose_file(title, filter));
@@ -214,7 +215,7 @@ pub(super) fn choose_file(
 pub(super) fn choose_file(
     _: &Window,
     title: &'static str,
-    _: [&'static str; 2],
+    _: FileFilter<'static>,
     cx: &App,
 ) -> impl Future<Output = anyhow::Result<Option<PathBuf>>> + use<> {
     let paths = cx.prompt_for_paths(PathPromptOptions {

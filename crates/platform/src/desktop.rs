@@ -144,6 +144,15 @@ impl fmt::Debug for NativeWindow {
     }
 }
 
+/// A file type a file dialog offers before all files.
+#[derive(Clone, Copy, Debug)]
+pub struct FileFilter<'a> {
+    /// What the dialog calls the type, such as "Programs".
+    pub name: &'a str,
+    /// The wildcard pattern the type matches, such as "*.exe".
+    pub pattern: &'a str,
+}
+
 /// Whether the system asks apps to reduce motion; any thread may ask.
 ///
 /// Linux reads no desktop preference and answers `false`, leaving the choice to the app setting.

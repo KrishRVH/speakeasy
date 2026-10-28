@@ -1,7 +1,7 @@
 //! The Direct3D 11 device on the adapter that drives the display, and reading capture frames back
 //! to memory, halved on the GPU until they fit.
 
-use std::slice;
+use std::{num::NonZeroU32, slice};
 
 use windows::Win32::{
     Foundation::{E_UNEXPECTED, HMODULE},
@@ -71,12 +71,8 @@ pub(super) fn device_for(
 
 /// Reads one size of box out of frames back to memory, halved on the GPU until it fits.
 pub(super) struct Readback {
-    /// The size of the box read.
-    pub(super) source: [u32; 2],
-    /// The size delivered: that of the first mip level whose long edge fits.
-    pub(super) size: [u32; 2],
-    /// That mip level, zero when the frame already fits.
-    pub(super) level: u32,
+    source: [u32; 2],
+    size: [u32; 2],
     /// The frame and its halvings, while it needs halving.
     mips: Option<Mips>,
     /// A CPU-readable copy of the delivered level, reused frame after frame.
@@ -86,6 +82,8 @@ pub(super) struct Readback {
 struct Mips {
     texture: ID3D11Texture2D,
     view: ID3D11ShaderResourceView,
+    /// The mip level delivered: the first whose long edge fits.
+    level: NonZeroU32,
 }
 
 impl Readback {
@@ -95,12 +93,9 @@ impl Readback {
         longest_edge: u32,
     ) -> windows::core::Result<Self> {
         let size = fit(source, longest_edge);
-        let level = halvings(source, size);
-        let mips = if level == 0 {
-            None
-        } else {
-            Some(Mips::new(device, source, level)?)
-        };
+        let mips = NonZeroU32::new(halvings(source, size))
+            .map(|level| Mips::new(device, source, level))
+            .transpose()?;
         let staging = create_texture(
             device,
             &D3D11_TEXTURE2D_DESC {
@@ -112,10 +107,25 @@ impl Readback {
         Ok(Self {
             source,
             size,
-            level,
             mips,
             staging,
         })
+    }
+
+    /// The size of the box read.
+    pub(super) const fn source(&self) -> [u32; 2] {
+        self.source
+    }
+
+    /// The size delivered: that of the first mip level whose long edge fits.
+    pub(super) const fn size(&self) -> [u32; 2] {
+        self.size
+    }
+
+    /// The mip level delivered, zero when the frame already fits.
+    #[cfg(test)]
+    pub(super) fn level(&self) -> u32 {
+        self.mips.as_ref().map_or(0, |mips| mips.level.get())
     }
 
     /// Copies the box of the source size at `[left, top]` in `frame`, which must hold the whole
@@ -145,8 +155,16 @@ impl Readback {
             context.CopySubresourceRegion(first, 0, 0, 0, 0, frame, 0, Some(&raw const region));
             if let Some(mips) = &self.mips {
                 context.GenerateMips(&mips.view);
-                let (staging, halved, level) = (&self.staging, &mips.texture, self.level);
-                context.CopySubresourceRegion(staging, 0, 0, 0, 0, halved, level, None);
+                context.CopySubresourceRegion(
+                    &self.staging,
+                    0,
+                    0,
+                    0,
+                    0,
+                    &mips.texture,
+                    mips.level.get(),
+                    None,
+                );
             }
         }
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
@@ -174,7 +192,11 @@ impl Readback {
 }
 
 impl Mips {
-    fn new(device: &ID3D11Device, source: [u32; 2], level: u32) -> windows::core::Result<Self> {
+    fn new(
+        device: &ID3D11Device,
+        source: [u32; 2],
+        level: NonZeroU32,
+    ) -> windows::core::Result<Self> {
         let texture = create_texture(
             device,
             &D3D11_TEXTURE2D_DESC {
@@ -182,7 +204,7 @@ impl Mips {
                     .0
                     .cast_unsigned(),
                 MiscFlags: D3D11_RESOURCE_MISC_GENERATE_MIPS.0.cast_unsigned(),
-                ..texture_description(source, level.saturating_add(1))
+                ..texture_description(source, level.get().saturating_add(1))
             },
         )?;
         let mut view = None;
@@ -191,6 +213,7 @@ impl Mips {
         Ok(Self {
             texture,
             view: created(view)?,
+            level,
         })
     }
 }

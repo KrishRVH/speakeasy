@@ -15,14 +15,14 @@ use windows_sys::Win32::{
 };
 
 use super::to_wide;
-use crate::NativeWindow;
+use crate::{FileFilter, NativeWindow};
 
 /// The extended-length path limit: 32,767 UTF-16 units plus NUL.
 const LONGEST_PATH: usize = 32_768;
 
 impl NativeWindow {
-    /// Asks for one existing file in a dialog this window owns, offering `filter` (a name and
-    /// pattern) before all files, without blocking the UI owner.
+    /// Asks for one existing file in a dialog this window owns, offering `filter` before all files,
+    /// without blocking the UI owner.
     ///
     /// The dialog runs its own message loop on a dedicated thread; shown from GPUI's UI thread, it
     /// stays unpainted while GPUI is idle.
@@ -32,12 +32,12 @@ impl NativeWindow {
     pub fn choose_file(
         &self,
         title: &str,
-        filter: [&str; 2],
+        filter: FileFilter<'_>,
     ) -> impl Future<Output = anyhow::Result<Option<PathBuf>>> + Send + use<> {
         // A raw HWND is not Send, so the dialog thread receives its value.
         let owner = self.native.hwnd as isize;
         let title = to_wide(title);
-        let [name, pattern] = filter;
+        let FileFilter { name, pattern } = filter;
         // The empty entry and to_wide's NUL end the list with the double NUL lpstrFilter requires.
         let filter = to_wide(&[name, pattern, "All files", "*.*", ""].join("\0"));
         async move {

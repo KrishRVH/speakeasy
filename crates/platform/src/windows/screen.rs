@@ -68,19 +68,18 @@ use windows_sys::Win32::{
         Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
         WindowsAndMessaging::{
             GA_ROOT, GWL_EXSTYLE, GetAncestor, GetClassNameW, GetCursorPos, GetSystemMetrics,
-            GetWindowLongPtrW, HWND_TOPMOST, IsIconic, IsWindow, SM_SWAPBUTTON, SW_HIDE,
-            SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-            SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_NCCALCSIZE, WM_NCDESTROY,
-            WS_EX_TRANSPARENT, WindowFromPoint,
+            HWND_TOPMOST, IsIconic, IsWindow, SM_SWAPBUTTON, SW_HIDE, SW_SHOWNOACTIVATE,
+            SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, ShowWindow,
+            WM_NCCALCSIZE, WM_NCDESTROY, WS_EX_TRANSPARENT, WindowFromPoint,
         },
     },
 };
 
 use self::{
-    exclusion::{Exclusions, exclude_always, exclusion_supported, owned},
+    exclusion::{Exclusions, exclude_always, exclusion_supported},
     readback::{Readback, device_for},
 };
-use super::{BASE_DPI, is_key_down, modifiers, ok_or_last_error};
+use super::{BASE_DPI, is_key_down, is_own_window, modifiers, ok_or_last_error};
 use crate::{
     NativeWindow,
     screen::{
@@ -172,7 +171,10 @@ impl Window {
 /// desktop, a taskbar, or Speakeasy's own.
 pub(crate) fn window_under_pointer(display: Display) -> Option<(Window, Part)> {
     let window = top_level_at(cursor()?);
-    if window.is_null() || owned(window) || SHELL_CLASSES.contains(&class_name(window).as_str()) {
+    if window.is_null()
+        || is_own_window(window)
+        || SHELL_CLASSES.contains(&class_name(window).as_str())
+    {
         return None;
     }
     let window = Window(window as isize);
@@ -531,12 +533,12 @@ impl Capture {
         let texture: ID3D11Texture2D = unsafe { surface.GetInterface()? };
         let crop = pixel_box(self.follow(), self.content);
         let source = crop_size(crop);
-        if source != self.readback.source {
+        if source != self.readback.source() {
             self.readback = Readback::new(&self.device, source, self.longest_edge)?;
         }
         let [left, top, ..] = crop;
         let bgra = self.readback.read(&self.context, &texture, [left, top])?;
-        let [width, height] = self.readback.size;
+        let [width, height] = self.readback.size();
         Ok(Some(Frame {
             captured,
             width,
@@ -763,19 +765,15 @@ unsafe extern "system" fn edge_to_edge(
 }
 
 pub(crate) fn set_overlay_input(window: &NativeWindow, takes_input: bool) {
-    let hwnd = window.native.hwnd;
-    let transparent = WS_EX_TRANSPARENT.cast_signed() as isize;
-    // SAFETY: this thread owns the window. Without WS_EX_TRANSPARENT the layered overlay takes
-    // every click over it; WS_EX_NOACTIVATE still keeps those clicks from activating it.
-    unsafe {
-        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        let style = if takes_input {
-            style & !transparent
+    // Without WS_EX_TRANSPARENT the layered overlay takes every click over it; WS_EX_NOACTIVATE
+    // still keeps those clicks from activating it.
+    window.native.restyle(GWL_EXSTYLE, |style| {
+        if takes_input {
+            style & !WS_EX_TRANSPARENT
         } else {
-            style | transparent
-        };
-        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
-    }
+            style | WS_EX_TRANSPARENT
+        }
+    });
 }
 
 pub(crate) fn set_overlay_visible(window: &NativeWindow, visible: bool) {

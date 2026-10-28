@@ -7,15 +7,12 @@ use std::{
 };
 
 use anyhow::Context as _;
-use windows_sys::Win32::{
-    System::Threading::GetCurrentProcessId,
-    UI::{
-        Input::KeyboardAndMouse::{INPUT, VK_CONTROL, VK_V},
-        WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
-    },
+use windows_sys::Win32::UI::{
+    Input::KeyboardAndMouse::{INPUT, VK_CONTROL, VK_V},
+    WindowsAndMessaging::GetForegroundWindow,
 };
 
-use super::{modifiers, press, release, send_input, type_unit};
+use super::{modifiers, press, release, send_input, type_unit, window_process};
 use crate::{Inserted, insertion::NativeInsert};
 
 /// Registered clipboard formats whose zero `DWORD` keeps a paste's text out of Windows clipboard
@@ -103,15 +100,9 @@ impl NativeInsert for Insert {
     }
 
     fn external_focus(&mut self) -> bool {
-        // SAFETY: the foreground window is queried and used immediately, with a live PID out
-        // parameter; a window destroyed in between fails the lookup.
-        unsafe {
-            let window = GetForegroundWindow();
-            let mut pid = 0;
-            !window.is_null()
-                && GetWindowThreadProcessId(window, &raw mut pid) != 0
-                && pid != GetCurrentProcessId()
-        }
+        // SAFETY: takes no arguments; a null answer names no window, which has no process.
+        let focused = unsafe { GetForegroundWindow() };
+        window_process(focused).is_some_and(|process| process != std::process::id())
     }
 
     fn shortcut_released(&mut self) -> bool {
