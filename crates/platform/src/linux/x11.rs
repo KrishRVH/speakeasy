@@ -212,6 +212,8 @@ struct ShortcutTracker<'a> {
     keyboard: &'a Keyboard,
     shortcuts: Option<Shortcuts>,
     lock: u16,
+    /// Whether a changed keyboard mapping stops input, as [`depends_on_mapping`] decides.
+    mapped: bool,
     input: &'a InputSender,
     /// The dictation chord while it is held.
     held: Option<KeyBinding>,
@@ -224,14 +226,14 @@ impl ShortcutTracker<'_> {
             Event::XinputRawKeyRelease(_) | Event::KeyRelease(_) => {
                 self.held.map_or(Ok(()), |dictate| self.release(dictate))
             },
-            Event::MappingNotify(_) => self.check_mapping(),
+            Event::MappingNotify(_) if self.mapped => self.check_mapping(),
             _ => Ok(()),
         }
     }
 
-    /// The grabs and the insertion worker's paste keys were resolved from the keyboard mapping, so a
-    /// changed one stops input. The server announces the mapping whenever input switches keyboards,
-    /// as an XTEST paste after physical typing does, even when nothing changed.
+    /// Stops input when the keyboard mapping changed. The server announces the mapping whenever
+    /// input switches keyboards, as an XTEST paste after physical typing does, even when nothing
+    /// changed.
     fn check_mapping(&self) -> anyhow::Result<()> {
         ensure!(
             Keyboard::load(self.connection)? == *self.keyboard,
@@ -311,6 +313,7 @@ pub(super) async fn run(
         keyboard: &keyboard,
         shortcuts,
         lock,
+        mapped: depends_on_mapping(options),
         input,
         held: None,
     };
@@ -325,6 +328,12 @@ pub(super) async fn run(
         }
     }
     Ok(())
+}
+
+/// Whether input depends on the keyboard mapping it started with: the shortcut grabs and the
+/// insertion worker's paste keys come from it, while desktop bindings with manual paste use neither.
+fn depends_on_mapping(options: &DesktopOptions) -> bool {
+    !(options.external_shortcut && options.manual_paste)
 }
 
 /// Subscribes `root` to XI2 raw key releases, which arrive without a keyboard grab.
@@ -560,6 +569,27 @@ mod tests {
             "CTRL+UNKNOWN+space",
         ] {
             assert!(parse_binding(binding).is_err());
+        }
+    }
+
+    #[test]
+    fn only_grabs_or_automatic_paste_stop_on_a_keyboard_mapping_change() {
+        for (external_shortcut, manual_paste, depends) in [
+            (false, false, true),
+            (false, true, true),
+            (true, false, true),
+            (true, true, false),
+        ] {
+            let options = DesktopOptions {
+                manual_paste,
+                external_shortcut,
+                ..DesktopOptions::default()
+            };
+            assert_eq!(
+                depends_on_mapping(&options),
+                depends,
+                "Desktop bindings {external_shortcut}, manual paste {manual_paste}"
+            );
         }
     }
 
