@@ -63,7 +63,7 @@ pub(crate) enum ModelState {
 /// The presentation of owned session state that Settings, the tray, and the pill render.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Snapshot {
-    /// The shell lifecycle it belongs to; an owner publishes only while its epoch is current.
+    /// The shell lifecycle it belongs to; an owner presents only while its epoch is current.
     pub epoch: u64,
     /// The latest session, so a new session differs even when its phase repeats.
     pub id: u64,
@@ -99,7 +99,7 @@ impl Default for Snapshot {
     }
 }
 
-/// The latest microphone level, on its own lane so that level reports never republish session
+/// The latest microphone level, on its own lane so that level reports never re-present session
 /// state. Every report replaces it; the pill applies it only while its snapshot shows the same
 /// epoch and session recording.
 #[derive(Clone, Copy, Debug, Default)]
@@ -317,7 +317,7 @@ impl Ports for Desktop {
     }
 }
 
-/// The owner's ends of its lanes, with its ports and the lifecycle epoch it publishes under.
+/// The owner's ends of its lanes, with its ports and the lifecycle epoch it presents under.
 struct Wiring<P> {
     changes: watch::Receiver<Config>,
     inputs: Receiver<Input>,

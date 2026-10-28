@@ -288,7 +288,7 @@ impl Decision {
 
 /// Modifier keys held, as the paste wait and Show ink read them now or a macOS key event's flags
 /// report them.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(super) struct Modifiers {
     pub(super) shift: bool,
     /// Any other held combination, which makes Shift part of another shortcut; part of the talk

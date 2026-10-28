@@ -129,6 +129,7 @@ fn circle(canvas: &watch::Sender<Canvas>, display: Display, seconds: f32) -> boo
     const LIFTED_AT: f32 = 1.8;
     const CENTER: Point = Point::new(0.5, 0.45);
     const RADIUS: f32 = 0.1;
+    // A little past one turn, as a hand closes a circle.
     const TURNS: f32 = 1.08;
     let progress = (seconds - DRAWN_FROM) / (LIFTED_AT - DRAWN_FROM);
     let [width, height] = display.size;

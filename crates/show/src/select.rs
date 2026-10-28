@@ -163,7 +163,6 @@ fn select_within(recording: &Recording, samples: &[Sample], most: usize) -> Opti
     if candidates.is_empty() {
         candidates.push(frames.middle_candidate());
     }
-    candidates.sort_by(|one, other| one.cmp_rank(other, &frames));
 
     let mut chosen = choose(candidates, &frames);
     chosen.sort_by_key(|candidate| frames.at(candidate.frame));
@@ -309,7 +308,8 @@ impl Candidate {
 
 /// The `candidates`, taken in rank order, that each add something those taken before them do not
 /// show, less any spoken cue whose screen another kind of keyframe already shows.
-fn choose(candidates: Vec<Candidate>, frames: &Frames<'_>) -> Vec<Candidate> {
+fn choose(mut candidates: Vec<Candidate>, frames: &Frames<'_>) -> Vec<Candidate> {
+    candidates.sort_by(|one, other| one.cmp_rank(other, frames));
     let mut chosen: Vec<Candidate> = Vec::new();
     for candidate in candidates {
         if admits(&chosen, &candidate, frames) {

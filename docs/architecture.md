@@ -166,11 +166,11 @@ No single module owns these rules; a change to any party keeps them.
 - **Retire before reopening.** A microphone, screen recorder, worker, insertion thread, or desktop
   service acknowledges native teardown before its replacement opens. Retiring work stays owned until
   then, and abandoning a session never waits for it.
-- **Snapshots only present.** The owner decides from owned state and publishes coalesced snapshots;
-  views never read PCM, and their timers cannot publish session state. Meter levels travel on their
+- **Snapshots only present.** The owner decides from owned state and presents coalesced snapshots;
+  views never read PCM, and their timers cannot present session state. Meter levels travel on their
   own lane, applied only to the matching epoch and recording.
-- **The lifecycle epoch fences publishers.** An owner takes the shell's epoch before its thread
-  starts and publishes only while that epoch is current, so a retiring owner cannot replace a newer
+- **The lifecycle epoch fences presenters.** An owner takes the shell's epoch before its thread
+  starts and presents only while that epoch is current, so a retiring owner cannot replace a newer
   pause or quit notice.
 - **Quit drains without a timeout.** Every application-owned Quit route awaits audio teardown,
   process reaping, insertion, setup, and requested saves while rendering continues. The instance
@@ -192,7 +192,7 @@ No single module owns these rules; a change to any party keeps them.
 
 Capture starts on the first shortcut press, and the five-minute cap holds whatever the UI animates;
 [interaction design](interaction-design.md#interaction-contracts) owns the gestures. Each wake of
-`owner.rs` handles one message, advances ready work, and publishes a snapshot. A `Session` holds its
+`owner.rs` handles one message, advances ready work, and presents a snapshot. A `Session` holds its
 permit and one stage, and cancellation or a failure ends it from any stage:
 
 ```mermaid

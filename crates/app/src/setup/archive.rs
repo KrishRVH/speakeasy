@@ -196,6 +196,7 @@ mod tests {
     /// An uncompressed ustar archive holding one file, a format every system tar reads.
     fn ustar(name: &str, contents: &[u8]) -> Vec<u8> {
         const BLOCK: usize = 512;
+        const END_OF_ARCHIVE: [u8; 2 * BLOCK] = [0; 2 * BLOCK];
         let size = format!("{:011o}\0", contents.len());
         let fields: [(usize, &[u8]); 10] = [
             (0, name.as_bytes()),
@@ -219,7 +220,7 @@ mod tests {
         let mut archive = header.to_vec();
         archive.extend_from_slice(contents);
         archive.resize(archive.len().next_multiple_of(BLOCK), 0);
-        archive.extend_from_slice(&[0; 2 * BLOCK]);
+        archive.extend_from_slice(&END_OF_ARCHIVE);
         archive
     }
 

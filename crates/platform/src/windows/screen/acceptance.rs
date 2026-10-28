@@ -353,17 +353,18 @@ fn covered(window: HWND) -> anyhow::Result<[[i32; 4]; 2]> {
 
 /// Every display on the desktop.
 fn displays() -> anyhow::Result<Vec<screen::Display>> {
+    type Monitor = windows_sys::Win32::Graphics::Gdi::HMONITOR;
     unsafe extern "system" fn collect(
-        monitor: windows_sys::Win32::Graphics::Gdi::HMONITOR,
+        monitor: Monitor,
         _: HDC,
         _: *mut RECT,
         monitors: LPARAM,
     ) -> BOOL {
         // SAFETY: `displays` passes its live vector for the length of the enumeration.
-        unsafe { (*(monitors as *mut Vec<_>)).push(monitor) };
+        unsafe { (*(monitors as *mut Vec<Monitor>)).push(monitor) };
         TRUE
     }
-    let mut monitors = Vec::new();
+    let mut monitors: Vec<Monitor> = Vec::new();
     // SAFETY: the callback only pushes into the vector, which outlives the enumeration.
     ok_or_last_error(unsafe {
         EnumDisplayMonitors(
@@ -696,7 +697,7 @@ impl Scene {
             .chain([area.bottom.saturating_sub(1)]);
         let probed = ys
             .flat_map(|y| xs.clone().map(move |x| POINT { x, y }))
-            .all(|point| self.is_ours(top_level_at(point)));
+            .all(|point| top_level_at(point).is_some_and(|window| self.is_ours(window)));
         let covered = top_level_windows()?
             .into_iter()
             .take_while(|&window| window != self.backdrop)

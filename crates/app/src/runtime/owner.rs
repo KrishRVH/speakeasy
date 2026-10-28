@@ -213,7 +213,7 @@ impl<P: Ports> Owner<P> {
             Wake::Stop => return ControlFlow::Break(()),
             Wake::Input(input) => self.handle_input(input)?,
             Wake::Report(message) => {
-                // The owner's own state, not a published copy, decides idleness, so a session that
+                // The owner's own state, not a presented copy, decides idleness, so a session that
                 // started meanwhile is never overwritten.
                 if self.session.is_none() {
                     self.outcome = Outcome::Failed(message);
@@ -715,11 +715,11 @@ impl<P: Ports> Owner<P> {
             shortcut: Arc::clone(&self.shortcut),
             cancel_shortcut: Arc::clone(&self.cancel_shortcut),
         };
-        self.snapshots.send_if_modified(|published| {
-            if published.epoch != self.epoch || *published == snapshot {
+        self.snapshots.send_if_modified(|presented| {
+            if presented.epoch != self.epoch || *presented == snapshot {
                 return false;
             }
-            *published = snapshot;
+            *presented = snapshot;
             true
         });
     }

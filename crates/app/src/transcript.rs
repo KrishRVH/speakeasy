@@ -38,7 +38,7 @@ pub(crate) fn for_insertion(text: &str, fillers: Fillers) -> String {
 pub(crate) fn for_show(narration: Narration, fillers: Fillers) -> Narration {
     match (narration, fillers) {
         (Narration::Text(text), _) => Narration::Text(for_insertion(&text, fillers)),
-        (timed, Fillers::Preserve) => timed,
+        (timed @ Narration::Words(_), Fillers::Preserve) => timed,
         (Narration::Words(words), Fillers::Remove) => {
             let mut kept: Vec<Word> = Vec::with_capacity(words.len());
             for word in words {

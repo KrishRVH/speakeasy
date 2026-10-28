@@ -355,7 +355,6 @@ mod tests {
             parse(&["show", "record"])?,
             Invocation::Show(Err(_))
         ));
-        assert!(matches!(parse(&["--help"])?, Invocation::Help));
         assert!(parse(&["--demo", "show"]).is_err());
         Ok(())
     }

@@ -170,21 +170,19 @@ impl Window {
 /// The top-level window under the pointer and the part of `display` it covers, unless it is the
 /// desktop, a taskbar, or Speakeasy's own.
 pub(crate) fn window_under_pointer(display: Display) -> Option<(Window, Part)> {
-    let window = top_level_at(cursor()?);
-    if window.is_null()
-        || is_own_window(window)
-        || SHELL_CLASSES.contains(&class_name(window).as_str())
-    {
+    let window = top_level_at(cursor()?)?;
+    if is_own_window(window) || SHELL_CLASSES.contains(&class_name(window).as_str()) {
         return None;
     }
     let window = Window(window as isize);
     Some((window, window_part(display, window)?))
 }
 
-/// The top-level window at `point` on the desktop; null where there is none.
-fn top_level_at(point: POINT) -> HWND {
+/// The top-level window at `point` on the desktop, if any.
+fn top_level_at(point: POINT) -> Option<HWND> {
     // SAFETY: both calls take values and answer null when no window qualifies.
-    unsafe { GetAncestor(WindowFromPoint(point), GA_ROOT) }
+    let window = unsafe { GetAncestor(WindowFromPoint(point), GA_ROOT) };
+    (!window.is_null()).then_some(window)
 }
 
 /// The name of `window`'s class, empty once the window is gone.
