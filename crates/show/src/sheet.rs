@@ -49,6 +49,44 @@ struct Cell {
     height: u32,
 }
 
+impl Cell {
+    /// The cell as a rectangle in pixels.
+    fn bounds(self) -> Rect {
+        Rect::from_origin(
+            Point::new(self.left as f32, self.top as f32),
+            self.width as f32,
+            self.height as f32,
+        )
+    }
+
+    /// Where an image `width` × `height` pixels goes to sit centered in the cell.
+    fn centered_origin(self, width: u32, height: u32) -> (i32, i32) {
+        let center = |start: u32, room: u32, size: u32| {
+            i32::try_from(start.saturating_add(room.saturating_sub(size) / 2)).unwrap_or(i32::MAX)
+        };
+        (
+            center(self.left, self.width, width),
+            center(self.top, self.height, height),
+        )
+    }
+}
+
+/// A sheet's size and each frame's cell on it, in whole pixels.
+struct Layout {
+    width: u32,
+    height: u32,
+    cells: Vec<Cell>,
+}
+
+impl Layout {
+    /// The factor that brings the sheet within [`LONGEST_EDGE`] and [`MOST_PIXELS`]; at least one
+    /// once it fits.
+    fn fit(&self) -> f32 {
+        let (width, height) = (self.width as f32, self.height as f32);
+        (LONGEST_EDGE / width.max(height)).min((MOST_PIXELS / (width * height)).sqrt())
+    }
+}
+
 /// Splits `keyframes`, in order, into the fewest sheets of at most six, shared evenly so no sheet
 /// is left with a frame or two.
 pub(crate) fn pages<T>(keyframes: &[T]) -> impl Iterator<Item = &[T]> {
@@ -75,17 +113,16 @@ pub(crate) fn render(
         .iter()
         .map(|(image, _)| image.width() as f32)
         .collect();
-    let ((width, height), cells) = layout(&aspects, &widths);
+    let Layout {
+        width,
+        height,
+        cells,
+    } = layout(&aspects, &widths);
     let mut sheet = Image::filled(width, height, BACKGROUND)?;
-    let smallest = cells.iter().fold((f32::MAX, f32::MAX), |smallest, cell| {
-        (
-            smallest.0.min(cell.width as f32),
-            smallest.1.min(cell.height as f32),
-        )
-    });
-    let badge_scale = 0.9_f32
-        .min(smallest.0 / 120.0)
-        .min(smallest.1 / 72.0)
+    let badge_scale = cells
+        .iter()
+        .map(|cell| (cell.width as f32 / 120.0).min(cell.height as f32 / 72.0))
+        .fold(0.9_f32, f32::min)
         .max(0.5);
     let fits: Vec<(&Image, (u32, u32))> = frames
         .iter()
@@ -100,30 +137,19 @@ pub(crate) fn render(
         keyframes.iter().zip(frames).zip(&cells).zip(scaled)
     {
         if let Some(scaled) = scaled {
-            let (width, height) = (scaled.width(), scaled.height());
-            let left = cell
-                .left
-                .saturating_add(cell.width.saturating_sub(width) / 2);
-            let top = cell
-                .top
-                .saturating_add(cell.height.saturating_sub(height) / 2);
+            let (left, top) = cell.centered_origin(scaled.width(), scaled.height());
             canvas.draw_pixmap(
-                i32::try_from(left).unwrap_or(i32::MAX),
-                i32::try_from(top).unwrap_or(i32::MAX),
+                left,
+                top,
                 scaled.as_ref(),
                 &PixmapPaint::default(),
                 Transform::identity(),
                 None,
             );
         }
-        let bounds = Rect::from_origin(
-            Point::new(cell.left as f32, cell.top as f32),
-            cell.width as f32,
-            cell.height as f32,
-        );
         draw::badge(
             &mut canvas,
-            bounds,
+            cell.bounds(),
             keyframe,
             badge_scale,
             *corner,
@@ -151,30 +177,21 @@ fn fitted(image: &Image, cell: Cell) -> (u32, u32) {
 ///
 /// Frames keep their native size where the sheet allows, small crops still get room, and the
 /// whole sheet stays within [`LONGEST_EDGE`] and [`MOST_PIXELS`].
-fn layout(aspects: &[f32], widths: &[f32]) -> ((u32, u32), Vec<Cell>) {
+fn layout(aspects: &[f32], widths: &[f32]) -> Layout {
     let rows = plan(aspects);
     let row_aspects: Vec<f32> = rows.iter().map(|row| sum(aspects, row)).collect();
-    let sheet_aspect = row_aspects
-        .iter()
-        .map(|aspect| aspect.recip())
-        .sum::<f32>()
-        .recip();
+    let sheet_aspect = stacked_aspect(&row_aspects);
     let native = rows
         .iter()
         .map(|row| sum(widths, row) + gaps(row) as f32)
         .fold(0.0, f32::max);
     let least = if aspects.len() == 1 { 640.0 } else { 960.0 };
     let usable = LONGEST_EDGE - 2.0 * PADDING as f32;
-    let widest = if sheet_aspect >= 1.0 {
-        usable
-    } else {
-        usable * sheet_aspect
-    };
+    let widest = usable * sheet_aspect.min(1.0);
     let mut inner = convert::pixels(native.max(least).min(widest)).max(SMALLEST_INNER);
     for _ in 0..FIT_PASSES {
         let placed = place(aspects, &rows, &row_aspects, inner);
-        let (width, height) = (placed.0.0 as f32, placed.0.1 as f32);
-        let fit = (LONGEST_EDGE / width.max(height)).min((MOST_PIXELS / (width * height)).sqrt());
+        let fit = placed.fit();
         if fit >= 1.0 || inner <= SMALLEST_INNER {
             return placed;
         }
@@ -192,12 +209,7 @@ fn gaps(row: &Range<usize>) -> u32 {
 
 /// Cells for justified rows `inner` pixels wide. Heights round down, so a sheet measured once is
 /// never larger when drawn.
-fn place(
-    aspects: &[f32],
-    rows: &[Range<usize>],
-    row_aspects: &[f32],
-    inner: u32,
-) -> ((u32, u32), Vec<Cell>) {
+fn place(aspects: &[f32], rows: &[Range<usize>], row_aspects: &[f32], inner: u32) -> Layout {
     let mut cells = Vec::with_capacity(aspects.len());
     let mut top = PADDING;
     for (row, row_aspect) in rows.iter().zip(row_aspects) {
@@ -225,13 +237,25 @@ fn place(
         }
         top = top.saturating_add(height).saturating_add(GUTTER);
     }
-    let width = inner.saturating_add(PADDING.saturating_mul(2));
-    let height = top.saturating_sub(GUTTER).saturating_add(PADDING);
-    ((width, height), cells)
+    Layout {
+        width: inner.saturating_add(PADDING.saturating_mul(2)),
+        height: top.saturating_sub(GUTTER).saturating_add(PADDING),
+        cells,
+    }
 }
 
 fn sum(values: &[f32], range: &Range<usize>) -> f32 {
     values.get(range.clone()).unwrap_or_default().iter().sum()
+}
+
+/// The aspect of justified rows stacked into one sheet: at a shared width their heights add, so
+/// the reciprocals of their aspects do.
+fn stacked_aspect(row_aspects: &[f32]) -> f32 {
+    row_aspects
+        .iter()
+        .map(|aspect| aspect.recip())
+        .sum::<f32>()
+        .recip()
 }
 
 /// Splits frames, in order, into justified rows of one to six.
@@ -246,13 +270,7 @@ fn plan(aspects: &[f32]) -> Vec<Range<usize>> {
         [_] => rows(&[1]),
         [one, two] if one + two > PAIR_SPLIT => rows(&[1, 1]),
         [_, _] => rows(&[2]),
-        _ => {
-            let scorer = Scorer::new(aspects);
-            let mut best = (f32::INFINITY, Vec::new());
-            let mut rows = Vec::new();
-            search(&scorer, 0, &mut rows, &mut best);
-            best.1
-        },
+        _ => Scorer::new(aspects).cheapest(),
     }
 }
 
@@ -268,35 +286,10 @@ fn rows(lengths: &[usize]) -> Vec<Range<usize>> {
         .collect()
 }
 
-fn search(
-    scorer: &Scorer<'_>,
-    start: usize,
-    rows: &mut Vec<Range<usize>>,
-    best: &mut (f32, Vec<Range<usize>>),
-) {
-    let count = scorer.aspects.len();
-    if start >= count {
-        let cost = scorer.cost(rows);
-        if cost < best.0 {
-            *best = (cost, rows.clone());
-        }
-        return;
-    }
-    let most = ROW_FRAMES.min(count.saturating_sub(start));
-    for length in 1..=most {
-        let alone_and_narrow = length == 1
-            && scorer
-                .aspects
-                .get(start)
-                .is_some_and(|aspect| *aspect < WIDE_ALONE);
-        if alone_and_narrow {
-            continue;
-        }
-        let end = start.saturating_add(length);
-        rows.push(start..end);
-        search(scorer, end, rows, best);
-        rows.pop();
-    }
+/// The cheapest split of the frames into rows found so far.
+struct Best {
+    cost: f32,
+    rows: Vec<Range<usize>>,
 }
 
 struct Scorer<'a> {
@@ -320,16 +313,45 @@ impl<'a> Scorer<'a> {
         }
     }
 
-    /// The weights are Scrawl's, tuned by eye against simulated captures.
+    /// The cheapest split of the frames into rows of one to six, where a frame sits alone only
+    /// when at least [`WIDE_ALONE`].
+    fn cheapest(&self) -> Vec<Range<usize>> {
+        let mut best = Best {
+            cost: f32::INFINITY,
+            rows: Vec::new(),
+        };
+        self.search(0, &mut Vec::new(), &mut best);
+        best.rows
+    }
+
+    /// Tries every split of the frames from `start` on after `rows`, keeping the cheapest whole
+    /// split in `best`.
+    fn search(&self, start: usize, rows: &mut Vec<Range<usize>>, best: &mut Best) {
+        let rest = self.aspects.get(start..).unwrap_or_default();
+        let Some(&first) = rest.first() else {
+            let cost = self.cost(rows);
+            if cost < best.cost {
+                best.cost = cost;
+                best.rows.clone_from(rows);
+            }
+            return;
+        };
+        let shortest = if first < WIDE_ALONE { 2 } else { 1 };
+        for length in shortest..=ROW_FRAMES.min(rest.len()) {
+            let end = start.saturating_add(length);
+            rows.push(start..end);
+            self.search(end, rows, best);
+            rows.pop();
+        }
+    }
+
+    /// How far `rows` falls from a legible sheet; lower is better. The weights are Scrawl's, tuned
+    /// by eye against simulated captures.
     fn cost(&self, rows: &[Range<usize>]) -> f32 {
         let count = self.aspects.len() as f32;
         let row_count = rows.len() as f32;
         let row_aspects: Vec<f32> = rows.iter().map(|row| sum(self.aspects, row)).collect();
-        let sheet_aspect = row_aspects
-            .iter()
-            .map(|aspect| aspect.recip())
-            .sum::<f32>()
-            .recip();
+        let sheet_aspect = stacked_aspect(&row_aspects);
         let sheet_penalty = (sheet_aspect / self.target_sheet).ln().powi(2) * 1.8;
 
         // A frame's displayed area is proportional to its aspect over its row's aspect squared.
@@ -361,16 +383,8 @@ impl<'a> Scorer<'a> {
             .iter()
             .map(|area| {
                 let ratio = area / median;
-                let small = if ratio < SMALL_AREA {
-                    ((SMALL_AREA - ratio) / SMALL_AREA).powi(2) * 18.0
-                } else {
-                    0.0
-                };
-                let large = if ratio > LARGE_AREA {
-                    ((ratio - LARGE_AREA) / LARGE_AREA).powi(2) * 4.0
-                } else {
-                    0.0
-                };
+                let small = ((SMALL_AREA - ratio).max(0.0) / SMALL_AREA).powi(2) * 18.0;
+                let large = ((ratio - LARGE_AREA).max(0.0) / LARGE_AREA).powi(2) * 4.0;
                 small + large
             })
             .sum();
@@ -389,9 +403,7 @@ impl<'a> Scorer<'a> {
         for (position, (row, row_aspect)) in rows.iter().zip(&row_aspects).enumerate() {
             for aspect in self.aspects.get(row.clone()).unwrap_or_default() {
                 let share = aspect / row_aspect * sheet_aspect.min(1.0);
-                if share < NARROW_SHARE {
-                    cramping += ((NARROW_SHARE - share) / NARROW_SHARE).powi(2) * 8.0;
-                }
+                cramping += ((NARROW_SHARE - share).max(0.0) / NARROW_SHARE).powi(2) * 8.0;
             }
             let columns = row.len() as f32;
             if self.mean_aspect > 0.75 {
@@ -402,8 +414,8 @@ impl<'a> Scorer<'a> {
             }
             tie_break += position as f32 * 1e-4 * columns;
         }
-        let rows = (row_variance * 0.6 + row_penalty * 0.4) / row_count;
-        area_variance * 8.0 + sheet_penalty + outliers + rows + cramping + tie_break
+        let row_shape = (row_variance * 0.6 + row_penalty * 0.4) / row_count;
+        area_variance * 8.0 + sheet_penalty + outliers + row_shape + cramping + tie_break
     }
 }
 
@@ -440,20 +452,20 @@ mod tests {
             &[3.0, 4.5, 4.5, 2.0, 0.56, 1.33, 4.5, 4.5, 4.5],
             &[1.6; 12],
         ] {
-            let ((width, height), _) = layout(aspects, &vec![2560.0; aspects.len()]);
+            let Layout { width, height, .. } = layout(aspects, &vec![2560.0; aspects.len()]);
             assert!(width.max(height) <= 1_600, "{width}×{height}");
             assert!(
                 width as f32 * height as f32 <= MOST_PIXELS,
                 "{width}×{height}"
             );
         }
-        let (_, cells) = layout(&[1.6; 12], &[2560.0; 12]);
+        let cells = layout(&[1.6; 12], &[2560.0; 12]).cells;
         assert_eq!(cells.len(), 12);
         // Rows are justified: the last cell of every row ends at the same right edge.
         let right_edges: Vec<u32> = cells
-            .windows(2)
-            .filter(|pair| pair[1].top != pair[0].top)
-            .map(|pair| pair[0].left.saturating_add(pair[0].width))
+            .array_windows()
+            .filter(|[one, next]| next.top != one.top)
+            .map(|[one, _]| one.left.saturating_add(one.width))
             .chain(
                 cells
                     .last()
@@ -462,7 +474,7 @@ mod tests {
             .collect();
         assert_eq!(right_edges.len(), 4);
         assert!(
-            right_edges.windows(2).all(|pair| pair[0] == pair[1]),
+            right_edges.array_windows().all(|[one, next]| one == next),
             "{right_edges:?}"
         );
     }
@@ -491,7 +503,7 @@ mod tests {
             prop_assert_eq!(flattened, (0..aspects.len()).collect::<Vec<_>>());
             prop_assert!(rows.iter().all(|row| (1..=ROW_FRAMES).contains(&row.len())));
             let widths = vec![2560.0; aspects.len()];
-            let ((width, height), cells) = layout(&aspects, &widths);
+            let Layout { width, height, cells } = layout(&aspects, &widths);
             prop_assert!(width.max(height) as f32 <= LONGEST_EDGE, "{}×{}", width, height);
             prop_assert!(width as f32 * height as f32 <= MOST_PIXELS, "{}×{}", width, height);
             prop_assert_eq!(cells.len(), aspects.len());

@@ -89,6 +89,22 @@ fn said(selection: &Selection) -> Vec<Option<&str>> {
         .collect()
 }
 
+fn marked(selection: &Selection) -> Vec<Range<usize>> {
+    selection
+        .keyframes
+        .iter()
+        .map(|keyframe| keyframe.marks.clone())
+        .collect()
+}
+
+fn reported(selection: &Selection) -> Vec<Option<Action>> {
+    selection
+        .keyframes
+        .iter()
+        .map(|keyframe| keyframe.action)
+        .collect()
+}
+
 #[test]
 fn later_actions_survive_a_full_first_sheet() {
     let frames = samples(250, 51_500, |_| 128);
@@ -163,8 +179,11 @@ fn a_crowded_show_keeps_its_most_keyframes_spread_out() {
                 .collect();
             // Splitting the longest stretch each time leaves none over twice an even share.
             let even = end / (most as u64 + 1);
+            assert_eq!(at.len(), most, "{at:?}");
             assert!(
-                at.len() == most && edges.windows(2).all(|pair| pair[1] - pair[0] <= 2 * even),
+                edges
+                    .array_windows()
+                    .all(|[one, next]| next - one <= 2 * even),
                 "{most}: {at:?}"
             );
         }
@@ -225,8 +244,7 @@ fn marks_group_only_while_they_share_a_screen() {
     )
     .unwrap();
     assert_eq!(shown.keyframes.len(), 7);
-    let covered: Vec<Range<usize>> = shown.keyframes.iter().map(|k| k.marks.clone()).collect();
-    assert_eq!(covered, [0..1, 1..2, 2..3, 3..4, 4..6, 6..7, 7..8]);
+    assert_eq!(marked(&shown), [0..1, 1..2, 2..3, 3..4, 4..6, 6..7, 7..8]);
     assert_eq!(shown.keyframes[4].at.as_millis(), 11_000);
 
     // On one unchanged screen, marks group until they span more than twenty seconds.
@@ -349,10 +367,10 @@ fn groups_close_at_a_click_or_too_much_ink() {
         &still,
     )
     .unwrap();
-    let marks: Vec<Range<usize>> = shown.keyframes.iter().map(|k| k.marks.clone()).collect();
+    let groups = marked(&shown);
     assert!(
-        marks.contains(&(0..1)) && marks.contains(&(1..2)),
-        "{marks:?}"
+        groups.contains(&(0..1)) && groups.contains(&(1..2)),
+        "{groups:?}"
     );
 
     // Five strokes a mark: two marks fit a group, a third would carry too much ink.
@@ -366,8 +384,7 @@ fn groups_close_at_a_click_or_too_much_ink() {
         &still,
     )
     .unwrap();
-    let marks: Vec<Range<usize>> = shown.keyframes.iter().map(|k| k.marks.clone()).collect();
-    assert_eq!(marks, [0..2, 2..3]);
+    assert_eq!(marked(&shown), [0..2, 2..3]);
 }
 
 #[test]
@@ -377,8 +394,7 @@ fn same_screen_merges_stay_balanced() {
     let clicks = every(2_000, 2_000, 5).map(click).collect();
     let shown =
         select_within(&recording(strokes, clicks, Narration::default()), &still, 3).unwrap();
-    let marks: Vec<Range<usize>> = shown.keyframes.iter().map(|k| k.marks.clone()).collect();
-    assert_eq!(marks, [0..2, 2..4, 4..6]);
+    assert_eq!(marked(&shown), [0..2, 2..4, 4..6]);
 }
 
 #[test]
@@ -468,8 +484,7 @@ fn a_click_between_two_marks_is_reported_by_the_nearer() {
     )
     .unwrap();
     assert_eq!(times(&shown), [2_000, 3_300]);
-    let actions: Vec<Option<Action>> = shown.keyframes.iter().map(|k| k.action).collect();
-    assert_eq!(actions, [Some(click(2_400)), None]);
+    assert_eq!(reported(&shown), [Some(click(2_400)), None]);
 
     // Both marks cover this click's result too, but the later one is nearer.
     let shown = select(
@@ -481,8 +496,7 @@ fn a_click_between_two_marks_is_reported_by_the_nearer() {
         &still,
     )
     .unwrap();
-    let actions: Vec<Option<Action>> = shown.keyframes.iter().map(|k| k.action).collect();
-    assert_eq!(actions, [None, Some(click(2_450))]);
+    assert_eq!(reported(&shown), [None, Some(click(2_450))]);
 }
 
 #[test]
@@ -569,9 +583,9 @@ proptest::proptest! {
     #[test]
     fn selection_keeps_its_invariants(
         gaps in proptest::collection::vec((50_u64..2_000, 0_u8..=255), 1..40),
-        dabs in proptest::collection::vec(100_u64..60_000, 0..10),
+        mut dabs in proptest::collection::vec(100_u64..60_000, 0..10),
         clicks in proptest::collection::vec(0_u64..60_000, 0..6),
-        spoken in proptest::collection::vec((0_u64..60_000, 0_usize..6), 0..30),
+        mut spoken in proptest::collection::vec((0_u64..60_000, 0_usize..6), 0..30),
         most in 0_usize..16,
     ) {
         let frames: Vec<Sample> = gaps
@@ -581,9 +595,7 @@ proptest::proptest! {
                 Some(sample(*at, level))
             })
             .collect();
-        let mut dabs = dabs;
         dabs.sort_unstable();
-        let mut spoken = spoken;
         spoken.sort_unstable();
         let vocabulary = ["look", "now", "this", "works", "fine.", "here,"];
         let narration: Vec<(u64, &str)> = spoken
@@ -610,7 +622,7 @@ proptest::proptest! {
             proptest::prop_assert!(!view.novel(view.nearest(last.at), view.last()));
         }
         proptest::prop_assert!(keyframes.iter().map(|k| k.index).eq(1..=keyframes.len()));
-        proptest::prop_assert!(keyframes.windows(2).all(|pair| pair[0].at <= pair[1].at));
+        proptest::prop_assert!(keyframes.is_sorted_by_key(|keyframe| keyframe.at));
         let covered: Vec<usize> = keyframes.iter().flat_map(|k| k.marks.clone()).collect();
         proptest::prop_assert_eq!(covered, (0..shown.marks.len()).collect::<Vec<_>>());
         let mut said: Vec<&str> = keyframes

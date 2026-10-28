@@ -3,7 +3,12 @@
 mod frames;
 mod groups;
 
-use std::{cmp::Reverse, fmt, ops::Range, time::Duration};
+use std::{
+    cmp::{Ordering, Reverse},
+    fmt,
+    ops::Range,
+    time::Duration,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -135,7 +140,7 @@ fn select_within(recording: &Recording, samples: &[Sample], most: usize) -> Opti
     }
     let frames = Frames::new(samples)?;
     let marks = marks::group(&recording.strokes, &recording.pins, recording.surface);
-    let actions = settle(&recording.actions);
+    let actions = merge_double_clicks(&recording.actions);
     let action_times: Vec<Moment> = actions.iter().map(|action| action.span().start()).collect();
     let transitions = frames.transitions();
     let mut candidates: Vec<Candidate> = group_marks(&frames, &marks, &action_times, most)
@@ -158,25 +163,14 @@ fn select_within(recording: &Recording, samples: &[Sample], most: usize) -> Opti
     if candidates.is_empty() {
         candidates.push(frames.middle_candidate());
     }
-    candidates.sort_by(|one, other| one.rank(&frames).cmp_rank(&other.rank(&frames)));
+    candidates.sort_by(|one, other| one.cmp_rank(other, &frames));
 
-    let mut chooser = Chooser {
-        frames: &frames,
-        chosen: Vec::new(),
-    };
-    chooser.choose(candidates);
-    chooser.drop_repeated_cues();
-    let mut chosen = chooser.chosen;
+    let mut chosen = choose(candidates, &frames);
     chosen.sort_by_key(|candidate| frames.at(candidate.frame));
     if let Some(last) = chosen.last()
         && frames.novel(last.frame, frames.last())
     {
-        chosen.push(Candidate {
-            frame: frames.last(),
-            span: Span::at(frames.at(frames.last())),
-            score: 0.0,
-            basis: Basis::SceneChange,
-        });
+        chosen.push(frames.last_candidate());
     }
     thin(&mut chosen, &frames, most);
     fold_actions_into_marks(&mut chosen, &actions, &frames);
@@ -254,34 +248,34 @@ impl Basis {
             Self::SceneChange | Self::Cue { .. } | Self::Middle => None,
         }
     }
-}
 
-/// Orders candidates: marks first, cues that found no transition last, then by score and time.
-struct Rank {
-    ordinary: bool,
-    unsnapped_cue: bool,
-    score: f32,
-    at: Moment,
-}
-
-impl Rank {
-    fn cmp_rank(&self, other: &Self) -> std::cmp::Ordering {
-        self.ordinary
-            .cmp(&other.ordinary)
-            .then(self.unsnapped_cue.cmp(&other.unsnapped_cue))
-            .then(other.score.total_cmp(&self.score))
-            .then(self.at.cmp(&other.at))
+    const fn tier(&self) -> Tier {
+        match self {
+            Self::Mark { .. } => Tier::Mark,
+            Self::Click(_) | Self::SceneChange | Self::Cue { snapped: true, .. } | Self::Middle => {
+                Tier::Ordinary
+            },
+            Self::Cue { snapped: false, .. } => Tier::UnsnappedCue,
+        }
     }
 }
 
+/// Where a candidate ranks before its score: marks first, cues that found no transition last.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Tier {
+    Mark,
+    Ordinary,
+    UnsnappedCue,
+}
+
 impl Candidate {
-    fn rank(&self, frames: &Frames<'_>) -> Rank {
-        Rank {
-            ordinary: !matches!(self.basis, Basis::Mark { .. }),
-            unsnapped_cue: matches!(self.basis, Basis::Cue { snapped: false, .. }),
-            score: self.score,
-            at: frames.at(self.frame),
-        }
+    /// Orders candidates for choosing: by tier, then the higher score, then the earlier frame.
+    fn cmp_rank(&self, other: &Self, frames: &Frames<'_>) -> Ordering {
+        self.basis
+            .tier()
+            .cmp(&other.basis.tier())
+            .then(other.score.total_cmp(&self.score))
+            .then(frames.at(self.frame).cmp(&frames.at(other.frame)))
     }
 
     /// Where the keyframe's story begins: the start of its span, or its frame if that is earlier.
@@ -295,7 +289,9 @@ impl Candidate {
     fn covers(&self, frames: &Frames<'_>, frame: usize) -> bool {
         match self.basis {
             Basis::Mark { .. } => self.during(frames, frame) && !frames.novel(self.frame, frame),
-            _ => self.near(frames, frame),
+            Basis::Click(_) | Basis::SceneChange | Basis::Cue { .. } | Basis::Middle => {
+                self.near(frames, frame)
+            },
         }
     }
 
@@ -311,54 +307,47 @@ impl Candidate {
     }
 }
 
-struct Chooser<'a> {
-    frames: &'a Frames<'a>,
-    chosen: Vec<Candidate>,
+/// The `candidates`, taken in rank order, that each add something those taken before them do not
+/// show, less any spoken cue whose screen another kind of keyframe already shows.
+fn choose(candidates: Vec<Candidate>, frames: &Frames<'_>) -> Vec<Candidate> {
+    let mut chosen: Vec<Candidate> = Vec::new();
+    for candidate in candidates {
+        if admits(&chosen, &candidate, frames) {
+            chosen.push(candidate);
+        }
+    }
+    let shown: Vec<usize> = chosen
+        .iter()
+        .filter(|candidate| !matches!(candidate.basis, Basis::Cue { .. }))
+        .map(|candidate| candidate.frame)
+        .collect();
+    chosen.retain(|candidate| {
+        !matches!(candidate.basis, Basis::Cue { .. })
+            || shown
+                .iter()
+                .all(|&other| frames.novel(other, candidate.frame))
+    });
+    chosen
 }
 
-impl Chooser<'_> {
-    /// Whether `candidate` adds something the chosen keyframes do not already show.
-    fn admits(&self, candidate: &Candidate) -> bool {
-        if matches!(candidate.basis, Basis::Mark { .. }) {
-            return true;
-        }
-        // A crowded click a mark covers is reported on that mark's keyframe instead.
-        let crowded = self
-            .chosen
+/// Whether `candidate` adds something `chosen` does not already show. A mark always does. Nothing
+/// else does where a chosen keyframe already covers its frame, so a crowded click a mark covers is
+/// reported on that mark's keyframe instead; a scene change or cue must also show a new screen.
+fn admits(chosen: &[Candidate], candidate: &Candidate, frames: &Frames<'_>) -> bool {
+    let covered = || {
+        chosen
             .iter()
-            .any(|other| other.covers(self.frames, candidate.frame));
-        if crowded {
-            return false;
-        }
-        !matches!(candidate.basis, Basis::Cue { .. } | Basis::SceneChange)
-            || self
-                .chosen
-                .iter()
-                .all(|other| self.frames.novel(other.frame, candidate.frame))
-    }
-
-    fn choose(&mut self, candidates: Vec<Candidate>) {
-        for candidate in candidates {
-            if self.admits(&candidate) {
-                self.chosen.push(candidate);
-            }
-        }
-    }
-
-    /// Drops a spoken cue whose screen another kind of keyframe already shows.
-    fn drop_repeated_cues(&mut self) {
-        let shown: Vec<usize> = self
-            .chosen
+            .any(|other| other.covers(frames, candidate.frame))
+    };
+    let novel = || {
+        chosen
             .iter()
-            .filter(|candidate| !matches!(candidate.basis, Basis::Cue { .. }))
-            .map(|candidate| candidate.frame)
-            .collect();
-        self.chosen.retain(|candidate| {
-            !matches!(candidate.basis, Basis::Cue { .. })
-                || shown
-                    .iter()
-                    .all(|&other| self.frames.novel(other, candidate.frame))
-        });
+            .all(|other| frames.novel(other.frame, candidate.frame))
+    };
+    match candidate.basis {
+        Basis::Mark { .. } => true,
+        Basis::Click(_) | Basis::Middle => !covered(),
+        Basis::SceneChange | Basis::Cue { .. } => !covered() && novel(),
     }
 }
 
@@ -427,9 +416,8 @@ fn widest(slots: &[Slot], end: Moment) -> Option<usize> {
             let (before, after) = kept.split_at(kept.partition_point(|&at| at < slot.at));
             let previous = before.last().copied().unwrap_or(Moment::START);
             let next = after.first().copied().unwrap_or(end);
-            // Twice the distance from the stretch's middle.
-            let off_middle = slot.at.since(previous).abs_diff(next.since(slot.at));
-            (Reverse(next.since(previous)), !slot.new_screen, off_middle)
+            let imbalance = slot.at.since(previous).abs_diff(next.since(slot.at));
+            (Reverse(next.since(previous)), !slot.new_screen, imbalance)
         })
         .map(|(index, _)| index)
 }
@@ -459,23 +447,29 @@ fn fold_actions_into_marks(chosen: &mut [Candidate], actions: &[Action], frames:
 }
 
 /// Actions in time order with double clicks merged into their last click.
-fn settle(actions: &[Action]) -> Vec<Action> {
+fn merge_double_clicks(actions: &[Action]) -> Vec<Action> {
     let mut sorted = actions.to_vec();
     sorted.sort_by_key(|action| action.span().start());
-    let mut settled: Vec<Action> = Vec::with_capacity(sorted.len());
+    let mut merged: Vec<Action> = Vec::with_capacity(sorted.len());
     for action in sorted {
-        if let Action::Click { at, point } = action
-            && let Some(repeat) = settled.iter().rposition(|prior| {
-                matches!(*prior, Action::Click { at: earlier, point: there }
-                    if at.since(earlier) <= DOUBLE_CLICK
-                        && point.distance(there) <= DOUBLE_CLICK_DISTANCE)
-            })
+        if let Some(repeat) = merged
+            .iter()
+            .rposition(|&prior| is_double_click(prior, action))
         {
-            settled.remove(repeat);
+            merged.remove(repeat);
         }
-        settled.push(action);
+        merged.push(action);
     }
-    settled
+    merged
+}
+
+/// Whether `later` is the second click of a double click that `earlier` began.
+fn is_double_click(earlier: Action, later: Action) -> bool {
+    matches!(
+        (earlier, later),
+        (Action::Click { at: first, point: here }, Action::Click { at: second, point: there })
+            if second.since(first) <= DOUBLE_CLICK && here.distance(there) <= DOUBLE_CLICK_DISTANCE
+    )
 }
 
 #[cfg(test)]

@@ -20,7 +20,7 @@ pub struct Recording {
     pub pins: Vec<Pin>,
     /// Clicks and drags that passed through to the apps underneath.
     pub actions: Vec<Action>,
-    /// The narration.
+    /// What was said while the Show ran.
     pub narration: Narration,
 }
 

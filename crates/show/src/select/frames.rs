@@ -62,13 +62,10 @@ impl<'a> Frames<'a> {
         self.signature(one).transition(self.signature(other)) >= NOVELTY
     }
 
-    /// The frame on screen closest to `moment`.
+    /// The frame on screen closest to `moment`, the earlier on a tie.
     pub(super) fn nearest(&self, moment: Moment) -> usize {
-        let after = self.samples.partition_point(|sample| sample.at < moment);
-        let before = after.saturating_sub(1);
-        if after <= self.last()
-            && self.at(after).distance(moment) < self.at(before).distance(moment)
-        {
+        let (before, after) = (self.last_before(moment), self.first_from(moment));
+        if self.at(after).distance(moment) < self.at(before).distance(moment) {
             after
         } else {
             before
@@ -76,14 +73,14 @@ impl<'a> Frames<'a> {
     }
 
     /// The last frame captured before `moment`, or the first frame.
-    fn before(&self, moment: Moment) -> usize {
+    fn last_before(&self, moment: Moment) -> usize {
         self.samples
             .partition_point(|sample| sample.at < moment)
             .saturating_sub(1)
     }
 
     /// The first frame captured at or after `moment`, or the last frame.
-    fn from(&self, moment: Moment) -> usize {
+    fn first_from(&self, moment: Moment) -> usize {
         self.samples
             .partition_point(|sample| sample.at < moment)
             .min(self.last())
@@ -93,22 +90,16 @@ impl<'a> Frames<'a> {
     pub(super) fn transitions(&self) -> Vec<Transition> {
         let mut found = Vec::new();
         let mut open: Option<Transition> = None;
-        let pairs = self.samples.iter().zip(self.samples.iter().skip(1));
-        for (frame, (one, next)) in pairs.enumerate() {
+        for (frame, [one, next]) in self.samples.array_windows().enumerate() {
             let strength = one.signature.transition(&next.signature);
-            let settled = frame.saturating_add(1);
             if strength > SCENE {
-                open = Some(match open {
-                    Some(run) => Transition {
-                        frame: settled,
-                        span: Span::new(run.span.start(), next.at),
-                        strength: run.strength.max(strength),
-                    },
-                    None => Transition {
-                        frame: settled,
-                        span: Span::new(one.at, next.at),
-                        strength,
-                    },
+                let (start, strongest) = open.map_or((one.at, strength), |run| {
+                    (run.span.start(), run.strength.max(strength))
+                });
+                open = Some(Transition {
+                    frame: frame.saturating_add(1),
+                    span: Span::new(start, next.at),
+                    strength: strongest,
                 });
             } else {
                 found.extend(open.take());
@@ -135,12 +126,13 @@ impl<'a> Frames<'a> {
     /// The frame that shows `action`'s result, once the app has responded.
     pub(super) fn result_of(&self, action: Action) -> usize {
         let end = action.span().end();
-        self.nearest(end.saturating_add(SETTLE)).max(self.from(end))
+        self.nearest(end.saturating_add(SETTLE))
+            .max(self.first_from(end))
     }
 
     pub(super) fn action_candidate(&self, action: Action) -> Candidate {
         let span = action.span();
-        let before = self.before(span.start());
+        let before = self.last_before(span.start());
         let after = self.result_of(action);
         let change = self.signature(before).change(self.signature(after));
         Candidate {
@@ -181,6 +173,17 @@ impl<'a> Frames<'a> {
                 snapped: snapped.is_some(),
             },
         })
+    }
+
+    /// The recording's last screen, shown as a scene change.
+    pub(super) fn last_candidate(&self) -> Candidate {
+        let frame = self.last();
+        Candidate {
+            frame,
+            span: Span::at(self.at(frame)),
+            score: 0.0,
+            basis: Basis::SceneChange,
+        }
     }
 
     pub(super) fn middle_candidate(&self) -> Candidate {

@@ -85,7 +85,6 @@ impl Tracker {
         } else {
             self.lift();
         }
-        let surface = self.surface;
         match (self.press.as_mut(), pressed) {
             (None, true) if inside => {
                 self.press = Some(Press {
@@ -98,7 +97,7 @@ impl Tracker {
             },
             (Some(press), true) => {
                 press.to = point;
-                press.reach = press.reach.max(pixels(surface, press.from, point));
+                press.reach = press.reach.max(pixels(self.surface, press.from, point));
                 press.drawing |= drawing;
             },
             (Some(_), false) => self.release(at, point),
@@ -132,17 +131,19 @@ impl Tracker {
             .take_while(|&&used| used >= taps.start())
             .any(|&used| used <= taps.end());
         let pinned = self.pins.last().is_some_and(|pin| taps.start() <= pin.at);
-        let Some(point) = self
-            .pointer
-            .filter(|&point| !used && !pinned && inside(point))
-        else {
-            return false;
-        };
-        self.pins.push(Pin {
-            at: taps.end(),
-            point,
-        });
-        true
+        if !used
+            && !pinned
+            && let Some(point) = self.pointer
+            && inside(point)
+        {
+            self.pins.push(Pin {
+                at: taps.end(),
+                point,
+            });
+            true
+        } else {
+            false
+        }
     }
 
     /// The marks the finished strokes and pins make so far, numbered as the bundle will number
@@ -179,11 +180,7 @@ impl Tracker {
             return;
         }
         if self.drawing.len() >= MOST_STROKE_POINTS {
-            // A cut is no pen lift: the next stroke starts where this one ended, as deliberate.
-            let (joint, deliberate) = (self.drawing.last().copied(), self.deliberate);
-            self.lift();
-            self.drawing.extend(joint);
-            self.deliberate = deliberate;
+            self.cut();
         }
         self.deliberate |= self.drawing.first().is_some_and(|first| {
             pixels(self.surface, first.point, ink.point) >= SHORTEST_STROKE_PIXELS
@@ -203,6 +200,15 @@ impl Tracker {
         if !noted {
             self.shift_uses.push(at);
         }
+    }
+
+    /// Ends the stroke being drawn without lifting the pen: the next stroke starts where this one
+    /// ended, as deliberate as it was.
+    fn cut(&mut self) {
+        let (joint, deliberate) = (self.drawing.last().copied(), self.deliberate);
+        self.lift();
+        self.drawing.extend(joint);
+        self.deliberate = deliberate;
     }
 
     /// Ends the stroke being drawn, keeping it only if it spans enough to be deliberate.
@@ -324,19 +330,33 @@ mod tests {
         assert_eq!(strokes[0].points().last(), strokes[1].points().first());
     }
 
-    /// Taps Shift for 60 ms from `millis` with the pointer at `x`, 0.4, flicking it 20 pixels
-    /// right when `flick` and holding the button when `click`; returns the tap's span.
-    fn tap(tracker: &mut Tracker, millis: u64, x: f32, flick: bool, click: bool) -> Span {
+    /// How a test taps Shift.
+    #[derive(Clone, Copy)]
+    enum Tap {
+        Clean,
+        /// Flicking the pointer 20 pixels right, which draws a quick stroke.
+        Flick,
+        /// Holding the button down.
+        ShiftClick,
+    }
+
+    /// Taps Shift for 60 ms from `millis` with the pointer at `x`, 0.4, as `kind` says; returns
+    /// the tap's span.
+    fn tap(tracker: &mut Tracker, millis: u64, x: f32, kind: Tap) -> Span {
         let at = |offset: u64| Moment::from_millis(millis.saturating_add(offset));
-        let flicked = if flick { x + 0.02 } else { x };
-        tracker.observe(at(0), Point::new(x, 0.4), true, click);
-        tracker.observe(at(30), Point::new(flicked, 0.4), true, click);
+        let (flicked, pressed) = match kind {
+            Tap::Clean => (x, false),
+            Tap::Flick => (x + 0.02, false),
+            Tap::ShiftClick => (x, true),
+        };
+        tracker.observe(at(0), Point::new(x, 0.4), true, pressed);
+        tracker.observe(at(30), Point::new(flicked, 0.4), true, pressed);
         tracker.observe(at(60), Point::new(flicked, 0.4), false, false);
         Span::new(at(0), at(60))
     }
 
     fn clean(tracker: &mut Tracker, millis: u64, x: f32) -> Span {
-        tap(tracker, millis, x, false, false)
+        tap(tracker, millis, x, Tap::Clean)
     }
 
     /// Asks for the pin of a double tap from `first`'s press to `second`'s release.
@@ -358,14 +378,14 @@ mod tests {
         assert!(!pin(t, second, third), "three taps pin once");
         let (first, second) = (clean(t, 1_000, 1.3), clean(t, 1_160, 1.3));
         assert!(!pin(t, first, second), "on another display");
-        let (first, second) = (tap(t, 2_000, 0.5, false, true), clean(t, 2_160, 0.5));
+        let (first, second) = (tap(t, 2_000, 0.5, Tap::ShiftClick), clean(t, 2_160, 0.5));
         assert!(!pin(t, first, second), "Shift-clicking");
         let (first, second) = (
-            tap(t, 3_000, 0.5, true, false),
-            tap(t, 3_160, 0.5, true, false),
+            tap(t, 3_000, 0.5, Tap::Flick),
+            tap(t, 3_160, 0.5, Tap::Flick),
         );
         assert!(!pin(t, first, second), "two quick strokes, as in an X");
-        let stroke = tap(t, 4_000, 0.6, true, false);
+        let stroke = tap(t, 4_000, 0.6, Tap::Flick);
         let (first, second) = (clean(t, 4_160, 0.62), clean(t, 4_320, 0.62));
         assert!(!pin(t, stroke, first), "a quick stroke and a tap");
         assert!(
@@ -373,7 +393,7 @@ mod tests {
             "a quick stroke costs the double tap after it nothing"
         );
         let (first, second) = (clean(t, 5_000, 0.7), clean(t, 5_160, 0.7));
-        tap(t, 5_240, 0.7, true, false);
+        tap(t, 5_240, 0.7, Tap::Flick);
         assert!(
             pin(t, first, second),
             "a stroke seen after the taps but before their pin"
