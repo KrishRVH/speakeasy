@@ -138,7 +138,6 @@ pub fn compose<E: From<Error> + Send>(
             frames.push(file?);
         }
     }
-    sheets.append(&mut frames);
     Ok(Bundle {
         manifest: Manifest {
             version: Manifest::VERSION,
@@ -146,7 +145,7 @@ pub fn compose<E: From<Error> + Send>(
             marks,
             keyframes,
         },
-        images: sheets,
+        images: sheets.into_iter().chain(frames).collect(),
     })
 }
 
@@ -218,9 +217,9 @@ impl Bundle {
         lines.join("\n")
     }
 
-    /// Every file of the bundle for `directory`, where it will be written, with already encoded
-    /// images, and the summary among them, which names the files there and which an agent reads
-    /// first.
+    /// Every file of the bundle, to be written under `directory`: its encoded images,
+    /// `summary.md`, and `show.json`. The summary names files under `directory` and also comes
+    /// back on its own, since an agent reads it first.
     ///
     /// # Errors
     ///
