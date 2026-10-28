@@ -67,11 +67,15 @@ pub(crate) struct Canvas {
     /// Finished strokes. Each is an immutable snapshot, so a render's copy of the canvas copies
     /// only the stroke being drawn.
     strokes: Vec<Arc<[Point]>>,
+    /// How many finished strokes were cleared before those in `strokes`: the first of them is the
+    /// recording's stroke of this index.
+    cleared: usize,
     /// The stroke being drawn.
     drawing: Vec<Point>,
     /// Every mark so far, numbered from one.
     marks: Arc<[Mark]>,
-    /// The number of the first mark made since the ink last faded; it and later ones show.
+    /// The number of the first mark to show: the first made since the ink last faded, or the
+    /// faded mark the ink on screen joined; it and later ones show.
     first: usize,
     /// When the pen last lifted, or a pin last dropped.
     lifted: Option<Instant>,
@@ -84,6 +88,7 @@ impl Default for Canvas {
             part: Part::WHOLE,
             picking: None,
             strokes: Vec::new(),
+            cleared: 0,
             drawing: Vec::new(),
             marks: Arc::new([]),
             first: 1,
@@ -126,10 +131,11 @@ impl Canvas {
     }
 
     /// Keeps the `finished` strokes, shows `drawing` as the stroke in progress, both normalized to
-    /// the part recorded, and takes `marks` when they changed, at `now`. Ink or a pin arriving
-    /// after earlier ink has faded starts a clean canvas, and ink no longer being drawn or a pin
-    /// starts the hold and fade; a stroke cut for length while the pen keeps drawing does neither.
-    /// Returns whether anything visible changed.
+    /// the part recorded, and takes `marks` when they changed, at `now`. Every stroke the
+    /// recording finishes arrives once, in order, and `marks` number them as the bundle does. Ink
+    /// or a pin arriving after earlier ink has faded starts a clean canvas, and ink no longer being
+    /// drawn or a pin starts the hold and fade; a stroke cut for length while the pen keeps
+    /// drawing does neither. Returns whether anything visible changed.
     pub(crate) fn update(
         &mut self,
         finished: impl IntoIterator<Item = Arc<[Point]>>,
@@ -146,6 +152,7 @@ impl Canvas {
             .is_some_and(|marks| marks.len() > self.marks.len());
         let inked = !finished.is_empty() || !drawing.is_empty() || marked;
         if inked && self.faded(now) {
+            self.cleared = self.cleared.saturating_add(self.strokes.len());
             self.strokes.clear();
             self.first = self.marks.len().saturating_add(1);
         }
@@ -156,6 +163,15 @@ impl Canvas {
         self.strokes.extend(finished);
         self.drawing = drawing;
         if let Some(marks) = marks {
+            // Marks group strokes by when the pen went down, which can come before the ink faded
+            // even when the pen drew nothing until after: the stroke then shows the number of the
+            // faded mark it joined.
+            if let Some(joined) = marks
+                .iter()
+                .find(|mark| mark.strokes.contains(&self.cleared))
+            {
+                self.first = self.first.min(joined.number);
+            }
             self.marks = marks;
         }
         changed
@@ -667,6 +683,8 @@ fn open(canvas: watch::Receiver<Canvas>, cx: &mut App) -> anyhow::Result<WindowH
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Range;
+
     use speakeasy_show::{Moment, Rect, Span};
 
     use super::*;
@@ -741,12 +759,12 @@ mod tests {
         assert!(!Canvas::default().update([], [], None, at(0)));
     }
 
-    /// The first `count` marks, numbered from one.
-    fn marks(count: usize) -> Arc<[Mark]> {
-        let tap = |number| Mark {
+    /// Mark `number`, made of the recording's `strokes`.
+    fn mark(number: usize, strokes: Range<usize>) -> Mark {
+        Mark {
             number,
             shape: Shape::Tap,
-            strokes: 0..0,
+            strokes,
             span: Span::at(Moment::START),
             bounds: Rect {
                 left: 0.5,
@@ -754,8 +772,22 @@ mod tests {
                 right: 0.5,
                 bottom: 0.5,
             },
-        };
-        (1..=count).map(tap).collect()
+        }
+    }
+
+    /// The first `count` marks, numbered from one.
+    fn marks(count: usize) -> Arc<[Mark]> {
+        (1..=count).map(|number| mark(number, 0..0)).collect()
+    }
+
+    /// Marks numbered from one, each made of the recording's strokes from where the mark before
+    /// it ended up to one of `ends`.
+    fn grouped(ends: &[usize]) -> Arc<[Mark]> {
+        let starts = std::iter::once(0).chain(ends.iter().copied());
+        (1..)
+            .zip(starts.zip(ends))
+            .map(|(number, (start, &end))| mark(number, start..end))
+            .collect()
     }
 
     fn shown(canvas: &Canvas) -> Vec<usize> {
@@ -782,6 +814,24 @@ mod tests {
         canvas.update([], stroke(4), None, at(4_000));
         canvas.update([stroke(4).into()], [], Some(marks(4)), at(4_100));
         assert_eq!(shown(&canvas), [4]);
+    }
+
+    #[test]
+    fn a_stroke_that_joins_a_faded_mark_shows_its_number() {
+        let at = clock();
+        let mut canvas = Canvas::default();
+        canvas.update([], stroke(3), None, at(0));
+        canvas.update([stroke(3).into()], [], Some(grouped(&[1])), at(100));
+        // Shift goes down again 1.1 s after the lift, soon enough for the bundle to join the next
+        // stroke to mark ①, but the pen pauses and draws only once the circle has faded.
+        canvas.update([], stroke(4), None, at(1_450));
+        assert_eq!(canvas.strokes, Vec::<Arc<[Point]>>::new());
+        canvas.update([stroke(4).into()], [], Some(grouped(&[2])), at(1_700));
+        assert_eq!(shown(&canvas), [1]);
+        // A stroke after everything has faded again starts a mark of its own.
+        canvas.update([], stroke(5), None, at(4_000));
+        canvas.update([stroke(5).into()], [], Some(grouped(&[2, 3])), at(4_100));
+        assert_eq!(shown(&canvas), [2]);
     }
 
     #[test]
