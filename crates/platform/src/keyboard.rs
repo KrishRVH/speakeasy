@@ -72,10 +72,12 @@ impl Chord {
     }
 
     /// Swallows `key` pressed during a hold through its release, including repeats after the
-    /// chord itself is released, and acts on each press.
+    /// chord itself is released, but acts only on presses during the hold, so a key whose release
+    /// went unseen asks for nothing once the hold is over.
     fn hold_key(&mut self, key: HoldKey, down: bool) -> Decision {
         let bit = key.bit();
-        if down && self.hold == Hold::Held {
+        let acts = down && self.hold == Hold::Held;
+        if acts {
             self.swallowing |= bit;
         }
         let swallowed = self.swallowing & bit != 0;
@@ -83,7 +85,7 @@ impl Chord {
             self.swallowing &= !bit;
         }
         if swallowed {
-            Decision::swallow(down.then_some(key.action()))
+            Decision::swallow(acts.then_some(key.action()))
         } else {
             Decision::pass(None)
         }

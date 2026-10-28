@@ -514,6 +514,30 @@ fn a_missed_release_lets_s_reach_the_app() {
 }
 
 #[test]
+fn a_show_key_whose_release_went_unseen_asks_for_no_show_outside_a_hold() {
+    // S and Ctrl+Win went up on the secure desktop, so S typed afterward belongs to no hold.
+    let mut policy = Windows::default();
+    policy.observe(LEFT_CONTROL, true, NONE_HELD, now());
+    policy.observe(LEFT_WINDOWS, true, held(&[LEFT_CONTROL]), now());
+    policy.observe(LETTER_S, true, held(&[LEFT_CONTROL, LEFT_WINDOWS]), now());
+    let typed = policy.observe(LETTER_S, true, NONE_HELD, now());
+    assert_eq!(delivered(&typed), [Action::Release]);
+
+    // The tap went off while S was held, and S and Fn came up unseen.
+    let (sender, _events) = async_channel::bounded(4);
+    let mut mac = Mac::default();
+    mac.observe(function(true), keyboard_fn_up, now());
+    mac.observe(key(Mac::SCREEN, true, FN_HELD), keyboard_fn_up, now());
+    mac.missed_events(&InputSender::new(sender));
+    let typed = mac.observe(key(Mac::SCREEN, true, NO_MODIFIERS), keyboard_fn_up, now());
+    assert_eq!(
+        delivered(&typed),
+        [],
+        "S typed after the outage asked for a Show"
+    );
+}
+
+#[test]
 fn a_posted_event_without_fn_ends_no_hold_the_keyboard_still_makes() {
     let keyboard_fn_down = || true;
     let mut mac = Mac::default();
