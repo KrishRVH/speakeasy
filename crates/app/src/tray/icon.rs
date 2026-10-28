@@ -175,24 +175,16 @@ fn coverage(distance: f32) -> f32 {
 fn composite(layers: [(u32, f32); 3]) -> ([f32; 3], f32) {
     layers
         .into_iter()
-        .fold(([0.0; 3], 0.0), |(below, alpha), (color, top)| {
-            let combined = alpha.mul_add(1.0 - top, top);
+        .fold(([0.0; 3], 0.0), |(mut rgb, alpha), (color, opacity)| {
+            let combined = opacity + alpha * (1.0 - opacity);
             if combined <= 0.0 {
-                return (below, 0.0);
+                return (rgb, 0.0);
             }
             let [_, red, green, blue] = color.to_be_bytes();
-            let blend = |under: f32, over: u8| {
-                (under * alpha).mul_add(1.0 - top, f32::from(over) * top) / combined
-            };
-            let [under_red, under_green, under_blue] = below;
-            (
-                [
-                    blend(under_red, red),
-                    blend(under_green, green),
-                    blend(under_blue, blue),
-                ],
-                combined,
-            )
+            for (under, over) in rgb.iter_mut().zip([red, green, blue]) {
+                *under = (f32::from(over) * opacity + *under * alpha * (1.0 - opacity)) / combined;
+            }
+            (rgb, combined)
         })
 }
 

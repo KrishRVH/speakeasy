@@ -40,7 +40,7 @@ struct Presenter {
 
 impl Presenter {
     fn present(&mut self, state: &TrayState) {
-        self.redraw_icon(state.status.indicator, state.theme);
+        best_effort(self.redraw_icon(state.status.indicator, state.theme));
         self.status.set_text(&state.status.description);
         best_effort(self.icon.set_tooltip(Some(format!(
             "Speakeasy · {}\nHold {} to dictate",
@@ -62,19 +62,17 @@ impl Presenter {
         }
     }
 
-    fn redraw_icon(&mut self, indicator: Indicator, theme: Theme) {
+    fn redraw_icon(&mut self, indicator: Indicator, theme: Theme) -> anyhow::Result<()> {
         if self.drawn == Some((indicator, theme)) {
-            return;
+            return Ok(());
         }
         self.drawn = Some((indicator, theme));
-        let Ok(image) = draw_icon(indicator, theme) else {
-            return;
-        };
+        let image = draw_icon(indicator, theme)?;
         #[cfg(target_os = "macos")]
-        let updated = self.icon.set_icon_templated(Some(image));
+        self.icon.set_icon_templated(Some(image))?;
         #[cfg(target_os = "windows")]
-        let updated = self.icon.set_icon(Some(image));
-        best_effort(updated);
+        self.icon.set_icon(Some(image))?;
+        Ok(())
     }
 }
 
@@ -185,7 +183,7 @@ fn offer(queue: &async_channel::Sender<TrayCommand>, command: TrayCommand) {
     let _ = queue.try_send(command);
 }
 
-fn best_effort(update: tray_icon::Result<()>) {
+fn best_effort<E>(update: Result<(), E>) {
     #[expect(
         clippy::let_underscore_must_use,
         reason = "A failed cosmetic icon or tooltip update keeps the previous one and a working menu"
