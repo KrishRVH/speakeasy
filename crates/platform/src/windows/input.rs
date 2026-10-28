@@ -431,8 +431,6 @@ fn dispatch_queued_messages(wake: &OwnedHandle) -> ControlFlow<()> {
 }
 
 unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    // A panic must not unwind into the OS. Closing the input makes the owner cancel rather than
-    // continue with lost key edges.
     let swallow = code >= 0
         && panic::catch_unwind(|| {
             // SAFETY: for nonnegative WH_KEYBOARD_LL callbacks lparam points to a KBDLLHOOKSTRUCT
@@ -446,13 +444,7 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                 })
         })
         .unwrap_or_else(|_| {
-            HOOK.with(|slot| {
-                if let Ok(state) = slot.try_borrow()
-                    && let Some(state) = state.as_ref()
-                {
-                    state.input.close();
-                }
-            });
+            close_input();
             false
         });
     if swallow {
@@ -468,17 +460,34 @@ unsafe extern "system" fn lifecycle_window(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    if interrupts_dictation(message, wparam) {
-        HOOK.with(|slot| {
-            if let Ok(mut state) = slot.try_borrow_mut()
-                && let Some(state) = state.as_mut()
-            {
-                state.policy.interrupt(&state.input);
-            }
-        });
+    if interrupts_dictation(message, wparam)
+        && panic::catch_unwind(|| {
+            HOOK.with(|slot| {
+                if let Ok(mut state) = slot.try_borrow_mut()
+                    && let Some(state) = state.as_mut()
+                {
+                    state.policy.interrupt(&state.input);
+                }
+            });
+        })
+        .is_err()
+    {
+        close_input();
     }
     // SAFETY: forward unchanged arguments for this registered native window.
     unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+}
+
+/// Recovers from a panic inside a native callback, which must not unwind into the OS: closing the
+/// input makes the owner cancel rather than continue with lost key edges.
+fn close_input() {
+    HOOK.with(|slot| {
+        if let Ok(state) = slot.try_borrow()
+            && let Some(state) = state.as_ref()
+        {
+            state.input.close();
+        }
+    });
 }
 
 fn interrupts_dictation(message: u32, wparam: WPARAM) -> bool {
