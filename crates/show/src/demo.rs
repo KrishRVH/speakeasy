@@ -478,9 +478,11 @@ mod tests {
     #[test]
     fn the_demo_tells_its_story_in_four_keyframes() {
         let bundle = Demo::new(typeface()).bundle((720, 450)).unwrap();
+        let expected = bundle.manifest().clone();
         let directory = Path::new("shows").join("demo");
+        let (summary, files) = bundle.into_files(&directory).unwrap();
         assert_eq!(
-            bundle.summary(&directory),
+            summary,
             format!(
                 "Screen recording (0:20, 4 keyframes): {}
 Contact sheet: {}
@@ -494,7 +496,7 @@ Full-size keyframes: frames/frame-01.png to frames/frame-04.png. Timeline: show.
                 directory.join("contact-sheet.png").display()
             )
         );
-        let marks = &bundle.manifest().marks;
+        let marks = &expected.marks;
         assert_eq!(marks.len(), 3);
         assert_eq!(marks[0].shape, crate::Shape::Circle);
         assert!(
@@ -507,8 +509,6 @@ Full-size keyframes: frames/frame-01.png to frames/frame-04.png. Timeline: show.
             "{:?}",
             marks[2].shape
         );
-        let expected = bundle.manifest().clone();
-        let files = bundle.into_files(&directory).unwrap();
         let names: Vec<&str> = files.iter().map(|file| file.name.as_str()).collect();
         assert_eq!(
             names,
@@ -522,6 +522,7 @@ Full-size keyframes: frames/frame-01.png to frames/frame-04.png. Timeline: show.
                 "show.json"
             ]
         );
+        assert_eq!(files[5].contents, summary.as_bytes());
         let sheet = Image::decode_png(&files[0].contents);
         assert!(sheet.width().max(sheet.height()) <= 1_600);
         let manifest: crate::Manifest = serde_json::from_slice(&files[6].contents).unwrap();

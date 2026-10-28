@@ -75,17 +75,14 @@ fn write_bundle(
     }
     let bundle = bundle?;
     let directory = store::fresh_directory(&parent()?, SystemTime::now())?;
-    let summary = bundle.summary(&directory);
-    let files = bundle.into_files(&directory)?;
     if cancelled() {
         return Ok(None);
     }
-    let staged = store::stage(&directory, &files)?;
+    let staged = store::stage(&directory, bundle)?;
     if !permit.commit() {
         return Ok(None);
     }
-    staged.persist()?;
-    Ok(Some(summary))
+    staged.persist().map(Some)
 }
 
 #[cfg(test)]

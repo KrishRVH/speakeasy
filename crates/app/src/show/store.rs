@@ -9,6 +9,7 @@ use std::{
 
 use anyhow::Context as _;
 use gpui::App;
+use speakeasy_show::Bundle;
 
 /// How long an unpinned Show is kept.
 const KEPT_FOR: Duration = Duration::from_hours(7 * 24);
@@ -78,16 +79,18 @@ pub(super) fn fresh_directory(parent: &Path, now: SystemTime) -> anyhow::Result<
 pub(super) struct Staged {
     staging: tempfile::TempDir,
     directory: PathBuf,
+    /// The summary written in the bundle, naming its files where it appears.
+    summary: String,
 }
 
 impl Staged {
-    /// Moves the bundle into place.
-    pub(super) fn persist(mut self) -> anyhow::Result<()> {
+    /// Moves the bundle into place and returns its summary.
+    pub(super) fn persist(mut self) -> anyhow::Result<String> {
         let parent = self.directory.parent().unwrap_or(&self.directory);
         fs::rename(self.staging.path(), &self.directory).map_err(cannot_save(parent))?;
         // The staging directory is now the bundle.
         self.staging.disable_cleanup(true);
-        Ok(())
+        Ok(self.summary)
     }
 }
 
@@ -103,10 +106,10 @@ fn cannot_save(parent: &Path) -> impl FnOnce(io::Error) -> anyhow::Error {
     }
 }
 
-/// Writes `files` beside `directory`, which must not exist yet. On Unix the bundle is the user's
-/// alone; on Windows it takes its parent's access, which for the Shows folder is the user's alone
-/// (see [`private_directory`]).
-pub(super) fn stage(directory: &Path, files: &[speakeasy_show::File]) -> anyhow::Result<Staged> {
+/// Writes `bundle` beside `directory`, which must not exist yet, with a summary naming its files
+/// there. On Unix the bundle is the user's alone; on Windows it takes its parent's access, which
+/// for the Shows folder is the user's alone (see [`private_directory`]).
+pub(super) fn stage(directory: &Path, bundle: Bundle) -> anyhow::Result<Staged> {
     anyhow::ensure!(
         !directory.exists(),
         "{} already exists, and a Show never replaces one",
@@ -115,6 +118,7 @@ pub(super) fn stage(directory: &Path, files: &[speakeasy_show::File]) -> anyhow:
     let parent = directory
         .parent()
         .context("A Show's directory needs a parent")?;
+    let (summary, files) = bundle.into_files(directory)?;
     fs::create_dir_all(parent).map_err(cannot_save(parent))?;
     let mut builder = tempfile::Builder::new();
     builder.prefix(STAGING_PREFIX);
@@ -134,6 +138,7 @@ pub(super) fn stage(directory: &Path, files: &[speakeasy_show::File]) -> anyhow:
     Ok(Staged {
         staging,
         directory: directory.to_path_buf(),
+        summary,
     })
 }
 
@@ -281,6 +286,8 @@ fn civil_date(days: u64) -> (u64, u64, u64) {
 
 #[cfg(test)]
 mod tests {
+    use speakeasy_show::{Image, Journal, Moment, Recording, Typeface, compose, select};
+
     use super::*;
 
     fn at(seconds: u64) -> SystemTime {
@@ -377,25 +384,36 @@ mod tests {
         assert_eq!(utc_stamp(at(4_102_444_799)), "20991231T235959Z");
     }
 
+    /// A bundle of one blank frame.
+    fn bundle() -> anyhow::Result<Bundle> {
+        let mut journal = Journal::new();
+        journal.record(Moment::START, Image::from_bgra(32, 20, vec![255; 2_560])?);
+        let recording = Recording::default();
+        let selection = select(&recording, journal.samples()).context("a frame to choose")?;
+        let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;
+        compose(
+            recording,
+            selection,
+            |at| journal.frame_at(at).context("a recorded frame"),
+            &typeface,
+        )
+    }
+
     #[test]
     fn a_bundle_appears_whole_under_a_fresh_name() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
         let parent = root.path().join("shows");
         let first = fresh_directory(&parent, at(1_792_420_563))?;
-        let files = [
-            speakeasy_show::File {
-                name: "summary.md".into(),
-                contents: b"text".to_vec(),
-            },
-            speakeasy_show::File {
-                name: "frames/frame-01.png".into(),
-                contents: vec![1, 2],
-            },
-        ];
-        stage(&first, &files)?.persist()?;
-        assert_eq!(fs::read(first.join("frames/frame-01.png"))?, [1, 2]);
+        let summary = stage(&first, bundle()?)?.persist()?;
+        assert_eq!(
+            fs::read_to_string(first.join("summary.md"))?,
+            summary,
+            "the summary returned is the one written"
+        );
+        assert!(summary.contains(&first.display().to_string()));
+        assert!(first.join("frames/frame-01.png").is_file());
         assert!(
-            stage(&first, &files).is_err(),
+            stage(&first, bundle()?).is_err(),
             "an existing bundle is never replaced"
         );
         #[cfg(unix)]
@@ -407,7 +425,7 @@ mod tests {
         assert_eq!(second.file_name(), Some("20261019T143603Z-2".as_ref()));
         // A bundle dropped before it persists, as a Show cancelled at commit drops it, leaves
         // nothing behind.
-        drop(stage(&second, &files)?);
+        drop(stage(&second, bundle()?)?);
         let names: Vec<_> = fs::read_dir(&parent)?
             .map(|entry| entry.map(|entry| entry.file_name()))
             .collect::<Result<_, _>>()?;
@@ -420,7 +438,7 @@ mod tests {
         let root = tempfile::tempdir()?;
         let blocked = root.path().join("shows");
         fs::write(&blocked, b"a file where the folder belongs")?;
-        let message = stage(&blocked.join("20261019T143603Z"), &[])
+        let message = stage(&blocked.join("20261019T143603Z"), bundle()?)
             .err()
             .context("A Show was staged beneath a file")?
             .to_string();

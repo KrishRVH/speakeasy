@@ -1,7 +1,7 @@
 //! Publishes a rehearsed Show into a temporary folder and checks every file and the cancel path;
 //! the opt-in `profile_show_pipeline` times recording and publishing at 2560 × 1440.
 
-use std::{fs, time::Instant};
+use std::{fs, io, path::Path, time::Instant};
 
 use speakeasy_platform::{InputSender, InsertPermit};
 use speakeasy_show::{Image, Journal, Manifest, Moment, Point, Size, Span, Tracker, Word};
@@ -256,6 +256,19 @@ fn a_show_cancelled_before_staging_never_writes_its_files() -> anyhow::Result<()
     Ok(())
 }
 
+/// The bytes of every file under `directory`.
+fn bytes_under(directory: &Path) -> io::Result<u64> {
+    fs::read_dir(directory)?.try_fold(0_u64, |bytes, entry| {
+        let entry = entry?;
+        let size = if entry.file_type()?.is_dir() {
+            bytes_under(&entry.path())?
+        } else {
+            entry.metadata()?.len()
+        };
+        Ok(bytes.saturating_add(size))
+    })
+}
+
 fn median_ms(mut timings: Vec<f64>) -> f64 {
     timings.sort_by(f64::total_cmp);
     timings[timings.len() / 2]
@@ -336,17 +349,14 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     let composed = started.elapsed();
     let root = tempfile::tempdir()?;
     let directory = root.path().join("show");
-    let files = bundle.into_files(&directory)?;
-    let assembled = started.elapsed();
-    store::stage(&directory, &files)?.persist()?;
+    store::stage(&directory, bundle)?.persist()?;
     let written = started.elapsed();
-    let bytes: usize = files.iter().map(|file| file.contents.len()).sum();
+    let bytes = bytes_under(&directory)?;
     eprintln!(
-        "show_publish: seconds=60 keyframes={keyframes} select_ms={:.1} compose_ms={:.1} files_ms={:.1} write_ms={:.1} total_ms={:.1} bundle_mb={:.1}",
+        "show_publish: seconds=60 keyframes={keyframes} select_ms={:.1} compose_ms={:.1} write_ms={:.1} total_ms={:.1} bundle_mb={:.1}",
         selected.as_secs_f64() * 1000.0,
         composed.saturating_sub(selected).as_secs_f64() * 1000.0,
-        assembled.saturating_sub(composed).as_secs_f64() * 1000.0,
-        written.saturating_sub(assembled).as_secs_f64() * 1000.0,
+        written.saturating_sub(composed).as_secs_f64() * 1000.0,
         written.as_secs_f64() * 1000.0,
         bytes as f64 / 1e6,
     );

@@ -168,8 +168,7 @@ impl Bundle {
     /// One line per keyframe gives its number and time, what the pointer or ink did there, and
     /// what was said, or only what happened when nothing was said. Window titles and other screen
     /// text never appear in it.
-    #[must_use]
-    pub fn summary(&self, directory: &Path) -> String {
+    fn summary(&self, directory: &Path) -> String {
         let Manifest {
             recording,
             marks,
@@ -225,23 +224,25 @@ impl Bundle {
         lines.join("\n")
     }
 
-    /// Every file of the bundle, with already encoded images and the summary for `directory`.
+    /// Every file of the bundle for `directory`, where it will be written, with already encoded
+    /// images, and the summary among them, which names the files there and which an agent reads
+    /// first.
     ///
     /// # Errors
     ///
     /// Fails if the manifest cannot be encoded, which valid input never causes.
-    pub fn into_files(self, directory: &Path) -> Result<Vec<File>, Error> {
+    pub fn into_files(self, directory: &Path) -> Result<(String, Vec<File>), Error> {
         let summary = self.summary(directory);
         let mut files = self.images;
         files.push(File {
             name: SUMMARY.to_owned(),
-            contents: summary.into_bytes(),
+            contents: summary.clone().into_bytes(),
         });
         files.push(File {
             name: MANIFEST.to_owned(),
             contents: serde_json::to_vec_pretty(&self.manifest).map_err(Error::manifest)?,
         });
-        Ok(files)
+        Ok((summary, files))
     }
 }
 

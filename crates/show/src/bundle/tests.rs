@@ -262,14 +262,13 @@ fn contact_sheets_cover_every_frame_once_in_readable_pages() {
         )
         .unwrap();
         let directory = Path::new("show");
-        let summary = bundle.summary(directory);
         let frame_files: Vec<_> = bundle
             .manifest()
             .keyframes
             .iter()
             .map(Keyframe::file)
             .collect();
-        let files = bundle.into_files(directory).unwrap();
+        let (summary, files) = bundle.into_files(directory).unwrap();
         let sheets: Vec<&File> = files
             .iter()
             .filter(|file| file.name.starts_with("contact-sheet"))
