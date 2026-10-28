@@ -1,7 +1,7 @@
 {
-  "engine": "whisper",
-  "engine_executable": "tools/whisper/whisper-server.exe",
-  "model": "models/ggml-small.en.bin",
+  "engine": "parakeet",
+  "engine_executable": "",
+  "model": "",
   "language": "en",
   "remove_fillers": true,
   "microphone": null,
