@@ -90,7 +90,6 @@ impl Grille {
             width,
             height,
         } = slot;
-        let radius = slot.radius();
         let color = self.bar_color();
         #[expect(
             clippy::cast_possible_truncation,
@@ -105,14 +104,9 @@ impl Grille {
         let start = x + (width - span) / 2.0;
         for index in 0..count {
             let left = start + index as f32 * BAR_PITCH;
-            let center = left + BAR_WIDTH / 2.0;
-            // A bar over a rounded end stays within the end's chord through the bar's center.
-            let into_end = (x + radius - center)
-                .max(center - (x + width - radius))
-                .max(0.0);
             let bar = slot
                 .bar_height(self.level_at_age(mirrored_age(index, count)))
-                .min((chord(radius, into_end) - 3.0).max(2.0));
+                .min((slot.height_at(left + BAR_WIDTH / 2.0) - 3.0).max(2.0));
             let bounds = rect(left, y + (height - bar) / 2.0, BAR_WIDTH, bar);
             window.paint_quad(fill(bounds, color).corner_radii(px(BAR_WIDTH / 2.0)));
         }
@@ -199,7 +193,7 @@ impl Grille {
     }
 
     fn level_at_age(&self, age: usize) -> f32 {
-        self.levels.iter().rev().nth(age).copied().unwrap_or(0.0)
+        self.levels.iter().nth_back(age).copied().unwrap_or(0.0)
     }
 }
 
@@ -232,6 +226,15 @@ impl Slot {
     /// A level bar's height: two pixels when silent, two short of each edge at full level.
     fn bar_height(self, level: f32) -> f32 {
         2.0 + level * (self.height - 6.0)
+    }
+
+    /// The slot's height at `x`, which narrows across its rounded ends.
+    fn height_at(self, x: f32) -> f32 {
+        let radius = self.radius();
+        let into_end = (self.x + radius - x)
+            .max(x - (self.x + self.width - radius))
+            .max(0.0);
+        chord(radius, into_end)
     }
 }
 

@@ -11,7 +11,10 @@ mod native_tests;
 mod render;
 mod symbol;
 
-use std::time::{Duration, Instant};
+use std::{
+    fmt,
+    time::{Duration, Instant},
+};
 
 use anyhow::Context as _;
 use gpui::{
@@ -66,16 +69,6 @@ const _: () = assert!(
         && MESSAGE_SIZE.height + SHADOW_ROOM <= PILL_HEIGHT as f32,
     "The capsule must fit the native pill window"
 );
-/// The slot row's horizontal padding.
-const ROW_PADDING: f32 = 7.0;
-/// The slot's horizontal inset inside the capsule: `ROW_PADDING` plus the capsule's one-pixel
-/// border on each side.
-const SLOT_SIDE_INSET: f32 = 2.0 * (ROW_PADDING + 1.0);
-/// The slot's total vertical inset inside the capsule.
-const SLOT_VERTICAL_INSET: f32 = 16.0;
-/// The room the mark and clock leave before the row's padding at the capsule's rounded end, which
-/// curves in closer to text than to the concentric slot.
-const TRAILING_INSET: f32 = 7.0;
 /// The window's clearance above the display's bottom edge. Windows and macOS move the pill onto
 /// their work area; GPUI's X11 display has none, so on Linux this keeps it above a bottom panel.
 const BOTTOM_CLEARANCE: f32 = 50.0;
@@ -83,15 +76,6 @@ const BOTTOM_CLEARANCE: f32 = 50.0;
 const LID_OPEN: f32 = 0.0;
 const LID_AJAR: f32 = 0.62;
 const LID_CLOSED: f32 = 1.0;
-/// The lid position from which a closed slot's label fades in.
-const LABEL_FADE_FROM: f32 = 0.6;
-
-const TRAY_HINT: &str = if cfg!(target_os = "macos") {
-    "In the menu bar · Use Speakeasy’s menu to quit"
-} else {
-    "In the tray · Use Speakeasy’s menu to quit"
-};
-const DRAW_HINT: &str = "Hold Shift to draw";
 
 #[expect(
     clippy::struct_excessive_bools,
@@ -177,11 +161,12 @@ impl Pill {
         let previous = &self.snapshot;
         let new_session = snapshot.id != previous.id;
         let new_phase = new_session || snapshot.phase != previous.phase;
+        let new_message = snapshot.message != previous.message;
         let state_changed = new_phase
+            || new_message
             || snapshot.hands_free != previous.hands_free
-            || snapshot.show != previous.show
-            || snapshot.message != previous.message;
-        if new_phase || (snapshot.phase == Phase::Error && snapshot.message != previous.message) {
+            || snapshot.show != previous.show;
+        if new_phase || (snapshot.phase == Phase::Error && new_message) {
             self.phase_at = now;
             self.wake = None;
             self.tray_hint_until = None;
@@ -212,9 +197,8 @@ impl Pill {
         }
         let previous = self.history;
         self.history.rotate_left(1);
-        if let Some(newest) = self.history.last_mut() {
-            *newest = meter.level;
-        }
+        let [.., newest] = &mut self.history;
+        *newest = meter.level;
         // Exact comparison: any tolerance would hide quiet speech. An animating pill paints new
         // levels on its pending frame.
         if previous.map(f32::to_bits) != self.history.map(f32::to_bits) && !self.animating {
@@ -258,7 +242,7 @@ impl Pill {
         for (spring, omega) in self.capsule.springs_mut() {
             moving |= advance(spring, omega);
         }
-        let newest = self.history.last().copied().unwrap_or_default();
+        let [.., newest] = self.history;
         for (spring, level) in self.meter.iter_mut().zip(self.history) {
             spring.target = match scene.phase {
                 Phase::Recording if reduced_motion => newest,
@@ -391,7 +375,11 @@ impl Capsule {
         self.opacity.target = if shown { 1.0 } else { 0.0 };
         self.lift.target = if shown { 0.0 } else { HIDDEN_LIFT };
         self.waveform.target = if scene.is_capturing() { 1.0 } else { 0.0 };
-        self.lid.target = lid_target(scene.phase);
+        self.lid.target = match scene.phase {
+            Phase::Recording | Phase::Stopping => LID_OPEN,
+            Phase::Processing => LID_AJAR,
+            _ => LID_CLOSED,
+        };
     }
 
     fn springs_mut(&mut self) -> [(&mut Spring, f32); 6] {
@@ -429,23 +417,22 @@ impl Scene {
         matches!(self.phase, Phase::Recording | Phase::Stopping)
     }
 
-    fn has_slot(&self) -> bool {
-        self.tray_hint.is_none()
-            && match self.phase {
-                Phase::Starting
-                | Phase::Recording
-                | Phase::Stopping
-                | Phase::Processing
-                | Phase::Done
-                | Phase::Empty => true,
-                Phase::Copied => self.show,
-                Phase::Idle | Phase::Cancelled | Phase::Error => false,
-            }
-    }
-
-    /// Copied dictation, whose message says how to paste it; a copied Show keeps its compact slot.
-    fn is_notice(&self) -> bool {
-        self.phase == Phase::Copied && !self.show
+    fn content(&self) -> Content {
+        if self.tray_hint.is_some() {
+            return Content::TrayHint;
+        }
+        match self.phase {
+            Phase::Error => Content::Error,
+            Phase::Copied if !self.show => Content::Notice,
+            Phase::Starting
+            | Phase::Recording
+            | Phase::Stopping
+            | Phase::Processing
+            | Phase::Done
+            | Phase::Copied
+            | Phase::Empty => Content::Slot,
+            Phase::Idle | Phase::Cancelled => Content::Idle,
+        }
     }
 
     fn shows_clock(&self) -> bool {
@@ -484,8 +471,10 @@ impl Scene {
             if self.is_capturing() {
                 let tick = self.clock.next_tick;
                 Some(self.draw_hint.map_or(tick, |left| left.min(tick)))
-            } else if self.phase == Phase::Processing && self.since_phase < SWEEP_DELAY {
-                Some(SWEEP_DELAY.saturating_sub(self.since_phase))
+            } else if self.phase == Phase::Processing {
+                SWEEP_DELAY
+                    .checked_sub(self.since_phase)
+                    .filter(|left| !left.is_zero())
             } else {
                 None
             }
@@ -504,6 +493,17 @@ impl Scene {
     }
 }
 
+/// What the capsule holds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Content {
+    TrayHint,
+    Error,
+    /// Copied dictation, whose message says how to paste it; a copied Show keeps its compact slot.
+    Notice,
+    Slot,
+    Idle,
+}
+
 /// The recording's elapsed seconds, and whether it has reached the countdown before its limit.
 struct Clock {
     seconds: u64,
@@ -516,22 +516,22 @@ struct Clock {
 impl Clock {
     fn new(elapsed: Duration) -> Self {
         let seconds = elapsed.as_secs();
-        let limit = RECORDING_LIMIT.as_secs();
         Self {
             seconds,
-            near_limit: seconds >= limit.saturating_sub(COUNTDOWN.as_secs()),
-            next_tick: Duration::from_secs(1)
-                .saturating_sub(Duration::from_nanos(u64::from(elapsed.subsec_nanos()))),
+            near_limit: elapsed >= RECORDING_LIMIT.saturating_sub(COUNTDOWN),
+            next_tick: Duration::from_secs(seconds.saturating_add(1)).saturating_sub(elapsed),
         }
     }
+}
 
-    /// The elapsed time, or the time left once the countdown begins.
-    fn text(&self) -> String {
+/// Formats as `M:SS`, or as the time left, `M:SS left`, once the countdown begins.
+impl fmt::Display for Clock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.near_limit {
             let left = RECORDING_LIMIT.as_secs().saturating_sub(self.seconds);
-            format!("{}:{:02} left", left / 60, left % 60)
+            write!(f, "{}:{:02} left", left / 60, left % 60)
         } else {
-            format!("{}:{:02}", self.seconds / 60, self.seconds % 60)
+            write!(f, "{}:{:02}", self.seconds / 60, self.seconds % 60)
         }
     }
 }
@@ -627,14 +627,6 @@ fn next_frame_deadline(previous: Instant, now: Instant) -> Instant {
         .unwrap_or(now)
 }
 
-fn lid_target(phase: Phase) -> f32 {
-    match phase {
-        Phase::Recording | Phase::Stopping => LID_OPEN,
-        Phase::Processing => LID_AJAR,
-        _ => LID_CLOSED,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -690,17 +682,25 @@ mod tests {
         assert_eq!(feedback_remaining(Phase::Error, false, ERROR_FOR), None);
     }
 
-    #[test]
-    fn a_new_show_says_how_to_draw_in_place_of_its_clock_until_the_hint_ends() {
-        let show = |seconds, draw_hint| Scene {
+    fn recording(elapsed: Duration) -> Scene {
+        Scene {
             phase: Phase::Recording,
             since_phase: Duration::ZERO,
             feedback: None,
             tray_hint: None,
-            draw_hint,
+            draw_hint: None,
             hands_free: true,
+            show: false,
+            clock: Clock::new(elapsed),
+        }
+    }
+
+    #[test]
+    fn a_new_show_says_how_to_draw_in_place_of_its_clock_until_the_hint_ends() {
+        let show = |seconds, draw_hint| Scene {
+            draw_hint,
             show: true,
-            clock: Clock::new(Duration::from_secs(seconds)),
+            ..recording(Duration::from_secs(seconds))
         };
         let left = Duration::from_millis(400);
         let hinted = show(2, Some(left));
@@ -731,16 +731,6 @@ mod tests {
 
     #[test]
     fn clock_wakes_land_on_whole_seconds_of_the_recording() {
-        let recording = |elapsed| Scene {
-            phase: Phase::Recording,
-            since_phase: Duration::ZERO,
-            feedback: None,
-            tray_hint: None,
-            draw_hint: None,
-            hands_free: true,
-            show: false,
-            clock: Clock::new(elapsed),
-        };
         assert_eq!(
             recording(Duration::from_millis(2_300)).wake_after(),
             Some(Duration::from_millis(700)),
@@ -811,7 +801,7 @@ mod tests {
     fn limit_countdown_is_clamped_and_only_appears_in_the_last_thirty_seconds() {
         let clock = |seconds| {
             let clock = Clock::new(Duration::from_secs(seconds));
-            (clock.near_limit, clock.text())
+            (clock.near_limit, clock.to_string())
         };
         assert_eq!(clock(269), (false, "4:29".into()));
         assert_eq!(clock(270), (true, "0:30 left".into()));

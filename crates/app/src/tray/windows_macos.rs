@@ -51,7 +51,7 @@ impl Presenter {
             pause,
             toggle,
             cancel,
-        } = state.menu();
+        } = state.menu;
         for (entry, TrayItem { label, enabled }) in [
             (&self.pause, pause),
             (&self.toggle, toggle),

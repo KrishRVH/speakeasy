@@ -32,9 +32,8 @@ pub(super) enum IconStyle {
 
 /// One state's colors and badge.
 struct Mark {
-    indicator: Indicator,
     style: IconStyle,
-    badged: bool,
+    badge: Option<Badge>,
     slot_color: u32,
     slot_opacity: f32,
     badge_color: u32,
@@ -44,12 +43,13 @@ impl Mark {
     fn new(indicator: Indicator, theme: Theme, style: IconStyle) -> Self {
         let palette = theme.palette();
         Self {
-            indicator,
             style,
-            badged: match indicator {
-                Indicator::Ready => false,
-                Indicator::Recording => style == IconStyle::Template,
-                Indicator::Busy | Indicator::Paused | Indicator::Attention => true,
+            badge: match indicator {
+                Indicator::Ready => None,
+                Indicator::Recording => (style == IconStyle::Template).then_some(Badge::Recording),
+                Indicator::Busy => Some(Badge::Busy),
+                Indicator::Paused => Some(Badge::Paused),
+                Indicator::Attention => Some(Badge::Attention),
             },
             slot_color: if indicator == Indicator::Recording && style == IconStyle::Color {
                 palette.live
@@ -71,14 +71,16 @@ impl Mark {
 
     fn pixel(&self, x: f32, y: f32) -> [u8; 4] {
         let slot = rounded_rect(x, y, [3.0, 9.0, 29.0, 23.0], 7.0);
-        let bars = BARS.iter().fold(0.0_f32, |cover, &(left, height)| {
-            let bar = [left, 16.0 - height / 2.0, left + 2.0, 16.0 + height / 2.0];
-            cover.max(coverage(rounded_rect(x, y, bar, 1.0)))
-        });
-        let (badge, cut) = if self.badged {
-            (self.badge(x, y), coverage(badge_diamond(x, y, 7.8)))
-        } else {
-            (f32::MAX, 0.0)
+        let bars = BARS
+            .into_iter()
+            .map(|(left, height)| {
+                let bar = [left, 16.0 - height / 2.0, left + 2.0, 16.0 + height / 2.0];
+                coverage(rounded_rect(x, y, bar, 1.0))
+            })
+            .fold(0.0, f32::max);
+        let (badge, cut) = match self.badge {
+            Some(badge) => (badge.distance(x, y), coverage(badge_diamond(x, y, 7.8))),
+            None => (f32::MAX, 0.0),
         };
         // A faint keyline keeps the lamp color legible on light taskbars.
         let keyline = match self.style {
@@ -98,21 +100,27 @@ impl Mark {
                 IconStyle::Color => color,
                 IconStyle::Template => [0.0; 3],
             };
-            [
-                quantize(red),
-                quantize(green),
-                quantize(blue),
-                quantize(opacity * 255.0),
-            ]
+            [red, green, blue, opacity * 255.0].map(quantize)
         } else {
             [0; 4]
         }
     }
+}
 
-    fn badge(&self, x: f32, y: f32) -> f32 {
-        match self.indicator {
-            Indicator::Recording => badge_diamond(x, y, 5.0),
-            Indicator::Busy => {
+/// A cut-jewel badge at the icon's lower right.
+#[derive(Clone, Copy)]
+enum Badge {
+    Recording,
+    Busy,
+    Paused,
+    Attention,
+}
+
+impl Badge {
+    fn distance(self, x: f32, y: f32) -> f32 {
+        match self {
+            Self::Recording => badge_diamond(x, y, 5.0),
+            Self::Busy => {
                 // A three-quarter ring with round caps, open at the upper left.
                 let (dx, dy) = (x - BADGE_CENTER, y - BADGE_CENTER);
                 let from_centerline = if dx < 0.0 && dy < 0.0 {
@@ -122,17 +130,16 @@ impl Mark {
                 };
                 from_centerline - 0.95
             },
-            Indicator::Paused => {
+            Self::Paused => {
                 let left = rounded_rect(x, y, [21.9, 20.8, 24.2, 29.2], 0.6);
                 let right = rounded_rect(x, y, [25.8, 20.8, 28.1, 29.2], 0.6);
                 left.min(right)
             },
-            Indicator::Attention => {
+            Self::Attention => {
                 let stroke = rounded_rect(x, y, [23.85, 19.6, 26.15, 26.0], 1.15);
                 let dot = (x - BADGE_CENTER).hypot(y - 28.7) - 1.3;
                 stroke.min(dot)
             },
-            Indicator::Ready => f32::MAX,
         }
     }
 }
@@ -173,17 +180,26 @@ fn composite(layers: [(u32, f32); 3]) -> ([f32; 3], f32) {
             if combined <= 0.0 {
                 return (below, 0.0);
             }
-            let blend = |channel: f32, shift: u32| {
-                let value = ((color >> shift) & 0xFF) as f32;
-                (channel * alpha).mul_add(1.0 - top, value * top) / combined
+            let [_, red, green, blue] = color.to_be_bytes();
+            let blend = |under: f32, over: u8| {
+                (under * alpha).mul_add(1.0 - top, f32::from(over) * top) / combined
             };
-            let [red, green, blue] = below;
-            ([blend(red, 16), blend(green, 8), blend(blue, 0)], combined)
+            let [under_red, under_green, under_blue] = below;
+            (
+                [
+                    blend(under_red, red),
+                    blend(under_green, green),
+                    blend(under_blue, blue),
+                ],
+                combined,
+            )
         })
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
 
     #[test]
@@ -195,20 +211,22 @@ mod tests {
             Indicator::Paused,
             Indicator::Attention,
         ];
-        let shapes: Vec<Vec<u8>> = states
-            .iter()
-            .map(|&state| {
+        let shapes: HashSet<Vec<u8>> = states
+            .into_iter()
+            .map(|state| {
                 raster(state, Theme::Jet, IconStyle::Template)
                     .as_chunks::<4>()
                     .0
                     .iter()
-                    .map(|pixel| pixel[3])
+                    .map(|&[.., alpha]| alpha)
                     .collect()
             })
             .collect();
-        for (index, shape) in shapes.iter().enumerate() {
-            assert!(shapes[index + 1..].iter().all(|other| other != shape));
-        }
+        assert_eq!(
+            shapes.len(),
+            states.len(),
+            "Two template states share a shape"
+        );
         assert_ne!(
             raster(Indicator::Ready, Theme::Jet, IconStyle::Color),
             raster(Indicator::Recording, Theme::Jet, IconStyle::Color)

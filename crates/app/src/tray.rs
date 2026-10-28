@@ -23,15 +23,12 @@ use crate::{
     theme::Theme,
 };
 
+/// What the tray shows for one snapshot.
 #[derive(PartialEq, Eq)]
 struct TrayState {
     status: Status,
     theme: Theme,
-    service: ServiceState,
-    activity: Activity,
-    desktop_ready: bool,
-    /// Whether the dictation commands act; a demo shows them disabled.
-    interactive: bool,
+    menu: TrayMenu,
 }
 
 impl TrayState {
@@ -39,48 +36,53 @@ impl TrayState {
         Self {
             status: services.status(snapshot),
             theme: services.config.theme,
-            service: services.service_state(),
-            activity: activity(snapshot.phase),
-            desktop_ready: snapshot.desktop_ready,
-            interactive: !services.mode.is_demo(),
-        }
-    }
-
-    /// The dictation entries, each enabled only while its command can act.
-    fn menu(&self) -> TrayMenu {
-        let running = self.service == ServiceState::Running;
-        TrayMenu {
-            pause: TrayItem {
-                label: match self.service {
-                    ServiceState::Running => "Pause dictation",
-                    ServiceState::Pausing => "Pausing…",
-                    ServiceState::Quitting => "Quitting…",
-                    ServiceState::Paused | ServiceState::NotSetUp => "Resume dictation",
-                },
-                // Resuming before setup would only fail validation; Settings offers setup instead.
-                enabled: self.interactive
-                    && matches!(self.service, ServiceState::Running | ServiceState::Paused),
-            },
-            toggle: TrayItem {
-                label: match self.activity {
-                    Activity::Dictating => "Finish dictation",
-                    Activity::Idle | Activity::Finishing => "Start dictation",
-                },
-                // The owner ignores Toggle until desktop input is ready.
-                enabled: self.interactive
-                    && running
-                    && self.desktop_ready
-                    && self.activity != Activity::Finishing,
-            },
-            cancel: TrayItem {
-                label: "Cancel dictation",
-                enabled: self.interactive && running && self.activity != Activity::Idle,
-            },
+            menu: dictation_menu(
+                services.service_state(),
+                activity(snapshot.phase),
+                snapshot.desktop_ready,
+                !services.mode.is_demo(),
+            ),
         }
     }
 }
 
-/// The tray state of each published snapshot, skipping any equal to the last one yielded.
+/// The dictation entries, each enabled only while its command can act; a demo is not
+/// `interactive`, so it shows them all disabled.
+fn dictation_menu(
+    service: ServiceState,
+    activity: Activity,
+    desktop_ready: bool,
+    interactive: bool,
+) -> TrayMenu {
+    let running = service == ServiceState::Running;
+    TrayMenu {
+        pause: TrayItem {
+            label: match service {
+                ServiceState::Running => "Pause dictation",
+                ServiceState::Pausing => "Pausing…",
+                ServiceState::Quitting => "Quitting…",
+                ServiceState::Paused | ServiceState::NotSetUp => "Resume dictation",
+            },
+            // Resuming before setup would only fail validation; Settings offers setup instead.
+            enabled: interactive && matches!(service, ServiceState::Running | ServiceState::Paused),
+        },
+        toggle: TrayItem {
+            label: match activity {
+                Activity::Dictating => "Finish dictation",
+                Activity::Idle | Activity::Finishing => "Start dictation",
+            },
+            // The owner ignores Toggle until desktop input is ready.
+            enabled: interactive && running && desktop_ready && activity != Activity::Finishing,
+        },
+        cancel: TrayItem {
+            label: "Cancel dictation",
+            enabled: interactive && running && activity != Activity::Idle,
+        },
+    }
+}
+
+/// The tray state of the current snapshot and each later one, skipping any equal to the last one
+/// yielded.
 struct TrayChanges {
     snapshots: watch::Receiver<Snapshot>,
     last: Option<TrayState>,
@@ -89,7 +91,6 @@ struct TrayChanges {
 impl TrayChanges {
     fn new(cx: &App) -> Self {
         let mut snapshots = cx.global::<Services>().output.subscribe();
-        // The first `next` presents the current snapshot instead of waiting for a change.
         snapshots.mark_changed();
         Self {
             snapshots,
@@ -164,27 +165,6 @@ fn activity(phase: Phase) -> Activity {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::status::Indicator;
-
-    fn menu(
-        service: ServiceState,
-        activity: Activity,
-        desktop_ready: bool,
-        interactive: bool,
-    ) -> TrayMenu {
-        TrayState {
-            status: Status {
-                indicator: Indicator::Ready,
-                description: "".into(),
-            },
-            theme: Theme::default(),
-            service,
-            activity,
-            desktop_ready,
-            interactive,
-        }
-        .menu()
-    }
 
     #[test]
     fn dictation_entries_are_enabled_only_while_their_command_can_act() {
@@ -208,7 +188,7 @@ mod tests {
                 pause,
                 toggle,
                 cancel,
-            } = menu(service, activity, desktop_ready, interactive);
+            } = dictation_menu(service, activity, desktop_ready, interactive);
             assert_eq!(
                 [pause.enabled, toggle.enabled, cancel.enabled],
                 expected,

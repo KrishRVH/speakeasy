@@ -8,6 +8,7 @@ use anyhow::{anyhow, bail, ensure};
 use gpui::{AsyncApp, div, rgb};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use x11rb::{
+    properties::WmHints,
     protocol::{
         shape::{self, ConnectionExt as _},
         xproto::{AtomEnum, ConnectionExt as _, ImageFormat, MapState},
@@ -50,34 +51,9 @@ fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {
     let (_publisher, updates) = watch::channel(Snapshot::default());
     let (_meter, levels) = watch::channel(Meter::default());
     let pill = open(updates, levels, true, Theme::default(), cx)?;
-    let (native, raw, display) = pill.update(cx, |_, window, _| {
-        Ok::<_, anyhow::Error>((
-            native_window(window, "pill")?,
-            HasWindowHandle::window_handle(window)
-                .map_err(|error| anyhow!("Window handle: {error}"))?
-                .as_raw(),
-            HasDisplayHandle::display_handle(window)
-                .map_err(|error| anyhow!("Display handle: {error}"))?
-                .as_raw(),
-        ))
+    let (native, id) = pill.update(cx, |_, window, _| {
+        anyhow::Ok((native_window(window, "pill")?, x11_window(window)?))
     })??;
-    let id = match (raw, display) {
-        (RawWindowHandle::Xcb(window), RawDisplayHandle::Xcb(display)) => {
-            ensure!(
-                display.connection.is_some(),
-                "Missing live XCB display handle"
-            );
-            window.window.get()
-        },
-        (RawWindowHandle::Xlib(window), RawDisplayHandle::Xlib(display)) => {
-            ensure!(
-                display.display.is_some(),
-                "Missing live Xlib display handle"
-            );
-            u32::try_from(window.window)?
-        },
-        _ => bail!("Expected matching X11 window and display handles"),
-    };
     let (connection, _) = XCBConnection::connect(None)?;
     let attributes = connection.get_window_attributes(id)?.reply()?;
     ensure!(
@@ -108,15 +84,9 @@ fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {
         window_types == [atom(b"_NET_WM_WINDOW_TYPE_NOTIFICATION")?],
         "Pill is not a notification window"
     );
-    let hints = connection
-        .get_property(false, id, AtomEnum::WM_HINTS, AtomEnum::WM_HINTS, 0, 9)?
-        .reply()?;
-    let hints: Vec<_> = hints
-        .value32()
-        .context("Invalid WM_HINTS format")?
-        .collect();
+    let hints = WmHints::get(&connection, id)?.reply()?;
     ensure!(
-        hints.len() == 9 && hints[0] & 1 != 0 && hints[1] == 0,
+        hints.is_some_and(|hints| hints.input == Some(false)),
         "Pill accepts input focus"
     );
     ensure!(
@@ -141,14 +111,43 @@ fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn x11_window(window: &Window) -> anyhow::Result<u32> {
+    let handle = HasWindowHandle::window_handle(window)
+        .map_err(|error| anyhow!("Window handle: {error}"))?
+        .as_raw();
+    let display = HasDisplayHandle::display_handle(window)
+        .map_err(|error| anyhow!("Display handle: {error}"))?
+        .as_raw();
+    match (handle, display) {
+        (RawWindowHandle::Xcb(handle), RawDisplayHandle::Xcb(display)) => {
+            ensure!(
+                display.connection.is_some(),
+                "Missing live XCB display handle"
+            );
+            Ok(handle.window.get())
+        },
+        (RawWindowHandle::Xlib(handle), RawDisplayHandle::Xlib(display)) => {
+            ensure!(
+                display.display.is_some(),
+                "Missing live Xlib display handle"
+            );
+            Ok(u32::try_from(handle.window)?)
+        },
+        _ => bail!("Expected matching X11 window and display handles"),
+    }
+}
+
+const LATE_BACKGROUND: u32 = 0x11_33_55;
+const LATE_STRIPE: u32 = 0x55_77_99;
+
 struct LateColors;
 
 impl Render for LateColors {
     fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .size_full()
-            .bg(rgb(0x11_33_55))
-            .child(div().w(px(32.0)).h_full().bg(rgb(0x55_77_99)))
+            .bg(rgb(LATE_BACKGROUND))
+            .child(div().w(px(32.0)).h_full().bg(rgb(LATE_STRIPE)))
     }
 }
 
@@ -174,15 +173,7 @@ async fn check_late_window(cx: &AsyncApp) -> anyhow::Result<()> {
             },
             |_, cx| cx.new(|_| LateColors),
         )?;
-        colors.update(cx, |_, window, _| {
-            match HasWindowHandle::window_handle(window)
-                .map_err(|error| anyhow!("Window handle: {error}"))?
-                .as_raw()
-            {
-                RawWindowHandle::Xcb(handle) => Ok(handle.window.get()),
-                _ => bail!("Expected XCB window"),
-            }
-        })?
+        colors.update(cx, |_, window, _| x11_window(window))?
     })??;
     let (connection, _) = XCBConnection::connect(None)?;
     let geometry = connection.get_geometry(id)?.reply()?;
@@ -207,7 +198,7 @@ async fn check_late_window(cx: &AsyncApp) -> anyhow::Result<()> {
             .iter()
             .map(|pixel| u32::from_ne_bytes(*pixel) & 0x00FF_FFFF)
             .collect();
-        if colors.contains(&0x11_33_55) && colors.contains(&0x55_77_99) {
+        if colors.contains(&LATE_BACKGROUND) && colors.contains(&LATE_STRIPE) {
             return Ok(());
         }
         ensure!(

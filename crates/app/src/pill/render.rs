@@ -7,20 +7,39 @@ use gpui::{
 use speakeasy_core::motion::Spring;
 
 use super::{
-    DRAW_HINT, LABEL_FADE_FROM, LID_CLOSED, Pill, RECORDING_WIDTH, ROW_PADDING, SHADOW_BLUR,
-    SHADOW_OFFSET, SHADOW_ROOM, SLOT_SIDE_INSET, SLOT_VERTICAL_INSET, Scene, TRAILING_INSET,
-    TRAY_HINT, grille::Grille, symbol::Symbol,
+    Content, LID_CLOSED, Pill, RECORDING_WIDTH, SHADOW_BLUR, SHADOW_OFFSET, SHADOW_ROOM, Scene,
+    grille::Grille, symbol::Symbol,
 };
 use crate::{
     runtime::Phase,
     theme::{Palette, alpha},
 };
 
+/// The slot row's horizontal padding.
+const ROW_PADDING: f32 = 7.0;
+/// The slot's horizontal inset inside the capsule: `ROW_PADDING` plus the capsule's one-pixel
+/// border on each side.
+const SLOT_SIDE_INSET: f32 = 2.0 * (ROW_PADDING + 1.0);
+/// The slot's total vertical inset inside the capsule.
+const SLOT_VERTICAL_INSET: f32 = 16.0;
+/// The room the mark and clock leave before the row's padding at the capsule's rounded end, which
+/// curves in closer to text than to the concentric slot.
+const TRAILING_INSET: f32 = 7.0;
+/// The lid position from which a closed slot's label fades in.
+const LABEL_FADE_FROM: f32 = 0.6;
+
+const TRAY_HINT: &str = if cfg!(target_os = "macos") {
+    "In the menu bar · Use Speakeasy’s menu to quit"
+} else {
+    "In the tray · Use Speakeasy’s menu to quit"
+};
+const DRAW_HINT: &str = "Hold Shift to draw";
+
 impl Pill {
     pub(super) fn render_capsule(&self, scene: Scene) -> Div {
         let palette = self.theme.palette();
         let height = self.capsule.height.value();
-        let inlaid = scene.has_slot();
+        let content = scene.content();
         div()
             .size_full()
             .flex()
@@ -48,30 +67,33 @@ impl Pill {
                     }])
                     .overflow_hidden()
                     .opacity(self.capsule.opacity.value().clamp(0.0, 1.0))
-                    .when(inlaid, |capsule| {
+                    .when(content == Content::Slot, |capsule| {
                         capsule.child(brass_inlay(height, palette))
                     })
-                    .child(self.render_content(scene, palette)),
+                    .child(self.render_content(content, scene, palette)),
             )
     }
 
-    fn render_content(&self, scene: Scene, palette: &'static Palette) -> AnyElement {
-        if scene.tray_hint.is_some() {
-            div()
+    fn render_content(
+        &self,
+        content: Content,
+        scene: Scene,
+        palette: &'static Palette,
+    ) -> AnyElement {
+        match content {
+            Content::TrayHint => div()
                 .text_size(px(12.0))
                 .child(TRAY_HINT)
-                .into_any_element()
-        } else if scene.phase == Phase::Error {
-            self.render_message(palette.warn, Some("Details in Settings"), palette)
-                .into_any_element()
-        } else if scene.is_notice() {
+                .into_any_element(),
+            Content::Error => self
+                .render_message(palette.warn, Some("Details in Settings"), palette)
+                .into_any_element(),
             // Neither a success nor a warning: the text reached the clipboard, not the focused app.
-            self.render_message(palette.muted, None, palette)
-                .into_any_element()
-        } else if scene.has_slot() {
-            self.render_slot(scene, palette).into_any_element()
-        } else {
-            idle_mark(palette).into_any_element()
+            Content::Notice => self
+                .render_message(palette.muted, None, palette)
+                .into_any_element(),
+            Content::Slot => self.render_slot(scene, palette).into_any_element(),
+            Content::Idle => idle_mark(palette).into_any_element(),
         }
     }
 
@@ -110,11 +132,12 @@ impl Pill {
         let (width, height) = (self.capsule.width.value(), self.capsule.height.value());
         let shows_clock = scene.shows_clock();
         // The clock, or the drawing hint in its place, takes any width beyond a recording capsule's.
-        let slot_width = if shows_clock {
+        let slot_room = if shows_clock {
             width.min(RECORDING_WIDTH)
         } else {
             width
-        } - SLOT_SIDE_INSET;
+        };
+        let slot_width = (slot_room - SLOT_SIDE_INSET).max(6.0);
         let slot_height = (height - SLOT_VERTICAL_INSET).max(4.0);
         let grille = Grille {
             lid: self.capsule.lid.value().clamp(0.0, 1.0),
@@ -135,7 +158,7 @@ impl Pill {
                 div()
                     .relative()
                     .flex_none()
-                    .w(px(slot_width.max(6.0)))
+                    .w(px(slot_width))
                     .h(px(slot_height))
                     .rounded(px(slot_height / 2.0))
                     .bg(alpha(0x00_00_00, 0.5))
@@ -176,9 +199,9 @@ impl Pill {
                 let (text, color): (SharedString, _) = if scene.shows_draw_hint() {
                     (DRAW_HINT.into(), palette.ink)
                 } else if scene.clock.near_limit {
-                    (scene.clock.text().into(), palette.warn)
+                    (scene.clock.to_string().into(), palette.warn)
                 } else {
-                    (scene.clock.text().into(), palette.muted)
+                    (scene.clock.to_string().into(), palette.muted)
                 };
                 // A Show is always hands-free; its mark says the screen is recording too.
                 let mark = match (scene.show, scene.hands_free) {

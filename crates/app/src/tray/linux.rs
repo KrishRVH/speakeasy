@@ -67,6 +67,6 @@ fn presentation(state: &TrayState) -> TrayPresentation {
     TrayPresentation {
         rgba: raster(state.status.indicator, state.theme, IconStyle::Color),
         description: state.status.description.to_string(),
-        menu: state.menu(),
+        menu: state.menu,
     }
 }
