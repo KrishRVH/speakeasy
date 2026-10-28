@@ -42,7 +42,9 @@ impl From<SessionId> for u64 {
 pub(crate) enum CaptureEvent {
     /// The first samples arrived; a capture reports it before any audio it seals.
     Ready(SessionId),
+    /// The latest microphone level, for the pill's meter.
     Level(SessionId, f32),
+    /// Capture ended; `None` when the recording was too short or held too little speech to seal.
     Finished(SessionId, anyhow::Result<Option<Sealed>>),
 }
 
@@ -73,10 +75,11 @@ pub(crate) enum ShowEvent {
     Finished(SessionId, anyhow::Result<Footage>),
 }
 
-/// What a Show's screen side recorded: everything but the narration, lasting until recording
-/// stopped, and the frames.
+/// What a Show's screen side recorded, up to the moment recording stopped.
 pub(crate) struct Footage {
+    /// Everything but the frames, with the narration left for publishing to add.
     pub recording: Recording,
+    /// The recorded frames.
     pub journal: Journal,
 }
 

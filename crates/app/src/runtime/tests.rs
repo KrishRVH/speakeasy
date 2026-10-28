@@ -318,14 +318,6 @@ struct FakeMicrophone {
     sounds: Sender<Sound>,
 }
 
-impl Listening for FakeMicrophone {
-    fn expect_cue(&self) {
-        self.sounds
-            .try_send(Sound::Expected(self.id))
-            .expect("the sound lane is unbounded");
-    }
-}
-
 impl Capturing for FakeMicrophone {
     fn finish(&self) {
         if self.delayed_finish {
@@ -340,6 +332,14 @@ impl Capturing for FakeMicrophone {
         if let Some(gate) = self.retirement {
             gate.pass_during_cleanup(()).await;
         }
+    }
+}
+
+impl Listening for FakeMicrophone {
+    fn expect_cue(&self) {
+        self.sounds
+            .try_send(Sound::Expected(self.id))
+            .expect("the sound lane is unbounded");
     }
 }
 
@@ -611,7 +611,7 @@ impl<Host: Sync> Harness<Host> {
         self.updates.borrow().clone()
     }
 
-    /// The cues played and marked since the last call.
+    /// Every sound the fakes reported since the last call, in order.
     fn take_sounds(&self) -> Vec<Sound> {
         std::iter::from_fn(|| self.sounds.try_recv().ok()).collect()
     }
