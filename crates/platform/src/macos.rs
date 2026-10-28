@@ -49,6 +49,7 @@ use super::{
     OwnedThread, PILL_MARGIN, PILL_WIDTH, SHORTCUT, insertion,
     keyboard::{self, MacEvent, Modifiers},
     monitor::MonitorControl,
+    screen::geometry::Bounds,
 };
 
 /// Tags input Speakeasy synthesizes, so its own event tap ignores it.
@@ -448,13 +449,9 @@ impl NativeWindow {
 fn pill_origin_under_pointer() -> Option<NSPoint> {
     let main = MainThreadMarker::new()?;
     let pointer = NSEvent::mouseLocation();
-    let screen = NSScreen::screens(main).iter().find(|screen| {
-        let frame = screen.frame();
-        pointer.x >= frame.origin.x
-            && pointer.x < frame.origin.x + frame.size.width
-            && pointer.y >= frame.origin.y
-            && pointer.y < frame.origin.y + frame.size.height
-    })?;
+    let screen = NSScreen::screens(main)
+        .iter()
+        .find(|screen| Bounds::from(screen.frame()).contains([pointer.x, pointer.y]))?;
     let frame = screen.visibleFrame();
     Some(NSPoint::new(
         frame.origin.x + (frame.size.width - f64::from(PILL_WIDTH)) / 2.0,

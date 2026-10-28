@@ -161,10 +161,7 @@ fn describe(window: &CFDictionary<CFString, CFType>) -> Option<Described> {
         on_screen: on_screen
             .and_then(|value| value.downcast::<CFBoolean>().ok())
             .is_some_and(|value| value.as_bool()),
-        bounds: Bounds {
-            origin: [rect.origin.x, rect.origin.y],
-            size: [rect.size.width, rect.size.height],
-        },
+        bounds: Bounds::from(rect),
     })
 }
 
@@ -525,10 +522,16 @@ fn pointer_location() -> Option<[f64; 2]> {
 
 /// Where display `id` lies in Core Graphics' global space; empty once the display is gone.
 fn display_bounds(id: CGDirectDisplayID) -> Bounds {
-    let rect = CGDisplayBounds(id);
-    Bounds {
-        origin: [rect.origin.x, rect.origin.y],
-        size: [rect.size.width, rect.size.height],
+    Bounds::from(CGDisplayBounds(id))
+}
+
+/// A Core Graphics or `AppKit` rectangle, in the space of the API that measured it.
+impl From<CGRect> for Bounds {
+    fn from(rect: CGRect) -> Self {
+        Self {
+            origin: [rect.origin.x, rect.origin.y],
+            size: [rect.size.width, rect.size.height],
+        }
     }
 }
 
