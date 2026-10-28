@@ -66,30 +66,10 @@ impl LocalSpeech {
         ensure!(!*cancelled.borrow(), STARTUP_CANCELLED);
         let listener = TcpListener::bind((LOOPBACK, 0))?;
         let port = listener.local_addr()?.port();
-        let directory = tempfile::Builder::new()
-            .prefix("speakeasy-")
-            .tempdir()
-            .map_err(|error| {
-                // tempfile's error names the folder it tried, escaped; the message names it once.
-                let reason = error.raw_os_error().map_or_else(
-                    || error.kind().to_string(),
-                    |code| std::io::Error::from_raw_os_error(code).to_string(),
-                );
-                anyhow!(
-                    "Cannot use the temporary folder {}: {reason}. {}",
-                    std::env::temp_dir().display(),
-                    crate::paths::remedy(&error)
-                )
-            })?;
+        let directory = served_directory()?;
         let secret = random_token()?;
         let mut command = server_command(&config, port, &secret, directory.path());
-        let client = client_builder()?
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(CONNECT_TIMEOUT)
-            // A pooled connection could outlive the listener check that precedes each request.
-            .pool_max_idle_per_host(0)
-            .build()?;
+        let client = engine_client()?;
         // Release the reserved port just before the engine binds it.
         drop(listener);
         let mut child = command.spawn().context(
@@ -174,15 +154,20 @@ impl LocalSpeech {
     }
 
     fn url(&self, path: &str) -> String {
-        let port = self.port;
-        match self.engine {
+        let Self {
+            engine,
+            port,
+            secret,
+            ..
+        } = self;
+        match engine {
             Engine::Parakeet => format!("http://{LOOPBACK}:{port}/{path}"),
-            Engine::Whisper => format!("http://{LOOPBACK}:{port}/{}/{path}", self.secret),
+            Engine::Whisper => format!("http://{LOOPBACK}:{port}/{secret}/{path}"),
         }
     }
 
-    /// Sends `wav` for recognition and returns the reply's body in the requested `format`.
-    async fn request(&self, wav: Vec<u8>, language: &str, format: &str) -> anyhow::Result<Vec<u8>> {
+    /// Sends `wav` for recognition and reads the engine's reply as `R`.
+    async fn request<R: Reply>(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<R> {
         // The engine may have exited and lost its port since readiness. Each request connects
         // afresh, leaving only the moment between this check and that connection.
         #[cfg(not(target_os = "macos"))]
@@ -203,10 +188,10 @@ impl LocalSpeech {
                 self.client
                     .post(self.url("v1/audio/transcriptions"))
                     .bearer_auth(&self.secret)
-                    .multipart(recording_form(wav, format)?)
+                    .multipart(recording_form(wav, R::FORMAT)?)
             },
             Engine::Whisper => {
-                let form = recording_form(wav, format)?
+                let form = recording_form(wav, R::FORMAT)?
                     .text("language", language.to_owned())
                     .text("temperature", "0.0");
                 self.client.post(self.url("inference")).multipart(form)
@@ -222,21 +207,20 @@ impl LocalSpeech {
             "Local speech returned HTTP {}. Check the selected model and engine, then try again.",
             response.status().as_u16()
         );
-        read_bounded(response).await
+        reply(&read_bounded(response).await?)
     }
 }
 
 impl Speech for LocalSpeech {
     async fn transcribe(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<String> {
-        let body = self.request(wav, language, "json").await?;
-        reply::<Transcription>(&body)?
+        self.request::<Transcription>(wav, language)
+            .await?
             .text
             .context("Local speech returned no transcript. Check the selected model and engine, then try again.")
     }
 
     async fn transcribe_words(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<Narration> {
-        let body = self.request(wav, language, "verbose_json").await?;
-        reply::<Timed>(&body)?.into_narration()
+        self.request::<Timed>(wav, language).await?.into_narration()
     }
 
     async fn probe_with_silence(&self) -> anyhow::Result<()> {
@@ -284,10 +268,19 @@ fn reply<T: DeserializeOwned>(body: &[u8]) -> anyhow::Result<T> {
         .context("Local speech sent a reply Speakeasy cannot read. Check the selected model and engine, then try again.")
 }
 
+/// An engine reply Speakeasy reads, and the `response_format` that asks for it.
+trait Reply: DeserializeOwned {
+    const FORMAT: &'static str;
+}
+
 /// The part of either engine's JSON reply that Speakeasy reads.
 #[derive(Deserialize)]
 struct Transcription {
     text: Option<String>,
+}
+
+impl Reply for Transcription {
+    const FORMAT: &'static str = "json";
 }
 
 /// The part of either engine's timed reply that Speakeasy reads. Parakeet lists whole words;
@@ -300,6 +293,10 @@ struct Timed {
     words: Vec<Token>,
     #[serde(default)]
     segments: Vec<TimedSegment>,
+}
+
+impl Reply for Timed {
+    const FORMAT: &'static str = "verbose_json";
 }
 
 #[derive(Deserialize)]
@@ -324,16 +321,12 @@ impl Timed {
             self.words
                 .into_iter()
                 .filter(|token| !token.word.trim().is_empty())
-                .map(|token| {
-                    Ok(Word {
-                        span: token.span()?,
-                        text: token.word.trim().to_owned(),
-                    })
-                })
+                .map(Token::into_word)
                 .collect::<anyhow::Result<_>>()?
         };
-        Ok(if words.is_empty() && !self.text.trim().is_empty() {
-            Narration::Text(self.text.trim().to_owned())
+        let text = self.text.trim();
+        Ok(if words.is_empty() && !text.is_empty() {
+            Narration::Text(text.to_owned())
         } else {
             Narration::Words(words)
         })
@@ -341,6 +334,13 @@ impl Timed {
 }
 
 impl Token {
+    fn into_word(self) -> anyhow::Result<Word> {
+        Ok(Word {
+            span: self.span()?,
+            text: self.word.trim().to_owned(),
+        })
+    }
+
     fn span(&self) -> anyhow::Result<Span> {
         let time = |seconds: f64| {
             Duration::try_from_secs_f64(seconds)
@@ -362,19 +362,35 @@ fn joined(tokens: impl Iterator<Item = Token>) -> anyhow::Result<Vec<Word>> {
         if token.word.trim().is_empty() || token.word.trim_start().starts_with("[_") {
             continue;
         }
-        let span = token.span()?;
         match words.last_mut() {
             Some(word) if !token.word.starts_with(char::is_whitespace) => {
+                word.span = word.span.union(token.span()?);
                 word.text.push_str(&token.word);
-                word.span = word.span.union(span);
             },
-            _ => words.push(Word {
-                span,
-                text: token.word.trim().to_owned(),
-            }),
+            _ => words.push(token.into_word()?),
         }
     }
     Ok(words)
+}
+
+/// The empty directory Whisper serves in place of its bundled web UI. tempfile's error already
+/// names the folder it tried, escaped, so the message rebuilds the bare OS reason and names the
+/// folder once.
+fn served_directory() -> anyhow::Result<tempfile::TempDir> {
+    tempfile::Builder::new()
+        .prefix("speakeasy-")
+        .tempdir()
+        .map_err(|error| {
+            let reason = error.raw_os_error().map_or_else(
+                || error.kind().to_string(),
+                |code| std::io::Error::from_raw_os_error(code).to_string(),
+            );
+            anyhow!(
+                "Cannot use the temporary folder {}: {reason}. {}",
+                std::env::temp_dir().display(),
+                crate::paths::remedy(&error)
+            )
+        })
 }
 
 /// 128 bits from the operating system's generator as 32 hex digits. A shared temporary directory
@@ -440,6 +456,18 @@ fn server_command(config: &Config, port: u16, secret: &str, served: &Path) -> Co
     command
 }
 
+/// A client that reaches only the engine: never through a proxy, never after a redirect, and
+/// never over an idle pooled connection, which could outlive the listener check that precedes
+/// each request.
+fn engine_client() -> anyhow::Result<Client> {
+    Ok(client_builder()?
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(CONNECT_TIMEOUT)
+        .pool_max_idle_per_host(0)
+        .build()?)
+}
+
 async fn contain(child: &mut Child) -> anyhow::Result<ProcessGroup> {
     match ProcessGroup::attach(child) {
         Ok(group) => Ok(group),
@@ -463,13 +491,13 @@ async fn unless_cancelled<T>(
     }
 }
 
-fn recording_form(wav: Vec<u8>, format: &str) -> reqwest::Result<multipart::Form> {
+fn recording_form(wav: Vec<u8>, format: &'static str) -> reqwest::Result<multipart::Form> {
     let file = multipart::Part::bytes(wav)
         .file_name("dictation.wav")
         .mime_str("audio/wav")?;
     Ok(multipart::Form::new()
         .part("file", file)
-        .text("response_format", format.to_owned()))
+        .text("response_format", format))
 }
 
 /// A failed exchange with the engine as a fixed message. The request URL carries the private route,

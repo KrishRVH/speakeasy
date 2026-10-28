@@ -138,17 +138,14 @@ impl Endpoint {
     /// on Unix and inherits the per-user profile's ACL on Windows, then atomically replaces any
     /// older one.
     fn publish(port: u16, directory: &Path) -> anyhow::Result<(Self, PortFile)> {
-        let mut nonce = [0_u8; 16];
-        getrandom::fill(&mut nonce)?;
-        let endpoint = Self {
-            port,
-            nonce: u128::from_le_bytes(nonce),
-        };
+        let mut bytes = [0_u8; 16];
+        getrandom::fill(&mut bytes)?;
+        let nonce = u128::from_le_bytes(bytes);
         let mut file = tempfile::NamedTempFile::new_in(directory)?;
-        write!(file, "{port} {:032x}", endpoint.nonce)?;
+        write!(file, "{port} {nonce:032x}")?;
         let path = directory.join(PORT_FILE);
         file.persist(&path).map_err(|error| error.error)?;
-        Ok((endpoint, PortFile(path)))
+        Ok((Self { port, nonce }, PortFile(path)))
     }
 
     /// Reads a published endpoint. Errors never quote the file.
@@ -316,12 +313,10 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("settings.json");
         let (instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
-        for request in [Request::Reveal, Request::Toggle, Request::Cancel] {
-            if request == Request::Reveal {
-                assert!(Instance::acquire(&path)?.is_none());
-            } else {
-                Instance::send(&path, request)?;
-            }
+        assert!(Instance::acquire(&path)?.is_none());
+        assert_eq!(next_request(&requests)?, Request::Reveal);
+        for request in [Request::Toggle, Request::Cancel] {
+            Instance::send(&path, request)?;
             assert_eq!(next_request(&requests)?, request);
         }
         drop(instance);

@@ -2,6 +2,8 @@
 //! fake engine scripts and programs that take the engine's port, and recognizes a public
 //! recording with a real engine in an opt-in run.
 
+use std::{path::PathBuf, time::Instant};
+
 use super::*;
 
 fn narration(body: &str) -> anyhow::Result<Narration> {
@@ -231,9 +233,8 @@ fn fake_engine(script: &str) -> anyhow::Result<(tempfile::TempDir, Config)> {
 async fn argument_failure_reports_exit_status_and_keeps_stderr_private() -> anyhow::Result<()> {
     let (_directory, config) =
         fake_engine("#!/bin/sh\nprintf 'private transcript or credential' >&2\nexit 2\n")?;
-    let (cancel, cancelled) = watch::channel(false);
+    let (_cancel, cancelled) = watch::channel(false);
     let result = LocalSpeech::start(config, cancelled).await;
-    drop(cancel);
     let error = format!(
         "{:#}",
         result.err().context("Engine unexpectedly became ready")?
@@ -386,15 +387,15 @@ async fn fixture_number<T: std::str::FromStr>(path: &Path) -> T {
 #[tokio::test]
 #[ignore = "Requires SPEAKEASY_FIXTURE_CONFIG and SPEAKEASY_FIXTURE_WAV (whisper.cpp samples/jfk.wav)"]
 async fn local_worker_recognizes_fixture_and_stops() -> anyhow::Result<()> {
-    let path = Path::new(&std::env::var("SPEAKEASY_FIXTURE_CONFIG")?).to_owned();
+    let path = PathBuf::from(std::env::var("SPEAKEASY_FIXTURE_CONFIG")?);
     let config = Config::read(&path)?.validated(&path)?.into_inner();
     let wav = std::fs::read(std::env::var("SPEAKEASY_FIXTURE_WAV")?)?;
     let language = config.language.clone();
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     let (_cancel, cancelled) = watch::channel(false);
     let mut worker = LocalSpeech::start(config, cancelled).await?;
     let startup = started.elapsed();
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     let result = worker.transcribe(wav, &language).await?;
     eprintln!(
         "Engine startup: {startup:?}; inference: {:?}",
@@ -405,7 +406,7 @@ async fn local_worker_recognizes_fixture_and_stops() -> anyhow::Result<()> {
         result.to_lowercase().contains("ask not what your country"),
         "Fixture recognition did not contain the expected phrase"
     );
-    let stopped = std::time::Instant::now();
+    let stopped = Instant::now();
     worker.stop().await;
     eprintln!("Engine shutdown: {:?}", stopped.elapsed());
     assert!(

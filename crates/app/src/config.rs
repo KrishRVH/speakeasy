@@ -26,7 +26,7 @@ use speakeasy_platform::{Delivery, DesktopOptions};
 
 use crate::{theme::Theme, transcript::Fillers};
 
-#[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Engine {
     #[default]
@@ -66,6 +66,88 @@ pub(crate) struct Config {
     pub theme: Theme,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            linux: LinuxSettings::default(),
+            engine: Engine::default(),
+            microphone: None,
+            engine_executable: PathBuf::new(),
+            model: PathBuf::new(),
+            language: "en".into(),
+            remove_fillers: true,
+            threads: 4,
+            use_gpu: true,
+            reduced_motion: false,
+            preserve_clipboard: false,
+            play_sounds: true,
+            theme: Theme::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct LinuxSettings {
+    pub shortcut: String,
+    pub cancel: String,
+    pub terminal_paste: bool,
+    pub manual_paste: bool,
+    pub external_shortcut: bool,
+}
+
+impl LinuxSettings {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl Default for LinuxSettings {
+    fn default() -> Self {
+        DesktopOptions::default().into()
+    }
+}
+
+impl From<DesktopOptions> for LinuxSettings {
+    fn from(
+        DesktopOptions {
+            shortcut,
+            cancel,
+            terminal_paste,
+            manual_paste,
+            external_shortcut,
+        }: DesktopOptions,
+    ) -> Self {
+        Self {
+            shortcut,
+            cancel,
+            terminal_paste,
+            manual_paste,
+            external_shortcut,
+        }
+    }
+}
+
+impl From<LinuxSettings> for DesktopOptions {
+    fn from(
+        LinuxSettings {
+            shortcut,
+            cancel,
+            terminal_paste,
+            manual_paste,
+            external_shortcut,
+        }: LinuxSettings,
+    ) -> Self {
+        Self {
+            shortcut,
+            cancel,
+            terminal_paste,
+            manual_paste,
+            external_shortcut,
+        }
+    }
+}
+
 /// How dictated text reaches the focused app. The file keeps it as `preserve_clipboard` and the
 /// Linux `manual_paste` and `terminal_paste` flags, which every release reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,9 +183,10 @@ impl TextDelivery {
 }
 
 impl Config {
-    /// The one place that decides how the stored flags combine.
+    /// How dictated text reaches the focused app, the one reading of the stored flags. On Linux,
+    /// manual paste wins over typing, because typing needs the keyboard control that manual paste
+    /// declines.
     pub(crate) const fn text_delivery(&self) -> TextDelivery {
-        // Typing needs the keyboard control that manual paste declines, so manual paste wins.
         #[cfg(target_os = "linux")]
         if self.linux.manual_paste {
             return TextDelivery::Copy;
@@ -152,10 +235,11 @@ impl Config {
     }
 
     pub(crate) fn delivery(&self) -> Delivery {
-        if self.text_delivery() == TextDelivery::Type {
-            Delivery::Direct
-        } else {
-            Delivery::Paste
+        match self.text_delivery() {
+            TextDelivery::Type => Delivery::Direct,
+            TextDelivery::Paste => Delivery::Paste,
+            #[cfg(target_os = "linux")]
+            TextDelivery::TerminalPaste | TextDelivery::Copy => Delivery::Paste,
         }
     }
 
@@ -165,13 +249,7 @@ impl Config {
     }
 
     pub(crate) fn desktop_options(&self) -> DesktopOptions {
-        DesktopOptions {
-            shortcut: self.linux.shortcut.clone(),
-            cancel: self.linux.cancel.clone(),
-            terminal_paste: self.linux.terminal_paste,
-            manual_paste: self.linux.manual_paste,
-            external_shortcut: self.linux.external_shortcut,
-        }
+        self.linux.clone().into()
     }
 
     pub(crate) fn read(path: &Path) -> anyhow::Result<Self> {
@@ -345,7 +423,6 @@ impl Config {
         let target = link_target(path).map_err(cannot_save)?;
         let contents = match fs::read(&target) {
             Ok(contents) => {
-                // Never replace a file the user still has to repair.
                 let (_, mut file) = parse(&contents, path)?;
                 patch(&mut file, held, draft, validated)
                     .with_context(|| format!("Cannot save settings to {}", path.display()))?;
@@ -360,15 +437,64 @@ impl Config {
     }
 }
 
+/// How far a settings change reaches, ordered by disruption; each tier's action covers the tiers
+/// below it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Change {
+    Unchanged,
+    /// Only the shell, the pill and the tray read these, so a session continues.
+    Presentation,
+    /// The owner reads these for each session or request, so a session in progress ends.
+    Session,
+    /// These start the engine process, so the worker reloads.
+    Engine,
+    /// Linux binds its desktop options when the owners start, so they restart.
+    Desktop,
+}
+
+/// How saved settings stand at launch.
+pub(crate) enum Startup {
+    /// A first launch, or a file without an engine: Settings offers setup.
+    Unconfigured,
+    Configured(ValidConfig),
+    /// The file cannot be read or validated; the message says why.
+    Invalid(String),
+}
+
+/// Settings whose engine and model resolved to canonical absolute files and whose values were in
+/// range when checked. Only [`Config::validated`] builds one; the files can still disappear later,
+/// and engine startup reports that.
+#[derive(Clone)]
+pub(crate) struct ValidConfig(Config);
+
+impl ValidConfig {
+    pub(crate) fn into_inner(self) -> Config {
+        self.0
+    }
+
+    /// Trusts `config` without checking it, for tests whose fake engines have no files.
+    #[cfg(test)]
+    pub(crate) const fn assume(config: Config) -> Self {
+        Self(config)
+    }
+}
+
+impl Deref for ValidConfig {
+    type Target = Config;
+
+    fn deref(&self) -> &Config {
+        &self.0
+    }
+}
+
 /// Parses `contents` as settings and as the map a save patches, so a file that reads is always one a
 /// save can patch: skipping an unknown key accepts values that holding it does not, such as `1e400`
 /// or a lone surrogate, and serde reads `linux` from an array that a save cannot patch key by key.
 /// Settings parse first, so a repair notice names the setting to fix.
 fn parse(contents: &[u8], path: &Path) -> anyhow::Result<(Config, Map<String, Value>)> {
     let invalid = || format!("Invalid settings in {}", path.display());
-    let (config, file): (Config, Map<String, Value>) = serde_json::from_slice(contents)
-        .and_then(|config| Ok((config, serde_json::from_slice(contents)?)))
-        .with_context(invalid)?;
+    let config: Config = serde_json::from_slice(contents).with_context(invalid)?;
+    let file: Map<String, Value> = serde_json::from_slice(contents).with_context(invalid)?;
     if file.get("linux").is_some_and(|linux| !linux.is_object()) {
         return Err(anyhow!("The linux settings must be an object").context(invalid()));
     }
@@ -383,11 +509,10 @@ const LINK_DEPTH: usize = 40;
 fn link_target(path: &Path) -> io::Result<PathBuf> {
     let mut target = path.to_owned();
     for _ in 0..LINK_DEPTH {
-        if !fs::symlink_metadata(&target).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        if !target.is_symlink() {
             return Ok(target);
         }
         let link = fs::read_link(&target)?;
-        // A relative link names a file beside it; joining an absolute one replaces the folder.
         target = match target.parent() {
             Some(folder) => folder.join(link),
             None => link,
@@ -469,107 +594,8 @@ fn replace(target: &Path, contents: &[u8]) -> io::Result<()> {
     let mut file = tempfile::NamedTempFile::new_in(directory)?;
     file.write_all(contents)?;
     file.as_file().sync_all()?;
-    file.persist(target).map_err(|error| error.error)?;
+    file.persist(target)?;
     Ok(())
-}
-
-/// How far a settings change reaches, ordered by disruption; each tier's action covers the tiers
-/// below it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum Change {
-    Unchanged,
-    /// Only the shell, the pill and the tray read these, so a session continues.
-    Presentation,
-    /// The owner reads these for each session or request, so a session in progress ends.
-    Session,
-    /// These start the engine process, so the worker reloads.
-    Engine,
-    /// Linux binds its desktop options when the owners start, so they restart.
-    Desktop,
-}
-
-/// How saved settings stand at launch.
-pub(crate) enum Startup {
-    /// A first launch, or a file without an engine: Settings offers setup.
-    Unconfigured,
-    Configured(ValidConfig),
-    /// The file cannot be read or validated; the message says why.
-    Invalid(String),
-}
-
-/// Settings whose engine and model resolved to canonical absolute files and whose values were in
-/// range when checked. Only [`Config::validated`] builds one; the files can still disappear later,
-/// and engine startup reports that.
-#[derive(Clone)]
-pub(crate) struct ValidConfig(Config);
-
-impl ValidConfig {
-    pub(crate) fn into_inner(self) -> Config {
-        self.0
-    }
-
-    /// Trusts `config` without checking it, for tests whose fake engines have no files.
-    #[cfg(test)]
-    pub(crate) const fn assume(config: Config) -> Self {
-        Self(config)
-    }
-}
-
-impl Deref for ValidConfig {
-    type Target = Config;
-
-    fn deref(&self) -> &Config {
-        &self.0
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            linux: LinuxSettings::default(),
-            engine: Engine::default(),
-            microphone: None,
-            engine_executable: PathBuf::new(),
-            model: PathBuf::new(),
-            language: "en".into(),
-            remove_fillers: true,
-            threads: 4,
-            use_gpu: true,
-            reduced_motion: false,
-            preserve_clipboard: false,
-            play_sounds: true,
-            theme: Theme::default(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(default, deny_unknown_fields)]
-pub(crate) struct LinuxSettings {
-    pub shortcut: String,
-    pub cancel: String,
-    pub terminal_paste: bool,
-    pub manual_paste: bool,
-    pub external_shortcut: bool,
-}
-
-impl LinuxSettings {
-    fn is_default(&self) -> bool {
-        *self == Self::default()
-    }
-}
-
-impl Default for LinuxSettings {
-    fn default() -> Self {
-        let options = DesktopOptions::default();
-        Self {
-            shortcut: options.shortcut,
-            cancel: options.cancel,
-            terminal_paste: false,
-            manual_paste: false,
-            external_shortcut: false,
-        }
-    }
 }
 
 /// Settings that pass validation: a fake engine and model written into `directory`.

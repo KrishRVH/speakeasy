@@ -128,7 +128,7 @@ fn released_delivery_keys_read_and_save_unchanged() -> anyhow::Result<()> {
 
 #[test]
 fn filler_cleanup_follows_engine_language_and_switch() -> anyhow::Result<()> {
-    for (engine, language, english) in [
+    for (engine, language, applies) in [
         (Engine::Whisper, "en", true),
         (Engine::Whisper, "EN", true),
         (Engine::Whisper, "de", false),
@@ -145,7 +145,7 @@ fn filler_cleanup_follows_engine_language_and_switch() -> anyhow::Result<()> {
                 remove_fillers,
                 ..Config::default()
             };
-            let expected = if english && remove_fillers {
+            let expected = if applies && remove_fillers {
                 Fillers::Remove
             } else {
                 Fillers::Preserve
@@ -157,11 +157,10 @@ fn filler_cleanup_follows_engine_language_and_switch() -> anyhow::Result<()> {
             );
         }
     }
-    // A file without the switch removes them.
-    let saved: Config = serde_json::from_str(
+    let without_switch: Config = serde_json::from_str(
         r#"{"engine":"parakeet","engine_executable":"","model":"","language":"de"}"#,
     )?;
-    assert!(saved.fillers() == Fillers::Remove);
+    assert!(without_switch.fillers() == Fillers::Remove);
     Ok(())
 }
 
@@ -197,7 +196,7 @@ fn shipped_example_is_what_a_first_launch_starts_from() -> anyhow::Result<()> {
 fn engine_and_theme_spellings_are_the_wire_format() -> anyhow::Result<()> {
     for (engine, name) in [(Engine::Whisper, "whisper"), (Engine::Parakeet, "parakeet")] {
         assert_eq!(serde_json::to_value(engine)?, name);
-        assert!(serde_json::from_value::<Engine>(name.into())? == engine);
+        assert_eq!(serde_json::from_value::<Engine>(name.into())?, engine);
     }
     for (theme, name) in [
         (Theme::Jet, "jet"),
@@ -256,9 +255,12 @@ fn a_file_that_reads_is_one_a_save_can_patch() -> anyhow::Result<()> {
         theme: Theme::Iris,
         ..held.clone()
     };
-    // A plain unknown value, then ones that skipping a key accepts but holding it as a value does
-    // not: out of range, a lone surrogate, and invalid UTF-8.
-    for retired in [&b"1"[..], b"1e400", br#""\ud800""#, b"\"\xff\""] {
+    for (case, retired) in [
+        ("a plain unknown value", &b"1"[..]),
+        ("an out-of-range number", b"1e400"),
+        ("a lone surrogate", br#""\ud800""#),
+        ("invalid UTF-8", b"\"\xff\""),
+    ] {
         let contents = [
             br#"{"engine_executable":"e","model":"m","retired":"#,
             retired,
@@ -267,9 +269,8 @@ fn a_file_that_reads_is_one_a_save_can_patch() -> anyhow::Result<()> {
         fs::write(&path, contents.concat())?;
         let read = Config::read(&path).is_ok();
         let saved = save(&held, &draft, &path).is_ok();
-        assert_eq!(read, saved, "{}", String::from_utf8_lossy(retired));
+        assert_eq!(read, saved, "{case}");
     }
-    // Serde reads a struct from an array too, which a save cannot patch key by key.
     let mut linux = held.clone();
     linux.linux.external_shortcut = true;
     for value in ["[]", "{}"] {
@@ -292,13 +293,10 @@ fn a_save_writes_through_a_linked_settings_file() -> anyhow::Result<()> {
     fs::create_dir(&dotfiles)?;
     let real = dotfiles.join("settings.json");
     let path = directory.path().join("settings.json");
+    let linked = directory.path().join("linked.json");
     // A relative link to an absolute one, made before the file they name exists.
-    std::os::unix::fs::symlink(&real, directory.path().join("linked.json"))?;
+    std::os::unix::fs::symlink(&real, &linked)?;
     std::os::unix::fs::symlink("linked.json", &path)?;
-    let is_link = |link: &Path| {
-        fs::symlink_metadata(directory.path().join(link))
-            .is_ok_and(|metadata| metadata.file_type().is_symlink())
-    };
     let defaults = Config::default();
     save(&defaults, &defaults, &path)?;
     let config = Config {
@@ -306,7 +304,10 @@ fn a_save_writes_through_a_linked_settings_file() -> anyhow::Result<()> {
         ..Config::default()
     };
     save(&defaults, &config, &path)?;
-    assert!(is_link(Path::new("settings.json")) && is_link(Path::new("linked.json")));
+    assert!(
+        path.is_symlink() && linked.is_symlink(),
+        "A save replaced a link with a file"
+    );
     assert_eq!(Config::read(&real)?.theme, Theme::Iris);
     Ok(())
 }
@@ -376,23 +377,15 @@ fn a_save_that_cannot_write_names_the_file_and_what_to_do() -> anyhow::Result<()
 fn validation_requires_an_executable_engine() -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let directory = tempfile::tempdir()?;
-    let executable = directory.path().join("engine");
-    let model = directory.path().join("model.gguf");
-    fs::write(&executable, b"fixture")?;
-    fs::write(&model, b"fixture")?;
-    fs::set_permissions(&executable, fs::Permissions::from_mode(0o600))?;
-    let config = Config {
-        engine_executable: executable.clone(),
-        model,
-        ..Config::default()
-    };
+    let config = valid_config(directory.path())?;
     let path = directory.path().join("settings.json");
+    fs::set_permissions(&config.engine_executable, fs::Permissions::from_mode(0o600))?;
     let failure = config
         .validated(&path)
         .err()
         .context("An engine without executable permission was accepted")?;
     assert!(failure.to_string().contains("not executable"));
-    fs::set_permissions(executable, fs::Permissions::from_mode(0o700))?;
+    fs::set_permissions(&config.engine_executable, fs::Permissions::from_mode(0o700))?;
     config.validated(&path)?;
     Ok(())
 }
@@ -402,21 +395,28 @@ fn startup_classifies_saved_settings() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let (config, startup) = Config::load(&path);
-    assert!(matches!(startup, Startup::Unconfigured) && config.engine == Engine::Parakeet);
+    assert!(matches!(startup, Startup::Unconfigured));
+    assert!(config == Config::first_launch());
 
     fs::write(&path, "{")?;
     let (config, startup) = Config::load(&path);
-    assert!(matches!(startup, Startup::Invalid(_)) && config == Config::default());
+    assert!(matches!(startup, Startup::Invalid(_)));
+    assert!(config == Config::default());
 
-    // A file without an engine keeps the user's other choices for Settings to show.
     fs::write(&path, r#"{"theme":"iris"}"#)?;
     let (config, startup) = Config::load(&path);
     assert!(matches!(startup, Startup::Unconfigured));
-    assert_eq!(config.theme, Theme::Iris);
-    // A file without an engine key reads as Whisper, the engine such files were written for.
-    assert!(config.engine == Engine::Whisper);
+    assert_eq!(
+        config.theme,
+        Theme::Iris,
+        "A file without an engine lost the user's other choices"
+    );
+    assert_eq!(
+        config.engine,
+        Engine::Whisper,
+        "A file without an engine key did not read as Whisper"
+    );
 
-    // A failed validation leaves the draft as the user wrote it.
     valid_config(directory.path())?;
     fs::write(
         &path,
@@ -424,7 +424,11 @@ fn startup_classifies_saved_settings() -> anyhow::Result<()> {
     )?;
     let (config, startup) = Config::load(&path);
     assert!(matches!(startup, Startup::Invalid(_)));
-    assert_eq!(config.engine_executable, Path::new("engine"));
+    assert_eq!(
+        config.engine_executable,
+        Path::new("engine"),
+        "A failed validation rewrote the draft"
+    );
 
     fs::write(
         &path,
