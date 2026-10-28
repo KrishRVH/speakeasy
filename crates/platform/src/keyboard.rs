@@ -291,8 +291,8 @@ impl Decision {
 #[derive(Clone, Copy)]
 pub(super) struct Modifiers {
     pub(super) shift: bool,
-    /// Any other held combination, which makes Shift part of another shortcut; part of the talk
-    /// shortcut alone counts.
+    /// A modifier outside the talk shortcut, or only part of it, which makes Shift part of another
+    /// shortcut.
     pub(super) other_shortcut: bool,
     /// The hold-to-talk shortcut, macOS Fn or Windows Ctrl+Win, which may be down while Shift
     /// draws.
@@ -403,9 +403,8 @@ impl Windows {
 
     /// Forgets the chord keys Windows reports up before this event and ends a hold they no longer
     /// make.
-    fn reconcile(&mut self, physical_before_event: [bool; 4]) -> bool {
-        for (tracked, physically_down) in self.chord_keys_down.iter_mut().zip(physical_before_event)
-        {
+    fn reconcile(&mut self, physical: [bool; 4]) -> bool {
+        for (tracked, physically_down) in self.chord_keys_down.iter_mut().zip(physical) {
             *tracked &= physically_down;
         }
         self.chord.reconcile(self.chord_held())
