@@ -162,7 +162,21 @@ fn record(started: Instant, scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<O
             let Some((target, finished)) = choose(scope, lanes).await? else {
                 return Ok(None);
             };
-            Take::run(started, target, finished, lanes).await
+            let (frame_lane, frames) = async_channel::bounded(FRAME_LANE);
+            let capture = ScreenCapture::start(target, SAMPLE_INTERVAL, LONGEST_EDGE, frame_lane)?;
+            let display = target.display();
+            let (sample_lane, samples) = async_channel::bounded(POINTER_LANE);
+            let pointer = PointerMonitor::start(display, sample_lane)?;
+            let part = target.part();
+            lanes.canvas.send_replace(Canvas::covering(display, part));
+            let sources = Sources {
+                frames,
+                samples,
+                stop: stop(&capture, &pointer),
+            };
+            Take::new(started, display.size, part, lanes.canvas)
+                .run(finished, lanes, sources)
+                .await
         })
 }
 
@@ -198,6 +212,15 @@ async fn pick(choice: &Receiver<Part>, lanes: &Lanes<'_>) -> Option<(Part, bool)
     picked
 }
 
+/// Where a take's frames and pointer samples come from.
+struct Sources<S> {
+    frames: Receiver<ScreenEvent>,
+    samples: Receiver<PointerSample>,
+    /// Stops the capture and the pointer monitor once awaited, resolving when both have released
+    /// the display and pointer.
+    stop: S,
+}
+
 /// The thread's state while recording.
 struct Take<'a> {
     started: Instant,
@@ -209,68 +232,79 @@ struct Take<'a> {
 }
 
 impl<'a> Take<'a> {
-    /// Records `target` until finished, or from the start when `finished`.
-    async fn run(
+    /// A take of the `part` of a display `size` logical pixels across, on a timeline that began
+    /// at `started`, publishing ink and marks to `canvas`.
+    fn new(
         started: Instant,
-        target: Target,
-        finished: bool,
-        lanes: &Lanes<'a>,
-    ) -> anyhow::Result<Option<Footage>> {
-        let (frames, frames_received) = async_channel::bounded(FRAME_LANE);
-        let capture = ScreenCapture::start(target, SAMPLE_INTERVAL, LONGEST_EDGE, frames)?;
-        let display = target.display();
-        let (pointer_samples, pointer_received) = async_channel::bounded(POINTER_LANE);
-        let pointer = PointerMonitor::start(display, pointer_samples)?;
-        let part = target.part();
-        lanes.canvas.send_replace(Canvas::covering(display, part));
-        let [width, height] = display.size;
-        let mut take = Take {
+        size: [f32; 2],
+        part: Part,
+        canvas: &'a watch::Sender<Canvas>,
+    ) -> Self {
+        let [width, height] = size;
+        Self {
             started,
-            canvas: lanes.canvas,
+            canvas,
             part,
             tracker: Tracker::new(Size {
                 width: width * part.width(),
                 height: height * part.height(),
             }),
             journal: Journal::with_budget(JOURNAL_BUDGET),
-        };
+        }
+    }
+
+    /// Records what `sources` send until finished, or from the start when `finished`, then stops
+    /// them before returning the footage; `None` once cancelled. A Show finished before its first
+    /// frame waits up to [`FIRST_FRAME_WAIT`] for one.
+    async fn run(
+        mut self,
+        finished: bool,
+        lanes: &Lanes<'_>,
+        sources: Sources<impl Future<Output = ()>>,
+    ) -> anyhow::Result<Option<Footage>> {
+        let Sources {
+            frames,
+            samples,
+            stop,
+        } = sources;
         // Set once finished: the latest moment to keep waiting for a first frame.
         let mut finished_by = finished.then(first_frame_deadline);
+        // `None` once the owner retired this recording, which reports nothing.
         let outcome = loop {
             tokio::select! {
                 biased;
                 finished = lanes.finishing.recv() => {
                     if finished.is_err() {
-                        // The owner retired this recording: nothing is reported.
-                        stop(&capture, &pointer).await;
-                        return Ok(None);
+                        break None;
                     }
-                    if !take.journal.is_empty() {
-                        break Ok(());
+                    if !self.journal.is_empty() {
+                        break Some(Ok(()));
                     }
                     finished_by.get_or_insert_with(first_frame_deadline);
                 },
                 () = tokio::time::sleep_until(finished_by.unwrap_or_else(tokio::time::Instant::now)),
-                    if finished_by.is_some() => break Ok(()),
-                event = frames_received.recv() => match event {
+                    if finished_by.is_some() => break Some(Ok(())),
+                event = frames.recv() => match event {
                     Ok(ScreenEvent::Frame(frame)) => {
-                        take.frame(frame);
-                        if finished_by.is_some() && !take.journal.is_empty() {
-                            break Ok(());
+                        self.frame(frame);
+                        if finished_by.is_some() && !self.journal.is_empty() {
+                            break Some(Ok(()));
                         }
                     },
-                    Ok(ScreenEvent::Failed(message)) => break Err(anyhow!(message)),
-                    Err(_) => break Err(anyhow!(CAPTURE_STOPPED)),
+                    Ok(ScreenEvent::Failed(message)) => break Some(Err(anyhow!(message))),
+                    Err(_) => break Some(Err(anyhow!(CAPTURE_STOPPED))),
                 },
                 // Samples first, so a pin lands where the pointer is and sees the taps that asked
                 // for it.
-                Ok(sample) = pointer_received.recv() => take.pointer(sample),
-                Ok(taps) = lanes.pinned.recv() => take.pin(taps),
+                Ok(sample) = samples.recv() => self.pointer(sample),
+                Ok(taps) = lanes.pinned.recv() => self.pin(taps),
             }
         };
-        stop(&capture, &pointer).await;
-        outcome?;
-        take.into_footage().map(Some)
+        stop.await;
+        match outcome {
+            None => Ok(None),
+            Some(outcome) => outcome.and_then(|()| self.into_footage()).map(Some),
+        }
     }
 
     fn moment(&self, at: Instant) -> Moment {
@@ -363,72 +397,7 @@ async fn stop(capture: &ScreenCapture, pointer: &PointerMonitor) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn an_area_is_dragged_out_or_recorded_whole_and_earlier_pins_mark_nothing()
-    -> anyhow::Result<()> {
-        let (finish, finishing) = async_channel::bounded(1);
-        let (pins, pinned) = async_channel::bounded(PIN_LANE);
-        let (canvas, _) = watch::channel(Canvas::default());
-        let lanes = Lanes {
-            finishing,
-            pinned,
-            canvas: &canvas,
-        };
-        let (chosen, choice) = async_channel::bounded(1);
-        let dragged = Part::between([0.1, 0.2], [0.5, 0.6]);
-        let now = Instant::now();
-        pins.try_send(Taps {
-            pressed: now,
-            released: now,
-        })?;
-        chosen.try_send(dragged)?;
-        assert_eq!(pick(&choice, &lanes).await, Some((dragged, false)));
-        assert!(lanes.pinned.is_empty(), "the early pin was dropped");
-        finish.try_send(())?;
-        assert_eq!(pick(&choice, &lanes).await, Some((Part::WHOLE, true)));
-        chosen.close();
-        assert_eq!(
-            tokio::time::timeout(Duration::from_secs(5), pick(&choice, &lanes)).await?,
-            Some((Part::WHOLE, false)),
-            "the overlay could not appear"
-        );
-        finish.close();
-        assert_eq!(pick(&choice, &lanes).await, None, "cancelled");
-        Ok(())
-    }
-
-    #[test]
-    fn a_recording_that_unwinds_hides_the_overlay_and_reports_a_fixed_failure() -> anyhow::Result<()>
-    {
-        let (events, reported) = async_channel::bounded(1);
-        let (canvas, overlay) = watch::channel(Canvas::default());
-        let unwound = std::thread::scope(|scope| {
-            scope
-                .spawn(|| {
-                    let _ending = Ending {
-                        id: SessionId::FIRST,
-                        events,
-                        canvas: &canvas,
-                        outcome: None,
-                    };
-                    panic!("a recording bug");
-                })
-                .join()
-        });
-        assert!(unwound.is_err());
-        assert!(overlay.has_changed()?, "the overlay was told to hide");
-        let ShowEvent::Finished(id, outcome) = reported.try_recv()?;
-        assert_eq!(id, SessionId::FIRST);
-        assert_eq!(
-            outcome.err().map(|error| error.to_string()).as_deref(),
-            Some(CAPTURE_STOPPED)
-        );
-        Ok(())
-    }
-}
+mod tests;
 
 /// Linux records no Shows.
 #[cfg(all(test, any(target_os = "windows", target_os = "macos")))]
