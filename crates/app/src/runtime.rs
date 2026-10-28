@@ -360,8 +360,9 @@ impl<P: Ports> Wiring<P> {
     }
 }
 
-/// Follows tokio's paused clock in tests, so gesture deadlines and snapshots share one timeline.
-fn now() -> Instant {
+/// Follows tokio's paused clock in tests, so gesture deadlines, snapshots, and a Show's length
+/// share one timeline.
+pub(crate) fn now() -> Instant {
     tokio::time::Instant::now().into_std()
 }
 

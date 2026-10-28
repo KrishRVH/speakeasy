@@ -17,7 +17,10 @@ use speakeasy_show::{Image, Journal, Mark, Moment, Point, SAMPLE_INTERVAL, Size,
 use tokio::sync::watch;
 
 use super::overlay::Canvas;
-use crate::runtime::ports::{Capturing, Footage, Pinning, SessionId, ShowEvent};
+use crate::runtime::{
+    now,
+    ports::{Capturing, Footage, Pinning, SessionId, ShowEvent},
+};
 
 /// Frames larger than this on the long edge are halved; a reading model gains nothing from more.
 pub(super) const LONGEST_EDGE: u32 = 2_560;
@@ -255,7 +258,8 @@ impl<'a> Take<'a> {
 
     /// Records what `sources` send until finished, or from the start when `finished`, then stops
     /// them before returning the footage; `None` once cancelled. A Show finished before its first
-    /// frame waits up to [`FIRST_FRAME_WAIT`] for one.
+    /// frame waits up to [`FIRST_FRAME_WAIT`] for one. The footage lasts until finishing was asked
+    /// for, or until the first frame such a wait received; stopping the sources adds nothing.
     async fn run(
         mut self,
         finished: bool,
@@ -269,8 +273,9 @@ impl<'a> Take<'a> {
         } = sources;
         // Set once finished: the latest moment to keep waiting for a first frame.
         let mut finished_by = finished.then(first_frame_deadline);
-        // `None` once the owner retired this recording, which reports nothing.
-        let outcome = loop {
+        // When the take ended, or `None` once the owner retired this recording, which reports
+        // nothing.
+        let ended = loop {
             tokio::select! {
                 biased;
                 finished = lanes.finishing.recv() => {
@@ -278,17 +283,17 @@ impl<'a> Take<'a> {
                         break None;
                     }
                     if !self.journal.is_empty() {
-                        break Some(Ok(()));
+                        break Some(Ok(now()));
                     }
                     finished_by.get_or_insert_with(first_frame_deadline);
                 },
                 () = tokio::time::sleep_until(finished_by.unwrap_or_else(tokio::time::Instant::now)),
-                    if finished_by.is_some() => break Some(Ok(())),
+                    if finished_by.is_some() => break Some(Ok(now())),
                 event = frames.recv() => match event {
                     Ok(ScreenEvent::Frame(frame)) => {
                         self.frame(frame);
                         if finished_by.is_some() && !self.journal.is_empty() {
-                            break Some(Ok(()));
+                            break Some(Ok(now()));
                         }
                     },
                     Ok(ScreenEvent::Failed(message)) => break Some(Err(anyhow!(message))),
@@ -301,9 +306,9 @@ impl<'a> Take<'a> {
             }
         };
         stop.await;
-        match outcome {
+        match ended {
             None => Ok(None),
-            Some(outcome) => outcome.and_then(|()| self.into_footage()).map(Some),
+            Some(ended) => self.into_footage(ended?).map(Some),
         }
     }
 
@@ -370,8 +375,9 @@ impl<'a> Take<'a> {
         self.tracker.marks().into()
     }
 
-    fn into_footage(self) -> anyhow::Result<Footage> {
-        let ended = self.moment(Instant::now());
+    /// What the take recorded, lasting until `ended`.
+    fn into_footage(self, ended: Instant) -> anyhow::Result<Footage> {
+        let ended = self.moment(ended);
         anyhow::ensure!(
             !self.journal.is_empty(),
             "The screen could not be recorded. Try again."

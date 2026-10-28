@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use speakeasy_platform::Frame;
-use speakeasy_show::Pin;
+use speakeasy_show::{Action, Pin};
 
 use super::*;
 
@@ -41,14 +41,15 @@ impl Feed {
         self.frames.send(ScreenEvent::Frame(frame)).await.unwrap();
     }
 
-    /// The pointer at `x`, `y` on the display `millis` into the take, drawing when `drawing`.
-    async fn pointer(&self, millis: u64, x: f32, y: f32, drawing: bool) {
+    /// The pointer at `x`, `y` on the display `millis` into the take, drawing when `drawing` and
+    /// with the button down when `pressed`.
+    async fn pointer(&self, millis: u64, x: f32, y: f32, drawing: bool, pressed: bool) {
         let sample = PointerSample {
             at: self.at(millis),
             x,
             y,
             drawing,
-            pressed: false,
+            pressed,
         };
         self.samples.send(sample).await.unwrap();
     }
@@ -115,9 +116,13 @@ async fn wait(millis: u64) {
 }
 
 #[tokio::test(start_paused = true)]
-async fn finishing_after_the_first_frame_ends_the_take_at_once() -> anyhow::Result<()> {
+async fn a_take_finished_after_its_first_frame_ends_then_and_records_no_teardown()
+-> anyhow::Result<()> {
     let (recorded, ran) = record(false, async |feed| {
         feed.frame(0).await;
+        // A drag still held when the Show finishes.
+        feed.pointer(200, 0.2, 0.2, false, true).await;
+        feed.pointer(300, 0.6, 0.6, false, true).await;
         wait(1_000).await;
         feed.finish().await;
     })
@@ -125,6 +130,16 @@ async fn finishing_after_the_first_frame_ends_the_take_at_once() -> anyhow::Resu
     let footage = recorded?.context("finished, not cancelled")?;
     assert_eq!(footage.journal.samples().len(), 1);
     assert_eq!(ran, Duration::from_secs(1) + TEARDOWN, "sources stop first");
+    let finished = Moment::from_millis(1_000);
+    assert_eq!(footage.recording.duration, finished);
+    assert_eq!(
+        footage.recording.actions,
+        [Action::Drag {
+            span: Span::new(Moment::from_millis(200), finished),
+            from: Point::new(0.2, 0.2),
+            to: Point::new(0.6, 0.6),
+        }]
+    );
     Ok(())
 }
 
@@ -139,6 +154,7 @@ async fn a_take_finished_before_its_first_frame_waits_three_seconds_for_one() ->
     .await;
     let footage = recorded?.context("finished, not cancelled")?;
     assert_eq!(footage.journal.samples().len(), 1);
+    assert_eq!(footage.recording.duration, Moment::from_millis(2_900));
     assert_eq!(ran, Duration::from_millis(2_900) + TEARDOWN);
     // Without a frame, the Show fails once the wait is over.
     let (recorded, ran) = record(false, async |feed| feed.finish().await).await;
@@ -184,16 +200,16 @@ async fn a_capture_that_fails_or_stops_ends_the_take_with_what_to_do() {
 async fn a_pin_is_judged_after_the_pointer_samples_queued_before_it() -> anyhow::Result<()> {
     let (recorded, _) = record(false, async |feed| {
         feed.frame(0).await;
-        feed.pointer(10, 0.5, 0.5, false).await;
+        feed.pointer(10, 0.5, 0.5, false, false).await;
         wait(10).await;
         // Shift drew between two taps that arrive with the ink, so they ask for no pin.
-        feed.pointer(100, 0.5, 0.5, true).await;
-        feed.pointer(150, 0.52, 0.5, true).await;
-        feed.pointer(200, 0.52, 0.5, false).await;
+        feed.pointer(100, 0.5, 0.5, true, false).await;
+        feed.pointer(150, 0.52, 0.5, true, false).await;
+        feed.pointer(200, 0.52, 0.5, false, false).await;
         feed.taps(50, 250).await;
         wait(10).await;
         // Clean taps pin where the pointer moved just before them.
-        feed.pointer(300, 0.3, 0.4, false).await;
+        feed.pointer(300, 0.3, 0.4, false, false).await;
         feed.taps(400, 600).await;
         wait(10).await;
         feed.finish().await;
