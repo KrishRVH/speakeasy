@@ -11,7 +11,7 @@ import time
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import TypedDict
 
 
 class Sample(TypedDict):
@@ -40,15 +40,6 @@ class MetricSummary(TypedDict):
 
 
 type Summary = dict[str, MetricSummary | float]
-type Metric = Literal[
-    "cpu_one_core_percent",
-    "cpu_machine_percent",
-    "rss_bytes",
-    "pss_bytes",
-    "private_bytes",
-    "threads",
-    "descriptors",
-]
 
 
 class ProcessResult(TypedDict):
@@ -107,7 +98,7 @@ def read_process(process_id: int, proc: Path, ticks_per_second: int) -> Sample:
 def summarize(samples: Sequence[Sample], logical_cpus: int) -> Summary:
     """Report nearest-rank p95 and CPU deltas, excluding unknown measurements."""
     summary: Summary = {}
-    metrics: tuple[Metric, ...] = (
+    for key in (
         "cpu_one_core_percent",
         "cpu_machine_percent",
         "rss_bytes",
@@ -115,8 +106,7 @@ def summarize(samples: Sequence[Sample], logical_cpus: int) -> Summary:
         "private_bytes",
         "threads",
         "descriptors",
-    )
-    for key in metrics:
+    ):
         values = sorted(value for sample in samples if (value := sample[key]) is not None)
         if values:
             summary[key] = {
