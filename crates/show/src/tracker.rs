@@ -3,7 +3,7 @@
 //! Holding Shift and moving the pointer draws; clicks keep reaching the apps underneath, so
 //! pressing a button never draws and drawing never clicks.
 
-use std::{mem, time::Duration};
+use std::mem;
 
 use crate::{
     Mark, Moment, Point, Recording, Span, marks,
@@ -18,9 +18,6 @@ const INK_SPACING_PIXELS: f32 = 1.5;
 const SHORTEST_STROKE_PIXELS: f32 = 6.0;
 /// A stroke this long is cut, and drawing continues in a new one.
 const MOST_STROKE_POINTS: usize = 2_400;
-/// A pin this soon after Shift and a button were down together is Shift-clicking, which taps Shift
-/// as fast as a double tap does; two taps span at most a second.
-const SHIFT_CLICK_SPAN: Duration = Duration::from_secs(1);
 
 /// Follows the pointer over the captured surface and keeps what it drew, pinned, and did.
 #[derive(Debug)]
@@ -32,8 +29,11 @@ pub struct Tracker {
     /// Whether the stroke being drawn has spanned enough to be ink.
     deliberate: bool,
     press: Option<Press>,
-    /// When Shift and a button were last seen down together.
-    shift_clicked: Option<Moment>,
+    /// When Shift, down to draw at the last sample, went down.
+    shift_down: Option<Moment>,
+    /// Each press of Shift that drew ink or was down with the button, by the moment it first did,
+    /// earlier first.
+    shift_uses: Vec<Moment>,
     strokes: Vec<Stroke>,
     pins: Vec<Pin>,
     actions: Vec<Action>,
@@ -62,7 +62,8 @@ impl Tracker {
             drawing: Vec::new(),
             deliberate: false,
             press: None,
-            shift_clicked: None,
+            shift_down: None,
+            shift_uses: Vec::new(),
             strokes: Vec::new(),
             pins: Vec::new(),
             actions: Vec::new(),
@@ -74,8 +75,9 @@ impl Tracker {
     /// lie outside it when the pointer is on another display.
     pub fn observe(&mut self, at: Moment, point: Point, drawing: bool, pressed: bool) {
         self.pointer = Some(point);
+        self.shift_down = drawing.then(|| self.shift_down.unwrap_or(at));
         if drawing && pressed {
-            self.shift_clicked = Some(at);
+            self.use_shift(at);
         }
         let inside = inside(point);
         if drawing && inside {
@@ -117,19 +119,29 @@ impl Tracker {
         &self.strokes
     }
 
-    /// Drops a pin at `at` where the pointer was last seen, unless it is off the surface, has not
-    /// been seen, or the Shift taps were Shift-clicks. Returns whether a pin was dropped.
-    pub fn pin(&mut self, at: Moment) -> bool {
-        let shift_clicking = self
-            .shift_clicked
-            .is_some_and(|clicked| at.since(clicked) <= SHIFT_CLICK_SPAN);
+    /// Drops a pin where the pointer was last seen for `taps`, two quick taps of Shift from the
+    /// first press to the second release, and returns whether it did. Taps that drew ink or were
+    /// down with the button ask for nothing: two quick strokes, as in an X, or two Shift-clicks tap
+    /// Shift as a double tap does. A tap that ended a pin begins no other, so three taps pin once.
+    /// Nothing drops while the pointer is off the surface or unseen.
+    pub fn pin(&mut self, taps: Span) -> bool {
+        let used = self
+            .shift_uses
+            .iter()
+            .rev()
+            .take_while(|&&used| used >= taps.start())
+            .any(|&used| used <= taps.end());
+        let pinned = self.pins.last().is_some_and(|pin| taps.start() <= pin.at);
         let Some(point) = self
             .pointer
-            .filter(|&point| !shift_clicking && inside(point))
+            .filter(|&point| !used && !pinned && inside(point))
         else {
             return false;
         };
-        self.pins.push(Pin { at, point });
+        self.pins.push(Pin {
+            at: taps.end(),
+            point,
+        });
         true
     }
 
@@ -176,7 +188,21 @@ impl Tracker {
         self.deliberate |= self.drawing.first().is_some_and(|first| {
             pixels(self.surface, first.point, ink.point) >= SHORTEST_STROKE_PIXELS
         });
+        if self.deliberate {
+            self.use_shift(ink.at);
+        }
         self.drawing.push(ink);
+    }
+
+    /// Notes that the press of Shift down now drew ink or was down with the button at `at`; whether
+    /// a press was used is all a pin asks, so only its first use is kept.
+    fn use_shift(&mut self, at: Moment) {
+        let noted = self
+            .shift_down
+            .is_some_and(|down| self.shift_uses.last().is_some_and(|&used| used >= down));
+        if !noted {
+            self.shift_uses.push(at);
+        }
     }
 
     /// Ends the stroke being drawn, keeping it only if it spans enough to be deliberate.
@@ -298,38 +324,80 @@ mod tests {
         assert_eq!(strokes[0].points().last(), strokes[1].points().first());
     }
 
+    /// Taps Shift for 60 ms from `millis` with the pointer at `x`, 0.4, flicking it 20 pixels
+    /// right when `flick` and holding the button when `click`; returns the tap's span.
+    fn tap(tracker: &mut Tracker, millis: u64, x: f32, flick: bool, click: bool) -> Span {
+        let at = |offset: u64| Moment::from_millis(millis.saturating_add(offset));
+        let flicked = if flick { x + 0.02 } else { x };
+        tracker.observe(at(0), Point::new(x, 0.4), true, click);
+        tracker.observe(at(30), Point::new(flicked, 0.4), true, click);
+        tracker.observe(at(60), Point::new(flicked, 0.4), false, false);
+        Span::new(at(0), at(60))
+    }
+
+    fn clean(tracker: &mut Tracker, millis: u64, x: f32) -> Span {
+        tap(tracker, millis, x, false, false)
+    }
+
+    /// Asks for the pin of a double tap from `first`'s press to `second`'s release.
+    fn pin(tracker: &mut Tracker, first: Span, second: Span) -> bool {
+        tracker.pin(Span::new(first.start(), second.end()))
+    }
+
     #[test]
-    fn pins_drop_where_the_pointer_was_last_seen_on_the_surface_unless_shift_clicking() {
+    fn pins_drop_where_the_pointer_was_last_seen_on_the_surface_after_two_clean_taps() {
         let mut tracker = Tracker::new(SURFACE);
-        assert!(!tracker.pin(Moment::START), "the pointer has not been seen");
-        tracker.observe(Moment::from_millis(10), Point::new(0.3, 0.4), false, false);
-        assert!(tracker.pin(Moment::from_millis(500)));
-        tracker.observe(Moment::from_millis(600), Point::new(1.3, 0.4), false, false);
-        assert!(!tracker.pin(Moment::from_millis(700)), "on another display");
-        tracker.observe(Moment::from_millis(1_000), Point::new(0.6, 0.4), true, true);
-        tracker.observe(
-            Moment::from_millis(1_100),
-            Point::new(0.6, 0.4),
-            false,
-            false,
+        let t = &mut tracker;
+        assert!(
+            !t.pin(Span::at(Moment::START)),
+            "the pointer has not been seen"
         );
-        assert!(!tracker.pin(Moment::from_millis(2_000)), "Shift-clicking");
-        assert!(tracker.pin(Moment::from_millis(2_100)));
-        let recording = tracker.finish(Moment::from_millis(2_200));
+        let (first, second) = (clean(t, 0, 0.3), clean(t, 160, 0.3));
+        assert!(pin(t, first, second));
+        let third = clean(t, 320, 0.3);
+        assert!(!pin(t, second, third), "three taps pin once");
+        let (first, second) = (clean(t, 1_000, 1.3), clean(t, 1_160, 1.3));
+        assert!(!pin(t, first, second), "on another display");
+        let (first, second) = (tap(t, 2_000, 0.5, false, true), clean(t, 2_160, 0.5));
+        assert!(!pin(t, first, second), "Shift-clicking");
+        let (first, second) = (
+            tap(t, 3_000, 0.5, true, false),
+            tap(t, 3_160, 0.5, true, false),
+        );
+        assert!(!pin(t, first, second), "two quick strokes, as in an X");
+        let stroke = tap(t, 4_000, 0.6, true, false);
+        let (first, second) = (clean(t, 4_160, 0.62), clean(t, 4_320, 0.62));
+        assert!(!pin(t, stroke, first), "a quick stroke and a tap");
+        assert!(
+            pin(t, first, second),
+            "a quick stroke costs the double tap after it nothing"
+        );
+        let (first, second) = (clean(t, 5_000, 0.7), clean(t, 5_160, 0.7));
+        tap(t, 5_240, 0.7, true, false);
+        assert!(
+            pin(t, first, second),
+            "a stroke seen after the taps but before their pin"
+        );
+        let recording = tracker.finish(Moment::from_millis(6_000));
         assert_eq!(
             recording.pins,
             [
                 Pin {
-                    at: Moment::from_millis(500),
+                    at: Moment::from_millis(220),
                     point: Point::new(0.3, 0.4)
                 },
                 Pin {
-                    at: Moment::from_millis(2_100),
-                    point: Point::new(0.6, 0.4)
+                    at: Moment::from_millis(4_380),
+                    point: Point::new(0.62, 0.4)
+                },
+                Pin {
+                    at: Moment::from_millis(5_220),
+                    point: Point::new(0.7 + 0.02, 0.4)
                 }
             ]
         );
-        assert_eq!(recording.duration, Moment::from_millis(2_200));
+        assert_eq!(recording.strokes.len(), 4, "the flicks drew");
+        assert_eq!(recording.duration, Moment::from_millis(6_000));
     }
 
     #[test]

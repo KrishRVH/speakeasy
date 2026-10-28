@@ -299,13 +299,10 @@ fn observe(
     let key_event = match kind {
         CGEventType::KeyDown => MacEvent::Key { code, down: true },
         CGEventType::KeyUp => MacEvent::Key { code, down: false },
-        CGEventType::FlagsChanged => {
-            let flags = event.get_flags();
-            MacEvent::FlagsChanged {
-                code,
-                function: flags.contains(CGEventFlags::CGEventFlagSecondaryFn),
-                shift: flags.contains(CGEventFlags::CGEventFlagShift),
-            }
+        // Both crates mirror the same CGEventFlags bits.
+        CGEventType::FlagsChanged => MacEvent::FlagsChanged {
+            code,
+            held: held(objc2_core_graphics::CGEventFlags(event.get_flags().bits())),
         },
         _ => return CallbackResult::Keep,
     };
@@ -411,9 +408,17 @@ impl Window {
 
 /// The modifier keys held now, as the session's combined input state reports them.
 pub(super) fn modifiers() -> Modifiers {
-    use objc2_core_graphics::{CGEventFlags, CGEventSource, CGEventSourceStateID};
+    use objc2_core_graphics::{CGEventSource, CGEventSourceStateID};
 
-    let flags = CGEventSource::flags_state(CGEventSourceStateID::CombinedSessionState);
+    held(CGEventSource::flags_state(
+        CGEventSourceStateID::CombinedSessionState,
+    ))
+}
+
+/// The modifier keys `flags` report held.
+fn held(flags: objc2_core_graphics::CGEventFlags) -> Modifiers {
+    use objc2_core_graphics::CGEventFlags;
+
     Modifiers {
         shift: flags.contains(CGEventFlags::MaskShift),
         shortcut: flags.intersects(

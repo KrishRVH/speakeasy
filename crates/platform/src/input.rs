@@ -1,9 +1,12 @@
 //! The lane from desktop callbacks to the session owner, and the commit gate that lets Escape
 //! revoke a recording's insertion while a native clipboard call is blocked.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Instant,
 };
 
 use async_channel::Sender;
@@ -22,8 +25,8 @@ pub enum Input {
     /// S, W, or A during a hold turns the recording into a Show, which also records the screen,
     /// the window under the pointer, or an area dragged out next.
     Show(Scope),
-    /// Shift tapped twice alone: a Show being recorded drops a numbered pin at the pointer.
-    Pin,
+    /// Shift tapped twice alone, which asks a Show being recorded for a numbered pin.
+    Pin(Taps),
     /// The user discards the active session, which revokes pending insertion.
     Cancel,
     /// Another shortcut or a session change ended the hold: discards the active session like
@@ -40,6 +43,15 @@ pub enum Input {
         /// The accepted cancellation shortcut for display in Settings.
         cancel: String,
     },
+}
+
+/// Two quick taps of Shift alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Taps {
+    /// When the first tap pressed Shift.
+    pub pressed: Instant,
+    /// When the second tap released it.
+    pub released: Instant,
 }
 
 /// The lane from OS callbacks to the session owner, carrying the recording's commit gate.

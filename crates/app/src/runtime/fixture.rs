@@ -3,7 +3,7 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use speakeasy_platform::{Delivery, InsertPermit, Inserted};
+use speakeasy_platform::{Delivery, InsertPermit, Inserted, Taps};
 use speakeasy_show::Narration;
 use tokio::time::timeout;
 
@@ -140,7 +140,7 @@ impl Listening for FixtureDevice {
 
 /// No fixture device records a Show, so none takes a pin.
 impl Pinning for FixtureDevice {
-    fn pin(&self) {}
+    fn pin(&self, _: Taps) {}
 }
 
 async fn wait_for_signal(

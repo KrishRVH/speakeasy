@@ -53,7 +53,7 @@ use windows::{
 };
 use windows_future::{AsyncStatus, IAsyncOperation};
 use windows_sys::Win32::{
-    Foundation::{FALSE, HWND, POINT, RECT},
+    Foundation::{FALSE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
     Graphics::{
         Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute},
         Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint},
@@ -66,11 +66,13 @@ use windows_sys::Win32::{
     UI::{
         HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI},
         Input::KeyboardAndMouse::{VK_LBUTTON, VK_RBUTTON},
+        Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
         WindowsAndMessaging::{
             GA_ROOT, GWL_EXSTYLE, GetAncestor, GetClassNameW, GetCursorPos, GetSystemMetrics,
             GetWindowLongPtrW, GetWindowThreadProcessId, HWND_TOPMOST, IsIconic, IsWindow,
-            SM_SWAPBUTTON, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-            SetWindowLongPtrW, SetWindowPos, ShowWindow, WS_EX_TRANSPARENT, WindowFromPoint,
+            SM_SWAPBUTTON, SW_HIDE, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+            SWP_NOMOVE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_NCCALCSIZE,
+            WM_NCDESTROY, WS_EX_TRANSPARENT, WindowFromPoint,
         },
     },
 };
@@ -699,12 +701,24 @@ pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyh
     exclude_always(hwnd)?;
     // The overlay is the pill's click-through popup, stretched over the display.
     window.configure_pill()?;
+    // SAFETY: this thread owns the window, which owns the subclass until WM_NCDESTROY on this same
+    // thread; installing it again replaces it.
+    ok_or_last_error(unsafe { SetWindowSubclass(hwnd, Some(edge_to_edge), 1, 0) })?;
     let [left, top, ..] = display.bounds;
     let [width, height] = display.extent();
     let place = || {
-        // SAFETY: this thread owns the window.
+        // SAFETY: this thread owns the window. A changed frame recomputes the client area through
+        // `edge_to_edge` even when the window does not move.
         ok_or_last_error(unsafe {
-            SetWindowPos(hwnd, HWND_TOPMOST, left, top, width, height, SWP_NOACTIVATE)
+            SetWindowPos(
+                hwnd,
+                HWND_TOPMOST,
+                left,
+                top,
+                width,
+                height,
+                SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            )
         })
     };
     // SAFETY: reads the DPI of this thread's live window by handle.
@@ -717,6 +731,32 @@ pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyh
         place()?;
     }
     Ok(())
+}
+
+/// Makes the overlay's whole window its client area. GPUI keeps a resize border's width of every
+/// window without a title bar out of its client area, which would leave the display's edges
+/// uncovered and draw ink up to a border's width from the pointer.
+unsafe extern "system" fn edge_to_edge(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    id: usize,
+    _: usize,
+) -> LRESULT {
+    // SAFETY: this window-owned subclass runs on the window's thread and is removed at
+    // destruction.
+    unsafe {
+        match message {
+            // Answering zero keeps the proposed window rectangle as the client area.
+            WM_NCCALCSIZE if wparam != 0 => 0,
+            WM_NCDESTROY => {
+                RemoveWindowSubclass(hwnd, Some(edge_to_edge), id);
+                DefSubclassProc(hwnd, message, wparam, lparam)
+            },
+            _ => DefSubclassProc(hwnd, message, wparam, lparam),
+        }
+    }
 }
 
 pub(crate) fn set_overlay_input(window: &NativeWindow, takes_input: bool) {

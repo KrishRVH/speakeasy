@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::{Input, InputSender, Scope};
+use super::{Input, InputSender, Scope, Taps};
 
 /// A Shift press released within this long is a tap.
 const SHIFT_TAP: Duration = Duration::from_millis(300);
@@ -107,41 +107,52 @@ impl Chord {
 /// Two quick taps of Shift alone, which drop a numbered pin during a Show.
 ///
 /// A tap is a press released within [`SHIFT_TAP`], and the second begins within [`SHIFT_TAP_GAP`]
-/// of the first's release with no other key between. The talk shortcut held through both taps
-/// does not count as another key. Shift stays passive, so an app's own double Shift still works.
+/// of the first's release with no other key between or held. The talk shortcut held through both
+/// taps does not count as another key. Shift stays passive, so an app's own double Shift still
+/// works.
+///
+/// Every tap also begins the next pair, and the Show decides which pairs pin, since only it sees
+/// whether a tap drew ink: a quick stroke before a double tap then costs that double tap nothing.
 #[derive(Clone, Copy, Default)]
 enum ShiftTaps {
     #[default]
     Idle,
-    /// Shift went down at `at`, for the second tap when `second`.
-    Down { at: Instant, second: bool },
-    /// The first tap ended at `at`.
-    Tapped { at: Instant },
+    /// Shift went down at `at`, as the second tap of a pair begun at `first` when there is one.
+    Down { at: Instant, first: Option<Instant> },
+    /// A tap pressed at `pressed` ended at `released`.
+    Tapped { pressed: Instant, released: Instant },
 }
 
 impl ShiftTaps {
-    /// Observes Shift going down or up at `at`; returns whether that completed a double tap.
-    fn shift(&mut self, down: bool, at: Instant) -> bool {
+    /// Observes Shift going down or up at `at`; returns the double tap that completed, if any.
+    fn shift(&mut self, down: bool, at: Instant) -> Option<Taps> {
         let (next, doubled) = match (*self, down) {
             // Autorepeat while Shift is held.
-            (Self::Down { .. }, true) => (*self, false),
-            (Self::Tapped { at: released }, true) => {
-                let second = at.saturating_duration_since(released) <= SHIFT_TAP_GAP;
-                (Self::Down { at, second }, false)
+            (Self::Down { .. }, true) => (*self, None),
+            (Self::Tapped { pressed, released }, true) => {
+                let first =
+                    (at.saturating_duration_since(released) <= SHIFT_TAP_GAP).then_some(pressed);
+                (Self::Down { at, first }, None)
             },
-            (Self::Idle, true) => (Self::Down { at, second: false }, false),
-            (
-                Self::Down {
-                    at: pressed,
-                    second,
-                },
-                false,
-            ) => match (at.saturating_duration_since(pressed) <= SHIFT_TAP, second) {
-                (true, true) => (Self::Idle, true),
-                (true, false) => (Self::Tapped { at }, false),
-                (false, _) => (Self::Idle, false),
+            (Self::Idle, true) => (Self::Down { at, first: None }, None),
+            (Self::Down { at: pressed, first }, false) => {
+                if at.saturating_duration_since(pressed) <= SHIFT_TAP {
+                    let doubled = first.map(|first| Taps {
+                        pressed: first,
+                        released: at,
+                    });
+                    (
+                        Self::Tapped {
+                            pressed,
+                            released: at,
+                        },
+                        doubled,
+                    )
+                } else {
+                    (Self::Idle, None)
+                }
             },
-            (Self::Idle | Self::Tapped { .. }, false) => (Self::Idle, false),
+            (Self::Idle | Self::Tapped { .. }, false) => (Self::Idle, None),
         };
         *self = next;
         doubled
@@ -168,7 +179,7 @@ enum Action {
     Release,
     Lock,
     Show(Scope),
-    Pin,
+    Pin(Taps),
     Cancel,
     /// Interrupt, then release: another shortcut or a session change ended the hold.
     Interrupt,
@@ -181,7 +192,7 @@ impl Action {
             Self::Release => input.deliver(Input::Release),
             Self::Lock => input.deliver(Input::Lock),
             Self::Show(scope) => input.deliver(Input::Show(scope)),
-            Self::Pin => input.deliver(Input::Pin),
+            Self::Pin(taps) => input.deliver(Input::Pin(taps)),
             Self::Cancel => input.deliver(Input::Cancel),
             Self::Interrupt => {
                 input.deliver(Input::Interrupt);
@@ -255,6 +266,17 @@ impl Modifiers {
     }
 }
 
+/// The keys Windows reports physically held just before a hook event, which corrects for events
+/// the hook missed, such as releases on the secure desktop.
+#[cfg(any(target_os = "windows", test))]
+#[derive(Clone, Copy, Default)]
+pub(super) struct Physical {
+    /// Each of [`Windows::CHORD_KEYS`].
+    pub(super) chord_keys: [bool; 4],
+    /// [`Modifiers::shortcut`]: Shift pressed now belongs to another shortcut.
+    pub(super) shortcut: bool,
+}
+
 /// Ctrl+Win policy over virtual-key codes from the low-level keyboard hook.
 #[cfg(any(target_os = "windows", test))]
 #[derive(Default)]
@@ -302,21 +324,28 @@ impl Windows {
         self.chord.interrupt();
     }
 
-    /// Decides one hook event at `at`. `physical_before_event` is the OS state of
-    /// [`Self::CHORD_KEYS`] before this event; it clears chord keys whose release the hook missed.
+    /// Decides one hook event at `at`. `physical` is what the OS reports held before this event;
+    /// it clears chord keys whose release the hook missed and tells Shift alone from Shift in
+    /// another shortcut.
     pub(super) fn observe(
         &mut self,
         key: u32,
         down: bool,
-        physical_before_event: [bool; 4],
+        physical: Physical,
         at: Instant,
     ) -> Decision {
         let key = u16::try_from(key).unwrap_or(u16::MAX);
         if Self::SHIFT_KEYS.contains(&key) {
-            return Decision::pass(self.taps.shift(down, at).then_some(Action::Pin));
+            let pinned = if physical.shortcut {
+                self.taps.interrupt();
+                None
+            } else {
+                self.taps.shift(down, at)
+            };
+            return Decision::pass(pinned.map(Action::Pin));
         }
         if Self::CHORD_KEYS.contains(&key) {
-            return self.chord_key(key, down, physical_before_event);
+            return self.chord_key(key, down, physical.chord_keys);
         }
         self.taps.interrupt();
         match key {
@@ -363,12 +392,8 @@ impl Windows {
 pub(super) enum MacEvent {
     /// A key went down, including autorepeat, or up.
     Key { code: i64, down: bool },
-    /// Modifier flags changed; `function` and `shift` report whether Fn and Shift are now held.
-    FlagsChanged {
-        code: i64,
-        function: bool,
-        shift: bool,
-    },
+    /// Modifier flags changed, leaving `held` held.
+    FlagsChanged { code: i64, held: Modifiers },
 }
 
 /// Fn policy over virtual key codes from the macOS event tap.
@@ -395,18 +420,24 @@ impl Mac {
         match event {
             MacEvent::FlagsChanged {
                 code: Self::FUNCTION,
-                function,
-                ..
-            } => Decision::pass(if function {
+                held,
+            } => Decision::pass(if held.talk {
                 self.chord.press()
             } else {
                 self.chord.release()
             }),
             MacEvent::FlagsChanged {
                 code: Self::LEFT_SHIFT | Self::RIGHT_SHIFT,
-                shift,
-                ..
-            } => Decision::pass(self.taps.shift(shift, at).then_some(Action::Pin)),
+                held,
+            } => {
+                let pinned = if held.shortcut {
+                    self.taps.interrupt();
+                    None
+                } else {
+                    self.taps.shift(held.shift, at)
+                };
+                Decision::pass(pinned.map(Action::Pin))
+            },
             MacEvent::FlagsChanged { .. } => {
                 self.taps.interrupt();
                 Decision::pass(None)

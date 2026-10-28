@@ -18,12 +18,23 @@ const LETTER_W: u32 = 0x57;
 const LETTER_A: u32 = 0x41;
 const LETTER_Q: u32 = 0x51;
 const LEFT_SHIFT: u32 = 0xA0;
+const ALT: u32 = 0x12;
 const MAC_LEFT_SHIFT: i64 = 56;
 const MAC_Q: i64 = 12;
-const NONE_HELD: [bool; 4] = [false; 4];
+const NONE_HELD: Physical = Physical {
+    chord_keys: [false; 4],
+    shortcut: false,
+};
 
-fn held(keys: &[u32]) -> [bool; 4] {
-    Windows::CHORD_KEYS.map(|chord_key| keys.contains(&u32::from(chord_key)))
+/// What Windows reports while `keys` are held.
+fn held(keys: &[u32]) -> Physical {
+    let down = |key: u16| keys.contains(&u32::from(key));
+    let control = keys.contains(&LEFT_CONTROL) || keys.contains(&RIGHT_CONTROL);
+    Physical {
+        chord_keys: Windows::CHORD_KEYS.map(down),
+        shortcut: Windows::modifiers(|key| down(key) || key == Windows::CONTROL && control)
+            .shortcut,
+    }
 }
 
 fn now() -> Instant {
@@ -33,8 +44,10 @@ fn now() -> Instant {
 fn function(down: bool) -> MacEvent {
     MacEvent::FlagsChanged {
         code: Mac::FUNCTION,
-        function: down,
-        shift: false,
+        held: Modifiers {
+            talk: down,
+            ..Modifiers::default()
+        },
     }
 }
 
@@ -168,8 +181,11 @@ fn s_during_a_hold_starts_a_show_and_is_swallowed_through_its_release() {
     let shift = mac.observe(
         MacEvent::FlagsChanged {
             code: MAC_LEFT_SHIFT,
-            function: true,
-            shift: true,
+            held: Modifiers {
+                shift: true,
+                talk: true,
+                ..Modifiers::default()
+            },
         },
         now(),
     );
@@ -214,51 +230,54 @@ fn w_and_a_during_a_hold_start_window_and_area_shows() {
 }
 
 /// Replays Shift and other key events, each `(milliseconds, shift, down)`, through the Windows
-/// policy and returns the moments a pin was dropped; `shift` false is the letter Q.
-fn windows_pins(events: &[(u64, bool, bool)]) -> Vec<u64> {
+/// policy and returns the double taps that asked for a pin, from the first press to the second
+/// release in milliseconds; `shift` false is the letter Q.
+fn windows_pins(events: &[(u64, bool, bool)]) -> Vec<(u64, u64)> {
     let start = now();
+    let millis = |at: Instant| u64::try_from(at.duration_since(start).as_millis()).unwrap();
     let mut policy = Windows::default();
     events
         .iter()
-        .filter(|&&(millis, shift, down)| {
+        .filter_map(|&(offset, shift, down)| {
             let key = if shift { LEFT_SHIFT } else { LETTER_Q };
-            let at = start.checked_add(Duration::from_millis(millis)).unwrap();
+            let at = start.checked_add(Duration::from_millis(offset)).unwrap();
             let decision = policy.observe(key, down, NONE_HELD, at);
             assert!(!decision.swallows(), "Shift and typing stay with the app");
-            decision.action == Some(Action::Pin)
+            match decision.action? {
+                Action::Pin(taps) => Some((millis(taps.pressed), millis(taps.released))),
+                action => panic!("Shift taps asked for {action:?}"),
+            }
         })
-        .map(|&(millis, ..)| millis)
         .collect()
 }
 
 #[test]
 fn two_quick_taps_of_shift_alone_drop_a_pin() {
     let tap = |at: u64| [(at, true, true), (at + 80, true, false)];
-    assert_eq!(windows_pins(&[tap(0), tap(300)].concat()), [380]);
+    assert_eq!(windows_pins(&[tap(0), tap(300)].concat()), [(0, 380)]);
     // Autorepeat while the first tap is held changes nothing.
     let repeated = [(0, true, true), (40, true, true), (90, true, false)];
-    assert_eq!(windows_pins(&[&repeated[..], &tap(250)].concat()), [330]);
     assert_eq!(
-        windows_pins(&[tap(0), tap(700)].concat()),
-        Vec::<u64>::new(),
-        "too slow"
+        windows_pins(&[&repeated[..], &tap(250)].concat()),
+        [(0, 330)]
     );
+    assert_eq!(windows_pins(&[tap(0), tap(700)].concat()), [], "too slow");
     let held = [(0, true, true), (600, true, false)];
     assert_eq!(
         windows_pins(&[&held[..], &tap(700)].concat()),
-        Vec::<u64>::new(),
+        [],
         "Shift held to draw is no tap"
     );
     let typed = [(150, false, true), (160, false, false)];
     assert_eq!(
         windows_pins(&[&tap(0)[..], &typed, &tap(200)].concat()),
-        Vec::<u64>::new(),
+        [],
         "a key between"
     );
     assert_eq!(
-        windows_pins(&[tap(0), tap(200), tap(400), tap(600)].concat()),
-        [280, 680],
-        "each pin takes two fresh taps"
+        windows_pins(&[tap(0), tap(200), tap(400)].concat()),
+        [(0, 280), (200, 480)],
+        "each tap also begins the next pair, for a quick stroke the Show skips"
     );
 }
 
@@ -281,7 +300,11 @@ fn shift_taps_pin_beside_the_held_talk_shortcut() {
     assert_eq!(tap(&mut policy, 500), None);
     // The held shortcut's autorepeat comes between the taps.
     policy.observe(LEFT_CONTROL, true, both, at(640));
-    assert_eq!(tap(&mut policy, 700), Some(Action::Pin));
+    let taps = Taps {
+        pressed: at(500),
+        released: at(780),
+    };
+    assert_eq!(tap(&mut policy, 700), Some(Action::Pin(taps)));
 
     let mut policy = Windows::default();
     let pins: Vec<Option<Action>> = [0, 300]
@@ -296,20 +319,37 @@ fn shift_taps_pin_beside_the_held_talk_shortcut() {
         })
         .collect();
     assert_eq!(pins, [None, None], "Ctrl+Shift twice is a shortcut");
+    // Alt, or Ctrl alone, held through both taps makes them part of another shortcut, such as a
+    // keyboard layout switch.
+    for physical in [held(&[ALT]), held(&[LEFT_CONTROL])] {
+        let mut policy = Windows::default();
+        let released: Vec<Option<Action>> = [0, 200]
+            .into_iter()
+            .map(|millis| {
+                policy.observe(LEFT_SHIFT, true, physical, at(millis));
+                policy
+                    .observe(LEFT_SHIFT, false, physical, at(millis + 80))
+                    .action
+            })
+            .collect();
+        assert_eq!(released, [None, None]);
+    }
 
     let shift = |down: bool, code: i64| MacEvent::FlagsChanged {
         code,
-        function: true,
-        shift: down,
+        held: Modifiers {
+            shift: down,
+            talk: true,
+            ..Modifiers::default()
+        },
     };
     let mut mac = Mac::default();
     mac.observe(function(true), at(0));
-    let taps = [(500, true), (580, false), (700, true), (780, false)];
-    let pins: Vec<Option<Action>> = taps
+    let pins: Vec<Option<Action>> = [(500, true), (580, false), (700, true), (780, false)]
         .into_iter()
         .map(|(millis, down)| mac.observe(shift(down, MAC_LEFT_SHIFT), at(millis)).action)
         .collect();
-    assert_eq!(pins, [None, None, None, Some(Action::Pin)]);
+    assert_eq!(pins, [None, None, None, Some(Action::Pin(taps))]);
     // Another modifier between the taps, here left Option, makes a different shortcut.
     mac.observe(shift(true, MAC_LEFT_SHIFT), at(1_000));
     mac.observe(shift(false, MAC_LEFT_SHIFT), at(1_080));
@@ -319,6 +359,21 @@ fn shift_taps_pin_beside_the_held_talk_shortcut() {
         mac.observe(shift(false, MAC_LEFT_SHIFT), at(1_280)).action,
         None
     );
+    // So does Command held through both taps.
+    let command = |down: bool| MacEvent::FlagsChanged {
+        code: MAC_LEFT_SHIFT,
+        held: Modifiers {
+            shift: down,
+            shortcut: true,
+            ..Modifiers::default()
+        },
+    };
+    let mut mac = Mac::default();
+    let released: Vec<Option<Action>> = [(0, true), (80, false), (200, true), (280, false)]
+        .into_iter()
+        .map(|(millis, down)| mac.observe(command(down), at(millis)).action)
+        .collect();
+    assert_eq!(released, [None; 4]);
 }
 
 #[test]

@@ -22,7 +22,8 @@ use objc2::{
     rc::{Retained, autoreleasepool},
 };
 use objc2_app_kit::{
-    NSStatusWindowLevel, NSWindowCollectionBehavior, NSWindowSharingType, NSWindowStyleMask,
+    NSPanel, NSStatusWindowLevel, NSWindowCollectionBehavior, NSWindowSharingType,
+    NSWindowStyleMask,
 };
 use objc2_core_foundation::{
     CFArray, CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType, CGPoint, CGRect,
@@ -539,6 +540,11 @@ pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyh
     let window = &window.native.ns_window;
     window.setIgnoresMouseEvents(true);
     window.setStyleMask(NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel);
+    // A click while the overlay takes input would otherwise make it the key window, taking typing
+    // from the app being recorded; GPUI's views never need it to be key.
+    if let Some(panel) = window.downcast_ref::<NSPanel>() {
+        panel.setBecomesKeyOnlyIfNeeded(true);
+    }
     window.setHasShadow(false);
     // Shows already leave out the whole application; this asks other recorders to leave out
     // the ink too.

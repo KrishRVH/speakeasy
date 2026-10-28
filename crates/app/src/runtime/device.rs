@@ -4,6 +4,7 @@
 
 use std::{future::pending, mem};
 
+use speakeasy_platform::Taps;
 use tokio::task::JoinHandle;
 
 use super::{
@@ -65,9 +66,9 @@ impl<R: Listening> Device<R> {
 }
 
 impl<R: Pinning> Device<R> {
-    pub(super) fn pin(&self) {
+    pub(super) fn pin(&self, taps: Taps) {
         if let Self::Open(recording) = self {
-            recording.pin();
+            recording.pin(taps);
         }
     }
 }

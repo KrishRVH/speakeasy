@@ -11,9 +11,9 @@ use anyhow::anyhow;
 use async_channel::{Receiver, Sender};
 use speakeasy_platform::{
     Display, OwnedThread, Part, PointerMonitor, PointerSample, Scope, ScreenCapture, ScreenEvent,
-    Target,
+    Taps, Target,
 };
-use speakeasy_show::{Image, Journal, Mark, Moment, Point, SAMPLE_INTERVAL, Size, Tracker};
+use speakeasy_show::{Image, Journal, Mark, Moment, Point, SAMPLE_INTERVAL, Size, Span, Tracker};
 use tokio::sync::watch;
 
 use super::overlay::Canvas;
@@ -37,8 +37,8 @@ const PIN_LANE: usize = 8;
 pub(crate) struct ScreenRecorder {
     /// Sending finishes the recording; closing it cancels.
     finish: Sender<()>,
-    /// When each pin was asked for.
-    pins: Sender<Instant>,
+    /// The double taps of Shift that asked for pins.
+    pins: Sender<Taps>,
     thread: OwnedThread,
 }
 
@@ -99,12 +99,12 @@ impl Capturing for ScreenRecorder {
 }
 
 impl Pinning for ScreenRecorder {
-    fn pin(&self) {
+    fn pin(&self, taps: Taps) {
         #[expect(
             clippy::let_underscore_must_use,
             reason = "A full lane means pins faster than anyone reads them, and a closed one belongs to an ended recording"
         )]
-        let _ = self.pins.try_send(Instant::now());
+        let _ = self.pins.try_send(taps);
     }
 }
 
@@ -119,7 +119,7 @@ impl Drop for ScreenRecorder {
 struct Lanes<'a> {
     /// A message finishes the recording; closing cancels it.
     finishing: Receiver<()>,
-    pinned: Receiver<Instant>,
+    pinned: Receiver<Taps>,
     canvas: &'a watch::Sender<Canvas>,
 }
 
@@ -138,7 +138,7 @@ fn record(started: Instant, scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<O
 
 /// Resolves what `scope` names into a target, and whether the Show was finished meanwhile; `None`
 /// once cancelled. An area is dragged out on the overlay over the display under the pointer; a
-/// Show finished before then records all of that display.
+/// Show finished before then, or whose overlay cannot appear, records all of that display.
 async fn choose(scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<Option<(Target, bool)>> {
     let display = match scope {
         Scope::Screen => return Target::screen().map(|target| Some((target, false))),
@@ -152,13 +152,14 @@ async fn choose(scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<Option<(Targe
         .map(|(part, finished)| (Target::area(display, part), finished)))
 }
 
-/// Waits for the part of the display dragged out on `choice`, or all of it, finished, when the
-/// Show finishes first; `None` once cancelled.
+/// Waits for the part of the display dragged out on `choice`, or all of it when the overlay closes
+/// `choice` because it cannot appear, or all of it, finished, when the Show finishes first; `None`
+/// once cancelled.
 async fn pick(choice: &Receiver<Part>, lanes: &Lanes<'_>) -> Option<(Part, bool)> {
     let picked = tokio::select! {
         biased;
         finished = lanes.finishing.recv() => finished.ok().map(|()| (Part::WHOLE, true)),
-        Ok(part) = choice.recv() => Some((part, false)),
+        part = choice.recv() => Some((part.unwrap_or(Part::WHOLE), false)),
     };
     // A pin asked for before there was anything to record marks nothing.
     while lanes.pinned.try_recv().is_ok() {}
@@ -229,8 +230,10 @@ impl<'a> Take<'a> {
                     Ok(ScreenEvent::Failed(message)) => break Err(anyhow!(message)),
                     Err(_) => break Err(anyhow!("Screen capture stopped unexpectedly. Try again.")),
                 },
-                Ok(at) = lanes.pinned.recv() => take.pin(at),
+                // Samples first, so a pin lands where the pointer is and sees the taps that asked
+                // for it.
                 Ok(sample) = pointer_received.recv() => take.pointer(sample),
+                Ok(taps) = lanes.pinned.recv() => take.pin(taps),
             }
         };
         stop(&capture, &pointer).await;
@@ -278,8 +281,9 @@ impl<'a> Take<'a> {
             .send_if_modified(|canvas| canvas.update(finished, drawing, marks, now));
     }
 
-    fn pin(&mut self, at: Instant) {
-        if !self.tracker.pin(self.moment(at)) {
+    fn pin(&mut self, taps: Taps) {
+        let taps = Span::new(self.moment(taps.pressed), self.moment(taps.released));
+        if !self.tracker.pin(taps) {
             return;
         }
         let marks = Some(self.marks());
@@ -324,7 +328,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn an_area_is_dragged_out_or_finished_whole_and_earlier_pins_mark_nothing()
+    async fn an_area_is_dragged_out_or_recorded_whole_and_earlier_pins_mark_nothing()
     -> anyhow::Result<()> {
         let (finish, finishing) = async_channel::bounded(1);
         let (pins, pinned) = async_channel::bounded(PIN_LANE);
@@ -336,12 +340,22 @@ mod tests {
         };
         let (chosen, choice) = async_channel::bounded(1);
         let dragged = Part::between([0.1, 0.2], [0.5, 0.6]);
-        pins.try_send(Instant::now())?;
+        let now = Instant::now();
+        pins.try_send(Taps {
+            pressed: now,
+            released: now,
+        })?;
         chosen.try_send(dragged)?;
         assert_eq!(pick(&choice, &lanes).await, Some((dragged, false)));
         assert!(lanes.pinned.is_empty(), "the early pin was dropped");
         finish.try_send(())?;
         assert_eq!(pick(&choice, &lanes).await, Some((Part::WHOLE, true)));
+        chosen.close();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), pick(&choice, &lanes)).await?,
+            Some((Part::WHOLE, false)),
+            "the overlay could not appear"
+        );
         finish.close();
         assert_eq!(pick(&choice, &lanes).await, None, "cancelled");
         Ok(())

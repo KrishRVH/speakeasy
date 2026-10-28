@@ -239,7 +239,7 @@ impl Overlay {
     }
 
     /// Moves onto the display and shows, taking input while an area is chosen, or hides when there
-    /// is no display, then redraws.
+    /// is no display, then redraws. An area that cannot be chosen here is the whole display.
     fn cover(&mut self, cover: (Option<Display>, bool), cx: &mut Context<'_, Self>) {
         if cover != self.cover {
             self.cover = cover;
@@ -247,11 +247,18 @@ impl Overlay {
             if !picking {
                 self.drag = None;
             }
+            let chosen = self.canvas.borrow().picking.clone();
             self.visibility = Some(defer_native(
                 self.window,
                 "overlay",
                 cx,
-                move |native, _| place(native, display, picking),
+                move |native, _| {
+                    if !place(native, display, picking)
+                        && let Some(chosen) = chosen
+                    {
+                        chosen.close();
+                    }
+                },
             ));
         }
         cx.notify();
@@ -333,12 +340,14 @@ impl Overlay {
     }
 }
 
-/// Covers `display` and shows the overlay, taking clicks only while `picking`, or hides it. An
-/// overlay that cannot cover the display stays hidden rather than misplaced.
-fn place(native: &NativeWindow, display: Option<Display>, picking: bool) {
+/// Covers `display` and shows the overlay, taking clicks only while `picking`, or hides it, and
+/// returns whether it covers a display. An overlay that cannot cover the display stays hidden
+/// rather than misplaced.
+fn place(native: &NativeWindow, display: Option<Display>, picking: bool) -> bool {
     let covered = display.is_some_and(|display| native.configure_overlay(display).is_ok());
     native.set_overlay_input(covered && picking);
     native.set_overlay_visible(covered);
+    covered
 }
 
 impl Render for Overlay {
@@ -587,7 +596,14 @@ pub(crate) fn attend(
             let show = snapshots.borrow().id;
             let (overlay, failure) = match cx.update(|cx| open(canvas.clone(), cx)) {
                 Ok(Ok(overlay)) => (Some(overlay), None),
-                Ok(Err(error)) => (None, (!reported).then_some(error)),
+                Ok(Err(error)) => {
+                    // No area can be dragged out without the overlay: the Show records the whole
+                    // display instead.
+                    if let Some(chosen) = &canvas.borrow().picking {
+                        chosen.close();
+                    }
+                    (None, (!reported).then_some(error))
+                },
                 Err(_) => return,
             };
             let released = canvas

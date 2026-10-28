@@ -130,16 +130,16 @@ status line stay in view below the scrolling controls.
   keeping the narration since the press; the pill table shows what the pill presents. S records the
   display under the pointer and W the window under it, cropped from the display and followed as it
   moves; over the desktop, the taskbar, or a Speakeasy window, W records the display. A shades that
-  display until the user drags out an area of at least 24 px each way; finishing first records the
-  whole display, and Escape cancels. A thin red line outside a window or area marks it while it
-  records, and no frame shows it.
+  display until the user drags out an area of at least 24 px each way; finishing first, or a shade
+  that cannot appear, records the whole display, and Escape cancels. A thin red line outside a
+  window or area marks it while it records, and no frame shows it.
 - Shift draws ink, alone or while the shortcut is still held; the ink holds briefly after the pen
   lifts, then fades, and clicks pass through to the apps underneath. Two taps of Shift alone, each
   released within 300 ms and the second pressed within 400 ms of the first's release, drop a pin at
-  the pointer, unless a click came with Shift in the second before; a pin off the recorded window or
-  area is dropped. Marks and pins share one numbering in the order they began, ① ② ③; each number
-  sits beside what it numbers on the overlay, fading with the ink, and in the bundle's keyframes and
-  summary.
+  the pointer, unless either tap drew ink or clicked or another modifier was held; no pin lands off
+  the recorded window or area. Marks and pins share one numbering in the order they began, ① ② ③;
+  each number sits beside what it numbers on the overlay, fading with the ink, and in the bundle's
+  keyframes and summary.
 - Windows/macOS Escape cancels immediately and continues to the focused app. Linux uses a reserved
   Ctrl+Super+Escape chord or an explicit command binding; bare Escape is not globally captured.
   Animation never delays cancellation or owns the microphone lifetime.

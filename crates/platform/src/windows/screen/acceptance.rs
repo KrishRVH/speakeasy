@@ -12,9 +12,9 @@ use windows_sys::{
         Graphics::{
             Dwm::{DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute},
             Gdi::{
-                BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BeginPaint, CreateSolidBrush, DIB_RGB_COLORS,
-                EndPaint, EnumDisplayMonitors, HBRUSH, HDC, MONITOR_DEFAULTTOPRIMARY, PAINTSTRUCT,
-                SetDIBitsToDevice,
+                BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BeginPaint, ClientToScreen, CreateSolidBrush,
+                DIB_RGB_COLORS, EndPaint, EnumDisplayMonitors, HBRUSH, HDC,
+                MONITOR_DEFAULTTOPRIMARY, PAINTSTRUCT, SetDIBitsToDevice,
             },
         },
         System::LibraryLoader::GetModuleHandleW,
@@ -25,12 +25,13 @@ use windows_sys::{
             },
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GA_ROOT,
-                GWL_EXSTYLE, GetAncestor, GetClassNameW, GetPropW, GetWindowLongPtrW,
-                GetWindowRect, IsWindowVisible, MSG, PM_REMOVE, PeekMessageW, RegisterClassW,
-                SWP_NOZORDER, SetWindowDisplayAffinity, TranslateMessage, UnregisterClassW,
-                WDA_EXCLUDEFROMCAPTURE, WDA_MONITOR, WDA_NONE, WM_DPICHANGED, WM_PAINT, WNDCLASSW,
-                WNDPROC, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-                WS_EX_TRANSPARENT, WS_POPUP, WindowFromPoint,
+                GWL_EXSTYLE, GetAncestor, GetClassNameW, GetClientRect, GetPropW,
+                GetWindowLongPtrW, GetWindowRect, IsWindowVisible, MSG, NCCALCSIZE_PARAMS,
+                PM_REMOVE, PeekMessageW, RegisterClassW, SWP_NOZORDER, SetWindowDisplayAffinity,
+                TranslateMessage, UnregisterClassW, WDA_EXCLUDEFROMCAPTURE, WDA_MONITOR, WDA_NONE,
+                WM_DPICHANGED, WM_NCCALCSIZE, WM_PAINT, WNDCLASSW, WNDPROC, WS_EX_LAYERED,
+                WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+                WindowFromPoint,
             },
         },
     },
@@ -318,51 +319,75 @@ fn synthetic_frame(
 }
 
 #[test]
-#[ignore = "Moves a hidden owned window across display scales; captures nothing"]
-fn overlay_covers_its_display_after_crossing_scales() -> anyhow::Result<()> {
+#[ignore = "Places a hidden owned window over each display scale; captures nothing"]
+fn overlay_covers_its_display_edge_to_edge_across_scales() -> anyhow::Result<()> {
     per_monitor_aware()?;
     let displays = displays()?;
-    let scale =
-        |display: &crate::screen::Display| display.native.extent()[0] as f32 / display.size[0];
-    let Some((from, to)) = displays.iter().find_map(|from| {
-        displays
-            .iter()
-            .find(|to| (scale(to) - scale(from)).abs() > 0.01)
-            .map(|to| (from, to))
-    }) else {
-        let scales: Vec<f32> = displays.iter().map(scale).collect();
-        println!("Needs two displays of different scale, not {scales:?}; nothing checked");
-        return Ok(());
-    };
+    let first = displays.first().context("No display")?;
     let _class = Class::register(RESCALING_CLASS, Some(rescale_like_gpui), null_mut())?;
-    let [left, top, ..] = from.native.bounds;
+    let [left, top, ..] = first.native.bounds;
     let window = Window::create(
         RESCALING_CLASS,
         WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         [left, top, 100, 100],
     )?;
+    // SAFETY: this thread owns the live window until `window` drops.
+    let native = unsafe { native_window(window.0) }?;
+    configure_overlay(&native, first.native)?;
+    assert_eq!(
+        covered(window.0)?,
+        [first.native.bounds; 2],
+        "The window and its client area, where ink is drawn, cover the display"
+    );
+    let scale =
+        |display: &crate::screen::Display| display.native.extent()[0] as f32 / display.size[0];
+    let Some(to) = displays
+        .iter()
+        .find(|to| (scale(to) - scale(first)).abs() > 0.01)
+    else {
+        let scales: Vec<f32> = displays.iter().map(scale).collect();
+        println!("Crossing scales needs two displays of different scale, not {scales:?}");
+        return Ok(());
+    };
     // SAFETY: reads this thread's own live window.
     let dpi = unsafe { GetDpiForWindow(window.0) };
-    // SAFETY: this thread owns the live window until `window` drops.
-    configure_overlay(&unsafe { native_window(window.0) }?, to.native)?;
-    let mut bounds = RECT::default();
-    // SAFETY: reads this thread's own live window into a live local.
-    let (moved_dpi, measured) = unsafe {
+    configure_overlay(&native, to.native)?;
+    // SAFETY: reads this thread's own live window.
+    let moved_dpi = unsafe { GetDpiForWindow(window.0) };
+    assert_ne!(dpi, moved_dpi, "The window must arrive at another scale");
+    assert_eq!(covered(window.0)?, [to.native.bounds; 2]);
+    Ok(())
+}
+
+/// The left, top, right, and bottom edges of `window` and of its client area, on the desktop.
+fn covered(window: HWND) -> anyhow::Result<[[i32; 4]; 2]> {
+    let (mut frame, mut client, mut origin) = (RECT::default(), RECT::default(), POINT::default());
+    // SAFETY: reads this thread's own live window into live locals.
+    let (measured, sized, placed) = unsafe {
         (
-            GetDpiForWindow(window.0),
-            GetWindowRect(window.0, &raw mut bounds),
+            GetWindowRect(window, &raw mut frame),
+            GetClientRect(window, &raw mut client),
+            ClientToScreen(window, &raw mut origin),
         )
     };
     ok_or_last_error(measured)?;
-    assert_ne!(dpi, moved_dpi, "The window must arrive at another scale");
+    ok_or_last_error(sized)?;
+    ok_or_last_error(placed)?;
     let RECT {
         left,
         top,
         right,
         bottom,
-    } = bounds;
-    assert_eq!([left, top, right, bottom], to.native.bounds);
-    Ok(())
+    } = frame;
+    Ok([
+        [left, top, right, bottom],
+        [
+            origin.x,
+            origin.y,
+            origin.x.saturating_add(client.right),
+            origin.y.saturating_add(client.bottom),
+        ],
+    ])
 }
 
 /// Every display on the desktop.
@@ -393,13 +418,24 @@ fn displays() -> anyhow::Result<Vec<crate::screen::Display>> {
         .collect()
 }
 
-/// Answers a DPI change as GPUI does: by taking the size and place Windows suggests.
+/// Answers a DPI change as GPUI does, by taking the size and place Windows suggests, and keeps a
+/// border out of the client area, as GPUI does for a window without a title bar.
 unsafe extern "system" fn rescale_like_gpui(
     hwnd: HWND,
     message: u32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if message == WM_NCCALCSIZE && wparam != 0 {
+        // SAFETY: for WM_NCCALCSIZE with wparam set, lparam points to this call's
+        // NCCALCSIZE_PARAMS, whose first rectangle is the proposed window rectangle.
+        let proposed = unsafe { &mut (*(lparam as *mut NCCALCSIZE_PARAMS)).rgrc[0] };
+        proposed.left = proposed.left.saturating_add(8);
+        proposed.top = proposed.top.saturating_add(1);
+        proposed.right = proposed.right.saturating_sub(8);
+        proposed.bottom = proposed.bottom.saturating_sub(8);
+        return 0;
+    }
     if message == WM_DPICHANGED {
         // SAFETY: for WM_DPICHANGED, lparam points to the suggested RECT for this call.
         let suggested = unsafe { *(lparam as *const RECT) };

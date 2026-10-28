@@ -183,7 +183,7 @@ impl Listening for ModelDevice {
 }
 
 impl Pinning for ModelDevice {
-    fn pin(&self) {
+    fn pin(&self, _: Taps) {
         self.log(Log::Pinned(self.source, self.id));
     }
 }
@@ -223,7 +223,7 @@ enum Key {
 }
 
 impl Key {
-    const fn input(self) -> Input {
+    fn input(self) -> Input {
         match self {
             Self::Press => Input::Press,
             Self::Release => Input::Release,
@@ -232,7 +232,7 @@ impl Key {
             Self::Cancel => Input::Cancel,
             Self::Interrupt => Input::Interrupt,
             Self::Show => Input::Show(Scope::Screen),
-            Self::Pin => Input::Pin,
+            Self::Pin => Input::Pin(double_tap()),
         }
     }
 }

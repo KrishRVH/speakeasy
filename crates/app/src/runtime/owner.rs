@@ -254,8 +254,8 @@ impl<P: Ports> Owner<P> {
             Input::Release => self.gesture.release(now()),
             Input::Lock => self.gesture.lock(),
             Input::Show(scope) => self.start_show(scope),
-            Input::Pin => {
-                self.screen.pin();
+            Input::Pin(taps) => {
+                self.screen.pin(taps);
                 None
             },
             Input::Cancel => self.gesture.cancel(),

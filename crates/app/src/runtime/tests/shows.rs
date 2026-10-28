@@ -55,8 +55,9 @@ async fn w_and_a_record_the_window_or_area_they_name() -> anyhow::Result<()> {
 async fn a_pin_during_a_show_reaches_its_screen_recorder() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     let (id, ..) = start_show(&mut h).await?;
-    h.input(Input::Pin);
-    assert_eq!(receive(&h.pins).await?, id);
+    let taps = double_tap();
+    h.input(Input::Pin(taps));
+    assert_eq!(receive(&h.pins).await?, (id, taps));
     h.close().await
 }
 

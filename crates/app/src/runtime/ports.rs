@@ -6,7 +6,7 @@
 use std::time::{Duration, Instant};
 
 use async_channel::Sender;
-use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope};
+use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope, Taps};
 use speakeasy_show::{Journal, Narration, Recording};
 use tokio::sync::watch;
 
@@ -83,8 +83,8 @@ pub(crate) trait Listening: Capturing {
 
 /// A Show's screen recorder, which takes numbered pins.
 pub(crate) trait Pinning: Capturing {
-    /// Drops a numbered pin where the pointer is now, if it is over what the Show records.
-    fn pin(&self);
+    /// Asks for a numbered pin for `taps`; the Show's tracker decides whether one drops.
+    fn pin(&self, taps: Taps);
 }
 
 pub(crate) trait Speech: Send + Sync + 'static {

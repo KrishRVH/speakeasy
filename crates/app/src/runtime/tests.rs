@@ -2,10 +2,10 @@
 //! exact and a pending check proves quiescence. One smoke test and the latency profile host the
 //! owner on its own thread instead, as production does, where a pending check only samples.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, ensure};
-use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope};
+use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope, Taps};
 use speakeasy_show::{Image, Journal, Moment, Narration, Recording, Size};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
@@ -90,7 +90,7 @@ struct FakePorts {
     publish_panics: bool,
     captures: Sender<OpenedCapture>,
     shows: Sender<OpenedShow>,
-    pins: Sender<SessionId>,
+    pins: Sender<(SessionId, Taps)>,
     jobs: Sender<TranscriptionJob>,
     pasted: Sender<String>,
     published: Sender<(Footage, Narration)>,
@@ -102,7 +102,7 @@ struct FakePorts {
 struct Reports {
     captures: Receiver<OpenedCapture>,
     shows: Receiver<OpenedShow>,
-    pins: Receiver<SessionId>,
+    pins: Receiver<(SessionId, Taps)>,
     jobs: Receiver<TranscriptionJob>,
     pasted: Receiver<String>,
     published: Receiver<(Footage, Narration)>,
@@ -347,7 +347,7 @@ impl Capturing for FakeMicrophone {
 struct FakeScreen {
     id: SessionId,
     events: Sender<ShowEvent>,
-    pins: Sender<SessionId>,
+    pins: Sender<(SessionId, Taps)>,
     retirement: Option<Gate<()>>,
 }
 
@@ -366,9 +366,9 @@ impl Capturing for FakeScreen {
 }
 
 impl Pinning for FakeScreen {
-    fn pin(&self) {
+    fn pin(&self, taps: Taps) {
         self.pins
-            .try_send(self.id)
+            .try_send((self.id, taps))
             .expect("pin lane has room for the test's pins");
     }
 }
@@ -493,7 +493,7 @@ struct Harness<Owner = OwnedTask> {
     levels: watch::Receiver<Meter>,
     captures: Receiver<OpenedCapture>,
     shows: Receiver<OpenedShow>,
-    pins: Receiver<SessionId>,
+    pins: Receiver<(SessionId, Taps)>,
     jobs: Receiver<TranscriptionJob>,
     pasted: Receiver<String>,
     published: Receiver<(Footage, Narration)>,
@@ -647,6 +647,17 @@ fn gate<T>(capacity: usize) -> (Gate<T>, GateControl<T>) {
         release: releases,
     };
     (gate, control)
+}
+
+/// Two taps of Shift that began now.
+fn double_tap() -> Taps {
+    let pressed = Instant::now();
+    Taps {
+        pressed,
+        released: pressed
+            .checked_add(Duration::from_millis(300))
+            .expect("the clock reaches 300 ms on"),
+    }
 }
 
 async fn receive<T>(receiver: &Receiver<T>) -> anyhow::Result<T> {

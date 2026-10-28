@@ -47,7 +47,9 @@ use windows_sys::{
     w,
 };
 
-use super::{OWN_INPUT, is_key_down, ok_or_last_error, send_input, synthetic_key, take_handle};
+use super::{
+    OWN_INPUT, is_key_down, modifiers, ok_or_last_error, send_input, synthetic_key, take_handle,
+};
 use crate::{
     CANCEL_SHORTCUT, DesktopOptions, Input, InputSender, Inserter, OwnedThread, SHORTCUT,
     insertion, keyboard,
@@ -111,10 +113,11 @@ impl HookState {
     /// Delivers the policy's decision for one key event and returns whether to swallow it.
     fn observe(&mut self, key: u32, down: bool) -> bool {
         // GetAsyncKeyState does not reflect this event until the hook returns.
-        let physical_before_event = keyboard::Windows::CHORD_KEYS.map(is_key_down);
-        let decision = self
-            .policy
-            .observe(key, down, physical_before_event, Instant::now());
+        let physical = keyboard::Physical {
+            chord_keys: keyboard::Windows::CHORD_KEYS.map(is_key_down),
+            shortcut: modifiers().shortcut,
+        };
+        let decision = self.policy.observe(key, down, physical, Instant::now());
         decision.deliver(&self.input);
         if decision.starts() {
             // SAFETY: posts a value-only message to this hook's own thread.

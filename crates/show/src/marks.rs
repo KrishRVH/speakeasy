@@ -131,15 +131,17 @@ impl Mark {
 
 /// The marks `strokes` and `pins` make, in the order they began, numbered from one.
 ///
-/// Strokes drawn within [`MARK_GAP`] of each other form one mark, up to [`MARK_STROKES`] apiece,
-/// whose shape is read in the pixels of `surface`; each pin is a mark of its own. Strokes and pins
-/// arrive in time order, so a later one never renumbers an earlier mark.
+/// Strokes drawn within [`MARK_GAP`] of each other with no pin between form one mark, up to
+/// [`MARK_STROKES`] apiece, whose shape is read in the pixels of `surface`; each pin is a mark of its
+/// own. Strokes and pins arrive in time order, so a later one never renumbers an earlier mark.
 pub(crate) fn group(strokes: &[Stroke], pins: &[Pin], surface: Size) -> Vec<Mark> {
     let mut groups: Vec<Range<usize>> = Vec::new();
     let mut previous_end = None;
     for (index, stroke) in strokes.iter().enumerate() {
-        let continues =
-            previous_end.is_some_and(|end| stroke.span().start().since(end) <= MARK_GAP);
+        let start = stroke.span().start();
+        let continues = previous_end.is_some_and(|end| {
+            start.since(end) <= MARK_GAP && !pins.iter().any(|pin| (end..=start).contains(&pin.at))
+        });
         match groups.last_mut() {
             Some(group) if continues && group.len() < MARK_STROKES => {
                 group.end = index.saturating_add(1);
@@ -441,6 +443,19 @@ mod tests {
             }
         );
         assert_eq!(marks[3].to_string(), "④ pinned x 0.80, y 0.40");
+        let quick = [
+            stroke(&[[0.1, 0.1], [0.3, 0.1]], 0),
+            stroke(&[[0.5, 0.5], [0.7, 0.5]], 800),
+        ];
+        let ranges: Vec<_> = group(&quick, &[pin(500, 0.4)], SURFACE)
+            .iter()
+            .map(|mark| mark.strokes.clone())
+            .collect();
+        assert_eq!(
+            ranges,
+            [0..1, 1..1, 1..2],
+            "a pin between strokes drawn close together ends a mark"
+        );
         // Marks made later never renumber earlier ones, so live labels match the bundle's.
         assert_eq!(group(&strokes[..1], &pins[..1], SURFACE), marks[..2]);
     }
