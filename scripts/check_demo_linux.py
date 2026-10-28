@@ -16,6 +16,10 @@ from io import TextIOWrapper
 from pathlib import Path
 from typing import Protocol, Self, cast
 
+# Xlib's AllPlanes mask and ZPixmap image format.
+ALL_PLANES = ctypes.c_ulong(-1).value
+Z_PIXMAP = 2
+
 
 class NativeFunction[**P, T](Protocol):
     """A ctypes function whose Python arguments and result match its bound C ABI."""
@@ -79,14 +83,7 @@ class Display:
 
     def rendered(self, handle: str) -> bool:
         image = self._x11.XGetImage(
-            self._display,
-            int(handle, 16),
-            0,
-            0,
-            400,
-            300,
-            ctypes.c_ulong(-1).value,
-            2,
+            self._display, int(handle, 16), 0, 0, 400, 300, ALL_PLANES, Z_PIXMAP
         )
         if image is None:
             return False
