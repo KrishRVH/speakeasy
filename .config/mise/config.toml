@@ -80,6 +80,7 @@ depends = ["rust:fmt"]
 depends = ["rust:fmt:check", "rust:lint", "rust:doc", "rust:test", "rust:machete"]
 
 [tasks."py:lock"]
+description = "Refresh uv.lock after Python tool requirements change"
 run = "uv lock"
 
 [tasks."py:install"]
@@ -126,6 +127,7 @@ depends = ["shell:fmt"]
 depends = ["shell:fmt:check", "shell:lint", "py:test"]
 
 [tasks."md:lock"]
+description = "Refresh bun.lock after Markdown tool requirements change"
 run = "bun install"
 
 [tasks."md:install"]
@@ -145,7 +147,8 @@ run = "{{vars.md_files}} | xargs -0 bun run markdownlint-cli2"
 run = "lychee --config lychee.toml --root-dir \"$PWD\" --offline --extensions md ."
 
 [tasks."md:links:deep"]
-run = "lychee --config lychee.toml --root-dir \"$PWD\" --extensions md ."
+description = "Check Markdown links, including external URLs, over the network"
+run ="lychee --config lychee.toml --root-dir \"$PWD\" --extensions md ."
 
 [tasks."md:typos"]
 run = "typos --config typos.toml ."
