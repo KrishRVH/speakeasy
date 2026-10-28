@@ -84,7 +84,6 @@ pub(crate) struct Services {
     pub(super) quit: Option<Task<()>>,
     pub(super) path: PathBuf,
     pub config: Config,
-    pub(super) config_epoch: ConfigEpoch,
     pub output: watch::Sender<Snapshot>,
     /// Where microphone levels reach the pill.
     pub(super) meter: watch::Sender<Meter>,
@@ -117,13 +116,12 @@ impl Services {
         mode: LaunchMode,
     ) -> Self {
         Self {
-            lifecycle: Lifecycle::Disabled,
+            lifecycle: Lifecycle::default(),
             retirement: None,
             validation: None,
             quit: None,
             path,
             config,
-            config_epoch: ConfigEpoch::default(),
             output,
             meter,
             canvas,
@@ -144,8 +142,12 @@ impl Services {
 
     /// Whether dictation is on: live owners run, or a resume is checking the saved settings.
     pub(crate) fn running(&self) -> bool {
-        self.runtime().is_some_and(Runtime::is_running)
-            || self.lifecycle.validating(self.config_epoch)
+        self.lifecycle.running(|owners| owners.runtime.is_running())
+    }
+
+    /// The epoch a save records when it is requested.
+    pub(super) const fn config_epoch(&self) -> ConfigEpoch {
+        self.lifecycle.epoch()
     }
 
     pub(super) fn quitting(&self) -> bool {
@@ -216,24 +218,13 @@ impl Services {
         });
     }
 
-    fn announce(&self, message: &str) {
-        self.output.send_modify(|snapshot| {
-            *snapshot = Snapshot {
-                epoch: snapshot.epoch.wrapping_add(1),
-                message: message.into(),
-                ..Snapshot::default()
-            };
-        });
-    }
-
     /// Applies `config`: reconfigures live owners, queues behind retiring ones, or starts new ones.
     /// Services adopts `config` even when new owners fail to start, and dictation then stays off.
     /// Does nothing once Quit has begun.
     pub(crate) fn apply(&mut self, config: ValidConfig, cx: &App) -> anyhow::Result<()> {
-        if self.quitting() {
+        if !self.lifecycle.reconfigure() {
             return Ok(());
         }
-        self.config_epoch = self.config_epoch.next();
         // A dead runtime or changed desktop options need fresh owners: stopping makes the queue
         // below restart with `config` once the current owners retire.
         if self.runtime().is_some_and(|runtime| {
@@ -254,40 +245,42 @@ impl Services {
         }
     }
 
-    /// Starts owners for `config` while none are live or retiring. `config` is newer than any
-    /// resume still checking the saved settings, so that check ends here even if the owners fail
-    /// to start, and a failure leaves the status paused rather than loading.
+    /// Starts owners for `config` as [`Lifecycle::start`] allows, ending any resume's check. A
+    /// failure leaves the status paused rather than loading.
     fn start(&mut self, config: ValidConfig) -> anyhow::Result<()> {
+        let Self {
+            lifecycle,
+            output,
+            meter,
+            canvas,
+            ..
+        } = self;
+        let started = lifecycle.start(|| {
+            announce(output, runtime::LOADING);
+            let (runtime, monitor) =
+                Runtime::start(config, output.clone(), meter.clone(), canvas.clone())?;
+            anyhow::Ok(Owners { runtime, monitor })
+        });
         self.validation = None;
-        self.lifecycle = Lifecycle::Disabled;
-        self.announce(runtime::LOADING);
-        match Runtime::start(
-            config,
-            self.output.clone(),
-            self.meter.clone(),
-            self.canvas.clone(),
-        ) {
-            Ok((runtime, monitor)) => {
-                self.lifecycle = Lifecycle::Running(Owners { runtime, monitor });
-                Ok(())
-            },
-            Err(error) => {
-                self.announce(PAUSED);
-                Err(error)
-            },
+        if started.is_err() {
+            announce(&self.output, PAUSED);
         }
+        started.map(|_| ())
     }
 
-    /// Adopts settings that a save made durable, enabling dictation only as `save_may_enable`
-    /// allows; otherwise the settings persist and show while dictation stays off.
+    /// Adopts settings that a save made durable, enabling dictation only as
+    /// [`Lifecycle::save_may_enable`] allows; otherwise the settings persist and show while
+    /// dictation stays off.
     pub(super) fn adopt_saved(
         &mut self,
         config: ValidConfig,
         saved_at: ConfigEpoch,
         cx: &App,
     ) -> anyhow::Result<()> {
-        let enabled = self.running() || self.lifecycle.has_pending();
-        if save_may_enable(saved_at, self.config_epoch, enabled) {
+        if self
+            .lifecycle
+            .save_may_enable(saved_at, |owners| owners.runtime.is_running())
+        {
             self.apply(config, cx)
         } else {
             self.config = config.into_inner();
@@ -304,17 +297,15 @@ impl Services {
             self.lifecycle.queue(Restart::Validate);
             return;
         }
-        self.config_epoch = self.config_epoch.next();
-        let epoch = self.config_epoch;
-        if !self.lifecycle.validate(epoch) {
+        let Some(epoch) = self.lifecycle.validate() else {
             return;
-        }
+        };
         let config = self.config.clone();
         let path = self.path.clone();
         let validation = cx
             .background_executor()
             .spawn(async move { config.validated(&path) });
-        self.announce("Checking local speech settings…");
+        announce(&self.output, "Checking local speech settings…");
         self.validation = Some(cx.spawn(async move |cx| {
             let result = validation.await;
             cx.update_if_running(|cx| Self::validation_complete(epoch, result, cx));
@@ -323,10 +314,9 @@ impl Services {
 
     fn validation_complete(epoch: ConfigEpoch, result: anyhow::Result<ValidConfig>, cx: &mut App) {
         let result = cx.update_global::<Self, _>(|services, cx| {
-            if !services.lifecycle.validating(epoch) {
+            if !services.lifecycle.validated(epoch) {
                 return Ok(());
             }
-            services.lifecycle = Lifecycle::Disabled;
             services.validation = None;
             result.and_then(|config| services.apply(config, cx))
         });
@@ -347,14 +337,16 @@ impl Services {
         if self.quitting() {
             return;
         }
-        self.config_epoch = self.config_epoch.next();
         self.validation = None;
         let started = self.lifecycle.pause();
-        self.announce(if self.lifecycle.pausing() {
-            PAUSING
-        } else {
-            PAUSED
-        });
+        announce(
+            &self.output,
+            if self.lifecycle.pausing() {
+                PAUSING
+            } else {
+                PAUSED
+            },
+        );
         if !started {
             return;
         }
@@ -384,7 +376,7 @@ impl Services {
                 }
             },
             Some(Restart::Validate) => self.resume(cx),
-            None => self.announce(PAUSED),
+            None => announce(&self.output, PAUSED),
         }
     }
 
@@ -392,11 +384,10 @@ impl Services {
         if !self.lifecycle.quit() {
             return None;
         }
-        self.config_epoch = self.config_epoch.next();
         self.validation = None;
         self.requests = None;
         self.visibility = None;
-        self.announce("Quitting Speakeasy…");
+        announce(&self.output, "Quitting Speakeasy…");
         let stopped = self.lifecycle.retiring().map(|owners| {
             owners.request_stop();
             owners.stopped()
@@ -433,10 +424,15 @@ pub(crate) fn send(input: Input, cx: &App) {
     }
 }
 
-/// A Pause after a Save wins: the save may enable dictation only if the service state is unchanged
-/// since its request, or dictation is enabled anyway.
-fn save_may_enable(saved_at: ConfigEpoch, current: ConfigEpoch, enabled: bool) -> bool {
-    saved_at == current || enabled
+/// Publishes a status of the shell's own that replaces the last owner's report.
+fn announce(output: &watch::Sender<Snapshot>, message: &str) {
+    output.send_modify(|snapshot| {
+        *snapshot = Snapshot {
+            epoch: snapshot.epoch.wrapping_add(1),
+            message: message.into(),
+            ..Snapshot::default()
+        };
+    });
 }
 
 fn handle_request(request: Request, cx: &mut App) {
@@ -452,22 +448,5 @@ fn handle_request(request: Request, cx: &mut App) {
     // owns the gesture.
     if cfg!(target_os = "linux") && cx.global::<Services>().config.linux.external_shortcut {
         send(input, cx);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_pause_after_save_keeps_dictation_off_unless_resumed() {
-        let saved_at = ConfigEpoch::default();
-        let paused_at = saved_at.next();
-        assert!(save_may_enable(saved_at, saved_at, false));
-        assert!(!save_may_enable(saved_at, paused_at, false));
-        assert!(
-            save_may_enable(saved_at, paused_at, true),
-            "A deliberate Resume after Pause still receives the durable settings"
-        );
     }
 }

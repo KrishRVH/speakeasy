@@ -101,8 +101,8 @@ module unless a test file is named.
   [lifecycle.rs](../crates/app/src/shell/lifecycle.rs),
   [shutdown.rs](../crates/app/src/shell/shutdown.rs), [save.rs](../crates/app/src/shell/save.rs),
   [window.rs](../crates/app/src/shell/window.rs), and [main.rs](../crates/app/src/main.rs).
-  Lifecycle, save, and Services tests check terminal Quit, ordered writes, and edits or Pause after
-  Save.
+  Lifecycle and save tests check terminal Quit, ordered writes, and edits, Pause, or a resume's
+  check around Save.
 - **Setup**: [setup.rs](../crates/app/src/setup.rs) and [setup/](../crates/app/src/setup) choose,
   download, verify, and unpack engines; a full install is opt-in.
 - **Tray and status**: [tray.rs](../crates/app/src/tray.rs), [tray/](../crates/app/src/tray),

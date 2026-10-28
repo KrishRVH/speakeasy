@@ -352,7 +352,7 @@ impl Settings {
         }
         let request = SaveRequest {
             draft: self.config.clone(),
-            epoch: services.config_epoch,
+            epoch: services.config_epoch(),
             path: services.path.clone(),
         };
         self.notice = Some(Notice::Note("Saving changes…".into()));
