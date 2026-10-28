@@ -4,7 +4,10 @@
 use serde_json::json;
 
 use super::*;
-use crate::{Action, InkPoint, Moment, Narration, Pin, Reason, Shape, Size, Span, Stroke, Word};
+use crate::{
+    Action, InkPoint, Moment, Narration, Pin, Reason, Sample, Shape, Size, Span, Stroke, Word,
+    select, signature::tests::signature, typeface::tests::typeface,
+};
 
 fn at(millis: u64) -> Moment {
     Moment::from_millis(millis)
@@ -212,7 +215,7 @@ fn a_provider_failure_stops_before_loading_the_next_page() {
                 Image::filled(160, 100, [90; 3])
             }
         },
-        &crate::typeface::tests::typeface(),
+        &typeface(),
     );
     assert_eq!(
         result.unwrap_err().to_string(),
@@ -222,8 +225,6 @@ fn a_provider_failure_stops_before_loading_the_next_page() {
 
 #[test]
 fn contact_sheets_cover_every_frame_once_in_readable_pages() {
-    use crate::{Sample, select, signature::tests::signature, typeface::tests::typeface};
-
     for (count, sizes) in [
         (6_usize, &[6][..]),
         (7, &[4, 3]),

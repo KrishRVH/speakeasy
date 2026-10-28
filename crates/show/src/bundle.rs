@@ -15,13 +15,13 @@ const CONTACT_SHEET: &str = "contact-sheet.png";
 const SUMMARY: &str = "summary.md";
 const MANIFEST: &str = "show.json";
 
-/// The file for contact sheet `page`, from zero: `contact-sheet.png`, then `contact-sheet-02.png`
-/// onward.
-fn sheet_file(page: usize) -> String {
-    if page == 0 {
+/// The file for the contact sheet numbered `number` from zero: `contact-sheet.png`, then
+/// `contact-sheet-02.png` onward.
+fn sheet_file(number: usize) -> String {
+    if number == 0 {
         CONTACT_SHEET.to_owned()
     } else {
-        format!("contact-sheet-{:02}.png", page.saturating_add(1))
+        format!("contact-sheet-{:02}.png", number.saturating_add(1))
     }
 }
 
@@ -99,8 +99,8 @@ pub fn compose<E: From<Error> + Send>(
     let Selection { marks, keyframes } = selection;
     let mut sheets = Vec::new();
     let mut frames = Vec::with_capacity(keyframes.len());
-    for (page, keyframes) in sheet::pages(&keyframes).enumerate() {
-        let annotated = parallel::map(keyframes, |keyframe| {
+    for (number, page) in sheet::pages(&keyframes).enumerate() {
+        let annotated = parallel::map(page, |keyframe| {
             let mut image = frame(keyframe.at)?;
             let corner = draw::annotate(&mut image, keyframe, &recording, &marks, typeface);
             Ok((image, corner))
@@ -108,10 +108,10 @@ pub fn compose<E: From<Error> + Send>(
         .into_iter()
         .collect::<Result<Vec<(Image, Corner)>, E>>()?;
         sheets.push(File {
-            name: sheet_file(page),
-            contents: sheet::render(keyframes, &annotated, typeface)?.encode_png()?,
+            name: sheet_file(number),
+            contents: sheet::render(page, &annotated, typeface)?.encode_png()?,
         });
-        let badged: Vec<(&Keyframe, Image)> = keyframes
+        let badged: Vec<(&Keyframe, Image)> = page
             .iter()
             .zip(annotated)
             .map(|(keyframe, (mut image, corner))| {
@@ -154,69 +154,86 @@ fn shown<'a>(marks: &'a [Mark], keyframe: &Keyframe) -> &'a [Mark] {
     marks.get(keyframe.marks.clone()).unwrap_or_default()
 }
 
-impl Bundle {
-    /// The summary an agent reads first, naming files under `directory`, where the bundle will be
-    /// written.
-    ///
-    /// One line per keyframe gives its number and time, what the pointer or ink did there, and
-    /// what was said, or only what happened when nothing was said. Window titles and other screen
-    /// text never appear in it.
-    fn summary(&self, directory: &Path) -> String {
+/// The summary an agent reads first, naming files under `directory`, where the bundle will be
+/// written.
+///
+/// One line per keyframe gives its number and time, what the pointer or ink did there, and
+/// what was said, or only what happened when nothing was said. Window titles and other screen
+/// text never appear in it.
+struct Summary<'a> {
+    manifest: &'a Manifest,
+    directory: &'a Path,
+}
+
+impl fmt::Display for Summary<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            manifest,
+            directory,
+        } = *self;
         let Manifest {
             recording,
             marks,
             keyframes,
             ..
-        } = &self.manifest;
-        let mut lines = vec![format!(
+        } = manifest;
+        writeln!(
+            f,
             "Screen recording ({}, {}): {}",
             recording.duration,
             Count(keyframes.len(), "keyframe"),
             directory.display()
-        )];
+        )?;
         let pages: Vec<&[Keyframe]> = sheet::pages(keyframes).collect();
-        for (page, shown) in pages.iter().enumerate() {
-            let path = directory.join(sheet_file(page));
-            lines.push(match (pages.len(), shown.first(), shown.last()) {
-                (2.., Some(first), Some(last)) => format!(
+        for (number, page) in pages.iter().enumerate() {
+            let path = directory.join(sheet_file(number));
+            match (pages.len(), page.first(), page.last()) {
+                (2.., Some(first), Some(last)) => writeln!(
+                    f,
                     "Contact sheet {} (frames #{}–#{}): {}",
-                    page.saturating_add(1),
+                    number.saturating_add(1),
                     first.index,
                     last.index,
                     path.display()
                 ),
-                _ => format!("Contact sheet: {}", path.display()),
-            });
+                _ => writeln!(f, "Contact sheet: {}", path.display()),
+            }?;
         }
-        lines.extend(
-            keyframes
-                .iter()
-                .map(|keyframe| match keyframe.said.as_deref() {
-                    Some(said) => format!(
-                        "- #{} ({}){} “{said}”",
-                        keyframe.index,
-                        keyframe.at,
-                        Marker(keyframe, shown(marks, keyframe))
-                    ),
-                    None => format!("- #{} ({}) {}", keyframe.index, keyframe.at, keyframe.event),
-                }),
-        );
+        for keyframe in keyframes {
+            let Keyframe {
+                index,
+                at,
+                event,
+                said,
+                ..
+            } = keyframe;
+            match said {
+                Some(said) => writeln!(
+                    f,
+                    "- #{index} ({at}){} “{said}”",
+                    Marker(keyframe, shown(marks, keyframe))
+                ),
+                None => writeln!(f, "- #{index} ({at}) {event}"),
+            }?;
+        }
         match keyframes.as_slice() {
-            [] => {},
-            [only] => lines.push(format!(
+            [] => Ok(()),
+            [only] => writeln!(
+                f,
                 "Full-size keyframe: {}. Timeline: {MANIFEST}.",
                 only.file()
-            )),
-            [first, .., last] => lines.push(format!(
+            ),
+            [first, .., last] => writeln!(
+                f,
                 "Full-size keyframes: {} to {}. Timeline: {MANIFEST}.",
                 first.file(),
                 last.file()
-            )),
+            ),
         }
-        lines.push(String::new());
-        lines.join("\n")
     }
+}
 
+impl Bundle {
     /// Every file of the bundle, to be written under `directory`: its encoded images,
     /// `summary.md`, and `show.json`. The summary names files under `directory` and also comes
     /// back on its own, since an agent reads it first.
@@ -225,7 +242,11 @@ impl Bundle {
     ///
     /// Fails if the manifest cannot be encoded, which valid input never causes.
     pub fn into_files(self, directory: &Path) -> Result<(String, Vec<File>), Error> {
-        let summary = self.summary(directory);
+        let summary = Summary {
+            manifest: &self.manifest,
+            directory,
+        }
+        .to_string();
         let mut files = self.images;
         files.push(File {
             name: SUMMARY.to_owned(),

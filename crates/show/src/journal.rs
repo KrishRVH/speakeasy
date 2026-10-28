@@ -5,7 +5,7 @@
 //! A journal over its budget thins evenly, and each frame's [`Sample`] is dropped with its tiles,
 //! so selection only picks frames the journal holds.
 
-use std::{fmt, mem, time::Duration};
+use std::{fmt, iter, mem, ops::Range, time::Duration};
 
 use crate::{
     Image, Moment, convert,
@@ -59,6 +59,13 @@ struct Tile {
     top: usize,
     width: usize,
     height: usize,
+}
+
+impl Tile {
+    /// The bytes the tile covers in each row of its frame.
+    fn columns(self) -> Range<usize> {
+        self.left.saturating_mul(PIXEL)..self.left.saturating_add(self.width).saturating_mul(PIXEL)
+    }
 }
 
 impl Default for Journal {
@@ -138,42 +145,6 @@ impl Journal {
         self.bytes
     }
 
-    /// Drops every second frame and its sample, keeping the first and the last, so a journal over
-    /// its budget keeps even coverage of the whole recording. Every kept frame still rebuilds
-    /// exactly.
-    fn thin(&mut self) {
-        let count = self.samples.len();
-        let mut next = 0_usize;
-        let renumbered: Vec<Option<usize>> = (0..count)
-            .map(|index| {
-                let kept = index.is_multiple_of(2) || index.saturating_add(1) == count;
-                kept.then(|| {
-                    let number = next;
-                    next = next.saturating_add(1);
-                    number
-                })
-            })
-            .collect();
-        let ends: Vec<usize> = self
-            .segments
-            .iter()
-            .skip(1)
-            .map(|segment| segment.first)
-            .chain([count])
-            .collect();
-        self.segments = mem::take(&mut self.segments)
-            .into_iter()
-            .zip(ends)
-            .filter_map(|(segment, end)| segment.thinned(&renumbered, end))
-            .collect();
-        self.samples = mem::take(&mut self.samples)
-            .into_iter()
-            .zip(&renumbered)
-            .filter_map(|(sample, kept)| kept.map(|_| sample))
-            .collect();
-        self.bytes = self.segments.iter().map(Segment::bytes).sum();
-    }
-
     /// The frame on screen at `at`: the latest recorded at or before it, else the first.
     #[must_use]
     pub fn frame_at(&self, at: Moment) -> Option<Image> {
@@ -186,6 +157,30 @@ impl Journal {
             .partition_point(|segment| segment.first <= index)
             .saturating_sub(1);
         self.segments.get(position)?.frame(index)
+    }
+
+    /// Drops every second frame and its sample, keeping the first and the last, and admits
+    /// arrivals half as often from then on, so a journal over its budget keeps even coverage of
+    /// the whole recording. Every kept frame still rebuilds exactly.
+    fn thin(&mut self) {
+        let count = self.samples.len();
+        let renumbered: Vec<Option<usize>> = (0..count)
+            .map(|index| {
+                let kept = index.is_multiple_of(2) || index.saturating_add(1) == count;
+                kept.then_some(index.div_ceil(2))
+            })
+            .collect();
+        let segments = mem::take(&mut self.segments);
+        self.segments = with_ends(segments, |segment| segment.first, count)
+            .filter_map(|(segment, end)| segment.thinned(&renumbered, end))
+            .collect();
+        self.samples = mem::take(&mut self.samples)
+            .into_iter()
+            .zip(&renumbered)
+            .filter_map(|(sample, kept)| kept.map(|_| sample))
+            .collect();
+        self.bytes = self.segments.iter().map(Segment::bytes).sum();
+        self.stride = self.stride.saturating_mul(2);
     }
 }
 
@@ -226,7 +221,6 @@ impl Admission<'_> {
         journal.latest = Some(frame);
         while journal.bytes > journal.budget && journal.samples.len() > 2 {
             journal.thin();
-            journal.stride = journal.stride.saturating_mul(2);
         }
     }
 }
@@ -271,15 +265,7 @@ impl Segment {
             .tiles
             .into_iter()
             .map(|versions| {
-                let ends: Vec<usize> = versions
-                    .iter()
-                    .skip(1)
-                    .map(|version| version.frame)
-                    .chain([end])
-                    .collect();
-                versions
-                    .into_iter()
-                    .zip(ends)
+                with_ends(versions, |version| version.frame, end)
                     .filter_map(|(version, until)| {
                         kept_from(version.frame, until).map(|frame| Version { frame, ..version })
                     })
@@ -348,22 +334,20 @@ impl Version {
 
     /// Writes this version of the tile into `rgba`, a frame `stride` bytes wide.
     fn restore(&self, tile: Tile, stride: usize, rgba: &mut [u8]) -> Option<()> {
-        let row_bytes = tile.width.saturating_mul(PIXEL);
-        let size = row_bytes.saturating_mul(tile.height);
-        let filtered = fdeflate::decompress_to_vec_bounded(&self.data, size).ok()?;
-        for (row, filtered) in filtered.chunks_exact(row_bytes.max(1)).enumerate() {
-            let start = tile
-                .top
-                .saturating_add(row)
-                .saturating_mul(stride)
-                .saturating_add(tile.left.saturating_mul(PIXEL));
-            let target = rgba.get_mut(start..start.saturating_add(row_bytes))?;
+        let columns = tile.columns();
+        let row_bytes = columns.len();
+        let filtered =
+            fdeflate::decompress_to_vec_bounded(&self.data, row_bytes.saturating_mul(tile.height))
+                .ok()?;
+        let rows = rgba.chunks_exact_mut(stride.max(1)).skip(tile.top);
+        for (row, filtered_row) in rows.zip(filtered.chunks_exact(row_bytes.max(1))) {
             let mut left = [0_u8; PIXEL];
-            for (pixel, deltas) in target
+            for (pixel, deltas) in row
+                .get_mut(columns.clone())?
                 .as_chunks_mut::<PIXEL>()
                 .0
                 .iter_mut()
-                .zip(filtered.as_chunks::<PIXEL>().0)
+                .zip(filtered_row.as_chunks::<PIXEL>().0)
             {
                 for ((byte, delta), before) in pixel.iter_mut().zip(deltas).zip(left) {
                     *byte = delta.wrapping_add(before);
@@ -373,6 +357,20 @@ impl Version {
         }
         Some(())
     }
+}
+
+/// Pairs each run of frames with the index just past it: where the next run starts, or `end`
+/// after the last.
+fn with_ends<T>(
+    runs: Vec<T>,
+    start: impl Fn(&T) -> usize,
+    end: usize,
+) -> impl Iterator<Item = (T, usize)> {
+    let mut runs = runs.into_iter().peekable();
+    iter::from_fn(move || {
+        let run = runs.next()?;
+        Some((run, runs.peek().map_or(end, &start)))
+    })
 }
 
 /// The tiles of a `width × height` frame, row by row.
@@ -389,8 +387,7 @@ fn tiles(width: usize, height: usize) -> impl Iterator<Item = Tile> {
 
 /// The rows of `image` that `tile` covers, cut to its columns.
 fn tile_rows(image: &Image, tile: Tile) -> impl Iterator<Item = &[u8]> {
-    let columns =
-        tile.left.saturating_mul(PIXEL)..tile.left.saturating_add(tile.width).saturating_mul(PIXEL);
+    let columns = tile.columns();
     image
         .rows()
         .skip(tile.top)
@@ -484,8 +481,9 @@ mod tests {
         };
         let mut journal = Journal::new();
         let frames: Vec<Image> = [0, 7, 7, 30]
+            .into_iter()
             .map(|shift| frame(130, 70, gradient(shift)))
-            .to_vec();
+            .collect();
         for (index, image) in frames.iter().enumerate() {
             admitted(&mut journal).record(at(u64::try_from(index).unwrap() * 100), image.clone());
         }
@@ -564,7 +562,6 @@ mod tests {
             changes in prop::collection::vec((0_u8..4, 0_usize..3), 1..24),
             rounds in 1_usize..4,
         ) {
-            // Each step repaints one quadrant, keeps the screen, or switches between two sizes.
             let mut journal = Journal::new();
             let mut recorded = Vec::new();
             let mut shade = [0_u8; 4];
@@ -623,7 +620,7 @@ mod tests {
                 prop_assert!(journal.bytes() <= BUDGET || held <= 2, "{} bytes in {held} frames", journal.bytes());
             }
             let samples = journal.samples();
-            prop_assert!(samples.windows(2).all(|pair| pair[0].at < pair[1].at));
+            prop_assert!(samples.is_sorted_by(|earlier, later| earlier.at < later.at));
             for sample in samples {
                 let shown = journal.frame_at(sample.at).unwrap();
                 prop_assert!(Signature::of(&shown) == sample.signature, "at {}", sample.at.as_millis());

@@ -49,7 +49,7 @@ impl Signature {
     #[must_use]
     pub(crate) fn of(image: &Image) -> Self {
         let pixels: Vec<&[[u8; 4]]> = image.rows().map(|row| row.as_chunks::<4>().0).collect();
-        let columns = spans(convert::count(image.width()), COLUMNS);
+        let column_spans = spans(convert::count(image.width()), COLUMNS);
         let mut cells = Box::new([0; CELLS]);
         for (line, rows) in cells
             .as_chunks_mut::<COLUMNS>()
@@ -57,7 +57,7 @@ impl Signature {
             .iter_mut()
             .zip(spans(pixels.len(), ROWS))
         {
-            for (cell, columns) in line.iter_mut().zip(&columns) {
+            for (cell, columns) in line.iter_mut().zip(&column_spans) {
                 *cell = mean_luma(&pixels, rows.clone(), columns.clone());
             }
         }
@@ -80,17 +80,18 @@ impl Signature {
     pub(crate) fn transition(&self, other: &Self) -> f32 {
         let differences: Vec<f32> = self.differences(other).collect();
         let mut blocks = [[0.0_f32; BLOCK_COLUMNS]; BLOCK_ROWS];
-        let lines = differences.as_chunks::<COLUMNS>().0.chunks(BLOCK_HEIGHT);
-        for (band, lines) in blocks.iter_mut().zip(lines) {
-            for line in lines {
+        let lines = differences.as_chunks::<COLUMNS>().0;
+        for (band, band_lines) in blocks.iter_mut().zip(lines.chunks(BLOCK_HEIGHT)) {
+            for line in band_lines {
                 for (sum, cells) in band.iter_mut().zip(line.as_chunks::<BLOCK_WIDTH>().0) {
                     *sum += cells.iter().sum::<f32>();
                 }
             }
         }
-        let mut sums: Vec<f32> = blocks.into_iter().flatten().collect();
-        sums.sort_by(|one, other| other.total_cmp(one));
-        let fourth = sums.get(3).copied().unwrap_or_default() / (BLOCK_WIDTH * BLOCK_HEIGHT) as f32;
+        let sums = blocks.as_flattened_mut();
+        sums.sort_unstable_by(f32::total_cmp);
+        let fourth = sums.iter().rev().nth(3).copied().unwrap_or_default()
+            / (BLOCK_WIDTH * BLOCK_HEIGHT) as f32;
         self.change(other).max((fourth * LOCAL_BOOST).min(1.0))
     }
 
@@ -98,27 +99,21 @@ impl Signature {
     pub(crate) fn region_change(&self, other: &Self, region: Rect) -> f32 {
         let rows = cell_range(region.top, region.bottom, ROWS);
         let columns = cell_range(region.left, region.right, COLUMNS);
-        let (changed, total) = self
+        let changed = self
             .region(&rows, &columns)
             .zip(other.region(&rows, &columns))
-            .fold((0.0_f32, 0.0_f32), |(changed, total), (one, other)| {
-                let differs = f32::from(one.abs_diff(other)) / 255.0 > CELL_CHANGE;
-                (changed + f32::from(u8::from(differs)), total + 1.0)
-            });
-        changed / total.max(1.0)
+            .filter(|&(one, another)| difference(one, another) > CELL_CHANGE)
+            .count();
+        changed as f32 / rows.len().saturating_mul(columns.len()).max(1) as f32
     }
 
-    fn region<'a>(
-        &'a self,
-        rows: &Range<usize>,
-        columns: &'a Range<usize>,
-    ) -> impl Iterator<Item = u8> + 'a {
+    fn region(&self, rows: &Range<usize>, columns: &Range<usize>) -> impl Iterator<Item = u8> {
         self.cells
             .as_chunks::<COLUMNS>()
             .0
+            .get(rows.clone())
+            .unwrap_or_default()
             .iter()
-            .skip(rows.start)
-            .take(rows.len())
             .flat_map(|line| {
                 line.get(columns.clone())
                     .unwrap_or_default()
@@ -127,11 +122,11 @@ impl Signature {
             })
     }
 
-    fn differences<'a>(&'a self, other: &'a Self) -> impl Iterator<Item = f32> + 'a {
+    fn differences(&self, other: &Self) -> impl Iterator<Item = f32> {
         self.cells
             .iter()
             .zip(other.cells.iter())
-            .map(|(one, other)| f32::from(one.abs_diff(*other)) / 255.0)
+            .map(|(&one, &another)| difference(one, another))
     }
 }
 
@@ -158,19 +153,25 @@ fn cell_range(low: f32, high: f32, cells: usize) -> Range<usize> {
     start..end
 }
 
-/// Rec. 709 luma averaged over a grid of up to [`SAMPLES_PER_CELL_SIDE`]² pixels in the cell.
-fn mean_luma(rows: &[&[[u8; 4]]], cell_rows: Range<usize>, cell_columns: Range<usize>) -> u8 {
+/// How far apart two cells' luma lies, from `0.0` when equal to `1.0` for black against white.
+fn difference(one: u8, another: u8) -> f32 {
+    f32::from(one.abs_diff(another)) / 255.0
+}
+
+/// Rec. 709 luma averaged over a grid of up to [`SAMPLES_PER_CELL_SIDE`]² of the `pixels` in
+/// `rows` and `columns`.
+fn mean_luma(pixels: &[&[[u8; 4]]], rows: Range<usize>, columns: Range<usize>) -> u8 {
     let step = |range: &Range<usize>| range.len().div_ceil(SAMPLES_PER_CELL_SIDE).max(1);
-    let (row_step, column_step) = (step(&cell_rows), step(&cell_columns));
+    let (row_step, column_step) = (step(&rows), step(&columns));
     let (mut sum, mut count) = (0.0_f32, 0.0_f32);
-    for row in rows
-        .get(cell_rows)
+    for row in pixels
+        .get(rows)
         .unwrap_or_default()
         .iter()
         .step_by(row_step)
     {
         for &[red, green, blue, _] in row
-            .get(cell_columns.clone())
+            .get(columns.clone())
             .unwrap_or_default()
             .iter()
             .step_by(column_step)

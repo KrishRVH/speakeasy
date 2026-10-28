@@ -258,13 +258,11 @@ mod tests {
 
     #[test]
     fn unrepresentable_recording_deadline_expires_immediately() {
-        let mut latest = Instant::now();
-        for shift in (0..64).rev() {
-            let seconds = 1_u64.checked_shl(shift).expect("Shift is below 64");
-            if let Some(next) = latest.checked_add(Duration::from_secs(seconds)) {
-                latest = next;
-            }
-        }
+        let latest = (0..u64::BITS).rev().fold(Instant::now(), |latest, shift| {
+            latest
+                .checked_add(Duration::from_secs(1_u64 << shift))
+                .unwrap_or(latest)
+        });
         assert!(latest.checked_add(RECORDING_LIMIT).is_none());
         let mut gesture = Gesture::default();
         assert_eq!(gesture.press(latest), Some(Action::Start));

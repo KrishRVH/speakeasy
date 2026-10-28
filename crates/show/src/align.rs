@@ -64,11 +64,10 @@ fn clauses(words: &[&Word]) -> Vec<Span> {
     let mut clause_words = 0;
     let mut previous: Option<&Word> = None;
     for word in words {
-        let continues = previous.is_some_and(|previous| {
-            !ends_clause(&previous.text, clause_words)
-                && word.span.start().since(previous.span.start()) < PAUSE
-        });
         let start = word.span.start();
+        let continues = previous.is_some_and(|previous| {
+            !ends_clause(&previous.text, clause_words) && start.since(previous.span.start()) < PAUSE
+        });
         let reach = Span::new(start, word.span.end().min(start.saturating_add(WORD_REACH)));
         match clauses.last_mut() {
             Some(clause) if continues => {
@@ -124,19 +123,21 @@ fn append(text: &mut String, word: &str) {
 mod tests {
     use super::*;
 
-    fn narration(words: &[(u64, &str)]) -> Narration {
-        Narration::Words(
-            words
-                .iter()
-                .map(|&(start, text)| Word {
-                    span: Span::new(
-                        Moment::from_millis(start),
-                        Moment::from_millis(start.saturating_add(200)),
-                    ),
-                    text: text.to_owned(),
-                })
-                .collect(),
-        )
+    fn words(spoken: &[(u64, &str)]) -> Vec<Word> {
+        spoken
+            .iter()
+            .map(|&(start, text)| Word {
+                span: Span::new(
+                    Moment::from_millis(start),
+                    Moment::from_millis(start.saturating_add(200)),
+                ),
+                text: text.to_owned(),
+            })
+            .collect()
+    }
+
+    fn narration(spoken: &[(u64, &str)]) -> Narration {
+        Narration::Words(words(spoken))
     }
 
     fn at(anchors: &[u64]) -> Vec<Moment> {
@@ -150,6 +151,17 @@ mod tests {
             .map(Option::unwrap_or_default)
             .collect()
     }
+
+    const HEADER_THEN_TAP: &[(u64, &str)] = &[
+        (100, "First"),
+        (300, "the"),
+        (500, "header."),
+        (2_000, "When"),
+        (2_200, "I"),
+        (2_400, "tap"),
+        (2_600, "it,"),
+        (2_800, "nothing."),
+    ];
 
     #[test]
     fn words_partition_without_duplicates_or_gaps() {
@@ -170,16 +182,7 @@ mod tests {
 
     #[test]
     fn an_action_mid_sentence_takes_the_sentence_from_its_start() {
-        let said = narration(&[
-            (100, "First"),
-            (300, "the"),
-            (500, "header."),
-            (2_000, "When"),
-            (2_200, "I"),
-            (2_400, "tap"),
-            (2_600, "it,"),
-            (2_800, "nothing."),
-        ]);
+        let said = narration(HEADER_THEN_TAP);
         assert_eq!(
             texts(&[400, 2_450], &said),
             ["First the header.", "When I tap it, nothing."]
@@ -225,21 +228,10 @@ mod tests {
     fn an_action_after_a_finished_sentence_does_not_reopen_it() {
         // The recognizer stretched "header." across the pause after it; an action during that
         // pause belongs to what comes next.
-        let mut said = narration(&[
-            (100, "First"),
-            (300, "the"),
-            (500, "header."),
-            (2_000, "When"),
-            (2_200, "I"),
-            (2_400, "tap"),
-            (2_600, "it,"),
-            (2_800, "nothing."),
-        ]);
-        if let Narration::Words(words) = &mut said {
-            words[2].span = Span::new(Moment::from_millis(500), Moment::from_millis(1_950));
-        }
+        let mut said = words(HEADER_THEN_TAP);
+        said[2].span = Span::new(Moment::from_millis(500), Moment::from_millis(1_950));
         assert_eq!(
-            texts(&[0, 1_800], &said),
+            texts(&[0, 1_800], &Narration::Words(said)),
             ["First the header.", "When I tap it, nothing."]
         );
     }
