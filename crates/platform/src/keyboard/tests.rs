@@ -19,6 +19,13 @@ const LETTER_A: u32 = 0x41;
 const LETTER_Q: u32 = 0x51;
 const LEFT_SHIFT: u32 = 0xA0;
 const ALT: u32 = 0x12;
+const MAC_LEFT_SHIFT: i64 = 56;
+const MAC_LEFT_COMMAND: i64 = 55;
+const MAC_RIGHT_COMMAND: i64 = 54;
+const MAC_LEFT_OPTION: i64 = 58;
+const MAC_RIGHT_OPTION: i64 = 61;
+const MAC_LEFT_CONTROL: i64 = 59;
+const MAC_RIGHT_CONTROL: i64 = 62;
 const MAC_Q: i64 = 12;
 const NONE_HELD: Physical = Physical {
     chord_keys: [false; 4],
@@ -229,7 +236,7 @@ fn s_during_a_hold_starts_a_show_and_is_swallowed_through_its_release() {
     let show = mac.observe(key(Mac::SCREEN, true, FN_HELD), keyboard_fn_up, now());
     assert!(show.swallows());
     assert_eq!(show.action, Some(Action::Show(Scope::Screen)));
-    let shift = mac.observe(beside_fn(Mac::LEFT_SHIFT, true), keyboard_fn_up, now());
+    let shift = mac.observe(beside_fn(MAC_LEFT_SHIFT, true), keyboard_fn_up, now());
     assert!(!shift.swallows());
     assert_eq!(
         shift.action, None,
@@ -353,7 +360,7 @@ fn shift_taps_pin_beside_the_held_talk_shortcut() {
     let pins: Vec<Option<Action>> = [(500, true), (580, false), (700, true), (780, false)]
         .into_iter()
         .map(|(millis, down)| {
-            mac.observe(beside_fn(Mac::LEFT_SHIFT, down), keyboard_fn_up, at(millis))
+            mac.observe(beside_fn(MAC_LEFT_SHIFT, down), keyboard_fn_up, at(millis))
                 .action
         })
         .collect();
@@ -396,18 +403,18 @@ fn shift_taps_inside_another_shortcut_never_pin() {
     }
 
     let mut mac = mac_holding();
-    mac.observe(beside_fn(Mac::LEFT_SHIFT, true), keyboard_fn_up, at(0));
-    mac.observe(beside_fn(Mac::LEFT_SHIFT, false), keyboard_fn_up, at(80));
-    mac.observe(beside_fn(Mac::LEFT_OPTION, true), keyboard_fn_up, at(100));
-    mac.observe(beside_fn(Mac::LEFT_SHIFT, true), keyboard_fn_up, at(200));
+    mac.observe(beside_fn(MAC_LEFT_SHIFT, true), keyboard_fn_up, at(0));
+    mac.observe(beside_fn(MAC_LEFT_SHIFT, false), keyboard_fn_up, at(80));
+    mac.observe(beside_fn(MAC_LEFT_OPTION, true), keyboard_fn_up, at(100));
+    mac.observe(beside_fn(MAC_LEFT_SHIFT, true), keyboard_fn_up, at(200));
     assert_eq!(
-        mac.observe(beside_fn(Mac::LEFT_SHIFT, false), keyboard_fn_up, at(280))
+        mac.observe(beside_fn(MAC_LEFT_SHIFT, false), keyboard_fn_up, at(280))
             .action,
         None,
         "Option between the taps let them pin"
     );
     let command = |down: bool| MacEvent::FlagsChanged {
-        code: Mac::LEFT_SHIFT,
+        code: MAC_LEFT_SHIFT,
         held: Modifiers {
             shift: down,
             other_shortcut: true,
@@ -532,7 +539,7 @@ fn a_posted_event_without_fn_ends_no_hold_the_keyboard_still_makes() {
     let posted = mac.observe(key(MAC_Q, false, NO_MODIFIERS), keyboard_fn_down, now());
     assert_eq!(delivered(&posted), [], "A posted key-up ended the hold");
     let command_up = MacEvent::FlagsChanged {
-        code: Mac::LEFT_COMMAND,
+        code: MAC_LEFT_COMMAND,
         held: NO_MODIFIERS,
     };
     assert_eq!(
@@ -561,7 +568,7 @@ fn a_tap_outage_ends_a_hold_but_not_a_released_dictation() -> anyhow::Result<()>
     assert!(events.try_recv().is_err());
 
     let shift = |down| MacEvent::FlagsChanged {
-        code: Mac::LEFT_SHIFT,
+        code: MAC_LEFT_SHIFT,
         held: Modifiers {
             shift: down,
             ..NO_MODIFIERS
@@ -595,12 +602,12 @@ fn command_option_or_control_during_fn_is_another_shortcut() {
         ..FN_HELD
     };
     for code in [
-        Mac::LEFT_COMMAND,
-        Mac::RIGHT_COMMAND,
-        Mac::LEFT_OPTION,
-        Mac::RIGHT_OPTION,
-        Mac::LEFT_CONTROL,
-        Mac::RIGHT_CONTROL,
+        MAC_LEFT_COMMAND,
+        MAC_RIGHT_COMMAND,
+        MAC_LEFT_OPTION,
+        MAC_RIGHT_OPTION,
+        MAC_LEFT_CONTROL,
+        MAC_RIGHT_CONTROL,
     ] {
         let mut mac = mac_holding();
         let pressed = mac.observe(
@@ -619,7 +626,7 @@ fn command_option_or_control_during_fn_is_another_shortcut() {
     }
     let mut mac = mac_holding();
     let released = MacEvent::FlagsChanged {
-        code: Mac::LEFT_COMMAND,
+        code: MAC_LEFT_COMMAND,
         held: FN_HELD,
     };
     assert_eq!(
