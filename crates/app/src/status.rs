@@ -46,61 +46,60 @@ pub(crate) struct Status {
 
 impl Status {
     pub(crate) fn new(snapshot: &Snapshot, service: ServiceState, engine: Engine) -> Self {
-        let (indicator, description): (_, Cow<'static, str>) =
-            match (service, snapshot.phase, snapshot.desktop_ready) {
-                (ServiceState::Quitting, ..) => (Indicator::Busy, QUITTING.into()),
-                (ServiceState::Pausing, ..) => (Indicator::Busy, PAUSING.into()),
-                (_, Phase::Error, _) => (
+        let (indicator, description) = match (service, snapshot.phase, snapshot.desktop_ready) {
+            (ServiceState::Quitting, ..) => (Indicator::Busy, QUITTING.into()),
+            (ServiceState::Pausing, ..) => (Indicator::Busy, PAUSING.into()),
+            (_, Phase::Error, _) => (
+                Indicator::Attention,
+                "Needs attention · Open Settings".into(),
+            ),
+            (ServiceState::Paused, ..) => (Indicator::Paused, PAUSED.into()),
+            (ServiceState::NotSetUp, ..) => {
+                (Indicator::Paused, "Not set up · Open Settings".into())
+            },
+            (ServiceState::Running, _, false) => {
+                (Indicator::Busy, "Waiting for desktop access…".into())
+            },
+            (ServiceState::Running, Phase::Starting, true) => {
+                (Indicator::Busy, "Opening microphone…".into())
+            },
+            (ServiceState::Running, Phase::Recording, true) => (
+                Indicator::Recording,
+                match (snapshot.show, snapshot.hands_free) {
+                    (true, _) => "Recording a Show",
+                    (false, true) => "Listening · Hands-free",
+                    (false, false) => "Listening",
+                }
+                .into(),
+            ),
+            (ServiceState::Running, Phase::Stopping, true) => {
+                (Indicator::Recording, "Finishing capture…".into())
+            },
+            (ServiceState::Running, Phase::Processing, true) => (
+                Indicator::Busy,
+                if snapshot.show {
+                    "Preparing the Show…"
+                } else {
+                    "Transcribing locally…"
+                }
+                .into(),
+            ),
+            (
+                ServiceState::Running,
+                Phase::Idle | Phase::Done | Phase::Copied | Phase::Empty | Phase::Cancelled,
+                true,
+            ) => match snapshot.model {
+                ModelState::Loading => (Indicator::Busy, LOADING.into()),
+                ModelState::Ready => (
+                    Indicator::Ready,
+                    format!("Ready · {}", engine.label()).into(),
+                ),
+                ModelState::Unavailable => (
                     Indicator::Attention,
-                    "Needs attention · Open Settings".into(),
+                    "Model unavailable · Open Settings".into(),
                 ),
-                (ServiceState::Paused, ..) => (Indicator::Paused, PAUSED.into()),
-                (ServiceState::NotSetUp, ..) => {
-                    (Indicator::Paused, "Not set up · Open Settings".into())
-                },
-                (ServiceState::Running, _, false) => {
-                    (Indicator::Busy, "Waiting for desktop access…".into())
-                },
-                (ServiceState::Running, Phase::Starting, true) => {
-                    (Indicator::Busy, "Opening microphone…".into())
-                },
-                (ServiceState::Running, Phase::Recording, true) => (
-                    Indicator::Recording,
-                    match (snapshot.show, snapshot.hands_free) {
-                        (true, _) => "Recording a Show",
-                        (false, true) => "Listening · Hands-free",
-                        (false, false) => "Listening",
-                    }
-                    .into(),
-                ),
-                (ServiceState::Running, Phase::Stopping, true) => {
-                    (Indicator::Recording, "Finishing capture…".into())
-                },
-                (ServiceState::Running, Phase::Processing, true) => (
-                    Indicator::Busy,
-                    if snapshot.show {
-                        "Preparing the Show…"
-                    } else {
-                        "Transcribing locally…"
-                    }
-                    .into(),
-                ),
-                (
-                    ServiceState::Running,
-                    Phase::Idle | Phase::Done | Phase::Copied | Phase::Empty | Phase::Cancelled,
-                    true,
-                ) => match snapshot.model {
-                    ModelState::Loading => (Indicator::Busy, LOADING.into()),
-                    ModelState::Ready => (
-                        Indicator::Ready,
-                        format!("Ready · {}", engine.label()).into(),
-                    ),
-                    ModelState::Unavailable => (
-                        Indicator::Attention,
-                        "Model unavailable · Open Settings".into(),
-                    ),
-                },
-            };
+            },
+        };
         Self {
             indicator,
             description,

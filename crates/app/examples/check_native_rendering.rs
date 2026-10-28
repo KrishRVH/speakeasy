@@ -24,6 +24,10 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const PRESENT_SETTLE: Duration = Duration::from_millis(20);
 const CYCLES: usize = 25;
 
+const BACKGROUND: u32 = 0x11_33_55;
+const ICON: u32 = 0xCC_99_55;
+const DIAMOND: u32 = 0xFF_77_33;
+
 #[derive(Default)]
 struct Scene {
     draws_path: bool,
@@ -36,7 +40,7 @@ impl Render for Scene {
         let draws_path = self.draws_path;
         div()
             .size_full()
-            .bg(rgb(0x11_33_55))
+            .bg(rgb(BACKGROUND))
             .child(
                 svg()
                     .path(icons::KEYSTONE)
@@ -44,7 +48,7 @@ impl Render for Scene {
                     .top(px(8.0))
                     .left(px(8.0))
                     .size(px(10.0))
-                    .text_color(rgb(0xCC_99_55)),
+                    .text_color(rgb(ICON)),
             )
             .child(
                 canvas(
@@ -179,7 +183,7 @@ fn paint_diamond(bounds: Bounds<Pixels>, window: &mut Window) {
     path.line_to(vertex(18.0, 24.0));
     path.close();
     if let Ok(path) = path.build() {
-        window.paint_path(path, rgb(0xFF_77_33));
+        window.paint_path(path, rgb(DIAMOND));
     }
 }
 
@@ -197,7 +201,7 @@ mod linux {
         xcb_ffi::XCBConnection,
     };
 
-    use super::{POLL_INTERVAL, TIMEOUT};
+    use super::{BACKGROUND, DIAMOND, ICON, POLL_INTERVAL, TIMEOUT};
 
     /// The owned window's id and display scale on the private X11 display.
     pub(super) struct Sampler {
@@ -264,14 +268,14 @@ mod linux {
                     .context("Native image is shorter than its geometry")?;
                 Ok(u32::from_ne_bytes(*pixel) & 0x00FF_FFFF)
             };
-            ensure!(color(13, 13)? == 0xCC_99_55, "Embedded SVG did not render");
+            ensure!(color(13, 13)? == ICON, "Embedded SVG did not render");
             ensure!(
-                color(50, 50)? == 0x11_33_55,
+                color(50, 50)? == BACKGROUND,
                 "Window background did not render"
             );
             if draws_path {
                 ensure!(
-                    color(24, 24)? == 0xFF_77_33,
+                    color(24, 24)? == DIAMOND,
                     "Path did not render after allocation or resize"
                 );
             }
