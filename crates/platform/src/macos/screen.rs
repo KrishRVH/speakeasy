@@ -9,8 +9,10 @@
 
 use std::{
     convert::Infallible,
+    fmt,
     panic::{self, AssertUnwindSafe},
-    process, slice,
+    ptr::NonNull,
+    slice,
     time::{Duration, Instant},
 };
 
@@ -62,12 +64,33 @@ use crate::{
 /// Show reports that capture stopped.
 const PATIENCE: Duration = Duration::from_secs(5);
 
-const PERMISSION: &str = "Allow Screen & System Audio Recording for Speakeasy in System Settings › Privacy & Security. If it is already on, remove it with − and add it again, then try again.";
-const STALLED: &str = "Screen capture stopped responding. Start the Show again.";
-const UNSTARTED: &str = "Screen capture could not start. Start the Show again.";
-const DISPLAY_GONE: &str = "The display being shown is no longer available. Start the Show again.";
-const EXPOSED: &str =
-    "Speakeasy could not keep its own windows out of the Show. Start the Show again.";
+/// Why a capture ended early, worded for the person recording.
+#[derive(Clone, Copy, Debug)]
+enum Failure {
+    Permission,
+    Stalled,
+    Unstarted,
+    DisplayLost,
+    Exposed,
+}
+
+impl fmt::Display for Failure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Permission => {
+                "Allow Screen & System Audio Recording for Speakeasy in System Settings › Privacy & Security. If it is already on, remove it with − and add it again, then try again."
+            },
+            Self::Stalled => "Screen capture stopped responding. Start the Show again.",
+            Self::Unstarted => "Screen capture could not start. Start the Show again.",
+            Self::DisplayLost => {
+                "The display being shown is no longer available. Start the Show again."
+            },
+            Self::Exposed => {
+                "Speakeasy could not keep its own windows out of the Show. Start the Show again."
+            },
+        })
+    }
+}
 
 /// A display and where it lies in Core Graphics' global space: points measured from the top-left
 /// corner of the main display.
@@ -97,13 +120,13 @@ struct Described {
 /// it is Speakeasy's own. Windows above app windows, such as the Dock, menus, and the menu bar, and
 /// invisible windows are passed over.
 pub(crate) fn window_under_pointer(display: Display) -> Option<(Window, Part)> {
-    let [x, y] = pointer_location()?;
+    let pointer = pointer_location()?;
     let options =
         CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements;
     let front = windows(options, kCGNullWindowID)
         .into_iter()
-        .find(|window| window.layer == 0 && window.alpha > 0.0 && window.bounds.contains([x, y]))
-        .filter(|window| window.owner != i64::from(process::id()))?;
+        .find(|window| window.layer == 0 && window.alpha > 0.0 && window.bounds.contains(pointer))
+        .filter(|window| !super::is_own_process(window.owner))?;
     Some((
         Window(front.number),
         display.bounds.part_covered_by(front.bounds)?,
@@ -195,14 +218,14 @@ pub(crate) fn capture(
             clippy::let_underscore_must_use,
             reason = "A closed lane means nobody is waiting for this capture"
         )]
-        let _ = events.try_send(ScreenEvent::Failed(UNSTARTED.to_owned()));
+        let _ = events.try_send(ScreenEvent::Failed(Failure::Unstarted.to_string()));
         return;
     };
     runtime.block_on(async {
         let failed = async {
             let Err(failure) = capture_stills(target, interval, longest_edge, events).await;
             // Unlike a frame, the failure waits for room: it is the capture's last word.
-            events.send(ScreenEvent::Failed(failure.to_owned())).await
+            events.send(ScreenEvent::Failed(failure.to_string())).await
         };
         tokio::select! {
             _ = stopping.recv() => {},
@@ -218,15 +241,14 @@ async fn capture_stills(
     interval: Duration,
     longest_edge: u32,
     events: &Sender<ScreenEvent>,
-) -> Result<Infallible, &'static str> {
+) -> Result<Infallible, Failure> {
     let display = target.display().native;
     let source = answer(Source::fetch(display.id, longest_edge))
         .await
-        .unwrap_or(Err(STALLED))?;
+        .unwrap_or(Err(Failure::Stalled))?;
     let mut part = target.part();
     let mut last_frame = Instant::now();
     loop {
-        // A window keeps its last place while it is minimized, closed, or off the display.
         if let Region::Window(window, _) = target.region
             && let Some(now) = window_part(display, window)
         {
@@ -242,7 +264,7 @@ async fn capture_stills(
                 )]
                 let _ = events.try_send(ScreenEvent::Frame(frame));
             },
-            None if last_frame.elapsed() >= PATIENCE => return Err(STALLED),
+            None if last_frame.elapsed() >= PATIENCE => return Err(Failure::Stalled),
             None => {},
         }
         // Waiting a whole interval after each answer keeps frames an interval apart, however long
@@ -272,7 +294,7 @@ unsafe impl Send for Source {}
 impl Source {
     /// Lists the shareable content, which prompts for Screen Recording the first time, and builds
     /// the capture of `display` from it.
-    fn fetch(id: CGDirectDisplayID, longest_edge: u32) -> Receiver<Result<Self, &'static str>> {
+    fn fetch(id: CGDirectDisplayID, longest_edge: u32) -> Receiver<Result<Self, Failure>> {
         ask(
             |handler| {
                 // SAFETY: the handler has the documented signature and captures only sendable
@@ -282,7 +304,7 @@ impl Source {
             move |content: Option<&SCShareableContent>, _: Option<&NSError>| {
                 // Of the reasons macOS lists no content, a missing Screen Recording permission is
                 // the one the user can act on, and macOS versions do not report it consistently.
-                Self::new(content.ok_or(PERMISSION)?, id, longest_edge)
+                Self::new(content.ok_or(Failure::Permission)?, id, longest_edge)
             },
         )
     }
@@ -291,7 +313,7 @@ impl Source {
         content: &SCShareableContent,
         id: CGDirectDisplayID,
         longest_edge: u32,
-    ) -> Result<Self, &'static str> {
+    ) -> Result<Self, Failure> {
         // SAFETY: these accessors only read the content snapshot.
         let (display, own) = unsafe {
             let display = content
@@ -301,11 +323,11 @@ impl Source {
             let own = content
                 .applications()
                 .iter()
-                .find(|application| i64::from(application.processID()) == i64::from(process::id()));
+                .find(|application| super::is_own_process(application.processID().into()));
             (display, own)
         };
-        let display = display.ok_or(DISPLAY_GONE)?;
-        let own = own.ok_or(EXPOSED)?;
+        let display = display.ok_or(Failure::DisplayLost)?;
+        let own = own.ok_or(Failure::Exposed)?;
         // Excluding the application, rather than its windows, also leaves out windows it opens
         // after the filter is built, such as the overlay.
         // SAFETY: the display and application come from the same content, as the filter expects.
@@ -330,12 +352,15 @@ impl Source {
     /// How to capture `part` of the display: at its size in pixels, halved until it fits the
     /// longest edge. `None` when the part comes to no pixels, as when the display is gone.
     fn configuration(&self, part: Part) -> Option<Retained<SCStreamConfiguration>> {
-        let [width, height] = self.points;
+        let [display_width, display_height] = self.points;
         let [left, top, right, bottom] =
             [part.left, part.top, part.right, part.bottom].map(f64::from);
         let area = CGRect::new(
-            CGPoint::new(left * width, top * height),
-            CGSize::new((right - left) * width, (bottom - top) * height),
+            CGPoint::new(left * display_width, top * display_height),
+            CGSize::new(
+                (right - left) * display_width,
+                (bottom - top) * display_height,
+            ),
         );
         let [width, height] = pixels([area.size.width, area.size.height], self.scale)
             .map(|size| fit(size, self.longest_edge))?;
@@ -366,11 +391,8 @@ impl Source {
     /// # Errors
     ///
     /// Fails when the part comes to no pixels, as when the display is gone.
-    fn still(
-        &self,
-        part: Part,
-    ) -> Result<Receiver<Result<Option<Frame>, &'static str>>, &'static str> {
-        let configuration = self.configuration(part).ok_or(DISPLAY_GONE)?;
+    fn still(&self, part: Part) -> Result<Receiver<Result<Option<Frame>, Failure>>, Failure> {
+        let configuration = self.configuration(part).ok_or(Failure::DisplayLost)?;
         Ok(ask(
             |handler| {
                 // SAFETY: the filter and configuration are alive for the call, which retains them,
@@ -385,7 +407,7 @@ impl Source {
             },
             move |sample: Option<&CMSampleBuffer>, error: Option<&NSError>| match sample {
                 Some(sample) => Ok(frame(sample, part)),
-                None if error.is_some_and(refused) => Err(PERMISSION),
+                None if error.is_some_and(refused) => Err(Failure::Permission),
                 None => Ok(None),
             },
         ))
@@ -410,7 +432,7 @@ where
         // SAFETY: ScreenCaptureKit passes each argument as nil or an object it keeps alive for the
         // duration of this call.
         let (value, error) = unsafe { (value.as_ref(), error.as_ref()) };
-        // A panic must not unwind into ScreenCaptureKit; the lane then closes unanswered.
+        // A panicking read leaves the lane to close unanswered.
         let outcome =
             panic::catch_unwind(AssertUnwindSafe(|| autoreleasepool(|_| read(value, error))));
         if let Ok(outcome) = outcome {
@@ -471,15 +493,12 @@ impl<'a> Locked<'a> {
 
     /// The buffer's memory: `height` rows of `bytesPerRow` bytes each.
     fn rows(&self) -> Option<&[u8]> {
-        let base = CVPixelBufferGetBaseAddress(self.0).cast::<u8>();
+        let base = NonNull::new(CVPixelBufferGetBaseAddress(self.0).cast::<u8>())?;
         let length =
             CVPixelBufferGetBytesPerRow(self.0).checked_mul(CVPixelBufferGetHeight(self.0))?;
-        if base.is_null() {
-            return None;
-        }
         // SAFETY: while locked, the buffer's base address starts `height` readable rows of
         // `bytesPerRow` bytes, and the slice cannot outlive the lock it borrows.
-        Some(unsafe { slice::from_raw_parts(base, length) })
+        Some(unsafe { slice::from_raw_parts(base.as_ptr(), length) })
     }
 }
 

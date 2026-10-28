@@ -301,11 +301,11 @@ mod tests {
     #[test]
     fn padded_rows_pack_tightly() {
         let rows = [
-            1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0, //
-            9, 10, 11, 12, 13, 14, 15, 16, 0, 0, 0, 0,
+            [1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0],
+            [9, 10, 11, 12, 13, 14, 15, 16, 0, 0, 0, 0],
         ];
         assert_eq!(
-            pack_rows(&rows, 12, 2, 2),
+            pack_rows(rows.as_flattened(), 12, 2, 2),
             Some((1..=16).collect::<Vec<u8>>())
         );
     }

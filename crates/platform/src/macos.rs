@@ -27,7 +27,7 @@ use core_foundation::{
 use core_graphics::{
     event::{
         CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
-        CGEventTapPlacement, CGEventType, CallbackResult, EventField, KeyCode,
+        CGEventTapPlacement, CGEventType, CGKeyCode, CallbackResult, EventField, KeyCode,
     },
     event_source::{CGEventSource, CGEventSourceStateID},
 };
@@ -156,7 +156,6 @@ impl Observer {
         let input = input.clone();
         let policy = Arc::clone(policy);
         let callback = RcBlock::new(move |_: NonNull<NSNotification>| {
-            // A panic must not unwind into AppKit.
             let interrupted =
                 panic::catch_unwind(AssertUnwindSafe(|| policy.lock().interrupt(&input)));
             if interrupted.is_err() {
@@ -216,15 +215,18 @@ fn run_event_loop(
     control: &MonitorControl<CFRunLoop>,
     policy: &SharedPolicy,
 ) -> anyhow::Result<()> {
+    const UNWATCHED: &str = "Cannot watch the dictation shortcut. Resume dictation to try again.";
+
     if control.stopping() {
         return Ok(());
     }
     let port = TapPort::default();
     let tap = shortcut_tap(input, policy, &port)?;
     port.publish(tap.mach_port());
-    let source = tap.mach_port().create_runloop_source(0).map_err(|()| {
-        anyhow!("Cannot watch the dictation shortcut. Resume dictation to try again.")
-    })?;
+    let source = tap
+        .mach_port()
+        .create_runloop_source(0)
+        .map_err(|()| anyhow!(UNWATCHED))?;
     let run_loop = CFRunLoop::get_current();
     let mut ready = RunLoopReady { control, input };
     let mut context = CFRunLoopObserverContext {
@@ -236,20 +238,20 @@ fn run_event_loop(
     };
     // SAFETY: this thread owns the observer and its stack context throughout CFRunLoopRun. Entry
     // fires once, and the observer is removed before return.
-    let observer = unsafe {
-        let raw = CFRunLoopObserverCreate(
+    let raw = unsafe {
+        CFRunLoopObserverCreate(
             kCFAllocatorDefault,
             kCFRunLoopEntry,
             0,
             0,
             on_run_loop_entry,
             &raw mut context,
-        );
-        if raw.is_null() {
-            bail!("Cannot watch the dictation shortcut. Resume dictation to try again.");
-        }
-        CFRunLoopObserver::wrap_under_create_rule(raw)
+        )
     };
+    ensure!(!raw.is_null(), UNWATCHED);
+    // SAFETY: `raw` is a non-null observer from a Create function, whose one reference the wrapper
+    // takes over and releases once.
+    let observer = unsafe { CFRunLoopObserver::wrap_under_create_rule(raw) };
     // SAFETY: this is Core Foundation's permanent mode constant.
     let modes = unsafe { kCFRunLoopCommonModes };
     run_loop.add_source(&source, modes);
@@ -312,8 +314,8 @@ fn shortcut_tap<'tap>(
                 CGEventType::FlagsChanged,
             ],
             move |_, kind, event| {
-                // A panic must not unwind into the OS. Closing the input makes the owner cancel
-                // rather than continue with lost key edges.
+                // Closing the input makes the owner cancel rather than continue with lost key
+                // edges.
                 panic::catch_unwind(AssertUnwindSafe(|| {
                     observe(input, &mut policy.lock(), port, kind, event)
                 }))
@@ -371,7 +373,7 @@ fn observe(
     }
     let code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
     // Both crates mirror the same CGEventFlags bits.
-    let held = held(objc2_core_graphics::CGEventFlags(event.get_flags().bits()));
+    let held = modifiers_in(objc2_core_graphics::CGEventFlags(event.get_flags().bits()));
     let key_event = match kind {
         CGEventType::KeyDown => MacEvent::Key {
             code,
@@ -486,7 +488,7 @@ impl Window {
 pub(super) fn modifiers() -> Modifiers {
     use objc2_core_graphics::{CGEventSource, CGEventSourceStateID};
 
-    held(CGEventSource::flags_state(
+    modifiers_in(CGEventSource::flags_state(
         CGEventSourceStateID::CombinedSessionState,
     ))
 }
@@ -501,7 +503,7 @@ fn keyboard_holds_fn() -> bool {
 }
 
 /// The modifier keys `flags` report held.
-fn held(flags: objc2_core_graphics::CGEventFlags) -> Modifiers {
+fn modifiers_in(flags: objc2_core_graphics::CGEventFlags) -> Modifiers {
     use objc2_core_graphics::CGEventFlags;
 
     Modifiers {
@@ -522,7 +524,6 @@ pub(super) fn copy_text(text: &str) -> anyhow::Result<()> {
 pub(super) struct Insert;
 
 impl insertion::NativeInsert for Insert {
-    /// Every event is created before commit, so a failed creation cannot leave partial input.
     type Keys = Vec<CGEvent>;
     type Lease = Retained<NSPasteboard>;
     /// The pasteboard change count, which every change advances.
@@ -560,30 +561,25 @@ impl insertion::NativeInsert for Insert {
 
     fn paste_keys(&mut self) -> anyhow::Result<Vec<CGEvent>> {
         let source = private_event_source()?;
-        let mut events = Vec::with_capacity(2);
-        for down in [true, false] {
-            let event = CGEvent::new_keyboard_event(source.clone(), KeyCode::ANSI_V, down)
-                .map_err(|()| anyhow!("Cannot create paste event"))?;
-            event.set_flags(CGEventFlags::CGEventFlagCommand);
-            event.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, OWN_INPUT);
-            events.push(event);
-        }
-        Ok(events)
+        [true, false]
+            .into_iter()
+            .map(|down| {
+                let event = own_key_event(&source, KeyCode::ANSI_V, down)
+                    .context("Cannot create paste event")?;
+                event.set_flags(CGEventFlags::CGEventFlagCommand);
+                Ok(event)
+            })
+            .collect()
     }
 
     fn text_keys(&mut self, text: &str) -> anyhow::Result<Vec<CGEvent>> {
         let source = private_event_source()?;
         let mut events = Vec::new();
         for chunk in insertion::utf16_chunks(text, TEXT_EVENT_UNITS) {
-            let press = CGEvent::new_keyboard_event(source.clone(), 0, true)
-                .map_err(|()| anyhow!("Cannot create text event"))?;
+            let press = own_key_event(&source, 0, true).context("Cannot create text event")?;
             press.set_string(chunk);
-            let release = CGEvent::new_keyboard_event(source.clone(), 0, false)
-                .map_err(|()| anyhow!("Cannot create text release"))?;
-            for event in [press, release] {
-                event.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, OWN_INPUT);
-                events.push(event);
-            }
+            let release = own_key_event(&source, 0, false).context("Cannot create text release")?;
+            events.extend([press, release]);
         }
         Ok(events)
     }
@@ -591,7 +587,7 @@ impl insertion::NativeInsert for Insert {
     fn external_focus(&mut self) -> bool {
         NSWorkspace::sharedWorkspace()
             .frontmostApplication()
-            .is_some_and(|app| i64::from(app.processIdentifier()) != i64::from(std::process::id()))
+            .is_some_and(|app| !is_own_process(app.processIdentifier().into()))
     }
 
     fn shortcut_released(&mut self) -> bool {
@@ -609,6 +605,18 @@ impl insertion::NativeInsert for Insert {
 fn private_event_source() -> anyhow::Result<CGEventSource> {
     CGEventSource::new(CGEventSourceStateID::Private)
         .map_err(|()| anyhow!("Cannot create keyboard event source"))
+}
+
+/// A key event from `source` tagged as Speakeasy's own, so its event tap passes over it.
+fn own_key_event(source: &CGEventSource, code: CGKeyCode, down: bool) -> Option<CGEvent> {
+    let event = CGEvent::new_keyboard_event(source.clone(), code, down).ok()?;
+    event.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, OWN_INPUT);
+    Some(event)
+}
+
+/// Whether `pid` names Speakeasy's own process.
+fn is_own_process(pid: i64) -> bool {
+    pid == i64::from(std::process::id())
 }
 
 fn clipboard_sequence() -> isize {

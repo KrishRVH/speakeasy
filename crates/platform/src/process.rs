@@ -7,6 +7,8 @@
 
 #[cfg(target_os = "linux")]
 use std::fs;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+use std::net::Ipv4Addr;
 #[cfg(target_os = "windows")]
 use std::{
     io,
@@ -34,10 +36,17 @@ use windows_sys::Win32::{
 #[cfg(target_os = "windows")]
 use crate::windows::{ok_or_last_error, take_handle};
 
+/// 127.0.0.1 as both listener tables hold an IPv4 address: its network-order bytes read as one
+/// host-order word.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+const LOOPBACK: u32 = u32::from_ne_bytes(Ipv4Addr::LOCALHOST.octets());
+
 /// Owns a kill-on-close job containing the local speech worker.
 #[cfg(target_os = "windows")]
 #[derive(Debug)]
-pub struct ProcessGroup(OwnedHandle);
+pub struct ProcessGroup {
+    job: OwnedHandle,
+}
 
 #[cfg(target_os = "windows")]
 impl ProcessGroup {
@@ -77,15 +86,16 @@ impl ProcessGroup {
         ok_or_last_error(unsafe {
             AssignProcessToJobObject(job.as_raw_handle(), process.as_raw_handle())
         })?;
-        Ok(Self(job))
+        Ok(Self { job })
     }
 
     /// Terminates only the owned child group; repeated calls have no effect.
     pub fn terminate(&mut self) {
-        // SAFETY: the retained job contains only the child assigned in `attach`.
+        // SAFETY: `self` keeps the job handle open, and the job holds only the child `contain`
+        // assigned and the processes it started.
         unsafe {
             // A failure needs no handling: closing the job on drop still kills the group.
-            TerminateJobObject(self.0.as_raw_handle(), 1);
+            TerminateJobObject(self.job.as_raw_handle(), 1);
         }
     }
 
@@ -124,7 +134,7 @@ impl ProcessGroup {
         let queried = unsafe {
             IsProcessInJob(
                 process.as_raw_handle(),
-                self.0.as_raw_handle(),
+                self.job.as_raw_handle(),
                 &raw mut member,
             )
         };
@@ -164,7 +174,9 @@ fn loopback_listener_owners(port: u16) -> anyhow::Result<Vec<u32>> {
         };
         match status {
             NO_ERROR => return Ok(listener_owners(&table, port)),
-            ERROR_INSUFFICIENT_BUFFER => table.resize(usize::try_from(size.div_ceil(4))?, 0),
+            ERROR_INSUFFICIENT_BUFFER => {
+                table.resize(usize::try_from(size)?.div_ceil(size_of::<u32>()), 0);
+            },
             error => return Err(io::Error::from_raw_os_error(error.cast_signed()).into()),
         }
     }
@@ -177,14 +189,13 @@ fn listener_owners(table: &[u32], port: u16) -> Vec<u32> {
     let Some((&count, rows)) = table.split_first() else {
         return Vec::new();
     };
-    let loopback = u32::from_ne_bytes([127, 0, 0, 1]);
     rows.as_chunks::<ROW_WORDS>()
         .0
         .iter()
         .take(usize::try_from(count).unwrap_or(usize::MAX))
         .filter(|&&[_, address, local_port, ..]| {
             let [high, low, ..] = local_port.to_ne_bytes();
-            address == loopback && u16::from_be_bytes([high, low]) == port
+            address == LOOPBACK && u16::from_be_bytes([high, low]) == port
         })
         .map(|&[.., owner]| owner)
         .collect()
@@ -193,7 +204,11 @@ fn listener_owners(table: &[u32], port: u16) -> Vec<u32> {
 /// Owns termination of a child process group until its leader is reaped.
 #[cfg(unix)]
 #[derive(Debug)]
-pub struct ProcessGroup(Option<libc::pid_t>);
+pub struct ProcessGroup {
+    /// The leader, whose identifier names the group, until the group is terminated or its leader
+    /// reaped.
+    leader: Option<libc::pid_t>,
+}
 
 #[cfg(unix)]
 impl ProcessGroup {
@@ -219,17 +234,19 @@ impl ProcessGroup {
             pid > 1,
             "Child process identifier must identify a spawned child"
         );
-        Ok(Self(Some(libc::pid_t::try_from(pid)?)))
+        Ok(Self {
+            leader: Some(libc::pid_t::try_from(pid)?),
+        })
     }
 
     /// Terminates only the owned child group; repeated calls have no effect.
     pub fn terminate(&mut self) {
-        if let Some(group) = self.0.take() {
-            // SAFETY: killpg takes plain values. `group` is above 1, so it names only the child's
+        if let Some(leader) = self.leader.take() {
+            // SAFETY: killpg takes plain values. `leader` is above 1, so it names only the child's
             // own group, and ownership is cleared before signaling so no group is signaled twice.
             unsafe {
                 // A failure needs no handling: ESRCH means the group has already exited.
-                libc::killpg(group, libc::SIGKILL);
+                libc::killpg(leader, libc::SIGKILL);
             }
         }
     }
@@ -237,7 +254,14 @@ impl ProcessGroup {
     /// Records that the caller reaped the group leader. The leader's identifier may now name an
     /// unrelated process group, so this group is never signaled again.
     pub fn leader_reaped(&mut self) {
-        self.0 = None;
+        self.leader = None;
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ProcessGroup {
+    fn drop(&mut self) {
+        self.terminate();
     }
 }
 
@@ -249,7 +273,7 @@ impl ProcessGroup {
     /// # Errors
     /// Returns an error if the system's socket table cannot be read.
     pub fn holds_loopback_listener(&self, port: u16) -> anyhow::Result<bool> {
-        let Some(leader) = self.0 else {
+        let Some(leader) = self.leader else {
             return Ok(false);
         };
         let mut unheld = loopback_listeners(&fs::read_to_string("/proc/net/tcp")?, port);
@@ -277,7 +301,6 @@ impl ProcessGroup {
 #[cfg(target_os = "linux")]
 fn loopback_listeners(table: &str, port: u16) -> Vec<u64> {
     const LISTEN: &str = "0A";
-    let loopback = u32::from_ne_bytes([127, 0, 0, 1]);
     table
         .lines()
         .skip(1)
@@ -288,9 +311,9 @@ fn loopback_listeners(table: &str, port: u16) -> Vec<u64> {
             };
             let (address, local_port) = local.split_once(':')?;
             let listening = *state == LISTEN
-                && u32::from_str_radix(address, 16).ok()? == loopback
+                && u32::from_str_radix(address, 16).ok()? == LOOPBACK
                 && u16::from_str_radix(local_port, 16).ok()? == port;
-            listening.then(|| inode.parse().ok()).flatten()
+            listening.then_some(inode)?.parse().ok()
         })
         .collect()
 }
@@ -324,13 +347,6 @@ fn process_group(pid: libc::pid_t) -> Option<libc::pid_t> {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let (_, fields) = stat.rsplit_once(')')?;
     fields.split_whitespace().nth(2)?.parse().ok()
-}
-
-#[cfg(unix)]
-impl Drop for ProcessGroup {
-    fn drop(&mut self) {
-        self.terminate();
-    }
 }
 
 #[cfg(test)]

@@ -29,7 +29,7 @@ use crate::{
 /// How often the pointer is sampled.
 const POINTER_INTERVAL: Duration = Duration::from_millis(8);
 
-/// What a Show records.
+/// What the user asks a Show to record, which becomes a [`Target`] once found under the pointer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
     /// The display under the pointer.
@@ -103,12 +103,6 @@ impl Part {
             share(x, self.left, self.width()),
             share(y, self.top, self.height()),
         ]
-    }
-
-    /// Where a point given as shares of this part lies as shares of the display.
-    #[must_use]
-    pub fn on_display(self, [x, y]: [f32; 2]) -> [f32; 2] {
-        [self.left + x * self.width(), self.top + y * self.height()]
     }
 }
 
@@ -223,7 +217,7 @@ pub enum ScreenEvent {
     Failed(String),
 }
 
-/// The display under the pointer when a Show began.
+/// A display that a Show records and its overlay covers.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Display {
     pub(crate) native: native::Display,
@@ -255,6 +249,13 @@ pub struct PointerSample {
     pub drawing: bool,
     /// The primary button was down.
     pub pressed: bool,
+}
+
+impl PointerSample {
+    fn differs(&self, other: &Self) -> bool {
+        (self.x, self.y, self.drawing, self.pressed)
+            != (other.x, other.y, other.drawing, other.pressed)
+    }
 }
 
 /// Captures a [`Target`] on an owned thread until stopped.
@@ -342,13 +343,6 @@ impl PointerMonitor {
     }
 }
 
-impl PointerSample {
-    fn differs(&self, other: &Self) -> bool {
-        (self.x, self.y, self.drawing, self.pressed)
-            != (other.x, other.y, other.drawing, other.pressed)
-    }
-}
-
 impl NativeWindow {
     /// Makes this window an overlay over `display` that never takes input or focus, stays above
     /// other windows, and is left out of screen capture.
@@ -425,7 +419,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn points_map_between_a_display_and_its_part() {
+    fn points_map_from_a_display_into_its_part() {
         let part = Part::between([0.75, 0.5], [0.25, -0.5]);
         assert_eq!(
             part,
@@ -437,7 +431,6 @@ mod tests {
             }
         );
         assert_eq!(part.within([0.5, 0.25]), [0.5, 0.5]);
-        assert_eq!(part.on_display([0.5, 0.5]), [0.5, 0.25]);
         assert_eq!(part.within([1.0, 0.75]), [1.5, 1.5], "outside the part");
         let flat = Part::between([0.0, 0.5], [1.0, 0.5]);
         assert_eq!(
