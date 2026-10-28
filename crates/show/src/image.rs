@@ -106,14 +106,11 @@ impl Image {
         Self::from_rgba(info.width, info.height, data).unwrap()
     }
 
-    /// Encodes the image as an RGBA PNG.
+    /// Encodes the image as an RGBA PNG; fails only if the encoder rejects the stream, which a
+    /// valid image never causes.
     ///
     /// Fast compression favors latency; screen content still compresses well.
-    ///
-    /// # Errors
-    ///
-    /// Fails only if the encoder rejects the stream, which a valid image never causes.
-    pub fn encode_png(&self) -> Result<Vec<u8>, Error> {
+    pub(crate) fn encode_png(&self) -> Result<Vec<u8>, Error> {
         let data = self.pixmap.data();
         let (pixels, _) = data.as_chunks::<4>();
         // Captured screens are opaque, so their premultiplied pixels are already straight.

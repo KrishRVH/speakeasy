@@ -105,12 +105,6 @@ impl Span {
         self.end
     }
 
-    /// How long the stretch lasts.
-    #[must_use]
-    pub const fn duration(self) -> Duration {
-        self.end.since(self.start)
-    }
-
     /// Whether `moment` lies within the stretch, ends included.
     #[must_use]
     pub fn contains(self, moment: Moment) -> bool {
@@ -178,7 +172,6 @@ mod tests {
             (100, 900)
         );
         assert_eq!(serde_json::to_string(&span).unwrap(), "[100,900]");
-        assert_eq!(span.duration(), Duration::from_millis(800));
         assert!(span.contains(Moment::from_millis(900)) && !span.contains(Moment::START));
     }
 }
