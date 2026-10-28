@@ -1,4 +1,4 @@
-<https://github.com/user-attachments/assets/3ccaba96-808a-4d01-891f-db7338d519c4>
+<https://github.com/user-attachments/assets/d0b50077-69d2-487a-b177-7a9b5ed1f6e9>
 
 <p align="center">
   <strong>Private dictation for Windows, macOS, and Linux.</strong><br>

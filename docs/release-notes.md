@@ -1,6 +1,6 @@
 # Release notes
 
-<https://github.com/user-attachments/assets/3ccaba96-808a-4d01-891f-db7338d519c4>
+<https://github.com/user-attachments/assets/d0b50077-69d2-487a-b177-7a9b5ed1f6e9>
 
 Speakeasy 0.6.0 lets a Show record one window or an area you drag out, not only the whole display,
 numbers every mark and pin so you and your coding agent can refer to them, and makes the shortcut,
