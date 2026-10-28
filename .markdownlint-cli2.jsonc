@@ -8,8 +8,7 @@
     "MD003": { "style": "atx" },
     "MD013": { "line_length": 120, "code_blocks": false, "tables": false, "headings": false },
     "MD024": { "siblings_only": true },
-    "MD033": { "allowed_elements": ["a", "aside", "br", "details", "kbd", "span", "strong", "sub", "summary", "sup"] },
-    "MD040": { "language_only": false }
+    "MD033": { "allowed_elements": ["a", "aside", "br", "details", "kbd", "span", "strong", "sub", "summary", "sup"] }
   },
   "overrides": [
     {

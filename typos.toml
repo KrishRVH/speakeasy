@@ -1,6 +1,4 @@
 [default]
-check-file = true
-check-filename = true
 locale = "en-us"
 
 [default.extend-words]
