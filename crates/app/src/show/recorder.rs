@@ -338,7 +338,20 @@ impl<'a> Take<'a> {
             .iter()
             .map(|stroke| stroke.points().iter().map(|ink| ink.point).collect())
             .collect();
-        let marks = (!finished.is_empty()).then(|| self.marks());
+        let marks = (!finished.is_empty()).then(|| self.tracker.marks().into());
+        self.publish_ink(finished, marks);
+    }
+
+    fn pin(&mut self, taps: Taps) {
+        let taps = Span::new(self.moment(taps.pressed), self.moment(taps.released));
+        if self.tracker.pin(taps) {
+            self.publish_ink(Vec::new(), Some(self.tracker.marks().into()));
+        }
+    }
+
+    /// Publishes the stroke being drawn to the overlay, with the strokes just `finished` and the
+    /// `marks` when they changed.
+    fn publish_ink(&self, finished: Vec<Arc<[Point]>>, marks: Option<Arc<[Mark]>>) {
         let drawing: Vec<Point> = self.tracker.drawing().iter().map(|ink| ink.point).collect();
         let now = Instant::now();
         self.canvas.send_if_modified(|canvas| {
@@ -346,25 +359,6 @@ impl<'a> Take<'a> {
                 .sheet()
                 .is_some_and(|sheet| sheet.update(finished, drawing, marks, now))
         });
-    }
-
-    fn pin(&mut self, taps: Taps) {
-        let taps = Span::new(self.moment(taps.pressed), self.moment(taps.released));
-        if !self.tracker.pin(taps) {
-            return;
-        }
-        let marks = Some(self.marks());
-        let drawing: Vec<Point> = self.tracker.drawing().iter().map(|ink| ink.point).collect();
-        let now = Instant::now();
-        self.canvas.send_if_modified(|canvas| {
-            canvas
-                .sheet()
-                .is_some_and(|sheet| sheet.update([], drawing, marks, now))
-        });
-    }
-
-    fn marks(&self) -> Arc<[Mark]> {
-        self.tracker.marks().into()
     }
 
     /// What the take recorded, lasting until `ended`.
