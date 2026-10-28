@@ -347,7 +347,8 @@ impl Config {
                     || self.use_gpu != *use_gpu,
                 Change::Engine,
             ),
-            // Every request sends its language, so the engine's launch language is only a default.
+            // Whisper takes the language with each request, so its launch language is only a
+            // default; Parakeet takes none.
             (self.language != *language, Change::Session),
             (
                 self.microphone != *microphone
@@ -418,8 +419,8 @@ impl Config {
     /// `held` is the settings the file last held, in each spelling a draft may still have, such as
     /// a submitted draft and the paths validation resolved from it; a key that matches any of them
     /// is unchanged. Every other key stays as the file has it, so edits made while Speakeasy runs
-    /// survive; a key changed both ways takes the Settings value. A new file gets every key, and a
-    /// file the user still has to repair is never replaced.
+    /// survive; a key changed both ways takes the Settings value. A new file gets every key but a
+    /// default Linux block, and a file the user still has to repair is never replaced.
     pub(crate) fn save_changes(
         held: &[&Self],
         draft: &Self,
@@ -611,7 +612,8 @@ fn replace(target: &Path, contents: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-/// Settings that pass validation: a fake engine and model written into `directory`.
+/// Settings that pass validation: a fake `engine` and `model.gguf` written into `directory`, which
+/// a settings file there may also name relatively.
 #[cfg(test)]
 pub(crate) fn valid_config(directory: &Path) -> anyhow::Result<Config> {
     let engine_executable = directory.join("engine");

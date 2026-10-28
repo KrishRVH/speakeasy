@@ -82,20 +82,20 @@ fn malformed_replies_never_quote_engine_text() {
 
 #[test]
 fn exit_diagnostics_identify_actions_without_engine_output() {
-    assert!(exit_remedy(Some(2), None).contains("server arguments"));
-    assert!(exit_remedy(None, Some(SIGILL)).contains("CPU instructions"));
-    assert!(
-        exit_remedy(Some(STATUS_ILLEGAL_INSTRUCTION.cast_signed()), None)
-            .contains("CPU instructions")
-    );
-    for code in [
-        STATUS_DLL_NOT_FOUND,
-        STATUS_ENTRYPOINT_NOT_FOUND,
-        STATUS_INVALID_IMAGE_FORMAT,
+    for (code, signal, remedy) in [
+        (Some(2), None, "server arguments"),
+        (None, Some(4), "CPU instructions"),
+        (Some(0xC000_001D), None, "CPU instructions"),
+        (Some(0xC000_0135), None, "native libraries"),
+        (Some(0xC000_0139), None, "native libraries"),
+        (Some(0xC000_007B), None, "native libraries"),
+        (Some(1), None, "selected model"),
     ] {
-        assert!(exit_remedy(Some(code.cast_signed()), None).contains("native libraries"));
+        assert!(
+            exit_remedy(code.map(u32::cast_signed), signal).contains(remedy),
+            "exit code {code:X?}, signal {signal:?}"
+        );
     }
-    assert!(exit_remedy(Some(1), None).contains("selected model"));
 }
 
 #[test]
@@ -176,8 +176,7 @@ fn engine_secrets_are_unrelated_128_bit_tokens() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn a_reply_cut_short_reports_a_stopped_engine_without_transport_detail() -> anyhow::Result<()>
-{
+async fn a_truncated_reply_reports_only_a_stopped_engine() -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     let listener = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
@@ -198,12 +197,7 @@ async fn a_reply_cut_short_reports_a_stopped_engine_without_transport_detail() -
             .await?;
         anyhow::Ok(())
     });
-    let response = client_builder()?
-        .no_proxy()
-        .build()?
-        .get(&url)
-        .send()
-        .await?;
+    let response = engine_client()?.get(&url).send().await?;
     engine.await??;
     let error = read_bounded(response)
         .await
@@ -321,7 +315,7 @@ async fn audio_never_reaches_a_program_that_took_a_ready_engines_port() -> anyho
         child,
         port: squatter.local_addr()?.port(),
         secret: random_token()?,
-        client: client_builder()?.build()?,
+        client: engine_client()?,
         _directory: tempfile::tempdir()?,
     };
     let wav = audio::silent_wav(16_000, Duration::from_secs(1))?;

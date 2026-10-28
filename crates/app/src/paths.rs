@@ -1,5 +1,5 @@
 //! Where Speakeasy keeps its files: roaming settings and the machine-local data root, both inside
-//! the user's own folders, and what to do when a file operation there fails.
+//! the user's own folders, and what to do when a file operation fails.
 
 use std::{
     ffi::OsString,
@@ -19,8 +19,8 @@ pub(crate) fn data_root() -> anyhow::Result<PathBuf> {
     user_folder(UserFolder::Data, std::env::var_os)
 }
 
-/// What to do when a file operation in one of these folders fails: free space on a full disk;
-/// otherwise close what holds the files and check that the user can write to the named path.
+/// What to do when a file operation fails, for a message that names its path: free space on a
+/// full disk; otherwise close what holds the files and check that the user can write to that path.
 pub(crate) fn remedy(error: &io::Error) -> &'static str {
     match error.kind() {
         ErrorKind::StorageFull | ErrorKind::QuotaExceeded => "Free up disk space, then try again.",
@@ -103,21 +103,13 @@ mod tests {
         let missing: Vec<_> = Vec::new();
         let empty: Vec<_> = names.iter().map(|name| (*name, "")).collect();
         let relative: Vec<_> = names.iter().map(|name| (*name, "home")).collect();
+        let (settings, data) = if cfg!(windows) {
+            ("APPDATA", "LOCALAPPDATA")
+        } else {
+            ("HOME", "HOME")
+        };
         for vars in [missing, empty, relative] {
-            for (folder, required) in [
-                (
-                    UserFolder::Settings,
-                    if cfg!(windows) { "APPDATA" } else { "HOME" },
-                ),
-                (
-                    UserFolder::Data,
-                    if cfg!(windows) {
-                        "LOCALAPPDATA"
-                    } else {
-                        "HOME"
-                    },
-                ),
-            ] {
+            for (folder, required) in [(UserFolder::Settings, settings), (UserFolder::Data, data)] {
                 let error = user_folder(folder, lookup(&vars))
                     .err()
                     .context("A user folder resolved without an absolute base")?;

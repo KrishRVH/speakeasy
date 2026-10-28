@@ -158,9 +158,7 @@ fn filler_cleanup_follows_engine_language_and_switch() -> anyhow::Result<()> {
             );
         }
     }
-    let without_switch: Config = serde_json::from_str(
-        r#"{"engine":"parakeet","engine_executable":"","model":"","language":"de"}"#,
-    )?;
+    let without_switch: Config = serde_json::from_str(r#"{"engine":"parakeet","language":"de"}"#)?;
     assert_eq!(without_switch.fillers(), Fillers::Remove);
     Ok(())
 }
@@ -188,7 +186,7 @@ fn shipped_example_is_what_a_first_launch_starts_from() -> anyhow::Result<()> {
     assert_eq!(config, Config::first_launch());
     assert_eq!(
         serde_json::to_value(&config)?,
-        serde_json::from_str::<serde_json::Value>(EXAMPLE)?
+        serde_json::from_str::<Value>(EXAMPLE)?
     );
     Ok(())
 }
@@ -213,7 +211,7 @@ fn engine_and_theme_spellings_are_the_wire_format() -> anyhow::Result<()> {
 
 #[test]
 fn omitted_keys_read_as_the_defaults() -> anyhow::Result<()> {
-    let read = serde_json::from_str::<Config>(r#"{"engine_executable":"","model":""}"#)?;
+    let read = serde_json::from_str::<Config>("{}")?;
     assert_eq!(read, Config::default());
     Ok(())
 }
@@ -272,15 +270,15 @@ fn a_file_that_reads_is_one_a_save_can_patch() -> anyhow::Result<()> {
         let saved = save(&held, &draft, &path).is_ok();
         assert_eq!(read, saved, "{case}");
     }
-    let mut linux = held.clone();
-    linux.linux.external_shortcut = true;
+    let mut linux_draft = held.clone();
+    linux_draft.linux.external_shortcut = true;
     for value in ["[]", "{}"] {
         fs::write(
             &path,
             format!(r#"{{"engine_executable":"e","model":"m","linux":{value}}}"#),
         )?;
         let read = Config::read(&path).is_ok();
-        let saved = save(&held, &linux, &path).is_ok();
+        let saved = save(&held, &linux_draft, &path).is_ok();
         assert_eq!(read, saved, "{value}");
     }
     Ok(())
@@ -339,7 +337,7 @@ fn save_refuses_to_replace_a_file_that_needs_repair() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     // A type error, not an unknown key, so the case holds whatever unknown keys are allowed.
-    let broken = br#"{"engine_executable":"","model":"","threads":"four"}"#;
+    let broken = br#"{"threads":"four"}"#;
     fs::write(&path, broken)?;
     let draft = Config {
         theme: Theme::Iris,
