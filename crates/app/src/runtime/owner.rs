@@ -378,7 +378,6 @@ impl<P: Ports> Owner<P> {
                 match transcript {
                     Transcript::Text(text) => self.insert_transcript(text),
                     Transcript::Words(narration) => self.narrate(narration),
-                    Transcript::Cancelled => {},
                 }
             },
             Completion::Transcribed(Err(error)) => {
