@@ -178,8 +178,7 @@ resumes where it stopped.
 <br>
 
 Speakeasy targets Windows 11 x64, macOS 14+ on Apple silicon, and experimental Linux x86_64 builds
-with glibc 2.35 or later. Use the pinned nightly Rust toolchain in `rust-toolchain.toml` (including
-rustfmt and Clippy). Workspace dependencies are declared centrally in the root `Cargo.toml`. Windows
+with glibc 2.35 or later. Use the pinned nightly Rust toolchain in `rust-toolchain.toml`. Windows
 builds need the Visual Studio C++ Build Tools and the Windows SDK; macOS builds need the Xcode
 command line tools.
 
@@ -233,8 +232,8 @@ link its absolute path as `speakeasy`, and install the desktop file from this re
 paste needs compositor modifier feedback and libei, and typing needs EI direct text support; X11
 pastes through XTest and cannot type. Settings' **Insert** control chooses **Paste (Ctrl+V)**,
 **Paste (Ctrl+Shift+V)** for terminals, **Type (Keep clipboard)**, or **Copy for manual paste** if
-automatic insertion is unavailable. X11 automatic paste uses the first keyboard layout with an
-unshifted V key; other layouts copy and explain how to paste manually.
+automatic insertion is unavailable. X11 automatic paste needs the first keyboard layout active and
+an unshifted V key in it; otherwise Speakeasy copies the text and explains how to paste it.
 
 For a desktop without suitable shortcut permissions, choose **Shortcuts: Desktop bindings** and
 assign the two commands Settings shows in your desktop's shortcut settings: `speakeasy --toggle` and
@@ -345,9 +344,9 @@ mise run standards:check
 The pinned toolchain and lockfiles make local checks reproducible. `mise run standards` applies safe
 formatters and autofixes, and `mise tasks` lists the focused checks.
 
-Default tests drive the real session owner with mocked microphone, inference, and insertion. A
-paused clock exercises gesture deadlines and the five-minute cap. They never record, install a
-global hook, or touch the clipboard. See the
+Default tests drive the real session owner with mocked microphone, inference, and insertion, and a
+paused clock exercises gesture deadlines and the five-minute cap.
+[AGENTS.md](AGENTS.md#tests-and-review) sets what they may touch. See the
 [architecture change and test map](docs/architecture.md#change-and-test-map), and
 [verification](docs/architecture.md#verification) for opt-in tests and their fixtures.
 
@@ -418,8 +417,8 @@ Versions carry no pre-release or build suffix, and a released version and its ta
 
 - [Architecture](docs/architecture.md): the change and test map, cross-module invariants,
   recognition, privacy, and verification.
-- [Interaction design](docs/interaction-design.md): the brand, the pill, the tray, and interaction
-  contracts.
+- [Interaction design](docs/interaction-design.md): the brand, the pill, sounds, the tray and
+  Settings, and interaction contracts.
 - [Linux implementation](docs/linux-implementation.md): desktop adapters, packaging, and the native
   acceptance Linux still needs.
 - [Performance](docs/performance.md): constraints, profiling methods, and native measurement limits.

@@ -34,27 +34,26 @@ when the full interaction remains correct.
 - Do not add an always-on microphone, worker pool, cache, resampler, or background service without a
   measured user benefit and explicit resource ownership.
 
-Code owns state contracts; [architecture](architecture.md) maps owners and cross-module invariants.
-Historical benchmark results belong to Git and published release history; they are not a performance
-claim about a newly changed revision.
+[Architecture](architecture.md) maps owners and cross-module invariants. This page keeps no results:
+a measurement speaks only for the revision it ran on.
 
 ## Measuring
 
 Record hardware, model and runtime, sample rate, request boundaries, warmup, and competing load.
-Compare paired runs and check word accuracy and formatting as well as latency. Keep transcripts out
-of logs. The opt-in tests `profile_fixture_dictation` and `profile_ready_text_latency` exercise the
-real session owner with public audio or fake devices; [verification](architecture.md#verification)
-names the fixture variables. The synthetic `profile_audio_pipeline` probe times
-callback/downmix/consumer work; `profile_audio_seal` times sealing a five-minute recording,
-classified for speech while recording. Sealing includes the remaining window, range selection,
-trimming, capacity reclamation, and WAV encoding; it excludes microphone teardown, inference, and
-insertion. The synthetic `profile_show_pipeline` probe reports the recorder's per-frame fingerprint
-and journal cost on 2560 × 1440 desktops that stay still, type, scroll, open a dialog, or play
-video, with journal megabytes per frame, and each stage of publishing a one-minute Show: selection,
-page composition (including keyframe rebuilding and PNG encoding), file assembly, and the private
-write. `profile_real_screen_recording` records the real screen for ten seconds on Windows or Mac,
-keeping no pixels; on Windows, run the test binary directly and sample its process, not Cargo's,
-with `profile-windows.ps1`. Use ordinary native profilers rather than a permanent benchmark suite.
+Compare paired runs and check word accuracy and formatting as well as latency. The opt-in tests
+`profile_fixture_dictation` and `profile_ready_text_latency` exercise the real session owner with
+public audio or fake devices; [verification](architecture.md#verification) names the fixture
+variables. The synthetic `profile_audio_pipeline` probe times callback/downmix/consumer work;
+`profile_audio_seal` times sealing a five-minute recording, classified for speech while recording.
+Sealing includes the remaining window, range selection, trimming, capacity reclamation, and WAV
+encoding; it excludes microphone teardown, inference, and insertion. The synthetic
+`profile_show_pipeline` probe measures the recorder's per-frame fingerprint and journal costs on
+2560 × 1440 desktops that stay still, type, scroll, open a dialog, or play video, with journal
+megabytes per frame, and each stage of publishing a one-minute Show: selection, page composition
+(including keyframe rebuilding and PNG encoding), file assembly, and the private write.
+`profile_real_screen_recording` records the real screen for ten seconds on Windows or Mac, keeping
+no pixels; on Windows, run the test binary directly and sample its process, not Cargo's, with
+`profile-windows.ps1`. Use ordinary native profilers rather than a permanent benchmark suite.
 
 ## Native process sampling
 
@@ -84,10 +83,10 @@ cargo test -p speakeasy --release --locked profile_ready_text_latency -- --ignor
 ```
 
 100% CPU means one logical core; machine-normalized samples divide by the logical CPU count. Use at
-least 30 seconds for low idle CPU, where OS tick quantization matters. Keep raw reports under
-ignored `artifacts/`. The scripts read no command lines, audio, transcripts, keystrokes or engine
-output. Do not add app and worker RSS as unique physical memory: shared pages can be counted twice.
-Linux PSS can be apportioned; report Windows process working sets individually.
+least 30 seconds for low idle CPU, where OS tick quantization matters. The scripts read no command
+lines, audio, transcripts, keystrokes or engine output. Do not add app and worker RSS as unique
+physical memory: shared pages can be counted twice. Linux PSS can be apportioned; report Windows
+process working sets individually.
 
 For each candidate, collect paired runs after warmup with the same hardware, model, backend, display
 refresh, competing load and settings:
@@ -115,7 +114,7 @@ Exercise short dictation, long recordings, the five-minute boundary, denied and 
 device removal, clipboard-owner changes, and focus changes. Include fullscreen apps such as games,
 terminals, protected fields, mixed-DPI and mixed-refresh displays, and display removal. Report
 editor acceptance separately from an OS accepting injected input. Before changing GPUI termination
-handling, check that forced termination, which still disposes synchronously, keeps the UI
+handling, check that forced termination, which disposes windows synchronously, keeps the UI
 responsive.
 
 [Verification](architecture.md#verification) states what default checks leave unproven, and the
