@@ -63,6 +63,7 @@ impl From<InkPoint> for (f32, f32, Moment) {
 #[serde(try_from = "Vec<InkPoint>", into = "Vec<InkPoint>")]
 pub struct Stroke {
     points: Vec<InkPoint>,
+    /// The ends of `points`, which is never empty, so reading them cannot fail.
     first: InkPoint,
     last: InkPoint,
 }

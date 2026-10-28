@@ -183,11 +183,13 @@ pub(crate) fn group(strokes: &[Stroke], pins: &[Pin], surface: Size) -> Vec<Mark
     marks
 }
 
-/// One stroke measured in pixels.
+/// One stroke of a mark, with the shape it makes in pixels.
 struct Measured<'a> {
     stroke: &'a Stroke,
     shape: Shape,
+    /// Normalized, like the stroke's points.
     bounds: Rect,
+    /// Width plus height in pixels; the largest stroke is the mark's main one.
     size: f32,
 }
 
