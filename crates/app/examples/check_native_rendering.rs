@@ -1,6 +1,8 @@
 //! Opt-in owned-window rendering and frame-source acceptance, without audio, global input or
 //! clipboard access.
 
+#![forbid(unsafe_code)]
+
 #[path = "../src/icons.rs"]
 mod icons;
 

@@ -3,7 +3,8 @@
 
 Findings: history directories at the top level or under docs/; old, legacy, deprecated, bak,
 orig, or vN file names; handoff notes; dated top-level or docs names; `mise run` references to
-tasks that do not exist; and Cargo workspace members that skip the workspace lint policy.
+tasks that do not exist; Cargo workspace members that skip the workspace lint policy; and crate
+roots outside the platform package that do not forbid unsafe code.
 """
 
 import json
@@ -43,6 +44,9 @@ DATED_NAME = re.compile(r"(19|20)\d\d-\d\d-\d\d")
 MISE_RUN = re.compile(r"\bmise run ([A-Za-z0-9][\w:.*-]*)")
 CODE_SPAN = re.compile(rb"```[\s\S]*?```|`[^`\n]+`")
 REFERENCE_SUFFIXES = {".md", ".mdx", ".toml", ".yml", ".yaml", ".sh", ".bash"}
+# Native FFI lives in this package alone; every other crate root forbids unsafe code.
+UNSAFE_PACKAGE = "speakeasy-platform"
+FORBIDS_UNSAFE = re.compile(r"^#!\[forbid\(unsafe_code\)\]$", re.MULTILINE)
 
 
 class Task(TypedDict):
@@ -50,8 +54,14 @@ class Task(TypedDict):
     aliases: NotRequired[list[str] | None]
 
 
+class Target(TypedDict):
+    src_path: str
+
+
 class Package(TypedDict):
+    name: str
     manifest_path: str
+    targets: list[Target]
 
 
 class Metadata(TypedDict):
@@ -70,7 +80,10 @@ class Manifest(TypedDict, total=False):
 def main(environment: Mapping[str, str]) -> int:
     paths = committed_paths(environment)
     known = known_tasks(environment)
-    findings = name_findings(paths) + workspace_lint_findings(environment)
+    metadata = workspace_metadata(environment)
+    findings = (
+        name_findings(paths) + workspace_lint_findings(metadata) + unsafe_code_findings(metadata)
+    )
     for path in paths:
         if PurePosixPath(path).suffix in REFERENCE_SUFFIXES:
             findings += task_reference_findings(path, known)
@@ -170,11 +183,11 @@ def toml_file(path: Path) -> object:
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
-def workspace_lint_findings(environment: Mapping[str, str]) -> list[str]:
-    """Cargo lets a workspace member skip the workspace lint policy; this repository does not."""
+def workspace_metadata(environment: Mapping[str, str]) -> Metadata:
+    """The workspace members and their targets, as Cargo resolves them."""
     # Cargo owns membership, including path dependencies that join the workspace without a
     # `members` entry. With --no-deps it resolves nothing and lists exactly the members.
-    metadata = cast(
+    return cast(
         Metadata,
         json.loads(
             run(
@@ -187,6 +200,25 @@ def workspace_lint_findings(environment: Mapping[str, str]) -> list[str]:
             )
         ),
     )
+
+
+def unsafe_code_findings(metadata: Metadata) -> list[str]:
+    """Each crate root is compiled alone, so a library's forbid does not cover its binaries,
+    examples, tests, or build script."""
+    findings: list[str] = []
+    for package in metadata["packages"]:
+        if package["name"] == UNSAFE_PACKAGE:
+            continue
+        for target in package["targets"]:
+            root = Path(target["src_path"])
+            if not FORBIDS_UNSAFE.search(root.read_text(encoding="utf-8")):
+                shown = os.path.relpath(root, metadata["workspace_root"])
+                findings.append(f"{shown}: crate roots outside platform must forbid unsafe_code")
+    return findings
+
+
+def workspace_lint_findings(metadata: Metadata) -> list[str]:
+    """Cargo lets a workspace member skip the workspace lint policy; this repository does not."""
     findings: list[str] = []
     for package in metadata["packages"]:
         manifest = Path(package["manifest_path"])

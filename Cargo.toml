@@ -76,7 +76,8 @@ missing_debug_implementations = "deny"
 missing_docs = "deny"
 unexpected_cfgs = "deny"
 unreachable_pub = "deny"
-# Native FFI lives in platform; core, show, and the app forbid unsafe locally.
+# Native FFI lives in platform; every other crate root forbids unsafe locally, as `mise run hygiene`
+# checks.
 unsafe_op_in_unsafe_fn = "deny"
 unfulfilled_lint_expectations = "deny"
 
