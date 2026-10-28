@@ -31,7 +31,7 @@ use xkbcommon::xkb::{KEYSYM_CASE_INSENSITIVE, Keysym, keysym_from_name};
 pub(super) use self::clipboard::ClipboardWorker;
 use self::paste::InsertionWorker;
 use super::{Actionable, HostSession, ShortcutLabels, stopping, watch_readable};
-use crate::{DesktopOptions, Input, InputSender, insertion::Insertion};
+use crate::{DesktopOptions, Input, InputSender, LinuxPaste, insertion::Insertion};
 
 const MAX_FOCUS_ANCESTRY: usize = 32;
 /// The eight core modifier bits; key-event state also carries pointer-button bits above them.
@@ -332,7 +332,7 @@ pub(super) async fn run(
 /// Whether input depends on the keyboard mapping it started with: the shortcut grabs and the
 /// insertion worker's paste keys come from it, while desktop bindings with manual paste use neither.
 fn depends_on_mapping(options: &DesktopOptions) -> bool {
-    !(options.external_shortcut && options.manual_paste)
+    !(options.external_shortcut && options.paste == LinuxPaste::Manual)
 }
 
 /// Subscribes `root` to XI2 raw key releases, which arrive without a keyboard grab.
@@ -570,21 +570,22 @@ mod tests {
 
     #[test]
     fn only_grabs_or_automatic_paste_stop_on_a_keyboard_mapping_change() {
-        for (external_shortcut, manual_paste, depends) in [
-            (false, false, true),
-            (false, true, true),
-            (true, false, true),
-            (true, true, false),
+        for (external_shortcut, paste, depends) in [
+            (false, LinuxPaste::Standard, true),
+            (false, LinuxPaste::Manual, true),
+            (true, LinuxPaste::Standard, true),
+            (true, LinuxPaste::Terminal, true),
+            (true, LinuxPaste::Manual, false),
         ] {
             let options = DesktopOptions {
-                manual_paste,
+                paste,
                 external_shortcut,
                 ..DesktopOptions::default()
             };
             assert_eq!(
                 depends_on_mapping(&options),
                 depends,
-                "Desktop bindings {external_shortcut}, manual paste {manual_paste}"
+                "Desktop bindings {external_shortcut}, {paste:?} paste"
             );
         }
     }

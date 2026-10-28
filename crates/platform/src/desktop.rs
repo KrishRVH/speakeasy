@@ -82,12 +82,21 @@ pub struct DesktopOptions {
     pub shortcut: String,
     /// Reserved Linux cancellation chord in portal syntax.
     pub cancel: String,
-    /// Whether clipboard submission pastes with Ctrl+Shift+V.
-    pub terminal_paste: bool,
-    /// Whether text is only copied, for the user to paste without keyboard-control permission.
-    pub manual_paste: bool,
+    /// How clipboard submission finishes.
+    pub paste: LinuxPaste,
     /// Whether desktop command bindings replace observing a native shortcut.
     pub external_shortcut: bool,
+}
+
+/// How a Linux clipboard submission ends once the text is on the clipboard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinuxPaste {
+    /// Sends Ctrl+V.
+    Standard,
+    /// Sends Ctrl+Shift+V, which terminals expect.
+    Terminal,
+    /// Sends nothing: the user pastes, so Speakeasy needs no keyboard control.
+    Manual,
 }
 
 impl Default for DesktopOptions {
@@ -95,8 +104,7 @@ impl Default for DesktopOptions {
         Self {
             shortcut: "CTRL+LOGO+space".into(),
             cancel: "CTRL+LOGO+Escape".into(),
-            terminal_paste: false,
-            manual_paste: false,
+            paste: LinuxPaste::Standard,
             external_shortcut: false,
         }
     }

@@ -67,7 +67,7 @@ impl MicrophoneScan {
     }
 
     /// Resolves once enumeration has returned.
-    pub(crate) fn exited(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
+    pub(crate) fn exited(&self) -> impl Future<Output = ()> + Send + use<> {
         self.thread.exited()
     }
 }

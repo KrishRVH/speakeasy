@@ -67,13 +67,15 @@ module unless a test file is named.
   owner and worker on public audio, opt-in.
 - **Transcript cleanup**: [transcript.rs](../crates/app/src/transcript.rs), with the filler policy
   in `Config::fillers` ([config.rs](../crates/app/src/config.rs)). Tested in transcript.rs.
-- **Insertion**: [platform/src/insertion.rs](../crates/platform/src/insertion.rs),
+- **Insertion**: [platform/src/insertion.rs](../crates/platform/src/insertion.rs) with the Windows
+  and macOS commit protocol in [insertion/commit.rs](../crates/platform/src/insertion/commit.rs),
   [input.rs](../crates/platform/src/input.rs),
   [windows/insertion.rs](../crates/platform/src/windows/insertion.rs),
   [macos.rs](../crates/platform/src/macos.rs), [linux/x11/](../crates/platform/src/linux/x11),
   [linux/portal/](../crates/platform/src/linux/portal), and
   [linux/ei.rs](../crates/platform/src/linux/ei.rs) own delivery, the permit commit, and clipboard
-  checks. [insertion/tests.rs](../crates/platform/src/insertion/tests.rs) and the input, X11,
+  checks. [insertion/tests.rs](../crates/platform/src/insertion/tests.rs),
+  [insertion/commit/tests.rs](../crates/platform/src/insertion/commit/tests.rs), and the input, X11,
   portal, and EI modules test them; an opt-in test in windows/insertion.rs checks the Windows
   clipboard on a private window station.
 - **Shortcuts and desktop adapters**: [keyboard.rs](../crates/platform/src/keyboard.rs),

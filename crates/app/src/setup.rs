@@ -17,7 +17,7 @@ use std::{
 };
 
 use anyhow::anyhow;
-use speakeasy_platform::{OwnedThread, StoppableThread};
+use speakeasy_platform::StoppableThread;
 use tokio::{
     io::AsyncReadExt,
     process::{Child, Command},
@@ -115,7 +115,7 @@ impl Setup {
     ) -> anyhow::Result<Self> {
         let (progress, updates) = watch::channel(Progress::default());
         let (finish, result) = async_channel::bounded(1);
-        let thread = OwnedThread::spawn_stoppable("setup", move |cancelled| {
+        let thread = StoppableThread::spawn("setup", move |cancelled| {
             if let Some(result) = work(progress, cancelled) {
                 #[expect(
                     clippy::let_underscore_must_use,

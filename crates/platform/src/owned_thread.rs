@@ -36,20 +36,6 @@ impl OwnedThread {
         })
     }
 
-    /// Runs `body` on a new thread called `name`, handing it a lane that never carries a value and
-    /// closes once the returned thread is asked to stop or dropped.
-    ///
-    /// # Errors
-    /// Returns the operating system's refusal to create the thread.
-    pub fn spawn_stoppable(
-        name: &str,
-        body: impl FnOnce(async_channel::Receiver<Infallible>) + Send + 'static,
-    ) -> io::Result<StoppableThread> {
-        let (stop, stopping) = async_channel::bounded(1);
-        let thread = Self::spawn(name, move || body(stopping))?;
-        Ok(StoppableThread { stop, thread })
-    }
-
     /// The thread, for unparking a body that parks.
     #[must_use]
     pub const fn thread(&self) -> &thread::Thread {
@@ -57,7 +43,7 @@ impl OwnedThread {
     }
 
     /// Resolves once the body has returned or unwound.
-    pub fn exited(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
+    pub fn exited(&self) -> impl Future<Output = ()> + Send + use<> {
         let exit = self.exit.clone();
         async move { exit.closed().await }
     }
@@ -108,13 +94,27 @@ pub struct StoppableThread {
 }
 
 impl StoppableThread {
+    /// Runs `body` on a new thread called `name`, handing it a lane that never carries a value and
+    /// closes once [`request_stop`](Self::request_stop) runs or this value drops.
+    ///
+    /// # Errors
+    /// Returns the operating system's refusal to create the thread.
+    pub fn spawn(
+        name: &str,
+        body: impl FnOnce(async_channel::Receiver<Infallible>) + Send + 'static,
+    ) -> io::Result<Self> {
+        let (stop, stopping) = async_channel::bounded(1);
+        let thread = OwnedThread::spawn(name, move || body(stopping))?;
+        Ok(Self { stop, thread })
+    }
+
     /// Asks the body to stop, without joining it.
     pub fn request_stop(&self) {
         self.stop.close();
     }
 
     /// Resolves once the body has returned or unwound.
-    pub fn stopped(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
+    pub fn stopped(&self) -> impl Future<Output = ()> + Send + use<> {
         self.thread.exited()
     }
 
@@ -135,7 +135,7 @@ impl Drop for StoppableThread {
 mod tests {
     use std::{sync::mpsc, thread, time::Duration};
 
-    use super::OwnedThread;
+    use super::{OwnedThread, StoppableThread};
 
     const PATIENCE: Duration = Duration::from_secs(5);
 
@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn dropping_a_stoppable_thread_stops_its_body_before_joining() -> anyhow::Result<()> {
-        let stoppable = OwnedThread::spawn_stoppable("stops", |stop| {
+        let stoppable = StoppableThread::spawn("stops", |stop| {
             let Err(_closed) = stop.recv_blocking();
         })?;
         let (dropped, observed) = mpsc::channel();

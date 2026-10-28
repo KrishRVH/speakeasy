@@ -177,7 +177,7 @@ fn manual_paste_wins_over_keep_clipboard() {
     };
     assert_eq!(config.text_delivery(), TextDelivery::Copy);
     assert_eq!(config.delivery(), Delivery::Paste);
-    assert!(config.desktop_options().manual_paste);
+    assert_eq!(config.desktop_options().paste, LinuxPaste::Manual);
 }
 
 #[test]

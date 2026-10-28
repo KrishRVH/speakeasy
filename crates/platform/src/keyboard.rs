@@ -291,9 +291,9 @@ impl Decision {
 #[derive(Clone, Copy, Default)]
 pub(super) struct Modifiers {
     pub(super) shift: bool,
-    /// Any other held combination, including part of the talk shortcut alone, which makes Shift
-    /// part of another shortcut.
-    pub(super) shortcut: bool,
+    /// Any other held combination, which makes Shift part of another shortcut; part of the talk
+    /// shortcut alone counts.
+    pub(super) other_shortcut: bool,
     /// The hold-to-talk shortcut, macOS Fn or Windows Ctrl+Win, which may be down while Shift
     /// draws.
     pub(super) talk: bool,
@@ -302,25 +302,36 @@ pub(super) struct Modifiers {
 impl Modifiers {
     /// Insertion waits while any modifier is held, so a paste never merges with the shortcut.
     pub(super) const fn any(self) -> bool {
-        self.shift || self.shortcut || self.talk
+        self.shift || self.other_shortcut || self.talk
     }
 
     /// Shift alone draws, so Shift shortcuts never draw; the talk shortcut does not count, since
     /// the user may still be holding it after pressing S.
     pub(super) const fn draws(self) -> bool {
-        self.shift && !self.shortcut
+        self.shift && !self.other_shortcut
     }
 }
 
 /// The keys Windows reports physically held just before a hook event, which corrects for events
 /// the hook missed, such as releases on the secure desktop.
 #[cfg(any(target_os = "windows", test))]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(super) struct Physical {
     /// Each of [`Windows::CHORD_KEYS`].
-    pub(super) chord_keys: [bool; 4],
-    /// [`Modifiers::shortcut`]: Shift pressed now belongs to another shortcut.
-    pub(super) shortcut: bool,
+    chord_keys: [bool; 4],
+    /// [`Modifiers::other_shortcut`]: Shift pressed now belongs to another shortcut.
+    other_shortcut: bool,
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl Physical {
+    /// Reads each key's state through `down`, by virtual-key code.
+    pub(super) fn read(down: impl Fn(u16) -> bool) -> Self {
+        Self {
+            chord_keys: Windows::CHORD_KEYS.map(&down),
+            other_shortcut: Windows::modifiers(down).other_shortcut,
+        }
+    }
 }
 
 /// Ctrl+Win policy over virtual-key codes from the low-level keyboard hook.
@@ -337,7 +348,7 @@ impl Windows {
     const ALT: u16 = 0x12;
     const AREA: u16 = 0x41;
     /// Either Ctrl with either Windows key holds the chord.
-    pub(super) const CHORD_KEYS: [u16; 4] = [
+    const CHORD_KEYS: [u16; 4] = [
         Self::LEFT_CONTROL,
         Self::RIGHT_CONTROL,
         Self::LEFT_WINDOWS,
@@ -365,7 +376,7 @@ impl Windows {
         let windows = down(Self::LEFT_WINDOWS) || down(Self::RIGHT_WINDOWS);
         Modifiers {
             shift: down(Self::SHIFT),
-            shortcut: down(Self::ALT) || control != windows,
+            other_shortcut: down(Self::ALT) || control != windows,
             talk: control && windows,
         }
     }
@@ -408,7 +419,7 @@ impl Windows {
     fn decide(&mut self, key: u32, down: bool, physical: Physical, at: Instant) -> Decision {
         let key = u16::try_from(key).unwrap_or(u16::MAX);
         if Self::SHIFT_KEYS.contains(&key) {
-            let pinned = self.taps.shift(down, physical.shortcut, at);
+            let pinned = self.taps.shift(down, physical.other_shortcut, at);
             return Decision::pass(pinned.map(Action::Pin));
         }
         if let Some(decision) = self.chord_key(key, down) {
@@ -552,13 +563,13 @@ impl Mac {
                 code: Self::LEFT_SHIFT | Self::RIGHT_SHIFT,
                 held,
             } => {
-                let pinned = self.taps.shift(held.shift, held.shortcut, at);
+                let pinned = self.taps.shift(held.shift, held.other_shortcut, at);
                 Decision::pass(pinned.map(Action::Pin))
             },
             // A change that leaves one of them held is a press.
             MacEvent::FlagsChanged { code, held } if Self::SHORTCUT_MODIFIERS.contains(&code) => {
                 self.taps.interrupt();
-                self.chord.other_key(held.shortcut)
+                self.chord.other_key(held.other_shortcut)
             },
             MacEvent::FlagsChanged { .. } => {
                 self.taps.interrupt();

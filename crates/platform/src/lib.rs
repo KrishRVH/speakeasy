@@ -35,7 +35,7 @@ use self::windows as native;
 pub use self::windows::attach_console;
 pub use self::{
     desktop::{
-        DesktopOptions, InputMonitor, NativeWindow, copy_text, prepare, reduced_motion,
+        DesktopOptions, InputMonitor, LinuxPaste, NativeWindow, copy_text, prepare, reduced_motion,
         show_startup_error,
     },
     input::{Input, InputSender, InsertPermit, Taps},

@@ -26,7 +26,7 @@ use zbus::{
 use self::insertion::Insertions;
 use super::{APPLICATION_ID, ShortcutLabels, ei, owner_changes, stopping, token::TokenStore, x11};
 use crate::{
-    DesktopOptions, Input, InputSender, InsertPermit,
+    DesktopOptions, Input, InputSender, InsertPermit, LinuxPaste,
     insertion::{Insertion, Reply},
 };
 
@@ -442,7 +442,7 @@ pub(super) async fn run(
 ) -> anyhow::Result<()> {
     // Desktop bindings and manual paste need neither portal shortcuts nor keyboard input;
     // Xwayland serves the copy.
-    if options.manual_paste && options.external_shortcut {
+    if options.paste == LinuxPaste::Manual && options.external_shortcut {
         return x11::run(input, options, requests, stop).await;
     }
     let (mut portal, mut changes) = tokio::select! {
@@ -471,15 +471,18 @@ pub(super) async fn run(
 
 async fn bind(portal: &mut Portal, options: &DesktopOptions) -> anyhow::Result<Bound> {
     // A host without libei fails here, before the user is asked for permissions it cannot use.
-    let libei = (!options.manual_paste).then(ei::Api::load).transpose()?;
+    let libei = (options.paste != LinuxPaste::Manual)
+        .then(ei::Api::load)
+        .transpose()?;
     let mut labels = ShortcutLabels::new(options);
     let shortcut_session = if options.external_shortcut {
         None
     } else {
         Some(bind_shortcuts(portal, options, &mut labels).await?)
     };
+    let terminal = options.paste == LinuxPaste::Terminal;
     let remote = match libei {
-        Some(libei) => Some(start_remote_desktop(portal, libei, options.terminal_paste).await?),
+        Some(libei) => Some(start_remote_desktop(portal, libei, terminal).await?),
         None => None,
     };
     Ok(Bound {

@@ -21,7 +21,7 @@ use super::{
     transfer::{Selection, Transfers, transfer},
 };
 use crate::{
-    Delivery, DesktopOptions, InputSender, InsertPermit, Inserted,
+    Delivery, DesktopOptions, InputSender, InsertPermit, Inserted, LinuxPaste,
     insertion::{Insertion, MODIFIER_WAIT, Reply},
     linux::{
         CLIPBOARD_CHANGED, COPIED_FOR_MANUAL_PASTE, NO_PASTE_BINDING,
@@ -166,7 +166,7 @@ impl<'a> Insertions<'a> {
         self.bound.dispatch()?;
         let Some((request, _)) = self.pending.take_if(|(request, started)| {
             !request.permit.active()
-                || self.options.manual_paste
+                || self.options.paste == LinuxPaste::Manual
                 || request.delivery == Delivery::Direct
                 || self.bound.sender().is_some_and(ei::Sender::can_paste)
                 || started.elapsed() >= MODIFIER_WAIT
@@ -460,7 +460,7 @@ fn finish_paste(
     if let Some(outcome) = Delivery::Paste.check_focus(external) {
         return outcome;
     }
-    if options.manual_paste {
+    if options.paste == LinuxPaste::Manual {
         return COPIED_FOR_MANUAL_PASTE;
     }
     let Some(sender) = bound.sender_mut() else {

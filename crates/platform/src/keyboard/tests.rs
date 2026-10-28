@@ -22,12 +22,12 @@ const ALT: u32 = 0x12;
 const MAC_Q: i64 = 12;
 const NONE_HELD: Physical = Physical {
     chord_keys: [false; 4],
-    shortcut: false,
+    other_shortcut: false,
 };
 /// What a macOS key event's flags report with no modifier held.
 const NO_MODIFIERS: Modifiers = Modifiers {
     shift: false,
-    shortcut: false,
+    other_shortcut: false,
     talk: false,
 };
 /// What a macOS key event's flags report while Fn is held.
@@ -38,13 +38,8 @@ const FN_HELD: Modifiers = Modifiers {
 
 /// What Windows reports while `keys` are held.
 fn held(keys: &[u32]) -> Physical {
-    let down = |key: u16| keys.contains(&u32::from(key));
     let control = keys.contains(&LEFT_CONTROL) || keys.contains(&RIGHT_CONTROL);
-    Physical {
-        chord_keys: Windows::CHORD_KEYS.map(down),
-        shortcut: Windows::modifiers(|key| down(key) || key == Windows::CONTROL && control)
-            .shortcut,
-    }
+    Physical::read(|key| keys.contains(&u32::from(key)) || key == Windows::CONTROL && control)
 }
 
 fn now() -> Instant {
@@ -114,7 +109,7 @@ fn shift_draws_beside_fn_but_any_modifier_holds_paste() {
     assert!(
         !Modifiers {
             shift: true,
-            shortcut: true,
+            other_shortcut: true,
             ..NO_MODIFIERS
         }
         .draws(),
@@ -131,7 +126,7 @@ fn shift_draws_beside_fn_but_any_modifier_holds_paste() {
     );
     assert!(
         Modifiers {
-            shortcut: true,
+            other_shortcut: true,
             ..NO_MODIFIERS
         }
         .any(),
@@ -415,7 +410,7 @@ fn shift_taps_inside_another_shortcut_never_pin() {
         code: Mac::LEFT_SHIFT,
         held: Modifiers {
             shift: down,
-            shortcut: true,
+            other_shortcut: true,
             ..NO_MODIFIERS
         },
     };
@@ -596,7 +591,7 @@ fn a_tap_outage_ends_a_hold_but_not_a_released_dictation() -> anyhow::Result<()>
 #[test]
 fn command_option_or_control_during_fn_is_another_shortcut() {
     let shortcut = Modifiers {
-        shortcut: true,
+        other_shortcut: true,
         ..FN_HELD
     };
     for code in [

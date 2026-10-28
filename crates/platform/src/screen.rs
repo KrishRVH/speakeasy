@@ -21,10 +21,7 @@ use self::unsupported as native;
 use crate::macos::screen as native;
 #[cfg(target_os = "windows")]
 use crate::windows::screen as native;
-use crate::{
-    NativeWindow,
-    owned_thread::{OwnedThread, StoppableThread},
-};
+use crate::{NativeWindow, StoppableThread};
 
 /// How often the pointer is sampled.
 const POINTER_INTERVAL: Duration = Duration::from_millis(8);
@@ -283,7 +280,7 @@ impl ScreenCapture {
         longest_edge: u32,
         events: Sender<ScreenEvent>,
     ) -> anyhow::Result<Self> {
-        let thread = OwnedThread::spawn_stoppable("screen-capture", move |stopping| {
+        let thread = StoppableThread::spawn("screen-capture", move |stopping| {
             native::capture(target, interval, longest_edge, &events, &stopping);
         })?;
         Ok(Self { thread })
@@ -296,7 +293,7 @@ impl ScreenCapture {
     }
 
     /// Resolves once the capture has released the display.
-    pub fn stopped(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
+    pub fn stopped(&self) -> impl Future<Output = ()> + Send + use<> {
         self.thread.stopped()
     }
 }
@@ -316,7 +313,7 @@ impl PointerMonitor {
     ///
     /// Fails when the thread cannot start.
     pub fn start(display: Display, samples: Sender<PointerSample>) -> anyhow::Result<Self> {
-        let thread = OwnedThread::spawn_stoppable("pointer", move |stopping| {
+        let thread = StoppableThread::spawn("pointer", move |stopping| {
             let mut last: Option<PointerSample> = None;
             while !stopping.is_closed() && !samples.is_closed() {
                 if let Some(sample) = native::pointer(display.native)
@@ -337,7 +334,7 @@ impl PointerMonitor {
     }
 
     /// Resolves once the monitor has stopped.
-    pub fn stopped(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
+    pub fn stopped(&self) -> impl Future<Output = ()> + Send + use<> {
         self.thread.stopped()
     }
 }

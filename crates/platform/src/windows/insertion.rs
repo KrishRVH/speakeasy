@@ -29,7 +29,7 @@ pub(crate) fn copy_text(text: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The native steps of one insertion, which [`crate::insertion::insert`] puts in order.
+/// The native steps of one Windows insertion, as [`NativeInsert`] defines them.
 pub(crate) struct Insert;
 
 /// Keyboard input built in full, submitted only after the recording commits.

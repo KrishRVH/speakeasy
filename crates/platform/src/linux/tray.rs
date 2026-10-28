@@ -13,7 +13,7 @@ use zbus::{
 };
 
 use super::owner_changes;
-use crate::{OwnedThread, StoppableThread, TrayItem, TrayMenu};
+use crate::{StoppableThread, TrayItem, TrayMenu};
 
 const WATCHER: &str = "org.kde.StatusNotifierWatcher";
 const WATCHER_PATH: &str = "/StatusNotifierWatcher";
@@ -84,7 +84,7 @@ impl NativeTray {
     pub fn start() -> anyhow::Result<(Self, Receiver<TrayAction>)> {
         let (updates, incoming) = async_channel::bounded(1);
         let (actions, received) = async_channel::bounded(ACTION_BACKLOG);
-        let thread = OwnedThread::spawn_stoppable("tray-service", move |stop_requests| {
+        let thread = StoppableThread::spawn("tray-service", move |stop_requests| {
             if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()

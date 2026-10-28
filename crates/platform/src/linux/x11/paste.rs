@@ -23,7 +23,7 @@ use super::{
     clipboard::{Clipboard, ClipboardAccess as _},
 };
 use crate::{
-    Delivery, DesktopOptions, InputSender, Inserted, OwnedThread,
+    Delivery, DesktopOptions, InputSender, Inserted, LinuxPaste, OwnedThread,
     insertion::{
         Insertion, PASTE_AFTER_RELEASE, Reply, abandon_queued, wait_for_released_modifiers,
     },
@@ -165,7 +165,7 @@ impl Paster {
         request: &Insertion,
     ) -> anyhow::Result<ControlFlow<Inserted, Window>> {
         let previous_owner = self.clipboard.owner()?;
-        let shortcut_held = !self.options.manual_paste && {
+        let shortcut_held = self.options.paste != LinuxPaste::Manual && {
             let locks = self.keyboard.lock_modifiers();
             wait_for_released_modifiers(&request.permit, || {
                 let keys = self.clipboard.connection.query_keymap()?.reply()?.keys;
@@ -189,7 +189,7 @@ impl Paster {
                 Inserted::Cancelled
             }));
         };
-        if self.options.manual_paste {
+        if self.options.paste == LinuxPaste::Manual {
             return Ok(ControlFlow::Break(COPIED_FOR_MANUAL_PASTE));
         }
         if shortcut_held {
@@ -199,10 +199,11 @@ impl Paster {
     }
 
     fn paste_copied(&self, request: &Insertion, owner: Window) -> anyhow::Result<Inserted> {
+        let terminal = self.options.paste == LinuxPaste::Terminal;
         // The first layout is the only one XTEST types through.
-        let Some(chord) = PasteChord::resolve(self.options.terminal_paste, |symbol| {
-            self.keyboard.unshifted_keycode(symbol)
-        }) else {
+        let Some(chord) =
+            PasteChord::resolve(terminal, |symbol| self.keyboard.unshifted_keycode(symbol))
+        else {
             return Ok(NO_PASTE_BINDING);
         };
         let connection = &self.clipboard.connection;

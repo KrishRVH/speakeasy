@@ -102,7 +102,7 @@ impl Monitor {
         clippy::unused_self,
         reason = "Linux insertion threads belong to the desktop thread, which joins them before exiting, so none outlives the one InputMonitor joins"
     )]
-    pub(crate) fn stopped(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
+    pub(crate) fn stopped(&self) -> impl Future<Output = ()> + Send + use<> {
         std::future::ready(())
     }
 }

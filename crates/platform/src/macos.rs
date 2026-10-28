@@ -73,7 +73,7 @@ impl Monitor {
         self.insertion.request_stop();
     }
 
-    pub(super) fn stopped(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
+    pub(super) fn stopped(&self) -> impl Future<Output = ()> + Send + use<> {
         self.insertion.stopped()
     }
 }
@@ -508,7 +508,7 @@ fn modifiers_in(flags: objc2_core_graphics::CGEventFlags) -> Modifiers {
 
     Modifiers {
         shift: flags.contains(CGEventFlags::MaskShift),
-        shortcut: flags.intersects(
+        other_shortcut: flags.intersects(
             CGEventFlags::MaskControl | CGEventFlags::MaskAlternate | CGEventFlags::MaskCommand,
         ),
         talk: flags.contains(CGEventFlags::MaskSecondaryFn),
@@ -520,7 +520,7 @@ pub(super) fn copy_text(text: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The native steps of one insertion, which [`insertion::insert`] puts in order.
+/// The native steps of one macOS insertion, as [`insertion::NativeInsert`] defines them.
 pub(super) struct Insert;
 
 impl insertion::NativeInsert for Insert {

@@ -22,7 +22,7 @@ use std::{
 use anyhow::{Context, anyhow, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use speakeasy_platform::{Delivery, DesktopOptions};
+use speakeasy_platform::{Delivery, DesktopOptions, LinuxPaste};
 
 use crate::{theme::Theme, transcript::Fillers};
 
@@ -113,16 +113,15 @@ impl From<DesktopOptions> for LinuxSettings {
         DesktopOptions {
             shortcut,
             cancel,
-            terminal_paste,
-            manual_paste,
+            paste,
             external_shortcut,
         }: DesktopOptions,
     ) -> Self {
         Self {
             shortcut,
             cancel,
-            terminal_paste,
-            manual_paste,
+            terminal_paste: paste == LinuxPaste::Terminal,
+            manual_paste: paste == LinuxPaste::Manual,
             external_shortcut,
         }
     }
@@ -138,11 +137,17 @@ impl From<LinuxSettings> for DesktopOptions {
             external_shortcut,
         }: LinuxSettings,
     ) -> Self {
+        let paste = if manual_paste {
+            LinuxPaste::Manual
+        } else if terminal_paste {
+            LinuxPaste::Terminal
+        } else {
+            LinuxPaste::Standard
+        };
         Self {
             shortcut,
             cancel,
-            terminal_paste,
-            manual_paste,
+            paste,
             external_shortcut,
         }
     }
