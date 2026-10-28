@@ -132,7 +132,7 @@ pub(crate) struct Footage {
 pub(crate) enum Published {
     /// The bundle was written and its summary copied.
     Copied,
-    /// Cancellation came first; nothing was written or copied.
+    /// Cancellation came first; no bundle appeared and nothing was copied.
     Cancelled,
 }
 
@@ -163,7 +163,7 @@ pub(crate) trait Ports: Send + 'static {
     ) -> anyhow::Result<Self::Screen>;
 
     /// Turns a finished Show's footage and its narration, already on the Show's timeline, into
-    /// a bundle; once `permit` commits, writes it and copies its summary.
+    /// a bundle, which appears with its summary copied only once `permit` commits.
     fn publish(
         &self,
         footage: Footage,
