@@ -42,6 +42,7 @@ const METER_INTERVAL: Duration = Duration::from_millis(32);
 const DRAIN_INTERVAL: Duration = Duration::from_millis(5);
 const METER_FLOOR_DBFS: f32 = -60.0;
 const METER_TOP_DBFS: f32 = -6.0;
+const CAPTURE_STOPPED: &str = "Microphone stopped unexpectedly. Try recording again.";
 
 /// One microphone capture on its own thread. Fields drop in declaration order, so a capture
 /// dropped without retiring cancels before its thread joins; the session owner retires it instead,
@@ -83,16 +84,11 @@ impl Capture {
             let control = Arc::clone(&control);
             move || {
                 // A panicked capture's state is discarded; only its event lane is used afterwards.
-                let result =
-                    panic::catch_unwind(AssertUnwindSafe(|| work(&events, &control, &heard)))
-                        .unwrap_or_else(|_| {
-                            Err(anyhow!(
-                                "Microphone stopped unexpectedly. Try recording again."
-                            ))
-                        });
-                let (outcome, device) = match result {
-                    Ok(Captured { outcome, device }) => (outcome, Some(device)),
-                    Err(error) => (Err(error), None),
+                let ran = panic::catch_unwind(AssertUnwindSafe(|| work(&events, &control, &heard)));
+                let (outcome, device) = match ran {
+                    Ok(Ok(Captured { outcome, device })) => (outcome, Some(device)),
+                    Ok(Err(error)) => (Err(error), None),
+                    Err(_) => (Err(anyhow!(CAPTURE_STOPPED)), None),
                 };
                 #[expect(
                     clippy::let_underscore_must_use,

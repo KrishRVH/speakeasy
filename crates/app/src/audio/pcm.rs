@@ -12,7 +12,6 @@ use crate::runtime::ports::Sealed;
 const WAV_HEADER_BYTES: usize = 44;
 const SAMPLE_RATE_OFFSET: usize = 24;
 pub(super) const SAMPLE_BYTES: usize = 2;
-pub(super) const MAX_SAMPLE_RATE: u32 = 192_000;
 const MINIMUM_RECORDING: Duration = Duration::from_millis(200);
 const RECLAIM_SLACK_BYTES: usize = 8 * 1024 * 1024;
 
@@ -196,6 +195,7 @@ mod tests {
     use anyhow::Context;
 
     use super::*;
+    use crate::audio::stream::MAX_SAMPLE_RATE;
 
     fn pcm_from(segments: &[(usize, i16)]) -> Pcm16 {
         let mut pcm = Pcm16::with_reservation(0, usize::MAX);
@@ -272,7 +272,9 @@ mod tests {
             (rate, 3000),
             (rate * 2, 0),
         ]);
-        let expected = pcm.audio()[rate * 3..rate * 15].to_vec();
+        let padding = rate / 2;
+        let kept = bytes_in(rate * 2 - padding)..bytes_in(rate * 7 + padding);
+        let expected = pcm.audio()[kept].to_vec();
         let click = pcm_from(&[(rate / 20, 3000), (rate * 2 - rate / 20, 0)]);
         let rate = u32::try_from(rate).unwrap();
         let sealed = pcm.seal(Audibility::new(rate), rate).unwrap().unwrap();
@@ -314,7 +316,9 @@ mod tests {
             .as_chunks_mut::<SAMPLE_BYTES>()
             .0
             .fill(3000_i16.to_le_bytes());
-        let expected = pcm.audio()[rate * 79..rate * 101].to_vec();
+        let padding = rate / 2;
+        let kept = bytes_in(rate * 40 - padding)..bytes_in(rate * 50 + padding);
+        let expected = pcm.audio()[kept].to_vec();
         let rate = u32::try_from(rate).unwrap();
         let sealed = pcm.seal(Audibility::new(rate), rate).unwrap().unwrap();
         assert_eq!(&sealed.wav[WAV_HEADER_BYTES..], expected);
@@ -351,20 +355,21 @@ mod tests {
 
         let rate = 48_000;
         let fixture = pcm_from(&[(rate, 0), (rate * 297, 3000), (rate * 2, 0)]);
+        let rate = u32::try_from(rate)?;
         let mut timings = Vec::new();
         for _ in 0..21 {
             let pcm = Pcm16 {
                 bytes: fixture.bytes.clone(),
                 limit: usize::MAX,
             };
-            let mut speech = Audibility::new(48_000);
+            let mut speech = Audibility::new(rate);
             // Classification runs on the consumer during recording, outside the stop span.
             for length in (480 * SAMPLE_BYTES..pcm.audio().len()).step_by(480 * SAMPLE_BYTES) {
                 speech.extend(black_box(&pcm.audio()[..length]));
             }
             let started = Instant::now();
             let wav = black_box(pcm)
-                .seal(speech, 48_000)?
+                .seal(speech, rate)?
                 .context("Audible fixture")?;
             timings.push(started.elapsed().as_secs_f64() * 1000.0);
             black_box(&wav);

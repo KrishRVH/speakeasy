@@ -9,11 +9,9 @@ use cpal::{SampleFormat, SizedSample, traits::DeviceTrait};
 use rtrb::Producer;
 use speakeasy_core::gesture::RECORDING_LIMIT;
 
-use super::{
-    control::{Control, Mode},
-    pcm::MAX_SAMPLE_RATE,
-};
+use super::control::{Control, Mode};
 
+pub(super) const MAX_SAMPLE_RATE: u32 = 192_000;
 const MAX_CHANNELS: usize = 32;
 const UNSUPPORTED_FORMAT: &str = "Microphone format is unsupported. Change it in OS sound settings or choose another microphone in Settings.";
 
