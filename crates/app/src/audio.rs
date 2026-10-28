@@ -9,10 +9,9 @@ mod speech;
 mod stream;
 
 use std::{
-    convert::Infallible,
     panic::{self, AssertUnwindSafe},
     sync::Arc,
-    thread::{self, JoinHandle, Thread},
+    thread::{self, Thread},
     time::{Duration, Instant},
 };
 
@@ -43,15 +42,15 @@ const DRAIN_INTERVAL: Duration = Duration::from_millis(5);
 const METER_FLOOR_DBFS: f32 = -60.0;
 const METER_TOP_DBFS: f32 = -6.0;
 
-/// One microphone capture on its own thread. Dropping it cancels without joining, so it cannot be
-/// an `OwnedThread`; the session owner retires it to await native teardown.
+/// One microphone capture on its own thread. Fields drop in declaration order, so a capture
+/// dropped without retiring cancels before its thread joins; the session owner retires it instead,
+/// awaiting native teardown without blocking its executor.
 pub(crate) struct Capture {
     signal: Signal,
     /// Each message says a cue is starting, so the speech gate listens beneath it.
     cues: Sender<()>,
-    /// Never sends; it closes once the thread has torn down its stream and reported `Finished`.
-    exit: Sender<Infallible>,
-    thread: JoinHandle<()>,
+    /// Exits once it has reported `Finished` and torn down its stream.
+    thread: OwnedThread,
 }
 
 impl Capture {
@@ -79,16 +78,17 @@ impl Capture {
     ) -> anyhow::Result<Self> {
         let control = Arc::new(Control::default());
         let (cues, heard) = async_channel::unbounded();
-        let (exit, alive) = async_channel::bounded::<Infallible>(1);
-        let thread = thread::Builder::new().name("audio-capture".into()).spawn({
+        let thread = OwnedThread::spawn("audio-capture", {
             let control = Arc::clone(&control);
             move || {
                 // A panicked capture's state is discarded; only its event lane is used afterwards.
                 let result =
                     panic::catch_unwind(AssertUnwindSafe(|| work(&events, &control, &heard)))
-                    .unwrap_or_else(|_| {
-                        Err(anyhow!("Microphone stopped unexpectedly. Try recording again."))
-                    });
+                        .unwrap_or_else(|_| {
+                            Err(anyhow!(
+                                "Microphone stopped unexpectedly. Try recording again."
+                            ))
+                        });
                 let (outcome, device) = match result {
                     Ok(Captured { outcome, device }) => (outcome, Some(device)),
                     Err(error) => (Err(error), None),
@@ -101,8 +101,6 @@ impl Capture {
                 // Audio is sealed before this potentially blocking driver teardown. Retirement
                 // acknowledges only after teardown, so another capture cannot overlap it.
                 drop(device);
-                // Naming `alive` moves it into this closure; dropping it last closes `exit`.
-                drop(alive);
             }
         })?;
         let signal = Signal {
@@ -112,7 +110,6 @@ impl Capture {
         Ok(Self {
             signal,
             cues,
-            exit,
             thread,
         })
     }
@@ -124,22 +121,10 @@ impl Capturing for Capture {
     }
 
     fn retire(self) -> impl Future<Output = ()> + Send + 'static {
-        let Self {
-            signal,
-            exit,
-            thread,
-            ..
-        } = self;
+        let Self { signal, thread, .. } = self;
         // Dropping the signal cancels capture and wakes the thread.
         drop(signal);
-        async move {
-            exit.closed().await;
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "The capture already reported its outcome; a join error leaves no session to fail"
-            )]
-            let _ = thread.join();
-        }
+        thread.join()
     }
 }
 
@@ -153,8 +138,8 @@ impl Listening for Capture {
     }
 }
 
-/// Finish and cancel requests for the capture thread. Dropping it cancels without joining, so
-/// discarding a capture never waits for an audio driver on the owner's input path.
+/// Finish and cancel requests for the capture thread. Dropping it cancels without waiting, so
+/// retiring a capture never waits for an audio driver on the owner's input path.
 struct Signal {
     control: Arc<Control>,
     thread: Thread,

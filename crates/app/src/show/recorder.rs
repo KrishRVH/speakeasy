@@ -38,9 +38,11 @@ const PIN_LANE: usize = 8;
 /// The failure a recording reports when capture or the recorder itself stops without an outcome.
 const CAPTURE_STOPPED: &str = "Screen capture stopped unexpectedly. Try again.";
 
-/// A Show's screen recording; the session owner finishes or retires it like a microphone.
+/// A Show's screen recording; the session owner finishes or retires it like a microphone. Fields
+/// drop in declaration order, so a recorder dropped without retiring cancels before its thread
+/// joins.
 pub(crate) struct ScreenRecorder {
-    /// Sending finishes the recording; closing it cancels.
+    /// Sending finishes the recording; closing it, as dropping this only sender does, cancels.
     finish: Sender<()>,
     /// The double taps of Shift that asked for pins.
     pins: Sender<Taps>,
@@ -92,12 +94,9 @@ impl Capturing for ScreenRecorder {
     }
 
     fn retire(self) -> impl Future<Output = ()> + Send + 'static {
-        self.finish.close();
-        let exited = self.thread.exited();
-        async move {
-            exited.await;
-            drop(self);
-        }
+        let Self { finish, thread, .. } = self;
+        finish.close();
+        thread.join()
     }
 }
 
@@ -108,13 +107,6 @@ impl Pinning for ScreenRecorder {
             reason = "A full lane means pins faster than anyone reads them, and a closed one belongs to an ended recording"
         )]
         let _ = self.pins.try_send(taps);
-    }
-}
-
-/// A recorder dropped without retiring cancels before its thread joins.
-impl Drop for ScreenRecorder {
-    fn drop(&mut self) {
-        self.finish.close();
     }
 }
 

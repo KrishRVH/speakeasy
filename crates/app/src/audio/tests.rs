@@ -90,7 +90,7 @@ async fn sealed_audio_is_reported_before_device_teardown_and_retirement_waits() 
             },
         })
     })?;
-    timeout(PATIENCE, teardown.recv()).await??;
+    let tearing_down = timeout(PATIENCE, teardown.recv()).await;
     let report = timeout(PATIENCE, audio.recv()).await;
     let retirement = capture.retire();
     tokio::pin!(retirement);
@@ -99,6 +99,9 @@ async fn sealed_audio_is_reported_before_device_teardown_and_retirement_waits() 
         .is_err();
     release.send(()).await?;
     timeout(PATIENCE, retirement).await?;
+    // Failing before release would hang: unwinding joins the blocked thread before dropping
+    // `release`.
+    tearing_down??;
     assert!(
         matches!(report?, Ok(CaptureEvent::Finished(SessionId::FIRST, Ok(Some(sealed)))) if sealed.wav == [1, 2])
     );
@@ -121,15 +124,17 @@ async fn capture_retirement_signals_cancel_and_waits_for_teardown() -> anyhow::R
     })?;
     let control = starting.recv().await?;
     let retirement = capture.retire();
-    assert_eq!(control.mode(), Mode::Cancelled);
+    let mode = control.mode();
     tokio::pin!(retirement);
-    assert!(
-        timeout(Duration::from_millis(30), retirement.as_mut())
-            .await
-            .is_err()
-    );
+    let pending = timeout(Duration::from_millis(30), retirement.as_mut())
+        .await
+        .is_err();
     release.send(()).await?;
     timeout(PATIENCE, retirement).await?;
+    // Asserting before release would hang on failure: unwinding joins the blocked thread before
+    // dropping `release`.
+    assert_eq!(mode, Mode::Cancelled);
+    assert!(pending, "Retirement acknowledged before teardown");
     Ok(())
 }
 
@@ -205,11 +210,12 @@ async fn consumer_wakes(cancel: bool, wake_before_park: bool) -> anyhow::Result<
         }
     } else {
         capture.finish();
-        assert_eq!(capture.signal.control.mode(), Mode::Finishing);
+        let mode = capture.signal.control.mode();
         release()?;
         let completed = timeout(Duration::from_millis(400), audio.recv()).await;
         consumer.unpark();
         timeout(PATIENCE, capture.retire()).await?;
+        assert_eq!(mode, Mode::Finishing);
         if !matches!(
             completed,
             Ok(Ok(CaptureEvent::Finished(SessionId::FIRST, Ok(None))))

@@ -7,11 +7,12 @@ use std::{convert::Infallible, io, thread};
 ///
 /// Dropping it joins the thread, so the thread's captures are released before any field declared
 /// after it in the containing value. [`exited`](Self::exited) lets an async owner wait for the body
-/// to finish without blocking its executor.
+/// to finish, and [`join`](Self::join) for the thread to end, without blocking its executor.
 #[derive(Debug)]
 pub struct OwnedThread {
     /// Never sends; it closes once the thread drops the receiving end.
     exit: async_channel::Sender<Infallible>,
+    thread: thread::Thread,
     handle: Option<thread::JoinHandle<()>>,
 }
 
@@ -32,6 +33,7 @@ impl OwnedThread {
             })?;
         Ok(Self {
             exit,
+            thread: handle.thread().clone(),
             handle: Some(handle),
         })
     }
@@ -50,6 +52,12 @@ impl OwnedThread {
         Ok(StoppableThread { stop, thread })
     }
 
+    /// The thread, for unparking a body that parks.
+    #[must_use]
+    pub const fn thread(&self) -> &thread::Thread {
+        &self.thread
+    }
+
     /// Resolves once the body has returned or unwound.
     pub fn exited(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
         let exit = self.exit.clone();
@@ -60,6 +68,21 @@ impl OwnedThread {
     #[must_use]
     pub fn is_finished(&self) -> bool {
         self.exit.is_closed()
+    }
+
+    /// Resolves once the body has returned or unwound and the thread has ended. A thread's end
+    /// still runs its thread-local destructors, such as a COM apartment's teardown, which can
+    /// block, so the join runs on Tokio's blocking pool rather than the awaiting executor.
+    ///
+    /// # Panics
+    /// Panics when awaited outside a Tokio runtime.
+    pub async fn join(self) {
+        self.exited().await;
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "Dropping the thread discards its panic, and a runtime shutting down drops the closure, which joins in place"
+        )]
+        let _ = tokio::task::spawn_blocking(move || drop(self)).await;
     }
 }
 
@@ -137,6 +160,19 @@ mod tests {
         let thread = OwnedThread::spawn("panics", || panic!("owned thread test panic"))?;
         tokio::time::timeout(PATIENCE, thread.exited()).await?;
         assert!(thread.is_finished());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn joining_resolves_only_once_the_body_returns() -> anyhow::Result<()> {
+        let (release, released) = async_channel::bounded(1);
+        let thread = OwnedThread::spawn("joins later", move || released.recv_blocking().unwrap())?;
+        let joined = tokio::spawn(thread.join());
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        let early = joined.is_finished();
+        release.send(()).await?;
+        tokio::time::timeout(PATIENCE, joined).await??;
+        assert!(!early, "Joining resolved while the body still ran");
         Ok(())
     }
 
