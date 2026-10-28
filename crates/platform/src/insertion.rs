@@ -1,5 +1,5 @@
-//! The insertion lane every platform shares, delivery choices, the pre-commit checks every native
-//! adapter shares, and the commit protocol Windows and macOS insertion follow.
+//! The insertion lane every platform shares, delivery choices and their outcomes, the pre-commit
+//! checks every native adapter shares, and the commit protocol Windows and macOS insertion follow.
 
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 use std::panic::{self, AssertUnwindSafe};
@@ -11,11 +11,11 @@ use std::{
 use anyhow::{anyhow, bail};
 use async_channel::{Receiver, Sender};
 
+use crate::InsertPermit;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-use super::native;
+use crate::native;
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
-use super::{InputSender, OwnedThread};
-use super::{InsertPermit, Inserted};
+use crate::{InputSender, OwnedThread};
 
 /// How long insertion waits for the user to let go of shortcut modifiers.
 pub(crate) const MODIFIER_WAIT: Duration = Duration::from_millis(800);
@@ -251,14 +251,29 @@ impl Delivery {
     }
 }
 
+/// Submission outcome; native input cannot prove that the target accepted text.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Inserted {
+    /// Native input was submitted once.
+    Sent,
+    /// Text remains on the clipboard with a manual-paste remedy.
+    Copied(&'static str),
+    /// Insertion authority was revoked before submission.
+    Cancelled,
+    /// Insertion is unavailable or incomplete; the message explains how to recover.
+    Unavailable(&'static str),
+}
+
 /// The clipboard no longer holds the text just written, so pasting would insert someone else's.
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
-const CLIPBOARD_CHANGED: &str =
-    "Clipboard changed, so paste was not sent. New contents were preserved; dictate again.";
+const CLIPBOARD_CHANGED: Inserted = Inserted::Unavailable(
+    "Clipboard changed, so paste was not sent. New contents were preserved; dictate again.",
+);
 /// The clipboard changed while the paste waited for focus and keys.
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
-const CLIPBOARD_CHANGED_BEFORE_PASTE: &str =
-    "Clipboard changed before paste. New contents were preserved; dictate again.";
+const CLIPBOARD_CHANGED_BEFORE_PASTE: Inserted = Inserted::Unavailable(
+    "Clipboard changed before paste. New contents were preserved; dictate again.",
+);
 
 /// The native steps of one Windows or macOS insertion. Implementations perform each step and
 /// decide nothing; [`insert`] owns their order.
@@ -318,7 +333,7 @@ pub(crate) fn insert<N: NativeInsert>(
             native.write(lease, text)?;
             let mark = native.mark();
             if !native.holds(text, &mark)? {
-                return Ok(Inserted::Unavailable(CLIPBOARD_CHANGED));
+                return Ok(CLIPBOARD_CHANGED);
             }
             let keys = native.paste_keys()?;
             if let Some(outcome) =
@@ -327,7 +342,7 @@ pub(crate) fn insert<N: NativeInsert>(
                 return Ok(outcome);
             }
             if native.mark() != mark {
-                return Ok(Inserted::Unavailable(CLIPBOARD_CHANGED_BEFORE_PASTE));
+                return Ok(CLIPBOARD_CHANGED_BEFORE_PASTE);
             }
             keys
         },

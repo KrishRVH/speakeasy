@@ -19,23 +19,21 @@ const LETTER_A: u32 = 0x41;
 const LETTER_Q: u32 = 0x51;
 const LEFT_SHIFT: u32 = 0xA0;
 const ALT: u32 = 0x12;
-const MAC_LEFT_SHIFT: i64 = 56;
 const MAC_Q: i64 = 12;
 const NONE_HELD: Physical = Physical {
     chord_keys: [false; 4],
     shortcut: false,
-};
-/// What a macOS key event's flags report while Fn is held.
-const FN_HELD: Modifiers = Modifiers {
-    shift: false,
-    shortcut: false,
-    talk: true,
 };
 /// What a macOS key event's flags report with no modifier held.
 const NO_MODIFIERS: Modifiers = Modifiers {
     shift: false,
     shortcut: false,
     talk: false,
+};
+/// What a macOS key event's flags report while Fn is held.
+const FN_HELD: Modifiers = Modifiers {
+    talk: true,
+    ..NO_MODIFIERS
 };
 
 /// What Windows reports while `keys` are held.
@@ -58,8 +56,16 @@ fn function(down: bool) -> MacEvent {
         code: Mac::FUNCTION,
         held: Modifiers {
             talk: down,
-            ..Modifiers::default()
+            ..NO_MODIFIERS
         },
+    }
+}
+
+/// A flag change of key `code` while Fn is held, with Shift held when `shift`.
+fn beside_fn(code: i64, shift: bool) -> MacEvent {
+    MacEvent::FlagsChanged {
+        code,
+        held: Modifiers { shift, ..FN_HELD },
     }
 }
 
@@ -76,55 +82,89 @@ fn delivered(decision: &Decision) -> Vec<Action> {
     decision.actions().collect()
 }
 
+/// A Windows policy holding left Ctrl+Win, and what Windows reports while both are held.
+fn windows_holding() -> (Windows, Physical) {
+    let mut policy = Windows::default();
+    policy.observe(LEFT_CONTROL, true, NONE_HELD, now());
+    assert!(
+        policy
+            .observe(LEFT_WINDOWS, true, held(&[LEFT_CONTROL]), now())
+            .starts()
+    );
+    (policy, held(&[LEFT_CONTROL, LEFT_WINDOWS]))
+}
+
+/// A macOS policy holding Fn.
+fn mac_holding() -> Mac {
+    let mut mac = Mac::default();
+    assert!(mac.observe(function(true), keyboard_fn_up, now()).starts());
+    mac
+}
+
 #[test]
 fn shift_draws_beside_fn_but_any_modifier_holds_paste() {
-    let held = |shift, shortcut, talk| Modifiers {
-        shift,
-        shortcut,
-        talk,
-    };
     assert!(
-        held(true, false, true).draws(),
+        Modifiers {
+            shift: true,
+            ..FN_HELD
+        }
+        .draws(),
         "Shift must draw while Fn is held to talk"
     );
     assert!(
-        !held(true, true, false).draws(),
+        !Modifiers {
+            shift: true,
+            shortcut: true,
+            ..NO_MODIFIERS
+        }
+        .draws(),
         "A Shift shortcut must not draw"
     );
+    assert!(FN_HELD.any(), "Fn alone must hold the paste");
     assert!(
-        held(false, false, true).any(),
-        "Fn alone must hold the paste"
-    );
-    assert!(
-        held(true, false, false).any(),
+        Modifiers {
+            shift: true,
+            ..NO_MODIFIERS
+        }
+        .any(),
         "Shift alone must hold the paste"
     );
     assert!(
-        held(false, true, false).any(),
+        Modifiers {
+            shortcut: true,
+            ..NO_MODIFIERS
+        }
+        .any(),
         "A shortcut modifier must hold the paste"
     );
-    assert!(!Modifiers::default().any());
+    assert!(
+        !NO_MODIFIERS.any(),
+        "The paste waited with no modifier held"
+    );
 }
 
 #[test]
 fn shift_draws_beside_ctrl_win_but_not_in_another_windows_shortcut() {
-    let held = |keys: &[u16]| Windows::modifiers(|key| keys.contains(&key));
+    let modifiers = |keys: &[u16]| Windows::modifiers(|key| keys.contains(&key));
     let (shift, control) = (Windows::SHIFT, Windows::CONTROL);
     assert!(
-        held(&[shift, control, Windows::RIGHT_WINDOWS]).draws(),
+        modifiers(&[shift, control, Windows::RIGHT_WINDOWS]).draws(),
         "Shift must draw while Ctrl+Win is still held after S"
     );
     assert!(
-        !held(&[shift, Windows::LEFT_WINDOWS]).draws(),
+        !modifiers(&[shift, Windows::LEFT_WINDOWS]).draws(),
         "Win+Shift, as in Win+Shift+S, must not draw"
     );
-    assert!(!held(&[shift, control]).draws(), "Ctrl+Shift must not draw");
     assert!(
-        !held(&[shift, control, Windows::LEFT_WINDOWS, Windows::ALT]).draws(),
+        !modifiers(&[shift, control]).draws(),
+        "Ctrl+Shift must not draw"
+    );
+    assert!(
+        !modifiers(&[shift, control, Windows::LEFT_WINDOWS, Windows::ALT]).draws(),
         "Alt beside the chord makes another shortcut"
     );
     assert!(
-        held(&[control, Windows::LEFT_WINDOWS]).any(),
+        modifiers(&[control, Windows::LEFT_WINDOWS]).any(),
         "The held chord must hold the paste"
     );
 }
@@ -171,48 +211,35 @@ fn windows_sides_repeats_space_and_passive_escape() {
 
 #[test]
 fn s_during_a_hold_starts_a_show_and_is_swallowed_through_its_release() {
-    let mut policy = Windows::default();
-    policy.observe(LEFT_CONTROL, true, NONE_HELD, now());
-    policy.observe(LEFT_WINDOWS, true, held(&[LEFT_CONTROL]), now());
-    let both = held(&[LEFT_CONTROL, LEFT_WINDOWS]);
+    let (mut policy, both) = windows_holding();
     let show = policy.observe(LETTER_S, true, both, now());
     assert!(show.swallows());
     assert_eq!(show.action, Some(Action::Show(Scope::Screen)));
-    // Reaching for Shift to draw before letting go of the chord keeps the Show.
     let shift = policy.observe(LEFT_SHIFT, true, both, now());
     assert!(!shift.swallows());
-    assert_eq!(shift.action, None);
-    // The chord's release follows, but S's own release still belongs to the shortcut.
+    assert_eq!(shift.action, None, "Shift pressed to draw ended the Show");
     assert_eq!(
         policy.observe(LEFT_CONTROL, false, both, now()).action,
         Some(Action::Release)
     );
-    assert!(policy.observe(LETTER_S, false, NONE_HELD, now()).swallows());
-    // Typing S with no hold reaches the app untouched.
+    assert!(
+        policy.observe(LETTER_S, false, NONE_HELD, now()).swallows(),
+        "S released after the chord reached the app"
+    );
     let typed = policy.observe(LETTER_S, true, NONE_HELD, now());
-    assert!(!typed.swallows());
+    assert!(!typed.swallows(), "S typed with no hold was swallowed");
     assert_eq!(typed.action, None);
 
-    let mut mac = Mac::default();
-    mac.observe(function(true), keyboard_fn_up, now());
+    let mut mac = mac_holding();
     let show = mac.observe(key(Mac::SCREEN, true, FN_HELD), keyboard_fn_up, now());
     assert!(show.swallows());
     assert_eq!(show.action, Some(Action::Show(Scope::Screen)));
-    // macOS reports Shift as a flag change while Fn stays held, and it keeps the Show too.
-    let shift = mac.observe(
-        MacEvent::FlagsChanged {
-            code: MAC_LEFT_SHIFT,
-            held: Modifiers {
-                shift: true,
-                talk: true,
-                ..Modifiers::default()
-            },
-        },
-        keyboard_fn_up,
-        now(),
-    );
+    let shift = mac.observe(beside_fn(Mac::LEFT_SHIFT, true), keyboard_fn_up, now());
     assert!(!shift.swallows());
-    assert_eq!(shift.action, None);
+    assert_eq!(
+        shift.action, None,
+        "Shift pressed to draw ended the macOS Show"
+    );
     assert_eq!(
         mac.observe(function(false), keyboard_fn_up, now()).action,
         Some(Action::Release)
@@ -225,10 +252,7 @@ fn w_and_a_during_a_hold_start_window_and_area_shows() {
         (LETTER_W, Mac::WINDOW, Scope::Window),
         (LETTER_A, Mac::AREA, Scope::Area),
     ] {
-        let mut policy = Windows::default();
-        policy.observe(LEFT_CONTROL, true, NONE_HELD, now());
-        policy.observe(LEFT_WINDOWS, true, held(&[LEFT_CONTROL]), now());
-        let both = held(&[LEFT_CONTROL, LEFT_WINDOWS]);
+        let (mut policy, both) = windows_holding();
         let show = policy.observe(windows_key, true, both, now());
         assert!(show.swallows());
         assert_eq!(show.action, Some(Action::Show(scope)));
@@ -242,8 +266,7 @@ fn w_and_a_during_a_hold_start_window_and_area_shows() {
         assert!(!typed.swallows());
         assert_eq!(typed.action, None);
 
-        let mut mac = Mac::default();
-        mac.observe(function(true), keyboard_fn_up, now());
+        let mut mac = mac_holding();
         let show = mac.observe(key(mac_key, true, FN_HELD), keyboard_fn_up, now());
         assert!(show.swallows());
         assert_eq!(show.action, Some(Action::Show(scope)));
@@ -254,17 +277,16 @@ fn w_and_a_during_a_hold_start_window_and_area_shows() {
     }
 }
 
-/// Replays Shift and other key events, each `(milliseconds, shift, down)`, through the Windows
-/// policy and returns the double taps that asked for a pin, from the first press to the second
-/// release in milliseconds; `shift` false is the letter Q.
-fn windows_pins(events: &[(u64, bool, bool)]) -> Vec<(u64, u64)> {
+/// Replays key events, each `(milliseconds, key, down)`, through the Windows policy with nothing
+/// else held, and returns the double taps that asked for a pin, from the first press to the second
+/// release in milliseconds.
+fn windows_pins(events: &[(u64, u32, bool)]) -> Vec<(u64, u64)> {
     let start = now();
     let millis = |at: Instant| u64::try_from(at.duration_since(start).as_millis()).unwrap();
     let mut policy = Windows::default();
     events
         .iter()
-        .filter_map(|&(offset, shift, down)| {
-            let key = if shift { LEFT_SHIFT } else { LETTER_Q };
+        .filter_map(|&(offset, key, down)| {
             let at = start.checked_add(Duration::from_millis(offset)).unwrap();
             let decision = policy.observe(key, down, NONE_HELD, at);
             assert!(!decision.swallows(), "Shift and typing stay with the app");
@@ -278,22 +300,26 @@ fn windows_pins(events: &[(u64, bool, bool)]) -> Vec<(u64, u64)> {
 
 #[test]
 fn two_quick_taps_of_shift_alone_drop_a_pin() {
-    let tap = |at: u64| [(at, true, true), (at + 80, true, false)];
+    let tap = |at: u64| [(at, LEFT_SHIFT, true), (at + 80, LEFT_SHIFT, false)];
     assert_eq!(windows_pins(&[tap(0), tap(300)].concat()), [(0, 380)]);
-    // Autorepeat while the first tap is held changes nothing.
-    let repeated = [(0, true, true), (40, true, true), (90, true, false)];
+    let repeated = [
+        (0, LEFT_SHIFT, true),
+        (40, LEFT_SHIFT, true),
+        (90, LEFT_SHIFT, false),
+    ];
     assert_eq!(
         windows_pins(&[&repeated[..], &tap(250)].concat()),
-        [(0, 330)]
+        [(0, 330)],
+        "autorepeat while the first tap is held"
     );
     assert_eq!(windows_pins(&[tap(0), tap(700)].concat()), [], "too slow");
-    let held = [(0, true, true), (600, true, false)];
+    let long_press = [(0, LEFT_SHIFT, true), (600, LEFT_SHIFT, false)];
     assert_eq!(
-        windows_pins(&[&held[..], &tap(700)].concat()),
+        windows_pins(&[&long_press[..], &tap(700)].concat()),
         [],
         "Shift held to draw is no tap"
     );
-    let typed = [(150, false, true), (160, false, false)];
+    let typed = [(150, LETTER_Q, true), (160, LETTER_Q, false)];
     assert_eq!(
         windows_pins(&[&tap(0)[..], &typed, &tap(200)].concat()),
         [],
@@ -310,10 +336,7 @@ fn two_quick_taps_of_shift_alone_drop_a_pin() {
 fn shift_taps_pin_beside_the_held_talk_shortcut() {
     let start = now();
     let at = |millis: u64| start + Duration::from_millis(millis);
-    let mut policy = Windows::default();
-    policy.observe(LEFT_CONTROL, true, NONE_HELD, at(0));
-    policy.observe(LEFT_WINDOWS, true, held(&[LEFT_CONTROL]), at(0));
-    let both = held(&[LEFT_CONTROL, LEFT_WINDOWS]);
+    let (mut policy, both) = windows_holding();
     policy.observe(LETTER_S, true, both, at(50));
     policy.observe(LETTER_S, false, both, at(100));
     let tap = |policy: &mut Windows, millis: u64| {
@@ -331,6 +354,21 @@ fn shift_taps_pin_beside_the_held_talk_shortcut() {
     };
     assert_eq!(tap(&mut policy, 700), Some(Action::Pin(taps)));
 
+    let mut mac = mac_holding();
+    let pins: Vec<Option<Action>> = [(500, true), (580, false), (700, true), (780, false)]
+        .into_iter()
+        .map(|(millis, down)| {
+            mac.observe(beside_fn(Mac::LEFT_SHIFT, down), keyboard_fn_up, at(millis))
+                .action
+        })
+        .collect();
+    assert_eq!(pins, [None, None, None, Some(Action::Pin(taps))]);
+}
+
+#[test]
+fn shift_taps_inside_another_shortcut_never_pin() {
+    let start = now();
+    let at = |millis: u64| start + Duration::from_millis(millis);
     let mut policy = Windows::default();
     let pins: Vec<Option<Action>> = [0, 300]
         .into_iter()
@@ -344,8 +382,6 @@ fn shift_taps_pin_beside_the_held_talk_shortcut() {
         })
         .collect();
     assert_eq!(pins, [None, None], "Ctrl+Shift twice is a shortcut");
-    // Alt, or Ctrl alone, held through both taps makes them part of another shortcut, such as a
-    // keyboard layout switch.
     for physical in [held(&[ALT]), held(&[LEFT_CONTROL])] {
         let mut policy = Windows::default();
         let released: Vec<Option<Action>> = [0, 200]
@@ -357,44 +393,30 @@ fn shift_taps_pin_beside_the_held_talk_shortcut() {
                     .action
             })
             .collect();
-        assert_eq!(released, [None, None]);
+        assert_eq!(
+            released,
+            [None, None],
+            "Shift taps beside Alt or Ctrl alone, as in a layout switch, pinned"
+        );
     }
 
-    let shift = |down: bool, code: i64| MacEvent::FlagsChanged {
-        code,
-        held: Modifiers {
-            shift: down,
-            talk: true,
-            ..Modifiers::default()
-        },
-    };
-    let mut mac = Mac::default();
-    mac.observe(function(true), keyboard_fn_up, at(0));
-    let pins: Vec<Option<Action>> = [(500, true), (580, false), (700, true), (780, false)]
-        .into_iter()
-        .map(|(millis, down)| {
-            mac.observe(shift(down, MAC_LEFT_SHIFT), keyboard_fn_up, at(millis))
-                .action
-        })
-        .collect();
-    assert_eq!(pins, [None, None, None, Some(Action::Pin(taps))]);
-    // Another modifier between the taps, here left Option, makes a different shortcut.
-    mac.observe(shift(true, MAC_LEFT_SHIFT), keyboard_fn_up, at(1_000));
-    mac.observe(shift(false, MAC_LEFT_SHIFT), keyboard_fn_up, at(1_080));
-    mac.observe(shift(true, 58), keyboard_fn_up, at(1_100));
-    mac.observe(shift(true, MAC_LEFT_SHIFT), keyboard_fn_up, at(1_200));
+    let mut mac = mac_holding();
+    mac.observe(beside_fn(Mac::LEFT_SHIFT, true), keyboard_fn_up, at(0));
+    mac.observe(beside_fn(Mac::LEFT_SHIFT, false), keyboard_fn_up, at(80));
+    mac.observe(beside_fn(Mac::LEFT_OPTION, true), keyboard_fn_up, at(100));
+    mac.observe(beside_fn(Mac::LEFT_SHIFT, true), keyboard_fn_up, at(200));
     assert_eq!(
-        mac.observe(shift(false, MAC_LEFT_SHIFT), keyboard_fn_up, at(1_280))
+        mac.observe(beside_fn(Mac::LEFT_SHIFT, false), keyboard_fn_up, at(280))
             .action,
-        None
+        None,
+        "Option between the taps let them pin"
     );
-    // So does Command held through both taps.
     let command = |down: bool| MacEvent::FlagsChanged {
-        code: MAC_LEFT_SHIFT,
+        code: Mac::LEFT_SHIFT,
         held: Modifiers {
             shift: down,
             shortcut: true,
-            ..Modifiers::default()
+            ..NO_MODIFIERS
         },
     };
     let mut mac = Mac::default();
@@ -405,30 +427,17 @@ fn shift_taps_pin_beside_the_held_talk_shortcut() {
                 .action
         })
         .collect();
-    assert_eq!(released, [None; 4]);
+    assert_eq!(released, [None; 4], "Shift taps with Command held pinned");
 }
 
 #[test]
 fn windows_lifecycle_interruption_waits_for_chord_release() {
     let (sender, _events) = async_channel::bounded(4);
     let input = InputSender::new(sender);
-    let mut policy = Windows::default();
-    policy.observe(LEFT_CONTROL, true, NONE_HELD, now());
-    assert!(
-        policy
-            .observe(LEFT_WINDOWS, true, held(&[LEFT_CONTROL]), now())
-            .starts()
-    );
+    let (mut policy, both) = windows_holding();
     policy.interrupt(&input);
     assert_eq!(
-        policy
-            .observe(
-                RIGHT_WINDOWS,
-                true,
-                held(&[LEFT_CONTROL, LEFT_WINDOWS]),
-                now()
-            )
-            .action,
+        policy.observe(RIGHT_WINDOWS, true, both, now()).action,
         None
     );
     assert_eq!(
@@ -447,14 +456,7 @@ fn windows_lifecycle_interruption_waits_for_chord_release() {
 
 #[test]
 fn windows_missed_release_and_other_shortcuts_do_not_restart_hold() {
-    let mut policy = Windows::default();
-    policy.observe(LEFT_CONTROL, true, NONE_HELD, now());
-    assert!(
-        policy
-            .observe(LEFT_WINDOWS, true, held(&[LEFT_CONTROL]), now())
-            .starts()
-    );
-    let both = held(&[LEFT_CONTROL, LEFT_WINDOWS]);
+    let (mut policy, both) = windows_holding();
     assert_eq!(
         policy.observe(LETTER_Q, true, both, now()).action,
         Some(Action::Interrupt)
@@ -484,21 +486,14 @@ fn windows_missed_release_and_other_shortcuts_do_not_restart_hold() {
 #[test]
 fn a_missed_release_lets_s_reach_the_app() {
     // Ctrl+Win went up on the secure desktop, where the hook sees nothing.
-    let mut policy = Windows::default();
-    policy.observe(LEFT_CONTROL, true, NONE_HELD, now());
-    assert!(
-        policy
-            .observe(LEFT_WINDOWS, true, held(&[LEFT_CONTROL]), now())
-            .starts()
-    );
+    let (mut policy, _) = windows_holding();
     let typed = policy.observe(LETTER_S, true, NONE_HELD, now());
     assert!(!typed.swallows(), "S after a missed release was swallowed");
     assert_eq!(delivered(&typed), [Action::Release]);
     assert!(!policy.observe(LETTER_S, false, NONE_HELD, now()).swallows());
 
     // The tap missed Fn's release, so the next key's flags show Fn up.
-    let mut mac = Mac::default();
-    assert!(mac.observe(function(true), keyboard_fn_up, now()).starts());
+    let mut mac = mac_holding();
     let typed = mac.observe(key(Mac::SCREEN, true, NO_MODIFIERS), keyboard_fn_up, now());
     assert!(
         !typed.swallows(),
@@ -506,27 +501,24 @@ fn a_missed_release_lets_s_reach_the_app() {
     );
     assert_eq!(delivered(&typed), [Action::Release]);
     assert!(mac.observe(function(true), keyboard_fn_up, now()).starts());
-    // Fn has one key, so a second press proves the release between them was missed.
     assert_eq!(
         delivered(&mac.observe(function(true), keyboard_fn_up, now())),
-        [Action::Release, Action::Press]
+        [Action::Release, Action::Press],
+        "Fn has one key, so a second press must end the hold whose release went unseen"
     );
 }
 
 #[test]
 fn a_show_key_whose_release_went_unseen_asks_for_no_show_outside_a_hold() {
     // S and Ctrl+Win went up on the secure desktop, so S typed afterward belongs to no hold.
-    let mut policy = Windows::default();
-    policy.observe(LEFT_CONTROL, true, NONE_HELD, now());
-    policy.observe(LEFT_WINDOWS, true, held(&[LEFT_CONTROL]), now());
-    policy.observe(LETTER_S, true, held(&[LEFT_CONTROL, LEFT_WINDOWS]), now());
+    let (mut policy, both) = windows_holding();
+    policy.observe(LETTER_S, true, both, now());
     let typed = policy.observe(LETTER_S, true, NONE_HELD, now());
     assert_eq!(delivered(&typed), [Action::Release]);
 
     // The tap went off while S was held, and S and Fn came up unseen.
     let (sender, _events) = async_channel::bounded(4);
-    let mut mac = Mac::default();
-    mac.observe(function(true), keyboard_fn_up, now());
+    let mut mac = mac_holding();
     mac.observe(key(Mac::SCREEN, true, FN_HELD), keyboard_fn_up, now());
     mac.missed_events(&InputSender::new(sender));
     let typed = mac.observe(key(Mac::SCREEN, true, NO_MODIFIERS), keyboard_fn_up, now());
@@ -540,13 +532,12 @@ fn a_show_key_whose_release_went_unseen_asks_for_no_show_outside_a_hold() {
 #[test]
 fn a_posted_event_without_fn_ends_no_hold_the_keyboard_still_makes() {
     let keyboard_fn_down = || true;
-    let mut mac = Mac::default();
-    assert!(mac.observe(function(true), keyboard_fn_up, now()).starts());
+    let mut mac = mac_holding();
     // Another app posts a key release and a Command release whose flags leave Fn out.
     let posted = mac.observe(key(MAC_Q, false, NO_MODIFIERS), keyboard_fn_down, now());
     assert_eq!(delivered(&posted), [], "A posted key-up ended the hold");
     let command_up = MacEvent::FlagsChanged {
-        code: 55,
+        code: Mac::LEFT_COMMAND,
         held: NO_MODIFIERS,
     };
     assert_eq!(
@@ -561,8 +552,7 @@ fn a_posted_event_without_fn_ends_no_hold_the_keyboard_still_makes() {
 fn a_tap_outage_ends_a_hold_but_not_a_released_dictation() -> anyhow::Result<()> {
     let (sender, events) = async_channel::bounded(4);
     let input = InputSender::new(sender);
-    let mut mac = Mac::default();
-    assert!(mac.observe(function(true), keyboard_fn_up, now()).starts());
+    let mut mac = mac_holding();
     assert_eq!(
         delivered(&mac.observe(function(false), keyboard_fn_up, now())),
         [Action::Release]
@@ -575,12 +565,11 @@ fn a_tap_outage_ends_a_hold_but_not_a_released_dictation() -> anyhow::Result<()>
     );
     assert!(events.try_recv().is_err());
 
-    // A Shift tap on each side of the outage is no double tap.
     let shift = |down| MacEvent::FlagsChanged {
-        code: MAC_LEFT_SHIFT,
+        code: Mac::LEFT_SHIFT,
         held: Modifiers {
             shift: down,
-            ..Modifiers::default()
+            ..NO_MODIFIERS
         },
     };
     mac.observe(shift(true), keyboard_fn_up, now());
@@ -610,10 +599,15 @@ fn command_option_or_control_during_fn_is_another_shortcut() {
         shortcut: true,
         ..FN_HELD
     };
-    // Left and right Command, Option, and Control.
-    for code in [55, 54, 58, 61, 59, 62] {
-        let mut mac = Mac::default();
-        assert!(mac.observe(function(true), keyboard_fn_up, now()).starts());
+    for code in [
+        Mac::LEFT_COMMAND,
+        Mac::RIGHT_COMMAND,
+        Mac::LEFT_OPTION,
+        Mac::RIGHT_OPTION,
+        Mac::LEFT_CONTROL,
+        Mac::RIGHT_CONTROL,
+    ] {
+        let mut mac = mac_holding();
         let pressed = mac.observe(
             MacEvent::FlagsChanged {
                 code,
@@ -624,19 +618,20 @@ fn command_option_or_control_during_fn_is_another_shortcut() {
         );
         assert!(!pressed.swallows());
         assert_eq!(pressed.action, Some(Action::Interrupt), "Key code {code}");
-        // ⌥S belongs to the other shortcut, not to a Show.
         let typed = mac.observe(key(Mac::SCREEN, true, shortcut), keyboard_fn_up, now());
         assert!(!typed.swallows(), "Key code {code} let S start a Show");
         assert_eq!(delivered(&typed), []);
     }
-    // Letting go of Command held since before Fn keeps the hold.
-    let mut mac = Mac::default();
-    mac.observe(function(true), keyboard_fn_up, now());
+    let mut mac = mac_holding();
     let released = MacEvent::FlagsChanged {
-        code: 55,
+        code: Mac::LEFT_COMMAND,
         held: FN_HELD,
     };
-    assert_eq!(delivered(&mac.observe(released, keyboard_fn_up, now())), []);
+    assert_eq!(
+        delivered(&mac.observe(released, keyboard_fn_up, now())),
+        [],
+        "Releasing Command held since before Fn ended the hold"
+    );
     let show = mac.observe(key(Mac::SCREEN, true, FN_HELD), keyboard_fn_up, now());
     assert_eq!(show.action, Some(Action::Show(Scope::Screen)));
 }
@@ -645,12 +640,7 @@ fn command_option_or_control_during_fn_is_another_shortcut() {
 fn mac_lifecycle_interruption_waits_for_fn_release() -> anyhow::Result<()> {
     let (sender, events) = async_channel::bounded(4);
     let input = InputSender::new(sender);
-    let mut policy = Mac::default();
-    assert!(
-        policy
-            .observe(function(true), keyboard_fn_up, now())
-            .starts()
-    );
+    let mut policy = mac_holding();
     policy.interrupt(&input);
     assert!(matches!(events.try_recv()?, Input::Interrupt));
     assert!(matches!(events.try_recv()?, Input::Release));
@@ -683,12 +673,7 @@ fn mac_lifecycle_interruption_waits_for_fn_release() -> anyhow::Result<()> {
 
 #[test]
 fn mac_function_space_and_escape_are_observed_without_native_events() {
-    let mut policy = Mac::default();
-    assert!(
-        policy
-            .observe(function(true), keyboard_fn_up, now())
-            .starts()
-    );
+    let mut policy = mac_holding();
     assert!(
         policy
             .observe(key(Mac::SPACE, true, FN_HELD), keyboard_fn_up, now())

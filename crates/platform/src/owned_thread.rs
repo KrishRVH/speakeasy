@@ -26,10 +26,8 @@ impl OwnedThread {
         let handle = thread::Builder::new()
             .name(name.to_owned())
             .spawn(move || {
+                let _alive = alive;
                 body();
-                // Naming `alive` moves it into the closure, so exit closes only once body returns
-                // or unwinds.
-                drop(alive);
             })?;
         Ok(Self {
             exit,
@@ -190,7 +188,6 @@ mod tests {
 
     #[test]
     fn dropping_a_stoppable_thread_stops_its_body_before_joining() -> anyhow::Result<()> {
-        // The lane never carries a value, so receiving returns only once it closes.
         let stoppable = OwnedThread::spawn_stoppable("stops", |stop| {
             let Err(_closed) = stop.recv_blocking();
         })?;

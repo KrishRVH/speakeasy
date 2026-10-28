@@ -105,7 +105,7 @@ impl InputSender {
 
     /// Resolves once native input and insertion are permanently disabled.
     #[cfg(target_os = "linux")]
-    pub(crate) fn closed(&self) -> impl Future<Output = ()> + '_ {
+    pub(crate) fn closed(&self) -> impl Future<Output = ()> {
         self.sender.closed()
     }
 

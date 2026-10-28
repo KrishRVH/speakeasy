@@ -7,7 +7,7 @@ use std::{fmt, marker::PhantomData};
 
 use raw_window_handle::WindowHandle;
 
-use crate::{DesktopOptions, InputSender, Inserter, OwnedThread, native};
+use crate::{InputSender, Inserter, OwnedThread, native};
 
 /// Owns desktop observation, and on Windows and macOS the insertion thread, until an explicit stop
 /// and acknowledged cleanup.
@@ -73,6 +73,33 @@ pub fn prepare(
         _ui_thread: PhantomData,
     };
     Ok((monitor, inserter))
+}
+
+/// Shortcut and insertion choices for the Linux desktop; Windows and macOS read none of them.
+#[derive(Clone, Debug)]
+pub struct DesktopOptions {
+    /// Reserved Linux dictation chord in portal syntax.
+    pub shortcut: String,
+    /// Reserved Linux cancellation chord in portal syntax.
+    pub cancel: String,
+    /// Whether clipboard submission pastes with Ctrl+Shift+V.
+    pub terminal_paste: bool,
+    /// Whether text is only copied, for the user to paste without keyboard-control permission.
+    pub manual_paste: bool,
+    /// Whether desktop command bindings replace observing a native shortcut.
+    pub external_shortcut: bool,
+}
+
+impl Default for DesktopOptions {
+    fn default() -> Self {
+        Self {
+            shortcut: "CTRL+LOGO+space".into(),
+            cancel: "CTRL+LOGO+Escape".into(),
+            terminal_paste: false,
+            manual_paste: false,
+            external_shortcut: false,
+        }
+    }
 }
 
 /// A live window of this process, for the native presentation GPUI does not offer.

@@ -237,7 +237,7 @@ fn a_clipboard_that_lost_the_text_is_never_pasted() -> anyhow::Result<()> {
     };
     assert_eq!(
         insert(&mut native, "text", &permit, Delivery::Paste)?,
-        Inserted::Unavailable(CLIPBOARD_CHANGED)
+        CLIPBOARD_CHANGED
     );
     assert!(!native.sent());
     assert!(permit.commit(), "A refused paste spent its authority");
@@ -253,7 +253,7 @@ fn a_clipboard_change_during_the_final_checks_is_never_pasted() -> anyhow::Resul
     };
     assert_eq!(
         insert(&mut native, "text", &permit, Delivery::Paste)?,
-        Inserted::Unavailable(CLIPBOARD_CHANGED_BEFORE_PASTE)
+        CLIPBOARD_CHANGED_BEFORE_PASTE
     );
     assert!(!native.sent());
     assert!(permit.commit(), "A refused paste spent its authority");

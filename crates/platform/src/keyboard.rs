@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::{Input, InputSender, Scope, Taps};
+use crate::{Input, InputSender, Scope, Taps};
 
 /// A Shift press released within this long is a tap.
 const SHIFT_TAP: Duration = Duration::from_millis(300);
@@ -27,33 +27,6 @@ struct Chord {
     hold: Hold,
     /// The [`HoldKey`]s being swallowed, by [`HoldKey::bit`].
     swallowing: u8,
-}
-
-/// A key that acts when pressed during a hold.
-#[derive(Clone, Copy)]
-enum HoldKey {
-    /// Space locks hands-free.
-    Space,
-    /// S, W, and A record a Show of the screen, the window under the pointer, or an area.
-    Show(Scope),
-}
-
-impl HoldKey {
-    const fn action(self) -> Action {
-        match self {
-            Self::Space => Action::Lock,
-            Self::Show(scope) => Action::Show(scope),
-        }
-    }
-
-    const fn bit(self) -> u8 {
-        match self {
-            Self::Space => 1,
-            Self::Show(Scope::Screen) => 2,
-            Self::Show(Scope::Window) => 4,
-            Self::Show(Scope::Area) => 8,
-        }
-    }
 }
 
 impl Chord {
@@ -125,6 +98,42 @@ impl Chord {
     }
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Hold {
+    #[default]
+    Released,
+    Held,
+    /// Another key ended the hold; nothing restarts it until the chord is released.
+    Interrupted,
+}
+
+/// A key that acts when pressed during a hold.
+#[derive(Clone, Copy)]
+enum HoldKey {
+    /// Space locks hands-free.
+    Space,
+    /// S, W, and A record a Show of the screen, the window under the pointer, or an area.
+    Show(Scope),
+}
+
+impl HoldKey {
+    const fn action(self) -> Action {
+        match self {
+            Self::Space => Action::Lock,
+            Self::Show(scope) => Action::Show(scope),
+        }
+    }
+
+    const fn bit(self) -> u8 {
+        match self {
+            Self::Space => 1,
+            Self::Show(Scope::Screen) => 2,
+            Self::Show(Scope::Window) => 4,
+            Self::Show(Scope::Area) => 8,
+        }
+    }
+}
+
 /// Two quick taps of Shift alone, which drop a numbered pin during a Show.
 ///
 /// A tap is a press released within [`SHIFT_TAP`], and the second begins within [`SHIFT_TAP_GAP`]
@@ -146,7 +155,12 @@ enum ShiftTaps {
 
 impl ShiftTaps {
     /// Observes Shift going down or up at `at`; returns the double tap that completed, if any.
-    fn shift(&mut self, down: bool, at: Instant) -> Option<Taps> {
+    /// Shift as part of another shortcut is no tap and breaks any pair.
+    fn shift(&mut self, down: bool, other_shortcut: bool, at: Instant) -> Option<Taps> {
+        if other_shortcut {
+            self.interrupt();
+            return None;
+        }
         let (next, doubled) = match (*self, down) {
             // Autorepeat while Shift is held.
             (Self::Down { .. }, true) => (*self, None),
@@ -156,24 +170,22 @@ impl ShiftTaps {
                 (Self::Down { at, first }, None)
             },
             (Self::Idle, true) => (Self::Down { at, first: None }, None),
-            (Self::Down { at: pressed, first }, false) => {
-                if at.saturating_duration_since(pressed) <= SHIFT_TAP {
-                    let doubled = first.map(|first| Taps {
-                        pressed: first,
+            (Self::Down { at: pressed, first }, false)
+                if at.saturating_duration_since(pressed) <= SHIFT_TAP =>
+            {
+                let doubled = first.map(|first| Taps {
+                    pressed: first,
+                    released: at,
+                });
+                (
+                    Self::Tapped {
+                        pressed,
                         released: at,
-                    });
-                    (
-                        Self::Tapped {
-                            pressed,
-                            released: at,
-                        },
-                        doubled,
-                    )
-                } else {
-                    (Self::Idle, None)
-                }
+                    },
+                    doubled,
+                )
             },
-            (Self::Idle | Self::Tapped { .. }, false) => (Self::Idle, None),
+            (_, false) => (Self::Idle, None),
         };
         *self = next;
         doubled
@@ -183,15 +195,6 @@ impl ShiftTaps {
     fn interrupt(&mut self) {
         *self = Self::Idle;
     }
-}
-
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-enum Hold {
-    #[default]
-    Released,
-    Held,
-    /// Another key ended the hold; nothing restarts it until the chord is released.
-    Interrupted,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -333,17 +336,24 @@ pub(super) struct Windows {
 impl Windows {
     const ALT: u16 = 0x12;
     const AREA: u16 = 0x41;
-    /// Left Ctrl, right Ctrl, left Windows, and right Windows; either Ctrl with either Windows key
-    /// holds the chord.
-    pub(super) const CHORD_KEYS: [u16; 4] = [0xA2, 0xA3, Self::LEFT_WINDOWS, Self::RIGHT_WINDOWS];
+    /// Either Ctrl with either Windows key holds the chord.
+    pub(super) const CHORD_KEYS: [u16; 4] = [
+        Self::LEFT_CONTROL,
+        Self::RIGHT_CONTROL,
+        Self::LEFT_WINDOWS,
+        Self::RIGHT_WINDOWS,
+    ];
     const CONTROL: u16 = 0x11;
     const ESCAPE: u16 = 0x1B;
+    const LEFT_CONTROL: u16 = 0xA2;
+    const LEFT_SHIFT: u16 = 0xA0;
     const LEFT_WINDOWS: u16 = 0x5B;
+    const RIGHT_CONTROL: u16 = 0xA3;
+    const RIGHT_SHIFT: u16 = 0xA1;
     const RIGHT_WINDOWS: u16 = 0x5C;
     const SCREEN: u16 = 0x53;
     const SHIFT: u16 = 0x10;
-    /// Shift, left Shift, and right Shift.
-    const SHIFT_KEYS: [u16; 3] = [Self::SHIFT, 0xA0, 0xA1];
+    const SHIFT_KEYS: [u16; 3] = [Self::SHIFT, Self::LEFT_SHIFT, Self::RIGHT_SHIFT];
     const SPACE: u16 = 0x20;
     const WINDOW: u16 = 0x57;
 
@@ -398,16 +408,11 @@ impl Windows {
     fn decide(&mut self, key: u32, down: bool, physical: Physical, at: Instant) -> Decision {
         let key = u16::try_from(key).unwrap_or(u16::MAX);
         if Self::SHIFT_KEYS.contains(&key) {
-            let pinned = if physical.shortcut {
-                self.taps.interrupt();
-                None
-            } else {
-                self.taps.shift(down, at)
-            };
+            let pinned = self.taps.shift(down, physical.shortcut, at);
             return Decision::pass(pinned.map(Action::Pin));
         }
-        if Self::CHORD_KEYS.contains(&key) {
-            return self.chord_key(key, down);
+        if let Some(decision) = self.chord_key(key, down) {
+            return decision;
         }
         self.taps.interrupt();
         match key {
@@ -420,24 +425,24 @@ impl Windows {
         }
     }
 
-    fn chord_key(&mut self, key: u16, down: bool) -> Decision {
-        let mut fresh = false;
-        for (&chord_key, tracked) in Self::CHORD_KEYS.iter().zip(&mut self.chord_keys_down) {
-            if chord_key == key {
-                fresh = down && !*tracked;
-                if *tracked != down {
-                    // Ctrl or Win pressed or released between taps makes a shortcut such as
-                    // Ctrl+Shift; holding the talk shortcut through both taps does not.
-                    self.taps.interrupt();
-                }
-                *tracked = down;
-            }
+    /// Follows one of [`Self::CHORD_KEYS`] going down or up; `None` for any other key.
+    fn chord_key(&mut self, key: u16, down: bool) -> Option<Decision> {
+        let tracked = Self::CHORD_KEYS
+            .into_iter()
+            .zip(&mut self.chord_keys_down)
+            .find_map(|(chord_key, tracked)| (chord_key == key).then_some(tracked))?;
+        let was_down = mem::replace(tracked, down);
+        if was_down != down {
+            // Ctrl or Win pressed or released between taps makes a shortcut such as Ctrl+Shift;
+            // holding the talk shortcut through both taps does not.
+            self.taps.interrupt();
         }
-        Decision::pass(match (self.chord_held(), fresh) {
+        let action = match (self.chord_held(), down && !was_down) {
             (false, _) => self.chord.release(),
             (true, true) => self.chord.press(),
             (true, false) => None,
-        })
+        };
+        Some(Decision::pass(action))
     }
 }
 
@@ -483,11 +488,24 @@ impl Mac {
     const AREA: i64 = 0;
     const ESCAPE: i64 = 53;
     const FUNCTION: i64 = 63;
+    const LEFT_COMMAND: i64 = 55;
+    const LEFT_CONTROL: i64 = 59;
+    const LEFT_OPTION: i64 = 58;
     const LEFT_SHIFT: i64 = 56;
+    const RIGHT_COMMAND: i64 = 54;
+    const RIGHT_CONTROL: i64 = 62;
+    const RIGHT_OPTION: i64 = 61;
     const RIGHT_SHIFT: i64 = 60;
     const SCREEN: i64 = 1;
-    /// Left and right Command, Option, and Control, which make Fn part of another shortcut.
-    const SHORTCUT_MODIFIERS: [i64; 6] = [55, 54, 58, 61, 59, 62];
+    /// Command, Option, and Control, which make Fn part of another shortcut.
+    const SHORTCUT_MODIFIERS: [i64; 6] = [
+        Self::LEFT_COMMAND,
+        Self::RIGHT_COMMAND,
+        Self::LEFT_OPTION,
+        Self::RIGHT_OPTION,
+        Self::LEFT_CONTROL,
+        Self::RIGHT_CONTROL,
+    ];
     const SPACE: i64 = 49;
     const WINDOW: i64 = 13;
 
@@ -534,15 +552,10 @@ impl Mac {
                 code: Self::LEFT_SHIFT | Self::RIGHT_SHIFT,
                 held,
             } => {
-                let pinned = if held.shortcut {
-                    self.taps.interrupt();
-                    None
-                } else {
-                    self.taps.shift(held.shift, at)
-                };
+                let pinned = self.taps.shift(held.shift, held.shortcut, at);
                 Decision::pass(pinned.map(Action::Pin))
             },
-            // Command, Option, or Control: a change that leaves one held is a press.
+            // A change that leaves one of them held is a press.
             MacEvent::FlagsChanged { code, held } if Self::SHORTCUT_MODIFIERS.contains(&code) => {
                 self.taps.interrupt();
                 self.chord.other_key(held.shortcut)
