@@ -5,10 +5,7 @@
 
 use std::mem;
 
-use crate::{
-    Mark, Moment, Point, Recording, Span, marks,
-    recording::{Action, InkPoint, Pin, Size, Stroke},
-};
+use crate::{Action, InkPoint, Mark, Moment, Pin, Point, Recording, Size, Span, Stroke, marks};
 
 /// A press that moves further than this many pixels before release is a drag.
 const DRAG_PIXELS: f32 = 12.0;
@@ -48,7 +45,8 @@ struct Press {
     to: Point,
     /// The farthest the pointer has moved from `from`, in pixels.
     reach: f32,
-    /// Pressed while drawing, so it belongs to no click.
+    /// Whether Shift was held to draw at any point in the press, which then records no click or
+    /// drag.
     drawing: bool,
 }
 

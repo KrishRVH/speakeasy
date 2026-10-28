@@ -176,7 +176,7 @@ pub enum Action {
 }
 
 impl Action {
-    /// When the action happened, from press to release.
+    /// When the action happened: a click's release, or a drag from press to release.
     #[must_use]
     pub const fn span(self) -> Span {
         match self {
@@ -185,7 +185,7 @@ impl Action {
         }
     }
 
-    /// Where the pointer was when the action finished.
+    /// Where the action lands: a click's point, or where a drag was released.
     #[must_use]
     pub const fn point(self) -> Point {
         match self {

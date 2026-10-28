@@ -13,13 +13,13 @@ const INK_CONTEXT: f32 = 0.08;
 const GROUP_SPAN: Duration = Duration::from_secs(20);
 const GROUP_STROKES: usize = 12;
 
-/// Groups marks drawn on one screen with nothing clicked between them, then merges neighboring
-/// groups until at most `most` remain: same-screen pairs carrying the least ink first, else the
-/// most alike screens.
+/// Groups marks drawn on one screen with no click or drag begun between them, then merges
+/// neighboring groups until at most `most` remain: same-screen pairs carrying the least ink first,
+/// else the most alike screens. `action_starts` holds when each click or drag began, in time order.
 pub(super) fn group_marks(
     frames: &Frames<'_>,
     marks: &[Mark],
-    actions: &[Moment],
+    action_starts: &[Moment],
     most: usize,
 ) -> Vec<Range<usize>> {
     let grouping = Grouping {
@@ -30,7 +30,7 @@ pub(super) fn group_marks(
             .map(|mark| frames.nearest(mark.span.end()))
             .collect(),
     };
-    grouping.merge(grouping.group(actions), most)
+    grouping.merge(grouping.group(action_starts), most)
 }
 
 /// The marks to group, and the frame each is shown on.
@@ -42,11 +42,12 @@ struct Grouping<'a> {
 
 impl Grouping<'_> {
     /// Groups marks in drawing order. A mark joins the group before it while the group, with it,
-    /// stays within [`GROUP_SPAN`] and [`GROUP_STROKES`], no action in `actions` started since the
-    /// group's last mark, and the screen around their ink stays the same.
-    fn group(&self, actions: &[Moment]) -> Vec<Range<usize>> {
+    /// stays within [`GROUP_SPAN`] and [`GROUP_STROKES`], no start in `action_starts` falls between
+    /// the group's last mark and it, and the screen around their ink stays the same.
+    fn group(&self, action_starts: &[Moment]) -> Vec<Range<usize>> {
         let acted_between = |after: Moment, before: Moment| {
-            actions.partition_point(|at| *at <= after) < actions.partition_point(|at| *at < before)
+            action_starts.partition_point(|at| *at <= after)
+                < action_starts.partition_point(|at| *at < before)
         };
         let mut groups: Vec<Range<usize>> = Vec::new();
         for (index, mark) in self.marks.iter().enumerate() {
@@ -57,10 +58,11 @@ impl Grouping<'_> {
                 ) else {
                     return false;
                 };
+                let joined = group.start..index.saturating_add(1);
                 mark.span.end().since(first.span.start()) <= GROUP_SPAN
-                    && self.ink(group).saturating_add(mark.strokes.len()) <= GROUP_STROKES
+                    && self.ink(&joined) <= GROUP_STROKES
                     && !acted_between(previous.span.end(), mark.span.start())
-                    && self.spread(group.clone(), index) < SAME_SCREEN
+                    && self.spread(joined) < SAME_SCREEN
             });
             match groups.last_mut() {
                 Some(group) if joins => group.end = index.saturating_add(1),
@@ -97,9 +99,8 @@ impl Grouping<'_> {
                 earlier.end = later.end;
             }
             for neighbor in [k.saturating_sub(1), k] {
-                let refreshed = self.merge_cost(&groups, neighbor);
                 if let Some(slot) = costs.get_mut(neighbor) {
-                    *slot = refreshed;
+                    *slot = self.merge_cost(&groups, neighbor);
                 }
             }
         }
@@ -109,7 +110,7 @@ impl Grouping<'_> {
     /// What merging group `k` of `groups` into the one before it costs; `None` for the first.
     fn merge_cost(&self, groups: &[Range<usize>], k: usize) -> Option<Merge> {
         let merged = groups.get(k.checked_sub(1)?)?.start..groups.get(k)?.end;
-        let spread = self.spread(merged.clone(), merged.end.saturating_sub(1));
+        let spread = self.spread(merged.clone());
         Some(if spread < SAME_SCREEN {
             Merge::SameScreen {
                 ink: self.ink(&merged),
@@ -129,22 +130,20 @@ impl Grouping<'_> {
             .sum()
     }
 
-    /// How far the screen around the ink, as each mark of `group` was drawn, is from the screen
-    /// mark `last` is shown on.
-    fn spread(&self, group: Range<usize>, last: usize) -> f32 {
-        let Some(around) = self
-            .marks
-            .get(group.start..group.end.max(last.saturating_add(1)))
-            .and_then(|members| members.iter().map(|mark| mark.bounds).reduce(Rect::union))
-        else {
-            return 1.0;
-        };
-        let Some(&shown) = self.shown_on.get(last) else {
+    /// How far the screen around the ink of `members`, as each was drawn, is from the screen the
+    /// last of them is shown on.
+    fn spread(&self, members: Range<usize>) -> f32 {
+        let (Some(around), Some(&shown)) = (
+            self.marks
+                .get(members.clone())
+                .and_then(|marks| marks.iter().map(|mark| mark.bounds).reduce(Rect::union)),
+            self.shown_on.get(members.end.saturating_sub(1)),
+        ) else {
             return 1.0;
         };
         let around = around.expanded_within(INK_CONTEXT, Rect::UNIT);
         let shown = self.frames.signature(shown);
-        group
+        members
             .filter_map(|member| self.shown_on.get(member))
             .map(|&frame| self.frames.signature(frame).region_change(shown, around))
             .fold(0.0, f32::max)

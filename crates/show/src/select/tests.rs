@@ -1,9 +1,9 @@
 //! Selection cases end to end through `select`, on signatures of flat gray frames.
 
+use proptest::prelude::*;
+
 use super::*;
-use crate::{
-    InkPoint, Narration, Point, Stroke, Word, recording::Size, signature::tests::signature,
-};
+use crate::{InkPoint, Narration, Point, Size, Stroke, Word, signature::tests::signature};
 
 fn sample(at: u64, level: u8) -> Sample {
     Sample {
@@ -579,13 +579,13 @@ fn a_quiet_show_falls_back_to_its_middle() {
     assert_eq!(select(&Recording::default(), &[]), None);
 }
 
-proptest::proptest! {
+proptest! {
     #[test]
     fn selection_keeps_its_invariants(
-        gaps in proptest::collection::vec((50_u64..2_000, 0_u8..=255), 1..40),
-        mut dabs in proptest::collection::vec(100_u64..60_000, 0..10),
-        clicks in proptest::collection::vec(0_u64..60_000, 0..6),
-        mut spoken in proptest::collection::vec((0_u64..60_000, 0_usize..6), 0..30),
+        gaps in prop::collection::vec((50_u64..2_000, 0_u8..=255), 1..40),
+        mut dabs in prop::collection::vec(100_u64..60_000, 0..10),
+        clicks in prop::collection::vec(0_u64..60_000, 0..6),
+        mut spoken in prop::collection::vec((0_u64..60_000, 0_usize..6), 0..30),
         most in 0_usize..16,
     ) {
         let frames: Vec<Sample> = gaps
@@ -608,32 +608,33 @@ proptest::proptest! {
             words(&narration),
         );
         let shown = select_within(&recording, &frames, most);
-        proptest::prop_assert_eq!(shown.is_some(), most > 0);
+        prop_assert_eq!(shown.is_some(), most > 0);
         let Some(shown) = shown else {
             return Ok(());
         };
         let keyframes = &shown.keyframes;
-        proptest::prop_assert!(keyframes.len() <= most);
+        prop_assert!(keyframes.len() <= most);
         let view = Frames::new(&frames).unwrap();
-        let marked = keyframes.iter().filter(|k| !k.marks.is_empty()).count();
+        let with_marks = keyframes.iter().filter(|keyframe| !keyframe.marks.is_empty()).count();
         if let Some(last) = keyframes.last()
-            && marked < most
+            && with_marks < most
         {
-            proptest::prop_assert!(!view.novel(view.nearest(last.at), view.last()));
+            prop_assert!(!view.novel(view.nearest(last.at), view.last()));
         }
-        proptest::prop_assert!(keyframes.iter().map(|k| k.index).eq(1..=keyframes.len()));
-        proptest::prop_assert!(keyframes.is_sorted_by_key(|keyframe| keyframe.at));
-        let covered: Vec<usize> = keyframes.iter().flat_map(|k| k.marks.clone()).collect();
-        proptest::prop_assert_eq!(covered, (0..shown.marks.len()).collect::<Vec<_>>());
+        prop_assert!(keyframes.iter().map(|keyframe| keyframe.index).eq(1..=keyframes.len()));
+        prop_assert!(keyframes.is_sorted_by_key(|keyframe| keyframe.at));
+        let covered: Vec<usize> =
+            keyframes.iter().flat_map(|keyframe| keyframe.marks.clone()).collect();
+        prop_assert_eq!(covered, (0..shown.marks.len()).collect::<Vec<_>>());
         let mut said: Vec<&str> = keyframes
             .iter()
-            .filter_map(|k| k.said.as_deref())
+            .filter_map(|keyframe| keyframe.said.as_deref())
             .flat_map(str::split_whitespace)
             .collect();
         let mut expected: Vec<&str> = narration.iter().map(|(_, word)| *word).collect();
         said.sort_unstable();
         expected.sort_unstable();
-        proptest::prop_assert_eq!(said, expected);
+        prop_assert_eq!(said, expected);
     }
 }
 

@@ -207,8 +207,8 @@ fn gaps(row: &Range<usize>) -> u32 {
     GUTTER.saturating_mul(u32::try_from(row.len().saturating_sub(1)).unwrap_or(u32::MAX))
 }
 
-/// Cells for justified rows `inner` pixels wide. Heights round down, so a sheet measured once is
-/// never larger when drawn.
+/// Cells for justified rows `inner` pixels wide. Heights round down, so a row's frames at its
+/// height never overflow its width.
 fn place(aspects: &[f32], rows: &[Range<usize>], row_aspects: &[f32], inner: u32) -> Layout {
     let mut cells = Vec::with_capacity(aspects.len());
     let mut top = PADDING;

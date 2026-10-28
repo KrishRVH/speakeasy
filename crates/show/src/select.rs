@@ -141,9 +141,9 @@ fn select_within(recording: &Recording, samples: &[Sample], most: usize) -> Opti
     let frames = Frames::new(samples)?;
     let marks = marks::group(&recording.strokes, &recording.pins, recording.surface);
     let actions = merge_double_clicks(&recording.actions);
-    let action_times: Vec<Moment> = actions.iter().map(|action| action.span().start()).collect();
+    let action_starts: Vec<Moment> = actions.iter().map(|action| action.span().start()).collect();
     let transitions = frames.transitions();
-    let mut candidates: Vec<Candidate> = group_marks(&frames, &marks, &action_times, most)
+    let mut candidates: Vec<Candidate> = group_marks(&frames, &marks, &action_starts, most)
         .into_iter()
         .filter_map(|group| frames.mark_candidate(&marks, group))
         .collect();
@@ -205,9 +205,8 @@ struct Candidate {
 
 /// What a candidate frame shows, which decides how it ranks and what its keyframe says.
 pub(crate) enum Basis {
-    /// The selection's marks in this range, and the last click or drag without a keyframe of its
-    /// own whose result came while they were drawn or close to the frame, known once keyframes are
-    /// chosen.
+    /// The selection's marks in this range, and the click or drag [`fold_actions_into_marks`]
+    /// gives them once keyframes are chosen.
     Mark {
         group: Range<usize>,
         during: Option<Action>,
