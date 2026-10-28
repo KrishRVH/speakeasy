@@ -42,7 +42,7 @@ const NO_PASTE_BINDING: Inserted = Inserted::Copied(
 const COPIED_FOR_MANUAL_PASTE: Inserted = Inserted::Copied("Text copied. Paste into your editor.");
 /// The X11 clipboard lost the copied text before paste.
 const CLIPBOARD_CHANGED: Inserted =
-    Inserted::Unavailable("Clipboard changed before paste. Dictate again.");
+    Inserted::Unavailable("The clipboard changed before pasting. Dictate again.");
 
 /// The keys of the paste shortcut: Control and V, with Shift only for terminal paste, so a layout
 /// without Shift still pastes everywhere else. X11 and libei resolve it the same way.

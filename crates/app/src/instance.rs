@@ -189,7 +189,12 @@ fn reveal_running(path: &Path) -> anyhow::Result<()> {
         }
         thread::sleep(REVEAL_RETRY);
     }
-    bail!("Speakeasy is already running. Open Settings from its tray icon.");
+    let icon = if cfg!(target_os = "macos") {
+        "menu bar"
+    } else {
+        "tray"
+    };
+    bail!("Speakeasy is already running. Open Settings from its {icon} icon.");
 }
 
 /// Answers callers until the owner closes `requests`. A failed accept is retried after a pause; the

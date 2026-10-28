@@ -678,7 +678,7 @@ impl fmt::Display for Failure {
         match self {
             Self::OldWindows => f.write_str("Shows need Windows 10 version 2004 or later."),
             Self::Exposed => f.write_str(
-                "Windows would not keep Speakeasy out of the recording. Start the Show again.",
+                "Cannot keep Speakeasy's windows out of the Show. Start the Show again.",
             ),
             Self::DisplayLost => {
                 f.write_str("The recorded display was disconnected. Start the Show again.")

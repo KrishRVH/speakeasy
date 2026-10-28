@@ -186,7 +186,7 @@ async fn play_interruptions(output: &watch::Sender<Snapshot>, mut session: u64) 
         ),
         (
             Phase::Error,
-            "Selected microphone is disconnected. Reconnect it or choose another in Settings.",
+            "The selected microphone is disconnected. Reconnect it, or choose another microphone in Settings.",
             Duration::from_secs(2),
         ),
     ] {

@@ -130,7 +130,7 @@ impl Sender {
         let context = EiContext::new_sender(&api)?;
         // SAFETY: libei takes ownership of the descriptor, including its teardown.
         let status = unsafe { (api.ei_setup_backend_fd)(context.as_ptr(), fd.into_raw_fd()) };
-        ensure!(status == 0, "Could not connect Wayland input sender");
+        ensure!(status == 0, "Cannot connect the Wayland input sender");
         // SAFETY: the live context keeps its descriptor open while it is duplicated.
         let readiness = unsafe { register_readiness((api.ei_get_fd)(context.as_ptr())) }?;
         Ok(Self {
@@ -524,7 +524,7 @@ impl EiContext {
         // SAFETY: a sender context is created without callback userdata.
         let raw = unsafe { (api.ei_new_sender)(ptr::null_mut()) };
         Ok(Self {
-            raw: NonNull::new(raw).context("Could not create Wayland input sender")?,
+            raw: NonNull::new(raw).context("Cannot create the Wayland input sender")?,
             unref: api.ei_unref,
         })
     }

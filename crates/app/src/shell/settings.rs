@@ -203,7 +203,7 @@ impl Settings {
                     Ok(microphones) => view.microphones = microphones,
                     Err(_) => {
                         view.notice = Some(Notice::Problem(
-                            "Cannot list microphones. Check OS audio settings.".into(),
+                            "Cannot list microphones. Check your system's sound settings.".into(),
                         ));
                     },
                 }
@@ -261,7 +261,7 @@ impl Settings {
             Ok(None) => {},
             Err(_) => {
                 self.notice = Some(Notice::Problem(
-                    "Could not open the file picker. Try again.".into(),
+                    "Cannot open the file picker. Try again.".into(),
                 ));
             },
         }

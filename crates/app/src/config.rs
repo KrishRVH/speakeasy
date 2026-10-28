@@ -378,7 +378,7 @@ impl Config {
         for file in [&mut config.engine_executable, &mut config.model] {
             ensure!(
                 !file.as_os_str().is_empty(),
-                "Choose the local speech executable and a matching model."
+                "Choose the engine executable and a matching model."
             );
             if file.is_relative() {
                 *file = directory.join(&file);

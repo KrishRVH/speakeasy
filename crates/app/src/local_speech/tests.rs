@@ -296,7 +296,7 @@ async fn a_program_that_takes_the_released_port_never_becomes_the_engine() -> an
         .context("The program on the engine's port became the engine")?;
     assert_eq!(
         error.to_string(),
-        "Another program took the local speech port. Try again."
+        "Another program took the speech engine's port. Try again."
     );
     Ok(())
 }

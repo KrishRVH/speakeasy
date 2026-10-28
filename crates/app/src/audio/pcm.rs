@@ -116,7 +116,7 @@ impl Pcm16 {
         };
         let Some(encoded) = wav_header(audio.len(), rate) else {
             bail!(
-                "Recording format is unsupported. Choose another microphone in Settings and try again."
+                "Recording format is unsupported. Choose another microphone in Settings, then try again."
             );
         };
         *header = encoded;

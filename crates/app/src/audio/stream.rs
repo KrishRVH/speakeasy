@@ -13,7 +13,7 @@ use super::control::{Control, Mode};
 
 pub(super) const MAX_SAMPLE_RATE: u32 = 192_000;
 const MAX_CHANNELS: usize = 32;
-const UNSUPPORTED_FORMAT: &str = "Microphone format is unsupported. Change it in OS sound settings or choose another microphone in Settings.";
+const UNSUPPORTED_FORMAT: &str = "Microphone format is unsupported. Change it in your system's sound settings, or choose another microphone in Settings.";
 
 /// Everything the stream callbacks own for one capture.
 pub(super) struct CallbackState {
@@ -151,9 +151,7 @@ pub(super) fn capture_failure(
     errors: &Receiver<cpal::Error>,
 ) -> anyhow::Result<()> {
     if control.overflowed() {
-        bail!(
-            "Recording buffer filled because capture could not keep up. Reduce system load and try again."
-        );
+        bail!("Recording fell behind and filled its buffer. Reduce system load, then try again.");
     }
     if let Ok(error) = errors.try_recv() {
         return Err(microphone_error(error));
@@ -166,19 +164,21 @@ pub(super) fn capture_failure(
 pub(super) fn microphone_error(error: cpal::Error) -> anyhow::Error {
     match error.kind() {
         cpal::ErrorKind::DeviceBusy => anyhow!(
-            "Another app is using the microphone. Close it or choose another microphone in Settings."
+            "Another app is using the microphone. Close that app, or choose another microphone in Settings."
         ),
         cpal::ErrorKind::PermissionDenied => anyhow!(
             "Speakeasy has no microphone access. Allow it in your system's privacy settings, then try again."
         ),
         cpal::ErrorKind::DeviceNotAvailable => {
-            anyhow!("The microphone was disconnected. Reconnect it or choose another in Settings.")
+            anyhow!(
+                "The microphone was disconnected. Reconnect it, or choose another microphone in Settings."
+            )
         },
         cpal::ErrorKind::Xrun => anyhow!(
             "Audio was interrupted during recording. Check your audio routing or reduce system load, then try again."
         ),
         _ => anyhow!(
-            "The microphone failed ({error}). Try recording again or choose another microphone in Settings."
+            "The microphone failed ({error}). Try recording again, or choose another microphone in Settings."
         ),
     }
 }

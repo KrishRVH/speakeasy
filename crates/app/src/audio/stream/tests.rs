@@ -208,7 +208,7 @@ fn recording_buffer_overflow_has_its_own_actionable_error() -> anyhow::Result<()
         .err()
         .context("Application ring overflow must abort recording")?
         .to_string();
-    assert!(error.contains("Recording buffer filled"));
+    assert!(error.contains("Recording fell behind and filled its buffer"));
     assert!(error.contains("Reduce system load"));
     Ok(())
 }

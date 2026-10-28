@@ -390,7 +390,7 @@ fn select_device(
     let Some(id) = microphone else {
         return Ok(host
             .default_input_device()
-            .context("No microphone found. Connect a microphone and try again.")?);
+            .context("No microphone found. Connect one, then try again.")?);
     };
     for device in host.input_devices().map_err(microphone_error)? {
         checkpoint()?;
@@ -400,7 +400,7 @@ fn select_device(
     }
     checkpoint()?;
     Err(
-        anyhow!("Selected microphone is disconnected. Reconnect it or choose another in Settings.")
+        anyhow!("The selected microphone is disconnected. Reconnect it, or choose another microphone in Settings.")
             .into(),
     )
 }

@@ -249,7 +249,8 @@ impl<P: Ports> Owner<P> {
     fn handle_input(&mut self, input: Result<Input, RecvError>) -> ControlFlow<(), Option<Action>> {
         let Ok(input) = input else {
             return self.stop_with_failure(
-                "Shortcut monitoring stopped. Resume dictation to try again.".into(),
+                "Speakeasy stopped watching the dictation shortcut. Resume dictation to try again."
+                    .into(),
             );
         };
         let action = match input {
@@ -485,7 +486,7 @@ impl<P: Ports> Owner<P> {
             Ok(Delivered::Published(Err(error))) => Outcome::Failed(format!("{error:#}")),
             Err(_) if show => Outcome::Failed(PUBLISH_STOPPED.into()),
             Ok(Delivered::Inserted(Err(_))) | Err(_) => Outcome::Failed(
-                "Could not submit text. Check desktop permissions and clipboard access, then try again."
+                "Cannot submit the text. Check desktop permissions and clipboard access, then try again."
                     .into(),
             ),
         };
@@ -632,9 +633,7 @@ impl<P: Ports> Owner<P> {
                 self.microphone.open(recording, self.gesture.state());
                 session.opened();
             },
-            Err(error) => self.fail(format!(
-                "Could not open the microphone ({error}). Try again."
-            )),
+            Err(error) => self.fail(format!("Cannot open the microphone ({error}). Try again.")),
         }
     }
 
@@ -658,7 +657,7 @@ impl<P: Ports> Owner<P> {
                 self.screen.open(recorder, self.gesture.state());
                 session.screen_opened();
             },
-            Err(error) => self.fail(format!("Could not record the screen: {error}")),
+            Err(error) => self.fail(format!("Cannot record the screen: {error}")),
         }
     }
 

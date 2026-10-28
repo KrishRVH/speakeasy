@@ -493,7 +493,11 @@ async fn a_lane_closed_behind_a_queued_press_still_reports_monitoring_stopped() 
     h.input(Input::Press);
     h.runtime.input.close();
     h.phase(Phase::Error).await?;
-    assert!(h.snapshot().message.contains("Shortcut monitoring stopped"));
+    assert!(
+        h.snapshot()
+            .message
+            .contains("Speakeasy stopped watching the dictation shortcut")
+    );
     h.close().await
 }
 
@@ -705,7 +709,7 @@ async fn delayed_owner_start_cannot_claim_a_newer_shell_publisher() -> anyhow::R
     Ok(())
 }
 
-const REPORT: &str = "Could not delete every expired Show";
+const REPORT: &str = "Cannot delete every expired Show";
 
 #[tokio::test(start_paused = true)]
 async fn an_idle_report_survives_model_load_and_desktop_readiness() -> anyhow::Result<()> {

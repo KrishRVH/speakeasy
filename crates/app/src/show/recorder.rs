@@ -37,9 +37,9 @@ const POINTER_LANE: usize = 256;
 /// How many pins wait for the recorder. A pin that finds the lane full is dropped.
 const PIN_LANE: usize = 8;
 /// The failure a recording reports when capture or the recorder itself stops without an outcome.
-const CAPTURE_STOPPED: &str = "Screen capture stopped unexpectedly. Try again.";
+const CAPTURE_STOPPED: &str = "Screen capture stopped unexpectedly. Start the Show again.";
 /// The failure a Show reports when not one frame of the screen was recorded.
-pub(super) const NOTHING_RECORDED: &str = "The screen could not be recorded. Try again.";
+pub(super) const NOTHING_RECORDED: &str = "The Show recorded no frames. Start the Show again.";
 
 /// A Show's screen recording; the session owner finishes or retires it like a microphone. Fields
 /// drop in declaration order, so a recorder dropped without retiring cancels before its thread

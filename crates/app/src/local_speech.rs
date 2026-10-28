@@ -34,10 +34,9 @@ pub(crate) const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 // waits long before this.
 const INFERENCE_TIMEOUT: Duration = Duration::from_mins(30);
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
-const STOPPED: &str =
-    "Local transcription stopped. Check the selected model and engine, then try again.";
+const STOPPED: &str = "Transcription stopped. Check the selected model and engine, then try again.";
 /// The engine returned word times Speakeasy cannot place on the recording.
-const INVALID_TIMINGS: &str = "Local speech returned invalid word timings. Check the selected model and engine, then try again.";
+const INVALID_TIMINGS: &str = "The speech engine returned invalid word timings. Check the selected model and engine, then try again.";
 const SIGILL: i32 = 4;
 const USAGE_ERROR: u32 = 2;
 const STATUS_ILLEGAL_INSTRUCTION: u32 = 0xC000_001D;
@@ -74,7 +73,7 @@ impl LocalSpeech {
         // Release the reserved port just before the engine binds it.
         drop(listener);
         let mut child = command.spawn().context(
-            "Cannot start local speech. Check the selected engine executable and its native dependencies.",
+            "Cannot start the speech engine. Check the selected engine executable and its native dependencies.",
         )?;
         let group = contain(&mut child).await?;
         let mut speech = Self {
@@ -102,7 +101,7 @@ impl LocalSpeech {
             timeout(STARTUP_TIMEOUT, self.wait_until_serving())
                 .await
                 .context(
-                    "Local model startup timed out. Check the selected model and engine, then try again.",
+                    "Loading the model timed out. Check the selected model and engine, then try again.",
                 )?
         })
         .await?;
@@ -145,8 +144,8 @@ impl LocalSpeech {
                 ensure!(
                     self.group
                         .holds_loopback_listener(self.port)
-                        .context("Cannot verify the local speech process. Try again.")?,
-                    "Another program took the local speech port. Try again."
+                        .context("Cannot verify the speech engine's process. Try again.")?,
+                    "Another program took the speech engine's port. Try again."
                 );
                 return Ok(());
             }
@@ -183,7 +182,7 @@ impl LocalSpeech {
                 let rate = audio::wav_sample_rate(&wav)?;
                 ensure!(
                     (8_000..=96_000).contains(&rate),
-                    "Parakeet needs 8–96 kHz audio. Set your microphone to 48 kHz in OS settings or choose Whisper."
+                    "Parakeet needs 8–96 kHz audio. Set your microphone to 48 kHz in your system's sound settings, or choose Whisper."
                 );
                 self.client
                     .post(self.url("v1/audio/transcriptions"))
@@ -204,7 +203,7 @@ impl LocalSpeech {
             .map_err(transport_error)?;
         ensure!(
             response.status().is_success(),
-            "Local speech returned HTTP {}. Check the selected model and engine, then try again.",
+            "The speech engine returned HTTP {}. Check the selected model and engine, then try again.",
             response.status().as_u16()
         );
         reply(&read_bounded(response).await?)
@@ -216,7 +215,7 @@ impl Speech for LocalSpeech {
         self.request::<Plain>(wav, language)
             .await?
             .text
-            .context("Local speech returned no transcript. Check the selected model and engine, then try again.")
+            .context("The speech engine returned no transcript. Check the selected model and engine, then try again.")
     }
 
     async fn transcribe_words(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<Narration> {
@@ -246,13 +245,13 @@ impl Warmup {
     fn required(config: &Config) -> Option<Self> {
         if config.use_gpu {
             Some(Self {
-                timed_out: "Local GPU warmup timed out. Check the selected engine and GPU dependencies.",
-                failed: "Local GPU warmup failed. Check the selected engine and GPU dependencies.",
+                timed_out: "GPU warmup timed out. Check the selected engine and its GPU dependencies.",
+                failed: "GPU warmup failed. Check the selected engine and its GPU dependencies.",
             })
         } else if cfg!(target_os = "linux") {
             Some(Self {
-                timed_out: "Local CPU inference timed out. Choose a smaller model or a compatible engine executable in Settings.",
-                failed: "Local CPU inference failed. Check the model and CPU compatibility; choose a compatible engine executable in Settings.",
+                timed_out: "CPU transcription timed out. Choose a smaller model or a compatible engine executable in Settings.",
+                failed: "CPU transcription failed. Check the selected model, or choose a compatible engine executable in Settings.",
             })
         } else {
             None
@@ -265,7 +264,7 @@ impl Warmup {
 fn reply<T: DeserializeOwned>(body: &[u8]) -> anyhow::Result<T> {
     serde_json::from_slice(body)
         .ok()
-        .context("Local speech sent a reply Speakeasy cannot read. Check the selected model and engine, then try again.")
+        .context("The speech engine sent a reply Speakeasy cannot read. Check the selected model and engine, then try again.")
 }
 
 /// An engine reply Speakeasy reads, and the `response_format` that asks for it.
@@ -474,7 +473,7 @@ async fn contain(child: &mut Child) -> anyhow::Result<ProcessGroup> {
         Err(error) => {
             kill_and_reap(child).await;
             Err(anyhow!(
-                "Cannot start local speech under Speakeasy's control ({error:#}). Restart Speakeasy, then try again."
+                "Cannot start the speech engine under Speakeasy's control ({error:#}). Restart Speakeasy, then try again."
             ))
         },
     }
@@ -515,7 +514,7 @@ async fn read_bounded(mut response: Response) -> anyhow::Result<Vec<u8>> {
     while let Some(chunk) = response.chunk().await.map_err(transport_error)? {
         ensure!(
             chunk.len() <= MAX_RESPONSE_BYTES.saturating_sub(body.len()),
-            "Local speech sent a reply too large to read. Check the selected model and engine, then try again."
+            "The speech engine sent a reply too large to read. Check the selected model and engine, then try again."
         );
         body.extend_from_slice(&chunk);
     }
@@ -528,7 +527,7 @@ fn startup_exit(status: ExitStatus) -> String {
     #[cfg(not(unix))]
     let signal = None;
     format!(
-        "Local speech exited before becoming ready ({status}). {}",
+        "The speech engine exited before it was ready ({status}). {}",
         exit_remedy(status.code(), signal)
     )
 }

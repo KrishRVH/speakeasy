@@ -78,15 +78,15 @@ impl fmt::Display for Failure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Permission => {
-                "Allow Screen & System Audio Recording for Speakeasy in System Settings › Privacy & Security. If it is already on, remove it with − and add it again, then try again."
+                "Allow Screen & System Audio Recording for Speakeasy in System Settings › Privacy & Security. If it is already on, remove it with − and add it again, then start the Show again."
             },
             Self::Stalled => "Screen capture stopped responding. Start the Show again.",
-            Self::Unstarted => "Screen capture could not start. Start the Show again.",
+            Self::Unstarted => "Cannot start screen capture. Start the Show again.",
             Self::DisplayLost => {
-                "The display being shown is no longer available. Start the Show again."
+                "The recorded display is no longer available. Start the Show again."
             },
             Self::Exposed => {
-                "Speakeasy could not keep its own windows out of the Show. Start the Show again."
+                "Cannot keep Speakeasy's windows out of the Show. Start the Show again."
             },
         })
     }

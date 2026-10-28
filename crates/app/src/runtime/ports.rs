@@ -17,7 +17,8 @@ use crate::{config::Config, sounds::Cue};
 pub(crate) const STARTUP_CANCELLED: &str = "Local model startup cancelled";
 
 /// The failure a Show publication reports when its task ends without a result.
-pub(crate) const PUBLISH_STOPPED: &str = "Publishing the Show stopped unexpectedly. Try again.";
+pub(crate) const PUBLISH_STOPPED: &str =
+    "Saving the Show stopped unexpectedly. Start the Show again.";
 
 /// Identifies one recording; capture events carry it, so late audio cannot reach a newer session.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

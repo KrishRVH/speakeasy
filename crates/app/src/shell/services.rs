@@ -341,7 +341,7 @@ impl Services {
         let error = match window::open(cx) {
             Ok(()) => error,
             Err(open_error) => anyhow!(
-                "{}. Settings could not open: {open_error:#}",
+                "{}. Cannot open Settings: {open_error:#}",
                 error.to_string().trim_end_matches('.')
             ),
         };

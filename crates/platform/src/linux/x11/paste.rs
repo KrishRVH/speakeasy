@@ -85,7 +85,7 @@ impl InsertionWorker {
                 match served {
                     Ok(Ok(())) => {},
                     Ok(Err(error)) => input.fail(format!(
-                        "X11 input is unavailable: {error}. Check your desktop connection, then resume."
+                        "X11 input is unavailable: {error}. Check your desktop connection, then resume dictation."
                     )),
                     // Never the panic payload, which could quote the text.
                     Err(_) => input.fail(
@@ -179,7 +179,7 @@ impl Paster {
         }
         if owner_changed {
             return Ok(ControlFlow::Break(Inserted::Unavailable(
-                "Clipboard changed while waiting for shortcut release. Dictate again when your keys are released.",
+                "The clipboard changed while your shortcut keys were held. Release them, then dictate again.",
             )));
         }
         let Some(owner) = self.clipboard.set_text(&request.text)? else {
@@ -214,7 +214,7 @@ impl Paster {
         }
         if !self.clipboard.owns(owner)? {
             return Ok(Inserted::Unavailable(
-                "Clipboard ownership changed before paste. Dictate again.",
+                "The clipboard changed before pasting. Dictate again.",
             ));
         }
         let external = self
@@ -240,7 +240,7 @@ impl Paster {
         Ok(match submitted {
             Ok(()) => Inserted::Sent,
             Err(_) => Inserted::Copied(
-                "Text copied, but input submission failed. Paste manually; automatic paste was not repeated.",
+                "Text copied, but automatic paste failed and was not retried. Paste it manually.",
             ),
         })
     }

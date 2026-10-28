@@ -182,7 +182,7 @@ fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
     }
     anyhow::ensure!(
         !stuck,
-        "Could not delete every expired Show in {}. Close any of their files that are open; \
+        "Cannot delete every expired Show in {}. Close any of their open files; \
          Speakeasy tries again within the hour.",
         parent.display()
     );

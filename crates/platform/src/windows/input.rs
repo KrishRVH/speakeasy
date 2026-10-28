@@ -336,7 +336,7 @@ fn monitor(input: &InputSender, stop: &StopEvent) {
         && !input.is_closed()
     {
         input.deliver(Input::Unavailable(format!(
-            "Cannot monitor the dictation shortcut ({error}). Resume dictation to try again."
+            "Cannot watch the dictation shortcut ({error}). Resume dictation to try again."
         )));
     }
     drop(HOOK.take());

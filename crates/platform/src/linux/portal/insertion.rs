@@ -429,7 +429,7 @@ const fn text_remedy(blocked: TextBlocked) -> Inserted {
 /// The portal selection was taken by another app or never confirmed as this session's, so its loss
 /// revoked the paste.
 const SELECTION_LOST: Inserted = Inserted::Unavailable(
-    "Clipboard changed or could not be confirmed before paste. Dictate again, or choose Insert: Copy for manual paste in Settings.",
+    "The clipboard changed or could not be confirmed before pasting. Dictate again, or choose Insert: Copy for manual paste in Settings.",
 );
 
 /// Submits a prepared paste. An unconfirmed or lost portal selection has already revoked its

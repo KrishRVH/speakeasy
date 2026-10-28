@@ -250,11 +250,7 @@ impl<T: Send + 'static> Job<T> {
 
 /// A failed join reports a fixed message, since a panic payload could carry private text.
 fn joined<T>(result: Result<anyhow::Result<T>, JoinError>) -> anyhow::Result<T> {
-    result.unwrap_or_else(|_| {
-        Err(anyhow!(
-            "Local transcription stopped unexpectedly. Try again."
-        ))
-    })
+    result.unwrap_or_else(|_| Err(anyhow!("Transcription stopped unexpectedly. Try again.")))
 }
 
 /// Transcribes `wav` as dictation text or as a Show's timed narration, cleaned up either way.

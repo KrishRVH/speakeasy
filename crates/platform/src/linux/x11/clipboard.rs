@@ -48,7 +48,7 @@ impl ClipboardWorker {
                 },
                 Err(error) => {
                     input.fail(format!(
-                        "X11 clipboard is unavailable: {error}. Check your desktop connection, then resume."
+                        "X11 clipboard is unavailable: {error}. Check your desktop connection, then resume dictation."
                     ));
                 },
             }

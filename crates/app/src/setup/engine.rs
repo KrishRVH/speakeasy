@@ -169,7 +169,7 @@ pub(super) async fn choose_engine(
     _: &mut Installation,
 ) -> anyhow::Result<ChosenEngine> {
     bail!(
-        "Automatic Linux setup requires x86_64. Choose a local speech executable and model for this architecture."
+        "Automatic Linux setup requires x86_64. Choose an engine executable and model for this architecture in Settings."
     )
 }
 
