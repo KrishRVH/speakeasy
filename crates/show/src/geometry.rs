@@ -152,13 +152,21 @@ impl Rect {
         }
     }
 
+    /// The empty rectangle at `point`.
+    #[must_use]
+    pub(crate) const fn at(point: Point) -> Self {
+        Self {
+            left: point.x,
+            top: point.y,
+            right: point.x,
+            bottom: point.y,
+        }
+    }
+
     /// The smallest rectangle holding every point, or `None` without points.
     #[must_use]
     pub(crate) fn bounding(points: impl IntoIterator<Item = Point>) -> Option<Self> {
-        points
-            .into_iter()
-            .map(|point| Self::from_origin(point, 0.0, 0.0))
-            .reduce(Self::union)
+        points.into_iter().map(Self::at).reduce(Self::union)
     }
 
     /// The horizontal extent.

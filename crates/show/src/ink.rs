@@ -3,7 +3,7 @@
 //!
 //! The outline is adapted from perfect-freehand 1.2.2 under the MIT License; see `NOTICE.md`.
 
-use std::f32::consts::PI;
+use std::f32::consts::{PI, TAU};
 
 use crate::Point;
 
@@ -91,12 +91,11 @@ pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
     }
     let radius = |pressure: f32| size * (0.5 + THINNING * (pressure - 0.5));
     let nodes = nodes(&input, size);
-    let (Some(first), Some(last)) = (nodes.first(), nodes.last()) else {
-        return Vec::new();
+    let (first, last) = match nodes.as_slice() {
+        [] => return Vec::new(),
+        [only] => return dot(only.point, radius(0.25).max(0.01)),
+        [first, .., last] => (first, last),
     };
-    if nodes.len() == 1 {
-        return dot(first.point, radius(0.25).max(0.01));
-    }
     let length = last.run;
 
     // Pressure follows speed: slow movement presses harder and draws wider.
@@ -111,7 +110,6 @@ pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
     let min_spacing = (size * SMOOTHING).powi(2);
     let (mut left, mut right) = (Vec::new(), Vec::new());
     let mut previous_direction = first.direction;
-    let (mut previous_left, mut previous_right) = (first.point, first.point);
     let mut rounding = false;
     let mut end_radius = radius(pressure);
     let final_index = nodes.len().saturating_sub(1);
@@ -123,19 +121,18 @@ pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
         let node_pressure = simulate(pressure, node.step);
         let width = radius(node_pressure).max(0.01);
         end_radius = width;
-        let next = nodes
+        let next_direction = nodes
             .get(index.saturating_add(1))
             .map_or(node.direction, |next| next.direction);
-        let turn = node.direction.dot(next);
+        let turn = node.direction.dot(next_direction);
         let turns_back = turn < 0.0;
-        if (node.direction.dot(previous_direction) < 0.0 && !rounding) || turns_back {
-            // A sharp corner gets a round joint instead of a spike.
+        let sharp_corner =
+            (node.direction.dot(previous_direction) < 0.0 && !rounding) || turns_back;
+        if sharp_corner {
             let offset = previous_direction.perpendicular() * width;
             for angle in arc(0..=ARC_STEPS, ARC_STEPS) {
-                previous_left = (node.point - offset).rotated(node.point, angle);
-                previous_right = (node.point + offset).rotated(node.point, -angle);
-                left.push(previous_left);
-                right.push(previous_right);
+                left.push((node.point - offset).rotated(node.point, angle));
+                right.push((node.point + offset).rotated(node.point, -angle));
             }
             rounding = turns_back;
             continue;
@@ -144,30 +141,28 @@ pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
         let along = if is_last {
             node.direction
         } else {
-            next.lerp(node.direction, turn)
+            next_direction.lerp(node.direction, turn)
         };
         let offset = along.perpendicular() * width;
-        let (on_left, on_right) = (node.point - offset, node.point + offset);
-        if is_last
-            || index <= 1
-            || (previous_left - on_left).dot(previous_left - on_left) > min_spacing
-        {
-            left.push(on_left);
-            previous_left = on_left;
-        }
-        if is_last
-            || index <= 1
-            || (previous_right - on_right).dot(previous_right - on_right) > min_spacing
-        {
-            right.push(on_right);
-            previous_right = on_right;
+        let forced = is_last || index <= 1;
+        for (side, point) in [
+            (&mut left, node.point - offset),
+            (&mut right, node.point + offset),
+        ] {
+            if forced
+                || side
+                    .last()
+                    .is_none_or(|&previous| (previous - point).dot(previous - point) > min_spacing)
+            {
+                side.push(point);
+            }
         }
         pressure = node_pressure;
         previous_direction = node.direction;
     }
 
     // Round caps join the two sides at each end.
-    let cap = last.point + (last.direction * -1.0).perpendicular() * end_radius;
+    let cap = last.point - last.direction.perpendicular() * end_radius;
     left.extend(
         arc(1..=ARC_STEPS, ARC_STEPS.saturating_add(1)).map(|angle| cap.rotated(last.point, angle)),
     );
@@ -223,25 +218,23 @@ fn nodes(input: &[Point], size: f32) -> Vec<Node> {
             run,
         });
     }
-    // The first node has no predecessor; it borrows the second node's direction.
-    if let Some(second) = nodes.get(1).map(|node| node.direction)
-        && let Some(first) = nodes.first_mut()
-    {
-        first.direction = second;
+    if let [first, second, ..] = nodes.as_mut_slice() {
+        first.direction = second.direction;
     }
     nodes
 }
 
-/// Angles from zero to π over `steps` steps, at the given step numbers.
+/// Angles from zero to π in `of` equal steps, at the step numbers `steps` yields.
 fn arc(steps: impl Iterator<Item = u8>, of: u8) -> impl Iterator<Item = f32> {
     steps.map(move |step| PI * f32::from(step) / f32::from(of))
 }
 
 /// A closed circle of `radius` around `center`.
 fn dot(center: Point, radius: f32) -> Vec<Point> {
-    (0..=32_u8)
+    (0..32_u8)
+        .chain([0])
         .map(|step| {
-            let angle = 2.0 * PI * f32::from(step % 32) / 32.0;
+            let angle = TAU * f32::from(step) / 32.0;
             center + Point::new(radius * angle.cos(), radius * angle.sin())
         })
         .collect()

@@ -43,26 +43,22 @@ impl fmt::Display for Mark {
             right,
             bottom,
         } = self.bounds;
-        let region = format!("x {left:.2}–{right:.2}, y {top:.2}–{bottom:.2}");
-        let strokes = match self.strokes.len() {
-            0 | 1 => String::new(),
-            count => format!(" ({count} strokes)"),
-        };
-        let verb = self.shape.verb();
-        write!(f, "{} ", Numeral(self.number))?;
+        let strokes = Strokes(self.strokes.len());
+        write!(f, "{} {} ", Numeral(self.number), self.shape.verb())?;
         match self.shape {
-            Shape::Circle | Shape::Scribble => write!(f, "{verb} region {region}{strokes}"),
+            Shape::Circle | Shape::Scribble => write!(
+                f,
+                "region x {left:.2}–{right:.2}, y {top:.2}–{bottom:.2}{strokes}"
+            ),
             Shape::Underline => write!(
                 f,
-                "{verb} x {left:.2}–{right:.2} at y {:.2}{strokes}",
+                "x {left:.2}–{right:.2} at y {:.2}{strokes}",
                 top.midpoint(bottom)
             ),
-            Shape::Line { from, to } => write!(f, "{verb} from {} to {}", At(from), At(to)),
-            Shape::Arrow { from, to } => {
-                write!(f, "{verb} from {} pointing to {}", At(from), At(to))
-            },
-            Shape::Tap => write!(f, "{verb} {}{strokes}", At(self.bounds.center())),
-            Shape::Pin { point } => write!(f, "{verb} {}", At(point)),
+            Shape::Line { from, to } => write!(f, "from {} to {}", At(from), At(to)),
+            Shape::Arrow { from, to } => write!(f, "from {} pointing to {}", At(from), At(to)),
+            Shape::Tap => write!(f, "{}{strokes}", At(self.bounds.center())),
+            Shape::Pin { point } => write!(f, "{}", At(point)),
         }
     }
 }
@@ -135,6 +131,18 @@ impl fmt::Display for Count {
         let Self(count, noun) = *self;
         let plural = if count == 1 { "" } else { "s" };
         write!(f, "{count} {noun}{plural}")
+    }
+}
+
+/// How many strokes a mark joined, as a parenthetical when more than one.
+struct Strokes(usize);
+
+impl fmt::Display for Strokes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            0 | 1 => Ok(()),
+            count => write!(f, " ({})", Count(count, "stroke")),
+        }
     }
 }
 
@@ -241,7 +249,7 @@ mod tests {
             },
             strokes: 2..2,
             span: Span::at(Moment::from_millis(2_000)),
-            bounds: Rect::from_origin(Point::new(0.6, 0.25), 0.0, 0.0),
+            bounds: Rect::at(Point::new(0.6, 0.25)),
         };
         let keyframe = |action| Keyframe {
             index: 1,

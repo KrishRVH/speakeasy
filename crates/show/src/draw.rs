@@ -27,6 +27,8 @@ const RIPPLE_REACH: Duration = Duration::from_millis(600);
 /// The top band where a badge sits; the left and right thirds decide which corner it takes.
 const BADGE_BAND: f32 = 0.18;
 const BADGE_SIDE: f32 = 0.30;
+/// How far a cubic Bézier's handles reach along its tangents, in radii, to trace a quarter circle.
+const QUARTER_CIRCLE_HANDLE: f32 = 0.552_284_8;
 
 /// The top corner a keyframe's badge sits in.
 #[derive(Clone, Copy)]
@@ -86,10 +88,10 @@ pub(crate) fn annotate(
         ripple(&mut canvas, point.scaled(width, height), detail);
     }
     let radius = ink::label_radius(width, height);
-    let labeled = marks
+    let recent_marks = marks
         .iter()
-        .filter(|mark| own.contains(mark) || (own.is_empty() && recent(mark.span)));
-    for mark in labeled {
+        .filter(|mark| own.is_empty() && recent(mark.span));
+    for mark in own.iter().chain(recent_marks) {
         let center = mark.label(width, height, radius);
         label(&mut canvas, mark, center, radius, typeface);
         ink_points.push(Point::new(center.x / width, center.y / height));
@@ -108,12 +110,11 @@ fn nearest_click(actions: &[Action], moment: Moment) -> Option<Point> {
     actions
         .iter()
         .filter_map(|action| match *action {
-            Action::Click { at, point } if at.distance(moment) <= RIPPLE_REACH => {
-                Some((at.distance(moment), point))
-            },
-            Action::Click { .. } | Action::Drag { .. } => None,
+            Action::Click { at, point } => Some((at.distance(moment), point)),
+            Action::Drag { .. } => None,
         })
-        .min_by_key(|(distance, _)| *distance)
+        .filter(|&(distance, _)| distance <= RIPPLE_REACH)
+        .min_by_key(|&(distance, _)| distance)
         .map(|(_, point)| point)
 }
 
@@ -138,32 +139,12 @@ fn ripple(canvas: &mut PixmapMut<'_>, center: Point, scale: f32) {
 /// Draws `mark`'s number in white on a red disc ringed in white, centered at `center` in pixels,
 /// with a dot at the point a pin marks.
 fn label(canvas: &mut PixmapMut<'_>, mark: &Mark, center: Point, radius: f32, typeface: &Typeface) {
-    let width = canvas.width() as f32;
-    let height = canvas.height() as f32;
     if let Shape::Pin { point } = mark.shape {
-        let point = point.scaled(width, height);
         let dot = ink::PIN_DOT * radius;
-        fill(
-            canvas,
-            PathBuilder::from_circle(point.x, point.y, dot),
-            WHITE,
-        );
-        fill(
-            canvas,
-            PathBuilder::from_circle(point.x, point.y, dot * (1.0 - 2.0 * ink::LABEL_RING)),
-            ink::COLOR,
-        );
+        let point = point.scaled(canvas.width() as f32, canvas.height() as f32);
+        disc(canvas, point, dot, dot * (1.0 - 2.0 * ink::LABEL_RING));
     }
-    fill(
-        canvas,
-        PathBuilder::from_circle(center.x, center.y, radius),
-        WHITE,
-    );
-    fill(
-        canvas,
-        PathBuilder::from_circle(center.x, center.y, radius * (1.0 - ink::LABEL_RING)),
-        ink::COLOR,
-    );
+    disc(canvas, center, radius, radius * (1.0 - ink::LABEL_RING));
     let digits = mark.number.to_string();
     let natural = ink::LABEL_TYPE * radius;
     let size = natural * (ink::LABEL_DIGITS * radius / typeface.width(&digits, natural)).min(1.0);
@@ -172,6 +153,20 @@ fn label(canvas: &mut PixmapMut<'_>, mark: &Mark, center: Point, radius: f32, ty
         center.y + typeface.cap_height(size) / 2.0,
     );
     fill(canvas, typeface.path(&digits, size, origin), WHITE);
+}
+
+/// A red disc of radius `inner` on a white one of `radius`, centered at `center` in pixels.
+fn disc(canvas: &mut PixmapMut<'_>, center: Point, radius: f32, inner: f32) {
+    fill(
+        canvas,
+        PathBuilder::from_circle(center.x, center.y, radius),
+        WHITE,
+    );
+    fill(
+        canvas,
+        PathBuilder::from_circle(center.x, center.y, inner),
+        ink::COLOR,
+    );
 }
 
 /// Draws a badge such as `#3  0:42` in the top corner of `cell`, a rectangle in pixels.
@@ -192,11 +187,11 @@ pub(crate) fn badge(
     let height = 28.0 * scale;
     let radius = 8.5 * scale;
     let inset = 2.5 * scale;
-    let cap_height = height - 2.0 * inset;
+    let keycap_height = height - 2.0 * inset;
     let number_width = typeface.width(&number, number_size);
-    let cap_width = (number_width + 12.0 * scale).max(cap_height);
+    let keycap_width = (number_width + 12.0 * scale).max(keycap_height);
     let time_width = typeface.width(&time, time_size);
-    let width = inset + cap_width + 7.0 * scale + time_width + 9.0 * scale;
+    let width = inset + keycap_width + 7.0 * scale + time_width + 9.0 * scale;
     let margin = 7.0 * scale;
     let left = match corner {
         Corner::Left => cell.left + margin,
@@ -223,15 +218,19 @@ pub(crate) fn badge(
         rounded(body, (radius - border).max(0.0)),
         [14, 15, 18, 240],
     );
-    let cap = Rect::from_origin(Point::new(left + inset, top + inset), cap_width, cap_height);
+    let keycap = Rect::from_origin(
+        Point::new(left + inset, top + inset),
+        keycap_width,
+        keycap_height,
+    );
     fill(
         canvas,
-        rounded(cap, (radius - inset).max(2.0)),
+        rounded(keycap, (radius - inset).max(2.0)),
         [248, 249, 252, 255],
     );
     let center_line = top + height / 2.0;
     let number_origin = Point::new(
-        cap.left + (cap_width - number_width) / 2.0,
+        keycap.left + (keycap_width - number_width) / 2.0,
         center_line + typeface.cap_height(number_size) / 2.0,
     );
     fill(
@@ -240,7 +239,7 @@ pub(crate) fn badge(
         [14, 15, 18, 255],
     );
     let time_origin = Point::new(
-        cap.right + 7.0 * scale,
+        keycap.right + 7.0 * scale,
         center_line + typeface.cap_height(time_size) / 2.0,
     );
     fill(
@@ -280,8 +279,7 @@ pub(crate) fn rounded(rect: Rect, radius: f32) -> Option<Path> {
         .max(0.0)
         .min(rect.width() / 2.0)
         .min(rect.height() / 2.0);
-    // A cubic Bézier approximates a quarter circle with its handles this far along the tangent.
-    let handle = radius * 0.552_284_8;
+    let handle = radius * QUARTER_CIRCLE_HANDLE;
     let Rect {
         left,
         top,

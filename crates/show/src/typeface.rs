@@ -1,7 +1,7 @@
 //! Text drawn as vector paths from a TrueType face, for badges and the demo.
 
 use tiny_skia::{Path, PathBuilder};
-use ttf_parser::{Face, OutlineBuilder};
+use ttf_parser::{Face, GlyphId, OutlineBuilder};
 
 use crate::{Error, Point};
 
@@ -30,15 +30,19 @@ impl Typeface {
         size / f32::from(self.face.units_per_em())
     }
 
+    /// The glyphs `text` sets, each with its advance in font units; characters the face lacks are
+    /// skipped.
+    fn glyphs(&self, text: &str) -> impl Iterator<Item = (GlyphId, f32)> {
+        text.chars().filter_map(|character| {
+            let glyph = self.face.glyph_index(character)?;
+            let advance = self.face.glyph_hor_advance(glyph).map_or(0.0, f32::from);
+            Some((glyph, advance))
+        })
+    }
+
     /// How far `text` advances at `size` pixels per em.
     pub(crate) fn width(&self, text: &str, size: f32) -> f32 {
-        let units: f32 = text
-            .chars()
-            .filter_map(|character| self.face.glyph_index(character))
-            .filter_map(|glyph| self.face.glyph_hor_advance(glyph))
-            .map(f32::from)
-            .sum();
-        units * self.scale(size)
+        self.glyphs(text).map(|(_, advance)| advance).sum::<f32>() * self.scale(size)
     }
 
     /// The height of capital letters and figures at `size`, for centering them optically.
@@ -57,13 +61,9 @@ impl Typeface {
             scale: self.scale(size),
             origin,
         };
-        for character in text.chars() {
-            let Some(glyph) = self.face.glyph_index(character) else {
-                continue;
-            };
+        for (glyph, advance) in self.glyphs(text) {
             // A glyph without an outline, such as a space, still advances the pen.
             self.face.outline_glyph(glyph, &mut pen);
-            let advance = self.face.glyph_hor_advance(glyph).map_or(0.0, f32::from);
             pen.origin.x += advance * pen.scale;
         }
         pen.builder.finish()

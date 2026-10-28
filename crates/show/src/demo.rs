@@ -2,7 +2,10 @@
 
 use std::time::Duration;
 
-use tiny_skia::{FillRule, LinearGradient, Paint, Path, PixmapMut, SpreadMode, Transform};
+use tiny_skia::{
+    Color, FillRule, GradientStop, LinearGradient, Paint, Path, PathBuilder, PixmapMut, SpreadMode,
+    Transform,
+};
 
 use crate::{
     Action, Bundle, Error, Image, InkPoint, Moment, Narration, Pin, Point, Recording, Rect,
@@ -29,23 +32,30 @@ const WINDOW: Rect = Rect {
 const SIDEBAR_RIGHT: f32 = 380.0;
 const TITLE_BAR: f32 = 44.0;
 const SECTIONS: [&str; 4] = ["General", "Shortcuts", "Audio", "Appearance"];
+/// Where General and Appearance sit in [`SECTIONS`].
+const GENERAL: usize = 0;
+const APPEARANCE: usize = 3;
 const ROW_TOP: f32 = 230.0;
 const ROW_HEIGHT: f32 = 78.0;
 const CONTROL_RIGHT: f32 = 1240.0;
 const SLIDER_LEFT: f32 = 900.0;
+const SLIDER_Y: f32 = row_center(2);
+/// The slider's value where the drag picks it up and where it lets go.
+const SLIDER_FROM: f32 = 0.35;
+const SLIDER_TO: f32 = 0.7;
 
 const ACCENT: [u8; 4] = [10, 132, 255, 255];
 const TEXT: [u8; 4] = [28, 28, 30, 255];
 const SECONDARY: [u8; 4] = [110, 110, 118, 255];
 const TRACK: [u8; 4] = [210, 210, 216, 255];
 
-/// When things happen, in milliseconds from the start.
-const OPEN_APPEARANCE: u64 = 2_500;
-const APPEARANCE_SHOWN: u64 = 2_800;
-const TOGGLE_CLICK: u64 = 12_000;
-const TOGGLE_PIN: u64 = 12_600;
-const DRAG: (u64, u64) = (16_000, 17_000);
-const END: u64 = 20_000;
+const OPEN_APPEARANCE: Moment = Moment::from_millis(2_500);
+const APPEARANCE_SHOWN: Moment = Moment::from_millis(2_800);
+const TOGGLE_CLICK: Moment = Moment::from_millis(12_000);
+const TOGGLE_PIN: Moment = Moment::from_millis(12_600);
+const DRAG_START: Moment = Moment::from_millis(16_000);
+const DRAG_END: Moment = Moment::from_millis(17_000);
+const END: Moment = Moment::from_millis(20_000);
 
 /// The narration, as phrases starting at a moment.
 const NARRATION: [(u64, &str); 6] = [
@@ -75,7 +85,7 @@ impl Demo {
 
     /// The screen at `at`, rendered at `width × height` pixels; fails when a dimension is zero or
     /// too large to allocate.
-    fn frame(&self, at: Moment, width: u32, height: u32) -> Result<Image, Error> {
+    fn frame(&self, at: Moment, (width, height): (u32, u32)) -> Result<Image, Error> {
         let mut image = Image::filled(width, height, [20, 22, 28])?;
         let scale = Transform::from_scale(width as f32 / SCENE.width, height as f32 / SCENE.height);
         let mut scene = Scene {
@@ -83,24 +93,24 @@ impl Demo {
             transform: scale,
             typeface: &self.typeface,
         };
-        scene.draw(at.as_millis());
+        scene.draw(at);
         Ok(image)
     }
 
     /// The scripted Show as a bundle, sampled every [`SAMPLE_INTERVAL`] as a recorded Show is,
-    /// with keyframes rendered at `keyframe` pixels.
+    /// with keyframes rendered at `keyframe_size` pixels.
     ///
     /// # Errors
     ///
     /// Fails when a keyframe dimension is zero or too large to allocate, or the script records no
     /// frames.
-    pub fn bundle(&self, keyframe: (u32, u32)) -> Result<Bundle, Error> {
+    pub fn bundle(&self, keyframe_size: (u32, u32)) -> Result<Bundle, Error> {
         let recording = recording();
         let samples = std::iter::successors(Some(Moment::START), |at| {
             Some(at.saturating_add(SAMPLE_INTERVAL)).filter(|next| *next <= recording.duration)
         })
         .map(|at| {
-            let frame = self.frame(at, SAMPLE_SIZE.0, SAMPLE_SIZE.1)?;
+            let frame = self.frame(at, SAMPLE_SIZE)?;
             Ok(Sample {
                 at,
                 signature: Signature::of(&frame),
@@ -111,7 +121,7 @@ impl Demo {
         compose(
             recording,
             selection,
-            |at| self.frame(at, keyframe.0, keyframe.1),
+            |at| self.frame(at, keyframe_size),
             &self.typeface,
         )
     }
@@ -124,7 +134,7 @@ struct Scene<'a> {
 }
 
 impl Scene<'_> {
-    fn draw(&mut self, at: u64) {
+    fn draw(&mut self, at: Moment) {
         self.backdrop();
         self.fill(rounded(WINDOW, 14.0), [245, 245, 247, 255]);
         let title_bar = Rect {
@@ -155,7 +165,11 @@ impl Scene<'_> {
             ..WINDOW
         };
         self.fill(rounded(sidebar, 0.0), [236, 236, 241, 255]);
-        let section = if at >= APPEARANCE_SHOWN { 3 } else { 0 };
+        let section = if at >= APPEARANCE_SHOWN {
+            APPEARANCE
+        } else {
+            GENERAL
+        };
         for (index, name) in SECTIONS.iter().enumerate() {
             let center = section_center(index);
             let selected = index == section;
@@ -166,7 +180,7 @@ impl Scene<'_> {
             let color = if selected { [255; 4] } else { TEXT };
             self.text(name, 17.0, Point::new(190.0, center + 6.0), color);
         }
-        if section == 0 {
+        if section == GENERAL {
             self.general();
         } else {
             self.appearance(at);
@@ -178,8 +192,8 @@ impl Scene<'_> {
             tiny_skia::Point::from_xy(0.0, 0.0),
             tiny_skia::Point::from_xy(SCENE.width, SCENE.height),
             vec![
-                tiny_skia::GradientStop::new(0.0, tiny_skia::Color::from_rgba8(28, 33, 48, 255)),
-                tiny_skia::GradientStop::new(1.0, tiny_skia::Color::from_rgba8(14, 15, 20, 255)),
+                GradientStop::new(0.0, Color::from_rgba8(28, 33, 48, 255)),
+                GradientStop::new(1.0, Color::from_rgba8(14, 15, 20, 255)),
             ],
             SpreadMode::Pad,
             Transform::identity(),
@@ -213,7 +227,7 @@ impl Scene<'_> {
         }
     }
 
-    fn appearance(&mut self, at: u64) {
+    fn appearance(&mut self, at: Moment) {
         self.text("Appearance", 28.0, Point::new(420.0, 190.0), TEXT);
         self.row(0, "Theme");
         let menu = Rect::from_origin(Point::new(960.0, row_center(0) - 20.0), 280.0, 40.0);
@@ -226,12 +240,11 @@ impl Scene<'_> {
         );
         self.chevron(Point::new(1_218.0, row_center(0)));
         self.row(1, "Reduce motion");
-        // The bug the narration describes: the toggle ignores the click.
         self.toggle(row_center(1), false);
         self.row(2, "Text size");
         let value = slider_value(at);
         let track = Rect::from_origin(
-            Point::new(SLIDER_LEFT, slider_y() - 3.0),
+            Point::new(SLIDER_LEFT, SLIDER_Y - 3.0),
             CONTROL_RIGHT - SLIDER_LEFT,
             6.0,
         );
@@ -242,7 +255,7 @@ impl Scene<'_> {
         };
         self.fill(rounded(filled, 3.0), ACCENT);
         let knob = Rect::from_origin(
-            Point::new(slider_x(value) - 13.0, slider_y() - 13.0),
+            Point::new(slider_x(value) - 13.0, SLIDER_Y - 13.0),
             26.0,
             26.0,
         );
@@ -251,7 +264,7 @@ impl Scene<'_> {
         self.text(
             &percent,
             15.0,
-            Point::new(SLIDER_LEFT - 70.0, slider_y() + 5.0),
+            Point::new(SLIDER_LEFT - 70.0, SLIDER_Y + 5.0),
             SECONDARY,
         );
         self.row(3, "Accent");
@@ -267,7 +280,6 @@ impl Scene<'_> {
             let swatch = Rect::from_origin(Point::new(left, row_center(3) - 12.0), 24.0, 24.0);
             self.fill(rounded(swatch, 12.0), color);
         }
-        // The label runs under the Save button.
         self.text(
             "Changes apply after you restart the app",
             16.0,
@@ -281,7 +293,7 @@ impl Scene<'_> {
 
     /// A small downward triangle, as a menu shows.
     fn chevron(&mut self, center: Point) {
-        let mut builder = tiny_skia::PathBuilder::new();
+        let mut builder = PathBuilder::new();
         builder.move_to(center.x - 6.0, center.y - 3.0);
         builder.line_to(center.x + 6.0, center.y - 3.0);
         builder.line_to(center.x, center.y + 4.0);
@@ -316,9 +328,7 @@ impl Scene<'_> {
     }
 
     fn text(&mut self, text: &str, size: f32, origin: Point, color: [u8; 4]) {
-        if let Some(path) = self.typeface.path(text, size, origin) {
-            self.paint(&path, &paint(color));
-        }
+        self.fill(self.typeface.path(text, size, origin), color);
     }
 
     fn centered(&mut self, text: &str, size: f32, center: f32, baseline: f32, color: [u8; 4]) {
@@ -342,12 +352,8 @@ fn section_center(index: usize) -> f32 {
     160.0 + 44.0 * index as f32
 }
 
-fn row_center(row: usize) -> f32 {
+const fn row_center(row: usize) -> f32 {
     ROW_TOP + ROW_HEIGHT * (row as f32 + 0.5)
-}
-
-fn slider_y() -> f32 {
-    row_center(2)
 }
 
 fn slider_x(value: f32) -> f32 {
@@ -355,11 +361,13 @@ fn slider_x(value: f32) -> f32 {
 }
 
 /// The slider follows the drag, easing between where it started and where it was let go.
-fn slider_value(at: u64) -> f32 {
-    let progress =
-        (at.saturating_sub(DRAG.0) as f32 / DRAG.1.saturating_sub(DRAG.0) as f32).clamp(0.0, 1.0);
+fn slider_value(at: Moment) -> f32 {
+    let progress = at
+        .since(DRAG_START)
+        .div_duration_f32(DRAG_END.since(DRAG_START))
+        .clamp(0.0, 1.0);
     let eased = progress * progress * (3.0 - 2.0 * progress);
-    0.35 * (1.0 - eased) + 0.7 * eased
+    SLIDER_FROM * (1.0 - eased) + SLIDER_TO * eased
 }
 
 fn normalized(x: f32, y: f32) -> Point {
@@ -369,26 +377,26 @@ fn normalized(x: f32, y: f32) -> Point {
 /// Everything the scripted Show captured except its frames.
 fn recording() -> Recording {
     Recording {
-        duration: Moment::from_millis(END),
+        duration: END,
         surface: SCENE,
         strokes: strokes(),
         pins: vec![Pin {
-            at: Moment::from_millis(TOGGLE_PIN),
+            at: TOGGLE_PIN,
             point: normalized(1_212.0, row_center(1)),
         }],
         actions: vec![
             Action::Click {
-                at: Moment::from_millis(OPEN_APPEARANCE),
-                point: normalized(270.0, section_center(3)),
+                at: OPEN_APPEARANCE,
+                point: normalized(270.0, section_center(APPEARANCE)),
             },
             Action::Click {
-                at: Moment::from_millis(TOGGLE_CLICK),
+                at: TOGGLE_CLICK,
                 point: normalized(1_206.0, row_center(1)),
             },
             Action::Drag {
-                span: Span::new(Moment::from_millis(DRAG.0), Moment::from_millis(DRAG.1)),
-                from: normalized(slider_x(0.35), slider_y()),
-                to: normalized(slider_x(0.7), slider_y()),
+                span: Span::new(DRAG_START, DRAG_END),
+                from: normalized(slider_x(SLIDER_FROM), SLIDER_Y),
+                to: normalized(slider_x(SLIDER_TO), SLIDER_Y),
             },
         ],
         narration: narration(),
@@ -397,6 +405,10 @@ fn recording() -> Recording {
 
 /// A circle around the theme menu, then a three-stroke arrow at the label under the button.
 fn strokes() -> Vec<Stroke> {
+    let ink = |point: Point, at: u64| InkPoint {
+        point: normalized(point.x, point.y),
+        at: Moment::from_millis(at),
+    };
     let circle = (0..=36_u8).map(|step| {
         let turn = f32::from(step) / 36.0;
         let angle = std::f32::consts::TAU * turn * 1.08 - 1.9;
@@ -405,39 +417,25 @@ fn strokes() -> Vec<Stroke> {
             1_100.0 + 170.0 * wobble * angle.cos(),
             row_center(0) + 40.0 * wobble * angle.sin(),
         );
-        (
-            point,
-            5_600_u64.saturating_add(u64::from(step).saturating_mul(28)),
-        )
+        let at = 5_600_u64.saturating_add(u64::from(step).saturating_mul(28));
+        ink(point, at)
     });
     let line = |from: Point, to: Point, start: u64, steps: u8| {
         (0..=steps).map(move |step| {
-            let progress = f32::from(step) / f32::from(steps);
-            (
-                from.lerp(to, progress),
-                start.saturating_add(u64::from(step).saturating_mul(24)),
-            )
+            let point = from.lerp(to, f32::from(step) / f32::from(steps));
+            let at = start.saturating_add(u64::from(step).saturating_mul(24));
+            ink(point, at)
         })
     };
     let tip = Point::new(1_110.0, 748.0);
     [
-        circle.collect::<Vec<_>>(),
+        circle.collect(),
         line(Point::new(900.0, 640.0), tip, 8_200, 20).collect(),
         line(Point::new(1_082.0, 738.0), tip, 8_800, 6).collect(),
         line(Point::new(1_100.0, 718.0), tip, 9_050, 6).collect(),
     ]
     .into_iter()
-    .filter_map(|points| {
-        Stroke::new(
-            points
-                .into_iter()
-                .map(|(point, at)| InkPoint {
-                    point: normalized(point.x, point.y),
-                    at: Moment::from_millis(at),
-                })
-                .collect(),
-        )
-    })
+    .filter_map(Stroke::new)
     .collect()
 }
 
@@ -455,12 +453,10 @@ fn narration() -> Narration {
                             .unwrap_or(u32::MAX)
                             .saturating_add(2);
                         let end = at.saturating_add(PER_CHARACTER.saturating_mul(length));
-                        let word = Word {
-                            span: Span::new(*at, end),
+                        Some(Word {
+                            span: Span::new(std::mem::replace(at, end), end),
                             text: text.to_owned(),
-                        };
-                        *at = end;
-                        Some(word)
+                        })
                     })
             })
             .collect(),

@@ -111,27 +111,7 @@ impl Image {
     ///
     /// Fast compression favors latency; screen content still compresses well.
     pub(crate) fn encode_png(&self) -> Result<Vec<u8>, Error> {
-        let data = self.pixmap.data();
-        let (pixels, _) = data.as_chunks::<4>();
-        // Captured screens are opaque, so their premultiplied pixels are already straight.
-        let rgba = if pixels.iter().all(|[.., alpha]| *alpha == u8::MAX) {
-            Cow::Borrowed(data)
-        } else {
-            Cow::Owned(
-                pixels
-                    .iter()
-                    .flat_map(|&[red, green, blue, alpha]| {
-                        PremultipliedColorU8::from_rgba(red, green, blue, alpha).map_or(
-                            [red, green, blue, alpha],
-                            |color| {
-                                let color = color.demultiply();
-                                [color.red(), color.green(), color.blue(), alpha]
-                            },
-                        )
-                    })
-                    .collect(),
-            )
-        };
+        let rgba = self.straight_rgba();
         let mut png = Vec::new();
         let mut encoder = png::Encoder::new(&mut png, self.width(), self.height());
         encoder.set_color(png::ColorType::Rgba);
@@ -141,6 +121,22 @@ impl Image {
         writer.write_image_data(&rgba).map_err(Error::png)?;
         writer.finish().map_err(Error::png)?;
         Ok(png)
+    }
+
+    /// The pixels as straight-alpha RGBA8 rows, borrowed when every pixel is opaque.
+    fn straight_rgba(&self) -> Cow<'_, [u8]> {
+        let pixels = self.pixmap.pixels();
+        if pixels.iter().all(PremultipliedColorU8::is_opaque) {
+            Cow::Borrowed(self.pixmap.data())
+        } else {
+            pixels
+                .iter()
+                .flat_map(|pixel| {
+                    let color = pixel.demultiply();
+                    [color.red(), color.green(), color.blue(), color.alpha()]
+                })
+                .collect()
+        }
     }
 
     /// The image resampled to `width × height`, each output pixel averaging the source area it
@@ -157,7 +153,6 @@ impl Image {
             let pixels = row.as_chunks::<4>().0;
             horizontal.extend(columns.iter().map(|footprint| footprint.average(pixels)));
         }
-        let lines: Vec<&[[f32; 4]]> = horizontal.chunks_exact(wide.max(1)).collect();
         let mut data = Vec::with_capacity(
             wide.saturating_mul(convert::count(height))
                 .saturating_mul(4),
@@ -165,8 +160,9 @@ impl Image {
         let mut line = vec![[0.0; 4]; wide];
         for footprint in &rows {
             line.fill([0.0; 4]);
-            for (source, weight) in lines.iter().skip(footprint.first).zip(&footprint.weights) {
-                for (sum, pixel) in line.iter_mut().zip(*source) {
+            let sources = horizontal.chunks_exact(wide.max(1)).skip(footprint.first);
+            for (source, weight) in sources.zip(&footprint.weights) {
+                for (sum, pixel) in line.iter_mut().zip(source) {
                     accumulate(sum, pixel, *weight);
                 }
             }

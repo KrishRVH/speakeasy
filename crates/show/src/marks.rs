@@ -135,46 +135,35 @@ impl Mark {
 /// [`MARK_STROKES`] apiece, whose shape is read in the pixels of `surface`; each pin is a mark of its
 /// own. Strokes and pins arrive in time order, so a later one never renumbers an earlier mark.
 pub(crate) fn group(strokes: &[Stroke], pins: &[Pin], surface: Size) -> Vec<Mark> {
-    let mut groups: Vec<Range<usize>> = Vec::new();
-    let mut previous_end = None;
-    for (index, stroke) in strokes.iter().enumerate() {
-        let start = stroke.span().start();
-        let continues = previous_end.is_some_and(|end| {
-            start.since(end) <= MARK_GAP && !pins.iter().any(|pin| (end..=start).contains(&pin.at))
-        });
-        match groups.last_mut() {
-            Some(group) if continues && group.len() < MARK_STROKES => {
-                group.end = index.saturating_add(1);
-            },
-            _ => groups.push(index..index.saturating_add(1)),
-        }
-        previous_end = Some(stroke.span().end());
-    }
-    let mut marks: Vec<Mark> = groups
-        .into_iter()
-        .filter_map(|range| {
-            let members = strokes.get(range.clone())?;
+    let joined = |one: &Stroke, next: &Stroke| {
+        let (end, start) = (one.span().end(), next.span().start());
+        start.since(end) <= MARK_GAP && !pins.iter().any(|pin| (end..=start).contains(&pin.at))
+    };
+    let ink = strokes
+        .chunk_by(joined)
+        .flat_map(|run| run.chunks(MARK_STROKES))
+        .filter_map(|members| {
             let span = members.iter().map(Stroke::span).reduce(Span::union)?;
             let bounds = Rect::bounding(members.iter().flat_map(Stroke::path))?;
             Some(Mark {
                 number: 0,
                 shape: shape(members, surface),
-                strokes: range,
+                strokes: strokes.subslice_range(members)?.into(),
                 span,
                 bounds,
             })
-        })
-        .collect();
-    marks.extend(pins.iter().map(|pin| {
+        });
+    let pinned = pins.iter().map(|pin| {
         let before = strokes.partition_point(|stroke| stroke.span().start() <= pin.at);
         Mark {
             number: 0,
             shape: Shape::Pin { point: pin.point },
             strokes: before..before,
             span: Span::at(pin.at),
-            bounds: Rect::from_origin(pin.point, 0.0, 0.0),
+            bounds: Rect::at(pin.point),
         }
-    }));
+    });
+    let mut marks: Vec<Mark> = ink.chain(pinned).collect();
     // Stable, so ink begun at a pin's moment keeps its place before the pin.
     marks.sort_by_key(|mark| mark.span.start());
     for (position, mark) in marks.iter_mut().enumerate() {
@@ -237,19 +226,10 @@ fn arrow(main: &Measured<'_>, rest: &[Measured<'_>], surface: Size) -> Option<Sh
             pixels(other.bounds.center()).distance(pixels(tip)) < ARROWHEAD_REACH * length
         })
     };
-    if clustered_at(end) {
-        Some(Shape::Arrow {
-            from: start,
-            to: end,
-        })
-    } else if clustered_at(start) {
-        Some(Shape::Arrow {
-            from: end,
-            to: start,
-        })
-    } else {
-        None
-    }
+    [(start, end), (end, start)]
+        .into_iter()
+        .find(|&(_, head)| clustered_at(head))
+        .map(|(from, to)| Shape::Arrow { from, to })
 }
 
 impl Shape {
@@ -259,38 +239,25 @@ impl Shape {
 }
 
 fn stroke_shape(stroke: &Stroke, surface: Size) -> Shape {
-    let path: Vec<Point> = stroke
-        .path()
-        .map(|point| point.scaled(surface.width, surface.height))
-        .collect();
-    let (Some(&first), Some(&last), Some(bounds)) = (
-        path.first(),
-        path.last(),
-        Rect::bounding(path.iter().copied()),
-    ) else {
+    let pixels = |point: Point| point.scaled(surface.width, surface.height);
+    let path: Vec<Point> = stroke.path().map(pixels).collect();
+    let Some(bounds) = Rect::bounding(path.iter().copied()) else {
         return Shape::Tap;
     };
     let (width, height) = (bounds.width(), bounds.height());
     let (longest, shortest) = (width.max(height), width.min(height));
     let length: f32 = path
-        .iter()
-        .zip(path.iter().skip(1))
-        .map(|(one, next)| one.distance(*next))
+        .array_windows()
+        .map(|&[one, next]| one.distance(next))
         .sum();
-    let chord = first.distance(last);
-    // Shoelace formula over the stroke closed by its chord.
-    let doubled_area = path
-        .iter()
-        .zip(path.iter().cycle().skip(1))
-        .map(|(one, next)| one.x * next.y - next.x * one.y)
-        .sum::<f32>();
+    let chord = pixels(stroke.first().point).distance(pixels(stroke.last().point));
     if width.hypot(height) < TAP_PIXELS {
         Shape::Tap
     } else if chord < LOOP_CLOSURE * longest
         && length > LOOP_LENGTH * longest
         && shortest >= CIRCLE_PIXELS
         && shortest > CIRCLE_FLATNESS * longest
-        && 0.5 * doubled_area.abs() > LOOP_FILL * width * height
+        && enclosed_area(&path) > LOOP_FILL * width * height
     {
         Shape::Circle
     } else if chord > STRAIGHTNESS * length {
@@ -305,6 +272,16 @@ fn stroke_shape(stroke: &Stroke, surface: Size) -> Shape {
     } else {
         Shape::Scribble
     }
+}
+
+/// The area `path` encloses once closed by its chord, by the shoelace formula.
+fn enclosed_area(path: &[Point]) -> f32 {
+    let doubled: f32 = path
+        .iter()
+        .zip(path.iter().cycle().skip(1))
+        .map(|(one, next)| one.x * next.y - next.x * one.y)
+        .sum();
+    0.5 * doubled.abs()
 }
 
 #[cfg(test)]
@@ -361,12 +338,15 @@ mod tests {
             height: 500.0,
         };
         assert_eq!(shape_of(&loop_points, half_height), Shape::Circle);
-        // A flat loop around a wide control is still a circle; a flat zigzag is not.
         let flat: Vec<[f32; 2]> = loop_points
             .iter()
             .map(|[x, y]| [x * 2.0 - 0.5, y * 0.4 + 0.3])
             .collect();
-        assert_eq!(shape_of(&flat, half_height), Shape::Circle);
+        assert_eq!(
+            shape_of(&flat, half_height),
+            Shape::Circle,
+            "a flat loop around a wide control"
+        );
         let zigzag = [
             [0.1, 0.40],
             [0.7, 0.42],
@@ -374,13 +354,20 @@ mod tests {
             [0.7, 0.46],
             [0.12, 0.40],
         ];
-        assert_eq!(shape_of(&zigzag, half_height), Shape::Scribble);
-        // The same loop on a tiny surface is a tap.
+        assert_eq!(
+            shape_of(&zigzag, half_height),
+            Shape::Scribble,
+            "a flat zigzag"
+        );
         let tiny = Size {
             width: 20.0,
             height: 20.0,
         };
-        assert_eq!(shape_of(&loop_points, tiny), Shape::Tap);
+        assert_eq!(
+            shape_of(&loop_points, tiny),
+            Shape::Tap,
+            "the same loop on a tiny surface"
+        );
     }
 
     #[test]
@@ -458,8 +445,11 @@ mod tests {
             [0..1, 1..1, 1..2],
             "a pin between strokes drawn close together ends a mark"
         );
-        // Marks made later never renumber earlier ones, so live labels match the bundle's.
-        assert_eq!(group(&strokes[..1], &pins[..1], SURFACE), marks[..2]);
+        assert_eq!(
+            group(&strokes[..1], &pins[..1], SURFACE),
+            marks[..2],
+            "later marks never renumber earlier ones, so live labels match the bundle's"
+        );
     }
 
     #[test]
