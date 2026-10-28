@@ -28,6 +28,7 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 sha2.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }
+zeroize.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

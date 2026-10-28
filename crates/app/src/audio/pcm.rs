@@ -4,6 +4,7 @@
 use std::{mem, ops::Range, time::Duration};
 
 use anyhow::bail;
+use zeroize::Zeroize;
 
 use super::speech::Audibility;
 use crate::runtime::ports::Sealed;
@@ -120,7 +121,7 @@ impl Pcm16 {
 
 impl Drop for Pcm16 {
     fn drop(&mut self) {
-        self.bytes.fill(0);
+        self.bytes.zeroize();
     }
 }
 

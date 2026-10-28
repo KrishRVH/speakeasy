@@ -4965,6 +4965,7 @@ dependencies = [
  "tokio",
  "tray-icon",
  "x11rb",
+ "zeroize",
 ]
 
 [[package]]

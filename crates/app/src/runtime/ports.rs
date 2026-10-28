@@ -9,6 +9,7 @@ use async_channel::Sender;
 use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope, Taps};
 use speakeasy_show::{Journal, Narration, Recording};
 use tokio::sync::watch;
+use zeroize::Zeroize;
 
 use crate::{config::Config, sounds::Cue};
 
@@ -59,8 +60,8 @@ impl CaptureEvent {
 }
 
 /// Speech sealed for recognition: a WAV, and how much leading quiet was trimmed before it, which
-/// places times the recognizer reports back on the recording's clock. The WAV is zeroed on drop,
-/// best effort, wherever the audio is discarded; recognition takes it with `mem::take` first.
+/// places times the recognizer reports back on the recording's clock. The WAV is zeroed on drop
+/// wherever the audio is discarded; recognition takes it with `mem::take` first.
 pub(crate) struct Sealed {
     pub wav: Vec<u8>,
     pub trimmed: Duration,
@@ -68,7 +69,7 @@ pub(crate) struct Sealed {
 
 impl Drop for Sealed {
     fn drop(&mut self) {
-        self.wav.fill(0);
+        self.wav.zeroize();
     }
 }
 
