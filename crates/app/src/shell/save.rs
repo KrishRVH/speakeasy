@@ -2,19 +2,13 @@
 //! latest request behind it and the last durable result until it drains. Writes run one at a time,
 //! so each patches exactly the keys its draft changed since the last write that succeeded.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use async_channel::Receiver;
 use speakeasy_platform::OwnedThread;
 
 use super::lifecycle::ConfigEpoch;
 use crate::config::{Config, ValidConfig};
-
-pub(super) struct SaveRequest {
-    pub(super) draft: Config,
-    pub(super) epoch: ConfigEpoch,
-    pub(super) path: PathBuf,
-}
 
 /// A durable write: the draft as submitted and the settings validation resolved from it.
 pub(super) struct SavedConfig {
@@ -40,8 +34,8 @@ impl SavedConfig {
 pub(super) enum SaveProgress {
     /// A write started; hand its result to [`SaveQueue::finish`].
     Writing(Receiver<anyhow::Result<SavedConfig>>),
-    /// The queue drained: the newest durable save, the latest error, and the newest request's
-    /// epoch.
+    /// The queue drained: the newest durable save, the last write's error, and the newest
+    /// request's epoch.
     Finished {
         saved: Option<Box<SavedConfig>>,
         error: Option<String>,
@@ -50,8 +44,11 @@ pub(super) enum SaveProgress {
 }
 
 pub(super) struct SaveQueue {
+    /// The settings file every write patches.
+    path: PathBuf,
     writing: Option<SaveWork>,
-    pending: Option<SaveRequest>,
+    /// The draft queued behind the running write.
+    pending: Option<Config>,
     saved: Option<SavedConfig>,
     /// The settings the file holds as of the last write that succeeded, in each spelling a draft
     /// may have of them, which the next write compares its draft against.
@@ -66,10 +63,11 @@ pub(super) struct SaveQueue {
 }
 
 impl SaveQueue {
-    /// A queue for Settings opened on `draft` from the file at `path`.
-    pub(super) fn new(path: &Path, draft: Config) -> Self {
-        let held = Config::held_by(path, &draft);
+    /// A queue that writes the file at `path`, for Settings opened on `draft` from it.
+    pub(super) fn new(path: PathBuf, draft: Config) -> Self {
+        let held = Config::held_by(&path, &draft);
         Self {
+            path,
             writing: None,
             pending: None,
             saved: None,
@@ -90,16 +88,16 @@ impl SaveQueue {
         !saved && self.requested.as_ref() != Some(draft)
     }
 
-    /// Starts writing `request`, or returns `None` after queuing it behind the running write in
-    /// place of any request queued before.
-    pub(super) fn submit(&mut self, request: SaveRequest) -> Option<SaveProgress> {
-        self.epoch = request.epoch;
-        self.requested = Some(request.draft.clone());
+    /// Starts writing `draft`, requested at `epoch`, or returns `None` after queuing it behind the
+    /// running write in place of any draft queued before.
+    pub(super) fn submit(&mut self, draft: Config, epoch: ConfigEpoch) -> Option<SaveProgress> {
+        self.epoch = epoch;
+        self.requested = Some(draft.clone());
         if self.writing.is_some() {
-            self.pending = Some(request);
+            self.pending = Some(draft);
             None
         } else {
-            Some(self.start(request))
+            Some(self.start(draft))
         }
     }
 
@@ -128,8 +126,8 @@ impl SaveQueue {
         }
     }
 
-    fn start(&mut self, request: SaveRequest) -> SaveProgress {
-        match SaveWork::start(self.durable.clone(), request.draft, request.path) {
+    fn start(&mut self, draft: Config) -> SaveProgress {
+        match SaveWork::start(self.durable.clone(), draft, self.path.clone()) {
             Ok(work) => SaveProgress::Writing(self.writing.insert(work).result.clone()),
             Err(error) => self.finish(Err(error)),
         }
@@ -154,7 +152,7 @@ impl SaveQueue {
                 clippy::let_underscore_must_use,
                 reason = "Dropping the work joins its thread; a closing view has no one to tell of a failed start"
             )]
-            let _ = SaveWork::start(self.durable.clone(), pending.draft, pending.path);
+            let _ = SaveWork::start(self.durable.clone(), pending, self.path.clone());
         }
     }
 }

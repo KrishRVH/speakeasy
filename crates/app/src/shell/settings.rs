@@ -14,7 +14,7 @@ use super::{
     Services, demo,
     lifecycle::ConfigEpoch,
     request_quit,
-    save::{SaveProgress, SaveQueue, SaveRequest, SavedConfig},
+    save::{SaveProgress, SaveQueue, SavedConfig},
     window::choose_file,
 };
 use crate::{
@@ -58,7 +58,7 @@ impl Settings {
     ) -> Self {
         let services = cx.global::<Services>();
         let presentation = Presentation::new(&updates.borrow_and_update(), services);
-        let saves = SaveQueue::new(&services.path, config.clone());
+        let saves = SaveQueue::new(services.path.clone(), config.clone());
         #[cfg(target_os = "linux")]
         let desktop_command = {
             let default = crate::paths::settings_file()
@@ -363,13 +363,9 @@ impl Settings {
         if services.quitting() || services.mode.is_demo() {
             return;
         }
-        let request = SaveRequest {
-            draft: self.config.clone(),
-            epoch: services.config_epoch(),
-            path: services.path.clone(),
-        };
+        let epoch = services.config_epoch();
         self.notice = Some(Notice::Note("Saving changes…".into()));
-        if let Some(progress) = self.saves.submit(request) {
+        if let Some(progress) = self.saves.submit(self.config.clone(), epoch) {
             self.advance_save(progress, cx);
         }
         cx.notify();
@@ -678,16 +674,13 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("settings.json");
         let config = valid_config(directory.path())?;
-        let mut saves = SaveQueue::new(&path, config.clone());
+        let mut saves = SaveQueue::new(path.clone(), config.clone());
         let mut submit = |threads| {
-            saves.submit(SaveRequest {
-                draft: Config {
-                    threads,
-                    ..config.clone()
-                },
-                epoch: ConfigEpoch::default(),
-                path: path.clone(),
-            })
+            let draft = Config {
+                threads,
+                ..config.clone()
+            };
+            saves.submit(draft, ConfigEpoch::default())
         };
         assert!(submit(4).is_some(), "The first save did not start");
         assert!(submit(8).is_none(), "The latest save did not queue");

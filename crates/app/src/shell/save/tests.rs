@@ -31,23 +31,19 @@ async fn queued_save_applies_only_latest_successful_draft() -> anyhow::Result<()
     let path = directory.path().join("settings.json");
     let config = valid_config(directory.path())?;
     let epoch = ConfigEpoch::default();
-    let request = |threads| SaveRequest {
-        draft: Config {
-            threads,
-            ..config.clone()
-        },
-        epoch,
-        path: path.clone(),
+    let draft = |threads| Config {
+        threads,
+        ..config.clone()
     };
-    let mut queue = SaveQueue::new(&path, config.clone());
+    let mut queue = SaveQueue::new(path.clone(), config.clone());
     let first = queue
-        .submit(request(4))
+        .submit(draft(4), epoch)
         .context("The first save was queued")?;
     assert!(
-        queue.submit(request(8)).is_none(),
+        queue.submit(draft(8), epoch).is_none(),
         "A save started while another was writing"
     );
-    assert!(queue.submit(request(16)).is_none());
+    assert!(queue.submit(draft(16), epoch).is_none());
     let latest = queue.finish(write_result(first).await?);
     let SaveProgress::Finished {
         saved,
@@ -77,23 +73,18 @@ async fn queued_failure_retains_previous_durable_save_and_reports_latest_error()
     let path = directory.path().join("settings.json");
     let first_epoch = ConfigEpoch::default();
     let queued_epoch = first_epoch.next();
-    let mut queue = SaveQueue::new(&path, Config::default());
-    let first = queue
-        .submit(SaveRequest {
-            draft: Config {
-                threads: 4,
-                ..valid_config(directory.path())?
-            },
-            epoch: first_epoch,
-            path: path.clone(),
-        })
-        .context("The first save was queued")?;
-    let unconfigured = SaveRequest {
-        draft: Config::default(),
-        epoch: queued_epoch,
-        path,
+    let mut queue = SaveQueue::new(path, Config::default());
+    let draft = Config {
+        threads: 4,
+        ..valid_config(directory.path())?
     };
-    assert!(queue.submit(unconfigured).is_none());
+    let first = queue
+        .submit(draft, first_epoch)
+        .context("The first save was queued")?;
+    assert!(
+        queue.submit(Config::default(), queued_epoch).is_none(),
+        "An unconfigured save started while another was writing"
+    );
     let queued = queue.finish(write_result(first).await?);
     let SaveProgress::Finished {
         saved,
@@ -126,19 +117,16 @@ async fn a_revert_queued_behind_a_write_reaches_the_file() -> anyhow::Result<()>
         &ValidConfig::assume(original.clone()),
         &path,
     )?;
-    let request = |theme| SaveRequest {
-        draft: Config {
-            theme,
-            ..original.clone()
-        },
-        epoch: ConfigEpoch::default(),
-        path: path.clone(),
+    let draft = |theme| Config {
+        theme,
+        ..original.clone()
     };
-    let mut queue = SaveQueue::new(&path, original.clone());
+    let epoch = ConfigEpoch::default();
+    let mut queue = SaveQueue::new(path.clone(), original.clone());
     let first = queue
-        .submit(request(Theme::Iris))
+        .submit(draft(Theme::Iris), epoch)
         .context("The first save was queued")?;
-    assert!(queue.submit(request(original.theme)).is_none());
+    assert!(queue.submit(draft(original.theme), epoch).is_none());
     let revert = queue.finish(write_result(first).await?);
     let SaveProgress::Finished { error, .. } = queue.finish(write_result(revert).await?) else {
         bail!("The revert did not finish");
@@ -159,20 +147,17 @@ async fn a_save_queued_behind_a_write_keeps_the_path_spellings_it_did_not_change
         r#"{"engine_executable":"engine","model":"model.gguf"}"#,
     )?;
     // The draft keeps relative paths, as after a launch whose settings did not validate.
-    let draft = Config::read(&path)?;
-    let request = |theme| SaveRequest {
-        draft: Config {
-            theme,
-            ..draft.clone()
-        },
-        epoch: ConfigEpoch::default(),
-        path: path.clone(),
+    let opened = Config::read(&path)?;
+    let draft = |theme| Config {
+        theme,
+        ..opened.clone()
     };
-    let mut queue = SaveQueue::new(&path, draft.clone());
+    let epoch = ConfigEpoch::default();
+    let mut queue = SaveQueue::new(path.clone(), opened.clone());
     let first = queue
-        .submit(request(Theme::Iris))
+        .submit(draft(Theme::Iris), epoch)
         .context("The first save was queued")?;
-    assert!(queue.submit(request(Theme::Chrome)).is_none());
+    assert!(queue.submit(draft(Theme::Chrome), epoch).is_none());
     let queued = queue.finish(write_result(first).await?);
     let SaveProgress::Finished { error, .. } = queue.finish(write_result(queued).await?) else {
         bail!("The queued save did not finish");
@@ -224,7 +209,7 @@ async fn a_draft_needs_saving_until_the_file_holds_it_or_a_write_is_making_it() 
         model: "model.gguf".into(),
         ..Config::first_launch()
     };
-    let mut queue = SaveQueue::new(&path, opened.clone());
+    let mut queue = SaveQueue::new(path, opened.clone());
     assert!(
         !queue.needs_save(&opened),
         "An untouched first launch had edits"
@@ -238,13 +223,9 @@ async fn a_draft_needs_saving_until_the_file_holds_it_or_a_write_is_making_it() 
         ..opened.clone()
     };
     assert!(queue.needs_save(&edited));
-    let request = |draft: &Config| SaveRequest {
-        draft: draft.clone(),
-        epoch: ConfigEpoch::default(),
-        path: path.clone(),
-    };
+    let epoch = ConfigEpoch::default();
     let write = queue
-        .submit(request(&edited))
+        .submit(edited.clone(), epoch)
         .context("The save was queued")?;
     assert!(
         !queue.needs_save(&edited),
@@ -273,7 +254,7 @@ async fn a_draft_needs_saving_until_the_file_holds_it_or_a_write_is_making_it() 
         ..edited
     };
     let write = queue
-        .submit(request(&unwritable))
+        .submit(unwritable.clone(), epoch)
         .context("The failing save was queued")?;
     let SaveProgress::Finished { error, .. } = queue.finish(write_result(write).await?) else {
         bail!("The failing save did not finish");
@@ -338,12 +319,8 @@ fn flush_finishes_the_running_write_before_a_revert_queued_behind_it() -> anyhow
     started.recv_timeout(Duration::from_secs(2))?;
     let mut queue = SaveQueue {
         writing: Some(running),
-        pending: Some(SaveRequest {
-            draft: original.clone(),
-            epoch: ConfigEpoch::default(),
-            path: path.clone(),
-        }),
-        ..SaveQueue::new(&path, original.clone())
+        pending: Some(original.clone()),
+        ..SaveQueue::new(path.clone(), original.clone())
     };
     let cleanup = std::thread::spawn(move || queue.flush());
     std::thread::sleep(Duration::from_millis(50));
