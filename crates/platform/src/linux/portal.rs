@@ -7,18 +7,19 @@ mod transfer;
 use std::{
     collections::HashMap,
     convert::Infallible,
-    mem,
+    iter,
     ops::ControlFlow,
     os::fd::OwnedFd,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, anyhow, bail, ensure};
+use anyhow::{Context, bail, ensure};
 use async_channel::{Receiver, Sender};
-use futures_util::{FutureExt, StreamExt, future::LocalBoxFuture, stream::FuturesUnordered};
+use futures_util::{FutureExt, StreamExt};
 use tokio::task::JoinSet;
 use zbus::{
     Connection, MatchRule, Message, MessageStream, Proxy,
+    names::MemberName,
     zvariant::{OwnedObjectPath, OwnedValue, Value},
 };
 
@@ -36,7 +37,6 @@ const REMOTE: &str = "org.freedesktop.portal.RemoteDesktop";
 const CLIPBOARD: &str = "org.freedesktop.portal.Clipboard";
 const REQUEST: &str = "org.freedesktop.portal.Request";
 const SESSION: &str = "org.freedesktop.portal.Session";
-const PLAIN_TEXT: [&str; 2] = ["text/plain;charset=utf-8", "text/plain"];
 /// Shortcut IDs Speakeasy binds; the portal reports activations by these IDs.
 const DICTATE_ID: &str = "dictate";
 const CANCEL_ID: &str = "cancel";
@@ -48,15 +48,12 @@ const PERSISTENT_REMOTE_VERSION: u32 = 2;
 const SIGNAL_BACKLOG: usize = 64;
 /// Any portal restart or session closure ends desktop access, so a short queue suffices.
 const REVOCATION_BACKLOG: usize = 4;
-const MAX_TRANSFERS: usize = 4;
 const CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
-const SELECTION_TIMEOUT: Duration = Duration::from_secs(2);
 const OWNERSHIP_SETTLE: Duration = Duration::from_millis(500);
 
 type Results = HashMap<String, OwnedValue>;
 type Options = HashMap<&'static str, Value<'static>>;
 type DesktopChanges = futures_util::stream::Select<MessageStream, MessageStream>;
-type Transfers<'a> = FuturesUnordered<LocalBoxFuture<'a, ()>>;
 
 struct Portal {
     connection: Connection,
@@ -87,15 +84,12 @@ impl Portal {
                 &(APPLICATION_ID, Options::new()),
             )
             .await;
-        match registered {
-            Ok(_) => {},
-            // Portals without the host registry identify the app from its launcher instead.
-            Err(error) if lacks_registry(&error) => {},
-            Err(error) => {
-                return Err(error).context(
-                    "Install the supplied Speakeasy desktop launcher before enabling portal shortcuts",
-                );
-            },
+        if let Err(error) = registered
+            && !lacks_registry(&error)
+        {
+            return Err(error).context(
+                "Install the supplied Speakeasy desktop launcher before enabling portal shortcuts",
+            );
         }
         let sender_segment = connection
             .unique_name()
@@ -123,6 +117,14 @@ impl Portal {
     fn next_token(&mut self) -> String {
         self.sequence = self.sequence.wrapping_add(1);
         format!("{}_{}", self.nonce, self.sequence)
+    }
+
+    /// A new request token and the options that carry it; the portal names the request object
+    /// after that token, which is the path [`Self::request`] awaits.
+    fn request_options(&mut self) -> (String, Options) {
+        let handle = self.next_token();
+        let options = Options::from([("handle_token", Value::from(handle.clone()))]);
+        (handle, options)
     }
 
     async fn proxy(&self, interface: &'static str) -> anyhow::Result<Proxy<'static>> {
@@ -161,14 +163,11 @@ impl Portal {
     }
 
     async fn create_session(&mut self, interface: &'static str) -> anyhow::Result<OwnedObjectPath> {
-        let handle = self.next_token();
+        let (handle, mut options) = self.request_options();
         let session = self.next_token();
         let predicted: OwnedObjectPath = format!("{}{session}", self.session_root()).try_into()?;
         self.sessions.push(predicted.clone());
-        let options = Options::from([
-            ("handle_token", Value::from(handle.clone())),
-            ("session_handle_token", Value::from(session)),
-        ]);
+        options.insert("session_handle_token", Value::from(session));
         let mut result = self
             .request(interface, "CreateSession", handle, &(options,))
             .await?;
@@ -191,12 +190,16 @@ impl Portal {
                     clippy::let_underscore_must_use,
                     reason = "Closing retired portal objects is bounded best effort when the desktop service has disconnected"
                 )]
-                let _ = tokio::time::timeout(CLOSE_TIMEOUT, async {
-                    Proxy::new(&self.connection, DESTINATION, path.clone(), interface)
-                        .await?
-                        .call::<_, _, ()>("Close", &())
-                        .await
-                })
+                let _ = tokio::time::timeout(
+                    CLOSE_TIMEOUT,
+                    self.connection.call_method(
+                        Some(DESTINATION),
+                        path,
+                        Some(interface),
+                        "Close",
+                        &(),
+                    ),
+                )
                 .await;
             }
         }
@@ -278,16 +281,15 @@ struct PendingHandoff {
 }
 
 impl Pump {
-    async fn watch(self) {
-        let input = self.input.clone();
+    async fn watch(mut self) {
         if let Err(error) = self.run().await {
-            input.fail(format!(
+            self.input.fail(format!(
                 "Desktop access stopped: {error}. Resume dictation to reconnect."
             ));
         }
     }
 
-    async fn run(mut self) -> anyhow::Result<()> {
+    async fn run(&mut self) -> anyhow::Result<()> {
         loop {
             self.complete_settled_handoff()?;
             let settle = or_pending(
@@ -304,7 +306,9 @@ impl Pump {
                 event = self.owners.next(), if self.ownership.session.is_some() => {
                     self.observe_owner(&event.context("Clipboard portal disconnected")??)?;
                 },
-                revoked = revocation(&mut self.changes, &self.session_root) => return Err(revoked),
+                Err(revoked) = revocation(&mut self.changes, &self.session_root) => {
+                    return Err(revoked);
+                },
                 event = self.shortcuts.next(), if self.shortcut_session.is_some() => {
                     let event = event.context("Shortcut portal disconnected")??;
                     if self.on_shortcut(&event)?.is_break() {
@@ -332,20 +336,14 @@ impl Pump {
     fn begin_handoff(&mut self, handoff: SelectionHandoff) -> anyhow::Result<()> {
         // SetSelection has completed: its queued ownership signals still belong to the
         // preceding permit, so settle them before the new selection takes over.
-        let mut drained = 0;
-        while drained < SIGNAL_BACKLOG
-            && let Some(event) = self.owners.next().now_or_never()
-        {
+        let mut queued = iter::from_fn(|| self.owners.next().now_or_never()).fuse();
+        for event in queued.by_ref().take(SIGNAL_BACKLOG) {
             self.ownership.observe(
                 &event.context("Clipboard portal disconnected")??,
                 &self.notify,
             )?;
-            drained = drained.saturating_add(1);
         }
-        ensure!(
-            drained < SIGNAL_BACKLOG || self.owners.next().now_or_never().is_none(),
-            "Clipboard ownership queue overran"
-        );
+        ensure!(queued.next().is_none(), "Clipboard ownership queue overran");
         self.handoff = Some(PendingHandoff {
             handoff,
             started: Instant::now(),
@@ -367,19 +365,16 @@ impl Pump {
     }
 
     fn on_shortcut(&mut self, event: &Message) -> anyhow::Result<ControlFlow<()>> {
-        let header = event.header();
-        let Some(member) = header
-            .member()
-            .filter(|member| matches!(member.as_str(), "Activated" | "Deactivated"))
-        else {
-            return Ok(ControlFlow::Continue(()));
+        let activated = match event.header().member().map(MemberName::as_str) {
+            Some("Activated") => true,
+            Some("Deactivated") => false,
+            _ => return Ok(ControlFlow::Continue(())),
         };
         let (path, action, _, _): (OwnedObjectPath, String, u64, Results) =
             event.body().deserialize()?;
         if Some(&path) != self.shortcut_session.as_ref() {
             return Ok(ControlFlow::Continue(()));
         }
-        let activated = member.as_str() == "Activated";
         let Some(input) = shortcut_event(&mut self.held, &action, activated) else {
             return Ok(ControlFlow::Continue(()));
         };
@@ -463,7 +458,7 @@ pub(super) async fn run(
         biased;
         () = stopping(stop, input) => None,
         bound = bind(&mut portal, options) => Some(bound),
-        revoked = revocation(&mut changes, &session_root) => Some(Err(revoked)),
+        Err(revoked) = revocation(&mut changes, &session_root) => Some(Err(revoked)),
     };
     let outcome = match bound {
         Some(Ok(bound)) => serve(&portal, bound, changes, input, options, requests, stop).await,
@@ -500,7 +495,7 @@ async fn bind_shortcuts(
     labels: &mut ShortcutLabels,
 ) -> anyhow::Result<OwnedObjectPath> {
     let session = portal.create_session(SHORTCUTS).await?;
-    let handle = portal.next_token();
+    let (handle, request) = portal.request_options();
     let shortcuts = vec![
         (
             DICTATE_ID,
@@ -517,13 +512,12 @@ async fn bind_shortcuts(
             ]),
         ),
     ];
-    let request = Options::from([("handle_token", Value::from(handle.clone()))]);
     let mut result = portal
         .request(
             SHORTCUTS,
             "BindShortcuts",
             handle,
-            &(session.clone(), shortcuts, "", request),
+            &(&session, shortcuts, "", request),
         )
         .await?;
     let bindings: Vec<(String, Results)> = result
@@ -554,11 +548,8 @@ async fn start_remote_desktop(
 ) -> anyhow::Result<Remote> {
     let tokens = TokenStore::open();
     let session = portal.create_session(REMOTE).await?;
-    let handle = portal.next_token();
-    let mut devices = Options::from([
-        ("handle_token", Value::from(handle.clone())),
-        ("types", Value::from(KEYBOARD_DEVICE)),
-    ]);
+    let (handle, mut devices) = portal.request_options();
+    devices.insert("types", Value::from(KEYBOARD_DEVICE));
     if let Some(store) = &tokens
         && portal
             .proxy(REMOTE)
@@ -573,13 +564,12 @@ async fn start_remote_desktop(
         }
     }
     portal
-        .request(REMOTE, "SelectDevices", handle, &(session.clone(), devices))
+        .request(REMOTE, "SelectDevices", handle, &(&session, devices))
         .await?;
     let clipboard_requested = request_clipboard(portal, &session).await?;
-    let handle = portal.next_token();
-    let start = Options::from([("handle_token", Value::from(handle.clone()))]);
+    let (handle, start) = portal.request_options();
     let mut result = portal
-        .request(REMOTE, "Start", handle, &(session.clone(), "", start))
+        .request(REMOTE, "Start", handle, &(&session, "", start))
         .await?;
     let granted: u32 = result
         .remove("devices")
@@ -608,7 +598,7 @@ async fn start_remote_desktop(
     let descriptor: zbus::zvariant::OwnedFd = portal
         .proxy(REMOTE)
         .await?
-        .call("ConnectToEIS", &(session.clone(), Options::new()))
+        .call("ConnectToEIS", &(&session, Options::new()))
         .await?;
     Ok(Remote {
         sender: ei::Sender::connect(libei, OwnedFd::from(descriptor), terminal_paste)?,
@@ -624,7 +614,7 @@ async fn request_clipboard(portal: &Portal, session: &OwnedObjectPath) -> anyhow
         return Ok(false);
     }
     clipboard
-        .call::<_, _, ()>("RequestClipboard", &(session.clone(), Options::new()))
+        .call::<_, _, ()>("RequestClipboard", &(session, Options::new()))
         .await?;
     Ok(true)
 }
@@ -644,7 +634,7 @@ async fn serve(
 ) -> anyhow::Result<()> {
     let shortcuts = shortcut_signals(&portal.connection).await?;
     let clipboard = portal.proxy(CLIPBOARD).await?;
-    let mut transfer_requests = clipboard.receive_signal("SelectionTransfer").await?;
+    let transfer_requests = clipboard.receive_signal("SelectionTransfer").await?;
     let owners = selection_owner_changes(&portal.connection).await?;
     let (notify, notices) = async_channel::bounded(SIGNAL_BACKLOG);
     let (selecting, selections) = async_channel::bounded(1);
@@ -679,46 +669,15 @@ async fn serve(
         ready = worker.ready() => ready?,
     }
     input.deliver(bound.labels.clone().into_desktop_ready());
-    let mut insertions = Insertions::new(
+    Insertions::new(
         &mut bound, &notices, &selecting, &worker, &clipboard, options,
-    );
-    loop {
-        insertions.advance_pending()?;
-        let accepts_transfers = insertions.accepts_transfers();
-        let idle = insertions.is_idle();
-        let modifier_wait = or_pending(insertions.modifier_wait());
-        let prepared = or_pending(insertions.preparing.as_mut().map(|work| work.task.as_mut()));
-        let readable = or_pending(
-            insertions
-                .bound
-                .sender()
-                .map(|sender| sender.readiness().readable()),
-        );
-        tokio::select! {
-            biased;
-            () = stopping(stop, input) => break,
-            notice = notices.recv() => {
-                insertions.apply(notice.context("Desktop monitoring stopped")?);
-            },
-            prepared = prepared => insertions.advance_preparation(prepared)?,
-            _ = insertions.transfers.next(), if !insertions.transfers.is_empty() => {},
-            event = transfer_requests.next(), if accepts_transfers => {
-                insertions.serve_transfer(&event.context("Clipboard portal disconnected")?)?;
-            },
-            request = requests.recv(), if idle => match request {
-                Ok(request) => insertions.queue(request),
-                Err(_) => break,
-            },
-            readable = readable => readable?.clear_ready(),
-            () = modifier_wait => {},
-        }
-    }
-    insertions.cancel_all();
-    Ok(())
+    )
+    .serve(transfer_requests, requests, input, stop)
+    .await
 }
 
-/// Whether a registration failed because the portal predates the host registry. zbus reports a
-/// method call's error reply by its D-Bus error name.
+/// Whether a registration failed because the portal predates the host registry and identifies the
+/// app from its launcher instead. zbus reports a method call's error reply by its D-Bus error name.
 fn lacks_registry(error: &zbus::Error) -> bool {
     matches!(
         error,
@@ -755,19 +714,16 @@ async fn selection_owner_changes(connection: &Connection) -> anyhow::Result<Mess
     Ok(MessageStream::for_match_rule(rule, connection, Some(SIGNAL_BACKLOG)).await?)
 }
 
-/// Resolves with why desktop access ended once a session under `session_root` closes, the portal
+/// Fails with why desktop access ended once a session under `session_root` closes, the portal
 /// restarts, or monitoring stops.
-async fn revocation(changes: &mut DesktopChanges, session_root: &str) -> anyhow::Error {
-    loop {
-        let checked = match changes.next().await {
-            Some(Ok(event)) => check_revocation(&event, session_root),
-            Some(Err(error)) => Err(error.into()),
-            None => Err(anyhow!("Portal session monitoring stopped")),
-        };
-        if let Err(revoked) = checked {
-            return revoked;
-        }
+async fn revocation(
+    changes: &mut DesktopChanges,
+    session_root: &str,
+) -> anyhow::Result<Infallible> {
+    while let Some(event) = changes.next().await {
+        check_revocation(&event?, session_root)?;
     }
+    bail!("Portal session monitoring stopped")
 }
 
 /// Fails when `event` revokes desktop access: a portal restart, or the closure of a session under
@@ -830,13 +786,16 @@ fn lose_selection(permit: InsertPermit, notify: &Sender<Notice>) -> anyhow::Resu
 }
 
 fn shortcut_event(held: &mut bool, action: &str, activated: bool) -> Option<Input> {
-    match (action, activated) {
-        (DICTATE_ID, true) if !*held => {
-            *held = true;
-            Some(Input::Press)
+    match action {
+        DICTATE_ID if *held != activated => {
+            *held = activated;
+            Some(if activated {
+                Input::Press
+            } else {
+                Input::Release
+            })
         },
-        (DICTATE_ID, false) if mem::take(held) => Some(Input::Release),
-        (CANCEL_ID, true) => Some(Input::Cancel),
+        CANCEL_ID if activated => Some(Input::Cancel),
         _ => None,
     }
 }
@@ -845,28 +804,32 @@ fn shortcut_event(held: &mut bool, action: &str, activated: bool) -> Option<Inpu
 mod tests {
     use super::{insertion::apply_notice, transfer::Selection, *};
 
+    pub(super) fn fixture_session() -> anyhow::Result<OwnedObjectPath> {
+        Ok(format!("{DESKTOP}/session/fixture").try_into()?)
+    }
+
+    /// The portal announcing whether `session` owns the clipboard selection.
+    pub(super) fn owner_changed(session: &OwnedObjectPath, owned: bool) -> anyhow::Result<Message> {
+        let values = Results::from([("session_is_owner".into(), OwnedValue::from(owned))]);
+        let signal = Message::signal(DESKTOP, CLIPBOARD, "SelectionOwnerChanged")?;
+        Ok(signal.build(&(session, values))?)
+    }
+
     #[test]
     fn only_a_portal_without_the_host_registry_skips_registration() -> anyhow::Result<()> {
         let call = Message::method_call(DESKTOP, "Register")?
             .interface("org.freedesktop.host.portal.Registry")?
             .build(&())?;
-        let reply = |name: &str| -> anyhow::Result<zbus::Error> {
-            Ok(zbus::Error::from(
-                Message::error(&call.header(), name)?.build(&("refused",))?,
-            ))
-        };
-        assert!(lacks_registry(&reply(
-            "org.freedesktop.DBus.Error.UnknownMethod"
-        )?));
-        assert!(lacks_registry(&reply(
-            "org.freedesktop.DBus.Error.UnknownInterface"
-        )?));
-        assert!(!lacks_registry(&reply(
-            "org.freedesktop.DBus.Error.AccessDenied"
-        )?));
-        assert!(!lacks_registry(&reply(
-            "org.freedesktop.portal.Error.Failed"
-        )?));
+        for (name, lacks) in [
+            ("org.freedesktop.DBus.Error.UnknownMethod", true),
+            ("org.freedesktop.DBus.Error.UnknownInterface", true),
+            ("org.freedesktop.DBus.Error.AccessDenied", false),
+            ("org.freedesktop.portal.Error.Failed", false),
+        ] {
+            let reply =
+                zbus::Error::from(Message::error(&call.header(), name)?.build(&("refused",))?);
+            assert_eq!(lacks_registry(&reply), lacks, "{name}");
+        }
         Ok(())
     }
 
@@ -898,22 +861,14 @@ mod tests {
         let previous = input.begin().context("Preceding recording")?;
         let next = input.begin().context("Current recording")?;
         let (notify, notices) = async_channel::bounded(4);
-        let session: OwnedObjectPath =
-            "/org/freedesktop/portal/desktop/session/fixture".try_into()?;
+        let session = fixture_session()?;
         let mut ownership = SelectionOwnership {
             session: Some(session.clone()),
             monitored: Some(previous),
             owned: true,
         };
-        let owner_event = |owned: bool| {
-            let values = Results::from([("session_is_owner".into(), OwnedValue::from(owned))]);
-            Ok::<_, anyhow::Error>(
-                Message::signal(DESKTOP, CLIPBOARD, "SelectionOwnerChanged")?
-                    .build(&(session.clone(), values))?,
-            )
-        };
-        ownership.observe(&owner_event(false)?, &notify)?;
-        ownership.observe(&owner_event(true)?, &notify)?;
+        ownership.observe(&owner_changed(&session, false)?, &notify)?;
+        ownership.observe(&owner_changed(&session, true)?, &notify)?;
         ownership.adopt(next.clone(), &notify)?;
         let mut payload = Some(Selection::new("fixture", next.clone()));
         let mut forfeited = None;
@@ -926,7 +881,7 @@ mod tests {
             payload.is_some(),
             "Preceding ownership loss discarded the current payload"
         );
-        ownership.observe(&owner_event(false)?, &notify)?;
+        ownership.observe(&owner_changed(&session, false)?, &notify)?;
         apply_notice(notices.try_recv()?, None, &mut payload, &mut forfeited);
         assert!(!next.commit(), "Current ownership loss authorized paste");
         assert!(payload.is_none());

@@ -154,7 +154,7 @@ fn a_fresh_clipboard_owns_its_first_copy() -> anyhow::Result<()> {
     let other = connection.generate_id()?;
     connection
         .create_window(
-            0,
+            x11rb::COPY_DEPTH_FROM_PARENT,
             other,
             root,
             0,
@@ -163,7 +163,7 @@ fn a_fresh_clipboard_owns_its_first_copy() -> anyhow::Result<()> {
             1,
             0,
             xproto::WindowClass::INPUT_ONLY,
-            0,
+            x11rb::COPY_FROM_PARENT,
             &xproto::CreateWindowAux::new(),
         )?
         .check()?;

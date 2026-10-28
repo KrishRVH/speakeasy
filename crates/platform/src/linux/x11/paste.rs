@@ -21,7 +21,6 @@ use x11rb::{
 use super::{
     Keyboard,
     clipboard::{Clipboard, ClipboardAccess as _},
-    has_external_target,
 };
 use crate::{
     Delivery, DesktopOptions, InputSender, Inserted, OwnedThread,
@@ -53,9 +52,12 @@ impl InsertionWorker {
         options: DesktopOptions,
         requests: Receiver<Insertion>,
     ) -> anyhow::Result<Self> {
-        Self::spawn_with(input, requests, open_insertion, move |opened, requests| {
-            serve_insertions(opened, requests, &options);
-        })
+        Self::spawn_with(
+            input,
+            requests,
+            move || Paster::open(options),
+            Paster::serve,
+        )
     }
 
     /// Runs `open` on the worker thread, then `serve` with what it opened.
@@ -117,131 +119,130 @@ impl Drop for InsertionWorker {
     }
 }
 
-fn open_insertion() -> anyhow::Result<(Clipboard, Keyboard)> {
-    let clipboard = Clipboard::open()?;
-    let keyboard = Keyboard::load(&clipboard.connection)?;
-    Ok((clipboard, keyboard))
+/// What the insertion thread owns: one X connection, the keyboard mapping it read, and the
+/// options it pastes with.
+struct Paster {
+    clipboard: Clipboard,
+    keyboard: Keyboard,
+    options: DesktopOptions,
 }
 
-fn serve_insertions(
-    (mut clipboard, keyboard): (Clipboard, Keyboard),
-    requests: &Receiver<Insertion>,
-    options: &DesktopOptions,
-) {
-    while let Ok(request) = requests.recv_blocking() {
-        let outcome = paste(&keyboard, &mut clipboard, &request, options);
-        request.reply.send(outcome);
+impl Paster {
+    fn open(options: DesktopOptions) -> anyhow::Result<Self> {
+        let clipboard = Clipboard::open()?;
+        let keyboard = Keyboard::load(&clipboard.connection)?;
+        Ok(Self {
+            clipboard,
+            keyboard,
+            options,
+        })
     }
-}
 
-fn paste(
-    keyboard: &Keyboard,
-    clipboard: &mut Clipboard,
-    request: &Insertion,
-    options: &DesktopOptions,
-) -> anyhow::Result<Inserted> {
-    if !request.permit.active() {
-        return Ok(Inserted::Cancelled);
+    fn serve(mut self, requests: &Receiver<Insertion>) {
+        while let Ok(request) = requests.recv_blocking() {
+            let outcome = self.paste(&request);
+            request.reply.send(outcome);
+        }
     }
-    if request.delivery == Delivery::Direct {
-        return Ok(Inserted::Unavailable(
-            "Direct text input is unavailable on this X11 desktop. Choose Insert: Paste in Settings.",
-        ));
-    }
-    match copy_after_release(keyboard, clipboard, request, options)? {
-        ControlFlow::Continue(owner) => paste_copied(keyboard, clipboard, request, options, owner),
-        ControlFlow::Break(outcome) => Ok(outcome),
-    }
-}
 
-fn copy_after_release(
-    keyboard: &Keyboard,
-    clipboard: &mut Clipboard,
-    request: &Insertion,
-    options: &DesktopOptions,
-) -> anyhow::Result<ControlFlow<Inserted, Window>> {
-    let previous_owner = clipboard.owner()?;
-    let shortcut_held = !options.manual_paste && {
-        let locks = keyboard.lock_modifiers();
-        wait_for_released_modifiers(&request.permit, || {
-            let keys = clipboard.connection.query_keymap()?.reply()?.keys;
-            Ok(keyboard.held_modifiers(&keys) & !locks != 0)
-        })?
-    };
-    let owner_changed = clipboard.owner()? != previous_owner;
-    // Checked after that round trip, so a cancel during it never reaches the clipboard.
-    if !request.permit.active() {
-        return Ok(ControlFlow::Break(Inserted::Cancelled));
+    fn paste(&mut self, request: &Insertion) -> anyhow::Result<Inserted> {
+        if !request.permit.active() {
+            return Ok(Inserted::Cancelled);
+        }
+        if request.delivery == Delivery::Direct {
+            return Ok(Inserted::Unavailable(
+                "Direct text input is unavailable on this X11 desktop. Choose Insert: Paste in Settings.",
+            ));
+        }
+        match self.copy_after_release(request)? {
+            ControlFlow::Continue(owner) => self.paste_copied(request, owner),
+            ControlFlow::Break(outcome) => Ok(outcome),
+        }
     }
-    if owner_changed {
-        return Ok(ControlFlow::Break(Inserted::Unavailable(
-            "Clipboard changed while waiting for shortcut release. Dictate again when your keys are released.",
-        )));
-    }
-    let Some(owner) = clipboard.set_text(&request.text)? else {
-        return Ok(ControlFlow::Break(if request.permit.active() {
-            CLIPBOARD_CHANGED
-        } else {
-            Inserted::Cancelled
-        }));
-    };
-    if options.manual_paste {
-        return Ok(ControlFlow::Break(COPIED_FOR_MANUAL_PASTE));
-    }
-    if shortcut_held {
-        return Ok(ControlFlow::Break(PASTE_AFTER_RELEASE));
-    }
-    Ok(ControlFlow::Continue(owner))
-}
 
-fn paste_copied(
-    keyboard: &Keyboard,
-    clipboard: &Clipboard,
-    request: &Insertion,
-    options: &DesktopOptions,
-    owner: Window,
-) -> anyhow::Result<Inserted> {
-    // The first layout is the only one XTEST types through.
-    let Some(chord) = PasteChord::resolve(options.terminal_paste, |symbol| {
-        keyboard.unshifted_keycode(symbol)
-    }) else {
-        return Ok(NO_PASTE_BINDING);
-    };
-    if !uses_first_layout(&clipboard.connection).unwrap_or(false) {
-        return Ok(Inserted::Copied(
-            "Text copied. Automatic paste needs your first keyboard layout; paste manually with the current layout.",
-        ));
+    fn copy_after_release(
+        &mut self,
+        request: &Insertion,
+    ) -> anyhow::Result<ControlFlow<Inserted, Window>> {
+        let previous_owner = self.clipboard.owner()?;
+        let shortcut_held = !self.options.manual_paste && {
+            let locks = self.keyboard.lock_modifiers();
+            wait_for_released_modifiers(&request.permit, || {
+                let keys = self.clipboard.connection.query_keymap()?.reply()?.keys;
+                Ok(self.keyboard.held_modifiers(&keys) & !locks != 0)
+            })?
+        };
+        let owner_changed = self.clipboard.owner()? != previous_owner;
+        // Checked after that round trip, so a cancel during it never reaches the clipboard.
+        if !request.permit.active() {
+            return Ok(ControlFlow::Break(Inserted::Cancelled));
+        }
+        if owner_changed {
+            return Ok(ControlFlow::Break(Inserted::Unavailable(
+                "Clipboard changed while waiting for shortcut release. Dictate again when your keys are released.",
+            )));
+        }
+        let Some(owner) = self.clipboard.set_text(&request.text)? else {
+            return Ok(ControlFlow::Break(if request.permit.active() {
+                CLIPBOARD_CHANGED
+            } else {
+                Inserted::Cancelled
+            }));
+        };
+        if self.options.manual_paste {
+            return Ok(ControlFlow::Break(COPIED_FOR_MANUAL_PASTE));
+        }
+        if shortcut_held {
+            return Ok(ControlFlow::Break(PASTE_AFTER_RELEASE));
+        }
+        Ok(ControlFlow::Continue(owner))
     }
-    if !clipboard.owns(owner)? {
-        return Ok(Inserted::Unavailable(
-            "Clipboard ownership changed before paste. Dictate again.",
-        ));
+
+    fn paste_copied(&self, request: &Insertion, owner: Window) -> anyhow::Result<Inserted> {
+        // The first layout is the only one XTEST types through.
+        let Some(chord) = PasteChord::resolve(self.options.terminal_paste, |symbol| {
+            self.keyboard.unshifted_keycode(symbol)
+        }) else {
+            return Ok(NO_PASTE_BINDING);
+        };
+        let connection = &self.clipboard.connection;
+        if !uses_first_layout(connection).unwrap_or(false) {
+            return Ok(Inserted::Copied(
+                "Text copied. Automatic paste needs your first keyboard layout; paste manually with the current layout.",
+            ));
+        }
+        if !self.clipboard.owns(owner)? {
+            return Ok(Inserted::Unavailable(
+                "Clipboard ownership changed before paste. Dictate again.",
+            ));
+        }
+        let external = self
+            .clipboard
+            .external_target(HostSession::X11)
+            .unwrap_or(false);
+        if let Some(outcome) = Delivery::Paste.check_focus(external) {
+            return Ok(outcome);
+        }
+        if !request.permit.commit() {
+            return Ok(Inserted::Cancelled);
+        }
+        // Once committed, the key sequence completes even if cancellation arrives.
+        let submitted = submit_paste(
+            chord,
+            |kind, code| Ok(connection.xtest_fake_input(kind, code, 0, 0, 0, 0, 0)?),
+            || {
+                connection.get_input_focus()?.reply()?;
+                Ok(())
+            },
+            |cookie| Ok(cookie.check()?),
+        );
+        Ok(match submitted {
+            Ok(()) => Inserted::Sent,
+            Err(_) => Inserted::Copied(
+                "Text copied, but input submission failed. Paste manually; automatic paste was not repeated.",
+            ),
+        })
     }
-    let external = has_external_target(&clipboard.connection, HostSession::X11).unwrap_or(false);
-    if let Some(outcome) = Delivery::Paste.check_focus(external) {
-        return Ok(outcome);
-    }
-    if !request.permit.commit() {
-        return Ok(Inserted::Cancelled);
-    }
-    // Once committed, the key sequence completes even if cancellation arrives.
-    let connection = &clipboard.connection;
-    if submit_paste(
-        chord,
-        |kind, code| Ok(connection.xtest_fake_input(kind, code, 0, 0, 0, 0, 0)?),
-        || {
-            connection.get_input_focus()?.reply()?;
-            Ok(())
-        },
-        |cookie| Ok(cookie.check()?),
-    )
-    .is_err()
-    {
-        return Ok(Inserted::Copied(
-            "Text copied, but input submission failed. Paste manually; automatic paste was not repeated.",
-        ));
-    }
-    Ok(Inserted::Sent)
 }
 
 fn uses_first_layout(connection: &XCBConnection) -> anyhow::Result<bool> {

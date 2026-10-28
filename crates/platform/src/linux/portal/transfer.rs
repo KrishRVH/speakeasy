@@ -12,11 +12,14 @@ use std::{
 
 use anyhow::{Context, ensure};
 use async_channel::{Receiver, Sender};
-use tokio::io::unix::AsyncFd;
+use futures_util::{future::LocalBoxFuture, stream::FuturesUnordered};
+use tokio::io::{Interest, unix::AsyncFd};
 
 use crate::InsertPermit;
 
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(1);
+
+pub(super) type Transfers<'a> = FuturesUnordered<LocalBoxFuture<'a, ()>>;
 
 /// The text a portal clipboard selection serves until it is replaced or this session loses the
 /// selection.
@@ -38,7 +41,7 @@ impl Selection {
         }
     }
 
-    pub(super) fn transfer(&self) -> TransferPayload {
+    pub(super) fn payload(&self) -> TransferPayload {
         TransferPayload {
             text: Arc::clone(&self.text),
             invalidated: self.invalidated.clone(),
@@ -104,14 +107,13 @@ async fn write_payload(
 
 async fn write_to_pipe(pipe: &AsyncFd<File>, mut bytes: &[u8]) -> anyhow::Result<()> {
     while !bytes.is_empty() {
-        let mut writable = pipe.writable().await?;
-        if let Ok(written) = writable.try_io(|pipe| pipe.get_ref().write(bytes)) {
-            let written = written?;
-            ensure!(written > 0, "Clipboard transfer stopped");
-            bytes = bytes
-                .get(written..)
-                .context("Clipboard write exceeded its pending transfer")?;
-        }
+        let written = pipe
+            .async_io(Interest::WRITABLE, |mut pipe| pipe.write(bytes))
+            .await?;
+        ensure!(written > 0, "Clipboard transfer stopped");
+        bytes = bytes
+            .get(written..)
+            .context("Clipboard write exceeded its pending transfer")?;
     }
     Ok(())
 }
@@ -130,12 +132,15 @@ fn set_nonblocking(fd: BorrowedFd<'_>) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::{io::Read as _, os::unix::net::UnixStream};
+    use std::{
+        io::{self, Read as _},
+        os::unix::net::UnixStream,
+    };
 
     use anyhow::bail;
     use futures_util::{FutureExt, StreamExt};
 
-    use super::{super::Transfers, *};
+    use super::*;
     use crate::InputSender;
 
     #[tokio::test]
@@ -156,7 +161,7 @@ mod tests {
                     Ok(OwnedFd::from(writer))
                 },
                 |_| async { Ok(()) },
-                Some(selection.transfer()),
+                Some(selection.payload()),
             )
             .boxed_local(),
         );
@@ -169,15 +174,10 @@ mod tests {
             _ = transfers.next() => bail!("Stalled transfer unexpectedly completed"),
         }
         drop(transfers);
-        let mut buffer = [0_u8; 16 * 1024];
-        let drained = loop {
-            match reader.read(&mut buffer) {
-                Ok(0) => break true,
-                Ok(_) => {},
-                Err(_) => break false,
-            }
-        };
-        assert!(drained, "Retired transfer kept its native writer alive");
+        assert!(
+            io::copy(&mut reader, &mut io::sink()).is_ok(),
+            "Retired transfer kept its native writer alive"
+        );
         Ok(())
     }
 
@@ -197,7 +197,7 @@ mod tests {
                 sent.send(success).await?;
                 Ok(())
             },
-            Some(selected.transfer()),
+            Some(selected.payload()),
         )
         .await;
         assert!(
@@ -210,7 +210,7 @@ mod tests {
 
         let current = input.begin().context("Current recording")?;
         let next = Selection::new("fixture", current.clone());
-        let previous_payload = selected.transfer();
+        let previous_payload = selected.payload();
         drop(selected);
         let (sent, reported) = async_channel::bounded(1);
         let (writer, mut reader) = UnixStream::pair()?;
@@ -256,7 +256,7 @@ mod tests {
                     sent.send(success).await?;
                     Ok(())
                 },
-                Some(selected.transfer()),
+                Some(selected.payload()),
             ),
         )
         .await?;

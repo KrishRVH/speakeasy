@@ -1,40 +1,48 @@
 //! The portal insertion pipeline and the remedies it reports when paste or direct text cannot run.
 
-use std::{os::fd::OwnedFd, time::Instant};
+use std::{
+    convert::Infallible,
+    os::fd::OwnedFd,
+    time::{Duration, Instant},
+};
 
 use anyhow::Context;
 use async_channel::{Receiver, Sender};
-use futures_util::{FutureExt, future::LocalBoxFuture};
+use futures_util::{FutureExt, StreamExt, future::LocalBoxFuture};
+use x11rb::protocol::xproto::Window;
 use zbus::{
     Message, Proxy,
+    proxy::SignalStream,
     zvariant::{OwnedObjectPath, Value},
 };
 
 use super::{
-    Bound, MAX_TRANSFERS, Notice, Options, PLAIN_TEXT, SELECTION_TIMEOUT, SelectionHandoff,
-    Transfers, deadline,
-    transfer::{Selection, transfer},
+    Bound, Notice, Options, SelectionHandoff, deadline, or_pending,
+    transfer::{Selection, Transfers, transfer},
 };
 use crate::{
-    Delivery, DesktopOptions, InsertPermit, Inserted,
+    Delivery, DesktopOptions, InputSender, InsertPermit, Inserted,
     insertion::{Insertion, MODIFIER_WAIT, Reply},
     linux::{
         CLIPBOARD_CHANGED, COPIED_FOR_MANUAL_PASTE, NO_PASTE_BINDING,
         ei::{self, PasteBlocked, TextBlocked},
-        x11,
+        stopping, x11,
     },
 };
+
+const PLAIN_TEXT: [&str; 2] = ["text/plain;charset=utf-8", "text/plain"];
+const MAX_TRANSFERS: usize = 4;
+const SELECTION_TIMEOUT: Duration = Duration::from_secs(2);
+
+type Stage<'a> = LocalBoxFuture<'a, anyhow::Result<Prepared>>;
 
 /// The insertion pipeline. A paste request waits for released modifiers unless the user pastes
 /// manually, then copies through the portal or X11 clipboard and confirms ownership; direct text
 /// skips both. Every request checks focus before it pastes or types through libei.
-///
-/// The serving loop borrows `transfers`, `preparing`, and `bound` at once while it waits on them,
-/// so those fields stay visible to it.
 pub(super) struct Insertions<'a> {
-    pub(super) transfers: Transfers<'a>,
-    pub(super) preparing: Option<Preparing<'a>>,
-    pub(super) bound: &'a mut Bound,
+    transfers: Transfers<'a>,
+    preparing: Option<Preparing<'a>>,
+    bound: &'a mut Bound,
     pending: Option<(Insertion, Instant)>,
     selection: Option<Selection>,
     /// The latest recording whose lost selection revoked it; its paste reports the loss instead of
@@ -71,11 +79,56 @@ impl<'a> Insertions<'a> {
         }
     }
 
-    pub(super) fn is_idle(&self) -> bool {
+    #[expect(
+        clippy::future_not_send,
+        reason = "libei resources remain on the owned desktop thread and its LocalSet; native pointers must never move between threads"
+    )]
+    pub(super) async fn serve(
+        mut self,
+        mut transfer_requests: SignalStream<'_>,
+        requests: Receiver<Insertion>,
+        input: &InputSender,
+        stop: &Receiver<Infallible>,
+    ) -> anyhow::Result<()> {
+        loop {
+            self.advance_pending()?;
+            let accepts_transfers = self.accepts_transfers();
+            let idle = self.is_idle();
+            let modifier_wait = or_pending(self.modifier_wait());
+            let prepared = or_pending(self.preparing.as_mut().map(|work| work.task.as_mut()));
+            let readable = or_pending(
+                self.bound
+                    .sender()
+                    .map(|sender| sender.readiness().readable()),
+            );
+            tokio::select! {
+                biased;
+                () = stopping(stop, input) => break,
+                notice = self.notices.recv() => {
+                    self.apply(notice.context("Desktop monitoring stopped")?);
+                },
+                prepared = prepared => self.advance_preparation(prepared)?,
+                _ = self.transfers.next(), if !self.transfers.is_empty() => {},
+                event = transfer_requests.next(), if accepts_transfers => {
+                    self.serve_transfer(&event.context("Clipboard portal disconnected")?)?;
+                },
+                request = requests.recv(), if idle => match request {
+                    Ok(request) => self.pending = Some((request, Instant::now())),
+                    Err(_) => break,
+                },
+                readable = readable => readable?.clear_ready(),
+                () = modifier_wait => {},
+            }
+        }
+        self.cancel_all();
+        Ok(())
+    }
+
+    fn is_idle(&self) -> bool {
         self.pending.is_none() && self.preparing.is_none()
     }
 
-    pub(super) fn accepts_transfers(&self) -> bool {
+    fn accepts_transfers(&self) -> bool {
         self.bound.clipboard_session().is_some()
             && self.transfers.len() < MAX_TRANSFERS
             && !self
@@ -90,7 +143,7 @@ impl<'a> Insertions<'a> {
         }
     }
 
-    pub(super) fn apply(&mut self, notice: Notice) {
+    fn apply(&mut self, notice: Notice) {
         apply_notice(
             notice,
             self.bound.sender_mut(),
@@ -99,12 +152,8 @@ impl<'a> Insertions<'a> {
         );
     }
 
-    pub(super) fn queue(&mut self, request: Insertion) {
-        self.pending = Some((request, Instant::now()));
-    }
-
     /// When the pending request stops waiting for released modifiers.
-    pub(super) fn modifier_wait(&self) -> Option<tokio::time::Sleep> {
+    fn modifier_wait(&self) -> Option<tokio::time::Sleep> {
         self.pending
             .as_ref()
             .map(|(_, started)| deadline(*started, MODIFIER_WAIT))
@@ -112,7 +161,7 @@ impl<'a> Insertions<'a> {
 
     /// Catches up on notices and libei events, then starts the pending request once its wait for
     /// released modifiers is over.
-    pub(super) fn advance_pending(&mut self) -> anyhow::Result<()> {
+    fn advance_pending(&mut self) -> anyhow::Result<()> {
         self.apply_queued_notices();
         self.bound.dispatch()?;
         let Some((request, _)) = self.pending.take_if(|(request, started)| {
@@ -130,7 +179,7 @@ impl<'a> Insertions<'a> {
         }
         let (task, setting_selection) = match request.delivery {
             Delivery::Direct => (
-                query_focus(self.worker, request.permit.clone(), Route::Direct),
+                query_focus(self.worker, request.permit.clone(), Route::Direct).boxed_local(),
                 false,
             ),
             Delivery::Paste => (
@@ -146,18 +195,15 @@ impl<'a> Insertions<'a> {
         Ok(())
     }
 
-    fn copy(&self, request: &Insertion) -> LocalBoxFuture<'a, anyhow::Result<Prepared>> {
+    fn copy(&self, request: &Insertion) -> Stage<'a> {
         let permit = request.permit.clone();
         match self.bound.clipboard_session() {
-            Some(session) => set_selection(self.clipboard, session.clone(), permit),
-            None => copy_with_x11(self.worker, request.text.clone(), permit),
+            Some(session) => set_selection(self.clipboard, session.clone(), permit).boxed_local(),
+            None => copy_with_x11(self.worker, request.text.clone(), permit).boxed_local(),
         }
     }
 
-    pub(super) fn advance_preparation(
-        &mut self,
-        prepared: anyhow::Result<Prepared>,
-    ) -> anyhow::Result<()> {
+    fn advance_preparation(&mut self, prepared: anyhow::Result<Prepared>) -> anyhow::Result<()> {
         let request = self
             .preparing
             .take()
@@ -167,15 +213,15 @@ impl<'a> Insertions<'a> {
         let task = match prepared {
             Ok(Prepared::SelectionSet) => {
                 self.selection = Some(Selection::new(&request.text, permit.clone()));
-                confirm_selection(self.selecting, permit)
+                confirm_selection(self.selecting, permit).boxed_local()
             },
-            Ok(Prepared::Copied { owner: Some(owner) }) => {
-                confirm_owner(self.worker, owner, permit)
+            Ok(Prepared::Copied { owner }) => {
+                confirm_owner(self.worker, owner, permit).boxed_local()
             },
             Ok(Prepared::Ownership { owned }) => {
-                query_focus(self.worker, permit, Route::Paste { owned })
+                query_focus(self.worker, permit, Route::Paste { owned }).boxed_local()
             },
-            Ok(Prepared::Copied { owner: None }) => {
+            Ok(Prepared::NotCopied) => {
                 let outcome = if permit.active() {
                     CLIPBOARD_CHANGED
                 } else {
@@ -222,7 +268,7 @@ impl<'a> Insertions<'a> {
         Ok(())
     }
 
-    pub(super) fn serve_transfer(&self, event: &Message) -> anyhow::Result<()> {
+    fn serve_transfer(&self, event: &Message) -> anyhow::Result<()> {
         let (path, mime, serial): (OwnedObjectPath, String, u32) = event.body().deserialize()?;
         if self.bound.clipboard_session() != Some(&path) {
             return Ok(());
@@ -231,7 +277,7 @@ impl<'a> Insertions<'a> {
             .selection
             .as_ref()
             .filter(|_| PLAIN_TEXT.contains(&mime.as_str()))
-            .map(Selection::transfer);
+            .map(Selection::payload);
         let clipboard = self.clipboard;
         let session = path.clone();
         let write = async move {
@@ -250,7 +296,7 @@ impl<'a> Insertions<'a> {
         Ok(())
     }
 
-    pub(super) fn cancel_all(self) {
+    fn cancel_all(self) {
         if let Some((request, _)) = self.pending {
             request.reply.send(Ok(Inserted::Cancelled));
         }
@@ -260,21 +306,22 @@ impl<'a> Insertions<'a> {
     }
 }
 
-pub(super) struct Preparing<'a> {
+struct Preparing<'a> {
     request: Insertion,
     /// Whether `task` is `SetSelection`. Transfers wait until it returns, because only then does
     /// `selection` hold the new text.
     setting_selection: bool,
-    pub(super) task: LocalBoxFuture<'a, anyhow::Result<Prepared>>,
+    task: Stage<'a>,
 }
 
 /// The outcome of one preparation stage.
-pub(super) enum Prepared {
+enum Prepared {
     /// The portal clipboard offers the text; this session's ownership awaits confirmation.
     SelectionSet,
-    /// The X11 clipboard holds the text under the `owner` window, or `None` when the X11 clipboard
-    /// changed or the permit lapsed before either clipboard was set.
-    Copied { owner: Option<u32> },
+    /// The X11 clipboard holds the text under the `owner` window.
+    Copied { owner: Window },
+    /// Neither clipboard holds the text: the X11 clipboard changed, or the permit lapsed first.
+    NotCopied,
     /// Whether this session still owns the clipboard selection it set.
     Ownership { owned: bool },
     /// Whether another app has focus, and how the insertion submits.
@@ -282,84 +329,70 @@ pub(super) enum Prepared {
 }
 
 /// How a prepared insertion submits once focus is known.
-pub(super) enum Route {
+enum Route {
     Direct,
     Paste { owned: bool },
 }
 
-fn set_selection<'a>(
-    clipboard: &'a Proxy<'static>,
+async fn set_selection(
+    clipboard: &Proxy<'static>,
     session: OwnedObjectPath,
     permit: InsertPermit,
-) -> LocalBoxFuture<'a, anyhow::Result<Prepared>> {
-    async move {
-        if !permit.active() {
-            return Ok(Prepared::Copied { owner: None });
-        }
-        let mime_types = Options::from([("mime_types", Value::from(PLAIN_TEXT.to_vec()))]);
-        tokio::time::timeout(
-            SELECTION_TIMEOUT,
-            clipboard.call::<_, _, ()>("SetSelection", &(session, mime_types)),
-        )
-        .await??;
-        Ok(Prepared::SelectionSet)
+) -> anyhow::Result<Prepared> {
+    if !permit.active() {
+        return Ok(Prepared::NotCopied);
     }
-    .boxed_local()
+    let mime_types = Options::from([("mime_types", Value::from(PLAIN_TEXT.to_vec()))]);
+    tokio::time::timeout(
+        SELECTION_TIMEOUT,
+        clipboard.call::<_, _, ()>("SetSelection", &(session, mime_types)),
+    )
+    .await??;
+    Ok(Prepared::SelectionSet)
 }
 
-fn copy_with_x11(
+async fn copy_with_x11(
     worker: &x11::ClipboardWorker,
     text: String,
     permit: InsertPermit,
-) -> LocalBoxFuture<'_, anyhow::Result<Prepared>> {
-    async move {
-        Ok(Prepared::Copied {
-            owner: worker.set_text(text, permit).await?,
-        })
-    }
-    .boxed_local()
+) -> anyhow::Result<Prepared> {
+    Ok(worker
+        .set_text(text, permit)
+        .await?
+        .map_or(Prepared::NotCopied, |owner| Prepared::Copied { owner }))
 }
 
-fn confirm_selection(
+async fn confirm_selection(
     selecting: &Sender<SelectionHandoff>,
     permit: InsertPermit,
-) -> LocalBoxFuture<'_, anyhow::Result<Prepared>> {
-    async move {
-        let (ready, confirmed) = Reply::channel();
-        selecting.send(SelectionHandoff { permit, ready }).await?;
-        let owned = confirmed
-            .recv()
-            .await
-            .context("Clipboard ownership monitoring stopped")?;
-        Ok(Prepared::Ownership { owned })
-    }
-    .boxed_local()
+) -> anyhow::Result<Prepared> {
+    let (ready, confirmed) = Reply::channel();
+    selecting.send(SelectionHandoff { permit, ready }).await?;
+    let owned = confirmed
+        .recv()
+        .await
+        .context("Clipboard ownership monitoring stopped")?;
+    Ok(Prepared::Ownership { owned })
 }
 
-fn confirm_owner(
+async fn confirm_owner(
     worker: &x11::ClipboardWorker,
-    owner: u32,
+    owner: Window,
     permit: InsertPermit,
-) -> LocalBoxFuture<'_, anyhow::Result<Prepared>> {
-    async move {
-        Ok(Prepared::Ownership {
-            owned: worker.owns(owner, permit).await?,
-        })
-    }
-    .boxed_local()
+) -> anyhow::Result<Prepared> {
+    Ok(Prepared::Ownership {
+        owned: worker.owns(owner, permit).await?,
+    })
 }
 
-fn query_focus(
+async fn query_focus(
     worker: &x11::ClipboardWorker,
     permit: InsertPermit,
     route: Route,
-) -> LocalBoxFuture<'_, anyhow::Result<Prepared>> {
-    async move {
-        // A failed focus query fails closed, as if Speakeasy had focus.
-        let external = worker.external_target(permit).await.unwrap_or(false);
-        Ok(Prepared::Target { external, route })
-    }
-    .boxed_local()
+) -> anyhow::Result<Prepared> {
+    // A failed focus query fails closed, as if Speakeasy had focus.
+    let external = worker.external_target(permit).await.unwrap_or(false);
+    Ok(Prepared::Target { external, route })
 }
 
 fn insert_direct(bound: &mut Bound, request: &Insertion, external: bool) -> Inserted {
@@ -488,13 +521,23 @@ pub(super) fn apply_notice(
 
 #[cfg(test)]
 mod tests {
-    use zbus::zvariant::OwnedValue;
-
     use super::{
-        super::{CLIPBOARD, DESKTOP, Results, SelectionOwnership},
+        super::{
+            SelectionOwnership,
+            tests::{fixture_session, owner_changed},
+        },
         *,
     };
     use crate::{Input, InputSender, linux::ShortcutLabels};
+
+    /// A binding that granted neither portal shortcuts nor keyboard input.
+    fn unbound() -> Bound {
+        Bound {
+            shortcut_session: None,
+            remote: None,
+            labels: ShortcutLabels::new(&DesktopOptions::default()),
+        }
+    }
 
     /// Applies the pump's queued notices, then finishes `permit`'s paste to an external editor as
     /// the insertion loop does once focus is known.
@@ -514,16 +557,10 @@ mod tests {
             delivery: Delivery::Paste,
             reply,
         };
-        let mut bound = Bound {
-            shortcut_session: None,
-            remote: None,
-            labels: ShortcutLabels::new(&DesktopOptions::default()),
-        };
-        let options = DesktopOptions::default();
         finish_paste(
-            &mut bound,
+            &mut unbound(),
             &request,
-            &options,
+            &DesktopOptions::default(),
             owned,
             true,
             forfeited.as_ref(),
@@ -535,15 +572,7 @@ mod tests {
         let (events, _receiver) = async_channel::bounded(4);
         let input = InputSender::new(events);
         let (notify, notices) = async_channel::bounded(4);
-        let session: OwnedObjectPath =
-            "/org/freedesktop/portal/desktop/session/fixture".try_into()?;
-        let owner_event = |owned: bool| {
-            let values = Results::from([("session_is_owner".into(), OwnedValue::from(owned))]);
-            Ok::<_, anyhow::Error>(
-                Message::signal(DESKTOP, CLIPBOARD, "SelectionOwnerChanged")?
-                    .build(&(session.clone(), values))?,
-            )
-        };
+        let session = fixture_session()?;
         let mut ownership = SelectionOwnership {
             session: Some(session.clone()),
             monitored: None,
@@ -559,21 +588,21 @@ mod tests {
             "Unconfirmed clipboard ownership looked like a cancellation"
         );
 
-        ownership.observe(&owner_event(true)?, &notify)?;
+        ownership.observe(&owner_changed(&session, true)?, &notify)?;
         let taken = input.begin().context("Taken recording")?;
         ownership.adopt(taken.clone(), &notify)?;
-        ownership.observe(&owner_event(false)?, &notify)?;
+        ownership.observe(&owner_changed(&session, false)?, &notify)?;
         assert_eq!(
             paste_after_notices(&notices, &mut forfeited, &taken, true),
             SELECTION_LOST,
             "Another app taking the clipboard looked like a cancellation"
         );
 
-        ownership.observe(&owner_event(true)?, &notify)?;
+        ownership.observe(&owner_changed(&session, true)?, &notify)?;
         let escaped = input.begin().context("Escaped recording")?;
         ownership.adopt(escaped.clone(), &notify)?;
         input.deliver(Input::Cancel);
-        ownership.observe(&owner_event(false)?, &notify)?;
+        ownership.observe(&owner_changed(&session, false)?, &notify)?;
         assert_eq!(
             paste_after_notices(&notices, &mut forfeited, &escaped, true),
             Inserted::Cancelled,
@@ -597,11 +626,7 @@ mod tests {
         let input = InputSender::new(events);
         let permit = input.begin().context("Recording")?;
         permit.revoke();
-        let mut bound = Bound {
-            shortcut_session: None,
-            remote: None,
-            labels: ShortcutLabels::new(&DesktopOptions::default()),
-        };
+        let mut bound = unbound();
         for external in [false, true] {
             for text in ["fixture", "\0"] {
                 let (reply, _answer) = Reply::channel();
@@ -611,10 +636,11 @@ mod tests {
                     delivery: Delivery::Direct,
                     reply,
                 };
-                assert!(matches!(
+                assert_eq!(
                     insert_direct(&mut bound, &request, external),
-                    Inserted::Cancelled
-                ));
+                    Inserted::Cancelled,
+                    "external={external}, text={text:?}"
+                );
             }
         }
         Ok(())

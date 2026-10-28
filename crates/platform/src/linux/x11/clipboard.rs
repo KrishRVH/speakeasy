@@ -31,11 +31,11 @@ impl ClipboardWorker {
         Self::spawn_with(input, Clipboard::open)
     }
 
-    fn spawn_with<C: ClipboardAccess + 'static>(
+    fn spawn_with<C: ClipboardAccess>(
         input: InputSender,
         open: impl FnOnce() -> anyhow::Result<C> + Send + 'static,
     ) -> anyhow::Result<Self> {
-        let (requests, incoming) = async_channel::bounded::<ClipboardRequest>(1);
+        let (requests, incoming) = async_channel::bounded(1);
         let (opened, ready) = Reply::channel();
         let thread = OwnedThread::spawn("x11-clipboard", {
             let input = input.clone();
@@ -148,7 +148,7 @@ impl ClipboardRequest {
         match self {
             Self::Target { permit, reply } => {
                 let target = if permit.active() {
-                    clipboard.external_target()
+                    clipboard.external_target(HostSession::Wayland)
                 } else {
                     Ok(false)
                 };
@@ -183,7 +183,7 @@ impl ClipboardRequest {
 }
 
 pub(super) trait ClipboardAccess {
-    fn external_target(&self) -> anyhow::Result<bool>;
+    fn external_target(&self, host: HostSession) -> anyhow::Result<bool>;
     fn set_text(&mut self, text: &str) -> anyhow::Result<Option<Window>>;
     fn owns(&self, owner: Window) -> anyhow::Result<bool>;
 }
@@ -224,8 +224,8 @@ impl Clipboard {
 }
 
 impl ClipboardAccess for Clipboard {
-    fn external_target(&self) -> anyhow::Result<bool> {
-        has_external_target(&self.connection, HostSession::Wayland)
+    fn external_target(&self, host: HostSession) -> anyhow::Result<bool> {
+        has_external_target(&self.connection, host)
     }
 
     fn set_text(&mut self, text: &str) -> anyhow::Result<Option<Window>> {
@@ -276,7 +276,7 @@ mod tests {
         }
 
         impl ClipboardAccess for FocusOnly {
-            fn external_target(&self) -> anyhow::Result<bool> {
+            fn external_target(&self, _: HostSession) -> anyhow::Result<bool> {
                 self.entered.try_send(())?;
                 self.release.recv_timeout(Duration::from_secs(2))?;
                 Ok(false)
@@ -324,7 +324,7 @@ mod tests {
         struct FakeClipboard(mpsc::Sender<()>);
 
         impl ClipboardAccess for FakeClipboard {
-            fn external_target(&self) -> anyhow::Result<bool> {
+            fn external_target(&self, _: HostSession) -> anyhow::Result<bool> {
                 Ok(false)
             }
 
