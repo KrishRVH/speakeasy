@@ -478,7 +478,7 @@ mod tests {
     #[test]
     fn the_demo_tells_its_story_in_four_keyframes() {
         let bundle = Demo::new(typeface()).bundle((720, 450)).unwrap();
-        let expected = bundle.manifest().clone();
+        let expected = bundle.manifest.clone();
         let directory = Path::new("shows").join("demo");
         let (summary, files) = bundle.into_files(&directory).unwrap();
         assert_eq!(

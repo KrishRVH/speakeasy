@@ -247,7 +247,7 @@ fn contact_sheets_cover_every_frame_once_in_readable_pages() {
             })
             .collect();
         let selection = select(&recording, &samples).unwrap();
-        assert_eq!(selection.keyframes().len(), count);
+        assert_eq!(selection.keyframes.len(), count);
         let colors: Vec<[u8; 3]> = (0..count)
             .map(|index| [40 + u8::try_from(index).unwrap() * 10, 90, 150])
             .collect();
@@ -263,7 +263,7 @@ fn contact_sheets_cover_every_frame_once_in_readable_pages() {
         .unwrap();
         let directory = Path::new("show");
         let frame_files: Vec<_> = bundle
-            .manifest()
+            .manifest
             .keyframes
             .iter()
             .map(Keyframe::file)

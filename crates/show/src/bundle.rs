@@ -56,7 +56,7 @@ impl Manifest {
 /// A Show ready to write: its manifest and its images, annotated and badged.
 #[derive(Clone, Debug)]
 pub struct Bundle {
-    manifest: Manifest,
+    pub(crate) manifest: Manifest,
     images: Vec<File>,
 }
 
@@ -156,12 +156,6 @@ fn shown<'a>(marks: &'a [Mark], keyframe: &Keyframe) -> &'a [Mark] {
 }
 
 impl Bundle {
-    /// What was recorded and chosen.
-    #[must_use]
-    pub const fn manifest(&self) -> &Manifest {
-        &self.manifest
-    }
-
     /// The summary an agent reads first, naming files under `directory`, where the bundle will be
     /// written.
     ///

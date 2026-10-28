@@ -108,14 +108,6 @@ pub struct Selection {
     pub(crate) keyframes: Vec<Keyframe>,
 }
 
-impl Selection {
-    /// The chosen frames, in time order.
-    #[must_use]
-    pub fn keyframes(&self) -> &[Keyframe] {
-        &self.keyframes
-    }
-}
-
 /// Chooses the keyframes that tell `recording`'s story from `samples`, which may arrive in any
 /// order, each at its own moment.
 ///

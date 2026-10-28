@@ -343,7 +343,6 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     let selection = select(&recording, journal.samples()).context("selected")?;
     let selected = started.elapsed();
     let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;
-    let keyframes = selection.keyframes().len();
     let bundle = compose(
         recording,
         selection,
@@ -356,6 +355,7 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     store::stage(&directory, bundle)?.persist()?;
     let written = started.elapsed();
     let bytes = bytes_under(&directory)?;
+    let keyframes = fs::read_dir(directory.join("frames"))?.count();
     eprintln!(
         "show_publish: seconds=60 keyframes={keyframes} select_ms={:.1} compose_ms={:.1} write_ms={:.1} total_ms={:.1} bundle_mb={:.1}",
         selected.as_secs_f64() * 1000.0,

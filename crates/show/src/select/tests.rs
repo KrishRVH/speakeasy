@@ -102,7 +102,7 @@ fn later_actions_survive_a_full_first_sheet() {
     for action in actions {
         assert!(
             shown
-                .keyframes()
+                .keyframes
                 .iter()
                 .any(|frame| frame.action == Some(action)),
             "missing action at {}",
@@ -153,7 +153,7 @@ fn a_crowded_show_keeps_its_most_keyframes_spread_out() {
         _ => 128,
     });
     let shown = select(&crowded, &still).unwrap();
-    assert_eq!(shown.keyframes().len(), MOST_KEYFRAMES);
+    assert_eq!(shown.keyframes.len(), MOST_KEYFRAMES);
     for frames in [&still, &switching] {
         for most in [12, 24, MOST_KEYFRAMES] {
             let at = times(&select_within(&crowded, frames, most).unwrap());
@@ -205,10 +205,10 @@ fn marks_on_one_screen_share_a_keyframe() {
     )
     .unwrap();
     assert_eq!(times(&shown), [1_000, 4_000]);
-    assert_eq!(shown.keyframes()[0].reason, Reason::Click);
-    assert_eq!(shown.keyframes()[1].reason, Reason::Mark);
-    assert_eq!(shown.keyframes()[1].marks, 0..2);
-    assert_eq!(shown.keyframes()[1].file(), "frames/frame-02.png");
+    assert_eq!(shown.keyframes[0].reason, Reason::Click);
+    assert_eq!(shown.keyframes[1].reason, Reason::Mark);
+    assert_eq!(shown.keyframes[1].marks, 0..2);
+    assert_eq!(shown.keyframes[1].file(), "frames/frame-02.png");
 }
 
 #[test]
@@ -224,10 +224,10 @@ fn marks_group_only_while_they_share_a_screen() {
         &frames,
     )
     .unwrap();
-    assert_eq!(shown.keyframes().len(), 7);
-    let covered: Vec<Range<usize>> = shown.keyframes().iter().map(|k| k.marks.clone()).collect();
+    assert_eq!(shown.keyframes.len(), 7);
+    let covered: Vec<Range<usize>> = shown.keyframes.iter().map(|k| k.marks.clone()).collect();
     assert_eq!(covered, [0..1, 1..2, 2..3, 3..4, 4..6, 6..7, 7..8]);
-    assert_eq!(shown.keyframes()[4].at.as_millis(), 11_000);
+    assert_eq!(shown.keyframes[4].at.as_millis(), 11_000);
 
     // On one unchanged screen, marks group until they span more than twenty seconds.
     let still = samples(1_000, 50_000, |_| 128);
@@ -251,7 +251,7 @@ fn a_scene_change_shows_the_settled_view() {
     ];
     let shown = select(&Recording::default(), &frames).unwrap();
     assert_eq!(times(&shown), [1_500]);
-    assert_eq!(shown.keyframes()[0].reason, Reason::SceneChange);
+    assert_eq!(shown.keyframes[0].reason, Reason::SceneChange);
 }
 
 #[test]
@@ -264,7 +264,7 @@ fn double_clicks_merge_and_keyframes_keep_apart() {
     )
     .unwrap();
     assert_eq!(times(&shown), [1_250, 2_500]);
-    assert_eq!(shown.keyframes()[0].event, "clicked (x 0.50, y 0.50)");
+    assert_eq!(shown.keyframes[0].event, "clicked (x 0.50, y 0.50)");
 }
 
 #[test]
@@ -301,16 +301,16 @@ fn spoken_cues_never_repeat_an_unchanged_screen() {
         (3_400, "stuck."),
     ]);
     let shown = select(&recording(Vec::new(), Vec::new(), narration), &still).unwrap();
-    assert_eq!(shown.keyframes().len(), 1);
-    assert_eq!(shown.keyframes()[0].reason, Reason::Cue);
+    assert_eq!(shown.keyframes.len(), 1);
+    assert_eq!(shown.keyframes[0].reason, Reason::Cue);
     assert_eq!(said(&shown), [Some("Look at this. Now it's stuck.")]);
 
     // A cue over a screen a scene change already settled on adds nothing.
     let changed = samples(250, 5_000, |at| if at < 1_000 { 40 } else { 90 });
     let narration = words(&[(3_500, "Look"), (3_700, "here.")]);
     let shown = select(&recording(Vec::new(), Vec::new(), narration), &changed).unwrap();
-    assert_eq!(shown.keyframes().len(), 1);
-    assert_eq!(shown.keyframes()[0].reason, Reason::SceneChange);
+    assert_eq!(shown.keyframes.len(), 1);
+    assert_eq!(shown.keyframes[0].reason, Reason::SceneChange);
 }
 
 #[test]
@@ -326,9 +326,9 @@ fn a_spoken_cue_finds_the_change_it_points_at() {
     ]);
     let shown = select(&recording(Vec::new(), vec![click(500)], narration), &frames).unwrap();
     assert_eq!(times(&shown), [750, 3_250]);
-    assert_eq!(shown.keyframes()[1].reason, Reason::Cue);
+    assert_eq!(shown.keyframes[1].reason, Reason::Cue);
     assert_eq!(
-        shown.keyframes()[1].event,
+        shown.keyframes[1].event,
         "said “watch” as the screen changed"
     );
     assert_eq!(
@@ -349,7 +349,7 @@ fn groups_close_at_a_click_or_too_much_ink() {
         &still,
     )
     .unwrap();
-    let marks: Vec<Range<usize>> = shown.keyframes().iter().map(|k| k.marks.clone()).collect();
+    let marks: Vec<Range<usize>> = shown.keyframes.iter().map(|k| k.marks.clone()).collect();
     assert!(
         marks.contains(&(0..1)) && marks.contains(&(1..2)),
         "{marks:?}"
@@ -366,7 +366,7 @@ fn groups_close_at_a_click_or_too_much_ink() {
         &still,
     )
     .unwrap();
-    let marks: Vec<Range<usize>> = shown.keyframes().iter().map(|k| k.marks.clone()).collect();
+    let marks: Vec<Range<usize>> = shown.keyframes.iter().map(|k| k.marks.clone()).collect();
     assert_eq!(marks, [0..2, 2..3]);
 }
 
@@ -377,7 +377,7 @@ fn same_screen_merges_stay_balanced() {
     let clicks = every(2_000, 2_000, 5).map(click).collect();
     let shown =
         select_within(&recording(strokes, clicks, Narration::default()), &still, 3).unwrap();
-    let marks: Vec<Range<usize>> = shown.keyframes().iter().map(|k| k.marks.clone()).collect();
+    let marks: Vec<Range<usize>> = shown.keyframes.iter().map(|k| k.marks.clone()).collect();
     assert_eq!(marks, [0..2, 2..4, 4..6]);
 }
 
@@ -390,8 +390,8 @@ fn only_a_different_screen_cuts_into_a_drawing() {
         &still,
     )
     .unwrap();
-    assert_eq!(shown.keyframes().len(), 1);
-    assert_eq!(shown.keyframes()[0].reason, Reason::Mark);
+    assert_eq!(shown.keyframes.len(), 1);
+    assert_eq!(shown.keyframes[0].reason, Reason::Mark);
 
     // Nor does a click between the strokes of one mark, far from the frame that shows it: the
     // mark's keyframe reports it.
@@ -399,14 +399,14 @@ fn only_a_different_screen_cuts_into_a_drawing() {
     let clicked = recording(strokes(), vec![click(2_500)], Narration::default());
     let shown = select(&clicked, &still).unwrap();
     assert_eq!(times(&shown), [4_250]);
-    assert_eq!(shown.keyframes()[0].marks, 0..1);
-    assert_eq!(shown.keyframes()[0].action, Some(click(2_500)));
+    assert_eq!(shown.keyframes[0].marks, 0..1);
+    assert_eq!(shown.keyframes[0].action, Some(click(2_500)));
     assert!(
-        shown.keyframes()[0]
+        shown.keyframes[0]
             .event
             .ends_with("; clicked (x 0.50, y 0.50)"),
         "{}",
-        shown.keyframes()[0].event
+        shown.keyframes[0].event
     );
     // Of two such clicks, it reports the later.
     let twice = recording(
@@ -416,27 +416,27 @@ fn only_a_different_screen_cuts_into_a_drawing() {
     );
     let shown = select(&twice, &still).unwrap();
     assert_eq!(times(&shown), [4_250]);
-    assert_eq!(shown.keyframes()[0].action, Some(click(3_500)));
+    assert_eq!(shown.keyframes[0].action, Some(click(3_500)));
     // So does a click made just before the drawing whose result shows while it is drawn.
     let before = recording(strokes(), vec![click(1_800)], Narration::default());
     let shown = select(&before, &still).unwrap();
     assert_eq!(times(&shown), [4_250]);
-    assert_eq!(shown.keyframes()[0].action, Some(click(1_800)));
+    assert_eq!(shown.keyframes[0].action, Some(click(1_800)));
     // And so does a click right after it, too close to the mark's frame for one of its own.
     let after = recording(strokes(), vec![click(4_300)], Narration::default());
     let shown = select(&after, &still).unwrap();
     assert_eq!(times(&shown), [4_250]);
-    assert_eq!(shown.keyframes()[0].action, Some(click(4_300)));
+    assert_eq!(shown.keyframes[0].action, Some(click(4_300)));
     // Unless that click opens a different screen, which then gets a keyframe of its own.
     let opened = samples(250, 10_000, |at| if at >= 4_500 { 255 } else { 128 });
     let shown = select(&after, &opened).unwrap();
     assert_eq!(times(&shown), [4_250, 4_500]);
-    assert_eq!(shown.keyframes()[0].action, None);
-    assert_eq!(shown.keyframes()[1].action, Some(click(4_300)));
+    assert_eq!(shown.keyframes[0].action, None);
+    assert_eq!(shown.keyframes[1].action, Some(click(4_300)));
     // With no room for that keyframe, the mark's keyframe still reports the click.
     let shown = select_within(&after, &opened, 1).unwrap();
     assert_eq!(times(&shown), [4_250]);
-    assert_eq!(shown.keyframes()[0].action, Some(click(4_300)));
+    assert_eq!(shown.keyframes[0].action, Some(click(4_300)));
 
     // A click whose result the mark's frame no longer shows keeps a keyframe of its own.
     let flash = samples(250, 10_000, |at| {
@@ -448,11 +448,11 @@ fn only_a_different_screen_cuts_into_a_drawing() {
     });
     let shown = select(&clicked, &flash).unwrap();
     assert_eq!(times(&shown), [2_750, 4_250]);
-    assert_eq!(shown.keyframes()[1].action, None);
+    assert_eq!(shown.keyframes[1].action, None);
     // With no room for it, the mark reports that click although its result was another screen.
     let shown = select_within(&clicked, &flash, 1).unwrap();
     assert_eq!(times(&shown), [4_250]);
-    assert_eq!(shown.keyframes()[0].action, Some(click(2_500)));
+    assert_eq!(shown.keyframes[0].action, Some(click(2_500)));
 }
 
 #[test]
@@ -468,7 +468,7 @@ fn a_click_between_two_marks_is_reported_by_the_nearer() {
     )
     .unwrap();
     assert_eq!(times(&shown), [2_000, 3_300]);
-    let actions: Vec<Option<Action>> = shown.keyframes().iter().map(|k| k.action).collect();
+    let actions: Vec<Option<Action>> = shown.keyframes.iter().map(|k| k.action).collect();
     assert_eq!(actions, [Some(click(2_400)), None]);
 
     // Both marks cover this click's result too, but the later one is nearer.
@@ -481,7 +481,7 @@ fn a_click_between_two_marks_is_reported_by_the_nearer() {
         &still,
     )
     .unwrap();
-    let actions: Vec<Option<Action>> = shown.keyframes().iter().map(|k| k.action).collect();
+    let actions: Vec<Option<Action>> = shown.keyframes.iter().map(|k| k.action).collect();
     assert_eq!(actions, [None, Some(click(2_450))]);
 }
 
@@ -521,12 +521,12 @@ fn long_talk_over_a_changing_screen_gets_more_than_one_frame() {
     // The same talk over an unchanged screen stays one frame.
     let still = samples(500, 120_000, |_| 90);
     let shown = select(&recording(Vec::new(), Vec::new(), words(&talk)), &still).unwrap();
-    assert_eq!(shown.keyframes().len(), 1);
+    assert_eq!(shown.keyframes.len(), 1);
 }
 
 #[test]
 fn each_event_says_why_its_frame_was_chosen() {
-    let event = |shown: Option<Selection>| shown.unwrap().keyframes()[0].event.clone();
+    let event = |shown: Option<Selection>| shown.unwrap().keyframes[0].event.clone();
     let still = samples(250, 10_000, |_| 128);
     let drawn = recording(
         vec![dab(2_000), dab(4_000)],
@@ -561,7 +561,7 @@ fn a_quiet_show_falls_back_to_its_middle() {
     let frames = [sample(0, 0), sample(1_000, 0), sample(2_000, 0)];
     let shown = select(&Recording::default(), &frames).unwrap();
     assert_eq!(times(&shown), [1_000]);
-    assert_eq!(shown.keyframes()[0].reason, Reason::Middle);
+    assert_eq!(shown.keyframes[0].reason, Reason::Middle);
     assert_eq!(select(&Recording::default(), &[]), None);
 }
 
@@ -600,7 +600,7 @@ proptest::proptest! {
         let Some(shown) = shown else {
             return Ok(());
         };
-        let keyframes = shown.keyframes();
+        let keyframes = &shown.keyframes;
         proptest::prop_assert!(keyframes.len() <= most);
         let view = Frames::new(&frames).unwrap();
         let marked = keyframes.iter().filter(|k| !k.marks.is_empty()).count();
