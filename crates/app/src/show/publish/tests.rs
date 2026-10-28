@@ -115,7 +115,9 @@ impl Rehearsal {
     }
 
     fn frame(&mut self, at: u64, image: Image) {
-        self.journal.record(Moment::from_millis(at), image);
+        if let Some(admission) = self.journal.admit() {
+            admission.record(Moment::from_millis(at), image);
+        }
     }
 
     fn pointer(&mut self, at: u64, x: f32, y: f32, drawing: bool, pressed: bool) {
@@ -299,8 +301,10 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
         for (index, image) in images.into_iter().enumerate() {
             let at = Moment::from_millis(u64::try_from(index)? * 200);
             let started = Instant::now();
-            journal.record(at, image);
-            timings.push(started.elapsed().as_secs_f64() * 1000.0);
+            if let Some(admission) = journal.admit() {
+                admission.record(at, image);
+                timings.push(started.elapsed().as_secs_f64() * 1000.0);
+            }
         }
         black_box(journal.samples());
         let journal_mb = journal.bytes() as f64 / 1e6;

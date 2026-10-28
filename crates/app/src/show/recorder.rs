@@ -323,12 +323,12 @@ impl<'a> Take<'a> {
                 canvas.sheet().is_some_and(|sheet| sheet.track(frame.part))
             });
         }
-        if !self.journal.admit() {
-            return;
-        }
         let at = self.moment(frame.captured);
+        let Some(admission) = self.journal.admit() else {
+            return;
+        };
         if let Ok(image) = Image::from_bgra(frame.width, frame.height, frame.bgra) {
-            self.journal.record(at, image);
+            admission.record(at, image);
         }
     }
 

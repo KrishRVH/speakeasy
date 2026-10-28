@@ -383,7 +383,10 @@ fn sealed() -> Sealed {
 fn footage() -> Footage {
     let frame = Image::from_bgra(2, 2, vec![128; 16]).expect("a 2×2 frame");
     let mut journal = Journal::new();
-    journal.record(Moment::START, frame);
+    journal
+        .admit()
+        .expect("an empty journal admits a frame")
+        .record(Moment::START, frame);
     Footage {
         recording: Recording {
             duration: Moment::from_millis(1_000),

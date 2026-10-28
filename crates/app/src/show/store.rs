@@ -387,7 +387,11 @@ mod tests {
     /// A bundle of one blank frame.
     fn bundle() -> anyhow::Result<Bundle> {
         let mut journal = Journal::new();
-        journal.record(Moment::START, Image::from_bgra(32, 20, vec![255; 2_560])?);
+        let frame = Image::from_bgra(32, 20, vec![255; 2_560])?;
+        journal
+            .admit()
+            .context("an empty journal admits a frame")?
+            .record(Moment::START, frame);
         let recording = Recording::default();
         let selection = select(&recording, journal.samples()).context("a frame to choose")?;
         let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;

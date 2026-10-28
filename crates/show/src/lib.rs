@@ -40,7 +40,7 @@ pub use crate::{
     error::Error,
     geometry::{Point, Rect},
     image::Image,
-    journal::Journal,
+    journal::{Admission, Journal},
     marks::{Mark, Shape},
     moment::{Moment, Span},
     recording::{Action, EmptyStroke, InkPoint, Narration, Pin, Recording, Size, Stroke, Word},

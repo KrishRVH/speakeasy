@@ -103,44 +103,12 @@ impl Journal {
         }
     }
 
-    /// Counts a frame's arrival and says whether to [`record`](Journal::record) it, so a frame
-    /// the budget would drop costs nothing to prepare.
-    pub fn admit(&mut self) -> bool {
+    /// Counts a frame's arrival and, when the budget keeps it, returns the admission that records
+    /// it, so a frame the budget would drop costs nothing to prepare.
+    pub fn admit(&mut self) -> Option<Admission<'_>> {
         let admitted = self.arrived.is_multiple_of(self.stride);
         self.arrived = self.arrived.saturating_add(1);
-        admitted
-    }
-
-    /// Records `frame` and its signature as on screen at `at`, then thins the journal while it is
-    /// over budget. A moment no later than the last recorded one moves just past it, so every
-    /// frame keeps a moment of its own and [`frame_at`](Journal::frame_at) rebuilds the frame
-    /// each sample fingerprints.
-    pub fn record(&mut self, at: Moment, frame: Image) {
-        let at = self.samples.last().map_or(at, |last| {
-            at.max(last.at.saturating_add(Duration::from_millis(1)))
-        });
-        let index = self.samples.len();
-        self.samples.push(Sample {
-            at,
-            signature: Signature::of(&frame),
-        });
-        let added = if let (Some(before), Some(segment)) = (&self.latest, self.segments.last_mut())
-            && before.width() == frame.width()
-            && before.height() == frame.height()
-        {
-            segment.record(index, before, &frame)
-        } else {
-            let segment = Segment::new(index, &frame);
-            let bytes = segment.bytes();
-            self.segments.push(segment);
-            bytes
-        };
-        self.bytes = self.bytes.saturating_add(added);
-        self.latest = Some(frame);
-        while self.bytes > self.budget && self.samples.len() > 2 {
-            self.thin();
-            self.stride = self.stride.saturating_mul(2);
-        }
+        admitted.then_some(Admission(self))
     }
 
     /// The journal without the frame it keeps only to compare the next one against, for when
@@ -218,6 +186,48 @@ impl Journal {
             .partition_point(|segment| segment.first <= index)
             .saturating_sub(1);
         self.segments.get(position)?.frame(index)
+    }
+}
+
+/// A frame's arrival the journal admitted. Only [`Journal::admit`] makes one, so every frame
+/// recorded counts toward how often arrivals are admitted.
+#[derive(Debug)]
+#[must_use = "an admitted frame is recorded only through its admission"]
+pub struct Admission<'a>(&'a mut Journal);
+
+impl Admission<'_> {
+    /// Records `frame` and its signature as on screen at `at`, then thins the journal while it is
+    /// over budget. A moment no later than the last recorded one moves just past it, so every
+    /// frame keeps a moment of its own and [`frame_at`](Journal::frame_at) rebuilds the frame
+    /// each sample fingerprints.
+    pub fn record(self, at: Moment, frame: Image) {
+        let Self(journal) = self;
+        let at = journal.samples.last().map_or(at, |last| {
+            at.max(last.at.saturating_add(Duration::from_millis(1)))
+        });
+        let index = journal.samples.len();
+        journal.samples.push(Sample {
+            at,
+            signature: Signature::of(&frame),
+        });
+        let added = if let (Some(before), Some(segment)) =
+            (&journal.latest, journal.segments.last_mut())
+            && before.width() == frame.width()
+            && before.height() == frame.height()
+        {
+            segment.record(index, before, &frame)
+        } else {
+            let segment = Segment::new(index, &frame);
+            let bytes = segment.bytes();
+            journal.segments.push(segment);
+            bytes
+        };
+        journal.bytes = journal.bytes.saturating_add(added);
+        journal.latest = Some(frame);
+        while journal.bytes > journal.budget && journal.samples.len() > 2 {
+            journal.thin();
+            journal.stride = journal.stride.saturating_mul(2);
+        }
     }
 }
 
@@ -410,6 +420,13 @@ mod tests {
         Moment::from_millis(millis)
     }
 
+    /// The next arrival at a journal without a budget, which admits every one.
+    fn admitted(journal: &mut Journal) -> Admission<'_> {
+        journal
+            .admit()
+            .expect("a journal without a budget admits every arrival")
+    }
+
     /// A frame of four flat quadrants in `shade`, 70 × 70 when `size` is 2 and 150 × 90 otherwise.
     #[expect(
         clippy::arithmetic_side_effects,
@@ -434,10 +451,10 @@ mod tests {
             }
         };
         let mut journal = Journal::new();
-        journal.record(at(0), frame(640, 360, text));
+        admitted(&mut journal).record(at(0), frame(640, 360, text));
         let first = journal.bytes();
         for millis in (200..=2_000).step_by(200) {
-            journal.record(at(millis), frame(640, 360, text));
+            admitted(&mut journal).record(at(millis), frame(640, 360, text));
         }
         assert_eq!(
             journal.bytes(),
@@ -452,7 +469,7 @@ mod tests {
                 text(x, y)
             }
         };
-        journal.record(at(2_200), frame(640, 360, caret));
+        admitted(&mut journal).record(at(2_200), frame(640, 360, caret));
         let added = journal.bytes() - first;
         assert!(added > 0 && added < first / 20, "{added} of {first}");
     }
@@ -470,7 +487,7 @@ mod tests {
             .map(|shift| frame(130, 70, gradient(shift)))
             .to_vec();
         for (index, image) in frames.iter().enumerate() {
-            journal.record(at(u64::try_from(index).unwrap() * 100), image.clone());
+            admitted(&mut journal).record(at(u64::try_from(index).unwrap() * 100), image.clone());
         }
         for (index, image) in frames.iter().enumerate() {
             let moment = at(u64::try_from(index).unwrap() * 100 + 50);
@@ -483,25 +500,25 @@ mod tests {
         assert_eq!(journal.frame_at(at(0)).as_ref(), frames.first());
         // A resolution change starts a new run of frames and leaves the old ones intact.
         let resized = frame(64, 64, gradient(3));
-        journal.record(at(1_000), resized.clone());
+        admitted(&mut journal).record(at(1_000), resized.clone());
         assert_eq!(journal.frame_at(at(1_000)).as_ref(), Some(&resized));
         assert_eq!(journal.frame_at(at(150)).as_ref(), frames.get(1));
         // Sealing keeps every moment, and a frame recorded after it is stored whole.
         let whole = {
             let mut alone = Journal::new();
-            alone.record(at(0), resized.clone());
+            admitted(&mut alone).record(at(0), resized.clone());
             alone.bytes()
         };
         let mut journal = journal.sealed();
         let held = journal.bytes();
-        journal.record(at(1_100), resized.clone());
+        admitted(&mut journal).record(at(1_100), resized.clone());
         assert_eq!(
             journal.bytes() - held,
             whole,
             "a sealed journal keeps no frame to compare the next against"
         );
         let after = frame(64, 64, gradient(9));
-        journal.record(at(1_200), after.clone());
+        admitted(&mut journal).record(at(1_200), after.clone());
         assert_eq!(journal.frame_at(at(1_100)).as_ref(), Some(&resized));
         assert_eq!(journal.frame_at(at(1_200)), Some(after));
         assert_eq!(journal.frame_at(at(1_000)), Some(resized));
@@ -515,10 +532,10 @@ mod tests {
         let mut journal = Journal::with_budget(0);
         let mut admitted = Vec::new();
         for arrival in 0_u8..9 {
-            if journal.admit() {
+            if let Some(admission) = journal.admit() {
                 admitted.push(arrival);
                 let moment = at(u64::from(arrival) * 200);
-                journal.record(moment, quadrants([arrival; 4], 2));
+                admission.record(moment, quadrants([arrival; 4], 2));
             }
         }
         assert_eq!(admitted, [0, 1, 2, 4, 8]);
@@ -527,11 +544,11 @@ mod tests {
     #[test]
     fn debugging_a_journal_never_prints_its_frames() {
         let mut journal = Journal::new();
-        journal.record(at(0), quadrants([0; 4], 2));
+        admitted(&mut journal).record(at(0), quadrants([0; 4], 2));
         let one = format!("{journal:?}");
         for shade in 1_u8..20 {
             let moment = at(u64::from(shade) * 200);
-            journal.record(moment, quadrants([shade, 0, shade, 0], 3));
+            admitted(&mut journal).record(moment, quadrants([shade, 0, shade, 0], 3));
         }
         let many = format!("{journal:?}");
         assert!(many.len() <= one.len() + 8, "{one}\n{many}");
@@ -557,7 +574,7 @@ mod tests {
                 }
                 let image = quadrants(shade, size);
                 let moment = at(u64::try_from(index).unwrap() * 100);
-                journal.record(moment, image.clone());
+                admitted(&mut journal).record(moment, image.clone());
                 recorded.push((moment, image));
             }
             for _ in 0..rounds {
@@ -595,13 +612,13 @@ mod tests {
                 if let Some(value) = shade.get_mut(usize::from(quadrant)) {
                     *value = value.wrapping_add(40);
                 }
-                if !journal.admit() {
+                let Some(admission) = journal.admit() else {
                     continue;
-                }
+                };
                 let image = quadrants(shade, size);
                 first.get_or_insert_with(|| (at(millis), image.clone()));
                 last = Some(image.clone());
-                journal.record(at(millis), image);
+                admission.record(at(millis), image);
                 let held = journal.samples().len();
                 prop_assert!(journal.bytes() <= BUDGET || held <= 2, "{} bytes in {held} frames", journal.bytes());
             }
@@ -630,7 +647,7 @@ mod tests {
             };
             let image = frame(width, height, noise);
             let mut journal = Journal::new();
-            journal.record(at(5), image.clone());
+            admitted(&mut journal).record(at(5), image.clone());
             prop_assert_eq!(journal.frame_at(at(5)), Some(image));
         }
     }
