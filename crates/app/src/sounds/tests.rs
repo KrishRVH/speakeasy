@@ -7,7 +7,7 @@ use super::*;
 
 const PATIENCE: Duration = Duration::from_secs(2);
 /// How long the players under test keep a released device open.
-const LINGER: Duration = Duration::from_millis(50);
+const BRIEF_LINGER: Duration = Duration::from_millis(50);
 
 #[derive(Debug, PartialEq, Eq)]
 enum Event {
@@ -47,7 +47,7 @@ fn player(broken: fn(u8) -> bool) -> (Sender<Ask>, Receiver<Event>, thread::Join
     let (events, reports) = mpsc::channel();
     let thread = thread::spawn(move || {
         let mut opened = 0_u8;
-        play(&asked, LINGER, || {
+        play(&asked, BRIEF_LINGER, || {
             opened = opened.saturating_add(1);
             events.send(Event::Opened(opened)).unwrap();
             Some(FakeSink {
@@ -67,7 +67,7 @@ fn next(reports: &Receiver<Event>) -> Event {
 /// Asserts that the player reports nothing for several of its lingers.
 fn quiet(reports: &Receiver<Event>, why: &str) {
     assert_eq!(
-        reports.recv_timeout(LINGER.saturating_mul(4)),
+        reports.recv_timeout(BRIEF_LINGER.saturating_mul(4)),
         Err(RecvTimeoutError::Timeout),
         "{why}"
     );
@@ -98,14 +98,14 @@ fn the_device_closes_after_lingering_and_reopens_for_the_next_cue() {
 #[test]
 fn a_held_device_opens_before_any_cue_and_closes_only_once_released() {
     let (asks, reports, thread) = player(|_| false);
-    asks.send(Ask::Hold(true)).unwrap();
+    asks.send(Ask::Hold).unwrap();
     assert_eq!(next(&reports), Event::Opened(1));
     quiet(&reports, "A held device closed before its session's cue");
     let asked = Instant::now();
     asks.send(Ask::Play(Cue::Stop, asked)).unwrap();
     assert_eq!(next(&reports), Event::Started(1, Cue::Stop, by(asked)));
     quiet(&reports, "A cue released a held device");
-    asks.send(Ask::Hold(false)).unwrap();
+    asks.send(Ask::Release).unwrap();
     assert_eq!(next(&reports), Event::Dropped(1));
     drop(asks);
     thread.join().unwrap();
@@ -181,39 +181,38 @@ fn a_slower_output_drops_what_would_fold_back_into_its_band() {
     assert!(folded < 0.01 * kept, "{folded}");
 }
 
-#[test]
-fn cues_mix_onto_every_channel_and_end_in_silence() {
+/// A mixer onto `channels` whose bank holds only `start` and `stop`, with the lane that asks it for
+/// cues.
+fn mixer(channels: usize, start: &[f32], stop: &[f32]) -> (Producer<(Cue, Instant)>, Mixer) {
     let bank = Bank {
-        start: [0.5, 0.25].into(),
-        stop: [0.75, 0.75, 0.75].into(),
+        start: start.into(),
+        stop: stop.into(),
         cancel: [].into(),
         show: [].into(),
         copied: [].into(),
     };
-    let (mut asks, asked) = RingBuffer::new(VOICES);
-    let mut mixer = Mixer::new(bank, asked);
+    let (asks, asked) = RingBuffer::new(VOICES);
+    let channels = NonZeroUsize::new(channels).unwrap();
+    (asks, Mixer::new(bank, asked, channels))
+}
+
+#[test]
+fn cues_mix_onto_every_channel_and_end_in_silence() {
+    let (mut asks, mut mixer) = mixer(2, &[0.5, 0.25], &[0.75, 0.75, 0.75]);
     let heard = Instant::now();
     asks.push((Cue::Start, heard)).unwrap();
     asks.push((Cue::Stop, heard)).unwrap();
     let mut output = [0.0_f32; 8];
-    mixer.fill(&mut output, NonZeroUsize::new(2).unwrap(), heard);
+    mixer.fill(&mut output, heard);
     // Overlapping cues add, and their sum stops at full scale.
     assert_eq!(output, [1.0, 1.0, 1.0, 1.0, 0.75, 0.75, 0.0, 0.0]);
-    mixer.fill(&mut output, NonZeroUsize::new(2).unwrap(), heard);
+    mixer.fill(&mut output, heard);
     assert_eq!(output, [0.0; 8]);
 }
 
 #[test]
 fn a_cue_the_device_would_play_after_its_deadline_is_skipped() {
-    let bank = Bank {
-        start: [0.5].into(),
-        stop: [0.25].into(),
-        cancel: [].into(),
-        show: [].into(),
-        copied: [].into(),
-    };
-    let (mut asks, asked) = RingBuffer::new(VOICES);
-    let mut mixer = Mixer::new(bank, asked);
+    let (mut asks, mut mixer) = mixer(1, &[0.5], &[0.25]);
     let heard = Instant::now();
     asks.push((
         Cue::Start,
@@ -222,7 +221,7 @@ fn a_cue_the_device_would_play_after_its_deadline_is_skipped() {
     .unwrap();
     asks.push((Cue::Stop, heard)).unwrap();
     let mut output = [0.0_f32; 2];
-    mixer.fill(&mut output, NonZeroUsize::new(1).unwrap(), heard);
+    mixer.fill(&mut output, heard);
     assert_eq!(output, [0.25, 0.0]);
 }
 

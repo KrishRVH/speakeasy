@@ -226,12 +226,12 @@ fn profile_audio_pipeline() -> anyhow::Result<()> {
             let (state, mut ring, errors, control) = callback_fixture(channels, 48_000, 480 * 3000);
             let (mut data, _) = capture_callbacks::<f32>(state);
             let input = vec![0.125; 480 * channels];
-            let mut pcm = Pcm16::with_reservation(480);
+            let mut pcm = Pcm16::with_reservation(480, 480);
             let mut meter = LevelMeter::new();
             let started = Instant::now();
             for _ in 0..3000 {
                 data(black_box(&input));
-                consume_pcm(&mut ring, &mut pcm, &mut meter, 480);
+                consume_pcm(&mut ring, &mut pcm, &mut meter);
                 black_box(&meter);
                 black_box(pcm.audio());
                 pcm.clear();

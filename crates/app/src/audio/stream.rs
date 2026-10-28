@@ -15,7 +15,7 @@ use super::{
 };
 
 const MAX_CHANNELS: usize = 32;
-pub(super) const UNSUPPORTED_FORMAT: &str = "Microphone format is unsupported. Change it in OS sound settings or choose another microphone in Settings.";
+const UNSUPPORTED_FORMAT: &str = "Microphone format is unsupported. Change it in OS sound settings or choose another microphone in Settings.";
 
 /// Everything the stream callbacks own for one capture.
 pub(super) struct CallbackState {
@@ -102,7 +102,6 @@ where
                 control.mark_overflowed();
                 return;
             };
-            // One uninitialized chunk publishes the whole packet without scratch or allocation.
             chunk.fill_from_iter(data.chunks_exact(channels.get()).take(queued).map(|frame| {
                 frame
                     .iter()
@@ -167,26 +166,23 @@ pub(super) fn capture_failure(
 /// What happened to the microphone and what to do; only a failure without its own message carries
 /// the driver's words.
 pub(super) fn microphone_error(error: cpal::Error) -> anyhow::Error {
-    let message = match error.kind() {
-        cpal::ErrorKind::DeviceBusy => {
+    match error.kind() {
+        cpal::ErrorKind::DeviceBusy => anyhow!(
             "Another app is using the microphone. Close it or choose another microphone in Settings."
-        },
-        cpal::ErrorKind::PermissionDenied => {
+        ),
+        cpal::ErrorKind::PermissionDenied => anyhow!(
             "Speakeasy has no microphone access. Allow it in your system's privacy settings, then try again."
-        },
+        ),
         cpal::ErrorKind::DeviceNotAvailable => {
-            "The microphone was disconnected. Reconnect it or choose another in Settings."
+            anyhow!("The microphone was disconnected. Reconnect it or choose another in Settings.")
         },
-        cpal::ErrorKind::Xrun => {
+        cpal::ErrorKind::Xrun => anyhow!(
             "Audio was interrupted during recording. Check your audio routing or reduce system load, then try again."
-        },
-        _ => {
-            return anyhow!(
-                "The microphone failed ({error}). Try recording again or choose another microphone in Settings."
-            );
-        },
-    };
-    anyhow!(message)
+        ),
+        _ => anyhow!(
+            "The microphone failed ({error}). Try recording again or choose another microphone in Settings."
+        ),
+    }
 }
 
 #[cfg(test)]

@@ -39,6 +39,7 @@ pub(super) struct Control {
 }
 
 /// One in-flight callback. Dropping the guard acknowledges its samples and errors.
+#[must_use = "a callback counts as publishing only while its guard lives"]
 pub(super) struct Publishing<'a>(&'a Control);
 
 impl Drop for Publishing<'_> {

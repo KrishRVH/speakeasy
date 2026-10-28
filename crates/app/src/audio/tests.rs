@@ -1,13 +1,13 @@
 //! Checks the capture thread's lifecycle, retirement and teardown, its metering, PCM consumption,
-//! the cue notices its speech gate hears, and the shared microphone scan, with fake devices and
-//! synthetic samples; no test opens a microphone.
+//! and the cue notices its speech gate hears, with fake devices and synthetic samples; no test opens
+//! a microphone.
 
 use std::sync::PoisonError;
 
-use anyhow::{bail, ensure};
+use anyhow::ensure;
 use tokio::time::timeout;
 
-use super::*;
+use super::{pcm::SAMPLE_BYTES, *};
 use crate::sounds::Cue;
 
 const PATIENCE: Duration = Duration::from_secs(2);
@@ -24,41 +24,39 @@ fn speech_meter_spans_sixty_to_six_dbfs() {
 
 #[test]
 fn stopped_startup_returns_without_audio() -> anyhow::Result<()> {
-    for mode in [Mode::Finishing, Mode::Cancelled] {
+    let records_nothing =
+        |events: &Sender<CaptureEvent>, control: &Arc<Control>| -> anyhow::Result<bool> {
+            let no_cues = async_channel::unbounded().1;
+            Ok(record(SessionId::FIRST, None, events, control, &no_cues)?
+                .outcome?
+                .is_none())
+        };
+    for stop in [Control::finish, Control::cancel] {
         let control = Arc::new(Control::default());
-        if mode == Mode::Finishing {
-            control.finish();
-        } else {
-            control.cancel();
-        }
+        stop(&control);
         let (events, _audio) = async_channel::bounded(1);
-        assert!(
-            record(
-                SessionId::FIRST,
-                None,
-                &events,
-                &control,
-                &async_channel::unbounded().1
-            )?
-            .outcome?
-            .is_none()
-        );
+        assert!(records_nothing(&events, &control)?);
     }
     let (events, _audio) = async_channel::bounded(1);
     events.close();
-    let control = Arc::new(Control::default());
-    assert!(
-        record(
-            SessionId::FIRST,
-            None,
-            &events,
-            &control,
-            &async_channel::unbounded().1
-        )?
-        .outcome?
-        .is_none()
-    );
+    assert!(records_nothing(&events, &Arc::default())?);
     Ok(())
+}
+
+/// Whether `retirement` stays pending until `release` lets the blocked capture end. It answers only
+/// once the capture is released and retired, so a failing assertion cannot unwind into a join on the
+/// blocked thread.
+async fn pending_until_released(
+    retirement: impl Future<Output = ()>,
+    release: &Sender<()>,
+) -> anyhow::Result<bool> {
+    tokio::pin!(retirement);
+    let pending = timeout(Duration::from_millis(30), retirement.as_mut())
+        .await
+        .is_err();
+    release.send(()).await?;
+    timeout(PATIENCE, retirement).await?;
+    Ok(pending)
 }
 
 #[tokio::test]
@@ -92,15 +90,7 @@ async fn sealed_audio_is_reported_before_device_teardown_and_retirement_waits() 
     })?;
     let tearing_down = timeout(PATIENCE, teardown.recv()).await;
     let report = timeout(PATIENCE, audio.recv()).await;
-    let retirement = capture.retire();
-    tokio::pin!(retirement);
-    let pending = timeout(Duration::from_millis(30), retirement.as_mut())
-        .await
-        .is_err();
-    release.send(()).await?;
-    timeout(PATIENCE, retirement).await?;
-    // Failing before release would hang: unwinding joins the blocked thread before dropping
-    // `release`.
+    let pending = pending_until_released(capture.retire(), &release).await?;
     tearing_down??;
     assert!(
         matches!(report?, Ok(CaptureEvent::Finished(SessionId::FIRST, Ok(Some(sealed)))) if sealed.wav == [1, 2])
@@ -125,14 +115,7 @@ async fn capture_retirement_signals_cancel_and_waits_for_teardown() -> anyhow::R
     let control = starting.recv().await?;
     let retirement = capture.retire();
     let mode = control.mode();
-    tokio::pin!(retirement);
-    let pending = timeout(Duration::from_millis(30), retirement.as_mut())
-        .await
-        .is_err();
-    release.send(()).await?;
-    timeout(PATIENCE, retirement).await?;
-    // Asserting before release would hang on failure: unwinding joins the blocked thread before
-    // dropping `release`.
+    let pending = pending_until_released(retirement, &release).await?;
     assert_eq!(mode, Mode::Cancelled);
     assert!(pending, "Retirement acknowledged before teardown");
     Ok(())
@@ -201,13 +184,15 @@ async fn consumer_wakes(cancel: bool, wake_before_park: bool) -> anyhow::Result<
         let retirement = capture.retire();
         tokio::pin!(retirement);
         release()?;
-        let completed = timeout(Duration::from_millis(400), retirement.as_mut()).await;
+        let woke = timeout(Duration::from_millis(400), retirement.as_mut())
+            .await
+            .is_ok();
         // A fallback wake reaps the thread even when the notification under test is lost.
         consumer.unpark();
-        if completed.is_err() {
+        if !woke {
             timeout(PATIENCE, retirement).await?;
-            return Ok(false);
         }
+        Ok(woke)
     } else {
         capture.finish();
         let mode = capture.signal.control.mode();
@@ -216,14 +201,11 @@ async fn consumer_wakes(cancel: bool, wake_before_park: bool) -> anyhow::Result<
         consumer.unpark();
         timeout(PATIENCE, capture.retire()).await?;
         assert_eq!(mode, Mode::Finishing);
-        if !matches!(
+        Ok(matches!(
             completed,
             Ok(Ok(CaptureEvent::Finished(SessionId::FIRST, Ok(None))))
-        ) {
-            return Ok(false);
-        }
+        ))
     }
-    Ok(true)
 }
 
 #[tokio::test]
@@ -274,9 +256,9 @@ fn pcm_chunks_wrap_clamp_invalid_samples_and_enforce_the_limit() -> anyhow::Resu
     producer.push_entire_slice(&[0.0, 0.0, 0.0])?;
     ring.read_chunk(3)?.commit_all();
     producer.push_entire_slice(&[0.5, f32::NAN, 2.0, -2.0])?;
-    let mut pcm = Pcm16::with_reservation(0);
+    let mut pcm = Pcm16::with_reservation(0, 3);
     let mut meter = LevelMeter::new();
-    consume_pcm(&mut ring, &mut pcm, &mut meter, 3);
+    consume_pcm(&mut ring, &mut pcm, &mut meter);
     assert_eq!(meter.samples, 3);
     assert_eq!(meter.energy, 1.25);
     let expected = [16383_i16, 0, 32767]
@@ -291,52 +273,26 @@ fn pcm_chunks_wrap_clamp_invalid_samples_and_enforce_the_limit() -> anyhow::Resu
 
 #[test]
 fn a_cue_noticed_after_its_first_samples_arrive_still_counts_only_by_its_voice_band() {
-    // A loud speaker beside the microphone, which took the Show cue in before the capture read its
-    // notice. Without the notice, the cue counts as speech.
-    let recording: Vec<u8> = Cue::Show
+    let loud_show_cue: Vec<u8> = Cue::Show
         .pcm()
-        .as_chunks::<2>()
+        .as_chunks::<SAMPLE_BYTES>()
         .0
         .iter()
         .flat_map(|pair| i16::from_le_bytes(*pair).saturating_mul(3).to_le_bytes())
         .chain(std::iter::repeat_n(0, 96_000))
         .collect();
-    let (cues, noticed) = async_channel::unbounded();
-    cues.try_send(()).unwrap();
-    let mut speech = Audibility::new(48_000).unwrap();
-    classify(&mut speech, &recording, &noticed);
-    assert_eq!(speech.retained(recording.len()), None);
-}
-
-#[tokio::test]
-async fn a_blocked_microphone_scan_serves_the_next_request_instead_of_another_thread()
--> anyhow::Result<()> {
-    let (release, released) = std::sync::mpsc::channel();
-    let mut current = None;
-    let abandoned = MicrophoneScan::share(&mut current, move || {
-        released.recv()?;
-        Ok(vec![InputDevice {
-            id: "usb".into(),
-            name: "USB".into(),
-        }])
-    })?;
-    // The Settings view that asked first is gone while the driver still blocks. The driver
-    // returns later, so a request that replaced the scan would join it, then fail, never hang.
-    drop(abandoned);
-    let driver = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(50));
-        release.send(())
-    });
-    let waiting = MicrophoneScan::share(&mut current, || {
-        bail!("A second scan started while one was enumerating")
-    })?;
-    let exited = current.as_ref().context("No scan is held")?.exited();
-    let devices = timeout(PATIENCE, waiting.recv()).await???;
-    assert_eq!(devices.len(), 1);
-    assert_eq!(devices[0].id, "usb");
-    timeout(PATIENCE, exited).await?;
-    driver.join().unwrap()?;
-    let fresh = MicrophoneScan::share(&mut current, || Ok(Vec::new()))?;
-    assert!(timeout(PATIENCE, fresh.recv()).await???.is_empty());
-    Ok(())
+    let retained = |noticed: bool| {
+        let (cues, notices) = async_channel::unbounded();
+        if noticed {
+            cues.try_send(()).unwrap();
+        }
+        let mut speech = Audibility::new(48_000);
+        classify(&mut speech, &loud_show_cue, &notices);
+        speech.retained(loud_show_cue.len())
+    };
+    assert!(
+        retained(false).is_some(),
+        "An unnoticed loud cue must count as speech, or this test proves nothing"
+    );
+    assert_eq!(retained(true), None);
 }

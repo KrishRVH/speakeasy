@@ -21,18 +21,21 @@ const RECLAIM_SLACK_BYTES: usize = 8 * 1024 * 1024;
 /// ring, allocator, HTTP client, or engine, remain.
 pub(super) struct Pcm16 {
     bytes: Vec<u8>,
+    /// The most samples the recording may hold.
+    limit: usize,
 }
 
 impl Pcm16 {
-    pub(super) fn with_reservation(samples: usize) -> Self {
-        let mut bytes = Vec::with_capacity(WAV_HEADER_BYTES.saturating_add(bytes_in(samples)));
+    pub(super) fn with_reservation(reserved: usize, limit: usize) -> Self {
+        let mut bytes = Vec::with_capacity(WAV_HEADER_BYTES.saturating_add(bytes_in(reserved)));
         bytes.resize(WAV_HEADER_BYTES, 0);
-        Self { bytes }
+        Self { bytes, limit }
     }
 
     fn silence(samples: usize) -> Self {
         Self {
             bytes: vec![0; WAV_HEADER_BYTES.saturating_add(bytes_in(samples))],
+            limit: samples,
         }
     }
 
@@ -44,11 +47,16 @@ impl Pcm16 {
         self.audio().len() / SAMPLE_BYTES
     }
 
-    /// Appends a sample, doubling capacity when full but never past `limit` samples, so a recording
-    /// at the limit cannot hold twice its size. Growth happens here, never in the audio callback.
-    pub(super) fn push(&mut self, sample: i16, limit: usize) {
+    /// Samples the recording can take before it reaches its limit.
+    pub(super) fn room(&self) -> usize {
+        self.limit.saturating_sub(self.samples())
+    }
+
+    /// Appends a sample, doubling capacity when full but never past the limit, so a recording at
+    /// the limit cannot hold twice its size. Growth happens here, never in the audio callback.
+    pub(super) fn push(&mut self, sample: i16) {
         if self.bytes.len().saturating_add(SAMPLE_BYTES) > self.bytes.capacity() {
-            let full = WAV_HEADER_BYTES.saturating_add(bytes_in(limit));
+            let full = WAV_HEADER_BYTES.saturating_add(bytes_in(self.limit));
             let capacity = self.bytes.capacity().saturating_mul(2).min(full);
             self.bytes
                 .reserve_exact(capacity.saturating_sub(self.bytes.len()));
@@ -85,13 +93,10 @@ impl Pcm16 {
     }
 
     fn retain_audio(&mut self, audio: Range<usize>) {
-        let length = audio.len();
-        if audio.start != 0 {
-            let source = WAV_HEADER_BYTES.saturating_add(audio.start)
-                ..WAV_HEADER_BYTES.saturating_add(audio.end);
-            self.bytes.copy_within(source, WAV_HEADER_BYTES);
-        }
-        self.bytes.truncate(WAV_HEADER_BYTES.saturating_add(length));
+        self.bytes
+            .truncate(WAV_HEADER_BYTES.saturating_add(audio.end));
+        self.bytes
+            .drain(WAV_HEADER_BYTES..WAV_HEADER_BYTES.saturating_add(audio.start));
     }
 
     /// Ordinary utterances stay allocation-free; only a large reservation that the remaining audio
@@ -133,12 +138,12 @@ fn wav_header(data_bytes: usize, rate: u32) -> Option<[u8; WAV_HEADER_BYTES]> {
     const PCM: u16 = 1;
     const MONO: u16 = 1;
     const BITS_PER_SAMPLE: u16 = 16;
+    const BLOCK_ALIGN: u16 = MONO * BITS_PER_SAMPLE / 8;
     if rate == 0 || !data_bytes.is_multiple_of(SAMPLE_BYTES) {
         return None;
     }
     let riff_bytes = data_bytes.checked_add(WAV_HEADER_BYTES - CHUNK_HEADER_BYTES)?;
-    let block_align = u16::try_from(SAMPLE_BYTES).ok()?;
-    let byte_rate = rate.checked_mul(u32::from(block_align))?;
+    let byte_rate = rate.checked_mul(u32::from(BLOCK_ALIGN))?;
     let fields: [&[u8]; 13] = [
         b"RIFF",
         &u32::try_from(riff_bytes).ok()?.to_le_bytes(),
@@ -149,7 +154,7 @@ fn wav_header(data_bytes: usize, rate: u32) -> Option<[u8; WAV_HEADER_BYTES]> {
         &MONO.to_le_bytes(),
         &rate.to_le_bytes(),
         &byte_rate.to_le_bytes(),
-        &block_align.to_le_bytes(),
+        &BLOCK_ALIGN.to_le_bytes(),
         &BITS_PER_SAMPLE.to_le_bytes(),
         b"data",
         &u32::try_from(data_bytes).ok()?.to_le_bytes(),
@@ -193,10 +198,10 @@ mod tests {
     use super::*;
 
     fn pcm_from(segments: &[(usize, i16)]) -> Pcm16 {
-        let mut pcm = Pcm16::with_reservation(0);
+        let mut pcm = Pcm16::with_reservation(0, usize::MAX);
         for &(samples, amplitude) in segments {
             for _ in 0..samples {
-                pcm.push(amplitude, usize::MAX);
+                pcm.push(amplitude);
             }
         }
         pcm
@@ -206,9 +211,10 @@ mod tests {
     fn wav_encoding_rewrites_the_header_in_place_with_exact_riff_lengths() -> anyhow::Result<()> {
         let mut pcm = Pcm16 {
             bytes: vec![0xFF; WAV_HEADER_BYTES],
+            limit: usize::MAX,
         };
         for sample in [i16::MIN, 0, i16::MAX] {
-            pcm.push(sample, usize::MAX);
+            pcm.push(sample);
         }
         let allocation = pcm.bytes.as_ptr();
         let encoded = pcm.into_wav(16_000)?;
@@ -237,6 +243,7 @@ mod tests {
         ] {
             let pcm = Pcm16 {
                 bytes: vec![0x5A; length],
+                limit: usize::MAX,
             };
             let error = pcm.into_wav(rate).unwrap_err().to_string();
             assert!(
@@ -268,21 +275,13 @@ mod tests {
         let expected = pcm.audio()[rate * 3..rate * 15].to_vec();
         let click = pcm_from(&[(rate / 20, 3000), (rate * 2 - rate / 20, 0)]);
         let rate = u32::try_from(rate).unwrap();
-        let sealed = pcm
-            .seal(Audibility::new(rate).unwrap(), rate)
-            .unwrap()
-            .unwrap();
+        let sealed = pcm.seal(Audibility::new(rate), rate).unwrap().unwrap();
         assert_eq!(&sealed.wav[WAV_HEADER_BYTES..], expected);
         assert_eq!(wav_sample_rate(&sealed.wav), Some(rate));
         // Two quiet seconds lead the speech; half a second of padding is kept before it.
         assert_eq!(sealed.trimmed, Duration::from_millis(1_500));
 
-        assert!(
-            click
-                .seal(Audibility::new(rate).unwrap(), rate)
-                .unwrap()
-                .is_none()
-        );
+        assert!(click.seal(Audibility::new(rate), rate).unwrap().is_none());
     }
 
     #[test]
@@ -291,7 +290,7 @@ mod tests {
             for millis in [199, 200] {
                 let samples = samples_in(Duration::from_millis(millis), rate);
                 let pcm = pcm_from(&[(samples, 3000)]);
-                let mut speech = Audibility::new(rate).unwrap();
+                let mut speech = Audibility::new(rate);
                 speech.extend(pcm.audio());
                 let sealed = pcm.seal(speech, rate).unwrap();
                 assert_eq!(sealed.is_some(), millis == 200);
@@ -307,18 +306,17 @@ mod tests {
     fn sparse_long_recording_releases_capacity_without_changing_padded_audio() {
         let rate = 48_000;
         let mut pcm = Pcm16 {
-            bytes: vec![0; WAV_HEADER_BYTES + rate * 300 * 2],
+            bytes: vec![0; WAV_HEADER_BYTES + bytes_in(rate * 300)],
+            limit: usize::MAX,
         };
-        let speech = WAV_HEADER_BYTES + rate * 40 * 2..WAV_HEADER_BYTES + rate * 50 * 2;
-        for pair in pcm.bytes[speech].as_chunks_mut::<2>().0 {
-            pair.copy_from_slice(&3000_i16.to_le_bytes());
-        }
+        let speech = WAV_HEADER_BYTES + bytes_in(rate * 40)..WAV_HEADER_BYTES + bytes_in(rate * 50);
+        pcm.bytes[speech]
+            .as_chunks_mut::<SAMPLE_BYTES>()
+            .0
+            .fill(3000_i16.to_le_bytes());
         let expected = pcm.audio()[rate * 79..rate * 101].to_vec();
         let rate = u32::try_from(rate).unwrap();
-        let sealed = pcm
-            .seal(Audibility::new(rate).unwrap(), rate)
-            .unwrap()
-            .unwrap();
+        let sealed = pcm.seal(Audibility::new(rate), rate).unwrap().unwrap();
         assert_eq!(&sealed.wav[WAV_HEADER_BYTES..], expected);
         assert_eq!(sealed.wav.capacity(), sealed.wav.len());
         assert_eq!(sealed.trimmed, Duration::from_millis(39_500));
@@ -334,7 +332,10 @@ mod tests {
             let mut bytes = Vec::with_capacity(capacity);
             bytes.resize(length, 0x5A);
             let allocation = bytes.as_ptr();
-            let mut pcm = Pcm16 { bytes };
+            let mut pcm = Pcm16 {
+                bytes,
+                limit: usize::MAX,
+            };
             pcm.release_excess_capacity();
             assert_eq!(pcm.bytes.capacity(), capacity);
             assert_eq!(pcm.bytes.as_ptr(), allocation);
@@ -354,8 +355,9 @@ mod tests {
         for _ in 0..21 {
             let pcm = Pcm16 {
                 bytes: fixture.bytes.clone(),
+                limit: usize::MAX,
             };
-            let mut speech = Audibility::new(48_000).unwrap();
+            let mut speech = Audibility::new(48_000);
             // Classification runs on the consumer during recording, outside the stop span.
             for length in (480 * SAMPLE_BYTES..pcm.audio().len()).step_by(480 * SAMPLE_BYTES) {
                 speech.extend(black_box(&pcm.audio()[..length]));

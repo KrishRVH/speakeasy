@@ -1,9 +1,10 @@
 //! Microphone capture on an owned thread, from device selection through draining and metering to
-//! sealing audio before driver teardown, and the input-device list Settings offers. The real-time
-//! callbacks live in `stream`, the in-place WAV buffer in `pcm`, and the speech gate, which hears a
-//! voice beneath Speakeasy's own cues, in `speech`.
+//! sealing audio before driver teardown. The real-time callbacks live in `stream`, the in-place WAV
+//! buffer in `pcm`, the speech gate, which hears a voice beneath Speakeasy's own cues, in `speech`,
+//! and the input devices Settings offers in `microphones`.
 
 mod control;
+mod microphones;
 mod pcm;
 mod speech;
 mod stream;
@@ -22,15 +23,15 @@ use rtrb::{Consumer, RingBuffer};
 use speakeasy_core::gesture::RECORDING_LIMIT;
 use speakeasy_platform::OwnedThread;
 
-pub(crate) use self::pcm::{silent_wav, wav_sample_rate};
 use self::{
     control::{Control, Mode},
     pcm::{Pcm16, samples_in},
     speech::Audibility,
-    stream::{
-        CallbackState, UNSUPPORTED_FORMAT, build_stream, capture_failure, microphone_error,
-        rate_and_channels,
-    },
+    stream::{CallbackState, build_stream, capture_failure, microphone_error, rate_and_channels},
+};
+pub(crate) use self::{
+    microphones::{InputDevice, MicrophoneScan},
+    pcm::{silent_wav, wav_sample_rate},
 };
 use crate::runtime::ports::{CaptureEvent, Capturing, Listening, Sealed, SessionId};
 
@@ -122,7 +123,6 @@ impl Capturing for Capture {
 
     fn retire(self) -> impl Future<Output = ()> + Send + 'static {
         let Self { signal, thread, .. } = self;
-        // Dropping the signal cancels capture and wakes the thread.
         drop(signal);
         thread.join()
     }
@@ -194,7 +194,6 @@ struct Recorder {
     errors: Receiver<cpal::Error>,
     started: Instant,
     rate: u32,
-    limit: usize,
 }
 
 impl Recorder {
@@ -232,10 +231,9 @@ impl Recorder {
             limit,
         };
         let stream = build_stream(&device, &format, callbacks)?;
-        checkpoint()?;
         // PCM stays at the device's native rate; the engine resamples.
-        let pcm = Pcm16::with_reservation(samples_in(INITIAL_RESERVATION, rate));
-        let speech = Audibility::new(rate).context(UNSUPPORTED_FORMAT)?;
+        let pcm = Pcm16::with_reservation(samples_in(INITIAL_RESERVATION, rate), limit);
+        let speech = Audibility::new(rate);
         checkpoint()?;
         stream.play().map_err(microphone_error)?;
         Ok(Self {
@@ -250,7 +248,6 @@ impl Recorder {
             errors: stream_errors,
             started,
             rate,
-            limit,
         })
     }
 
@@ -272,8 +269,8 @@ impl Recorder {
             rate,
             ..
         } = self;
-        let outcome = drained.and_then(|finished| {
-            if !finished || control.mode() == Mode::Cancelled {
+        let outcome = drained.and_then(|()| {
+            if abandoned(control, events) {
                 return Ok(None);
             }
             // A callback may have failed between the last poll and quiescence.
@@ -283,30 +280,30 @@ impl Recorder {
         Captured { outcome, device }
     }
 
-    /// Moves audio from the ring into PCM, reporting readiness and levels, until capture stops:
-    /// `true` once it finishes or reaches the limit, `false` once cancelled or its owner has gone.
+    /// Moves audio from the ring into PCM, reporting readiness and levels, until capture finishes,
+    /// reaches the limit, or is abandoned.
     fn drain(
         &mut self,
         id: SessionId,
         events: &Sender<CaptureEvent>,
         control: &Control,
         cues: &Receiver<()>,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<()> {
         let mut meter = LevelMeter::new();
         let mut ready = false;
         loop {
-            if control.mode() == Mode::Cancelled || events.is_closed() {
-                return Ok(false);
+            if abandoned(control, events) {
+                return Ok(());
             }
             capture_failure(control, &self.errors)?;
             let stopping = control.mode() == Mode::Finishing
                 || self.started.elapsed() >= RECORDING_LIMIT
-                || self.pcm.samples() >= self.limit;
+                || self.pcm.room() == 0;
             if stopping {
                 control.finish();
                 control.quiesce();
             }
-            consume_pcm(&mut self.ring, &mut self.pcm, &mut meter, self.limit);
+            consume_pcm(&mut self.ring, &mut self.pcm, &mut meter);
             // Checked after draining, not before, so a callback that fills the ring in between
             // cannot leave audio in the recording that no `Ready` announced.
             if !ready && self.pcm.samples() > 0 {
@@ -322,7 +319,7 @@ impl Recorder {
                 let _ = events.try_send(CaptureEvent::Level(id, level));
             }
             if stopping {
-                return Ok(true);
+                return Ok(());
             }
             // Finish and cancel unpark this thread at once, and an unpark that lands before the
             // wait is not lost; the timeout only paces draining of the ring.
@@ -364,13 +361,6 @@ impl LevelMeter {
         *self = Self::new();
         Some(speech_meter_level(rms))
     }
-}
-
-pub(crate) struct InputDevice {
-    /// The stable device identifier saved in settings.
-    pub id: String,
-    /// For display only; device names need not be unique.
-    pub name: String,
 }
 
 fn record(
@@ -419,14 +409,13 @@ fn select_device(
     )
 }
 
-/// Drains the ring, appending samples to `pcm` until it holds `limit` and metering each one kept.
-fn consume_pcm(ring: &mut Consumer<f32>, pcm: &mut Pcm16, meter: &mut LevelMeter, limit: usize) {
+/// Drains the ring, appending samples to `pcm` until it is full and metering each one kept.
+fn consume_pcm(ring: &mut Consumer<f32>, pcm: &mut Pcm16, meter: &mut LevelMeter) {
     let Ok(chunk) = ring.read_chunk(ring.slots()) else {
         return;
     };
     let (first, second) = chunk.as_slices();
-    let room = limit.saturating_sub(pcm.samples());
-    for &sample in first.iter().chain(second).take(room) {
+    for &sample in first.iter().chain(second).take(pcm.room()) {
         let sample = if sample.is_finite() {
             sample.clamp(-1.0, 1.0)
         } else {
@@ -438,7 +427,7 @@ fn consume_pcm(ring: &mut Consumer<f32>, pcm: &mut Pcm16, meter: &mut LevelMeter
             reason = "A finite sample clamped to [-1, 1] intentionally quantizes to signed PCM16 without overflow"
         )]
         let encoded = (sample * 32_767.0) as i16;
-        pcm.push(encoded, limit);
+        pcm.push(encoded);
     }
     chunk.commit_all();
 }
@@ -452,82 +441,15 @@ fn classify(speech: &mut Audibility, audio: &[u8], cues: &Receiver<()>) {
     speech.extend(audio);
 }
 
+/// Whether nobody wants the recording any more: it was cancelled, or its owner has gone.
+fn abandoned(control: &Control, events: &Sender<CaptureEvent>) -> bool {
+    control.mode() == Mode::Cancelled || events.is_closed()
+}
+
 /// Maps RMS onto the meter's dBFS span, whose top is a speech reference rather than clipping.
 fn speech_meter_level(rms: f32) -> f32 {
     let above_floor = 20.0 * rms.max(0.000_001).log10() - METER_FLOOR_DBFS;
     (above_floor / (METER_TOP_DBFS - METER_FLOOR_DBFS)).clamp(0.0, 1.0)
-}
-
-/// A listing of the input devices, made without opening a stream. Drivers may block, and CPAL
-/// leaves its calling thread in a single-threaded COM apartment, so enumeration runs on a thread
-/// the scan owns; dropping the scan joins it.
-pub(crate) struct MicrophoneScan {
-    devices: Receiver<anyhow::Result<Vec<InputDevice>>>,
-    thread: OwnedThread,
-}
-
-impl MicrophoneScan {
-    /// The listing from the scan in `current` while it enumerates, or else from a new scan that
-    /// replaces it, so a driver that blocks holds one thread however often Settings asks. One
-    /// waiter receives each listing.
-    pub(crate) fn listing(
-        current: &mut Option<Self>,
-    ) -> anyhow::Result<impl Future<Output = anyhow::Result<Vec<InputDevice>>> + use<>> {
-        let devices = Self::share(current, enumerate_microphones)?;
-        Ok(async move { devices.recv().await? })
-    }
-
-    fn share(
-        current: &mut Option<Self>,
-        enumerate: impl FnOnce() -> anyhow::Result<Vec<InputDevice>> + Send + 'static,
-    ) -> anyhow::Result<Receiver<anyhow::Result<Vec<InputDevice>>>> {
-        let scan = match current {
-            Some(scan) if !scan.thread.is_finished() => scan,
-            idle => {
-                let finished = idle.take();
-                idle.insert(Self::spawn(finished, enumerate)?)
-            },
-        };
-        Ok(scan.devices.clone())
-    }
-
-    /// Starts a scan that first joins `finished`, the scan it replaces: that thread's enumeration
-    /// has returned, but its COM apartment may still be tearing down, which the caller's thread
-    /// must not wait for.
-    fn spawn(
-        finished: Option<Self>,
-        enumerate: impl FnOnce() -> anyhow::Result<Vec<InputDevice>> + Send + 'static,
-    ) -> anyhow::Result<Self> {
-        let (reply, devices) = async_channel::bounded(1);
-        let thread = OwnedThread::spawn("microphone-scan", move || {
-            drop(finished);
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "Only a dropped scan closes the receiver, and then no Settings view waits for the list"
-            )]
-            let _ = reply.try_send(enumerate());
-        })?;
-        Ok(Self { devices, thread })
-    }
-
-    /// Resolves once enumeration has returned.
-    pub(crate) fn exited(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
-        self.thread.exited()
-    }
-}
-
-fn enumerate_microphones() -> anyhow::Result<Vec<InputDevice>> {
-    // A device that cannot report its id or name cannot be chosen, so it drops out of the list
-    // rather than hiding every other microphone.
-    Ok(cpal::default_host()
-        .input_devices()?
-        .filter_map(|device| {
-            Some(InputDevice {
-                id: device.id().ok()?.to_string(),
-                name: device.description().ok()?.name().to_owned(),
-            })
-        })
-        .collect())
 }
 
 #[cfg(test)]

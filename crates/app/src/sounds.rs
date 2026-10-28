@@ -94,8 +94,9 @@ const _: () = assert!(
 
 /// Whether the samples in `wav` play for no longer than `limit`.
 const fn lasts_at_most(wav: &[u8], limit: Duration) -> bool {
-    // 48 kHz PCM16 holds 96 bytes a millisecond.
-    wav.len().saturating_sub(WAV_HEADER) as u128 <= limit.as_millis().saturating_mul(96)
+    const BYTES_PER_MILLISECOND: u128 = RATE as u128 * 2 / 1000;
+    wav.len().saturating_sub(WAV_HEADER) as u128
+        <= limit.as_millis().saturating_mul(BYTES_PER_MILLISECOND)
 }
 
 /// Whether `wav` holds a 44-byte header for 48 kHz mono PCM16 and then exactly the samples it
@@ -118,15 +119,19 @@ const fn is_canonical(wav: &[u8]) -> bool {
     };
     let data = u32::from_le_bytes([d0, d1, d2, d3]) as u64;
     let riff = u32::from_le_bytes([r0, r1, r2, r3]) as u64;
-    data == samples.len() as u64 && samples.len() % 2 == 0 && riff == data.saturating_add(36)
+    data == samples.len() as u64
+        && samples.len().is_multiple_of(2)
+        && riff == data.saturating_add(36)
 }
 
 /// What the owner asks of the player.
 enum Ask {
     /// Sound the cue, asked for at that instant.
     Play(Cue, Instant),
-    /// Keep the output device open while `true`; once `false`, it closes after [`LINGER`].
-    Hold(bool),
+    /// Open the output device and keep it open until released.
+    Hold,
+    /// Let the device close [`LINGER`] after the last ask.
+    Release,
 }
 
 /// Plays cues on an owned thread, which keeps the output device open only through a hold and for
@@ -157,7 +162,7 @@ impl Sounds {
     /// Opens the output device and keeps it open while `held`, so a cue never waits for one; a
     /// release closes it after [`LINGER`].
     pub(crate) fn hold(&self, held: bool) {
-        self.ask(Ask::Hold(held));
+        self.ask(if held { Ask::Hold } else { Ask::Release });
     }
 
     fn ask(&self, ask: Ask) {
@@ -203,11 +208,11 @@ fn play<S: Sink>(asked: &Receiver<Ask>, linger: Duration, mut open: impl FnMut()
         let now = Instant::now();
         closing = now.checked_add(linger).unwrap_or(now);
         match ask {
-            Ask::Hold(false) => held = false,
-            Ask::Hold(true) => {
+            Ask::Hold => {
                 held = true;
                 sink = usable(sink, &mut open);
             },
+            Ask::Release => held = false,
             Ask::Play(cue, at) => {
                 sink = usable(sink, &mut open);
                 if let Some(sink) = &mut sink {
@@ -220,13 +225,7 @@ fn play<S: Sink>(asked: &Receiver<Ask>, linger: Duration, mut open: impl FnMut()
 
 /// `sink` while it works; otherwise a replacement, opened only after the failed one is released.
 fn usable<S: Sink>(sink: Option<S>, open: impl FnOnce() -> Option<S>) -> Option<S> {
-    match sink {
-        Some(sink) if !sink.is_broken() => Some(sink),
-        failed => {
-            drop(failed);
-            open()
-        },
-    }
+    sink.filter(|sink| !sink.is_broken()).or_else(open)
 }
 
 /// The default output device, open through a hold or after a recent cue. Fields drop in declaration
@@ -249,14 +248,14 @@ impl Output {
         let rate = NonZeroU32::new(format.sample_rate())?;
         let channels = NonZeroUsize::new(usize::from(format.channels()))?;
         let (asks, asked) = RingBuffer::new(VOICES);
-        let mixer = Mixer::new(Bank::render(rate), asked);
+        let mixer = Mixer::new(Bank::render(rate), asked, channels);
         let (failed, failures) = mpsc::sync_channel(1);
         let config = format.config();
         let stream = match format.sample_format() {
-            SampleFormat::F32 => build::<f32>(&device, config, mixer, channels, failed),
-            SampleFormat::I16 => build::<i16>(&device, config, mixer, channels, failed),
-            SampleFormat::U16 => build::<u16>(&device, config, mixer, channels, failed),
-            SampleFormat::I32 => build::<i32>(&device, config, mixer, channels, failed),
+            SampleFormat::F32 => build::<f32>(&device, config, mixer, failed),
+            SampleFormat::I16 => build::<i16>(&device, config, mixer, failed),
+            SampleFormat::U16 => build::<u16>(&device, config, mixer, failed),
+            SampleFormat::I32 => build::<i32>(&device, config, mixer, failed),
             _ => None,
         }?;
         stream.play().ok()?;
@@ -288,14 +287,13 @@ fn build<T: SizedSample + FromSample<f32>>(
     device: &cpal::Device,
     config: cpal::StreamConfig,
     mut mixer: Mixer,
-    channels: NonZeroUsize,
     failed: SyncSender<cpal::Error>,
 ) -> Option<cpal::Stream> {
     device
         .build_output_stream(
             config,
             move |output: &mut [T], info: &cpal::OutputCallbackInfo| {
-                mixer.fill(output, channels, heard(Instant::now(), info.timestamp()));
+                mixer.fill(output, heard(Instant::now(), info.timestamp()));
             },
             move |error: cpal::Error| {
                 if breaks(error.kind()) {
@@ -400,6 +398,7 @@ fn resample(pcm: &[u8], rate: NonZeroU32) -> Box<[f32]> {
 /// blocking.
 struct Mixer {
     bank: Bank,
+    channels: NonZeroUsize,
     /// Cues to start, each with the latest instant it may be heard.
     asked: Consumer<(Cue, Instant)>,
     voices: [Option<Voice>; VOICES],
@@ -413,9 +412,10 @@ struct Voice {
 }
 
 impl Mixer {
-    const fn new(bank: Bank, asked: Consumer<(Cue, Instant)>) -> Self {
+    const fn new(bank: Bank, asked: Consumer<(Cue, Instant)>, channels: NonZeroUsize) -> Self {
         Self {
             bank,
+            channels,
             asked,
             voices: [None; VOICES],
         }
@@ -423,25 +423,25 @@ impl Mixer {
 
     /// Fills `output`, whose first frame is heard at `heard`, skipping cues asked to be heard
     /// sooner.
-    fn fill<T: SizedSample + FromSample<f32>>(
-        &mut self,
-        output: &mut [T],
-        channels: NonZeroUsize,
-        heard: Instant,
-    ) {
+    fn fill<T: SizedSample + FromSample<f32>>(&mut self, output: &mut [T], heard: Instant) {
         while let Ok((cue, deadline)) = self.asked.pop() {
             if heard > deadline {
                 continue;
             }
-            let free = self
+            if let Some(slot) = self
                 .voices
                 .iter_mut()
-                .max_by_key(|voice| voice.map_or(usize::MAX, |voice| voice.at));
-            if let Some(voice) = free {
-                *voice = Some(Voice { cue, at: 0 });
+                .max_by_key(|slot| slot.map_or(usize::MAX, |voice| voice.at))
+            {
+                *slot = Some(Voice { cue, at: 0 });
             }
         }
-        let Self { bank, voices, .. } = self;
+        let Self {
+            bank,
+            channels,
+            voices,
+            ..
+        } = self;
         for frame in output.chunks_mut(channels.get()) {
             let mut mixed = 0.0;
             for slot in voices.iter_mut() {
