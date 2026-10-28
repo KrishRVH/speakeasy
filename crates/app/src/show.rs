@@ -7,6 +7,7 @@ mod recorder;
 mod store;
 
 use std::{
+    ffi::OsString,
     io::{self, Write},
     path::PathBuf,
     time::SystemTime,
@@ -36,17 +37,20 @@ pub(crate) enum Command {
 
 impl Command {
     /// Parses the arguments after `show`.
-    pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> anyhow::Result<Self> {
+    pub(crate) fn parse(mut args: impl Iterator<Item = OsString>) -> anyhow::Result<Self> {
         let subcommand = args.next().context("show needs a subcommand: demo")?;
         anyhow::ensure!(
             subcommand == "demo",
-            "Unknown show subcommand: {subcommand}"
+            "Unknown show subcommand: {}",
+            subcommand.display()
         );
         let mut out = None;
         while let Some(arg) = args.next() {
-            match arg.as_str() {
-                "--out" => out = Some(args.next().context("--out needs a directory")?.into()),
-                _ => anyhow::bail!("Unknown show option: {arg}"),
+            match arg.to_str() {
+                Some("--out") => {
+                    out = Some(args.next().context("--out needs a directory")?.into());
+                },
+                _ => anyhow::bail!("Unknown show option: {}", arg.display()),
             }
         }
         Ok(Self::Demo { out })
@@ -80,7 +84,7 @@ mod tests {
 
     #[test]
     fn show_takes_one_subcommand_and_an_output() -> anyhow::Result<()> {
-        let parse = |args: &[&str]| Command::parse(args.iter().map(|arg| (*arg).to_owned()));
+        let parse = |args: &[&str]| Command::parse(args.iter().map(OsString::from));
         assert_eq!(parse(&["demo"])?, Command::Demo { out: None });
         assert_eq!(
             parse(&["demo", "--out", "here"])?,

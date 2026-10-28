@@ -27,6 +27,7 @@ mod tray;
 
 use std::{
     borrow::Cow,
+    ffi::OsString,
     io::{self, Write},
     path::PathBuf,
     process::ExitCode,
@@ -64,7 +65,7 @@ enum Invocation {
 }
 
 impl Invocation {
-    fn parse(args: impl Iterator<Item = String>) -> anyhow::Result<Self> {
+    fn parse(args: impl Iterator<Item = OsString>) -> anyhow::Result<Self> {
         let mut args = args.peekable();
         if args.next_if(|arg| arg == "show").is_some() {
             return Ok(Self::Show(show::Command::parse(args)));
@@ -75,20 +76,20 @@ impl Invocation {
             path: None,
         };
         while let Some(arg) = args.next() {
-            match arg.as_str() {
-                "--demo" => {
+            match arg.to_str() {
+                Some("--demo") => {
                     if cli.mode == LaunchMode::Live {
                         cli.mode = LaunchMode::Demo;
                     }
                 },
-                "--demo-tray" => cli.mode = LaunchMode::DemoTray,
-                "--config" => {
+                Some("--demo-tray") => cli.mode = LaunchMode::DemoTray,
+                Some("--config") => {
                     cli.path = Some(args.next().context("--config needs a path")?.into());
                 },
-                "--toggle" => cli.command = Some(Request::Toggle),
-                "--cancel" => cli.command = Some(Request::Cancel),
-                "--help" | "-h" => return Ok(Self::Help),
-                _ => bail!("Unknown option: {arg}"),
+                Some("--toggle") => cli.command = Some(Request::Toggle),
+                Some("--cancel") => cli.command = Some(Request::Cancel),
+                Some("--help" | "-h") => return Ok(Self::Help),
+                _ => bail!("Unknown option: {}", arg.display()),
             }
         }
         Ok(Self::App(cli))
@@ -96,7 +97,7 @@ impl Invocation {
 }
 
 fn main() -> ExitCode {
-    match Invocation::parse(std::env::args().skip(1)) {
+    match Invocation::parse(std::env::args_os().skip(1)) {
         Ok(Invocation::Help) => in_terminal(|| Ok(print_help()?)),
         Ok(Invocation::Show(command)) => in_terminal(|| command.and_then(show::Command::run)),
         Ok(Invocation::App(cli)) => in_dialog(run(cli)),
@@ -320,7 +321,7 @@ mod tests {
     use super::*;
 
     fn parse(args: &[&str]) -> anyhow::Result<Invocation> {
-        Invocation::parse(args.iter().map(|arg| (*arg).to_owned()))
+        Invocation::parse(args.iter().map(OsString::from))
     }
 
     fn launch_mode(args: &[&str]) -> anyhow::Result<LaunchMode> {
@@ -356,6 +357,20 @@ mod tests {
             Invocation::Show(Err(_))
         ));
         assert!(parse(&["--demo", "show"]).is_err());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn arguments_need_not_be_unicode() -> anyhow::Result<()> {
+        use std::os::unix::ffi::OsStringExt as _;
+        let path = OsString::from_vec(b"settings-\xff.json".to_vec());
+        let config = [OsString::from("--config"), path.clone()];
+        let Invocation::App(cli) = Invocation::parse(config.into_iter())? else {
+            bail!("--config did not launch the app");
+        };
+        assert_eq!(cli.path, Some(path.into()));
+        assert!(Invocation::parse([OsString::from_vec(vec![0xFF])].into_iter()).is_err());
         Ok(())
     }
 }
