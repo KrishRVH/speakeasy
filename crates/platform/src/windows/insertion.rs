@@ -200,7 +200,7 @@ mod tests {
         );
         let _clipboard = open_clipboard()?;
         ensure!(
-            !clipboard_win::raw::is_format_avail(private_format()?.get()),
+            !clipboard_win::raw::is_format_avail(image_format()?.get()),
             "The helper copied to the desktop's clipboard"
         );
         Ok(())
@@ -249,7 +249,6 @@ mod tests {
     /// clipboard belongs to that station, which interactive apps never use; the process keeps both
     /// until it exits.
     fn enter_private_station() -> anyhow::Result<()> {
-        let desktop = to_wide("speakeasy-test");
         // SAFETY: a null name, which only administrators may replace, asks for the station named
         // after this logon session; null attributes take the default security.
         let station = unsafe { CreateWindowStationW(null(), 0, GENERIC_ALL, null()) };
@@ -260,10 +259,11 @@ mod tests {
         );
         // SAFETY: the station handle is live; only this helper process changes stations.
         ok_or_last_error(unsafe { SetProcessWindowStation(station) })?;
+        let name = to_wide("speakeasy-test");
         // SAFETY: the NUL-terminated name outlives the call; null device, mode, and attributes take
         // the defaults. The desktop opens in the station just entered.
         let desktop =
-            unsafe { CreateDesktopW(desktop.as_ptr(), null(), null(), 0, GENERIC_ALL, null()) };
+            unsafe { CreateDesktopW(name.as_ptr(), null(), null(), 0, GENERIC_ALL, null()) };
         ensure!(
             !desktop.is_null(),
             "Cannot create a desktop: {}",
@@ -277,13 +277,13 @@ mod tests {
 
     /// Copies data in a format of its own, as an app copying an image or files would.
     fn copy_without_text() -> anyhow::Result<()> {
-        let format = private_format()?;
+        let format = image_format()?;
         let _clipboard = open_clipboard()?;
         clipboard_win::raw::set(format.get(), &[1, 2, 3])?;
         Ok(())
     }
 
-    fn private_format() -> anyhow::Result<NonZeroU32> {
+    fn image_format() -> anyhow::Result<NonZeroU32> {
         clipboard_win::raw::register_format("Speakeasy test image")
             .context("Cannot register a clipboard format")
     }

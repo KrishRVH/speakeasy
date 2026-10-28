@@ -48,7 +48,7 @@ use windows_sys::{
     w,
 };
 
-use super::{OWN_INPUT, is_key_down, ok_or_last_error, press, release, send_input, take_handle};
+use super::{OWN_INPUT, is_key_down, press, release, send_input, take_handle};
 use crate::{
     CANCEL_SHORTCUT, DesktopOptions, Input, InputSender, Inserter, OwnedThread, SHORTCUT,
     insertion, keyboard,
@@ -254,10 +254,7 @@ impl<'window> SessionNotifications<'window> {
         let window = self.window.0;
         self.registration.attempt_when_due(now, || {
             // SAFETY: the borrowed window stays live until this registration is dropped.
-            ok_or_last_error(unsafe {
-                WTSRegisterSessionNotification(window, NOTIFY_FOR_THIS_SESSION)
-            })
-            .is_ok()
+            unsafe { WTSRegisterSessionNotification(window, NOTIFY_FOR_THIS_SESSION) != FALSE }
         });
     }
 }
@@ -448,7 +445,7 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
     if swallow {
         return 1;
     }
-    // SAFETY: forward the original callback arguments, including Escape.
+    // SAFETY: forwards this callback's own arguments unchanged.
     unsafe { CallNextHookEx(null_mut(), code, wparam, lparam) }
 }
 
@@ -460,8 +457,8 @@ unsafe extern "system" fn lifecycle_window(
 ) -> LRESULT {
     if interrupts_dictation(message, wparam)
         && panic::catch_unwind(|| {
-            HOOK.with(|slot| {
-                if let Ok(Some(state)) = slot.try_borrow_mut().as_deref_mut() {
+            HOOK.with_borrow_mut(|slot| {
+                if let Some(state) = slot {
                     state.policy.interrupt(&state.input);
                 }
             });
@@ -520,6 +517,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::windows::ok_or_last_error;
 
     #[test]
     fn session_registration_retries_for_a_while_without_spinning() {

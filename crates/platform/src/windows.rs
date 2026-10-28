@@ -62,7 +62,7 @@ fn is_key_down(key: VIRTUAL_KEY) -> bool {
 }
 
 /// The modifier keys physically held now.
-pub(super) fn modifiers() -> Modifiers {
+pub(crate) fn modifiers() -> Modifiers {
     keyboard::Windows::modifiers(is_key_down)
 }
 
