@@ -1,5 +1,6 @@
 //! Drives the save queue through writes to temporary settings files: the latest queued draft lands,
-//! a failure keeps the last durable save, and dropping or flushing waits for the running write.
+//! a failure keeps the last durable save, dropping or flushing waits for the running write, and a
+//! draft has nothing to save only while the file holds it.
 
 use std::{sync::mpsc, time::Duration};
 
@@ -38,7 +39,7 @@ async fn queued_save_applies_only_latest_successful_draft() -> anyhow::Result<()
         epoch,
         path: path.clone(),
     };
-    let mut queue = SaveQueue::new(config.clone());
+    let mut queue = SaveQueue::new(&path, config.clone());
     let first = queue
         .submit(request(4))
         .context("The first save was queued")?;
@@ -76,7 +77,7 @@ async fn queued_failure_retains_previous_durable_save_and_reports_latest_error()
     let path = directory.path().join("settings.json");
     let first_epoch = ConfigEpoch::default();
     let queued_epoch = first_epoch.next();
-    let mut queue = SaveQueue::new(Config::default());
+    let mut queue = SaveQueue::new(&path, Config::default());
     let first = queue
         .submit(SaveRequest {
             draft: Config {
@@ -133,7 +134,7 @@ async fn a_revert_queued_behind_a_write_reaches_the_file() -> anyhow::Result<()>
         epoch: ConfigEpoch::default(),
         path: path.clone(),
     };
-    let mut queue = SaveQueue::new(original.clone());
+    let mut queue = SaveQueue::new(&path, original.clone());
     let first = queue
         .submit(request(Theme::Iris))
         .context("The first save was queued")?;
@@ -167,7 +168,7 @@ async fn a_save_queued_behind_a_write_keeps_the_path_spellings_it_did_not_change
         epoch: ConfigEpoch::default(),
         path: path.clone(),
     };
-    let mut queue = SaveQueue::new(draft.clone());
+    let mut queue = SaveQueue::new(&path, draft.clone());
     let first = queue
         .submit(request(Theme::Iris))
         .context("The first save was queued")?;
@@ -203,12 +204,86 @@ fn save_completion_preserves_new_edits() {
         validated: ValidConfig::assume(validated),
     };
     draft.threads = 8;
-    assert!(!saved.update_draft(&mut draft));
+    saved.update_draft(&mut draft);
     assert_eq!(draft.threads, 8);
     assert!(draft.model.as_os_str().is_empty());
     draft = saved.submitted.clone();
-    assert!(saved.update_draft(&mut draft));
+    saved.update_draft(&mut draft);
     assert!(draft == *saved.validated);
+}
+
+#[tokio::test]
+async fn a_draft_needs_saving_until_the_file_holds_it_or_a_write_is_making_it() -> anyhow::Result<()>
+{
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    valid_config(directory.path())?;
+    // A first launch opens on Parakeet before the file exists, and validation resolves the paths.
+    let opened = Config {
+        engine_executable: "engine".into(),
+        model: "model.gguf".into(),
+        ..Config::first_launch()
+    };
+    let mut queue = SaveQueue::new(&path, opened.clone());
+    assert!(
+        !queue.needs_save(&opened),
+        "An untouched first launch had edits"
+    );
+    assert!(
+        queue.needs_save(&Config::default()),
+        "Edits back to the defaults the missing file reads as had nothing to save"
+    );
+    let edited = Config {
+        theme: Theme::Iris,
+        ..opened.clone()
+    };
+    assert!(queue.needs_save(&edited));
+    let request = |draft: &Config| SaveRequest {
+        draft: draft.clone(),
+        epoch: ConfigEpoch::default(),
+        path: path.clone(),
+    };
+    let write = queue
+        .submit(request(&edited))
+        .context("The save was queued")?;
+    assert!(
+        !queue.needs_save(&edited),
+        "A draft being written had edits"
+    );
+    let SaveProgress::Finished { saved, error, .. } = queue.finish(write_result(write).await?)
+    else {
+        bail!("The save did not finish");
+    };
+    assert!(error.is_none());
+    let saved = saved.context("The save was lost")?;
+    assert!(
+        !queue.needs_save(&edited),
+        "The draft as submitted had edits"
+    );
+    assert!(
+        !queue.needs_save(&saved.validated),
+        "The draft with resolved paths had edits"
+    );
+    assert!(
+        queue.needs_save(&opened),
+        "A revert the file no longer holds had nothing to save"
+    );
+    let unwritable = Config {
+        model: "missing.gguf".into(),
+        ..edited
+    };
+    let write = queue
+        .submit(request(&unwritable))
+        .context("The failing save was queued")?;
+    let SaveProgress::Finished { error, .. } = queue.finish(write_result(write).await?) else {
+        bail!("The failing save did not finish");
+    };
+    assert!(error.is_some());
+    assert!(
+        queue.needs_save(&unwritable),
+        "A draft whose write failed had nothing to save"
+    );
+    Ok(())
 }
 
 #[test]
@@ -268,7 +343,7 @@ fn flush_finishes_the_running_write_before_a_revert_queued_behind_it() -> anyhow
             epoch: ConfigEpoch::default(),
             path: path.clone(),
         }),
-        ..SaveQueue::new(original.clone())
+        ..SaveQueue::new(&path, original.clone())
     };
     let cleanup = std::thread::spawn(move || queue.flush());
     std::thread::sleep(Duration::from_millis(50));

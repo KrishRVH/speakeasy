@@ -58,7 +58,7 @@ impl Settings {
     ) -> Self {
         let services = cx.global::<Services>();
         let presentation = Presentation::new(&updates.borrow_and_update(), services);
-        let saves = SaveQueue::new(Config::held_by(&services.path, &config));
+        let saves = SaveQueue::new(&services.path, config.clone());
         #[cfg(target_os = "linux")]
         let desktop_command = {
             let default = crate::paths::settings_file()
@@ -133,14 +133,20 @@ impl Settings {
         ));
     }
 
-    fn mark_unsaved(&mut self) {
-        self.notice = Some(Notice::Note("Unsaved changes".into()));
+    /// An edit supersedes the last notice; whether edits remain to save shows from the draft.
+    fn edited(&mut self) {
+        self.notice = None;
+    }
+
+    /// Whether the draft has edits the file does not hold. A demo never saves, so it has none.
+    fn unsaved(&self, cx: &App) -> bool {
+        !is_demo(cx) && self.saves.needs_save(&self.config)
     }
 
     fn cycle_microphone(&mut self) {
         self.config.microphone =
             next_microphone(&self.microphones, self.config.microphone.as_deref());
-        self.mark_unsaved();
+        self.edited();
     }
 
     /// Parakeet detects the language itself, so only Whisper offers a choice.
@@ -154,33 +160,31 @@ impl Settings {
             "en"
         }
         .into();
-        self.mark_unsaved();
+        self.edited();
     }
 
     fn cycle_delivery(&mut self) {
         let next = self.config.text_delivery().next();
         self.config.set_text_delivery(next);
-        self.mark_unsaved();
+        self.edited();
     }
 
     fn toggle(&mut self, setting: Setting, cx: &mut App) {
         let flag = setting.flag(&mut self.config);
         *flag = !*flag;
-        self.mark_unsaved();
+        self.edited();
         if is_demo(cx) && setting == Setting::ReduceMotion {
             show_motion(self.config.prefers_reduced_motion(), cx);
-            self.notice = None;
         }
     }
 
     fn cycle_theme(&mut self, cx: &mut App) {
         self.config.theme = self.config.theme.next();
-        self.mark_unsaved();
+        self.edited();
         if is_demo(cx) {
             let theme = self.config.theme;
             cx.global_mut::<Services>().config.theme = theme;
             show_theme(theme, cx);
-            self.notice = None;
         }
     }
 
@@ -242,7 +246,7 @@ impl Settings {
                     EngineFile::Executable => self.config.engine_executable = path,
                     EngineFile::Model => self.config.model = path,
                 }
-                self.mark_unsaved();
+                self.edited();
             },
             Ok(None) => {},
             Err(_) => {
@@ -405,16 +409,13 @@ impl Settings {
             self.notice = error.map(|error| Notice::Problem(error.into()));
             return;
         };
-        let unchanged = saved.update_draft(&mut self.config);
+        saved.update_draft(&mut self.config);
         let applied = cx.update_global::<Services, _>(|services, cx| {
             services.adopt_saved(saved.validated, epoch, cx)
         });
         self.notice = error
             .or_else(|| applied.err().map(|error| error.to_string()))
             .map(|error| Notice::Problem(error.into()));
-        if self.notice.is_none() && !unchanged {
-            self.mark_unsaved();
-        }
         show_motion(cx.global::<Services>().config.prefers_reduced_motion(), cx);
         show_theme(cx.global::<Services>().config.theme, cx);
     }
@@ -666,7 +667,7 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("settings.json");
         let config = valid_config(directory.path())?;
-        let mut saves = SaveQueue::new(config.clone());
+        let mut saves = SaveQueue::new(&path, config.clone());
         let mut submit = |threads| {
             saves.submit(SaveRequest {
                 draft: Config {

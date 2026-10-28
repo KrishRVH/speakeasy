@@ -33,6 +33,7 @@ impl Render for Settings {
         let palette = self.config.theme.palette();
         let ui = Ui { palette, cx };
         let unconfigured = !is_demo(cx) && self.config.needs_engine();
+        let unsaved = self.unsaved(cx);
         let body = div()
             .id("settings")
             .flex_1()
@@ -71,7 +72,7 @@ impl Render for Settings {
             .border_t_1()
             .border_color(alpha(palette.lamp, 0.14))
             .child(self.commands(&ui))
-            .child(self.status_line(palette));
+            .child(self.status_line(palette, unsaved));
         div()
             .on_key_down(cycle_focus)
             .size_full()
@@ -322,8 +323,8 @@ impl Settings {
     }
 
     /// The session's status, then any local notice, each in the attention color only when it is a
-    /// problem to act on.
-    fn status_line(&self, palette: &'static Palette) -> impl IntoElement {
+    /// problem to act on, then whether the draft has edits to save.
+    fn status_line(&self, palette: &'static Palette, unsaved: bool) -> impl IntoElement {
         let tone = |problem| rgb(if problem { palette.warn } else { palette.muted });
         div()
             .text_size(TEXT)
@@ -338,6 +339,9 @@ impl Settings {
                         .text_color(tone(notice.is_problem()))
                         .child(notice.text()),
                 )
+            })
+            .when(unsaved, |status| {
+                status.child(div().text_color(tone(false)).child("Unsaved changes"))
             })
     }
 }

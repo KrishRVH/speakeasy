@@ -2,7 +2,7 @@
 //! latest request behind it and the last durable result until it drains. Writes run one at a time,
 //! so each patches exactly the keys its draft changed since the last write that succeeded.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use async_channel::Receiver;
 use speakeasy_platform::OwnedThread;
@@ -23,14 +23,10 @@ pub(super) struct SavedConfig {
 }
 
 impl SavedConfig {
-    /// Adopts the validated settings if the draft is unchanged since submission, returning whether
-    /// it was.
-    pub(super) fn update_draft(&self, draft: &mut Config) -> bool {
+    /// Adopts the validated settings if the draft is unchanged since submission.
+    pub(super) fn update_draft(&self, draft: &mut Config) {
         if *draft == self.submitted {
             *draft = Config::clone(&self.validated);
-            true
-        } else {
-            false
         }
     }
 
@@ -60,26 +56,45 @@ pub(super) struct SaveQueue {
     /// The settings the file holds as of the last write that succeeded, in each spelling a draft
     /// may have of them, which the next write compares its draft against.
     durable: [Config; 2],
+    /// The draft Settings opened on, which alone has nothing to save until a write succeeds: a
+    /// missing file holds only the defaults its keys read as, which a first launch's draft is not.
+    opened: Option<Config>,
+    /// The newest request's draft until the queue drains.
+    requested: Option<Config>,
     /// The newest request's epoch, which the drained queue reports.
     epoch: ConfigEpoch,
 }
 
 impl SaveQueue {
-    /// A queue for settings that the file holds as `durable`.
-    pub(super) fn new(durable: Config) -> Self {
+    /// A queue for Settings opened on `draft` from the file at `path`.
+    pub(super) fn new(path: &Path, draft: Config) -> Self {
+        let held = Config::held_by(path, &draft);
         Self {
             writing: None,
             pending: None,
             saved: None,
-            durable: [durable.clone(), durable],
+            durable: [held.clone(), held],
+            opened: Some(draft),
+            requested: None,
             epoch: ConfigEpoch::default(),
         }
+    }
+
+    /// Whether `draft` has edits to save: it is not the draft Settings opened on or, once a write
+    /// succeeds, what the file holds in either spelling, and no request in the queue is saving it.
+    pub(super) fn needs_save(&self, draft: &Config) -> bool {
+        let saved = match &self.opened {
+            Some(opened) => opened == draft,
+            None => self.durable.contains(draft),
+        };
+        !saved && self.requested.as_ref() != Some(draft)
     }
 
     /// Starts writing `request`, or returns `None` after queuing it behind the running write in
     /// place of any request queued before.
     pub(super) fn submit(&mut self, request: SaveRequest) -> Option<SaveProgress> {
         self.epoch = request.epoch;
+        self.requested = Some(request.draft.clone());
         if self.writing.is_some() {
             self.pending = Some(request);
             None
@@ -96,18 +111,20 @@ impl SaveQueue {
         let error = match result {
             Ok(saved) => {
                 self.durable = saved.held();
+                self.opened = None;
                 self.saved = Some(saved);
                 None
             },
             Err(error) => Some(format!("{error:#}")),
         };
-        match self.pending.take() {
-            Some(next) => self.start(next),
-            None => SaveProgress::Finished {
-                saved: self.saved.take().map(Box::new),
-                error,
-                epoch: self.epoch,
-            },
+        if let Some(next) = self.pending.take() {
+            return self.start(next);
+        }
+        self.requested = None;
+        SaveProgress::Finished {
+            saved: self.saved.take().map(Box::new),
+            error,
+            epoch: self.epoch,
         }
     }
 
