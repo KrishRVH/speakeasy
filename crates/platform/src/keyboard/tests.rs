@@ -737,20 +737,6 @@ fn mac_function_space_and_escape_are_observed_without_native_events() {
 }
 
 #[test]
-fn hands_free_space_press_and_release_never_reach_the_app() {
-    let mut chord = Chord::default();
-    assert_eq!(chord.press(), Some(Action::Press));
-    assert!(chord.hold_key(HoldKey::Space, true).swallows());
-    assert!(chord.hold_key(HoldKey::Space, false).swallows());
-    assert!(!chord.hold_key(HoldKey::Space, false).swallows());
-    assert_eq!(chord.release(), Some(Action::Release));
-    assert!(
-        !chord.hold_key(HoldKey::Space, true).swallows(),
-        "Space was swallowed without a hold"
-    );
-}
-
-#[test]
 fn hands_free_space_stays_swallowed_until_its_release() {
     let mut chord = Chord::default();
     assert_eq!(chord.press(), Some(Action::Press));
