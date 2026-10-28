@@ -118,8 +118,8 @@ impl Readback {
         })
     }
 
-    /// Copies the box of the source size at `origin` in `frame`, which must lie within it, to
-    /// memory as tightly packed BGRA rows of the delivered size.
+    /// Copies the box of the source size at `[left, top]` in `frame`, which must hold the whole
+    /// box, to memory as tightly packed BGRA rows of the delivered size.
     pub(super) fn read(
         &self,
         context: &ID3D11DeviceContext,
@@ -162,11 +162,10 @@ impl Readback {
         let [width, height] = self.size.map(|edge| edge as usize);
         let row = width.saturating_mul(BYTES_PER_PIXEL);
         let pitch = mapped.RowPitch as usize;
-        let Some(length) =
-            mapped_len(pitch, row, height).filter(|_| pitch >= row && !mapped.pData.is_null())
-        else {
+        if pitch < row || mapped.pData.is_null() {
             return Err(E_UNEXPECTED.into());
-        };
+        }
+        let length = mapped_len(pitch, row, height).ok_or(E_UNEXPECTED)?;
         // SAFETY: Direct3D maps `height` rows starting `pitch` bytes apart, valid until the caller
         // unmaps them, and `length` ends with the last row's pixels.
         let bytes = unsafe { slice::from_raw_parts(mapped.pData.cast::<u8>(), length) };
@@ -196,7 +195,7 @@ impl Mips {
     }
 }
 
-/// A single-sampled BGRA texture of `size` with `levels` mip levels.
+/// A single-sampled BGRA texture `[width, height]` in size, with `levels` mip levels.
 pub(super) fn texture_description([width, height]: [u32; 2], levels: u32) -> D3D11_TEXTURE2D_DESC {
     D3D11_TEXTURE2D_DESC {
         Width: width,

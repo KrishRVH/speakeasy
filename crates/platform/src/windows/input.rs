@@ -32,7 +32,7 @@ use windows_sys::{
             },
         },
         UI::{
-            Input::KeyboardAndMouse::{KEYEVENTF_KEYUP, VIRTUAL_KEY},
+            Input::KeyboardAndMouse::VIRTUAL_KEY,
             WindowsAndMessaging::{
                 CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
                 HHOOK, KBDLLHOOKSTRUCT, MSG, MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx,
@@ -49,7 +49,7 @@ use windows_sys::{
 };
 
 use super::{
-    OWN_INPUT, is_key_down, modifiers, ok_or_last_error, send_input, synthetic_key, take_handle,
+    OWN_INPUT, is_key_down, modifiers, ok_or_last_error, press, release, send_input, take_handle,
 };
 use crate::{
     CANCEL_SHORTCUT, DesktopOptions, Input, InputSender, Inserter, OwnedThread, SHORTCUT,
@@ -72,18 +72,14 @@ thread_local! {
 /// What `InputMonitor` holds beside the hook thread: the event that stops it, and the insertion
 /// thread.
 pub(crate) struct Monitor {
-    // Shared so a stop can end the hook thread's wait, which cannot receive owner messages; the
-    // manual-reset event records a stop however early it comes, and closes once both release it.
-    wake: Arc<OwnedHandle>,
+    // Shared with the hook thread, which waits on it, so the event closes once both release it.
+    stop: Arc<StopEvent>,
     insertion: insertion::Worker,
 }
 
 impl Monitor {
     pub(crate) fn request_stop(&self) {
-        // SAFETY: `wake` keeps the event open for this call, which takes the handle by value.
-        unsafe {
-            SetEvent(self.wake.as_raw_handle());
-        }
+        self.stop.set();
         self.insertion.request_stop();
     }
 
@@ -97,12 +93,34 @@ pub(crate) fn start(
     _: DesktopOptions,
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
     let (insertion, inserter) = insertion::Worker::start(input.clone())?;
-    let wake = Arc::new(manual_reset_event()?);
+    let stop = Arc::new(StopEvent::new()?);
     let thread = OwnedThread::spawn("input-monitor", {
-        let wake = Arc::clone(&wake);
-        move || monitor(&input, &wake)
+        let stop = Arc::clone(&stop);
+        move || monitor(&input, &stop)
     })?;
-    Ok((thread, Monitor { wake, insertion }, inserter))
+    Ok((thread, Monitor { stop, insertion }, inserter))
+}
+
+/// The monitor's stop, set once and for good. A manual-reset event records a stop that comes
+/// before the hook thread first waits, and it ends that wait, which owner messages cannot reach.
+struct StopEvent(OwnedHandle);
+
+impl StopEvent {
+    fn new() -> io::Result<Self> {
+        // SAFETY: null attributes and name create an unnamed manual-reset event whose handle
+        // nothing else owns.
+        unsafe { take_handle(CreateEventW(null(), TRUE, FALSE, null())) }.map(Self)
+    }
+
+    fn set(&self) {
+        // SAFETY: the owned event stays open for this call, which takes the handle by value.
+        unsafe { SetEvent(self.0.as_raw_handle()) };
+    }
+
+    fn is_set(&self) -> bool {
+        // SAFETY: the owned event stays open for this zero-timeout wait.
+        unsafe { WaitForSingleObject(self.0.as_raw_handle(), 0) == WAIT_OBJECT_0 }
+    }
 }
 
 struct HookState {
@@ -302,9 +320,10 @@ impl Registration {
         };
     }
 
-    /// How long, in milliseconds, the message loop waits for the next attempt to fall due. Rounding
-    /// up keeps a fraction of a millisecond from becoming a zero timeout that spins until then.
-    fn wait(self, now: Instant) -> u32 {
+    /// How long, in milliseconds, the message loop may wait before the next attempt falls due.
+    /// Rounding up keeps a fraction of a millisecond from becoming a zero timeout that spins until
+    /// then.
+    fn timeout(self, now: Instant) -> u32 {
         match self {
             Self::Pending { at, .. } => {
                 let remaining = at.saturating_duration_since(now);
@@ -315,19 +334,13 @@ impl Registration {
     }
 }
 
-/// An unsignaled manual-reset event: once set, it releases the current wait and every later one.
-fn manual_reset_event() -> io::Result<OwnedHandle> {
-    // SAFETY: null attributes and name create an unnamed event whose handle nothing else owns.
-    unsafe { take_handle(CreateEventW(null(), TRUE, FALSE, null())) }
-}
-
-fn monitor(input: &InputSender, wake: &OwnedHandle) {
+fn monitor(input: &InputSender, stop: &StopEvent) {
     HOOK.set(Some(HookState {
         input: input.clone(),
         policy: keyboard::Windows::default(),
     }));
-    if let Err(error) = run_event_loop(input, wake)
-        && !stop_requested(wake)
+    if let Err(error) = run_event_loop(input, stop)
+        && !stop.is_set()
         && !input.is_closed()
     {
         input.deliver(Input::Unavailable(format!(
@@ -338,9 +351,8 @@ fn monitor(input: &InputSender, wake: &OwnedHandle) {
     input.close();
 }
 
-fn run_event_loop(input: &InputSender, wake: &OwnedHandle) -> io::Result<()> {
-    // A stop that came first never installs the hook.
-    if stop_requested(wake) {
+fn run_event_loop(input: &InputSender, stop: &StopEvent) -> io::Result<()> {
+    if stop.is_set() {
         return Ok(());
     }
     // Windows silently removes a low-level hook whose callback misses LowLevelHooksTimeout, as a
@@ -356,20 +368,14 @@ fn run_event_loop(input: &InputSender, wake: &OwnedHandle) -> io::Result<()> {
     let mut notifications = SessionNotifications::register(&window, Instant::now());
     // A stop landing after this check may still see readiness, which is harmless: each runtime has
     // its own input lane, and the runtime is stopped together with its monitor.
-    if stop_requested(wake) {
+    if stop.is_set() {
         return Ok(());
     }
     input.deliver(Input::DesktopReady {
         shortcut: SHORTCUT.into(),
         cancel: CANCEL_SHORTCUT.into(),
     });
-    pump_messages(wake, &mut notifications)
-}
-
-/// Whether a stop has set the monitor's manual-reset event; once set, it stays set.
-fn stop_requested(wake: &OwnedHandle) -> bool {
-    // SAFETY: the owning handle stays open for this zero-timeout wait.
-    unsafe { WaitForSingleObject(wake.as_raw_handle(), 0) == WAIT_OBJECT_0 }
+    pump_messages(stop, &mut notifications)
 }
 
 /// Peeking makes Windows create this thread's queue before the hook posts to it.
@@ -383,14 +389,11 @@ fn create_message_queue() {
 
 /// Runs the message loop until a stop or `WM_QUIT`; a stop wins even under continuous input.
 /// Between messages, it retries a session registration that failed.
-fn pump_messages(
-    wake: &OwnedHandle,
-    notifications: &mut SessionNotifications<'_>,
-) -> io::Result<()> {
-    let handles = [wake.as_raw_handle()];
-    while dispatch_queued_messages(wake).is_continue() && !stop_requested(wake) {
+fn pump_messages(stop: &StopEvent, notifications: &mut SessionNotifications<'_>) -> io::Result<()> {
+    let handles = [stop.0.as_raw_handle()];
+    while dispatch_queued_messages(stop).is_continue() && !stop.is_set() {
         notifications.attempt_when_due(Instant::now());
-        let timeout = notifications.registration.wait(Instant::now());
+        let timeout = notifications.registration.timeout(Instant::now());
         // SAFETY: the one-handle array outlives this synchronous wait.
         let woken = unsafe {
             MsgWaitForMultipleObjectsEx(
@@ -410,11 +413,11 @@ fn pump_messages(
     Ok(())
 }
 
-fn dispatch_queued_messages(wake: &OwnedHandle) -> ControlFlow<()> {
+fn dispatch_queued_messages(stop: &StopEvent) -> ControlFlow<()> {
     let mut message = MSG::default();
     // SAFETY: PeekMessageW writes only this live local.
-    while unsafe { PeekMessageW(&raw mut message, null_mut(), 0, 0, PM_REMOVE) } != 0 {
-        if stop_requested(wake) || message.message == WM_QUIT {
+    while unsafe { PeekMessageW(&raw mut message, null_mut(), 0, 0, PM_REMOVE) } != FALSE {
+        if stop.is_set() || message.message == WM_QUIT {
             return ControlFlow::Break(());
         }
         if message.message == MASK_START {
@@ -463,9 +466,7 @@ unsafe extern "system" fn lifecycle_window(
     if interrupts_dictation(message, wparam)
         && panic::catch_unwind(|| {
             HOOK.with(|slot| {
-                if let Ok(mut state) = slot.try_borrow_mut()
-                    && let Some(state) = state.as_mut()
-                {
+                if let Ok(Some(state)) = slot.try_borrow_mut().as_deref_mut() {
                     state.policy.interrupt(&state.input);
                 }
             });
@@ -482,9 +483,7 @@ unsafe extern "system" fn lifecycle_window(
 /// input makes the owner cancel rather than continue with lost key edges.
 fn close_input() {
     HOOK.with(|slot| {
-        if let Ok(state) = slot.try_borrow()
-            && let Some(state) = state.as_ref()
-        {
+        if let Ok(Some(state)) = slot.try_borrow().as_deref() {
             state.input.close();
         }
     });
@@ -492,15 +491,13 @@ fn close_input() {
 
 fn interrupts_dictation(message: u32, wparam: WPARAM) -> bool {
     match message {
-        WM_WTSSESSION_CHANGE => u32::try_from(wparam).is_ok_and(|change| {
-            matches!(
-                change,
-                WTS_CONSOLE_DISCONNECT
-                    | WTS_REMOTE_DISCONNECT
-                    | WTS_SESSION_LOGOFF
-                    | WTS_SESSION_LOCK
-            )
-        }),
+        WM_WTSSESSION_CHANGE => matches!(
+            u32::try_from(wparam),
+            Ok(WTS_CONSOLE_DISCONNECT
+                | WTS_REMOTE_DISCONNECT
+                | WTS_SESSION_LOGOFF
+                | WTS_SESSION_LOCK)
+        ),
         WM_QUERYENDSESSION => true,
         WM_POWERBROADCAST => wparam == PBT_APMSUSPEND as usize,
         _ => false,
@@ -510,15 +507,11 @@ fn interrupts_dictation(message: u32, wparam: WPARAM) -> bool {
 /// Releasing Win without another key opens Start. An unassigned key while the chord is held marks
 /// Win as used, as other shortcut tools do.
 fn mask_start_menu() {
-    let input = [
-        synthetic_key(UNASSIGNED_KEY, 0, 0),
-        synthetic_key(UNASSIGNED_KEY, 0, KEYEVENTF_KEYUP),
-    ];
     #[expect(
         clippy::let_underscore_must_use,
         reason = "Marking Win as used is a best-effort shell hint; blocked synthetic input must not stop dictation"
     )]
-    let _ = send_input(&input);
+    let _ = send_input(&[press(UNASSIGNED_KEY), release(UNASSIGNED_KEY)]);
 }
 
 #[cfg(test)]
@@ -538,7 +531,7 @@ mod tests {
         let start = Instant::now();
         let mut registration = Registration::due(start);
         registration.attempt_when_due(start, || false);
-        assert_eq!(registration.wait(start), 5_000, "A failed attempt spins");
+        assert_eq!(registration.timeout(start), 5_000, "A failed attempt spins");
         registration.attempt_when_due(start, || panic!("Retried before it was due"));
         let mut now = start;
         for _ in 0..Registration::RETRIES {
@@ -546,20 +539,24 @@ mod tests {
             registration.attempt_when_due(now, || false);
         }
         assert_eq!(registration, Registration::Abandoned);
-        assert_eq!(registration.wait(now), INFINITE, "Abandoned retries wake");
+        assert_eq!(
+            registration.timeout(now),
+            INFINITE,
+            "Abandoned retries wake"
+        );
 
         let mut registration = Registration::due(start);
         registration.attempt_when_due(start, || false);
         registration.attempt_when_due(start + Registration::RETRY_AFTER, || true);
         assert_eq!(registration, Registration::Registered);
-        assert_eq!(registration.wait(start), INFINITE);
+        assert_eq!(registration.timeout(start), INFINITE);
 
         let almost_due = Registration::Pending {
             at: start + Duration::from_micros(1),
             retries: 0,
         };
         assert_eq!(
-            almost_due.wait(start),
+            almost_due.timeout(start),
             1,
             "The last fraction of a millisecond spins"
         );

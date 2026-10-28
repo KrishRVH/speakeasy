@@ -10,12 +10,12 @@ use anyhow::Context as _;
 use windows_sys::Win32::{
     System::Threading::GetCurrentProcessId,
     UI::{
-        Input::KeyboardAndMouse::{INPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VK_CONTROL, VK_V},
+        Input::KeyboardAndMouse::{INPUT, VK_CONTROL, VK_V},
         WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
     },
 };
 
-use super::{modifiers, send_input, synthetic_key};
+use super::{modifiers, press, release, send_input, type_unit};
 use crate::{Inserted, insertion::NativeInsert};
 
 /// Registered clipboard formats whose zero `DWORD` keeps a paste's text out of Windows clipboard
@@ -85,8 +85,6 @@ impl NativeInsert for Insert {
     }
 
     fn paste_keys(&mut self) -> anyhow::Result<Keys> {
-        let press = |key| synthetic_key(key, 0, 0);
-        let release = |key| synthetic_key(key, 0, KEYEVENTF_KEYUP);
         Ok(Keys::Paste([
             press(VK_CONTROL),
             press(VK_V),
@@ -99,12 +97,7 @@ impl NativeInsert for Insert {
         Ok(Keys::Text(
             text.replace("\r\n", "\n")
                 .encode_utf16()
-                .flat_map(|unit| {
-                    [
-                        synthetic_key(0, unit, KEYEVENTF_UNICODE),
-                        synthetic_key(0, unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP),
-                    ]
-                })
+                .flat_map(type_unit)
                 .collect(),
         ))
     }
@@ -133,7 +126,6 @@ impl NativeInsert for Insert {
                     return Ok(Inserted::Sent);
                 }
                 if sent > 0 {
-                    let release = |key| synthetic_key(key, 0, KEYEVENTF_KEYUP);
                     #[expect(
                         clippy::let_underscore_must_use,
                         reason = "Release stuck synthetic modifiers after partial input even if the target also blocks cleanup"

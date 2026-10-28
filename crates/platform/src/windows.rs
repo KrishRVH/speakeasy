@@ -30,11 +30,12 @@ use windows_sys::{
         UI::{
             Input::KeyboardAndMouse::{
                 GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
-                SendInput, VIRTUAL_KEY,
+                KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput, VIRTUAL_KEY,
             },
             WindowsAndMessaging::{
-                GetWindowThreadProcessId, MB_ICONERROR, MB_OK, MessageBoxW,
-                SPI_GETCLIENTAREAANIMATION, SystemParametersInfoW,
+                GetWindowLongW, GetWindowThreadProcessId, MB_ICONERROR, MB_OK, MessageBoxW,
+                SPI_GETCLIENTAREAANIMATION, SetWindowLongW, SystemParametersInfoW,
+                WINDOW_LONG_PTR_INDEX,
             },
         },
     },
@@ -100,13 +101,29 @@ pub(crate) fn show_startup_error(message: &str) {
     }
 }
 
-fn synthetic_key(key: VIRTUAL_KEY, unit: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
+fn press(key: VIRTUAL_KEY) -> INPUT {
+    synthetic_key(key, 0, 0)
+}
+
+fn release(key: VIRTUAL_KEY) -> INPUT {
+    synthetic_key(key, 0, KEYEVENTF_KEYUP)
+}
+
+/// A press and release that types one UTF-16 code unit, whatever the keyboard layout.
+fn type_unit(unit: u16) -> [INPUT; 2] {
+    [
+        synthetic_key(0, unit, KEYEVENTF_UNICODE),
+        synthetic_key(0, unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP),
+    ]
+}
+
+fn synthetic_key(key: VIRTUAL_KEY, scan: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
                 wVk: key,
-                wScan: unit,
+                wScan: scan,
                 dwFlags: flags,
                 time: 0,
                 dwExtraInfo: OWN_INPUT,
@@ -169,6 +186,15 @@ impl Window {
         ensure!(owner == current, "Another thread owns this window");
         Ok(Self { hwnd })
     }
+
+    /// Rewrites the window's 32-bit `GWL_STYLE` or `GWL_EXSTYLE` bits through `change`.
+    fn restyle(&self, index: WINDOW_LONG_PTR_INDEX, change: impl FnOnce(u32) -> u32) {
+        // SAFETY: `new` checked that this thread owns the window, and both calls take values only.
+        unsafe {
+            let style = GetWindowLongW(self.hwnd, index).cast_unsigned();
+            SetWindowLongW(self.hwnd, index, change(style).cast_signed());
+        }
+    }
 }
 
 /// The `NativeWindow` for a window a test created.
@@ -223,9 +249,12 @@ fn with_foreign_window<O: Send + 'static, T>(
             )
         };
         ensure!(!hwnd.is_null(), "Cannot create the test window");
-        // A failed send or receive means the calling thread is gone, so the window can go too.
         if created.send((hwnd as isize, on_owner(hwnd))).is_ok() {
-            let _released = released.recv();
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A closed lane means the calling thread is gone, so the window can go too"
+            )]
+            let _ = released.recv();
         }
         // SAFETY: this thread created the window and destroys it once.
         unsafe { DestroyWindow(hwnd) };

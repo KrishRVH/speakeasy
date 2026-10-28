@@ -34,7 +34,7 @@ pub(super) const ALWAYS_EXCLUDED: PCWSTR = w!("SpeakeasyAlwaysExcluded");
 /// The Speakeasy windows one capture has left out, shown to capture again when it ends.
 #[derive(Default)]
 pub(super) struct Exclusions {
-    changed: Vec<HWND>,
+    left_out: Vec<HWND>,
 }
 
 impl Exclusions {
@@ -42,11 +42,11 @@ impl Exclusions {
     /// they stay out once shown. Reports whether any was newly left out: even one hidden now may
     /// have been shown in frames composed since the last check.
     pub(super) fn refresh(&mut self) -> Result<bool, Failure> {
-        let mut newcomers = false;
-        let own = top_level_windows()?
+        let before = self.left_out.len();
+        let capturable = top_level_windows()?
             .into_iter()
-            .filter(|&window| owned(window));
-        for window in own.filter(|&window| affinity(window) == Some(WDA_NONE)) {
+            .filter(|&window| owned(window) && affinity(window) == Some(WDA_NONE));
+        for window in capturable {
             // SAFETY: both calls take a window of this process by value.
             let (excluded, visible) = unsafe {
                 (
@@ -55,24 +55,21 @@ impl Exclusions {
                 )
             };
             if excluded {
-                self.changed.push(window);
-                newcomers = true;
+                self.left_out.push(window);
             } else if visible {
                 return Err(Failure::Exposed);
             }
         }
-        Ok(newcomers)
+        Ok(self.left_out.len() > before)
     }
 }
 
 impl Drop for Exclusions {
     fn drop(&mut self) {
-        let restorable = |window: HWND| {
-            // SAFETY: reads a property by handle; a destroyed window has none.
-            let marked = !unsafe { GetPropW(window, ALWAYS_EXCLUDED) }.is_null();
-            !marked && affinity(window) == Some(WDA_EXCLUDEFROMCAPTURE)
-        };
-        for &window in self.changed.iter().filter(|&&window| restorable(window)) {
+        let restorable = self.left_out.iter().copied().filter(|&window| {
+            !excluded_for_good(window) && affinity(window) == Some(WDA_EXCLUDEFROMCAPTURE)
+        });
+        for window in restorable {
             // SAFETY: takes values only; a window since destroyed, or reused by another process,
             // fails the call.
             unsafe { SetWindowDisplayAffinity(window, WDA_NONE) };
@@ -82,18 +79,18 @@ impl Drop for Exclusions {
 
 /// Every top-level window on the desktop, front to back.
 pub(super) fn top_level_windows() -> windows::core::Result<Vec<HWND>> {
-    unsafe extern "system" fn collect(window: HWND, windows: LPARAM) -> BOOL {
+    unsafe extern "system" fn collect(window: HWND, found: LPARAM) -> BOOL {
         // SAFETY: `top_level_windows` passes its live vector for the length of the enumeration.
-        unsafe { (*(windows as *mut Vec<HWND>)).push(window) };
+        unsafe { (*(found as *mut Vec<HWND>)).push(window) };
         TRUE
     }
-    let mut windows = Vec::new();
+    let mut found = Vec::new();
     // SAFETY: the callback only pushes into the vector, which outlives the enumeration.
-    let enumerated = unsafe { EnumWindows(Some(collect), (&raw mut windows) as LPARAM) };
+    let enumerated = unsafe { EnumWindows(Some(collect), (&raw mut found) as LPARAM) };
     if enumerated == FALSE {
         return Err(windows::core::Error::from_thread());
     }
-    Ok(windows)
+    Ok(found)
 }
 
 pub(super) fn owned(window: HWND) -> bool {
@@ -124,6 +121,12 @@ pub(super) fn exclude_always(hwnd: HWND) -> anyhow::Result<()> {
         ok_or_last_error(SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE))
             .context("Cannot keep the Show overlay out of screen capture")
     }
+}
+
+/// Whether `exclude_always` left `window` out of capture for good.
+fn excluded_for_good(window: HWND) -> bool {
+    // SAFETY: reads a property by handle; a destroyed window has none.
+    !unsafe { GetPropW(window, ALWAYS_EXCLUDED) }.is_null()
 }
 
 unsafe extern "system" fn always_excluded(
@@ -174,8 +177,7 @@ mod tests {
         // thread fails to install one.
         let exclude = |hwnd| {
             let refused = exclude_always(hwnd).is_err();
-            // SAFETY: reads a property of a window `with_foreign_window` keeps live.
-            let marked = !unsafe { GetPropW(hwnd, ALWAYS_EXCLUDED) }.is_null();
+            let marked = excluded_for_good(hwnd);
             (refused, marked)
         };
         let ((), (refused, marked)) = with_foreign_window(|_| (), exclude)?;

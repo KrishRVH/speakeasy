@@ -4,7 +4,7 @@
 use anyhow::bail;
 use async_channel::Sender;
 use windows_sys::Win32::{
-    Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
+    Foundation::{FALSE, HWND, LPARAM, LRESULT, RECT, WPARAM},
     Graphics::{
         Dwm::{
             DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_WINDOW_CORNER_PREFERENCE,
@@ -19,12 +19,12 @@ use windows_sys::Win32::{
         HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
         Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
         WindowsAndMessaging::{
-            GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, GetWindowLongPtrW, HWND_TOPMOST,
-            IsWindowVisible, LWA_ALPHA, SC_MINIMIZE, SIZE_MINIMIZED, SW_HIDE, SW_RESTORE,
-            SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-            SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
-            ShowWindow, WM_NCDESTROY, WM_PAINT, WM_SIZE, WM_SYSCOMMAND, WS_EX_LAYERED,
-            WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_OVERLAPPEDWINDOW, WS_POPUP,
+            GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, HWND_TOPMOST, IsWindowVisible, LWA_ALPHA,
+            SC_MINIMIZE, SIZE_MINIMIZED, SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED,
+            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow,
+            SetLayeredWindowAttributes, SetWindowPos, ShowWindow, WM_NCDESTROY, WM_PAINT, WM_SIZE,
+            WM_SYSCOMMAND, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+            WS_OVERLAPPEDWINDOW, WS_POPUP,
         },
     },
 };
@@ -39,23 +39,19 @@ impl NativeWindow {
     /// Configures the pill for nonactivating, click-through presentation.
     ///
     /// # Errors
-    /// Returns failed native configuration.
+    /// Fails when Windows refuses the layered alpha, the topmost placement, or the subclass that
+    /// keeps a hidden pill from painting; the frame style and DWM decoration changes are best
+    /// effort.
     pub fn configure_pill(&self) -> anyhow::Result<()> {
-        let hwnd = self.native.hwnd;
+        let window = &self.native;
+        let hwnd = window.hwnd;
         let border = DWMWA_COLOR_NONE;
         let corners = DWMWCP_DONOTROUND;
-        // SAFETY: this thread owns the window, and both DWM values outlive their synchronous calls.
-        // The window owns its subclass until WM_NCDESTROY on this same thread.
+        // Windows 11 outlines and shadows GPUI's overlapped frame around the whole transparent
+        // surface, so the pill becomes a plain popup; the DWM decoration hints are best effort.
+        window.restyle(GWL_STYLE, |style| (style & !WS_OVERLAPPEDWINDOW) | WS_POPUP);
+        // SAFETY: both DWM values outlive their synchronous calls on this thread's window.
         unsafe {
-            // Windows 11 outlines and shadows GPUI's overlapped frame around the whole transparent
-            // surface, so the pill becomes a plain popup; the DWM decoration hints are best effort.
-            let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
-            SetWindowLongPtrW(
-                hwnd,
-                GWL_STYLE,
-                (style & !(WS_OVERLAPPEDWINDOW.cast_signed() as isize))
-                    | WS_POPUP.cast_signed() as isize,
-            );
             DwmSetWindowAttribute(
                 hwnd,
                 DWMWA_BORDER_COLOR.cast_unsigned(),
@@ -68,14 +64,13 @@ impl NativeWindow {
                 (&raw const corners).cast(),
                 DWM_VALUE_SIZE,
             );
-            let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-            SetWindowLongPtrW(
-                hwnd,
-                GWL_EXSTYLE,
-                style
-                    | (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_LAYERED)
-                        .cast_signed() as isize,
-            );
+        }
+        window.restyle(GWL_EXSTYLE, |style| {
+            style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_LAYERED
+        });
+        // SAFETY: this thread owns the window, which owns its subclass until WM_NCDESTROY on this
+        // same thread.
+        unsafe {
             // WS_EX_TRANSPARENT alone only changes paint order; layering makes the whole pill pass
             // mouse hit testing.
             ok_or_last_error(SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA))?;
@@ -117,17 +112,21 @@ unsafe extern "system" fn pill_window(
     // SAFETY: this window-owned subclass runs on the pill's UI thread and is removed at
     // destruction. PAINTSTRUCT lives through its paint cycle.
     unsafe {
-        if message == WM_NCDESTROY {
-            RemoveWindowSubclass(hwnd, Some(pill_window), id);
-        } else if message == WM_PAINT && IsWindowVisible(hwnd) == 0 {
+        match message {
+            WM_NCDESTROY => {
+                RemoveWindowSubclass(hwnd, Some(pill_window), id);
+                DefSubclassProc(hwnd, message, wparam, lparam)
+            },
             // ValidateRect alone leaves a hidden window's paint pending; finish the cycle without
             // drawing or calling GPUI.
-            let mut paint = PAINTSTRUCT::default();
-            BeginPaint(hwnd, &raw mut paint);
-            EndPaint(hwnd, &raw const paint);
-            return 0;
+            WM_PAINT if IsWindowVisible(hwnd) == FALSE => {
+                let mut paint = PAINTSTRUCT::default();
+                BeginPaint(hwnd, &raw mut paint);
+                EndPaint(hwnd, &raw const paint);
+                0
+            },
+            _ => DefSubclassProc(hwnd, message, wparam, lparam),
         }
-        DefSubclassProc(hwnd, message, wparam, lparam)
     }
 }
 
@@ -150,25 +149,24 @@ fn place_pill(hwnd: HWND) {
             &raw mut dpi,
             &raw mut vertical_dpi,
         );
-        GetMonitorInfoW(monitor, &raw mut info) != 0
+        GetMonitorInfoW(monitor, &raw mut info) != FALSE
     };
     if !found {
         return;
     }
-    let scaled = |logical: u32| {
+    let scaled = |logical: u16| {
         u64::from(logical)
             .saturating_mul(u64::from(dpi))
             .checked_div(u64::from(BASE_DPI))
             .and_then(|physical| i32::try_from(physical).ok())
             .unwrap_or(i32::MAX)
     };
-    let width = scaled(PILL_WIDTH.into());
-    let height = scaled(PILL_HEIGHT.into());
+    let [width, height, margin] = [PILL_WIDTH, PILL_HEIGHT, PILL_MARGIN].map(scaled);
     let top = info
         .rcWork
         .bottom
         .saturating_sub(height)
-        .saturating_sub(scaled(PILL_MARGIN.into()));
+        .saturating_sub(margin);
     let left = centered_left(info.rcWork, width);
     // SAFETY: called with a live window handle on its UI thread.
     unsafe {
@@ -200,7 +198,7 @@ impl NativeWindow {
         // SAFETY: this thread owns the window. Ownership of the sender transfers to settings_window
         // on success, or is reclaimed immediately on failure.
         unsafe {
-            if SetWindowSubclass(hwnd, Some(settings_window), 1, context as usize) == 0 {
+            if SetWindowSubclass(hwnd, Some(settings_window), 1, context as usize) == FALSE {
                 drop(Box::from_raw(context));
                 bail!("Cannot enable minimize to tray. Restart Speakeasy.");
             }
@@ -232,19 +230,25 @@ unsafe extern "system" fn settings_window(
     // SAFETY: SetWindowSubclass stores this boxed sender for this window only. Remove the callback
     // before freeing its context at final destruction.
     unsafe {
-        if message == WM_NCDESTROY {
-            RemoveWindowSubclass(hwnd, Some(settings_window), id);
-            drop(Box::from_raw(context as *mut Sender<()>));
-        } else if message == WM_SYSCOMMAND && wparam & 0xFFF0 == SC_MINIMIZE as usize {
+        match message {
+            WM_NCDESTROY => {
+                RemoveWindowSubclass(hwnd, Some(settings_window), id);
+                drop(Box::from_raw(context as *mut Sender<()>));
+                DefSubclassProc(hwnd, message, wparam, lparam)
+            },
             // WM_SYSCOMMAND reserves wParam's low four bits for the system.
-            request_hide(context);
-            return 0;
-        } else if message == WM_SIZE && wparam == SIZE_MINIMIZED as usize {
+            WM_SYSCOMMAND if wparam & 0xFFF0 == SC_MINIMIZE as usize => {
+                request_hide(context);
+                0
+            },
             // ShowWindow(SW_MINIMIZE), including GPUI's own minimize, bypasses WM_SYSCOMMAND. Still
             // forward the size so GPUI tracks the restore.
-            request_hide(context);
+            WM_SIZE if wparam == SIZE_MINIMIZED as usize => {
+                request_hide(context);
+                DefSubclassProc(hwnd, message, wparam, lparam)
+            },
+            _ => DefSubclassProc(hwnd, message, wparam, lparam),
         }
-        DefSubclassProc(hwnd, message, wparam, lparam)
     }
 }
 
@@ -357,30 +361,36 @@ mod tests {
                 null(),
             )
         };
-        let window = Window(hwnd);
+        let _window = Window(hwnd);
         ensure!(!hwnd.is_null(), "Cannot create paint test window");
-        // SAFETY: this thread owns the live window until `window` drops.
+        // SAFETY: this thread owns the live window until `_window` drops.
         unsafe { native_window(hwnd) }?.configure_pill()?;
-        PAINTS.set(0);
-        // SAFETY: synchronous messages target this thread's owned window; showing uses no
-        // activation and no input or clipboard operations.
-        unsafe {
-            InvalidateRect(window.0, null(), 0);
-            SendMessageW(window.0, WM_PAINT, 0, 0);
-            assert_eq!(PAINTS.get(), 0, "A hidden pill must not call its renderer");
-            assert_eq!(GetUpdateRect(window.0, null_mut(), 0), 0);
-            ShowWindow(window.0, SW_SHOWNOACTIVATE);
+        let repaint = || {
             PAINTS.set(0);
-            InvalidateRect(window.0, null(), 0);
-            SendMessageW(window.0, WM_PAINT, 0, 0);
-            assert_eq!(PAINTS.get(), 1, "Visible paint must reach the renderer");
-            ShowWindow(window.0, SW_HIDE);
-            PAINTS.set(0);
-            InvalidateRect(window.0, null(), 0);
-            SendMessageW(window.0, WM_PAINT, 0, 0);
-            assert_eq!(PAINTS.get(), 0, "Hiding must restore idle paint handling");
-            assert_eq!(GetUpdateRect(window.0, null_mut(), 0), 0);
-        }
+            // SAFETY: both synchronous calls target this thread's live window.
+            unsafe {
+                InvalidateRect(hwnd, null(), FALSE);
+                SendMessageW(hwnd, WM_PAINT, 0, 0);
+            }
+            PAINTS.get()
+        };
+        // SAFETY: reads the update region of this thread's live window, with no rectangle to fill.
+        let paint_pending = || unsafe { GetUpdateRect(hwnd, null_mut(), FALSE) != FALSE };
+        assert_eq!(repaint(), 0, "A hidden pill must not call its renderer");
+        assert!(
+            !paint_pending(),
+            "A hidden pill must finish its paint cycle"
+        );
+        // SAFETY: this thread owns the live window; showing it activates nothing.
+        unsafe { ShowWindow(hwnd, SW_SHOWNOACTIVATE) };
+        assert_eq!(repaint(), 1, "Visible paint must reach the renderer");
+        // SAFETY: this thread owns the live window.
+        unsafe { ShowWindow(hwnd, SW_HIDE) };
+        assert_eq!(repaint(), 0, "Hiding must restore idle paint handling");
+        assert!(
+            !paint_pending(),
+            "A hidden pill must finish its paint cycle"
+        );
         Ok(())
     }
 

@@ -4,7 +4,7 @@ use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::PathBuf, ptr::null
 
 use anyhow::bail;
 use windows_sys::Win32::{
-    Foundation::HWND,
+    Foundation::{FALSE, HWND},
     System::Com::{
         COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize,
     },
@@ -82,7 +82,7 @@ fn open_file(owner: HWND, title: &[u16], filter: &[u16]) -> anyhow::Result<Optio
             null(),
             (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE).cast_unsigned(),
         );
-        let error = if GetOpenFileNameW(&raw mut dialog) == 0 {
+        let error = if GetOpenFileNameW(&raw mut dialog) == FALSE {
             CommDlgExtendedError()
         } else {
             0
