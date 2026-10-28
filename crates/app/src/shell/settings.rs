@@ -1,6 +1,6 @@
 //! The Settings view. It edits a draft that reaches Services only through a durable save; a demo,
 //! which never saves, previews its theme and motion directly. The view owns the setup, file picker,
-//! microphone scan, and saves it starts.
+//! and saves it starts, and waits on the microphone scan that Services holds.
 
 mod render;
 
@@ -18,7 +18,7 @@ use super::{
     window::choose_file,
 };
 use crate::{
-    audio::{self, InputDevice},
+    audio::{InputDevice, MicrophoneScan},
     config::{Config, Engine},
     gpui_ext::{EntityUpdate, WindowUpdate, follow},
     runtime::Snapshot,
@@ -54,7 +54,7 @@ impl Settings {
     pub(super) fn new(
         config: Config,
         mut updates: watch::Receiver<Snapshot>,
-        cx: &Context<'_, Self>,
+        cx: &mut Context<'_, Self>,
     ) -> Self {
         let services = cx.global::<Services>();
         let presentation = Presentation::new(&updates.borrow_and_update(), services);
@@ -192,15 +192,20 @@ impl Settings {
         }
     }
 
-    fn refresh_microphones(&mut self, cx: &Context<'_, Self>) {
-        // The demo is simulated and never touches audio devices. A scan stuck in a driver keeps its
-        // detached thread, so a second Refresh would only strand another.
-        if is_demo(cx) || self.microphone_scan.is_some() {
+    fn refresh_microphones(&mut self, cx: &mut Context<'_, Self>) {
+        // The demo is simulated and never touches audio devices, and Quit waits only for a scan
+        // that started before it.
+        if is_demo(cx) || cx.global::<Services>().quitting() || self.microphone_scan.is_some() {
             return;
         }
-        let scan = audio::microphones();
+        let listing = cx.update_global::<Services, _>(|services, _| {
+            MicrophoneScan::listing(&mut services.microphone_scan)
+        });
         self.microphone_scan = Some(cx.spawn(async move |this, cx| {
-            let result = scan.await;
+            let result = match listing {
+                Ok(listing) => listing.await,
+                Err(error) => Err(error),
+            };
             this.update_if_alive(cx, |view, cx| {
                 match result {
                     Ok(microphones) => view.microphones = microphones,

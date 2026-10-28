@@ -14,6 +14,7 @@ use super::{
     window::{self, reveal},
 };
 use crate::{
+    audio::MicrophoneScan,
     config::{Change, Config, ValidConfig},
     gpui_ext::AppUpdate,
     instance::{Instance, Request},
@@ -95,6 +96,8 @@ pub(crate) struct Services {
     pub(super) visibility: Option<Task<()>>,
     pub(super) tray_hint_seen: bool,
     requests: Option<Task<()>>,
+    /// The latest microphone scan, which every Settings view shares and Quit waits for.
+    pub(super) microphone_scan: Option<MicrophoneScan>,
     instance: Option<Instance>,
 }
 
@@ -131,6 +134,7 @@ impl Services {
             visibility: None,
             tray_hint_seen: false,
             requests: None,
+            microphone_scan: None,
             instance,
         }
     }
@@ -396,9 +400,13 @@ impl Services {
             owners.request_stop();
             owners.stopped()
         });
+        let scanned = self.microphone_scan.as_ref().map(MicrophoneScan::exited);
         Some(async move {
             if let Some(stopped) = stopped {
                 stopped.await;
+            }
+            if let Some(scanned) = scanned {
+                scanned.await;
             }
         })
     }

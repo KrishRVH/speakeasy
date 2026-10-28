@@ -1,10 +1,10 @@
 //! Checks the capture thread's lifecycle, retirement and teardown, its metering, PCM consumption,
-//! and the cue notices its speech gate hears, with fake devices and synthetic samples; no test
-//! opens a microphone.
+//! the cue notices its speech gate hears, and the shared microphone scan, with fake devices and
+//! synthetic samples; no test opens a microphone.
 
 use std::sync::PoisonError;
 
-use anyhow::ensure;
+use anyhow::{bail, ensure};
 use tokio::time::timeout;
 
 use super::*;
@@ -300,4 +300,37 @@ fn a_cue_noticed_after_its_first_samples_arrive_still_counts_only_by_its_voice_b
     let mut speech = Audibility::new(48_000).unwrap();
     classify(&mut speech, &recording, &noticed);
     assert_eq!(speech.retained(recording.len()), None);
+}
+
+#[tokio::test]
+async fn a_blocked_microphone_scan_serves_the_next_request_instead_of_another_thread()
+-> anyhow::Result<()> {
+    let (release, released) = std::sync::mpsc::channel();
+    let mut current = None;
+    let abandoned = MicrophoneScan::share(&mut current, move || {
+        released.recv()?;
+        Ok(vec![InputDevice {
+            id: "usb".into(),
+            name: "USB".into(),
+        }])
+    })?;
+    // The Settings view that asked first is gone while the driver still blocks. The driver
+    // returns later, so a request that replaced the scan would join it, then fail, never hang.
+    drop(abandoned);
+    let driver = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        release.send(())
+    });
+    let waiting = MicrophoneScan::share(&mut current, || {
+        bail!("A second scan started while one was enumerating")
+    })?;
+    let exited = current.as_ref().context("No scan is held")?.exited();
+    let devices = timeout(PATIENCE, waiting.recv()).await???;
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices[0].id, "usb");
+    timeout(PATIENCE, exited).await?;
+    driver.join().unwrap()?;
+    let fresh = MicrophoneScan::share(&mut current, || Ok(Vec::new()))?;
+    assert!(timeout(PATIENCE, fresh.recv()).await???.is_empty());
+    Ok(())
 }

@@ -21,6 +21,7 @@ use async_channel::{Receiver, Sender};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rtrb::{Consumer, RingBuffer};
 use speakeasy_core::gesture::RECORDING_LIMIT;
+use speakeasy_platform::OwnedThread;
 
 pub(crate) use self::pcm::{silent_wav, wav_sample_rate};
 use self::{
@@ -470,20 +471,55 @@ fn speech_meter_level(rms: f32) -> f32 {
     (above_floor / (METER_TOP_DBFS - METER_FLOOR_DBFS)).clamp(0.0, 1.0)
 }
 
-/// Lists input devices without opening a stream. Drivers may block, and CPAL leaves its calling
-/// thread in a single-threaded COM apartment, so enumeration runs on its own detached thread.
-pub(crate) async fn microphones() -> anyhow::Result<Vec<InputDevice>> {
-    let (reply, devices) = async_channel::bounded(1);
-    thread::Builder::new()
-        .name("microphone-scan".into())
-        .spawn(move || {
+/// A listing of the input devices, made without opening a stream. Drivers may block, and CPAL
+/// leaves its calling thread in a single-threaded COM apartment, so enumeration runs on a thread
+/// the scan owns; dropping the scan joins it.
+pub(crate) struct MicrophoneScan {
+    devices: Receiver<anyhow::Result<Vec<InputDevice>>>,
+    thread: OwnedThread,
+}
+
+impl MicrophoneScan {
+    /// The listing from the scan in `current` while it enumerates, or else from a new scan that
+    /// replaces it, so a driver that blocks holds one thread however often Settings asks. One
+    /// waiter receives each listing.
+    pub(crate) fn listing(
+        current: &mut Option<Self>,
+    ) -> anyhow::Result<impl Future<Output = anyhow::Result<Vec<InputDevice>>> + use<>> {
+        let devices = Self::share(current, enumerate_microphones)?;
+        Ok(async move { devices.recv().await? })
+    }
+
+    fn share(
+        current: &mut Option<Self>,
+        enumerate: impl FnOnce() -> anyhow::Result<Vec<InputDevice>> + Send + 'static,
+    ) -> anyhow::Result<Receiver<anyhow::Result<Vec<InputDevice>>>> {
+        let scan = match current {
+            Some(scan) if !scan.thread.is_finished() => scan,
+            // Replacing a finished scan joins a thread whose enumeration has returned.
+            idle => idle.insert(Self::spawn(enumerate)?),
+        };
+        Ok(scan.devices.clone())
+    }
+
+    fn spawn(
+        enumerate: impl FnOnce() -> anyhow::Result<Vec<InputDevice>> + Send + 'static,
+    ) -> anyhow::Result<Self> {
+        let (reply, devices) = async_channel::bounded(1);
+        let thread = OwnedThread::spawn("microphone-scan", move || {
             #[expect(
                 clippy::let_underscore_must_use,
-                reason = "Closing the one-shot receiver means the settings owner no longer needs the device list"
+                reason = "Only a dropped scan closes the receiver, and then no Settings view waits for the list"
             )]
-            let _ = reply.send_blocking(enumerate_microphones());
+            let _ = reply.try_send(enumerate());
         })?;
-    devices.recv().await?
+        Ok(Self { devices, thread })
+    }
+
+    /// Resolves once enumeration has returned.
+    pub(crate) fn exited(&self) -> impl Future<Output = ()> + Send + 'static + use<> {
+        self.thread.exited()
+    }
 }
 
 fn enumerate_microphones() -> anyhow::Result<Vec<InputDevice>> {
