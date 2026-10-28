@@ -67,8 +67,8 @@ summaries; the UI animates between them. Pill animation follows native display f
 [frame budget](performance.md#implementation-constraints). Delayed frames skip expired deadlines,
 and springs advance by the actual elapsed time. Silence settles to short bars. Demo mode alone
 supplies simulated levels. Reduced motion, from Settings or the OS, snaps transitions, the lid, and
-level changes, uses one level bar, and keeps the processing highlight still. Capture uses a timer
-for its clock and recording-limit cue.
+level changes, uses one level bar, and keeps the processing highlight still. During capture, a timer
+wakes the pill for each second of its clock and countdown.
 
 ## Sounds
 
@@ -155,8 +155,8 @@ status line stay in view below the scrolling controls.
 
 Run `--demo` to inspect the same Settings and pill views without live devices or insertion. Use
 `--demo-tray` for native tray and Settings lifecycle checks; its dictation controls are disabled.
-Both modes bypass engine/model configuration. Public-audio tests cover recognition with fake capture
-and insertion. None of these establish physical microphone onset, target-editor behavior,
+Both modes bypass engine/model configuration. Public-audio tests cover transcription with fake
+capture and insertion. None of these establish physical microphone onset, target-editor behavior,
 screen-reader usability, display removal, or mixed-DPI presentation.
 
 For visual acceptance, inspect interrupted transitions, quick completion, long processing,

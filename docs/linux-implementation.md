@@ -21,8 +21,7 @@ and can use different protocols.
 | Desktop command bindings | `speakeasy --toggle` and `speakeasy --cancel`, as Settings shows them | Explicit automatic or manual-paste preference                     |
 
 Gestures, the default **Ctrl+Super+Space** and reserved **Ctrl+Super+Escape** chords, and command
-bindings follow the [interaction contracts](interaction-design.md#interaction-contracts); command
-bindings give hands-free only, never hold/release.
+bindings follow the [interaction contracts](interaction-design.md#interaction-contracts).
 
 Settings shows the actual accepted dictate and cancel bindings. A chord another X11 app already
 grabs stops desktop access with an error naming that shortcut, dictation or cancel. X11 releases its
@@ -34,13 +33,13 @@ bindings with manual paste depend on no keyboard map.
 ## Owned preparation and insertion
 
 Desktop preparation runs outside the UI thread. Shortcut input is enabled after the adapter reports
-readiness; capture can proceed while the model loads. Pause cancels pending consent, closes owned
-requests and sessions, and awaits native cleanup before replacement. Quit awaits owned insertion and
-worker cleanup. Permission loss produces an actionable error rather than a background consent loop.
+readiness; capture can proceed while the model loads. Pause cancels pending consent and closes owned
+portal requests and sessions, awaiting their cleanup before any replacement opens. Permission loss
+produces an actionable error rather than a background consent loop.
 
 Portals use the installed `io.github.krvh.speakeasy.desktop` launcher identity. The adapter
-registers it before other portal calls; older portal frontends without registration retain their
-launcher-derived identity. See the [installation instructions](../README.md#linux-experimental).
+registers it before other portal calls; a portal that predates the host registry identifies
+Speakeasy from its launcher. See the [installation instructions](../README.md#linux-experimental).
 
 Wayland requests keyboard access and optional Clipboard access, except for **Copy for manual
 paste**, and never screen capture. Restore credentials are single-use, private 0600 files under the
@@ -71,15 +70,15 @@ available until ownership changes or the service retires.
 Settings' **Insert** control offers **Paste (Ctrl+V)**, **Paste (Ctrl+Shift+V)** for terminals,
 **Type (Keep clipboard)**, and **Copy for manual paste**. In the settings file, `manual_paste` takes
 precedence over `preserve_clipboard`, which takes precedence over `terminal_paste`. Typing requires
-advertised EI text support on Wayland; X11 reports it as unavailable. There is no application-name
-guessing, transcript history, automatic provider switch, or repeated ambiguous paste.
+advertised EI text support on Wayland; X11 reports it as unavailable. The terminal chord is the
+user's choice; Speakeasy never infers it from the focused application.
 
 ## Presentation and lifecycle
 
 The pinned GPUI X11 renderer supplies Settings and the pill, with the native contracts recorded in
 [the dependency patch](../vendor/gpui/README.speakeasy.md). Wayland hosts need Xwayland for
 presentation. The pill uses notification hints, override-redirect, no keyboard focus, and an empty
-input shape before mapping. These hints still need native acceptance for stacking, fullscreen, mixed
+input shape before mapping. These hints need native acceptance for stacking, fullscreen, mixed
 scaling, and focus.
 
 Private-Xvfb presentation checks exercise actual Settings rendering, pill startup visibility, input
@@ -108,10 +107,10 @@ resumable, size- and hash-checked downloads, accelerator selection, locking, ext
 reaping. It preserves complete engine runtime layouts and validates executable permissions.
 
 The pinned upstream Linux CPU engine has a reported illegal-instruction failure on AVX2 hardware
-without AVX-512. `doctor` or model loading alone cannot prove inference compatibility. Linux CPU
-workers run synthetic inference before readiness; failure stops the worker and explains how to
-select a compatible engine. This catches decode failures without supplying a portable engine or
-establishing broad CPU coverage. GPU builds also require compatible host drivers.
+without AVX-512. The engine's `doctor` report or model loading alone cannot prove inference
+compatibility. Linux CPU workers run synthetic inference before readiness; failure stops the worker
+and explains how to select a compatible engine. This catches decode failures without supplying a
+portable engine or establishing broad CPU coverage. GPU builds also require compatible host drivers.
 
 `package-linux.sh` builds AppImage and bundled tar packages with a glibc 2.35 check for the app and
 bundled libraries. `--native-tar` produces an unbundled development archive for the builder's ABI.

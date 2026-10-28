@@ -54,22 +54,22 @@ module unless a test file is named.
   [stream/tests.rs](../crates/app/src/audio/stream/tests.rs) use synthetic samples; microphones.rs
   checks that a scan the driver blocks serves the next request.
 - **Sound cues**: [sounds.rs](../crates/app/src/sounds.rs) plays the cues the owner asks for through
-  `Ports::cue` on an owned output thread, which `Ports::hold_cues` keeps open through each session,
-  and [speech.rs](../crates/app/src/audio/speech.rs) hears only the voice band beneath the cues,
-  through [lowpass.rs](../crates/app/src/lowpass.rs), while a recording may overhear one.
+  `Ports::cue` on an owned output thread, which `Ports::hold_cues` keeps open through each session.
+  A recording may overhear a cue, so [speech.rs](../crates/app/src/audio/speech.rs) hears only the
+  voice band beneath it, through [lowpass.rs](../crates/app/src/lowpass.rs).
   [sounds/tests.rs](../crates/app/src/sounds/tests.rs) drives the player against a fake device and,
   opt-in, plays every cue on the default output;
   [speech/tests.rs](../crates/app/src/audio/speech/tests.rs) runs the real cues through the gate at
   full scale; [runtime/tests/cues.rs](../crates/app/src/runtime/tests/cues.rs) checks which moments
   sound and when the output is held.
-- **Local recognition**: [local_speech.rs](../crates/app/src/local_speech.rs),
+- **Local speech**: [local_speech.rs](../crates/app/src/local_speech.rs),
   [child.rs](../crates/app/src/child.rs), [http.rs](../crates/app/src/http.rs), and
   [platform/src/process.rs](../crates/platform/src/process.rs) start, query, and reap engines.
   [local_speech/tests.rs](../crates/app/src/local_speech/tests.rs) drives startup and requests
   against fake engines; [runtime/fixture.rs](../crates/app/src/runtime/fixture.rs) profiles the real
   owner and worker on public audio, opt-in.
 - **Transcript cleanup**: [transcript.rs](../crates/app/src/transcript.rs), with the filler policy
-  in `Config::fillers` ([config.rs](../crates/app/src/config.rs)). Tested in transcript.rs.
+  in `Config::fillers` ([config.rs](../crates/app/src/config.rs)).
 - **Insertion**: [platform/src/insertion.rs](../crates/platform/src/insertion.rs) with the Windows
   and macOS commit protocol in [insertion/commit.rs](../crates/platform/src/insertion/commit.rs),
   [input.rs](../crates/platform/src/input.rs),
@@ -106,8 +106,8 @@ module unless a test file is named.
   [lifecycle.rs](../crates/app/src/shell/lifecycle.rs),
   [shutdown.rs](../crates/app/src/shell/shutdown.rs), [save.rs](../crates/app/src/shell/save.rs),
   [window.rs](../crates/app/src/shell/window.rs), and [main.rs](../crates/app/src/main.rs).
-  Lifecycle and save tests check terminal Quit, ordered writes, and edits, Pause, or a resume's
-  check around Save.
+  [save/tests.rs](../crates/app/src/shell/save/tests.rs) checks ordered writes and edits made during
+  one; lifecycle.rs's tests check terminal Quit and Pause or a resume check around Save.
 - **Setup**: [setup.rs](../crates/app/src/setup.rs) and [setup/](../crates/app/src/setup) choose,
   download, verify, and unpack engines; a full install is opt-in.
 - **Tray and status**: [tray.rs](../crates/app/src/tray.rs), [tray/](../crates/app/src/tray),
@@ -119,15 +119,18 @@ module unless a test file is named.
   [show/recorder.rs](../crates/app/src/show/recorder.rs),
   [show/publish.rs](../crates/app/src/show/publish.rs), and the session owner.
   [runtime/tests/shows.rs](../crates/app/src/runtime/tests/shows.rs) drives Shows with a fake
-  screen; [show/publish/tests.rs](../crates/app/src/show/publish/tests.rs) checks every published
-  file and the cancel path.
+  screen; [show/recorder/tests.rs](../crates/app/src/show/recorder/tests.rs) drives the area choice
+  and a take on synthetic frames and pointer samples;
+  [show/publish/tests.rs](../crates/app/src/show/publish/tests.rs) checks every published file and
+  the cancel path.
 - **Show composition**: [crates/show/src](../crates/show/src), notably
   [select.rs](../crates/show/src/select.rs) and [select/](../crates/show/src/select),
   [journal.rs](../crates/show/src/journal.rs), [tracker.rs](../crates/show/src/tracker.rs),
   [marks.rs](../crates/show/src/marks.rs), [align.rs](../crates/show/src/align.rs),
   [sheet.rs](../crates/show/src/sheet.rs), and [demo.rs](../crates/show/src/demo.rs), tested in
-  their modules and [select/tests.rs](../crates/show/src/select/tests.rs); `speakeasy show demo`
-  writes a bundle to view.
+  their modules, [select/tests.rs](../crates/show/src/select/tests.rs), and
+  [journal/tests.rs](../crates/show/src/journal/tests.rs); `speakeasy show demo` writes a bundle to
+  view.
 - **Show bundle format**: [bundle.rs](../crates/show/src/bundle.rs) and
   [describe.rs](../crates/show/src/describe.rs).
   [bundle/tests.rs](../crates/show/src/bundle/tests.rs) checks paginated sheets and pins
@@ -173,9 +176,9 @@ No single module owns these rules; a change to any party keeps them.
 - **The snapshot epoch fences presenters.** Each status the shell announces advances it. An owner
   takes the current epoch before its thread starts and presents only while that epoch is current, so
   a retiring owner cannot replace a newer pause or quit notice.
-- **Quit drains without a timeout.** Every application-owned Quit route awaits audio teardown,
-  process reaping, insertion, setup, and requested saves while rendering continues. The instance
-  lock is released after the last Settings writer.
+- **Quit drains without a timeout.** Every application-owned Quit route awaits audio teardown, a
+  microphone scan, process reaping, insertion, setup, and requested saves while rendering continues.
+  The instance lock is released after the last Settings writer.
 - **Reports go through the owner.** Background failures, such as a failed retention sweep, reach a
   running owner's report lane and never interrupt a recording; without an owner, Services shows them
   while idle.
@@ -185,8 +188,8 @@ No single module owns these rules; a change to any party keeps them.
 - **Insertion is never repeated.** Validation precedes the single commit. After it, a native failure
   reports a partial, unavailable, or manual-paste outcome. Submission cannot prove that an editor
   accepted the text, and Escape cannot retract input already submitted.
-- **Private content stays out of diagnostics.** Audio, transcripts, worker output, engine stderr,
-  and screen pixels never reach logs or error messages; join failures and panics report fixed
+- **Private content stays out of diagnostics.** No module logs or reports what
+  [AGENTS.md](../AGENTS.md#app-contracts) keeps private; join failures and panics report fixed
   messages.
 
 ### Session ownership
@@ -240,8 +243,9 @@ Default checks use fake capture and insertion; opt-in public-audio fixtures driv
 owner and local worker, and `--demo` uses the actual views with scripted levels.
 [AGENTS.md](../AGENTS.md#tests-and-review) sets what default tests may touch. Use explicit gates for
 fake cleanup, closing them when a failed test disposes its harness. Timer timeouts inside fakes
-change paused-time behavior; use bounded observation helpers instead. Add a port only for an actual
-side effect. Keep native mechanics in the adapter and deterministic decisions in portable code.
+change paused-time behavior; bound the test's own waits with
+[testing.rs](../crates/app/src/testing.rs) instead. Add a port only for an actual side effect. Keep
+native mechanics in the adapter and deterministic decisions in portable code.
 
 Opt-in checks are `#[ignore = "..."]` tests whose reason says what each touches, and
 `rg -A1 '#\[ignore =' crates` lists them. Run one at a time with
