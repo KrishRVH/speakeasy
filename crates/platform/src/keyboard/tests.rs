@@ -67,6 +67,11 @@ fn key(code: i64, down: bool, held: Modifiers) -> MacEvent {
     MacEvent::Key { code, down, held }
 }
 
+/// The keyboard's own report while Fn is up.
+fn keyboard_fn_up() -> bool {
+    false
+}
+
 fn delivered(decision: &Decision) -> Vec<Action> {
     decision.actions().collect()
 }
@@ -189,8 +194,8 @@ fn s_during_a_hold_starts_a_show_and_is_swallowed_through_its_release() {
     assert_eq!(typed.action, None);
 
     let mut mac = Mac::default();
-    mac.observe(function(true), now());
-    let show = mac.observe(key(Mac::SCREEN, true, FN_HELD), now());
+    mac.observe(function(true), keyboard_fn_up, now());
+    let show = mac.observe(key(Mac::SCREEN, true, FN_HELD), keyboard_fn_up, now());
     assert!(show.swallows());
     assert_eq!(show.action, Some(Action::Show(Scope::Screen)));
     // macOS reports Shift as a flag change while Fn stays held, and it keeps the Show too.
@@ -203,12 +208,13 @@ fn s_during_a_hold_starts_a_show_and_is_swallowed_through_its_release() {
                 ..Modifiers::default()
             },
         },
+        keyboard_fn_up,
         now(),
     );
     assert!(!shift.swallows());
     assert_eq!(shift.action, None);
     assert_eq!(
-        mac.observe(function(false), now()).action,
+        mac.observe(function(false), keyboard_fn_up, now()).action,
         Some(Action::Release)
     );
 }
@@ -237,11 +243,14 @@ fn w_and_a_during_a_hold_start_window_and_area_shows() {
         assert_eq!(typed.action, None);
 
         let mut mac = Mac::default();
-        mac.observe(function(true), now());
-        let show = mac.observe(key(mac_key, true, FN_HELD), now());
+        mac.observe(function(true), keyboard_fn_up, now());
+        let show = mac.observe(key(mac_key, true, FN_HELD), keyboard_fn_up, now());
         assert!(show.swallows());
         assert_eq!(show.action, Some(Action::Show(scope)));
-        assert!(mac.observe(key(mac_key, false, FN_HELD), now()).swallows());
+        assert!(
+            mac.observe(key(mac_key, false, FN_HELD), keyboard_fn_up, now())
+                .swallows()
+        );
     }
 }
 
@@ -360,19 +369,23 @@ fn shift_taps_pin_beside_the_held_talk_shortcut() {
         },
     };
     let mut mac = Mac::default();
-    mac.observe(function(true), at(0));
+    mac.observe(function(true), keyboard_fn_up, at(0));
     let pins: Vec<Option<Action>> = [(500, true), (580, false), (700, true), (780, false)]
         .into_iter()
-        .map(|(millis, down)| mac.observe(shift(down, MAC_LEFT_SHIFT), at(millis)).action)
+        .map(|(millis, down)| {
+            mac.observe(shift(down, MAC_LEFT_SHIFT), keyboard_fn_up, at(millis))
+                .action
+        })
         .collect();
     assert_eq!(pins, [None, None, None, Some(Action::Pin(taps))]);
     // Another modifier between the taps, here left Option, makes a different shortcut.
-    mac.observe(shift(true, MAC_LEFT_SHIFT), at(1_000));
-    mac.observe(shift(false, MAC_LEFT_SHIFT), at(1_080));
-    mac.observe(shift(true, 58), at(1_100));
-    mac.observe(shift(true, MAC_LEFT_SHIFT), at(1_200));
+    mac.observe(shift(true, MAC_LEFT_SHIFT), keyboard_fn_up, at(1_000));
+    mac.observe(shift(false, MAC_LEFT_SHIFT), keyboard_fn_up, at(1_080));
+    mac.observe(shift(true, 58), keyboard_fn_up, at(1_100));
+    mac.observe(shift(true, MAC_LEFT_SHIFT), keyboard_fn_up, at(1_200));
     assert_eq!(
-        mac.observe(shift(false, MAC_LEFT_SHIFT), at(1_280)).action,
+        mac.observe(shift(false, MAC_LEFT_SHIFT), keyboard_fn_up, at(1_280))
+            .action,
         None
     );
     // So does Command held through both taps.
@@ -387,7 +400,10 @@ fn shift_taps_pin_beside_the_held_talk_shortcut() {
     let mut mac = Mac::default();
     let released: Vec<Option<Action>> = [(0, true), (80, false), (200, true), (280, false)]
         .into_iter()
-        .map(|(millis, down)| mac.observe(command(down), at(millis)).action)
+        .map(|(millis, down)| {
+            mac.observe(command(down), keyboard_fn_up, at(millis))
+                .action
+        })
         .collect();
     assert_eq!(released, [None; 4]);
 }
@@ -482,19 +498,39 @@ fn a_missed_release_lets_s_reach_the_app() {
 
     // The tap missed Fn's release, so the next key's flags show Fn up.
     let mut mac = Mac::default();
-    assert!(mac.observe(function(true), now()).starts());
-    let typed = mac.observe(key(Mac::SCREEN, true, NO_MODIFIERS), now());
+    assert!(mac.observe(function(true), keyboard_fn_up, now()).starts());
+    let typed = mac.observe(key(Mac::SCREEN, true, NO_MODIFIERS), keyboard_fn_up, now());
     assert!(
         !typed.swallows(),
         "S after a missed Fn release was swallowed"
     );
     assert_eq!(delivered(&typed), [Action::Release]);
-    assert!(mac.observe(function(true), now()).starts());
+    assert!(mac.observe(function(true), keyboard_fn_up, now()).starts());
     // Fn has one key, so a second press proves the release between them was missed.
     assert_eq!(
-        delivered(&mac.observe(function(true), now())),
+        delivered(&mac.observe(function(true), keyboard_fn_up, now())),
         [Action::Release, Action::Press]
     );
+}
+
+#[test]
+fn a_posted_event_without_fn_ends_no_hold_the_keyboard_still_makes() {
+    let keyboard_fn_down = || true;
+    let mut mac = Mac::default();
+    assert!(mac.observe(function(true), keyboard_fn_up, now()).starts());
+    // Another app posts a key release and a Command release whose flags leave Fn out.
+    let posted = mac.observe(key(MAC_Q, false, NO_MODIFIERS), keyboard_fn_down, now());
+    assert_eq!(delivered(&posted), [], "A posted key-up ended the hold");
+    let command_up = MacEvent::FlagsChanged {
+        code: 55,
+        held: NO_MODIFIERS,
+    };
+    assert_eq!(
+        delivered(&mac.observe(command_up, keyboard_fn_down, now())),
+        []
+    );
+    let show = mac.observe(key(Mac::SCREEN, true, FN_HELD), keyboard_fn_down, now());
+    assert_eq!(show.action, Some(Action::Show(Scope::Screen)));
 }
 
 #[test]
@@ -506,30 +542,31 @@ fn command_option_or_control_during_fn_is_another_shortcut() {
     // Left and right Command, Option, and Control.
     for code in [55, 54, 58, 61, 59, 62] {
         let mut mac = Mac::default();
-        assert!(mac.observe(function(true), now()).starts());
+        assert!(mac.observe(function(true), keyboard_fn_up, now()).starts());
         let pressed = mac.observe(
             MacEvent::FlagsChanged {
                 code,
                 held: shortcut,
             },
+            keyboard_fn_up,
             now(),
         );
         assert!(!pressed.swallows());
         assert_eq!(pressed.action, Some(Action::Interrupt), "Key code {code}");
         // ⌥S belongs to the other shortcut, not to a Show.
-        let typed = mac.observe(key(Mac::SCREEN, true, shortcut), now());
+        let typed = mac.observe(key(Mac::SCREEN, true, shortcut), keyboard_fn_up, now());
         assert!(!typed.swallows(), "Key code {code} let S start a Show");
         assert_eq!(delivered(&typed), []);
     }
     // Letting go of Command held since before Fn keeps the hold.
     let mut mac = Mac::default();
-    mac.observe(function(true), now());
+    mac.observe(function(true), keyboard_fn_up, now());
     let released = MacEvent::FlagsChanged {
         code: 55,
         held: FN_HELD,
     };
-    assert_eq!(delivered(&mac.observe(released, now())), []);
-    let show = mac.observe(key(Mac::SCREEN, true, FN_HELD), now());
+    assert_eq!(delivered(&mac.observe(released, keyboard_fn_up, now())), []);
+    let show = mac.observe(key(Mac::SCREEN, true, FN_HELD), keyboard_fn_up, now());
     assert_eq!(show.action, Some(Action::Show(Scope::Screen)));
 }
 
@@ -538,23 +575,36 @@ fn mac_lifecycle_interruption_waits_for_fn_release() -> anyhow::Result<()> {
     let (sender, events) = async_channel::bounded(4);
     let input = InputSender::new(sender);
     let mut policy = Mac::default();
-    assert!(policy.observe(function(true), now()).starts());
+    assert!(
+        policy
+            .observe(function(true), keyboard_fn_up, now())
+            .starts()
+    );
     policy.interrupt(&input);
     assert!(matches!(events.try_recv()?, Input::Interrupt));
     assert!(matches!(events.try_recv()?, Input::Release));
-    let typed = policy.observe(key(Mac::SCREEN, true, FN_HELD), now());
+    let typed = policy.observe(key(Mac::SCREEN, true, FN_HELD), keyboard_fn_up, now());
     assert!(
         !typed.swallows(),
         "S during an interrupted hold was swallowed"
     );
     assert_eq!(delivered(&typed), []);
-    assert_eq!(delivered(&policy.observe(function(false), now())), []);
-    assert!(policy.observe(function(true), now()).starts());
+    assert_eq!(
+        delivered(&policy.observe(function(false), keyboard_fn_up, now())),
+        []
+    );
+    assert!(
+        policy
+            .observe(function(true), keyboard_fn_up, now())
+            .starts()
+    );
 
     // Fn went up while the Mac slept, unseen; the first press after waking still starts.
     policy.interrupt(&input);
     assert!(
-        policy.observe(function(true), now()).starts(),
+        policy
+            .observe(function(true), keyboard_fn_up, now())
+            .starts(),
         "The first press after an unseen release was lost"
     );
     Ok(())
@@ -563,37 +613,56 @@ fn mac_lifecycle_interruption_waits_for_fn_release() -> anyhow::Result<()> {
 #[test]
 fn mac_function_space_and_escape_are_observed_without_native_events() {
     let mut policy = Mac::default();
-    assert!(policy.observe(function(true), now()).starts());
     assert!(
         policy
-            .observe(key(Mac::SPACE, true, FN_HELD), now())
+            .observe(function(true), keyboard_fn_up, now())
+            .starts()
+    );
+    assert!(
+        policy
+            .observe(key(Mac::SPACE, true, FN_HELD), keyboard_fn_up, now())
             .swallows()
     );
     assert_eq!(
-        policy.observe(function(false), now()).action,
+        policy
+            .observe(function(false), keyboard_fn_up, now())
+            .action,
         Some(Action::Release)
     );
     assert!(
         policy
-            .observe(key(Mac::SPACE, false, NO_MODIFIERS), now())
+            .observe(key(Mac::SPACE, false, NO_MODIFIERS), keyboard_fn_up, now())
             .swallows()
     );
-    let escape = policy.observe(key(Mac::ESCAPE, true, NO_MODIFIERS), now());
+    let escape = policy.observe(key(Mac::ESCAPE, true, NO_MODIFIERS), keyboard_fn_up, now());
     assert_eq!(escape.action, Some(Action::Cancel));
     assert!(!escape.swallows());
-    assert!(policy.observe(function(true), now()).starts());
+    assert!(
+        policy
+            .observe(function(true), keyboard_fn_up, now())
+            .starts()
+    );
     assert_eq!(
-        policy.observe(key(MAC_Q, true, FN_HELD), now()).action,
+        policy
+            .observe(key(MAC_Q, true, FN_HELD), keyboard_fn_up, now())
+            .action,
         Some(Action::Interrupt)
     );
     assert!(
         !policy
-            .observe(key(Mac::SPACE, true, FN_HELD), now())
+            .observe(key(Mac::SPACE, true, FN_HELD), keyboard_fn_up, now())
             .swallows(),
         "Space after another shortcut interrupted the hold was swallowed"
     );
-    assert_eq!(delivered(&policy.observe(function(false), now())), []);
-    assert!(policy.observe(function(true), now()).starts());
+    assert_eq!(
+        delivered(&policy.observe(function(false), keyboard_fn_up, now())),
+        []
+    );
+    assert!(
+        policy
+            .observe(function(true), keyboard_fn_up, now())
+            .starts()
+    );
 }
 
 #[test]

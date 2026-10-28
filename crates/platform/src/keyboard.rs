@@ -109,6 +109,12 @@ impl Chord {
         self.interrupt();
     }
 
+    /// Whether the chord went down and has not been seen to come up.
+    #[cfg(any(target_os = "macos", test))]
+    fn awaits_release(&self) -> bool {
+        self.hold != Hold::Released
+    }
+
     /// Ends the hold when the chord was not `held` just before this event, so its release never
     /// arrived, as on the secure desktop or across sleep. Returns whether that ended an
     /// uninterrupted hold, whose release the owner still has to hear.
@@ -447,14 +453,15 @@ pub(super) enum MacEvent {
 #[cfg(any(target_os = "macos", test))]
 impl MacEvent {
     /// Whether Fn was held just before this event. Fn's own flag change reports its new state, so
-    /// Fn was in the other state before; every other event leaves Fn as its flags report.
-    const fn fn_held_before(&self) -> bool {
+    /// Fn was in the other state before. Another process may post any other event with whatever
+    /// flags it likes, so flags showing Fn up count only once `keyboard_fn` agrees.
+    fn fn_held_before(&self, keyboard_fn: impl FnOnce() -> bool) -> bool {
         match *self {
             Self::FlagsChanged {
                 code: Mac::FUNCTION,
                 held,
             } => !held.talk,
-            Self::Key { held, .. } | Self::FlagsChanged { held, .. } => held.talk,
+            Self::Key { held, .. } | Self::FlagsChanged { held, .. } => held.talk || keyboard_fn(),
         }
     }
 }
@@ -485,9 +492,18 @@ impl Mac {
         self.chord.interrupt_dictation(input);
     }
 
-    /// Decides one event-tap event at `at`; its flags end a hold whose Fn release the tap missed.
-    pub(super) fn observe(&mut self, event: MacEvent, at: Instant) -> Decision {
-        let missed_release = self.chord.reconcile(event.fn_held_before());
+    /// Decides one event-tap event at `at`. A hold whose Fn release the tap missed ends once both
+    /// the event's flags and `keyboard_fn`, whether the keyboard itself holds Fn, show Fn up.
+    /// `keyboard_fn` is asked only then, and only during a hold.
+    pub(super) fn observe(
+        &mut self,
+        event: MacEvent,
+        keyboard_fn: impl FnOnce() -> bool,
+        at: Instant,
+    ) -> Decision {
+        let holding = self.chord.awaits_release();
+        let fn_held = event.fn_held_before(|| holding && keyboard_fn());
+        let missed_release = self.chord.reconcile(fn_held);
         self.decide(event, at).after_missed_release(missed_release)
     }
 

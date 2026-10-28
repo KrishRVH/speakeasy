@@ -387,7 +387,7 @@ fn observe(
         CGEventType::FlagsChanged => MacEvent::FlagsChanged { code, held },
         _ => return CallbackResult::Keep,
     };
-    let decision = policy.observe(key_event, Instant::now());
+    let decision = policy.observe(key_event, keyboard_holds_fn, Instant::now());
     decision.deliver(input);
     if decision.swallows() {
         CallbackResult::Drop
@@ -494,6 +494,15 @@ pub(super) fn modifiers() -> Modifiers {
     held(CGEventSource::flags_state(
         CGEventSourceStateID::CombinedSessionState,
     ))
+}
+
+/// Whether the keyboard itself holds Fn, whatever the flags of an event another process posted
+/// claim.
+fn keyboard_holds_fn() -> bool {
+    use objc2_core_graphics::{CGEventFlags, CGEventSource, CGEventSourceStateID};
+
+    CGEventSource::flags_state(CGEventSourceStateID::HIDSystemState)
+        .contains(CGEventFlags::MaskSecondaryFn)
 }
 
 /// The modifier keys `flags` report held.
