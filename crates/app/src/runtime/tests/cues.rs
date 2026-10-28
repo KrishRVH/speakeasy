@@ -127,13 +127,15 @@ async fn a_microphone_still_opening_sounds_its_cue_once_it_listens() -> anyhow::
     h.phase(Phase::Cancelled).await?;
     retiring.reached().await?;
     h.sounds();
-    // The next hold waits for that microphone with the output already open; S meanwhile makes it
-    // a Show, still unheard.
     h.input(Input::Press);
     h.phase(Phase::Starting).await?;
     h.input(Input::Show(Scope::Screen));
     receive(&h.shows).await?;
-    assert_eq!(h.sounds(), [Sound::Held(true)]);
+    assert_eq!(
+        h.sounds(),
+        [Sound::Held(true)],
+        "A cue played before its microphone listened"
+    );
     retiring.release().await?;
     let (id, _) = receive(&h.captures).await?;
     h.phase(Phase::Recording).await?;

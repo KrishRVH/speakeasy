@@ -26,8 +26,8 @@ enum Source {
 
 /// What the model ports did, in order, on one unbounded lane.
 enum Log {
-    Microphone(SessionId, Sender<CaptureEvent>),
-    Screen(SessionId, Sender<ShowEvent>),
+    MicrophoneOpened(SessionId, Sender<CaptureEvent>),
+    ScreenOpened(SessionId, Sender<ShowEvent>),
     Finished(Source, SessionId),
     /// The owner asked for the device's release, which takes its generated time.
     Retiring(Source, SessionId),
@@ -90,7 +90,8 @@ impl Ports for ModelPorts {
         _: Option<&str>,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<ModelDevice> {
-        self.log.try_send(Log::Microphone(id, events.clone()))?;
+        self.log
+            .try_send(Log::MicrophoneOpened(id, events.clone()))?;
         events.try_send(CaptureEvent::Ready(id))?;
         Ok(self.device(Source::Microphone, id))
     }
@@ -102,7 +103,7 @@ impl Ports for ModelPorts {
         _: Scope,
         events: Sender<ShowEvent>,
     ) -> anyhow::Result<ModelDevice> {
-        self.log.try_send(Log::Screen(id, events))?;
+        self.log.try_send(Log::ScreenOpened(id, events))?;
         Ok(self.device(Source::Screen, id))
     }
 
@@ -278,6 +279,9 @@ impl Key {
     }
 }
 
+/// A Show starts with S during a hold; the shortcut is then let go while the Show records.
+const SHOW_GESTURE: [Key; 3] = [Key::Press, Key::Show, Key::Release];
+
 /// How the latest microphone's capture ends.
 #[derive(Clone, Copy, Debug)]
 enum Heard {
@@ -291,6 +295,13 @@ enum Heard {
 enum Said {
     Words,
     Nothing,
+    Failure,
+}
+
+/// How the latest screen's recording ends.
+#[derive(Clone, Copy, Debug)]
+enum Seen {
+    Complete,
     Failure,
 }
 
@@ -312,10 +323,8 @@ enum Step {
     Advance(Duration),
     /// The latest microphone's capture ends, whether or not it was asked to finish.
     Audio(Heard),
-    /// Footage from the latest screen: complete once it was asked to finish, or failed at any time.
-    Footage {
-        complete: bool,
-    },
+    /// The latest screen's recording ends: complete once asked to finish, failed at any time.
+    Footage(Seen),
     Answer(Said),
     Configure(Setting),
 }
@@ -331,10 +340,9 @@ fn step() -> impl Strategy<Value = Step> {
         1 => Just(Key::Show),
         1 => Just(Key::Pin),
     ];
-    // A Show starts with S during a hold; the shortcut is then let go while the Show records.
     let inputs = prop_oneof![
         1 => prop::collection::vec(key, 1..=3),
-        1 => Just(vec![Key::Press, Key::Show, Key::Release]),
+        1 => Just(SHOW_GESTURE.to_vec()),
     ];
     let advance = prop_oneof![
         9 => (0_u64..400).prop_map(Duration::from_millis),
@@ -346,12 +354,13 @@ fn step() -> impl Strategy<Value = Step> {
         Just(Heard::Failure)
     ];
     let said = prop_oneof![Just(Said::Words), Just(Said::Nothing), Just(Said::Failure)];
+    let seen = prop_oneof![Just(Seen::Complete), Just(Seen::Failure)];
     let setting = prop_oneof![Just(Setting::Fillers), Just(Setting::Gpu)];
     prop_oneof![
         4 => inputs.prop_map(Step::Inputs),
         2 => advance.prop_map(Step::Advance),
         2 => heard.prop_map(Step::Audio),
-        2 => any::<bool>().prop_map(|complete| Step::Footage { complete }),
+        2 => seen.prop_map(Step::Footage),
         2 => said.prop_map(Step::Answer),
         1 => setting.prop_map(Step::Configure),
     ]
@@ -391,6 +400,13 @@ struct Open {
     retiring: bool,
 }
 
+/// A device the owner asked to finish, or whose outcome the test sent first.
+struct Ending {
+    device: (Source, SessionId),
+    /// Whether the test has sent what the device recorded.
+    answered: bool,
+}
+
 /// The owner under test, and what the model ports reported so far.
 struct Model {
     runtime: Runtime<OwnedTask>,
@@ -402,8 +418,7 @@ struct Model {
     microphone: Option<(SessionId, Sender<CaptureEvent>)>,
     screen: Option<(SessionId, Sender<ShowEvent>)>,
     open: HashMap<Source, Open>,
-    /// Devices asked to finish, and whether the test has sent what they recorded.
-    finished: Vec<(Source, SessionId, bool)>,
+    finished: Vec<Ending>,
     /// Whether a speech worker has started and not yet stopped.
     worker: bool,
 }
@@ -456,14 +471,16 @@ impl Model {
                     self.answered(Source::Microphone, *id);
                 }
             },
-            Step::Footage { complete } => {
+            Step::Footage(seen) => {
                 if let Some((id, events)) = &self.screen {
-                    if !complete {
-                        let failure = Err(anyhow!("model screen failed"));
-                        events.try_send(ShowEvent::Finished(*id, failure))?;
-                        self.answered(Source::Screen, *id);
-                    } else if self.finishing(Source::Screen, *id) {
-                        events.try_send(ShowEvent::Finished(*id, Ok(footage())))?;
+                    let outcome = match seen {
+                        Seen::Complete => {
+                            self.finishing(Source::Screen, *id).then(|| Ok(footage()))
+                        },
+                        Seen::Failure => Some(Err(anyhow!("model screen failed"))),
+                    };
+                    if let Some(outcome) = outcome {
+                        events.try_send(ShowEvent::Finished(*id, outcome))?;
                         self.answered(Source::Screen, *id);
                     }
                 }
@@ -555,31 +572,41 @@ impl Model {
         while let Ok(entry) = self.log.try_recv() {
             arrived = true;
             match entry {
-                Log::Microphone(id, events) => {
+                Log::MicrophoneOpened(id, events) => {
                     self.opened(Source::Microphone, id)?;
                     self.microphone = Some((id, events));
                 },
-                Log::Screen(id, events) => {
+                Log::ScreenOpened(id, events) => {
                     self.opened(Source::Screen, id)?;
                     self.screen = Some((id, events));
                 },
                 Log::Finished(source, id) => {
                     if !self.finishing(source, id) {
-                        self.finished.push((source, id, false));
+                        self.finished.push(Ending {
+                            device: (source, id),
+                            answered: false,
+                        });
                     }
                 },
                 Log::Retiring(source, id) => match self.open.get_mut(&source) {
                     Some(open) if open.id == id => open.retiring = true,
                     _ => bail!("{source:?} {id:?} retired without being open"),
                 },
-                Log::Retired(source, id) => match self.open.remove(&source) {
-                    Some(open) if open.id == id && open.retiring => {},
-                    _ => bail!("{source:?} {id:?} released without being retired"),
+                Log::Retired(source, id) => {
+                    let released = self.open.remove(&source);
+                    ensure!(
+                        released.is_some_and(|open| open.id == id && open.retiring),
+                        "{source:?} {id:?} released without being retired"
+                    );
                 },
-                Log::Pinned(source, id) => match self.open.get(&source) {
-                    Some(open) if source == Source::Screen && open.id == id && !open.retiring => {},
-                    _ => bail!("{source:?} {id:?} took a pin while not recording a Show"),
-                },
+                Log::Pinned(source, id) => ensure!(
+                    source == Source::Screen
+                        && self
+                            .open
+                            .get(&source)
+                            .is_some_and(|open| open.id == id && !open.retiring),
+                    "{source:?} {id:?} took a pin while not recording a Show"
+                ),
                 Log::Loaded => {
                     ensure!(
                         !self.worker,
@@ -636,26 +663,30 @@ impl Model {
     fn finishing(&self, source: Source, id: SessionId) -> bool {
         self.finished
             .iter()
-            .any(|&(finished, session, _)| finished == source && session == id)
+            .any(|ending| ending.device == (source, id))
     }
 
     fn unanswered(&self) -> Vec<(Source, SessionId)> {
         self.finished
             .iter()
-            .filter(|&&(_, _, answered)| !answered)
-            .map(|&(source, id, _)| (source, id))
+            .filter(|ending| !ending.answered)
+            .map(|ending| ending.device)
             .collect()
     }
 
     /// Records that the test sent `source`'s outcome for `id`, finished or not.
     fn answered(&mut self, source: Source, id: SessionId) {
+        let device = (source, id);
         match self
             .finished
             .iter_mut()
-            .find(|(finished, session, _)| *finished == source && *session == id)
+            .find(|ending| ending.device == device)
         {
-            Some((_, _, answered)) => *answered = true,
-            None => self.finished.push((source, id, true)),
+            Some(ending) => ending.answered = true,
+            None => self.finished.push(Ending {
+                device,
+                answered: true,
+            }),
         }
     }
 }
@@ -685,9 +716,9 @@ proptest! {
         steps in prop::collection::vec(step(), 0..=40),
         releases in releases(),
     ) {
-        if let Err(error) = paused()?.block_on(run(&steps, releases)) {
-            return Err(TestCaseError::fail(format!("{error:#}")));
-        }
+        paused()?
+            .block_on(run(&steps, releases))
+            .map_err(|error| TestCaseError::fail(format!("{error:#}")))?;
     }
 }
 
@@ -695,14 +726,14 @@ proptest! {
 /// to the strategy changes what a saved seed generates.
 #[test]
 fn the_sequences_that_once_stranded_the_owner_come_to_rest() -> anyhow::Result<()> {
-    let show = || Step::Inputs(vec![Key::Press, Key::Show, Key::Release]);
+    let show = || Step::Inputs(SHOW_GESTURE.to_vec());
     let keys = |keys: &[Key]| Step::Inputs(keys.to_vec());
     let at_once = Releases {
         microphone: Duration::ZERO,
         screen: Duration::ZERO,
         worker: Duration::ZERO,
     };
-    let unfinished = Step::Footage { complete: false };
+    let screen_failure = Step::Footage(Seen::Failure);
     let (speech, failure) = (Step::Audio(Heard::Speech), Step::Audio(Heard::Failure));
     let cases = [
         (vec![keys(&[Key::Toggle]), failure.clone()], at_once),
@@ -712,7 +743,7 @@ fn the_sequences_that_once_stranded_the_owner_come_to_rest() -> anyhow::Result<(
                 show(),
                 show(),
                 speech.clone(),
-                unfinished.clone(),
+                screen_failure.clone(),
                 Step::Advance(Duration::from_millis(141)),
                 Step::Advance(Duration::ZERO),
                 show(),
@@ -741,7 +772,7 @@ fn the_sequences_that_once_stranded_the_owner_come_to_rest() -> anyhow::Result<(
                 show(),
                 keys(&[Key::Cancel]),
                 show(),
-                unfinished,
+                screen_failure,
                 show(),
                 keys(&[Key::Press]),
                 failure.clone(),

@@ -239,7 +239,8 @@ async fn cpu_cancellation_reaps_before_replacement_without_blocking_input() -> a
     h.transcribe_next_as("current fixture").await?;
     assert_eq!(receive(&h.pasted).await?, "current fixture");
     h.phase(Phase::Done).await?;
-    // Pre-release the stop gate, so the shutdown stop passes without harness cleanup.
+    h.runtime.request_stop();
+    stopping.reached().await?;
     stopping.release().await?;
     h.close().await
 }
@@ -328,20 +329,22 @@ async fn copied_text_is_a_notice_that_carries_its_remedy_until_the_next_paste() 
 
 #[tokio::test(start_paused = true)]
 async fn saved_cleanup_opt_out_keeps_words_and_worker() -> anyhow::Result<()> {
-    let mut config = Config::default();
-    let mut h = Harness::with_ports(config.clone(), |_| {})?;
+    let mut h = Harness::new()?;
     receive(&h.loads).await?;
     h.start().await?;
     h.finish_as("Um, speak uh clearly.").await?;
     assert_eq!(receive(&h.pasted).await?, "speak clearly.");
     h.phase(Phase::Done).await?;
-    config.remove_fillers = false;
+    let opted_out = Config {
+        remove_fillers: false,
+        ..Config::default()
+    };
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     Config::save_changes(
         &[&Config::default()],
-        &config,
-        &ValidConfig::assume(config.clone()),
+        &opted_out,
+        &ValidConfig::assume(opted_out.clone()),
         &path,
     )?;
     h.runtime
@@ -527,7 +530,8 @@ async fn failed_recovery_stops_worker_before_loading_replacement() -> anyhow::Re
     assert_eq!(receive(&h.pasted).await?, "after recovery");
     h.phase(Phase::Done).await?;
     assert!(h.pasted.try_recv().is_err());
-    // Pre-release the stop gate, so the shutdown stop passes without harness cleanup.
+    h.runtime.request_stop();
+    stopping.reached().await?;
     stopping.release().await?;
     h.close().await
 }
@@ -815,9 +819,8 @@ async fn recovery_failure_keeps_a_queued_dictation_until_microphone_retirement()
     h.close().await
 }
 
-// Scheduler noise must not turn performance profiling into a gate, so this only reports.
 #[tokio::test]
-#[ignore = "Reports owner reply-to-insertion latency with fake devices"]
+#[ignore = "Reports owner reply-to-insertion latency with fake devices; scheduler noise must not gate it"]
 async fn profile_ready_text_latency() -> anyhow::Result<()> {
     let mut h = Harness::on_own_thread(Config::default(), |_| {})?;
     receive(&h.loads).await?;

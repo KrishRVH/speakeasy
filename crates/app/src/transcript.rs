@@ -2,6 +2,9 @@
 
 use speakeasy_show::{Narration, Word};
 
+const PAUSES: [char; 4] = [',', ';', ':', '…'];
+const SENTENCE_ENDINGS: [char; 3] = ['.', '!', '?'];
+
 /// Whether to remove English hesitation tokens or keep literal engine words.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Fillers {
@@ -16,7 +19,9 @@ pub(crate) enum Fillers {
 pub(crate) fn for_insertion(text: &str, fillers: Fillers) -> String {
     let mut output = String::with_capacity(text.len());
     for token in text.split_whitespace() {
-        if let Some(ending) = hesitation(token, fillers) {
+        if fillers == Fillers::Remove
+            && let Some(ending) = hesitation(token)
+        {
             close_after_hesitation(&mut output, ending);
             continue;
         }
@@ -31,12 +36,13 @@ pub(crate) fn for_insertion(text: &str, fillers: Fillers) -> String {
 /// The same cleanup for a Show's narration. Timed words lose their hesitations one by one, and a
 /// sentence ending a hesitation carried moves to the word before, where clause breaks read it.
 pub(crate) fn for_show(narration: Narration, fillers: Fillers) -> Narration {
-    match narration {
-        Narration::Text(text) => Narration::Text(for_insertion(&text, fillers)),
-        Narration::Words(words) => {
+    match (narration, fillers) {
+        (Narration::Text(text), _) => Narration::Text(for_insertion(&text, fillers)),
+        (timed, Fillers::Preserve) => timed,
+        (Narration::Words(words), Fillers::Remove) => {
             let mut kept: Vec<Word> = Vec::with_capacity(words.len());
             for word in words {
-                match hesitation(&word.text, fillers) {
+                match hesitation(&word.text) {
                     Some(ending) => {
                         if let Some(previous) = kept.last_mut() {
                             close_after_hesitation(&mut previous.text, ending);
@@ -50,18 +56,13 @@ pub(crate) fn for_show(narration: Narration, fillers: Fillers) -> Narration {
     }
 }
 
-/// When `token` is a standalone `um` or `uh` being removed, the sentence ending it carried.
-fn hesitation(token: &str, fillers: Fillers) -> Option<&str> {
-    let word = token.trim_matches(is_pause_punctuation);
-    (fillers == Fillers::Remove
-        && (word.eq_ignore_ascii_case("um") || word.eq_ignore_ascii_case("uh")))
-    .then(|| {
-        token
-            .trim_start_matches(is_pause_punctuation)
-            .strip_prefix(word)
-            .unwrap_or_default()
-            .trim_matches([',', ';', ':', '…'])
-    })
+/// When `token` is a standalone `um` or `uh`, the sentence ending it carried.
+fn hesitation(token: &str) -> Option<&str> {
+    let spoken = token.trim_start_matches(is_pause_or_ending);
+    let word = spoken.trim_end_matches(is_pause_or_ending);
+    let trailing = spoken.strip_prefix(word)?;
+    (word.eq_ignore_ascii_case("um") || word.eq_ignore_ascii_case("uh"))
+        .then(|| trailing.trim_matches(PAUSES))
 }
 
 /// Ends the text before a removed hesitation: a comma before it belonged to that pause, but a
@@ -70,13 +71,13 @@ fn close_after_hesitation(text: &mut String, ending: &str) {
     if text.ends_with(',') {
         text.pop();
     }
-    if !text.is_empty() && !text.ends_with(['.', '!', '?']) {
+    if !text.is_empty() && !text.ends_with(SENTENCE_ENDINGS) {
         text.push_str(ending);
     }
 }
 
-fn is_pause_punctuation(character: char) -> bool {
-    matches!(character, ',' | '.' | ';' | ':' | '!' | '?' | '…')
+fn is_pause_or_ending(character: char) -> bool {
+    PAUSES.contains(&character) || SENTENCE_ENDINGS.contains(&character)
 }
 
 #[cfg(test)]

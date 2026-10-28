@@ -18,13 +18,14 @@ async fn start_show(h: &mut Harness) -> anyhow::Result<OpenedShow> {
 async fn s_during_a_hold_turns_the_recording_into_a_show_and_publishes_it() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     start_show(&mut h).await?;
-    // The Show is locked hands-free: releasing the shortcut keeps recording.
     h.input(Input::Release);
     tokio::time::advance(Duration::from_secs(2)).await;
-    assert!(h.jobs.try_recv().is_err());
+    assert!(
+        h.jobs.try_recv().is_err(),
+        "Releasing the shortcut ended a hands-free Show"
+    );
     h.input(Input::Press);
-    let (_, reply) = receive(&h.jobs).await?;
-    answer(reply, "look here")?;
+    h.transcribe_next_as("look here").await?;
     let (footage, narration) = receive(&h.published).await?;
     assert_eq!(narration, Narration::Text("look here".into()));
     assert_eq!(footage.journal.samples().len(), 1);
@@ -234,7 +235,6 @@ async fn s_while_the_last_microphone_retires_still_starts_a_show() -> anyhow::Re
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
     retiring.reached().await?;
-    // The next hold waits for that microphone, and S during the wait still makes it a Show.
     h.input(Input::Press);
     h.phase(Phase::Starting).await?;
     h.input(Input::Show(Scope::Screen));
@@ -274,7 +274,6 @@ async fn a_microphone_failure_ends_the_show_and_frees_the_screen() -> anyhow::Re
         ))
         .await?;
     h.phase(Phase::Error).await?;
-    // The screen recorder retired with the session, so the next Show records again.
     h.input(Input::Release);
     start_show(&mut h).await?;
     h.close().await
@@ -310,8 +309,10 @@ async fn footage_from_an_earlier_show_never_reaches_a_later_one() -> anyhow::Res
     let mut late = footage();
     late.recording.duration = Moment::from_millis(9_999);
     stale.send(ShowEvent::Finished(earlier, Ok(late))).await?;
-    // The owner takes the stale footage while this Show is still recording its own.
-    assert!(still_pending(h.published.recv()).await);
+    assert!(
+        still_pending(h.published.recv()).await,
+        "A Show published while it was still recording"
+    );
     h.input(Input::Release);
     h.input(Input::Press);
     h.transcribe_next_as("this one").await?;
@@ -332,7 +333,6 @@ async fn a_show_queued_behind_a_retiring_screen_still_records_it() -> anyhow::Re
     h.transcribe_next_as("first").await?;
     receive(&h.published).await?;
     retiring.reached().await?;
-    // The second Show's narration ends before the first screen recorder lets go.
     h.input(Input::Release);
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
@@ -343,7 +343,10 @@ async fn a_show_queued_behind_a_retiring_screen_still_records_it() -> anyhow::Re
     h.input(Input::Release);
     h.input(Input::Press);
     h.transcribe_next_as("second").await?;
-    assert!(still_pending(h.shows.recv()).await);
+    assert!(
+        still_pending(h.shows.recv()).await,
+        "The second Show's screen opened before the first let go"
+    );
     retiring.release().await?;
     receive(&h.shows).await?;
     let (_, narration) = receive(&h.published).await?;

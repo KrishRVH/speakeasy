@@ -113,11 +113,12 @@ impl Palette {
 
 /// Linear blend of two `0xRRGGBB` colors; `weight` in `0.0..=1.0` moves from `from` to `to`.
 pub(crate) fn mix(from: u32, to: u32, weight: f32) -> u32 {
-    [16, 8, 0].into_iter().fold(0, |mixed, shift| {
-        let channel = |color: u32| ((color >> shift) & 0xFF) as f32;
-        let (start, end) = (channel(from), channel(to));
-        mixed | (u32::from(quantize(start + (end - start) * weight)) << shift)
-    })
+    let mut mixed = from.to_be_bytes();
+    for (channel, end) in mixed.iter_mut().zip(to.to_be_bytes()) {
+        let start = f32::from(*channel);
+        *channel = quantize(start + (f32::from(end) - start) * weight);
+    }
+    u32::from_be_bytes(mixed)
 }
 
 /// Rounds a color channel or opacity in `0.0..=255.0` to eight bits.

@@ -46,13 +46,13 @@ impl Biquad {
     /// A section for the cutoff at `omega` radians a sample.
     fn new(omega: f64, quality: f64) -> Self {
         let alpha = omega.sin() / (2.0 * quality);
-        // `1 - cos ω` without cancellation, which would cost precision where the cutoff is a tiny
-        // fraction of the rate.
-        let falling = 2.0 * (omega / 2.0).sin().powi(2);
+        // The half-angle form of `1 - cos ω` avoids the cancellation that would cost precision
+        // where the cutoff is a tiny fraction of the rate.
+        let one_minus_cos = 2.0 * (omega / 2.0).sin().powi(2);
         let a0 = 1.0 + alpha;
         Self {
-            b0: falling / 2.0 / a0,
-            b1: falling / a0,
+            b0: one_minus_cos / 2.0 / a0,
+            b1: one_minus_cos / a0,
             a1: -2.0 * omega.cos() / a0,
             a2: (1.0 - alpha) / a0,
             s1: 0.0,
