@@ -6,4 +6,6 @@ locale = "en-us"
 EIS = "EIS"
 
 [files]
-extend-exclude = ["vendor", "Cargo.lock", "bun.lock", "uv.lock", ".config/mise/mise.lock"]
+# Dotfiles hold the release workflow and the task and tool config.
+ignore-hidden = false
+extend-exclude = [".git", "vendor", "Cargo.lock", "bun.lock", "uv.lock", ".config/mise/mise.lock"]
