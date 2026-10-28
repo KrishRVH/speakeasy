@@ -146,7 +146,9 @@ async fn choose(scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<Option<(Targe
         Scope::Area => Display::under_pointer()?,
     };
     let (chosen, choice) = async_channel::bounded(1);
-    lanes.canvas.send_replace(Canvas::picking(display, chosen));
+    lanes
+        .canvas
+        .send_replace(Canvas::Picking { display, chosen });
     Ok(pick(&choice, lanes)
         .await
         .map(|(part, finished)| (Target::area(display, part), finished)))
@@ -248,8 +250,9 @@ impl<'a> Take<'a> {
     fn frame(&mut self, frame: speakeasy_platform::Frame) {
         if frame.part != self.part {
             self.part = frame.part;
-            self.canvas
-                .send_if_modified(|canvas| canvas.track(frame.part));
+            self.canvas.send_if_modified(|canvas| {
+                canvas.sheet().is_some_and(|sheet| sheet.track(frame.part))
+            });
         }
         if !self.journal.admit() {
             return;
@@ -277,8 +280,11 @@ impl<'a> Take<'a> {
         let marks = (!finished.is_empty()).then(|| self.marks());
         let drawing: Vec<Point> = self.tracker.drawing().iter().map(|ink| ink.point).collect();
         let now = Instant::now();
-        self.canvas
-            .send_if_modified(|canvas| canvas.update(finished, drawing, marks, now));
+        self.canvas.send_if_modified(|canvas| {
+            canvas
+                .sheet()
+                .is_some_and(|sheet| sheet.update(finished, drawing, marks, now))
+        });
     }
 
     fn pin(&mut self, taps: Taps) {
@@ -289,8 +295,11 @@ impl<'a> Take<'a> {
         let marks = Some(self.marks());
         let drawing: Vec<Point> = self.tracker.drawing().iter().map(|ink| ink.point).collect();
         let now = Instant::now();
-        self.canvas
-            .send_if_modified(|canvas| canvas.update([], drawing, marks, now));
+        self.canvas.send_if_modified(|canvas| {
+            canvas
+                .sheet()
+                .is_some_and(|sheet| sheet.update([], drawing, marks, now))
+        });
     }
 
     fn marks(&self) -> Arc<[Mark]> {

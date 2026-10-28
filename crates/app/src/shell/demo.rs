@@ -143,6 +143,9 @@ fn circle(canvas: &watch::Sender<Canvas>, display: Display, seconds: f32) -> boo
         .collect();
     let (lifted, now) = (progress >= 1.0, Instant::now());
     canvas.send_if_modified(|canvas| {
+        let Some(sheet) = canvas.sheet() else {
+            return false;
+        };
         if lifted {
             let mark = Mark {
                 number: 1,
@@ -156,9 +159,9 @@ fn circle(canvas: &watch::Sender<Canvas>, display: Display, seconds: f32) -> boo
                     bottom: 0.45 + RADIUS,
                 },
             };
-            canvas.update([Arc::from(points)], [], Some(Arc::new([mark])), now)
+            sheet.update([Arc::from(points)], [], Some(Arc::new([mark])), now)
         } else {
-            canvas.update([], points, None, now)
+            sheet.update([], points, None, now)
         }
     });
     lifted

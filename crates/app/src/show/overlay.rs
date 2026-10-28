@@ -56,15 +56,70 @@ const SMALLEST_AREA: f32 = 24.0;
 const PICK_HINT: &str = "Drag over the area to record · Esc cancels";
 
 /// What the overlay shows, published by a Show's recorder or the demo's.
-#[derive(Clone, Debug)]
-pub(crate) struct Canvas {
+#[derive(Clone, Debug, Default)]
+pub(crate) enum Canvas {
+    /// Nothing: the overlay hides.
+    #[default]
+    Hidden,
+    /// `display`, shaded while the user drags out the part to record, which goes to `chosen`.
+    Picking {
+        display: Display,
+        chosen: Sender<Part>,
+    },
+    /// Ink and the numbers of marks over the part of `display` being recorded.
+    Covering { display: Display, sheet: Sheet },
+}
+
+impl Canvas {
+    /// A clean sheet over `display`, for ink on its `part`.
+    pub(crate) fn covering(display: Display, part: Part) -> Self {
+        Self::Covering {
+            display,
+            sheet: Sheet::new(part),
+        }
+    }
+
     /// The display to cover; `None` hides the overlay.
-    display: Option<Display>,
+    pub(crate) const fn display(&self) -> Option<Display> {
+        match self {
+            Self::Hidden => None,
+            Self::Picking { display, .. } | Self::Covering { display, .. } => Some(*display),
+        }
+    }
+
+    /// The ink of a canvas covering a display; nothing else takes ink.
+    pub(crate) fn sheet(&mut self) -> Option<&mut Sheet> {
+        match self {
+            Self::Covering { sheet, .. } => Some(sheet),
+            Self::Hidden | Self::Picking { .. } => None,
+        }
+    }
+
+    /// The display covered and whether the overlay takes clicks there to choose an area; `None`
+    /// hides the overlay.
+    fn cover(&self) -> Option<(Display, bool)> {
+        match self {
+            Self::Hidden => None,
+            Self::Picking { display, .. } => Some((*display, true)),
+            Self::Covering { display, .. } => Some((*display, false)),
+        }
+    }
+
+    /// Where an area being chosen goes.
+    fn chosen(&self) -> Option<&Sender<Part>> {
+        match self {
+            Self::Picking { chosen, .. } => Some(chosen),
+            Self::Hidden | Self::Covering { .. } => None,
+        }
+    }
+}
+
+/// Ink and the numbers of marks, normalized to the part of the display recorded.
+#[derive(Clone, Debug)]
+pub(crate) struct Sheet {
     /// The part of the display recorded, which ink and marks are normalized to.
     part: Part,
-    /// Set while the user drags out the area to record, which goes here.
-    picking: Option<Sender<Part>>,
-    /// Finished strokes. Each is an immutable snapshot, so a render's copy of the canvas copies
+    /// Finished strokes. Each is an immutable snapshot, so a render's copy of the sheet copies
     /// only the stroke being drawn.
     strokes: Vec<Arc<[Point]>>,
     /// How many finished strokes were cleared before those in `strokes`: the first of them is the
@@ -81,12 +136,10 @@ pub(crate) struct Canvas {
     lifted: Option<Instant>,
 }
 
-impl Default for Canvas {
-    fn default() -> Self {
+impl Sheet {
+    fn new(part: Part) -> Self {
         Self {
-            display: None,
-            part: Part::WHOLE,
-            picking: None,
+            part,
             strokes: Vec::new(),
             cleared: 0,
             drawing: Vec::new(),
@@ -94,32 +147,6 @@ impl Default for Canvas {
             first: 1,
             lifted: None,
         }
-    }
-}
-
-impl Canvas {
-    /// A clean canvas over `display`, for ink on its `part`.
-    pub(crate) fn covering(display: Display, part: Part) -> Self {
-        Self {
-            display: Some(display),
-            part,
-            ..Self::default()
-        }
-    }
-
-    /// A canvas over `display` on which the user drags out the part to record, which goes to
-    /// `chosen`.
-    pub(crate) fn picking(display: Display, chosen: Sender<Part>) -> Self {
-        Self {
-            display: Some(display),
-            picking: Some(chosen),
-            ..Self::default()
-        }
-    }
-
-    /// The display to cover; `None` hides the overlay.
-    pub(crate) const fn display(&self) -> Option<Display> {
-        self.display
     }
 
     /// Moves the ink and marks with the part recorded, as its window moves. Returns whether it
@@ -133,7 +160,7 @@ impl Canvas {
     /// Keeps the `finished` strokes, shows `drawing` as the stroke in progress, both normalized to
     /// the part recorded, and takes `marks` when they changed, at `now`. Every stroke the
     /// recording finishes arrives once, in order, and `marks` number them as the bundle does. Ink
-    /// or a pin arriving after earlier ink has faded starts a clean canvas, and ink no longer being
+    /// or a pin arriving after earlier ink has faded starts a clean sheet, and ink no longer being
     /// drawn or a pin starts the hold and fade; a stroke cut for length while the pen keeps
     /// drawing does neither. Returns whether anything visible changed.
     pub(crate) fn update(
@@ -202,7 +229,7 @@ impl Canvas {
         self.opacity(now) <= 0.0
     }
 
-    /// When the overlay next needs a frame at `now`, if the canvas does not change first.
+    /// When the overlay next needs a frame at `now`, if the sheet does not change first.
     fn next_frame(&self, now: Instant) -> Redraw {
         match self.since_lift(now) {
             Some(since) if since < HOLD => Redraw::After(HOLD.saturating_sub(since)),
@@ -227,7 +254,7 @@ struct Overlay {
     canvas: watch::Receiver<Canvas>,
     window: AnyWindowHandle,
     /// The display covered, and whether an area is being chosen on it.
-    cover: (Option<Display>, bool),
+    cover: Option<(Display, bool)>,
     /// Where a drag choosing an area began and where it is now, in window pixels.
     drag: Option<[gpui::Point<Pixels>; 2]>,
     visibility: Option<Task<()>>,
@@ -239,15 +266,10 @@ struct Overlay {
 impl Overlay {
     fn new(canvas: watch::Receiver<Canvas>, window: &Window, cx: &Context<'_, Self>) -> Self {
         Self {
-            _updates: follow(
-                canvas.clone(),
-                cx,
-                |canvas| (canvas.display(), canvas.picking.is_some()),
-                Self::cover,
-            ),
+            _updates: follow(canvas.clone(), cx, Canvas::cover, Self::cover),
             canvas,
             window: window.window_handle(),
-            cover: (None, false),
+            cover: None,
             drag: None,
             visibility: None,
             wake: None,
@@ -256,20 +278,19 @@ impl Overlay {
 
     /// Moves onto the display and shows, taking input while an area is chosen, or hides when there
     /// is no display, then redraws. An area that cannot be chosen here is the whole display.
-    fn cover(&mut self, cover: (Option<Display>, bool), cx: &mut Context<'_, Self>) {
+    fn cover(&mut self, cover: Option<(Display, bool)>, cx: &mut Context<'_, Self>) {
         if cover != self.cover {
             self.cover = cover;
-            let (display, picking) = cover;
-            if !picking {
+            if !cover.is_some_and(|(_, picking)| picking) {
                 self.drag = None;
             }
-            let chosen = self.canvas.borrow().picking.clone();
+            let chosen = self.canvas.borrow().chosen().cloned();
             self.visibility = Some(defer_native(
                 self.window,
                 "overlay",
                 cx,
                 move |native, _| {
-                    if !place(native, display, picking)
+                    if !place(native, cover)
                         && let Some(chosen) = chosen
                     {
                         chosen.close();
@@ -289,8 +310,7 @@ impl Overlay {
         let sent = dragged(from, to, size).is_some_and(|part| {
             self.canvas
                 .borrow()
-                .picking
-                .as_ref()
+                .chosen()
                 .is_some_and(|chosen| chosen.try_send(part).is_ok())
         });
         self.drag = sent.then_some([from, to]);
@@ -356,24 +376,31 @@ impl Overlay {
     }
 }
 
-/// Covers `display` and shows the overlay, taking clicks only while `picking`, or hides it, and
-/// returns whether it covers a display. An overlay that cannot cover the display stays hidden
-/// rather than misplaced.
-fn place(native: &NativeWindow, display: Option<Display>, picking: bool) -> bool {
-    let covered = display.is_some_and(|display| native.configure_overlay(display).is_ok());
-    native.set_overlay_input(covered && picking);
-    native.set_overlay_visible(covered);
-    covered
+/// Covers the display of `cover` and shows the overlay, taking clicks only while an area is
+/// chosen there, or hides it, and returns whether it covers a display. An overlay that cannot
+/// cover the display stays hidden rather than misplaced.
+fn place(native: &NativeWindow, cover: Option<(Display, bool)>) -> bool {
+    let covered = cover.filter(|&(display, _)| native.configure_overlay(display).is_ok());
+    native.set_overlay_input(covered.is_some_and(|(_, picking)| picking));
+    native.set_overlay_visible(covered.is_some());
+    covered.is_some()
 }
 
 impl Render for Overlay {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let sheet = self.canvas.borrow().clone();
+        let current = self.canvas.borrow().clone();
         let size = window.viewport_size();
-        if sheet.picking.is_some() {
-            self.wake = None;
-            return self.picker(size, cx);
-        }
+        let sheet = match current {
+            Canvas::Covering { sheet, .. } => sheet,
+            Canvas::Picking { .. } => {
+                self.wake = None;
+                return self.picker(size, cx);
+            },
+            Canvas::Hidden => {
+                self.wake = None;
+                return div();
+            },
+        };
         let now = Instant::now();
         let opacity = sheet.opacity(now);
         self.wake = match sheet.next_frame(now) {
@@ -545,7 +572,7 @@ fn disc(center: Point, radius: f32, inner: f32, content: Option<Div>) -> Div {
 }
 
 /// Paints every stroke as the pen outline the bundle draws, at a width that reads on screen.
-fn paint(sheet: &Canvas, bounds: Bounds<Pixels>, opacity: f32, window: &mut Window) {
+fn paint(sheet: &Sheet, bounds: Bounds<Pixels>, opacity: f32, window: &mut Window) {
     let area = on_overlay(sheet.part, bounds.size);
     let origin = point(
         bounds.origin.x + area.origin.x,
@@ -603,7 +630,7 @@ pub(crate) fn attend(
         let mut reported = false;
         loop {
             if canvas
-                .wait_for(|canvas| canvas.display.is_some())
+                .wait_for(|canvas| canvas.display().is_some())
                 .await
                 .is_err()
             {
@@ -615,7 +642,7 @@ pub(crate) fn attend(
                 Ok(Err(error)) => {
                     // No area can be dragged out without the overlay: the Show records the whole
                     // display instead.
-                    if let Some(chosen) = &canvas.borrow().picking {
+                    if let Some(chosen) = canvas.borrow().chosen() {
                         chosen.close();
                     }
                     (None, (!reported).then_some(error))
@@ -623,7 +650,7 @@ pub(crate) fn attend(
                 Err(_) => return,
             };
             let released = canvas
-                .wait_for(|canvas| canvas.display.is_none())
+                .wait_for(|canvas| canvas.display().is_none())
                 .await
                 .is_ok();
             if let Some(overlay) = overlay {
@@ -702,61 +729,61 @@ mod tests {
         move |millis| start.checked_add(Duration::from_millis(millis)).unwrap()
     }
 
-    fn whole(canvas: &Canvas, now: Instant) -> bool {
-        (canvas.opacity(now) - 1.0).abs() < f32::EPSILON
+    fn whole(sheet: &Sheet, now: Instant) -> bool {
+        (sheet.opacity(now) - 1.0).abs() < f32::EPSILON
     }
 
     #[test]
     fn ink_holds_while_drawing_then_fades_out_after_the_pen_lifts() {
         let at = clock();
-        let mut canvas = Canvas::default();
-        assert!(canvas.update([], stroke(3), None, at(0)));
-        assert!(canvas.update([stroke(3).into()], [], None, at(0)));
-        assert!(whole(&canvas, at(600)));
-        let midway = canvas.opacity(at(975));
+        let mut sheet = Sheet::new(Part::WHOLE);
+        assert!(sheet.update([], stroke(3), None, at(0)));
+        assert!(sheet.update([stroke(3).into()], [], None, at(0)));
+        assert!(whole(&sheet, at(600)));
+        let midway = sheet.opacity(at(975));
         assert!(midway > 0.2 && midway < 0.3, "{midway}");
-        assert!(canvas.faded(at(1_300)));
+        assert!(sheet.faded(at(1_300)));
         // Drawing again keeps every mark whole for as long as the stroke takes.
-        assert!(canvas.update([], stroke(4), None, at(600)));
-        assert!(whole(&canvas, at(5_000)));
+        assert!(sheet.update([], stroke(4), None, at(600)));
+        assert!(whole(&sheet, at(5_000)));
     }
 
     #[test]
     fn held_ink_draws_no_frames_until_it_fades() {
         let at = clock();
-        let mut canvas = Canvas::default();
-        canvas.update([], stroke(3), None, at(0));
-        assert_eq!(canvas.next_frame(at(0)), Redraw::OnChange);
-        canvas.update([stroke(3).into()], [], None, at(0));
+        let mut sheet = Sheet::new(Part::WHOLE);
+        sheet.update([], stroke(3), None, at(0));
+        assert_eq!(sheet.next_frame(at(0)), Redraw::OnChange);
+        sheet.update([stroke(3).into()], [], None, at(0));
         let left = Duration::from_millis(50);
-        assert_eq!(canvas.next_frame(at(600)), Redraw::After(left));
-        assert_eq!(canvas.next_frame(at(975)), Redraw::Animate);
-        assert_eq!(canvas.next_frame(at(1_300)), Redraw::OnChange);
+        assert_eq!(sheet.next_frame(at(600)), Redraw::After(left));
+        assert_eq!(sheet.next_frame(at(975)), Redraw::Animate);
+        assert_eq!(sheet.next_frame(at(1_300)), Redraw::OnChange);
     }
 
     #[test]
     fn marks_drawn_before_the_fade_ends_stay_and_later_ink_starts_clean() {
         let at = clock();
-        let mut canvas = Canvas::default();
-        canvas.update([], stroke(3), None, at(0));
-        canvas.update([stroke(3).into()], [], None, at(100));
+        let mut sheet = Sheet::new(Part::WHOLE);
+        sheet.update([], stroke(3), None, at(0));
+        sheet.update([stroke(3).into()], [], None, at(100));
         // An arrow drawn while the circle fades keeps it.
-        canvas.update([], stroke(4), None, at(1_000));
-        canvas.update([stroke(4).into()], [], None, at(1_100));
-        assert_eq!(canvas.strokes.len(), 2);
+        sheet.update([], stroke(4), None, at(1_000));
+        sheet.update([stroke(4).into()], [], None, at(1_100));
+        assert_eq!(sheet.strokes.len(), 2);
         // A stroke cut for length while the pen keeps drawing stays whole.
-        canvas.update([], stroke(5), None, at(1_150));
-        assert!(canvas.update([stroke(5).into()], stroke(2), None, at(1_200)));
-        assert!(whole(&canvas, at(9_000)));
-        assert_eq!(canvas.strokes.len(), 3);
+        sheet.update([], stroke(5), None, at(1_150));
+        assert!(sheet.update([stroke(5).into()], stroke(2), None, at(1_200)));
+        assert!(whole(&sheet, at(9_000)));
+        assert_eq!(sheet.strokes.len(), 3);
         // A pointer that moved too little to add ink changes nothing.
-        assert!(!canvas.update([], stroke(2), None, at(1_300)));
-        canvas.update([stroke(2).into()], [], None, at(1_400));
-        assert_eq!(canvas.next_frame(at(1_400)), Redraw::After(HOLD));
-        // Ink once everything has faded starts a clean canvas.
-        assert!(canvas.update([], stroke(3), None, at(2_800)));
-        assert_eq!(canvas.strokes, Vec::<Arc<[Point]>>::new());
-        assert!(!Canvas::default().update([], [], None, at(0)));
+        assert!(!sheet.update([], stroke(2), None, at(1_300)));
+        sheet.update([stroke(2).into()], [], None, at(1_400));
+        assert_eq!(sheet.next_frame(at(1_400)), Redraw::After(HOLD));
+        // Ink once everything has faded starts a clean sheet.
+        assert!(sheet.update([], stroke(3), None, at(2_800)));
+        assert_eq!(sheet.strokes, Vec::<Arc<[Point]>>::new());
+        assert!(!Sheet::new(Part::WHOLE).update([], [], None, at(0)));
     }
 
     /// Mark `number`, made of the recording's `strokes`.
@@ -790,48 +817,48 @@ mod tests {
             .collect()
     }
 
-    fn shown(canvas: &Canvas) -> Vec<usize> {
-        canvas.shown().map(|mark| mark.number).collect()
+    fn shown(sheet: &Sheet) -> Vec<usize> {
+        sheet.shown().map(|mark| mark.number).collect()
     }
 
     #[test]
     fn numbers_show_beside_their_marks_until_the_ink_fades() {
         let at = clock();
-        let mut canvas = Canvas::default();
-        canvas.update([], stroke(3), None, at(0));
-        assert!(canvas.update([stroke(3).into()], [], Some(marks(1)), at(100)));
-        assert_eq!(shown(&canvas), [1]);
+        let mut sheet = Sheet::new(Part::WHOLE);
+        sheet.update([], stroke(3), None, at(0));
+        assert!(sheet.update([stroke(3).into()], [], Some(marks(1)), at(100)));
+        assert_eq!(shown(&sheet), [1]);
         // A pin keeps the ink before it and holds it again.
-        assert!(canvas.update([], [], Some(marks(2)), at(700)));
-        assert_eq!(shown(&canvas), [1, 2]);
-        assert_eq!(canvas.next_frame(at(700)), Redraw::After(HOLD));
+        assert!(sheet.update([], [], Some(marks(2)), at(700)));
+        assert_eq!(shown(&sheet), [1, 2]);
+        assert_eq!(sheet.next_frame(at(700)), Redraw::After(HOLD));
         // Once everything has faded, a pin starts clean, numbered on from the last mark.
-        assert!(canvas.update([], [], Some(marks(3)), at(2_100)));
-        assert_eq!(shown(&canvas), [3]);
-        assert_eq!(canvas.strokes, Vec::<Arc<[Point]>>::new());
-        assert!(whole(&canvas, at(2_100)));
+        assert!(sheet.update([], [], Some(marks(3)), at(2_100)));
+        assert_eq!(shown(&sheet), [3]);
+        assert_eq!(sheet.strokes, Vec::<Arc<[Point]>>::new());
+        assert!(whole(&sheet, at(2_100)));
         // So does a stroke.
-        canvas.update([], stroke(4), None, at(4_000));
-        canvas.update([stroke(4).into()], [], Some(marks(4)), at(4_100));
-        assert_eq!(shown(&canvas), [4]);
+        sheet.update([], stroke(4), None, at(4_000));
+        sheet.update([stroke(4).into()], [], Some(marks(4)), at(4_100));
+        assert_eq!(shown(&sheet), [4]);
     }
 
     #[test]
     fn a_stroke_that_joins_a_faded_mark_shows_its_number() {
         let at = clock();
-        let mut canvas = Canvas::default();
-        canvas.update([], stroke(3), None, at(0));
-        canvas.update([stroke(3).into()], [], Some(grouped(&[1])), at(100));
+        let mut sheet = Sheet::new(Part::WHOLE);
+        sheet.update([], stroke(3), None, at(0));
+        sheet.update([stroke(3).into()], [], Some(grouped(&[1])), at(100));
         // Shift goes down again 1.1 s after the lift, soon enough for the bundle to join the next
         // stroke to mark ①, but the pen pauses and draws only once the circle has faded.
-        canvas.update([], stroke(4), None, at(1_450));
-        assert_eq!(canvas.strokes, Vec::<Arc<[Point]>>::new());
-        canvas.update([stroke(4).into()], [], Some(grouped(&[2])), at(1_700));
-        assert_eq!(shown(&canvas), [1]);
+        sheet.update([], stroke(4), None, at(1_450));
+        assert_eq!(sheet.strokes, Vec::<Arc<[Point]>>::new());
+        sheet.update([stroke(4).into()], [], Some(grouped(&[2])), at(1_700));
+        assert_eq!(shown(&sheet), [1]);
         // A stroke after everything has faded again starts a mark of its own.
-        canvas.update([], stroke(5), None, at(4_000));
-        canvas.update([stroke(5).into()], [], Some(grouped(&[2, 3])), at(4_100));
-        assert_eq!(shown(&canvas), [2]);
+        sheet.update([], stroke(5), None, at(4_000));
+        sheet.update([stroke(5).into()], [], Some(grouped(&[2, 3])), at(4_100));
+        assert_eq!(shown(&sheet), [2]);
     }
 
     #[test]
