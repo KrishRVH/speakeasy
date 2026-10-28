@@ -14,6 +14,8 @@ const BLOCK_WIDTH: usize = COLUMNS / BLOCK_COLUMNS;
 const BLOCK_HEIGHT: usize = ROWS / BLOCK_ROWS;
 /// A change that fills a few blocks counts nearly as much as one spread over the whole frame.
 const LOCAL_BOOST: f32 = 1.4;
+/// A [`transition`](Signature::transition) stronger than this is a scene change.
+pub(crate) const SCENE: f32 = 0.08;
 /// A cell changed when its luma moved by more than this share of the full range.
 const CELL_CHANGE: f32 = 0.04;
 /// Cells average at most this many samples a side, so cost does not grow with resolution.
@@ -181,7 +183,7 @@ fn mean_luma(pixels: &[&[[u8; 4]]], rows: Range<usize>, columns: Range<usize>) -
             count += 1.0;
         }
     }
-    convert::channel(sum / count.max(1.0))
+    convert::quantize(sum / count.max(1.0))
 }
 
 #[cfg(test)]
@@ -236,14 +238,14 @@ pub(crate) mod tests {
         // A cursor-sized square straddling a block corner.
         let cursor = with_patch(640, 360, [314.0, 174.0, 326.0, 186.0]);
         assert!(
-            base.transition(&cursor) < 0.08,
+            base.transition(&cursor) < SCENE,
             "{}",
             base.transition(&cursor)
         );
         // A panel opening over a sixth of the frame is.
         let opened = with_patch(640, 360, [0.0, 0.0, 320.0, 120.0]);
         assert!(
-            base.transition(&opened) > 0.08,
+            base.transition(&opened) > SCENE,
             "{}",
             base.transition(&opened)
         );

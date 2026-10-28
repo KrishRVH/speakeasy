@@ -345,7 +345,7 @@ mod tests {
         assert_eq!(
             shape_of(&flat, half_height),
             Shape::Circle,
-            "a flat loop around a wide control"
+            "A flat loop around a wide control"
         );
         let zigzag = [
             [0.1, 0.40],
@@ -357,7 +357,7 @@ mod tests {
         assert_eq!(
             shape_of(&zigzag, half_height),
             Shape::Scribble,
-            "a flat zigzag"
+            "A flat zigzag"
         );
         let tiny = Size {
             width: 20.0,
@@ -366,7 +366,7 @@ mod tests {
         assert_eq!(
             shape_of(&loop_points, tiny),
             Shape::Tap,
-            "the same loop on a tiny surface"
+            "The same loop on a tiny surface"
         );
     }
 
@@ -443,12 +443,12 @@ mod tests {
         assert_eq!(
             ranges,
             [0..1, 1..1, 1..2],
-            "a pin between strokes drawn close together ends a mark"
+            "A pin between strokes drawn close together ends a mark"
         );
         assert_eq!(
             group(&strokes[..1], &pins[..1], SURFACE),
             marks[..2],
-            "later marks never renumber earlier ones, so live labels match the bundle's"
+            "Later marks never renumber earlier ones, so live labels match the bundle's"
         );
     }
 
@@ -478,9 +478,9 @@ mod tests {
             },
             [0.2, 0.5, 0.6, 0.5],
         );
-        assert_eq!(arrow, Point::new(184.0, 250.0), "past the tail");
+        assert_eq!(arrow, Point::new(184.0, 250.0), "Past the tail");
         let underline = label(Shape::Underline, [0.2, 0.5, 0.6, 0.52]);
-        assert_eq!(underline, Point::new(616.0, 255.0), "past the right end");
+        assert_eq!(underline, Point::new(616.0, 255.0), "Past the right end");
         let circle = label(Shape::Circle, [0.2, 0.2, 0.6, 0.8]);
         assert!(circle.x > 600.0 && circle.y < 100.0, "{circle:?}");
         let cornered = label(
@@ -489,7 +489,7 @@ mod tests {
             },
             [1.0, 0.0, 1.0, 0.0],
         );
-        assert_eq!(cornered, Point::new(989.0, 11.0), "kept on the surface");
+        assert_eq!(cornered, Point::new(989.0, 11.0), "Kept on the surface");
     }
 
     #[test]

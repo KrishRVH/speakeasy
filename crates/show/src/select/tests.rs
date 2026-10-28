@@ -3,7 +3,9 @@
 use proptest::prelude::*;
 
 use super::*;
-use crate::{InkPoint, Narration, Point, Size, Stroke, Word, signature::tests::signature};
+use crate::{
+    InkPoint, Narration, Point, Size, Stroke, recording::tests::words, signature::tests::signature,
+};
 
 fn sample(at: u64, level: u8) -> Sample {
     Sample {
@@ -43,20 +45,6 @@ fn click(at: u64) -> Action {
         at: Moment::from_millis(at),
         point: Point::new(0.5, 0.5),
     }
-}
-
-fn words(list: &[(u64, &str)]) -> Narration {
-    Narration::Words(
-        list.iter()
-            .map(|&(at, text)| Word {
-                span: Span::new(
-                    Moment::from_millis(at),
-                    Moment::from_millis(at.saturating_add(200)),
-                ),
-                text: text.to_owned(),
-            })
-            .collect(),
-    )
 }
 
 fn recording(strokes: Vec<Stroke>, actions: Vec<Action>, narration: Narration) -> Recording {
@@ -121,7 +109,7 @@ fn later_actions_survive_a_full_first_sheet() {
                 .keyframes
                 .iter()
                 .any(|frame| frame.action == Some(action)),
-            "missing action at {}",
+            "Missing action at {}",
             action.span().end()
         );
     }

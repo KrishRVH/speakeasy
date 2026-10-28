@@ -5,7 +5,7 @@ use std::{fmt, path::Path};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Error, Image, Keyframe, Mark, Moment, Point, Recording, Rect, Selection, Typeface,
+    Error, Image, Keyframe, Mark, Moment, Recording, Selection, Typeface,
     describe::{Count, Marker},
     draw::{self, Corner},
     parallel, sheet,
@@ -30,11 +30,6 @@ impl Keyframe {
     #[must_use]
     pub fn file(&self) -> String {
         format!("frames/frame-{:02}.png", self.index)
-    }
-
-    /// The marks drawn on the keyframe, among the selection's `marks`.
-    pub(crate) fn marks_in<'a>(&self, marks: &'a [Mark]) -> &'a [Mark] {
-        marks.get(self.marks.clone()).unwrap_or_default()
     }
 }
 
@@ -92,7 +87,6 @@ impl fmt::Debug for File {
 /// sheet's frames are ever decoded together.
 ///
 /// # Errors
-///
 /// Fails with the first error `frame` returns, before loading the next sheet's frames, or when an
 /// image cannot be built or encoded.
 pub fn compose<E: From<Error> + Send>(
@@ -120,16 +114,7 @@ pub fn compose<E: From<Error> + Send>(
             .iter()
             .zip(annotated)
             .map(|(keyframe, (mut image, corner))| {
-                let (width, height) = (image.width() as f32, image.height() as f32);
-                let whole = Rect::from_origin(Point::default(), width, height);
-                draw::badge(
-                    &mut image.as_mut(),
-                    whole,
-                    keyframe,
-                    draw::badge_scale(width, height),
-                    corner,
-                    typeface,
-                );
+                draw::badge_frame(&mut image, keyframe, corner, typeface);
                 (keyframe, image)
             })
             .collect();
@@ -239,8 +224,7 @@ impl Bundle {
     /// back on its own, since an agent reads it first.
     ///
     /// # Errors
-    ///
-    /// Fails if the manifest cannot be encoded, which valid input never causes.
+    /// Fails when the manifest cannot be encoded, which valid input never causes.
     pub fn into_files(self, directory: &Path) -> Result<(String, Vec<File>), Error> {
         let summary = Summary {
             manifest: &self.manifest,

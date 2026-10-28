@@ -5,50 +5,42 @@ use serde_json::json;
 
 use super::*;
 use crate::{
-    Action, InkPoint, Narration, Pin, Reason, Sample, Shape, Size, Span, Stroke, Word, select,
-    signature::tests::signature, typeface::tests::typeface,
+    Action, InkPoint, Pin, Point, Reason, Rect, Sample, Shape, Size, Span, Stroke,
+    recording::tests::words, select, signature::tests::signature, typeface::tests::typeface,
 };
-
-fn at(millis: u64) -> Moment {
-    Moment::from_millis(millis)
-}
 
 #[test]
 fn show_json_keeps_its_wire_format() {
     let click = Action::Click {
-        at: at(400),
+        at: Moment::from_millis(400),
         point: Point::new(0.5, 0.25),
-    };
-    let word = |start: u64, text: &str| Word {
-        span: Span::new(at(start), at(start + 200)),
-        text: text.to_owned(),
     };
     let ink = |x: f32, millis: u64| InkPoint {
         point: Point::new(x, 0.5),
-        at: at(millis),
+        at: Moment::from_millis(millis),
     };
     let manifest = Manifest {
         version: Manifest::VERSION,
         recording: Recording {
-            duration: at(2_000),
+            duration: Moment::from_millis(2_000),
             surface: Size {
                 width: 800.0,
                 height: 600.0,
             },
             strokes: vec![Stroke::new(vec![ink(0.25, 100), ink(0.75, 300)]).unwrap()],
             pins: vec![Pin {
-                at: at(1_200),
+                at: Moment::from_millis(1_200),
                 point: Point::new(0.5, 0.25),
             }],
             actions: vec![
                 click,
                 Action::Drag {
-                    span: Span::new(at(600), at(900)),
+                    span: Span::new(Moment::from_millis(600), Moment::from_millis(900)),
                     from: Point::new(0.25, 0.75),
                     to: Point::new(0.75, 0.75),
                 },
             ],
-            narration: Narration::Words(vec![word(100, "Look"), word(300, "here.")]),
+            narration: words(&[(100, "Look"), (300, "here.")]),
         },
         marks: vec![
             Mark {
@@ -58,7 +50,7 @@ fn show_json_keeps_its_wire_format() {
                     to: Point::new(0.75, 0.5),
                 },
                 strokes: 0..1,
-                span: Span::new(at(100), at(300)),
+                span: Span::new(Moment::from_millis(100), Moment::from_millis(300)),
                 bounds: Rect {
                     left: 0.25,
                     top: 0.5,
@@ -72,14 +64,14 @@ fn show_json_keeps_its_wire_format() {
                     point: Point::new(0.5, 0.25),
                 },
                 strokes: 1..1,
-                span: Span::at(at(1_200)),
+                span: Span::at(Moment::from_millis(1_200)),
                 bounds: Rect::from_origin(Point::new(0.5, 0.25), 0.0, 0.0),
             },
         ],
         keyframes: vec![
             Keyframe {
                 index: 1,
-                at: at(300),
+                at: Moment::from_millis(300),
                 reason: Reason::Mark,
                 event: "drew a line".to_owned(),
                 said: Some("Look here.".to_owned()),
@@ -88,7 +80,7 @@ fn show_json_keeps_its_wire_format() {
             },
             Keyframe {
                 index: 2,
-                at: at(1_000),
+                at: Moment::from_millis(1_000),
                 reason: Reason::Click,
                 event: "clicked".to_owned(),
                 said: None,
@@ -97,7 +89,7 @@ fn show_json_keeps_its_wire_format() {
             },
             Keyframe {
                 index: 3,
-                at: at(1_500),
+                at: Moment::from_millis(1_500),
                 reason: Reason::SceneChange,
                 event: "scene changed".to_owned(),
                 said: None,
@@ -197,7 +189,7 @@ fn a_failed_frame_stops_loading_before_the_next_sheet() {
         keyframes: (1..=13)
             .map(|index| Keyframe {
                 index,
-                at: at(index as u64),
+                at: Moment::from_millis(index as u64),
                 reason: Reason::Middle,
                 event: String::new(),
                 said: None,
@@ -213,7 +205,7 @@ fn a_failed_frame_stops_loading_before_the_next_sheet() {
             // Thirteen keyframes share three sheets as #1–#5, #6–#9, and #10–#13.
             assert!(
                 moment.as_millis() <= 9,
-                "loaded the sheet after a failed sheet"
+                "Loaded the sheet after a failed sheet"
             );
             if moment.as_millis() == 7 {
                 Err(Error::unsampled())
@@ -238,10 +230,10 @@ fn contact_sheets_cover_every_frame_once_in_readable_pages() {
         (13, &[5, 4, 4]),
     ] {
         let recording = Recording {
-            duration: at(30_000),
+            duration: Moment::from_millis(30_000),
             actions: (0..count)
                 .map(|index| Action::Click {
-                    at: at(index as u64 * 2_000),
+                    at: Moment::from_millis(index as u64 * 2_000),
                     point: Point::new(0.1, 0.1),
                 })
                 .collect(),
@@ -249,7 +241,7 @@ fn contact_sheets_cover_every_frame_once_in_readable_pages() {
         };
         let samples: Vec<Sample> = (0..count)
             .map(|index| Sample {
-                at: at(index as u64 * 2_000 + 250),
+                at: Moment::from_millis(index as u64 * 2_000 + 250),
                 signature: signature(128),
             })
             .collect();
@@ -299,7 +291,7 @@ fn contact_sheets_cover_every_frame_once_in_readable_pages() {
                 assert_eq!(
                     present,
                     page.contains(&index),
-                    "frame {} on {} of {count} frames",
+                    "Frame {} on {} of {count} frames",
                     index + 1,
                     file.name
                 );

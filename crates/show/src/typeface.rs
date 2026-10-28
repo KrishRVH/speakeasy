@@ -18,7 +18,6 @@ impl Typeface {
     /// Reads the first face in `data`.
     ///
     /// # Errors
-    ///
     /// Fails when `data` is not a TrueType or OpenType font.
     pub fn parse(data: &'static [u8]) -> Result<Self, Error> {
         Face::parse(data, 0)

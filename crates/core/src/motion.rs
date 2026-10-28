@@ -18,7 +18,7 @@ pub struct Spring {
 }
 
 impl Spring {
-    /// Creates a spring resting at `value`.
+    /// A spring resting at `value`.
     #[must_use]
     pub const fn new(value: f32) -> Self {
         Self {
@@ -28,7 +28,7 @@ impl Spring {
         }
     }
 
-    /// Returns the current position.
+    /// The current position.
     #[must_use]
     pub const fn value(&self) -> f32 {
         self.value

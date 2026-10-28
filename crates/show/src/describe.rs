@@ -1,5 +1,5 @@
 //! How a Show reads to its agent: marks, actions, keyframe events, and the markers beside
-//! narration in the summary. Positions are fractions of the surface; screen text never appears.
+//! narration in the summary. Positions are normalized to the surface; screen text never appears.
 
 use std::fmt;
 
@@ -34,7 +34,7 @@ pub(crate) fn event(basis: &Basis, marks: &[Mark]) -> String {
     }
 }
 
-/// Describes the mark for a reader after its number, with positions as fractions of the surface.
+/// Describes the mark for a reader after its number, with positions normalized to the surface.
 impl fmt::Display for Mark {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Rect {

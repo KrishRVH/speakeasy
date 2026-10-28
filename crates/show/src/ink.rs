@@ -15,8 +15,8 @@ const SMOOTHING: f32 = 0.5;
 const STREAMLINE: f32 = 0.5;
 /// How quickly simulated pressure follows the pen's speed.
 const PRESSURE_RATE: f32 = 0.275;
-/// Nodes within this distance of the line's end, other than the last, are lift-off jitter and
-/// skipped.
+/// Nodes other than the last within this distance of the end, measured along the line, are
+/// lift-off jitter and skipped.
 const END_JITTER: f32 = 3.0;
 /// Steps in each round cap and corner.
 const ARC_STEPS: u8 = 13;

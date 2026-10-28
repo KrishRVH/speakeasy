@@ -8,13 +8,11 @@ use crate::{
     Moment, Span,
     marks::Mark,
     recording::{Action, Word},
-    signature::{Sample, Signature},
+    signature::{SCENE, Sample, Signature},
 };
 
 /// A click's keyframe shows the screen this long after release, once the app has responded.
 const SETTLE: Duration = Duration::from_millis(250);
-/// A transition stronger than this is a scene change.
-const SCENE: f32 = 0.08;
 /// Scene changes and spoken cues must differ at least this much from every chosen keyframe, and
 /// any keyframe during or near a mark from the mark's.
 const NOVELTY: f32 = 0.03;

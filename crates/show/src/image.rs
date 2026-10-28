@@ -42,7 +42,6 @@ impl Image {
     /// Wraps captured BGRA or BGRX rows; the screen is opaque, so their fourth byte is ignored.
     ///
     /// # Errors
-    ///
     /// Fails when a dimension is zero or `bgra` does not hold exactly `width × height` pixels.
     pub fn from_bgra(width: u32, height: u32, mut bgra: Vec<u8>) -> Result<Self, Error> {
         let (pixels, _) = bgra.as_chunks_mut::<4>();
@@ -169,7 +168,7 @@ impl Image {
             data.extend(
                 line.iter()
                     .flatten()
-                    .map(|&channel| convert::channel(channel)),
+                    .map(|&channel| convert::quantize(channel)),
             );
         }
         Self::from_premultiplied(width, height, data).ok()

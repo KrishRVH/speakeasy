@@ -122,23 +122,7 @@ fn append(text: &mut String, word: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn words(spoken: &[(u64, &str)]) -> Vec<Word> {
-        spoken
-            .iter()
-            .map(|&(start, text)| Word {
-                span: Span::new(
-                    Moment::from_millis(start),
-                    Moment::from_millis(start.saturating_add(200)),
-                ),
-                text: text.to_owned(),
-            })
-            .collect()
-    }
-
-    fn narration(spoken: &[(u64, &str)]) -> Narration {
-        Narration::Words(words(spoken))
-    }
+    use crate::recording::tests::words;
 
     fn at(anchors: &[u64]) -> Vec<Moment> {
         anchors.iter().copied().map(Moment::from_millis).collect()
@@ -165,7 +149,7 @@ mod tests {
 
     #[test]
     fn words_partition_without_duplicates_or_gaps() {
-        let said = narration(&[
+        let said = words(&[
             (0, "Make"),
             (1_000, "this"),
             (2_000, "smaller"),
@@ -182,7 +166,7 @@ mod tests {
 
     #[test]
     fn an_action_mid_sentence_takes_the_sentence_from_its_start() {
-        let said = narration(HEADER_THEN_TAP);
+        let said = words(HEADER_THEN_TAP);
         assert_eq!(
             texts(&[400, 2_450], &said),
             ["First the header.", "When I tap it, nothing."]
@@ -191,7 +175,7 @@ mod tests {
 
     #[test]
     fn a_short_comma_lead_in_stays_with_its_clause() {
-        let said = narration(&[
+        let said = words(&[
             (200, "The"),
             (400, "message"),
             (600, "was"),
@@ -228,7 +212,7 @@ mod tests {
     fn an_action_after_a_finished_sentence_does_not_reopen_it() {
         // The recognizer stretched "header." across the pause after it; an action during that
         // pause belongs to what comes next.
-        let mut said = words(HEADER_THEN_TAP);
+        let mut said = words(HEADER_THEN_TAP).words().to_vec();
         said[2].span = Span::new(Moment::from_millis(500), Moment::from_millis(1_950));
         assert_eq!(
             texts(&[0, 1_800], &Narration::Words(said)),
@@ -244,7 +228,7 @@ mod tests {
             [Some("All of it.".to_owned()), None]
         );
         assert_eq!(align(&at(&[0]), &Narration::default()), [None]);
-        assert_eq!(align(&at(&[0]), &narration(&[(0, "  ")])), [None]);
+        assert_eq!(align(&at(&[0]), &words(&[(0, "  ")])), [None]);
         assert_eq!(align(&[], &text), Vec::<Option<String>>::new());
     }
 }

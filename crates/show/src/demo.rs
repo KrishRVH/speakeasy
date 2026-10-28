@@ -29,7 +29,7 @@ const WINDOW: Rect = Rect {
     right: 1280.0,
     bottom: 810.0,
 };
-const CORNER: f32 = 14.0;
+const CORNER_RADIUS: f32 = 14.0;
 const SIDEBAR_RIGHT: f32 = 380.0;
 const TITLE_BAR: f32 = 44.0;
 const SECTIONS: [&str; 4] = ["General", "Shortcuts", "Audio", "Appearance"];
@@ -103,7 +103,6 @@ impl Demo {
     /// with keyframes rendered at `keyframe_size` pixels.
     ///
     /// # Errors
-    ///
     /// Fails when a keyframe dimension is zero or too large to allocate, or the script records no
     /// frames.
     pub fn bundle(&self, keyframe_size: (u32, u32)) -> Result<Bundle, Error> {
@@ -138,14 +137,14 @@ struct Scene<'a> {
 impl Scene<'_> {
     fn draw(&mut self, at: Moment) {
         self.backdrop();
-        self.fill(rounded(WINDOW, CORNER), [245, 245, 247, 255]);
+        self.fill(rounded(WINDOW, CORNER_RADIUS), [245, 245, 247, 255]);
         let title_bar = Rect {
             bottom: WINDOW.top + TITLE_BAR,
             ..WINDOW
         };
-        self.fill(rounded(title_bar, CORNER), CHROME);
+        self.fill(rounded(title_bar, CORNER_RADIUS), CHROME);
         let square_base = Rect {
-            top: title_bar.bottom - CORNER,
+            top: title_bar.bottom - CORNER_RADIUS,
             ..title_bar
         };
         self.fill(rounded(square_base, 0.0), CHROME);

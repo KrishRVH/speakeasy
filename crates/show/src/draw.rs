@@ -251,9 +251,24 @@ pub(crate) fn badge(
     );
 }
 
-/// How large a badge reads well on a frame of this size.
-pub(crate) fn badge_scale(width: f32, height: f32) -> f32 {
-    (height / 480.0).min(width / 280.0).max(0.45)
+/// Draws `keyframe`'s badge in the top `corner` of its full-size frame, sized for the frame.
+pub(crate) fn badge_frame(
+    image: &mut Image,
+    keyframe: &Keyframe,
+    corner: Corner,
+    typeface: &Typeface,
+) {
+    let (width, height) = (image.width() as f32, image.height() as f32);
+    let scale = (height / 480.0).min(width / 280.0).max(0.45);
+    let whole = Rect::from_origin(Point::default(), width, height);
+    badge(
+        &mut image.as_mut(),
+        whole,
+        keyframe,
+        scale,
+        corner,
+        typeface,
+    );
 }
 
 pub(crate) fn paint(color: [u8; 4]) -> Paint<'static> {
@@ -390,8 +405,8 @@ mod tests {
                 })
             })
         };
-        assert_eq!(inked(1_000, 0..1), [true, true], "its own keyframe");
-        assert_eq!(inked(2_000, 0..0), [true, true], "just after");
-        assert_eq!(inked(3_000, 0..0), [false, false], "long after");
+        assert_eq!(inked(1_000, 0..1), [true, true], "Its own keyframe");
+        assert_eq!(inked(2_000, 0..0), [true, true], "Just after");
+        assert_eq!(inked(3_000, 0..0), [false, false], "Long after");
     }
 }

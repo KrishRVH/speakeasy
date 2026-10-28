@@ -53,7 +53,7 @@ pub struct Gesture {
 }
 
 impl Gesture {
-    /// Returns the current mode; only gesture transitions change it.
+    /// The current mode; only gesture transitions change it.
     #[must_use]
     pub fn state(&self) -> State {
         match self.phase {
@@ -128,7 +128,7 @@ impl Gesture {
         }
     }
 
-    /// Returns the earliest tap or recording deadline; callers wake and tick at this instant.
+    /// The earliest tap or recording deadline; callers wake and tick at this instant.
     #[must_use]
     pub fn deadline(&self) -> Option<Instant> {
         match self.phase {

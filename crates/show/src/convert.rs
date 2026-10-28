@@ -13,7 +13,7 @@
     clippy::cast_sign_loss,
     reason = "Negative channel values saturate to zero"
 )]
-pub(crate) fn channel(value: f32) -> u8 {
+pub(crate) fn quantize(value: f32) -> u8 {
     value.round() as u8
 }
 

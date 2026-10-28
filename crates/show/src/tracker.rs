@@ -368,33 +368,33 @@ mod tests {
         let t = &mut tracker;
         assert!(
             !t.pin(Span::at(Moment::START)),
-            "the pointer has not been seen"
+            "The pointer has not been seen"
         );
         let (first, second) = (clean(t, 0, 0.3), clean(t, 160, 0.3));
         assert!(pin(t, first, second));
         let third = clean(t, 320, 0.3);
-        assert!(!pin(t, second, third), "three taps pin once");
+        assert!(!pin(t, second, third), "Three taps pin once");
         let (first, second) = (clean(t, 1_000, 1.3), clean(t, 1_160, 1.3));
-        assert!(!pin(t, first, second), "on another display");
+        assert!(!pin(t, first, second), "On another display");
         let (first, second) = (tap(t, 2_000, 0.5, Tap::ShiftClick), clean(t, 2_160, 0.5));
         assert!(!pin(t, first, second), "Shift-clicking");
         let (first, second) = (
             tap(t, 3_000, 0.5, Tap::Flick),
             tap(t, 3_160, 0.5, Tap::Flick),
         );
-        assert!(!pin(t, first, second), "two quick strokes, as in an X");
+        assert!(!pin(t, first, second), "Two quick strokes, as in an X");
         let stroke = tap(t, 4_000, 0.6, Tap::Flick);
         let (first, second) = (clean(t, 4_160, 0.62), clean(t, 4_320, 0.62));
-        assert!(!pin(t, stroke, first), "a quick stroke and a tap");
+        assert!(!pin(t, stroke, first), "A quick stroke and a tap");
         assert!(
             pin(t, first, second),
-            "a quick stroke costs the double tap after it nothing"
+            "A quick stroke costs the double tap after it nothing"
         );
         let (first, second) = (clean(t, 5_000, 0.7), clean(t, 5_160, 0.7));
         tap(t, 5_240, 0.7, Tap::Flick);
         assert!(
             pin(t, first, second),
-            "a stroke seen after the taps but before their pin"
+            "A stroke seen after the taps but before their pin"
         );
         let recording = tracker.finish(Moment::from_millis(6_000));
         assert_eq!(
@@ -414,7 +414,7 @@ mod tests {
                 }
             ]
         );
-        assert_eq!(recording.strokes.len(), 4, "the flicks drew");
+        assert_eq!(recording.strokes.len(), 4, "The flicks drew");
         assert_eq!(recording.duration, Moment::from_millis(6_000));
     }
 

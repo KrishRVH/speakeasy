@@ -275,8 +275,24 @@ impl Word {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// Narration of each `(start, text)` word, each spoken for 200 ms.
+    pub(crate) fn words(spoken: &[(u64, &str)]) -> Narration {
+        Narration::Words(
+            spoken
+                .iter()
+                .map(|&(start, text)| Word {
+                    span: Span::new(
+                        Moment::from_millis(start),
+                        Moment::from_millis(start.saturating_add(200)),
+                    ),
+                    text: text.to_owned(),
+                })
+                .collect(),
+        )
+    }
 
     fn ink(x: f32, at: u64) -> InkPoint {
         InkPoint {
@@ -302,16 +318,9 @@ mod tests {
     #[test]
     fn debugging_narration_never_prints_what_was_said() {
         let shown = |said: &str| {
-            let word = Word {
-                span: Span::new(Moment::from_millis(0), Moment::from_millis(200)),
-                text: said.to_owned(),
-            };
             format!(
                 "{:?}",
-                [
-                    Narration::Words(vec![word]),
-                    Narration::Text(said.to_owned())
-                ]
+                [words(&[(0, said)]), Narration::Text(said.to_owned())]
             )
         };
         assert_eq!(shown("alpha"), shown("omega"));

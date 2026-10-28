@@ -1,4 +1,4 @@
-//! Turns a recorded Show into a bundle a coding agent can read.
+//! Turning a recorded Show into a bundle a coding agent can read.
 //!
 //! A Show is a screen recording with narration, pointer events, and ink and numbered pins over
 //! the screen. During capture, [`Tracker`] turns pointer samples into ink, pins, and actions, and

@@ -80,6 +80,13 @@ pub struct Keyframe {
     pub action: Option<Action>,
 }
 
+impl Keyframe {
+    /// The marks drawn on the keyframe, among the selection's `marks`.
+    pub(crate) fn marks_in<'a>(&self, marks: &'a [Mark]) -> &'a [Mark] {
+        marks.get(self.marks.clone()).unwrap_or_default()
+    }
+}
+
 /// Leaves out what was said, which is the user's speech, and the event, which can quote a spoken
 /// cue.
 impl fmt::Debug for Keyframe {

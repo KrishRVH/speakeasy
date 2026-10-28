@@ -13,9 +13,10 @@ const INK_CONTEXT: f32 = 0.08;
 const GROUP_SPAN: Duration = Duration::from_secs(20);
 const GROUP_STROKES: usize = 12;
 
-/// Groups marks drawn on one screen with no click or drag begun between them, then merges
-/// neighboring groups until at most `most` remain: same-screen pairs carrying the least ink first,
-/// else the most alike screens. `action_starts` holds when each click or drag began, in time order.
+/// Groups marks drawn on one screen with no click or drag between them, then merges neighboring
+/// groups until at most `most` remain: same-screen pairs carrying the least ink first, else the
+/// most alike screens. `action_starts` holds the start of each action's span, in time order: a
+/// click's release or a drag's press.
 pub(super) fn group_marks(
     frames: &Frames<'_>,
     marks: &[Mark],
@@ -130,20 +131,20 @@ impl Grouping<'_> {
             .sum()
     }
 
-    /// How far the screen around the ink of `members`, as each was drawn, is from the screen the
-    /// last of them is shown on.
-    fn spread(&self, members: Range<usize>) -> f32 {
+    /// How far the screen around the ink of `group`'s marks, as each was drawn, is from the screen
+    /// the last of them is shown on.
+    fn spread(&self, group: Range<usize>) -> f32 {
         let (Some(around), Some(&shown)) = (
             self.marks
-                .get(members.clone())
-                .and_then(|marks| marks.iter().map(|mark| mark.bounds).reduce(Rect::union)),
-            self.shown_on.get(members.end.saturating_sub(1)),
+                .get(group.clone())
+                .and_then(|members| members.iter().map(|mark| mark.bounds).reduce(Rect::union)),
+            self.shown_on.get(group.end.saturating_sub(1)),
         ) else {
             return 1.0;
         };
         let around = around.expanded_within(INK_CONTEXT, Rect::UNIT);
         let shown = self.frames.signature(shown);
-        members
+        group
             .filter_map(|member| self.shown_on.get(member))
             .map(|&frame| self.frames.signature(frame).region_change(shown, around))
             .fold(0.0, f32::max)
