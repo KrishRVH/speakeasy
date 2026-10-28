@@ -55,19 +55,19 @@ impl Command {
     /// Runs the subcommand, printing the bundle's summary.
     pub(crate) fn run(self) -> anyhow::Result<()> {
         let Self::Demo { out } = self;
-        let out = out.map(std::path::absolute).transpose()?;
-        if let Some(out) = &out {
-            anyhow::ensure!(
-                !out.exists(),
-                "{} already exists; choose a new directory",
-                out.display()
-            );
-        }
-        let bundle = Demo::new(Typeface::parse(crate::BRAND_FONT_FILE)?).bundle(DEMO_SIZE)?;
         let directory = match out {
-            Some(out) => out,
+            Some(out) => {
+                let out = std::path::absolute(out)?;
+                anyhow::ensure!(
+                    !out.exists(),
+                    "{} already exists; choose a new directory",
+                    out.display()
+                );
+                out
+            },
             None => store::fresh_directory(&store::private_directory()?, SystemTime::now())?,
         };
+        let bundle = Demo::new(Typeface::parse(crate::BRAND_FONT_FILE)?).bundle(DEMO_SIZE)?;
         let summary = store::stage(&directory, bundle)?.persist()?;
         write!(io::stdout().lock(), "{summary}")?;
         Ok(())

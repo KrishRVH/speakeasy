@@ -1,10 +1,7 @@
 //! Drives the area choice, a take on paused time with synthetic frames, pointer samples, and
 //! pins, and the thread's ending, without a screen, a pointer, or an overlay window.
 
-use std::time::{Duration, Instant};
-
 use anyhow::Context as _;
-use speakeasy_platform::Frame;
 use speakeasy_show::{Action, Pin};
 
 use super::*;
@@ -107,7 +104,7 @@ async fn record(
 }
 
 /// What a recording that failed says.
-fn failure(recorded: anyhow::Result<Option<Footage>>) -> Option<String> {
+fn failure<T>(recorded: anyhow::Result<T>) -> Option<String> {
     recorded.err().map(|error| error.to_string())
 }
 
@@ -120,7 +117,6 @@ async fn a_take_finished_after_its_first_frame_ends_then_and_records_no_teardown
 -> anyhow::Result<()> {
     let (recorded, ran) = record(false, async |feed| {
         feed.frame(0).await;
-        // A drag still held when the Show finishes.
         feed.pointer(200, 0.2, 0.2, false, true).await;
         feed.pointer(300, 0.6, 0.6, false, true).await;
         wait(1_000).await;
@@ -138,7 +134,8 @@ async fn a_take_finished_after_its_first_frame_ends_then_and_records_no_teardown
             span: Span::new(Moment::from_millis(200), finished),
             from: Point::new(0.2, 0.2),
             to: Point::new(0.6, 0.6),
-        }]
+        }],
+        "a drag still held when the Show finishes ends with it"
     );
     Ok(())
 }
@@ -156,13 +153,13 @@ async fn a_take_finished_before_its_first_frame_waits_three_seconds_for_one() ->
     assert_eq!(footage.journal.samples().len(), 1);
     assert_eq!(footage.recording.duration, Moment::from_millis(2_900));
     assert_eq!(ran, Duration::from_millis(2_900) + TEARDOWN);
-    // Without a frame, the Show fails once the wait is over.
     let (recorded, ran) = record(false, async |feed| feed.finish().await).await;
+    assert_eq!(failure(recorded).as_deref(), Some(NOTHING_RECORDED));
     assert_eq!(
-        failure(recorded).as_deref(),
-        Some("The screen could not be recorded. Try again.")
+        ran,
+        FIRST_FRAME_WAIT + TEARDOWN,
+        "without a frame, the Show fails once the wait is over"
     );
-    assert_eq!(ran, FIRST_FRAME_WAIT + TEARDOWN);
     Ok(())
 }
 
@@ -202,13 +199,11 @@ async fn a_pin_is_judged_after_the_pointer_samples_queued_before_it() -> anyhow:
         feed.frame(0).await;
         feed.pointer(10, 0.5, 0.5, false, false).await;
         wait(10).await;
-        // Shift drew between two taps that arrive with the ink, so they ask for no pin.
         feed.pointer(100, 0.5, 0.5, true, false).await;
         feed.pointer(150, 0.52, 0.5, true, false).await;
         feed.pointer(200, 0.52, 0.5, false, false).await;
         feed.taps(50, 250).await;
         wait(10).await;
-        // Clean taps pin where the pointer moved just before them.
         feed.pointer(300, 0.3, 0.4, false, false).await;
         feed.taps(400, 600).await;
         wait(10).await;
@@ -222,7 +217,9 @@ async fn a_pin_is_judged_after_the_pointer_samples_queued_before_it() -> anyhow:
         [Pin {
             at: Moment::from_millis(600),
             point: Point::new(0.3, 0.4),
-        }]
+        }],
+        "taps queued after the ink they span ask for no pin; clean taps pin where the pointer \
+         moved just before them"
     );
     Ok(())
 }
@@ -268,12 +265,7 @@ fn a_recording_that_unwinds_hides_the_overlay_and_reports_a_fixed_failure() -> a
     let unwound = std::thread::scope(|scope| {
         scope
             .spawn(|| {
-                let _ending = Ending {
-                    id: SessionId::FIRST,
-                    events,
-                    canvas: &canvas,
-                    outcome: None,
-                };
+                let _ending = Ending::new(SessionId::FIRST, events, &canvas);
                 panic!("a recording bug");
             })
             .join()
@@ -282,9 +274,6 @@ fn a_recording_that_unwinds_hides_the_overlay_and_reports_a_fixed_failure() -> a
     assert!(overlay.has_changed()?, "the overlay was told to hide");
     let ShowEvent::Finished(id, outcome) = reported.try_recv()?;
     assert_eq!(id, SessionId::FIRST);
-    assert_eq!(
-        outcome.err().map(|error| error.to_string()).as_deref(),
-        Some(CAPTURE_STOPPED)
-    );
+    assert_eq!(failure(outcome).as_deref(), Some(CAPTURE_STOPPED));
     Ok(())
 }

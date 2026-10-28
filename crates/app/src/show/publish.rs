@@ -7,7 +7,7 @@ use anyhow::{Context as _, anyhow};
 use speakeasy_platform::InsertPermit;
 use speakeasy_show::{Narration, Typeface, compose, select};
 
-use super::store;
+use super::{recorder::NOTHING_RECORDED, store};
 use crate::runtime::ports::{Footage, PUBLISH_STOPPED, Published};
 
 /// Composes and writes a Show from its `footage` and `narration` off the caller's thread. The
@@ -23,9 +23,8 @@ pub(crate) async fn publish(
         else {
             return Ok(Published::Cancelled);
         };
-        speakeasy_platform::copy_text(&summary).map_err(|error| {
-            anyhow!("The Show was saved, but its summary could not be copied: {error}")
-        })?;
+        speakeasy_platform::copy_text(&summary)
+            .context("The Show was saved, but its summary could not be copied")?;
         Ok(Published::Copied)
     })
     .await
@@ -53,16 +52,13 @@ fn write_bundle(
         journal,
     } = footage;
     recording.narration = narration;
-    let selection = select(&recording, journal.samples())
-        .context("The screen could not be recorded. Try again.")?;
+    let selection = select(&recording, journal.samples()).context(NOTHING_RECORDED)?;
     let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;
     let bundle = compose(
         recording,
         selection,
         |at| {
-            if cancelled() {
-                return Err(anyhow!(PUBLISH_STOPPED));
-            }
+            anyhow::ensure!(!cancelled(), PUBLISH_STOPPED);
             journal.frame_at(at).context("A keyframe was not recorded")
         },
         &typeface,

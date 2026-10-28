@@ -3,6 +3,7 @@
 //! overlay as they are made. An area Show first has the user drag out its area on the overlay.
 
 use std::{
+    mem,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -10,15 +11,15 @@ use std::{
 use anyhow::anyhow;
 use async_channel::{Receiver, Sender};
 use speakeasy_platform::{
-    Display, OwnedThread, Part, PointerMonitor, PointerSample, Scope, ScreenCapture, ScreenEvent,
-    Taps, Target,
+    Display, Frame, OwnedThread, Part, PointerMonitor, PointerSample, Scope, ScreenCapture,
+    ScreenEvent, Taps, Target,
 };
 use speakeasy_show::{Image, Journal, Mark, Moment, Point, SAMPLE_INTERVAL, Size, Span, Tracker};
 use tokio::sync::watch;
 
 use super::overlay::Canvas;
 use crate::runtime::{
-    now,
+    self,
     ports::{Capturing, Footage, Pinning, SessionId, ShowEvent},
 };
 
@@ -37,6 +38,8 @@ const POINTER_LANE: usize = 256;
 const PIN_LANE: usize = 8;
 /// The failure a recording reports when capture or the recorder itself stops without an outcome.
 const CAPTURE_STOPPED: &str = "Screen capture stopped unexpectedly. Try again.";
+/// The failure a Show reports when not one frame of the screen was recorded.
+pub(super) const NOTHING_RECORDED: &str = "The screen could not be recorded. Try again.";
 
 /// A Show's screen recording; the session owner finishes or retires it like a microphone. Fields
 /// drop in declaration order, so a recorder dropped without retiring cancels before its thread
@@ -68,13 +71,8 @@ impl ScreenRecorder {
                 pinned,
                 canvas: &canvas,
             };
-            let mut ending = Ending {
-                id,
-                events,
-                canvas: &canvas,
-                outcome: None,
-            };
-            ending.outcome = Some(record(started, scope, &lanes));
+            let mut ending = Ending::new(id, events, &canvas);
+            ending.outcome = record(started, scope, &lanes);
         })?;
         Ok(Self {
             finish,
@@ -111,24 +109,31 @@ impl Pinning for ScreenRecorder {
 }
 
 /// Ends a recording however its thread leaves it: when dropped, it hides the overlay and reports
-/// `outcome` to the owner, or a fixed failure once recording unwinds without one, since a panic's
-/// message could carry private text. A cancelled recording reports nothing.
+/// `outcome` to the owner. A cancelled recording reports nothing.
 struct Ending<'a> {
     id: SessionId,
     events: Sender<ShowEvent>,
     canvas: &'a watch::Sender<Canvas>,
-    /// How recording ended; `None` while it runs.
-    outcome: Option<anyhow::Result<Option<Footage>>>,
+    /// How recording ended: [`CAPTURE_STOPPED`] until it returns, so a recording that unwinds
+    /// reports a fixed failure rather than a panic's message, which could carry private text.
+    outcome: anyhow::Result<Option<Footage>>,
+}
+
+impl<'a> Ending<'a> {
+    fn new(id: SessionId, events: Sender<ShowEvent>, canvas: &'a watch::Sender<Canvas>) -> Self {
+        Self {
+            id,
+            events,
+            canvas,
+            outcome: Err(anyhow!(CAPTURE_STOPPED)),
+        }
+    }
 }
 
 impl Drop for Ending<'_> {
     fn drop(&mut self) {
         self.canvas.send_replace(Canvas::Hidden);
-        let outcome = self
-            .outcome
-            .take()
-            .unwrap_or_else(|| Err(anyhow!(CAPTURE_STOPPED)));
-        if let Some(outcome) = outcome.transpose() {
+        if let Some(outcome) = mem::replace(&mut self.outcome, Ok(None)).transpose() {
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "A closed event lane belongs to a departed owner; retirement still observes this thread's exit"
@@ -195,14 +200,13 @@ async fn choose(scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<Option<(Targe
 
 /// Waits for the part of the display dragged out on `choice`, or all of it when the overlay closes
 /// `choice` because it cannot appear, or all of it, finished, when the Show finishes first; `None`
-/// once cancelled.
+/// once cancelled. Pins asked for before it returns mark nothing.
 async fn pick(choice: &Receiver<Part>, lanes: &Lanes<'_>) -> Option<(Part, bool)> {
     let picked = tokio::select! {
         biased;
         finished = lanes.finishing.recv() => finished.ok().map(|()| (Part::WHOLE, true)),
         part = choice.recv() => Some((part.unwrap_or(Part::WHOLE), false)),
     };
-    // A pin asked for before there was anything to record marks nothing.
     while lanes.pinned.try_recv().is_ok() {}
     picked
 }
@@ -275,17 +279,17 @@ impl<'a> Take<'a> {
                         break None;
                     }
                     if !self.journal.is_empty() {
-                        break Some(Ok(now()));
+                        break Some(Ok(runtime::now()));
                     }
                     finished_by.get_or_insert_with(first_frame_deadline);
                 },
                 () = tokio::time::sleep_until(finished_by.unwrap_or_else(tokio::time::Instant::now)),
-                    if finished_by.is_some() => break Some(Ok(now())),
+                    if finished_by.is_some() => break Some(Ok(runtime::now())),
                 event = frames.recv() => match event {
                     Ok(ScreenEvent::Frame(frame)) => {
                         self.frame(frame);
                         if finished_by.is_some() && !self.journal.is_empty() {
-                            break Some(Ok(now()));
+                            break Some(Ok(runtime::now()));
                         }
                     },
                     Ok(ScreenEvent::Failed(message)) => break Some(Err(anyhow!(message))),
@@ -308,7 +312,7 @@ impl<'a> Take<'a> {
         Moment::from(at.saturating_duration_since(self.started))
     }
 
-    fn frame(&mut self, frame: speakeasy_platform::Frame) {
+    fn frame(&mut self, frame: Frame) {
         if frame.part != self.part {
             self.part = frame.part;
             self.canvas.send_if_modified(|canvas| {
@@ -326,16 +330,15 @@ impl<'a> Take<'a> {
 
     fn pointer(&mut self, sample: PointerSample) {
         let at = self.moment(sample.at);
-        let strokes = self.tracker.strokes().len();
+        let earlier = self.tracker.strokes().len();
         let [x, y] = self.part.within([sample.x, sample.y]);
         self.tracker
             .observe(at, Point::new(x, y), sample.drawing, sample.pressed);
         let finished: Vec<Arc<[Point]>> = self
             .tracker
             .strokes()
-            .get(strokes..)
-            .unwrap_or_default()
             .iter()
+            .skip(earlier)
             .map(|stroke| stroke.points().iter().map(|ink| ink.point).collect())
             .collect();
         let marks = (!finished.is_empty()).then(|| self.tracker.marks().into());
@@ -364,10 +367,7 @@ impl<'a> Take<'a> {
     /// What the take recorded, lasting until `ended`.
     fn into_footage(self, ended: Instant) -> anyhow::Result<Footage> {
         let ended = self.moment(ended);
-        anyhow::ensure!(
-            !self.journal.is_empty(),
-            "The screen could not be recorded. Try again."
-        );
+        anyhow::ensure!(!self.journal.is_empty(), NOTHING_RECORDED);
         Ok(Footage {
             recording: self.tracker.finish(ended),
             journal: self.journal.sealed(),
@@ -436,7 +436,7 @@ mod native_tests {
             moments.len()
         );
         assert!(
-            moments.windows(2).all(|pair| pair[0] < pair[1]),
+            moments.is_sorted_by(|earlier, later| earlier < later),
             "{moments:?}"
         );
         let ended = footage.recording.duration.since(Moment::START);

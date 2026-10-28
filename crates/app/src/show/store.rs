@@ -88,7 +88,6 @@ impl Staged {
     pub(super) fn persist(mut self) -> anyhow::Result<String> {
         let parent = self.directory.parent().unwrap_or(&self.directory);
         fs::rename(self.staging.path(), &self.directory).map_err(cannot_save(parent))?;
-        // The staging directory is now the bundle.
         self.staging.disable_cleanup(true);
         Ok(self.summary)
     }
@@ -177,28 +176,7 @@ fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
     let cutoff = utc_stamp(now.checked_sub(KEPT_FOR).unwrap_or(SystemTime::UNIX_EPOCH));
     let mut stuck = false;
     for entry in entries.flatten() {
-        // The entry's own type: a link is never followed out of the directory.
-        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-            continue;
-        }
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        let path = entry.path();
-        let expired = if name.starts_with(STAGING_PREFIX) {
-            entry
-                .metadata()
-                .and_then(|metadata| metadata.modified())
-                .is_ok_and(|modified| {
-                    now.duration_since(modified)
-                        .is_ok_and(|age| age >= ABANDONED_AFTER)
-                })
-        } else {
-            // Stamps sort in time order, so comparing them compares when Shows were recorded.
-            stamp(name).is_some_and(|stamp| stamp < cutoff.as_str()) && !pinned(&path)
-        };
-        if expired && fs::remove_dir_all(&path).is_err() {
+        if expired(&entry, &cutoff, now) && fs::remove_dir_all(entry.path()).is_err() {
             stuck = true;
         }
     }
@@ -209,6 +187,28 @@ fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
         parent.display()
     );
     Ok(())
+}
+
+/// Whether `entry`, judged by its own type so a link is never followed out of the folder, is a
+/// directory holding an unpinned Show stamped before `cutoff`, or staging abandoned by `now`.
+fn expired(entry: &fs::DirEntry, cutoff: &str, now: SystemTime) -> bool {
+    if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+        return false;
+    }
+    let name = entry.file_name();
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+    if name.starts_with(STAGING_PREFIX) {
+        entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age >= ABANDONED_AFTER)
+    } else {
+        stamp(name).is_some_and(|stamp| stamp < cutoff) && !pinned(&entry.path())
+    }
 }
 
 /// Whether the Show at `path` holds a pin. Only a pin known to be absent lets it expire, and a
@@ -296,6 +296,15 @@ mod tests {
             .unwrap()
     }
 
+    /// The names in `directory`, sorted.
+    fn names(directory: &Path) -> io::Result<Vec<String>> {
+        let mut names = fs::read_dir(directory)?
+            .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
+            .collect::<io::Result<Vec<_>>>()?;
+        names.sort();
+        Ok(names)
+    }
+
     #[test]
     fn a_week_old_show_expires_unless_pinned() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
@@ -322,19 +331,11 @@ mod tests {
         }
         fs::write(parent.join(&pinned).join(PIN), b"")?;
         fs::write(parent.join(days_ago(9)), b"not a Show")?;
-        // A link named like an expired Show is left alone, and so is what it points to.
         #[cfg(unix)]
         let elsewhere = {
             let elsewhere = tempfile::tempdir()?;
             std::os::unix::fs::symlink(elsewhere.path(), parent.join(days_ago(10)))?;
             elsewhere
-        };
-        let names = || -> anyhow::Result<Vec<String>> {
-            let mut names = fs::read_dir(parent)?
-                .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
-                .collect::<anyhow::Result<Vec<_>>>()?;
-            names.sort();
-            Ok(names)
         };
 
         sweep(parent, now)?;
@@ -348,14 +349,17 @@ mod tests {
         #[cfg(unix)]
         {
             kept.push(days_ago(10));
-            assert!(elsewhere.path().exists());
+            assert!(
+                elsewhere.path().exists(),
+                "what a link named like an expired Show points to is left alone"
+            );
         }
         kept.sort();
-        assert_eq!(names()?, kept);
+        assert_eq!(names(parent)?, kept);
 
         sweep(parent, now + 2 * ABANDONED_AFTER)?;
         kept.retain(|name| *name != staging);
-        assert_eq!(names()?, kept);
+        assert_eq!(names(parent)?, kept);
 
         sweep(&parent.join("missing"), now)
     }
@@ -427,13 +431,13 @@ mod tests {
         }
         let second = fresh_directory(&parent, at(1_792_420_563))?;
         assert_eq!(second.file_name(), Some("20261019T143603Z-2".as_ref()));
-        // A bundle dropped before it persists, as a Show cancelled at commit drops it, leaves
-        // nothing behind.
         drop(stage(&second, bundle()?)?);
-        let names: Vec<_> = fs::read_dir(&parent)?
-            .map(|entry| entry.map(|entry| entry.file_name()))
-            .collect::<Result<_, _>>()?;
-        assert_eq!(names, ["20261019T143603Z"]);
+        assert_eq!(
+            names(&parent)?,
+            ["20261019T143603Z"],
+            "a bundle dropped before it persists, as a Show cancelled at commit drops it, leaves \
+             nothing behind"
+        );
         Ok(())
     }
 

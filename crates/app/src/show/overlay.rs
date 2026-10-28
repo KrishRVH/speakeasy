@@ -95,13 +95,18 @@ impl Canvas {
         }
     }
 
-    /// The display covered and whether the overlay takes clicks there to choose an area; `None`
-    /// hides the overlay.
-    fn cover(&self) -> Option<(Display, bool)> {
+    /// Where the overlay sits; `None` hides it.
+    fn cover(&self) -> Option<Cover> {
         match self {
             Self::Hidden => None,
-            Self::Picking { display, .. } => Some((*display, true)),
-            Self::Covering { display, .. } => Some((*display, false)),
+            Self::Picking { display, .. } => Some(Cover {
+                display: *display,
+                picking: true,
+            }),
+            Self::Covering { display, .. } => Some(Cover {
+                display: *display,
+                picking: false,
+            }),
         }
     }
 
@@ -112,6 +117,13 @@ impl Canvas {
             Self::Hidden | Self::Covering { .. } => None,
         }
     }
+}
+
+/// Where the overlay sits, and whether it takes clicks there to choose an area.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Cover {
+    display: Display,
+    picking: bool,
 }
 
 /// Ink and the numbers of marks, normalized to the part of the display recorded.
@@ -253,8 +265,7 @@ enum Redraw {
 struct Overlay {
     canvas: watch::Receiver<Canvas>,
     window: AnyWindowHandle,
-    /// The display covered, and whether an area is being chosen on it.
-    cover: Option<(Display, bool)>,
+    cover: Option<Cover>,
     /// Takes the first reason the overlay could not cover its display, for its Show to report.
     misplaced: Sender<anyhow::Error>,
     /// Where a drag choosing an area began and where it is now, in window pixels.
@@ -287,10 +298,10 @@ impl Overlay {
 
     /// Moves onto the display and shows, taking input while an area is chosen, or hides when there
     /// is no display, then redraws. An area that cannot be chosen here is the whole display.
-    fn cover(&mut self, cover: Option<(Display, bool)>, cx: &mut Context<'_, Self>) {
+    fn cover(&mut self, cover: Option<Cover>, cx: &mut Context<'_, Self>) {
         if cover != self.cover {
             self.cover = cover;
-            if !cover.is_some_and(|(_, picking)| picking) {
+            if !cover.is_some_and(|cover| cover.picking) {
                 self.drag = None;
             }
             let chosen = self.canvas.borrow().chosen().cloned();
@@ -395,10 +406,10 @@ impl Overlay {
 /// Covers the display of `cover` and shows the overlay, taking clicks only while an area is
 /// chosen there, or hides it. An overlay that cannot cover its display stays hidden rather than
 /// misplaced, and says why.
-fn place(native: &NativeWindow, cover: Option<(Display, bool)>) -> anyhow::Result<()> {
-    let placed = cover.map(|(display, _)| native.configure_overlay(display));
+fn place(native: &NativeWindow, cover: Option<Cover>) -> anyhow::Result<()> {
+    let placed = cover.map(|cover| native.configure_overlay(cover.display));
     let covered = matches!(placed, Some(Ok(())));
-    native.set_overlay_input(covered && cover.is_some_and(|(_, picking)| picking));
+    native.set_overlay_input(covered && cover.is_some_and(|cover| cover.picking));
     native.set_overlay_visible(covered);
     placed.unwrap_or(Ok(()))
 }
@@ -477,12 +488,7 @@ fn on_overlay(part: Part, size: Size<Pixels>) -> Bounds<Pixels> {
 /// The part of the display a drag from `from` to `to` covers on an overlay `size` across, or
 /// `None` for a drag too short to mean an area.
 fn dragged(from: gpui::Point<Pixels>, to: gpui::Point<Pixels>, size: Size<Pixels>) -> Option<Part> {
-    let share = |point: gpui::Point<Pixels>| {
-        [
-            f32::from(point.x) / f32::from(size.width),
-            f32::from(point.y) / f32::from(size.height),
-        ]
-    };
+    let share = |point: gpui::Point<Pixels>| [point.x / size.width, point.y / size.height];
     let part = Part::between(share(from), share(to));
     let area = on_overlay(part, size).size;
     (f32::from(area.width) >= SMALLEST_AREA && f32::from(area.height) >= SMALLEST_AREA)
@@ -655,45 +661,47 @@ pub(crate) fn attend(
             }
             let show = snapshots.borrow().id;
             let (misplaced, placement) = async_channel::bounded(1);
-            let (overlay, failure) = match cx.update(|cx| open(canvas.clone(), misplaced, cx)) {
-                Ok(Ok(overlay)) => (Some(overlay), None),
-                Ok(Err(error)) => {
-                    // No area can be dragged out without the overlay: the Show records the whole
-                    // display instead.
-                    if let Some(chosen) = canvas.borrow().chosen() {
-                        chosen.close();
-                    }
-                    (None, Some(error))
-                },
-                Err(_) => return,
+            let Ok(opened) = cx.update(|cx| open(canvas.clone(), misplaced, cx)) else {
+                return;
             };
+            if opened.is_err()
+                && let Some(chosen) = canvas.borrow().chosen()
+            {
+                // No area can be dragged out without the overlay: the Show records the whole
+                // display instead.
+                chosen.close();
+            }
             let released = canvas
                 .wait_for(|canvas| canvas.display().is_none())
                 .await
                 .is_ok();
-            if let Some(overlay) = overlay {
-                overlay.update_if_open(cx, |_, window, _| window.remove_window());
-            }
+            let failure = match opened {
+                Ok(overlay) => {
+                    overlay.update_if_open(cx, |_, window, _| window.remove_window());
+                    placement.try_recv().ok()
+                },
+                Err(error) => Some(error),
+            };
             if !released {
                 return;
             }
-            let Some(error) = failure
-                .or_else(|| placement.try_recv().ok())
-                .filter(|_| !reported)
-            else {
+            if reported {
+                continue;
+            }
+            let Some(error) = failure else {
                 continue;
             };
             // The next session cannot start until this one leaves the active phases, so waiting
             // here never delays the next Show's overlay. A new id means pause, quit or a newer
             // session took the snapshot first.
-            let Ok(ended) = snapshots
+            let Ok(copied) = snapshots
                 .wait_for(|snapshot| snapshot.id != show || !snapshot.phase.is_active())
                 .await
                 .map(|snapshot| snapshot.id == show && snapshot.phase == Phase::Copied)
             else {
                 return;
             };
-            if ended {
+            if copied {
                 reported = true;
                 let error =
                     anyhow!("Show copied, but its ink could not appear on screen: {error:#}");
@@ -712,7 +720,7 @@ fn open(
     cx: &mut App,
 ) -> anyhow::Result<WindowHandle<Overlay>> {
     let display = cx.primary_display().context("No display available")?;
-    let overlay = cx.open_window(
+    cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(display.bounds())),
             titlebar: None,
@@ -729,8 +737,7 @@ fn open(
             window.set_window_title("Speakeasy overlay");
             cx.new(|cx| Overlay::new(canvas, misplaced, window, cx))
         },
-    )?;
-    Ok(overlay)
+    )
 }
 
 #[cfg(test)]
@@ -768,9 +775,11 @@ mod tests {
         let midway = sheet.opacity(at(975));
         assert!(midway > 0.2 && midway < 0.3, "{midway}");
         assert!(sheet.faded(at(1_300)));
-        // Drawing again keeps every mark whole for as long as the stroke takes.
         assert!(sheet.update([], stroke(4), None, at(600)));
-        assert!(whole(&sheet, at(5_000)));
+        assert!(
+            whole(&sheet, at(5_000)),
+            "drawing again keeps every mark whole for as long as the stroke takes"
+        );
     }
 
     #[test]
@@ -792,22 +801,32 @@ mod tests {
         let mut sheet = Sheet::new(Part::WHOLE);
         sheet.update([], stroke(3), None, at(0));
         sheet.update([stroke(3).into()], [], None, at(100));
-        // An arrow drawn while the circle fades keeps it.
         sheet.update([], stroke(4), None, at(1_000));
         sheet.update([stroke(4).into()], [], None, at(1_100));
-        assert_eq!(sheet.strokes.len(), 2);
-        // A stroke cut for length while the pen keeps drawing stays whole.
+        assert_eq!(
+            sheet.strokes.len(),
+            2,
+            "an arrow drawn while the circle fades keeps it"
+        );
         sheet.update([], stroke(5), None, at(1_150));
         assert!(sheet.update([stroke(5).into()], stroke(2), None, at(1_200)));
-        assert!(whole(&sheet, at(9_000)));
+        assert!(
+            whole(&sheet, at(9_000)),
+            "a stroke cut for length while the pen keeps drawing stays whole"
+        );
         assert_eq!(sheet.strokes.len(), 3);
-        // A pointer that moved too little to add ink changes nothing.
-        assert!(!sheet.update([], stroke(2), None, at(1_300)));
+        assert!(
+            !sheet.update([], stroke(2), None, at(1_300)),
+            "a pointer that moved too little to add ink changes nothing"
+        );
         sheet.update([stroke(2).into()], [], None, at(1_400));
         assert_eq!(sheet.next_frame(at(1_400)), Redraw::After(HOLD));
-        // Ink once everything has faded starts a clean sheet.
         assert!(sheet.update([], stroke(3), None, at(2_800)));
-        assert_eq!(sheet.strokes, Vec::<Arc<[Point]>>::new());
+        assert_eq!(
+            sheet.strokes,
+            Vec::<Arc<[Point]>>::new(),
+            "ink once everything has faded starts a clean sheet"
+        );
         assert!(!Sheet::new(Part::WHOLE).update([], [], None, at(0)));
     }
 
@@ -853,19 +872,28 @@ mod tests {
         sheet.update([], stroke(3), None, at(0));
         assert!(sheet.update([stroke(3).into()], [], Some(marks(1)), at(100)));
         assert_eq!(shown(&sheet), [1]);
-        // A pin keeps the ink before it and holds it again.
         assert!(sheet.update([], [], Some(marks(2)), at(700)));
-        assert_eq!(shown(&sheet), [1, 2]);
-        assert_eq!(sheet.next_frame(at(700)), Redraw::After(HOLD));
-        // Once everything has faded, a pin starts clean, numbered on from the last mark.
+        assert_eq!(shown(&sheet), [1, 2], "a pin keeps the ink before it");
+        assert_eq!(
+            sheet.next_frame(at(700)),
+            Redraw::After(HOLD),
+            "a pin holds the ink again"
+        );
         assert!(sheet.update([], [], Some(marks(3)), at(2_100)));
-        assert_eq!(shown(&sheet), [3]);
+        assert_eq!(
+            shown(&sheet),
+            [3],
+            "once everything has faded, a pin starts clean, numbered on from the last mark"
+        );
         assert_eq!(sheet.strokes, Vec::<Arc<[Point]>>::new());
         assert!(whole(&sheet, at(2_100)));
-        // So does a stroke.
         sheet.update([], stroke(4), None, at(4_000));
         sheet.update([stroke(4).into()], [], Some(marks(4)), at(4_100));
-        assert_eq!(shown(&sheet), [4]);
+        assert_eq!(
+            shown(&sheet),
+            [4],
+            "once everything has faded, a stroke starts clean too"
+        );
     }
 
     #[test]
@@ -874,16 +902,26 @@ mod tests {
         let mut sheet = Sheet::new(Part::WHOLE);
         sheet.update([], stroke(3), None, at(0));
         sheet.update([stroke(3).into()], [], Some(grouped(&[1])), at(100));
-        // Shift goes down again 1.1 s after the lift, soon enough for the bundle to join the next
-        // stroke to mark ①, but the pen pauses and draws only once the circle has faded.
         sheet.update([], stroke(4), None, at(1_450));
-        assert_eq!(sheet.strokes, Vec::<Arc<[Point]>>::new());
+        assert_eq!(
+            sheet.strokes,
+            Vec::<Arc<[Point]>>::new(),
+            "the pen draws only once the circle has faded"
+        );
         sheet.update([stroke(4).into()], [], Some(grouped(&[2])), at(1_700));
-        assert_eq!(shown(&sheet), [1]);
-        // A stroke after everything has faded again starts a mark of its own.
+        assert_eq!(
+            shown(&sheet),
+            [1],
+            "Shift went down again 1.1 s after the lift, soon enough for the bundle to join the \
+             stroke to mark 1, so it shows that number"
+        );
         sheet.update([], stroke(5), None, at(4_000));
         sheet.update([stroke(5).into()], [], Some(grouped(&[2, 3])), at(4_100));
-        assert_eq!(shown(&sheet), [2]);
+        assert_eq!(
+            shown(&sheet),
+            [2],
+            "a stroke after everything has faded again starts a mark of its own"
+        );
     }
 
     #[test]
@@ -896,15 +934,15 @@ mod tests {
             right,
             bottom,
         };
-        // Dragged up and to the left.
         assert_eq!(
             dragged(at(300.0, 200.0), at(100.0, 100.0), size),
-            Some(part(0.1, 0.2, 0.3, 0.4))
+            Some(part(0.1, 0.2, 0.3, 0.4)),
+            "dragged up and to the left"
         );
-        // Past the display's edge, the area stops at it.
         assert_eq!(
             dragged(at(900.0, 400.0), at(1_200.0, 600.0), size),
-            Some(part(0.9, 0.8, 1.0, 1.0))
+            Some(part(0.9, 0.8, 1.0, 1.0)),
+            "past the display's edge, the area stops at it"
         );
         assert_eq!(dragged(at(100.0, 100.0), at(110.0, 300.0), size), None);
         assert_eq!(dragged(at(100.0, 100.0), at(100.0, 100.0), size), None);
