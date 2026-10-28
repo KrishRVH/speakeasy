@@ -1,4 +1,4 @@
-//! Show scenarios: S during a hold, screen lanes, footage, and publication, against a fake
+//! Show scenarios: S, W, or A during a hold, screen lanes, footage, and publication, against a fake
 //! screen and gated publication.
 
 use super::{ports::PUBLISH_STOPPED, *};

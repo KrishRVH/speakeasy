@@ -1,6 +1,6 @@
-//! Opt-in native checks on a private Xvfb display: the idle pill's window hints, input shape, and
-//! native visibility, and GPUI's queued-event patch presenting a window opened after launch while
-//! the pill is open.
+//! Opt-in native checks on the X11 display in `DISPLAY`, which `check-rendering-linux.sh` starts
+//! under Xvfb: the idle pill's window hints, input shape, and native visibility, and GPUI's
+//! queued-event patch presenting a window opened after launch while the pill is open.
 
 use std::collections::HashSet;
 
@@ -20,13 +20,13 @@ use super::*;
 use crate::gpui_ext::AppUpdate;
 
 #[test]
-#[ignore = "Opt-in native windows on a private Xvfb display, never microphone, input, or clipboard"]
+#[ignore = "Opt-in native windows on the X11 display, never microphone, input, or clipboard"]
 fn idle_native_pill_starts_unmapped_and_can_show_and_hide() -> anyhow::Result<()> {
     run_native(async |cx: &AsyncApp| cx.update(check_idle_pill).flatten())
 }
 
 #[test]
-#[ignore = "Opt-in native windows on a private Xvfb display, never microphone, input, or clipboard"]
+#[ignore = "Opt-in native windows on the X11 display, never microphone, input, or clipboard"]
 fn idle_native_pill_can_render_a_window_opened_after_launch() -> anyhow::Result<()> {
     run_native(check_late_window)
 }

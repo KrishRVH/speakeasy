@@ -144,7 +144,7 @@ impl Settings {
             .child(hold_hint)
             .child(div().child(gesture_hint))
             .when(records_shows, |panel| {
-                panel.child(div().child("Add S for a Show, then hold Shift to draw."))
+                panel.child(div().child("Add S, W, or A for a Show, then hold Shift to draw."))
             })
     }
 
