@@ -483,17 +483,24 @@ impl MicrophoneScan {
     ) -> anyhow::Result<Receiver<anyhow::Result<Vec<InputDevice>>>> {
         let scan = match current {
             Some(scan) if !scan.thread.is_finished() => scan,
-            // Replacing a finished scan joins a thread whose enumeration has returned.
-            idle => idle.insert(Self::spawn(enumerate)?),
+            idle => {
+                let finished = idle.take();
+                idle.insert(Self::spawn(finished, enumerate)?)
+            },
         };
         Ok(scan.devices.clone())
     }
 
+    /// Starts a scan that first joins `finished`, the scan it replaces: that thread's enumeration
+    /// has returned, but its COM apartment may still be tearing down, which the caller's thread
+    /// must not wait for.
     fn spawn(
+        finished: Option<Self>,
         enumerate: impl FnOnce() -> anyhow::Result<Vec<InputDevice>> + Send + 'static,
     ) -> anyhow::Result<Self> {
         let (reply, devices) = async_channel::bounded(1);
         let thread = OwnedThread::spawn("microphone-scan", move || {
+            drop(finished);
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "Only a dropped scan closes the receiver, and then no Settings view waits for the list"
