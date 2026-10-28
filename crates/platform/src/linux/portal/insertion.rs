@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Context;
+use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
 use futures_util::{FutureExt, StreamExt, future::LocalBoxFuture};
 use x11rb::protocol::xproto::Window;
@@ -17,7 +17,7 @@ use zbus::{
 };
 
 use super::{
-    Bound, Notice, Options, SelectionHandoff, deadline, or_pending,
+    Bound, CLIPBOARD_DISCONNECTED, Notice, Options, SelectionHandoff, deadline, or_pending,
     transfer::{Selection, Transfers, transfer},
 };
 use crate::{
@@ -26,7 +26,7 @@ use crate::{
     linux::{
         CLIPBOARD_CHANGED, COPIED_FOR_MANUAL_PASTE, NO_PASTE_BINDING,
         ei::{self, PasteBlocked, TextBlocked},
-        stopping, x11,
+        stop_requested, x11,
     },
 };
 
@@ -86,7 +86,7 @@ impl<'a> Insertions<'a> {
         mut transfer_requests: SignalStream<'_>,
         requests: Receiver<Insertion>,
         input: &InputSender,
-        stop: &Receiver<Infallible>,
+        stopping: &Receiver<Infallible>,
     ) -> anyhow::Result<()> {
         loop {
             self.advance_pending()?;
@@ -101,14 +101,14 @@ impl<'a> Insertions<'a> {
             );
             tokio::select! {
                 biased;
-                () = stopping(stop, input) => break,
+                () = stop_requested(stopping, input) => break,
                 notice = self.notices.recv() => {
                     self.apply(notice.context("Desktop monitoring stopped")?);
                 },
                 prepared = prepared => self.advance_preparation(prepared)?,
                 _ = self.transfers.next(), if !self.transfers.is_empty() => {},
                 event = transfer_requests.next(), if accepts_transfers => {
-                    self.serve_transfer(&event.context("Clipboard portal disconnected")?)?;
+                    self.serve_transfer(&event.context(CLIPBOARD_DISCONNECTED)?)?;
                 },
                 request = requests.recv(), if idle => match request {
                     Ok(request) => self.pending = Some((request, Instant::now())),

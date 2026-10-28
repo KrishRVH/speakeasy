@@ -467,7 +467,7 @@ unsafe extern "system" fn lifecycle_window(
     {
         close_input();
     }
-    // SAFETY: forward unchanged arguments for this registered native window.
+    // SAFETY: forwards this window procedure's own arguments unchanged.
     unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
 }
 

@@ -28,7 +28,7 @@ impl NativeWindow {
     /// stays unpainted while GPUI is idle.
     ///
     /// # Errors
-    /// Returns native dialog or worker failures; cancellation returns no path.
+    /// Fails when the native dialog or its thread fails; cancellation returns no path.
     pub fn choose_file(
         &self,
         title: &str,

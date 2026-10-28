@@ -56,6 +56,10 @@ pub const PILL_HEIGHT: u16 = 100;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 pub(crate) const PILL_MARGIN: u16 = 2;
 
+/// How long a test waits on a thread, lane, or answer before calling it stuck.
+#[cfg(test)]
+const PATIENCE: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// The hold-to-talk shortcut as people see it.
 #[cfg(target_os = "macos")]
 pub const SHORTCUT: &str = "Fn";

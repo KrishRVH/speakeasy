@@ -191,7 +191,7 @@ impl NativeWindow {
     /// avoiding reentrant GPUI updates.
     ///
     /// # Errors
-    /// Returns an error if callback installation fails.
+    /// Fails when Windows refuses the subclass that hides the window on minimize.
     pub fn minimize_to_tray(&self, hide: Sender<()>) -> anyhow::Result<()> {
         let hwnd = self.native.hwnd;
         let context = Box::into_raw(Box::new(hide));

@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use anyhow::Context;
+use anyhow::Context as _;
 
 use super::*;
 
@@ -18,11 +18,13 @@ const LETTER_W: u32 = 0x57;
 const LETTER_A: u32 = 0x41;
 const LETTER_Q: u32 = 0x51;
 const LEFT_SHIFT: u32 = 0xA0;
+const RIGHT_SHIFT: u32 = 0xA1;
 const SHIFT: u32 = 0x10;
 const CONTROL: u32 = 0x11;
 const ALT: u32 = 0x12;
 const MAC_FN: i64 = 63;
 const MAC_LEFT_SHIFT: i64 = 56;
+const MAC_RIGHT_SHIFT: i64 = 60;
 const MAC_LEFT_COMMAND: i64 = 55;
 const MAC_RIGHT_COMMAND: i64 = 54;
 const MAC_LEFT_OPTION: i64 = 58;
@@ -81,8 +83,13 @@ fn function(down: bool) -> MacEvent {
 
 /// Left Shift's flag change, down when `down`, beside the modifiers in `others`.
 fn shift(down: bool, others: Modifiers) -> MacEvent {
+    shift_on(MAC_LEFT_SHIFT, down, others)
+}
+
+/// The flag change of Shift key `code`, down when `down`, beside the modifiers in `others`.
+fn shift_on(code: i64, down: bool, others: Modifiers) -> MacEvent {
     MacEvent::FlagsChanged {
-        code: MAC_LEFT_SHIFT,
+        code,
         held: Modifiers {
             shift: down,
             ..others
@@ -135,8 +142,7 @@ fn shift_draws_beside_fn_but_any_modifier_holds_paste() {
     assert!(
         !Modifiers {
             shift: true,
-            other_shortcut: true,
-            ..NO_MODIFIERS
+            ..COMMAND_HELD
         }
         .draws(),
         "A Shift shortcut must not draw"
@@ -151,11 +157,7 @@ fn shift_draws_beside_fn_but_any_modifier_holds_paste() {
         "Shift alone must hold the paste"
     );
     assert!(
-        Modifiers {
-            other_shortcut: true,
-            ..NO_MODIFIERS
-        }
-        .any(),
+        COMMAND_HELD.any(),
         "A shortcut modifier must hold the paste"
     );
     assert!(
@@ -193,7 +195,7 @@ fn shift_draws_beside_ctrl_win_but_not_in_another_windows_shortcut() {
 fn interruption_revokes_authority_before_delivering_release() -> anyhow::Result<()> {
     let (sender, events) = async_channel::bounded(4);
     let input = InputSender::new(sender);
-    let permit = input.begin().context("Missing permit")?;
+    let permit = input.begin().context("Recording")?;
     Decision::pass(Some(Action::Interrupt)).deliver(&input);
     assert!(!permit.active());
     assert!(matches!(events.try_recv()?, Input::Interrupt));
@@ -330,9 +332,9 @@ fn two_quick_taps_of_shift_alone_drop_a_pin() {
     assert_eq!(
         windows_pins(&[&repeated[..], &tap(250)].concat()),
         [(0, 330)],
-        "autorepeat while the first tap is held"
+        "Autorepeat while the first tap is held"
     );
-    assert_eq!(windows_pins(&[tap(0), tap(700)].concat()), [], "too slow");
+    assert_eq!(windows_pins(&[tap(0), tap(700)].concat()), [], "Too slow");
     let long_press = [(0, LEFT_SHIFT, true), (600, LEFT_SHIFT, false)];
     assert_eq!(
         windows_pins(&[&long_press[..], &tap(700)].concat()),
@@ -343,12 +345,12 @@ fn two_quick_taps_of_shift_alone_drop_a_pin() {
     assert_eq!(
         windows_pins(&[&tap(0)[..], &typed, &tap(200)].concat()),
         [],
-        "a key between"
+        "A key between"
     );
     assert_eq!(
         windows_pins(&[tap(0), tap(200), tap(400)].concat()),
         [(0, 280), (200, 480)],
-        "each tap also begins the next pair, for a quick stroke the Show skips"
+        "Each tap also begins the next pair, for a quick stroke the Show skips"
     );
 }
 
@@ -356,33 +358,44 @@ fn two_quick_taps_of_shift_alone_drop_a_pin() {
 fn shift_taps_pin_beside_the_held_talk_shortcut() {
     let start = now();
     let at = |millis: u64| start + Duration::from_millis(millis);
-    let (mut policy, both) = windows_holding();
-    policy.observe(LETTER_S, true, both, at(50));
-    policy.observe(LETTER_S, false, both, at(100));
-    let tap = |policy: &mut Windows, millis: u64| {
-        policy.observe(LEFT_SHIFT, true, both, at(millis));
-        policy
-            .observe(LEFT_SHIFT, false, both, at(millis + 80))
-            .action
-    };
-    assert_eq!(tap(&mut policy, 500), None);
-    // The held shortcut's autorepeat comes between the taps.
-    policy.observe(LEFT_CONTROL, true, both, at(640));
     let taps = Taps {
         pressed: at(500),
         released: at(780),
     };
-    assert_eq!(tap(&mut policy, 700), Some(Action::Pin(taps)));
-
-    let mut mac = mac_holding();
-    let pins: Vec<Option<Action>> = [(500, true), (580, false), (700, true), (780, false)]
-        .into_iter()
-        .map(|(millis, down)| {
-            mac.observe(shift(down, FN_HELD), keyboard_fn_up, at(millis))
+    let shift_keys = [(LEFT_SHIFT, MAC_LEFT_SHIFT), (RIGHT_SHIFT, MAC_RIGHT_SHIFT)];
+    for (windows_shift, mac_shift) in shift_keys {
+        let (mut policy, both) = windows_holding();
+        policy.observe(LETTER_S, true, both, at(50));
+        policy.observe(LETTER_S, false, both, at(100));
+        let tap = |policy: &mut Windows, millis: u64| {
+            policy.observe(windows_shift, true, both, at(millis));
+            policy
+                .observe(windows_shift, false, both, at(millis + 80))
                 .action
-        })
-        .collect();
-    assert_eq!(pins, [None, None, None, Some(Action::Pin(taps))]);
+        };
+        assert_eq!(tap(&mut policy, 500), None);
+        // The held shortcut's autorepeat comes between the taps.
+        policy.observe(LEFT_CONTROL, true, both, at(640));
+        assert_eq!(
+            tap(&mut policy, 700),
+            Some(Action::Pin(taps)),
+            "Key {windows_shift:#X}"
+        );
+
+        let mut mac = mac_holding();
+        let pins: Vec<Option<Action>> = [(500, true), (580, false), (700, true), (780, false)]
+            .into_iter()
+            .map(|(millis, down)| {
+                let event = shift_on(mac_shift, down, FN_HELD);
+                mac.observe(event, keyboard_fn_up, at(millis)).action
+            })
+            .collect();
+        assert_eq!(
+            pins,
+            [None, None, None, Some(Action::Pin(taps))],
+            "Key code {mac_shift}"
+        );
+    }
 }
 
 #[test]
@@ -577,7 +590,7 @@ fn a_tap_outage_ends_a_hold_but_not_a_released_dictation() -> anyhow::Result<()>
         delivered(&mac.observe(function(false), keyboard_fn_up, now())),
         [Action::Release]
     );
-    let permit = input.begin().context("Missing permit")?;
+    let permit = input.begin().context("Recording")?;
     mac.missed_events(&input);
     assert!(
         permit.active(),

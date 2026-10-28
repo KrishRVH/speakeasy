@@ -11,7 +11,7 @@ use std::{
     ptr::{self, NonNull},
 };
 
-use anyhow::{Context, bail, ensure};
+use anyhow::{Context as _, bail, ensure};
 use libloading::os::unix::{Library, RTLD_LAZY, RTLD_LOCAL};
 use tokio::io::unix::AsyncFd;
 use xkbcommon::xkb::{self, Keysym};
@@ -164,7 +164,7 @@ impl Sender {
     /// modifier released.
     ///
     /// # Errors
-    /// Returns what stops automatic paste.
+    /// Fails with what stops automatic paste.
     pub(super) fn ready_paste(&mut self) -> Result<ReadyPaste<'_>, PasteBlocked> {
         let (keyboard, chord) = self.paste_target()?;
         Ok(ReadyPaste {
@@ -186,7 +186,7 @@ impl Sender {
     /// Prepares `text` for the resumed text device.
     ///
     /// # Errors
-    /// Returns what stops direct text input.
+    /// Fails with what stops direct text input.
     pub(super) fn ready_text<'t>(
         &mut self,
         text: &'t str,

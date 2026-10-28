@@ -64,7 +64,8 @@ const TOLERANCE: u8 = 6;
 const ON_SCREEN: Duration = Duration::from_secs(6);
 /// Lets DWM compose a change before it is captured.
 const COMPOSED: Duration = Duration::from_millis(300);
-const PATIENCE: Duration = Duration::from_secs(3);
+/// How long a capture may take to deliver its first frame.
+const FIRST_FRAME: Duration = Duration::from_secs(3);
 const INTERVAL: Duration = Duration::from_millis(100);
 /// How long frames are watched after a window opens mid-capture.
 const WATCH: Duration = Duration::from_secs(1);
@@ -78,7 +79,7 @@ const PATTERN_CLASS: PCWSTR = w!("SpeakeasyCapturePattern");
 const OVERLAY_CLASS: PCWSTR = w!("SpeakeasyCaptureOverlay");
 const RESCALING_CLASS: PCWSTR = w!("SpeakeasyRescalingOverlay");
 /// GPUI's client-area insets, left, top, right, and bottom, for a window without a title bar on
-/// Windows 11 at 96 DPI: its resize frame on three sides and one pixel on top.
+/// Windows 11 at 96 DPI: a resize border's width on three sides and one pixel on top.
 const GPUI_INSETS: [i32; 4] = [8, 1, 8, 8];
 
 /// The pattern's RGB color at `[x, y]`: four quadrants above a checkerboard band. Every
@@ -142,7 +143,7 @@ fn capture_leaves_out_every_speakeasy_window_until_it_stops() -> anyhow::Result<
     let (during, opened) = scene.record_opening_pattern(display)?;
     let pattern = scene.pattern.context("Missing pattern window")?;
     assert!(
-        during.iter().any(|crop| crop.captured > opened),
+        during.iter().any(|crop| crop.at > opened),
         "No frame arrived after the pattern opened"
     );
     for crop in &during {
@@ -460,7 +461,7 @@ fn unfiltered_frame(target: Target, longest_edge: u32) -> anyhow::Result<Frame> 
     let (_stop, stopping) = async_channel::bounded::<Infallible>(1);
     let started = Instant::now();
     let mut capture = Capture::start(target, INTERVAL, longest_edge, &stopping)?;
-    let deadline = started.checked_add(PATIENCE).unwrap();
+    let deadline = started.checked_add(FIRST_FRAME).unwrap();
     while Instant::now() < deadline {
         if capture.poll(started)?
             && let Some(frame) = capture.read_pending()?
@@ -495,7 +496,7 @@ fn frame_of(event: ScreenEvent) -> anyhow::Result<Frame> {
 struct Crop {
     scale: usize,
     width: usize,
-    captured: Instant,
+    at: Instant,
     bgra: Vec<[u8; 4]>,
     /// The part of the display the frame showed.
     part: Part,
@@ -537,7 +538,7 @@ impl Crop {
         Ok(Self {
             scale: scale.cast_unsigned() as usize,
             width: crop_width,
-            captured: frame.captured,
+            at: frame.at,
             bgra,
             part: frame.part,
             frame_width,
@@ -662,13 +663,13 @@ impl Scene {
         self.check_owned(area)?;
         let (events, frames) = async_channel::bounded(4);
         let started = Instant::now();
-        let target = Target::screen()?;
+        let target = Target::screen_under_pointer()?;
         ensure!(
             target.display() == display,
             "The pointer moved to another display; nothing was inspected"
         );
         let capture = ScreenCapture::start(target, INTERVAL, u32::MAX, events)?;
-        let deadline = started.checked_add(PATIENCE).unwrap();
+        let deadline = started.checked_add(FIRST_FRAME).unwrap();
         let first = next_event(&frames, deadline).context("No frame arrived")?;
         println!("First frame {:.1?} after start", started.elapsed());
         let mut crops = vec![Crop::of(frame_of(first)?, display.native, area)?];

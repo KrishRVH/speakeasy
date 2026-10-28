@@ -14,7 +14,7 @@ pub(crate) struct Bounds {
 }
 
 impl Bounds {
-    /// Where a point lies within these bounds as a share of each axis: `0.0..=1.0` spans them, and
+    /// Where a point lies within these bounds, normalized on each axis: `0.0..=1.0` spans them, and
     /// a point beyond an edge falls outside that range. `None` when the bounds are empty.
     pub(crate) fn normalize(self, [x, y]: [f64; 2]) -> Option<[f32; 2]> {
         let [left, top] = self.origin;
@@ -75,7 +75,7 @@ pub(crate) fn pixel_box(part: Part, [width, height]: [u32; 2]) -> [u32; 4] {
     [left, top, right, bottom]
 }
 
-/// The pixels between shares `start` and `end` of `extent` pixels.
+/// The pixels between `start` and `end`, normalized to `extent` pixels.
 #[cfg(any(target_os = "windows", test))]
 fn pixel_span(start: f32, end: f32, extent: u32) -> (u32, u32) {
     let edge = |share: f32| whole_within(f64::from(share) * f64::from(extent), extent);
@@ -234,7 +234,7 @@ mod tests {
     #[test]
     fn degenerate_scales_have_no_pixels() {
         for scale in [0.0, -2.0, f64::NAN, f64::INFINITY] {
-            assert_eq!(pixels([1440.0, 900.0], scale), None, "scale {scale}");
+            assert_eq!(pixels([1440.0, 900.0], scale), None, "Scale {scale}");
         }
         assert_eq!(pixels([0.2, 900.0], 2.0), None);
         assert_eq!(pixels([1440.0, 900.0], 1e10), None);
@@ -250,12 +250,12 @@ mod tests {
         assert_eq!(
             MAIN.part_covered_by(window([-720.0, 450.0], [1440.0, 900.0])),
             Some(Part::between([0.0, 0.5], [0.5, 1.0])),
-            "clipped to the display"
+            "Clipped to the display"
         );
         assert_eq!(
             MAIN.part_covered_by(window([1440.0, 0.0], [800.0, 600.0])),
             None,
-            "on the next display"
+            "On the next display"
         );
     }
 
@@ -265,7 +265,7 @@ mod tests {
         assert!(MAIN.contains([1439.5, 899.5]));
         assert!(
             !MAIN.contains([1440.0, 450.0]),
-            "the next display's left edge"
+            "The next display's left edge"
         );
         assert!(!MAIN.contains([-0.5, 450.0]));
     }
@@ -281,7 +281,7 @@ mod tests {
         assert_eq!(
             pixel_box(sliver, size),
             [1919, 0, 1920, 1080],
-            "one pixel wide"
+            "One pixel wide"
         );
         assert_eq!(pixel_box(middle, [0, 0]), [0, 0, 0, 0]);
     }
@@ -324,9 +324,9 @@ mod tests {
     #[test]
     fn rows_that_cannot_hold_the_image_pack_nothing() {
         let rows = [0; 32];
-        assert_eq!(pack_rows(&rows, 8, 2, 5), None, "a short buffer");
-        assert_eq!(pack_rows(&rows, 4, 2, 4), None, "overlapping rows");
-        assert_eq!(pack_rows(&rows, 0, 1, 1), None, "no stride");
-        assert_eq!(pack_rows(&rows, 8, 0, 4), None, "no width");
+        assert_eq!(pack_rows(&rows, 8, 2, 5), None, "A short buffer");
+        assert_eq!(pack_rows(&rows, 4, 2, 4), None, "Overlapping rows");
+        assert_eq!(pack_rows(&rows, 0, 1, 1), None, "No stride");
+        assert_eq!(pack_rows(&rows, 8, 0, 4), None, "No width");
     }
 }

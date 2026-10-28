@@ -171,7 +171,7 @@ impl Window {
 /// The top-level window under the pointer and the part of `display` it covers, unless it is the
 /// desktop, a taskbar, or Speakeasy's own.
 pub(crate) fn window_under_pointer(display: Display) -> Option<(Window, Part)> {
-    let window = top_level_at(cursor()?)?;
+    let window = top_level_at(pointer_location()?)?;
     if is_own_window(window) || SHELL_CLASSES.contains(&class_name(window).as_str()) {
         return None;
     }
@@ -232,7 +232,7 @@ fn frame_bounds(window: HWND) -> Option<RECT> {
 }
 
 pub(crate) fn display_under_pointer() -> anyhow::Result<screen::Display> {
-    let pointer = cursor().context("Cannot find the pointer")?;
+    let pointer = pointer_location().context("Cannot find the pointer")?;
     // SAFETY: takes the point by value and always answers with the nearest monitor.
     describe(unsafe { MonitorFromPoint(pointer, MONITOR_DEFAULTTONEAREST) })
         .context("Cannot measure the display under the pointer")
@@ -272,7 +272,7 @@ fn describe(
 
 pub(crate) fn pointer(display: Display) -> Option<PointerSample> {
     let at = Instant::now();
-    let POINT { x, y } = cursor()?;
+    let POINT { x, y } = pointer_location()?;
     Some(PointerSample {
         at,
         position: display.bounds().normalize([x, y].map(f64::from))?,
@@ -281,7 +281,7 @@ pub(crate) fn pointer(display: Display) -> Option<PointerSample> {
     })
 }
 
-fn cursor() -> Option<POINT> {
+fn pointer_location() -> Option<POINT> {
     let mut point = POINT::default();
     // SAFETY: GetCursorPos writes only this live local.
     (unsafe { GetCursorPos(&raw mut point) } != FALSE).then_some(point)
@@ -438,9 +438,10 @@ impl Capture {
         best_effort(session.SetIsCursorCaptureEnabled(false));
         // Builds without the setting deliver every change; `record` paces those itself.
         best_effort(session.SetMinUpdateInterval(time_span(interval)));
-        let extent = pixels(size);
+        let content_size = pixels(size);
         let part = target.part();
-        let readback = Readback::new(&device, crop_size(pixel_box(part, extent)), longest_edge)?;
+        let crop = pixel_box(part, content_size);
+        let readback = Readback::new(&device, crop_size(crop), longest_edge)?;
         session.StartCapture()?;
         if let Ok(access) = &access {
             settle(access, stopping);
@@ -455,7 +456,7 @@ impl Capture {
             display,
             followed,
             part,
-            content: extent,
+            content: content_size,
             device,
             context,
             direct3d,
@@ -536,7 +537,7 @@ impl Capture {
         let bgra = self.readback.read(&self.context, &texture, [left, top])?;
         let [width, height] = self.readback.size();
         Ok(Some(Frame {
-            captured,
+            at: captured,
             width,
             height,
             bgra,
@@ -673,20 +674,18 @@ impl From<windows::core::Error> for Failure {
 }
 
 impl fmt::Display for Failure {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::OldWindows => formatter.write_str("Shows need Windows 10 version 2004 or later."),
-            Self::Exposed => formatter.write_str(
+            Self::OldWindows => f.write_str("Shows need Windows 10 version 2004 or later."),
+            Self::Exposed => f.write_str(
                 "Windows would not keep Speakeasy out of the recording. Start the Show again.",
             ),
             Self::DisplayLost => {
-                formatter.write_str("The recorded display was disconnected. Start the Show again.")
+                f.write_str("The recorded display was disconnected. Start the Show again.")
             },
-            Self::DeviceLost => {
-                formatter.write_str("The graphics driver restarted. Start the Show again.")
-            },
+            Self::DeviceLost => f.write_str("The graphics driver restarted. Start the Show again."),
             Self::Refused(error) => write!(
-                formatter,
+                f,
                 "Windows stopped the screen capture ({}). Start the Show again.",
                 error.code()
             ),

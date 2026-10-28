@@ -61,7 +61,7 @@ impl Drop for InputMonitor {
 /// [`Input::Unavailable`](crate::Input::Unavailable).
 ///
 /// # Errors
-/// Returns thread startup or native desktop initialization failures.
+/// Fails when a thread cannot start or native desktop initialization fails.
 pub fn prepare(
     input: InputSender,
     options: DesktopOptions,

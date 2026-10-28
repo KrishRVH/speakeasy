@@ -75,8 +75,8 @@ enum Failure {
 }
 
 impl fmt::Display for Failure {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
             Self::Permission => {
                 "Allow Screen & System Audio Recording for Speakeasy in System Settings › Privacy & Security. If it is already on, remove it with − and add it again, then try again."
             },
@@ -255,7 +255,7 @@ async fn capture_stills(
         // An unanswered request is a missed still, and a long enough run of misses is a stall.
         match answer(source.still(part)?).await.unwrap_or(Ok(None))? {
             Some(frame) => {
-                last_frame = frame.captured;
+                last_frame = frame.at;
                 #[expect(
                     clippy::let_underscore_must_use,
                     reason = "A frame the lane has no room for is dropped, and a closed lane ends capture"
@@ -387,7 +387,6 @@ impl Source {
     /// Asks for one still of `part` of the display; `None` when `ScreenCaptureKit` misses it.
     ///
     /// # Errors
-    ///
     /// Fails when the part comes to no pixels, as when the display is gone.
     fn still(&self, part: Part) -> Result<Receiver<Result<Option<Frame>, Failure>>, Failure> {
         let configuration = self.configuration(part).ok_or(Failure::DisplayLost)?;
@@ -470,7 +469,7 @@ fn frame(sample: &CMSampleBuffer, part: Part) -> Option<Frame> {
         height,
     )?;
     Some(Frame {
-        captured,
+        at: captured,
         width: width.try_into().ok()?,
         height: height.try_into().ok()?,
         bgra,

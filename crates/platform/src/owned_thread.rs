@@ -20,7 +20,7 @@ impl OwnedThread {
     /// Runs `body` on a new thread called `name`.
     ///
     /// # Errors
-    /// Returns the operating system's refusal to create the thread.
+    /// Fails with the operating system's error when it cannot create the thread.
     pub fn spawn(name: &str, body: impl FnOnce() + Send + 'static) -> io::Result<Self> {
         let (exit, alive) = async_channel::bounded::<Infallible>(1);
         let handle = thread::Builder::new()
@@ -98,7 +98,7 @@ impl StoppableThread {
     /// closes once [`request_stop`](Self::request_stop) runs or this value drops.
     ///
     /// # Errors
-    /// Returns the operating system's refusal to create the thread.
+    /// Fails with the operating system's error when it cannot create the thread.
     pub fn spawn(
         name: &str,
         body: impl FnOnce(async_channel::Receiver<Infallible>) + Send + 'static,
@@ -136,8 +136,7 @@ mod tests {
     use std::{sync::mpsc, thread, time::Duration};
 
     use super::{OwnedThread, StoppableThread};
-
-    const PATIENCE: Duration = Duration::from_secs(5);
+    use crate::PATIENCE;
 
     #[tokio::test]
     async fn exit_is_observed_once_the_body_returns() -> anyhow::Result<()> {

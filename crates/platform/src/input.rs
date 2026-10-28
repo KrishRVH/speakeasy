@@ -14,7 +14,7 @@ use async_channel::Sender;
 use crate::Scope;
 
 /// Desktop observations and explicit dictation commands sent to the owner.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum Input {
     /// The physical shortcut became held.
     Press,
@@ -65,7 +65,7 @@ pub struct InputSender {
 }
 
 impl InputSender {
-    /// Creates an input lane with no recording authorized.
+    /// An input lane with no recording authorized.
     #[must_use]
     pub fn new(sender: Sender<Input>) -> Self {
         Self {
@@ -251,7 +251,7 @@ impl Gate {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Context;
+    use anyhow::Context as _;
 
     use super::*;
 
@@ -259,7 +259,7 @@ mod tests {
     fn closed_input_cannot_grant_new_insertion_authority() -> anyhow::Result<()> {
         let (sender, _events) = async_channel::bounded(1);
         let input = InputSender::new(sender);
-        let permit = input.begin().context("Missing initial permit")?;
+        let permit = input.begin().context("Recording")?;
         input.close();
         assert!(!permit.active());
         assert!(input.begin().is_none());
@@ -271,14 +271,14 @@ mod tests {
     fn escape_during_clipboard_preparation_prevents_commit() -> anyhow::Result<()> {
         let (sender, _events) = async_channel::bounded(4);
         let input = InputSender::new(sender);
-        let permit = input.begin().context("First insertion permit")?;
+        let permit = input.begin().context("Previous recording")?;
         assert!(input.active());
         input.deliver(Input::Cancel);
         assert!(
             !permit.commit(),
             "Escape must revoke without the owner draining its queue"
         );
-        let next = input.begin().context("New insertion permit")?;
+        let next = input.begin().context("Current recording")?;
         assert!(!permit.commit(), "New recording authorized an old paste");
         assert!(next.commit());
         input.deliver(Input::Cancel);
@@ -302,7 +302,7 @@ mod tests {
     fn full_input_queue_cancels_instead_of_losing_escape() -> anyhow::Result<()> {
         let (sender, events) = async_channel::bounded(1);
         let input = InputSender::new(sender);
-        let permit = input.begin().context("Insertion permit")?;
+        let permit = input.begin().context("Recording")?;
         assert!(permit.active());
         input.deliver(Input::Press);
         input.deliver(Input::Cancel);

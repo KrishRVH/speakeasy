@@ -37,8 +37,7 @@ pub enum Scope {
     Area,
 }
 
-/// A part of a display, by its edges as shares of the display's width and height from its
-/// top-left corner.
+/// A part of a display, by its edges normalized to the display from its top-left corner.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Part {
     /// The left edge.
@@ -60,8 +59,8 @@ impl Part {
         bottom: 1.0,
     };
 
-    /// The part with corners at two points given as shares of the display, in either order,
-    /// clipped to the display.
+    /// The part with corners at two points normalized to the display, in either order, clipped to
+    /// the display.
     #[must_use]
     pub fn between([x, y]: [f32; 2], [other_x, other_y]: [f32; 2]) -> Self {
         let share = |value: f32| value.clamp(0.0, 1.0);
@@ -73,20 +72,20 @@ impl Part {
         }
     }
 
-    /// The share of the display's width the part spans.
+    /// The part's width, normalized to the display's.
     #[must_use]
     pub fn width(self) -> f32 {
         self.right - self.left
     }
 
-    /// The share of the display's height the part spans.
+    /// The part's height, normalized to the display's.
     #[must_use]
     pub fn height(self) -> f32 {
         self.bottom - self.top
     }
 
-    /// Where a point given as shares of the display lies as shares of this part; points outside
-    /// the part fall outside `0.0..=1.0`, and an empty part leaves the point as it was.
+    /// Where a point normalized to the display lies, normalized to this part; points outside the
+    /// part fall outside `0.0..=1.0`, and an empty part leaves the point as it was.
     #[must_use]
     pub fn within(self, [x, y]: [f32; 2]) -> [f32; 2] {
         let share = |value: f32, start: f32, extent: f32| {
@@ -123,9 +122,8 @@ impl Target {
     /// All of the display under the pointer.
     ///
     /// # Errors
-    ///
     /// Fails when the platform cannot record its screen or no display is under the pointer.
-    pub fn screen() -> anyhow::Result<Self> {
+    pub fn screen_under_pointer() -> anyhow::Result<Self> {
         Ok(Self {
             display: Display::under_pointer()?,
             region: Region::Whole,
@@ -137,8 +135,7 @@ impl Target {
     /// top one is Speakeasy's.
     ///
     /// # Errors
-    ///
-    /// Fails as [`screen`](Self::screen) does.
+    /// Fails as [`screen_under_pointer`](Self::screen_under_pointer) does.
     pub fn window_under_pointer() -> anyhow::Result<Self> {
         let display = Display::under_pointer()?;
         let region = native::window_under_pointer(display.native)
@@ -175,7 +172,7 @@ impl Target {
 /// One image of the display, or of the part being recorded.
 pub struct Frame {
     /// When the image was on screen.
-    pub captured: Instant,
+    pub at: Instant,
     /// Width in pixels.
     pub width: u32,
     /// Height in pixels.
@@ -190,14 +187,14 @@ pub struct Frame {
 impl fmt::Debug for Frame {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
-            captured,
+            at,
             width,
             height,
             bgra: _,
             part,
         } = self;
         f.debug_struct("Frame")
-            .field("captured", captured)
+            .field("at", at)
             .field("width", width)
             .field("height", height)
             .field("part", part)
@@ -226,7 +223,6 @@ impl Display {
     /// The display under the pointer now.
     ///
     /// # Errors
-    ///
     /// Fails when the platform cannot record its screen or no display is under the pointer.
     pub fn under_pointer() -> anyhow::Result<Self> {
         native::display_under_pointer()
@@ -271,7 +267,6 @@ impl ScreenCapture {
     /// they still appear in the user's own screen sharing before and after.
     ///
     /// # Errors
-    ///
     /// Fails when the thread cannot start. Failures after starting arrive as
     /// [`ScreenEvent::Failed`].
     pub fn start(
@@ -310,7 +305,6 @@ impl PointerMonitor {
     /// input hook or permission, and never delays the pointer.
     ///
     /// # Errors
-    ///
     /// Fails when the thread cannot start.
     pub fn start(display: Display, samples: Sender<PointerSample>) -> anyhow::Result<Self> {
         let thread = StoppableThread::spawn("pointer", move |stopping| {
@@ -344,7 +338,6 @@ impl NativeWindow {
     /// other windows, and is left out of screen capture.
     ///
     /// # Errors
-    ///
     /// Fails when the platform cannot keep the window out of screen capture or place it.
     pub fn configure_overlay(&self, display: Display) -> anyhow::Result<()> {
         native::configure_overlay(self, display.native)
@@ -372,7 +365,7 @@ mod unsupported {
     use async_channel::{Receiver, Sender};
 
     use super::{Part, PointerSample, ScreenEvent, Target};
-    use crate::NativeWindow;
+    use crate::{NativeWindow, linux::SHOWS_UNSUPPORTED};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(crate) struct Display;
@@ -381,7 +374,7 @@ mod unsupported {
     pub(crate) struct Window;
 
     pub(super) fn display_under_pointer() -> anyhow::Result<super::Display> {
-        bail!("Shows are not available on Linux yet")
+        bail!(SHOWS_UNSUPPORTED)
     }
 
     pub(super) const fn window_under_pointer(_: Display) -> Option<(Window, Part)> {
@@ -402,7 +395,7 @@ mod unsupported {
     }
 
     pub(super) fn configure_overlay(_: &NativeWindow, _: Display) -> anyhow::Result<()> {
-        bail!("Shows are not available on Linux yet")
+        bail!(SHOWS_UNSUPPORTED)
     }
 
     pub(super) const fn set_overlay_visible(_: &NativeWindow, _: bool) {}
@@ -427,21 +420,21 @@ mod tests {
             }
         );
         assert_eq!(part.within([0.5, 0.25]), [0.5, 0.5]);
-        assert_eq!(part.within([1.0, 0.75]), [1.5, 1.5], "outside the part");
+        assert_eq!(part.within([1.0, 0.75]), [1.5, 1.5], "Outside the part");
         let flat = Part::between([0.0, 0.5], [1.0, 0.5]);
         assert_eq!(
             flat.within([0.3, 0.7]),
             [0.3, 0.7],
-            "an empty extent maps nothing"
+            "An empty extent maps nothing"
         );
     }
 
     #[test]
     fn debugging_a_frame_never_prints_its_pixels() {
-        let captured = Instant::now();
+        let at = Instant::now();
         let shown = |shade: u8| {
             let frame = Frame {
-                captured,
+                at,
                 width: 2,
                 height: 2,
                 bgra: vec![shade; 16],

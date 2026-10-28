@@ -185,7 +185,7 @@ fn record(started: Instant, scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<O
 /// Show finished before then, or whose overlay cannot appear, records all of that display.
 async fn choose(scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<Option<(Target, bool)>> {
     let display = match scope {
-        Scope::Screen => return Target::screen().map(|target| Some((target, false))),
+        Scope::Screen => return Target::screen_under_pointer().map(|target| Some((target, false))),
         Scope::Window => return Target::window_under_pointer().map(|target| Some((target, false))),
         Scope::Area => Display::under_pointer()?,
     };
@@ -321,7 +321,7 @@ impl<'a> Take<'a> {
                     .is_some_and(|sheet| sheet.track(frame.part))
             });
         }
-        let at = self.moment(frame.captured);
+        let at = self.moment(frame.at);
         let Some(admission) = self.journal.admit() else {
             return;
         };

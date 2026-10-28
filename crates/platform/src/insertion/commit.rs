@@ -28,11 +28,11 @@ impl Worker {
         // The thread lives as long as the monitor, so each request drains what AppKit autoreleases.
         #[cfg(target_os = "macos")]
         let deliver = |request: &Insertion| objc2::rc::autoreleasepool(|_| deliver(request));
-        Self::serving(input, deliver)
+        Self::spawn(input, deliver)
     }
 
     /// Starts a thread that answers each request with `serve_one`.
-    fn serving(
+    fn spawn(
         input: InputSender,
         serve_one: impl Fn(&Insertion) -> anyhow::Result<Inserted> + Send + 'static,
     ) -> std::io::Result<(Self, Inserter)> {

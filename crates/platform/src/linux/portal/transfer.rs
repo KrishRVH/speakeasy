@@ -4,13 +4,13 @@
 use std::{
     convert::Infallible,
     fs::File,
-    io::Write,
+    io::Write as _,
     os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd},
     sync::Arc,
     time::Duration,
 };
 
-use anyhow::{Context, ensure};
+use anyhow::{Context as _, ensure};
 use async_channel::{Receiver, Sender};
 use futures_util::{future::LocalBoxFuture, stream::FuturesUnordered};
 use tokio::io::{Interest, unix::AsyncFd};

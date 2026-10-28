@@ -2,18 +2,15 @@
 //! through a recording fake adapter, plus the insertion thread's stop and panic answers; no test
 //! touches the clipboard or sends input.
 
-use std::{panic, time::Duration};
+use std::panic;
 
-use anyhow::Context;
+use anyhow::Context as _;
 
 use super::{CLIPBOARD_CHANGED, CLIPBOARD_CHANGED_BEFORE_PASTE, NativeInsert, Worker, insert};
 use crate::{
-    InputSender, InsertPermit,
+    InputSender, InsertPermit, PATIENCE,
     insertion::{Delivery, INSERTION_STOPPED, Inserted},
 };
-
-/// How long a test waits for the insertion thread before calling it stuck.
-const PATIENCE: Duration = Duration::from_secs(5);
 
 const DELIVERIES: [Delivery; 2] = [Delivery::Paste, Delivery::Direct];
 const OWN_FOCUS: bool = false;
@@ -296,7 +293,7 @@ fn escape_during_the_final_checks_prevents_input() -> anyhow::Result<()> {
 async fn a_stopped_worker_exits_while_inserters_outlive_it() -> anyhow::Result<()> {
     let (events, _receiver) = async_channel::bounded(1);
     let input = InputSender::new(events);
-    let (worker, inserter) = Worker::serving(input.clone(), |_| Ok(Inserted::Sent))?;
+    let (worker, inserter) = Worker::spawn(input.clone(), |_| Ok(Inserted::Sent))?;
     worker.request_stop();
     tokio::time::timeout(PATIENCE, worker.stopped())
         .await
@@ -314,7 +311,7 @@ async fn a_stopped_worker_exits_while_inserters_outlive_it() -> anyhow::Result<(
 #[tokio::test]
 async fn a_panic_answers_a_fixed_message_and_the_next_request_is_served() -> anyhow::Result<()> {
     let (events, _receiver) = async_channel::bounded(1);
-    let (_worker, inserter) = Worker::serving(InputSender::new(events), |request| {
+    let (_worker, inserter) = Worker::spawn(InputSender::new(events), |request| {
         if request.text == "panics" {
             // Unwinds without the panic hook, so the payload never reaches test output.
             panic::resume_unwind(Box::new("private payload"));

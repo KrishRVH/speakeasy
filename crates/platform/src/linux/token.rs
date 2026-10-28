@@ -4,7 +4,7 @@
 use std::{
     ffi::OsString,
     fs,
-    io::{ErrorKind, Read, Write},
+    io::{ErrorKind, Read as _, Write as _},
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };

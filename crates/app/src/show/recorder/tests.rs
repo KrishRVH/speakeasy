@@ -29,7 +29,7 @@ impl Feed {
     /// A small frame of the whole display, on screen `millis` into the take.
     async fn frame(&self, millis: u64) {
         let frame = Frame {
-            captured: self.at(millis),
+            at: self.at(millis),
             width: 4,
             height: 4,
             bgra: vec![0x80; 64],

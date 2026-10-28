@@ -47,12 +47,12 @@ pub(super) struct InsertionWorker {
 }
 
 impl InsertionWorker {
-    pub(super) fn spawn(
+    pub(super) fn start(
         input: InputSender,
         options: DesktopOptions,
         requests: Receiver<Insertion>,
     ) -> anyhow::Result<Self> {
-        Self::spawn_with(
+        Self::spawn(
             input,
             requests,
             move || Paster::open(options),
@@ -61,7 +61,7 @@ impl InsertionWorker {
     }
 
     /// Runs `open` on the worker thread, then `serve` with what it opened.
-    fn spawn_with<S>(
+    fn spawn<S>(
         input: InputSender,
         requests: Receiver<Insertion>,
         open: impl FnOnce() -> anyhow::Result<S> + Send + 'static,
@@ -290,13 +290,13 @@ fn submit_paste<C>(
 
 #[cfg(test)]
 mod tests {
-    use std::{mem, sync::mpsc, time::Duration};
+    use std::{mem, sync::mpsc};
 
-    use anyhow::{Context, bail};
+    use anyhow::bail;
     use futures_util::FutureExt;
 
     use super::*;
-    use crate::Input;
+    use crate::{Input, PATIENCE};
 
     #[derive(Debug, PartialEq, Eq)]
     enum Step {
@@ -432,17 +432,17 @@ mod tests {
         let (inserter, requests) = crate::Inserter::lane();
         let (entered, opening) = async_channel::bounded(1);
         let (release, released) = mpsc::channel();
-        let worker = InsertionWorker::spawn_with(
+        let worker = InsertionWorker::spawn(
             input.clone(),
             requests,
             move || -> anyhow::Result<()> {
                 entered.try_send(())?;
-                released.recv_timeout(Duration::from_secs(2))?;
+                released.recv_timeout(PATIENCE)?;
                 bail!("Synthetic setup failure")
             },
             |(), _| {},
         )?;
-        tokio::time::timeout(Duration::from_secs(1), opening.recv()).await??;
+        tokio::time::timeout(PATIENCE, opening.recv()).await??;
         let mut ready = Box::pin(worker.ready());
         assert!(
             ready.as_mut().now_or_never().is_none(),
@@ -453,9 +453,7 @@ mod tests {
         assert!(queued.as_mut().now_or_never().is_none());
         release.send(())?;
         assert!(
-            tokio::time::timeout(Duration::from_secs(2), ready)
-                .await?
-                .is_err(),
+            tokio::time::timeout(PATIENCE, ready).await?.is_err(),
             "A failed setup reported readiness"
         );
         match received.try_recv() {
@@ -465,7 +463,7 @@ mod tests {
             ),
             other => bail!("Readiness failed before setup reported why: {other:?}"),
         }
-        let answer = tokio::time::timeout(Duration::from_secs(2), queued)
+        let answer = tokio::time::timeout(PATIENCE, queued)
             .await
             .context("A queued insertion was left waiting")?;
         assert!(answer.is_err());
@@ -480,7 +478,7 @@ mod tests {
         let (inserter, requests) = crate::Inserter::lane();
         let (taken, holding) = async_channel::bounded(1);
         let (release, released) = mpsc::channel();
-        let worker = InsertionWorker::spawn_with(
+        let worker = InsertionWorker::spawn(
             input.clone(),
             requests,
             || Ok(()),
@@ -490,7 +488,7 @@ mod tests {
                     .try_send(())
                     .expect("The test awaits the request in hand");
                 released
-                    .recv_timeout(Duration::from_secs(2))
+                    .recv_timeout(PATIENCE)
                     .expect("The test queues a second request");
                 // Unwinds without the panic hook, so the payload never reaches test output.
                 panic::resume_unwind(Box::new("private payload"));
@@ -501,12 +499,12 @@ mod tests {
         let mut in_hand =
             Box::pin(inserter.insert("fixture".into(), permit.clone(), Delivery::Paste));
         assert!(in_hand.as_mut().now_or_never().is_none());
-        tokio::time::timeout(Duration::from_secs(1), holding.recv()).await??;
+        tokio::time::timeout(PATIENCE, holding.recv()).await??;
         let mut queued = Box::pin(inserter.insert("fixture".into(), permit, Delivery::Paste));
         assert!(queued.as_mut().now_or_never().is_none());
         release.send(())?;
         for answer in [in_hand, queued] {
-            let answer = tokio::time::timeout(Duration::from_secs(2), answer)
+            let answer = tokio::time::timeout(PATIENCE, answer)
                 .await
                 .context("An insertion request was left waiting")?;
             assert!(answer.is_err());

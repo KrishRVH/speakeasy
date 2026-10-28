@@ -10,7 +10,7 @@ mod paste;
 
 use std::{convert::Infallible, os::fd::AsFd};
 
-use anyhow::{Context, anyhow, bail, ensure};
+use anyhow::{Context as _, anyhow, bail, ensure};
 use async_channel::Receiver;
 use x11rb::{
     connection::Connection,
@@ -30,22 +30,12 @@ use xkbcommon::xkb::{KEYSYM_CASE_INSENSITIVE, Keysym, keysym_from_name};
 
 pub(super) use self::clipboard::ClipboardWorker;
 use self::paste::InsertionWorker;
-use super::{Actionable, HostSession, ShortcutLabels, stopping, watch_readable};
+use super::{Actionable, HostSession, ShortcutLabels, stop_requested, watch_readable};
 use crate::{DesktopOptions, Input, InputSender, LinuxPaste, insertion::Insertion};
 
 const MAX_FOCUS_ANCESTRY: usize = 32;
 /// The eight core modifier bits; key-event state also carries pointer-button bits above them.
 const CORE_MODIFIERS: u16 = 0xFF;
-const MODIFIER_KEY_NAMES: [&str; 8] = [
-    "Control_L",
-    "Control_R",
-    "Super_L",
-    "Super_R",
-    "Alt_L",
-    "Alt_R",
-    "Shift_L",
-    "Shift_R",
-];
 
 #[derive(PartialEq, Eq)]
 struct Keyboard {
@@ -280,7 +270,7 @@ pub(super) async fn run(
     input: &InputSender,
     options: &DesktopOptions,
     requests: Receiver<Insertion>,
-    stop: &Receiver<Infallible>,
+    stopping: &Receiver<Infallible>,
 ) -> anyhow::Result<()> {
     let (connection, screen) = connect()?;
     let root = connection
@@ -298,10 +288,10 @@ pub(super) async fn run(
     let lock = keyboard.lock_modifiers();
     // The grabs wait for the worker: a chord pressed before this loop runs would hold the keyboard
     // grabbed until it does.
-    let worker = InsertionWorker::spawn(input.clone(), options.clone(), requests)?;
+    let worker = InsertionWorker::start(input.clone(), options.clone(), requests)?;
     tokio::select! {
         biased;
-        () = stopping(stop, input) => return Ok(()),
+        () = stop_requested(stopping, input) => return Ok(()),
         ready = worker.ready() => ready?,
     }
     if let Some(shortcuts) = shortcuts {
@@ -325,7 +315,7 @@ pub(super) async fn run(
         }
         tokio::select! {
             biased;
-            () = stopping(stop, input) => break,
+            () = stop_requested(stopping, input) => break,
             readable = readiness.readable() => readable?.clear_ready(),
         }
     }
@@ -361,6 +351,17 @@ fn is_key_down(keys: &[u8; 32], code: u8) -> bool {
 }
 
 fn parse_binding(expression: &str) -> anyhow::Result<(Vec<Keysym>, &str)> {
+    /// The left and right keys of CTRL, LOGO, ALT, and SHIFT, which cannot be the ordinary key.
+    const BINDING_MODIFIER_KEYS: [&str; 8] = [
+        "Control_L",
+        "Control_R",
+        "Super_L",
+        "Super_R",
+        "Alt_L",
+        "Alt_R",
+        "Shift_L",
+        "Shift_R",
+    ];
     let mut parts = expression.split('+').map(str::trim);
     let key = parts
         .next_back()
@@ -380,7 +381,7 @@ fn parse_binding(expression: &str) -> anyhow::Result<(Vec<Keysym>, &str)> {
         "Shortcut needs one to three modifiers"
     );
     ensure!(
-        !MODIFIER_KEY_NAMES
+        !BINDING_MODIFIER_KEYS
             .iter()
             .any(|name| name.eq_ignore_ascii_case(key)),
         "Shortcut needs an ordinary key"

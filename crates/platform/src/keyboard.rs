@@ -403,8 +403,8 @@ impl Windows {
 
     /// Forgets the chord keys Windows reports up before this event and ends a hold they no longer
     /// make.
-    fn reconcile(&mut self, physical: [bool; 4]) -> bool {
-        for (tracked, physically_down) in self.chord_keys_down.iter_mut().zip(physical) {
+    fn reconcile(&mut self, chord_keys: [bool; 4]) -> bool {
+        for (tracked, physically_down) in self.chord_keys_down.iter_mut().zip(chord_keys) {
             *tracked &= physically_down;
         }
         self.chord.reconcile(self.chord_held())

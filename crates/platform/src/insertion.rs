@@ -46,8 +46,8 @@ impl Inserter {
     /// Submits text under the recording permit through the chosen delivery.
     ///
     /// # Errors
-    /// Returns native insertion failures, or a fixed message once the request lane has closed or
-    /// its thread ended without answering.
+    /// Fails when native insertion fails, or with a fixed message once the request lane has closed
+    /// or its thread ended without answering.
     pub async fn insert(
         &self,
         text: String,

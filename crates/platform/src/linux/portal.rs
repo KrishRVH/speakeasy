@@ -9,11 +9,10 @@ use std::{
     convert::Infallible,
     iter,
     ops::ControlFlow,
-    os::fd::OwnedFd,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, bail, ensure};
+use anyhow::{Context as _, bail, ensure};
 use async_channel::{Receiver, Sender};
 use futures_util::{FutureExt, StreamExt};
 use tokio::task::JoinSet;
@@ -24,7 +23,9 @@ use zbus::{
 };
 
 use self::insertion::Insertions;
-use super::{APPLICATION_ID, ShortcutLabels, ei, owner_changes, stopping, token::TokenStore, x11};
+use super::{
+    APPLICATION_ID, ShortcutLabels, ei, owner_changes, stop_requested, token::TokenStore, x11,
+};
 use crate::{
     DesktopOptions, Input, InputSender, InsertPermit, LinuxPaste,
     insertion::{Insertion, Reply},
@@ -48,6 +49,8 @@ const PERSISTENT_REMOTE_VERSION: u32 = 2;
 const SIGNAL_BACKLOG: usize = 64;
 /// Any portal restart or session closure ends desktop access, so a short queue suffices.
 const REVOCATION_BACKLOG: usize = 4;
+/// The clipboard portal's signal stream ended.
+const CLIPBOARD_DISCONNECTED: &str = "Clipboard portal disconnected";
 const CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
 const OWNERSHIP_SETTLE: Duration = Duration::from_millis(500);
 
@@ -304,7 +307,7 @@ impl Pump {
                     self.begin_handoff(handoff.context("Clipboard preparation stopped")?)?;
                 },
                 event = self.owners.next(), if self.ownership.session.is_some() => {
-                    self.observe_owner(&event.context("Clipboard portal disconnected")??)?;
+                    self.observe_owner(&event.context(CLIPBOARD_DISCONNECTED)??)?;
                 },
                 Err(revoked) = revocation(&mut self.changes, &self.session_root) => {
                     return Err(revoked);
@@ -338,10 +341,8 @@ impl Pump {
         // preceding permit, so settle them before the new selection takes over.
         let mut queued = iter::from_fn(|| self.owners.next().now_or_never()).fuse();
         for event in queued.by_ref().take(SIGNAL_BACKLOG) {
-            self.ownership.observe(
-                &event.context("Clipboard portal disconnected")??,
-                &self.notify,
-            )?;
+            self.ownership
+                .observe(&event.context(CLIPBOARD_DISCONNECTED)??, &self.notify)?;
         }
         ensure!(queued.next().is_none(), "Clipboard ownership queue overran");
         self.handoff = Some(PendingHandoff {
@@ -438,16 +439,16 @@ pub(super) async fn run(
     input: &InputSender,
     options: &DesktopOptions,
     requests: Receiver<Insertion>,
-    stop: &Receiver<Infallible>,
+    stopping: &Receiver<Infallible>,
 ) -> anyhow::Result<()> {
     // Desktop bindings and manual paste need neither portal shortcuts nor keyboard input;
     // Xwayland serves the copy.
     if options.paste == LinuxPaste::Manual && options.external_shortcut {
-        return x11::run(input, options, requests, stop).await;
+        return x11::run(input, options, requests, stopping).await;
     }
     let (mut portal, mut changes) = tokio::select! {
         biased;
-        () = stopping(stop, input) => return Ok(()),
+        () = stop_requested(stopping, input) => return Ok(()),
         connected = Portal::connect() => connected?,
     };
     // A portal restart, or a session closed while a later consent dialog is open, ends binding,
@@ -456,12 +457,12 @@ pub(super) async fn run(
     let session_root = portal.session_root();
     let bound = tokio::select! {
         biased;
-        () = stopping(stop, input) => None,
+        () = stop_requested(stopping, input) => None,
         bound = bind(&mut portal, options) => Some(bound),
         Err(revoked) = revocation(&mut changes, &session_root) => Some(Err(revoked)),
     };
     let outcome = match bound {
-        Some(Ok(bound)) => serve(&portal, bound, changes, input, options, requests, stop).await,
+        Some(Ok(bound)) => serve(&portal, bound, changes, input, options, requests, stopping).await,
         Some(Err(error)) => Err(error),
         None => Ok(()),
     };
@@ -605,11 +606,7 @@ async fn start_remote_desktop(
         .await?;
     Ok(Remote {
         session,
-        sender: ei::Sender::connect(
-            libei,
-            OwnedFd::from(descriptor),
-            paste == LinuxPaste::Terminal,
-        )?,
+        sender: ei::Sender::connect(libei, descriptor.into(), paste == LinuxPaste::Terminal)?,
         shares_clipboard,
     })
 }
@@ -637,7 +634,7 @@ async fn serve(
     input: &InputSender,
     options: &DesktopOptions,
     requests: Receiver<Insertion>,
-    stop: &Receiver<Infallible>,
+    stopping: &Receiver<Infallible>,
 ) -> anyhow::Result<()> {
     let shortcuts = shortcut_signals(&portal.connection).await?;
     let clipboard = portal.proxy(CLIPBOARD).await?;
@@ -669,17 +666,17 @@ async fn serve(
     );
     // Focus checks need the X worker, which touches X clipboard contents only for X11 copies,
     // never for portal copies or direct text.
-    let worker = x11::ClipboardWorker::spawn(input.clone())?;
+    let worker = x11::ClipboardWorker::start(input.clone())?;
     tokio::select! {
         biased;
-        () = stopping(stop, input) => return Ok(()),
+        () = stop_requested(stopping, input) => return Ok(()),
         ready = worker.ready() => ready?,
     }
     input.deliver(bound.labels.clone().into_desktop_ready());
     Insertions::new(
         &mut bound, &notices, &selecting, &worker, &clipboard, options,
     )
-    .serve(transfer_requests, requests, input, stop)
+    .serve(transfer_requests, requests, input, stopping)
     .await
 }
 
@@ -865,7 +862,7 @@ mod tests {
     fn preceding_clipboard_loss_cannot_revoke_or_clear_a_new_selection() -> anyhow::Result<()> {
         let (events, _receiver) = async_channel::bounded(1);
         let input = InputSender::new(events);
-        let previous = input.begin().context("Preceding recording")?;
+        let previous = input.begin().context("Previous recording")?;
         let next = input.begin().context("Current recording")?;
         let (notify, notices) = async_channel::bounded(4);
         let session = fixture_session()?;

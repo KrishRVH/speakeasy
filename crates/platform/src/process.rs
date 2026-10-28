@@ -56,7 +56,7 @@ impl ProcessGroup {
     /// this call stays outside, so attach right after spawning.
     ///
     /// # Errors
-    /// Returns an error if the child was already reaped or native group setup fails.
+    /// Fails when the child was already reaped or native group setup fails.
     pub fn attach(child: &tokio::process::Child) -> anyhow::Result<Self> {
         let process = child
             .raw_handle()
@@ -115,7 +115,7 @@ impl ProcessGroup {
     /// to a process in this job.
     ///
     /// # Errors
-    /// Returns an error if the system's listener table cannot be read.
+    /// Fails when the system's listener table cannot be read.
     pub fn holds_loopback_listener(&self, port: u16) -> anyhow::Result<bool> {
         let owners = loopback_listener_owners(port)?;
         Ok(!owners.is_empty() && owners.into_iter().all(|owner| self.contains(owner)))
@@ -218,7 +218,7 @@ impl ProcessGroup {
     /// terminates the group before reaping its leader.
     ///
     /// # Errors
-    /// Returns an error if the child was already reaped.
+    /// Fails when the child was already reaped.
     pub fn attach(child: &tokio::process::Child) -> anyhow::Result<Self> {
         Self::led_by(
             child
@@ -271,7 +271,7 @@ impl ProcessGroup {
     /// by a process in this group. A group that was terminated or whose leader was reaped holds none.
     ///
     /// # Errors
-    /// Returns an error if the system's socket table cannot be read.
+    /// Fails when the system's socket table cannot be read.
     pub fn holds_loopback_listener(&self, port: u16) -> anyhow::Result<bool> {
         let Some(leader) = self.leader else {
             return Ok(false);
@@ -407,12 +407,12 @@ mod tests {
     #[test]
     fn listeners_held_by_members_other_than_the_leader_count() -> anyhow::Result<()> {
         use std::{
-            io::{BufRead, BufReader},
+            io::{BufRead as _, BufReader},
             os::{fd::OwnedFd, unix::process::CommandExt},
             process::{Command, Stdio},
         };
 
-        use anyhow::Context;
+        use anyhow::Context as _;
 
         let held = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = held.local_addr()?.port();
@@ -441,12 +441,12 @@ mod tests {
     #[test]
     fn only_listeners_held_inside_the_job_count() -> anyhow::Result<()> {
         use std::{
-            io::{BufRead, BufReader},
+            io::{BufRead as _, BufReader},
             os::windows::io::AsHandle,
             process::{Command, Stdio},
         };
 
-        use anyhow::Context;
+        use anyhow::Context as _;
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = listener.local_addr()?.port();

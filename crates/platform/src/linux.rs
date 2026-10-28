@@ -10,7 +10,8 @@ mod x11;
 
 use std::{
     convert::Infallible,
-    io::{self, Write},
+    fmt,
+    io::{self, Write as _},
     os::fd::{BorrowedFd, OwnedFd},
 };
 
@@ -29,6 +30,8 @@ use super::{
 
 /// Desktop launcher and portal registration identity.
 pub const APPLICATION_ID: &str = "io.github.krvh.speakeasy";
+/// The failure of each Show call Linux cannot serve, since it records no Shows yet.
+pub(crate) const SHOWS_UNSUPPORTED: &str = "Shows are not available on Linux yet";
 
 /// The keyboard layout that paste types through has no paste shortcut keys: the active layout
 /// through libei, or on X11 the first layout, the only one XTEST paste drives.
@@ -78,8 +81,8 @@ impl<K: Copy> PasteChord<K> {
 #[derive(Debug)]
 struct Actionable(&'static str);
 
-impl std::fmt::Display for Actionable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Actionable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.0)
     }
 }
@@ -178,10 +181,10 @@ fn start_serving(
     + 'static,
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
     let (inserter, incoming) = Inserter::lane();
-    let (stop, stop_requests) = async_channel::bounded(1);
+    let (stop, stopping) = async_channel::bounded(1);
     let thread = OwnedThread::spawn("desktop-access", move || {
         let lane = incoming.clone();
-        match serve(&input, &options, incoming, &stop_requests) {
+        match serve(&input, &options, incoming, &stopping) {
             Err(error) if !input.is_closed() => {
                 input.fail(match error.downcast_ref::<Actionable>() {
                     Some(actionable) => actionable.0.to_owned(),
@@ -201,7 +204,7 @@ fn serve_desktop(
     input: &InputSender,
     options: &DesktopOptions,
     requests: Receiver<Insertion>,
-    stop: &Receiver<Infallible>,
+    stopping: &Receiver<Infallible>,
 ) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -212,17 +215,17 @@ fn serve_desktop(
     );
     tokio::task::LocalSet::new().block_on(&runtime, async {
         match host {
-            HostSession::Wayland => portal::run(input, options, requests, stop).await,
-            HostSession::X11 => x11::run(input, options, requests, stop).await,
+            HostSession::Wayland => portal::run(input, options, requests, stopping).await,
+            HostSession::X11 => x11::run(input, options, requests, stopping).await,
         }
     })
 }
 
 /// Resolves once the owner requests a stop or input closes.
-async fn stopping(stop: &Receiver<Infallible>, input: &InputSender) {
+async fn stop_requested(stopping: &Receiver<Infallible>, input: &InputSender) {
     tokio::select! {
         biased;
-        _ = stop.recv() => {},
+        _ = stopping.recv() => {},
         () = input.closed() => {},
     }
 }
@@ -265,7 +268,7 @@ impl NativeWindow {
     /// Configures the pill for nonactivating, click-through presentation.
     ///
     /// # Errors
-    /// Returns failed native configuration.
+    /// Fails when the X11 server cannot be reached or refuses a change to the window.
     pub fn configure_pill(&self) -> anyhow::Result<()> {
         x11::configure_pill(self.native.id)
     }
@@ -286,7 +289,7 @@ pub(crate) fn reduced_motion() -> bool {
 }
 
 pub(crate) fn copy_text(_: &str) -> anyhow::Result<()> {
-    bail!("Shows are not available on Linux yet")
+    bail!(SHOWS_UNSUPPORTED)
 }
 
 pub(crate) fn show_startup_error(message: &str) {
@@ -299,13 +302,13 @@ pub(crate) fn show_startup_error(message: &str) {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::mpsc, time::Duration};
+    use std::sync::mpsc;
 
     use anyhow::Context as _;
     use futures_util::FutureExt as _;
 
     use super::*;
-    use crate::Delivery;
+    use crate::{Delivery, PATIENCE};
 
     #[tokio::test]
     async fn a_stopped_desktop_thread_answers_every_queued_insertion() -> anyhow::Result<()> {
@@ -317,7 +320,7 @@ mod tests {
         let serve = move |_: &_, _: &_, requests: Receiver<Insertion>, _: &_| {
             let _in_hand = requests.recv_blocking()?;
             taken.try_send(())?;
-            released.recv_timeout(Duration::from_secs(2))?;
+            released.recv_timeout(PATIENCE)?;
             Ok(())
         };
         let (_thread, _monitor, inserter) =
@@ -326,12 +329,12 @@ mod tests {
         let in_hand = inserter.insert("fixture".into(), permit.clone(), Delivery::Paste);
         let mut in_hand = Box::pin(in_hand);
         assert!(in_hand.as_mut().now_or_never().is_none());
-        tokio::time::timeout(Duration::from_secs(1), holding.recv()).await??;
+        tokio::time::timeout(PATIENCE, holding.recv()).await??;
         let mut queued = Box::pin(inserter.insert("fixture".into(), permit, Delivery::Paste));
         assert!(queued.as_mut().now_or_never().is_none());
         release.send(())?;
         for answer in [in_hand, queued] {
-            let answer = tokio::time::timeout(Duration::from_secs(2), answer)
+            let answer = tokio::time::timeout(PATIENCE, answer)
                 .await
                 .context("An insertion request was left waiting")?;
             assert!(answer.is_err());

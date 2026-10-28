@@ -1,7 +1,7 @@
 //! The X11 clipboard both insertion paths copy through, and the worker thread that serves it, with
 //! focus checks, to the Wayland portal path.
 
-use anyhow::Context;
+use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
 use x11rb::{
     protocol::xproto::{Atom, ConnectionExt as _, Window},
@@ -27,11 +27,11 @@ pub(in crate::linux) struct ClipboardWorker {
 }
 
 impl ClipboardWorker {
-    pub(in crate::linux) fn spawn(input: InputSender) -> anyhow::Result<Self> {
-        Self::spawn_with(input, Clipboard::open)
+    pub(in crate::linux) fn start(input: InputSender) -> anyhow::Result<Self> {
+        Self::spawn(input, Clipboard::open)
     }
 
-    fn spawn_with<C: ClipboardAccess>(
+    fn spawn<C: ClipboardAccess>(
         input: InputSender,
         open: impl FnOnce() -> anyhow::Result<C> + Send + 'static,
     ) -> anyhow::Result<Self> {
@@ -259,13 +259,13 @@ fn serve_clipboard(mut clipboard: impl ClipboardAccess, requests: &Receiver<Clip
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::mpsc, time::Duration};
+    use std::sync::mpsc;
 
     use anyhow::bail;
     use futures_util::FutureExt;
 
     use super::*;
-    use crate::Input;
+    use crate::{Input, PATIENCE};
 
     #[tokio::test]
     async fn blocked_focus_query_keeps_cancellation_responsive_and_never_accesses_clipboard()
@@ -278,7 +278,7 @@ mod tests {
         impl ClipboardAccess for FocusOnly {
             fn external_target(&self, _: HostSession) -> anyhow::Result<bool> {
                 self.entered.try_send(())?;
-                self.release.recv_timeout(Duration::from_secs(2))?;
+                self.release.recv_timeout(PATIENCE)?;
                 Ok(false)
             }
 
@@ -293,10 +293,10 @@ mod tests {
 
         let (sender, _events) = async_channel::bounded(4);
         let input = InputSender::new(sender);
-        let permit = input.begin().context("Missing focus permit")?;
+        let permit = input.begin().context("Recording")?;
         let (entered, blocked) = async_channel::bounded(1);
         let (release, waiting) = mpsc::channel();
-        let worker = ClipboardWorker::spawn_with(input.clone(), || {
+        let worker = ClipboardWorker::spawn(input.clone(), || {
             Ok(FocusOnly {
                 entered,
                 release: waiting,
@@ -306,7 +306,7 @@ mod tests {
         let mut target = std::pin::pin!(worker.external_target(permit.clone()));
         tokio::select! {
             result = &mut target => bail!("Focus did not block: {result:?}"),
-            started = tokio::time::timeout(Duration::from_secs(1), blocked.recv()) => {
+            started = tokio::time::timeout(PATIENCE, blocked.recv()) => {
                 started??;
             },
         }
@@ -344,12 +344,12 @@ mod tests {
         let (copy_log, copies) = mpsc::channel();
         let (entered, opening) = async_channel::bounded(1);
         let (release, waiting) = mpsc::channel();
-        let worker = ClipboardWorker::spawn_with(input.clone(), move || {
+        let worker = ClipboardWorker::spawn(input.clone(), move || {
             entered.try_send(())?;
-            waiting.recv_timeout(Duration::from_secs(2))?;
+            waiting.recv_timeout(PATIENCE)?;
             Ok(FakeClipboard(copy_log))
         })?;
-        tokio::time::timeout(Duration::from_secs(1), opening.recv()).await??;
+        tokio::time::timeout(PATIENCE, opening.recv()).await??;
         let mut ready = Box::pin(worker.ready());
         assert!(
             ready.as_mut().now_or_never().is_none(),

@@ -3,7 +3,7 @@
 
 use std::{collections::HashMap, convert::Infallible, fmt, time::Duration};
 
-use anyhow::Context;
+use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
 use futures_util::{StreamExt, stream::Select};
 use zbus::{
@@ -80,11 +80,11 @@ impl NativeTray {
     /// Starts tray registration without microphone, hook, or clipboard access.
     ///
     /// # Errors
-    /// Returns a thread startup failure; absent tray hosts arrive as availability events.
+    /// Fails when the thread cannot start; absent tray hosts arrive as availability events.
     pub fn start() -> anyhow::Result<(Self, Receiver<TrayAction>)> {
         let (updates, incoming) = async_channel::bounded(1);
         let (actions, received) = async_channel::bounded(ACTION_BACKLOG);
-        let thread = StoppableThread::spawn("tray-service", move |stop_requests| {
+        let thread = StoppableThread::spawn("tray-service", move |stopping| {
             if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -93,7 +93,7 @@ impl NativeTray {
                     clippy::let_underscore_must_use,
                     reason = "Tray failure is reported by the following availability event; the application remains usable without a tray host"
                 )]
-                let _ = runtime.block_on(serve(incoming, &actions, &stop_requests));
+                let _ = runtime.block_on(serve(incoming, &actions, &stopping));
             }
             offer(&actions, TrayAction::Available(false));
         })?;
@@ -106,7 +106,7 @@ impl NativeTray {
         ))
     }
 
-    /// Returns the snapshot lane; a full lane coalesces updates at the caller.
+    /// The snapshot lane; a full lane coalesces updates at the caller.
     #[must_use]
     pub fn updater(&self) -> Sender<TrayPresentation> {
         self.updates.clone()
@@ -448,10 +448,10 @@ fn offer(events: &Sender<TrayAction>, action: TrayAction) {
 async fn serve(
     updates: Receiver<TrayPresentation>,
     events: &Sender<TrayAction>,
-    stop: &Receiver<Infallible>,
+    stopping: &Receiver<Infallible>,
 ) -> anyhow::Result<()> {
     let connection = tokio::select! {
-        _ = stop.recv() => return Ok(()),
+        _ = stopping.recv() => return Ok(()),
         connection = Connection::session() => connection?,
     };
     let item = Item {
@@ -475,7 +475,7 @@ async fn serve(
     loop {
         tokio::select! {
             biased;
-            _ = stop.recv() => break,
+            _ = stopping.recv() => break,
             signal = host_changes.next() => {
                 if is_host_change(&signal.context("Tray connection closed")??) {
                     available = refresh_availability(&connection, events, available).await;

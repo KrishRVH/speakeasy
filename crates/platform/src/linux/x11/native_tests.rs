@@ -99,7 +99,7 @@ async fn a_keyboard_switch_keeps_shortcuts_and_a_remap_stops_them() -> anyhow::R
     };
     ensure!(
         reason.starts_with("Keyboard mapping changed. Resume dictation"),
-        "A remap gave {stopped:?}"
+        "A remap stopped input for another reason: {reason}"
     );
     Ok(())
 }
@@ -139,7 +139,7 @@ async fn a_shortcut_another_app_holds_stops_input_naming_the_shortcut() -> anyho
     };
     ensure!(
         reason.starts_with("Another app already uses the dictation shortcut. Free it there"),
-        "A held shortcut gave {stopped:?}"
+        "A held shortcut stopped input for another reason: {reason}"
     );
     Ok(())
 }
