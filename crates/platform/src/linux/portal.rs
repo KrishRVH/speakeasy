@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, bail, ensure};
+use anyhow::{Context, anyhow, bail, ensure};
 use async_channel::{Receiver, Sender};
 use futures_util::{FutureExt, StreamExt, future::LocalBoxFuture, stream::FuturesUnordered};
 use tokio::task::JoinSet;
@@ -72,7 +72,10 @@ struct Portal {
 }
 
 impl Portal {
-    async fn connect() -> anyhow::Result<Self> {
+    /// Connects and registers, then subscribes to the session closures and portal restarts that
+    /// revoke desktop access, before any session exists. Registration comes first because its call
+    /// starts an inactive portal, which would otherwise read as a restart.
+    async fn connect() -> anyhow::Result<(Self, DesktopChanges)> {
         let connection = Connection::session().await?;
         // The host registry accepts registration only before any other portal call.
         let registered = connection
@@ -100,14 +103,21 @@ impl Portal {
             .trim_start_matches(':')
             .replace('.', "_");
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-        Ok(Self {
+        let changes = desktop_changes(&connection).await?;
+        let portal = Self {
             connection,
             sender_segment,
             unanswered: Vec::new(),
             sessions: Vec::new(),
             nonce: format!("s{}_{now}", std::process::id()),
             sequence: 0,
-        })
+        };
+        Ok((portal, changes))
+    }
+
+    /// The path prefix of every session this connection creates.
+    fn session_root(&self) -> String {
+        format!("{DESKTOP}/session/{}/", self.sender_segment)
     }
 
     fn next_token(&mut self) -> String {
@@ -157,8 +167,7 @@ impl Portal {
     async fn create_session(&mut self, interface: &'static str) -> anyhow::Result<OwnedObjectPath> {
         let handle = self.next_token();
         let session = self.next_token();
-        let predicted: OwnedObjectPath =
-            format!("{DESKTOP}/session/{}/{session}", self.sender_segment).try_into()?;
+        let predicted: OwnedObjectPath = format!("{}{session}", self.session_root()).try_into()?;
         self.sessions.push(predicted.clone());
         let options = Options::from([
             ("handle_token", Value::from(handle.clone())),
@@ -253,7 +262,8 @@ enum Notice {
 struct Pump {
     input: InputSender,
     shortcut_session: Option<OwnedObjectPath>,
-    sessions: Vec<OwnedObjectPath>,
+    /// The prefix of every session this connection opened, as `Portal::session_root` gives it.
+    session_root: String,
     shortcuts: MessageStream,
     changes: DesktopChanges,
     owners: MessageStream,
@@ -298,9 +308,7 @@ impl Pump {
                 event = self.owners.next(), if self.ownership.session.is_some() => {
                     self.observe_owner(&event.context("Clipboard portal disconnected")??)?;
                 },
-                event = self.changes.next() => {
-                    self.check_session(&event.context("Portal session monitoring stopped")??)?;
-                },
+                revoked = revocation(&mut self.changes, &self.session_root) => return Err(revoked),
                 event = self.shortcuts.next(), if self.shortcut_session.is_some() => {
                     let event = event.context("Shortcut portal disconnected")??;
                     if self.on_shortcut(&event)?.is_break() {
@@ -358,25 +366,6 @@ impl Pump {
                 pending.events <= SIGNAL_BACKLOG,
                 "Clipboard ownership queue overran"
             );
-        }
-        Ok(())
-    }
-
-    fn check_session(&self, event: &Message) -> anyhow::Result<()> {
-        let header = event.header();
-        if header
-            .member()
-            .is_some_and(|member| member.as_str() == "NameOwnerChanged")
-        {
-            bail!("The desktop portal restarted");
-        }
-        if let Some(closed) = header.path()
-            && self
-                .sessions
-                .iter()
-                .any(|session| session.as_str() == closed.as_str())
-        {
-            bail!("Desktop permissions were revoked");
         }
         Ok(())
     }
@@ -465,18 +454,23 @@ pub(super) async fn run(
     if options.manual_paste && options.external_shortcut {
         return x11::run(input, options, requests, stop).await;
     }
-    let mut portal = tokio::select! {
+    let (mut portal, mut changes) = tokio::select! {
         biased;
         () = stopping(stop, input) => return Ok(()),
-        portal = Portal::connect() => portal?,
+        connected = Portal::connect() => connected?,
     };
+    // A session closed while a later consent dialog is open ends binding, which closes that dialog.
+    // Binding is polled first: a declined dialog answers before the portal closes its session, and
+    // that answer names the cause.
+    let session_root = portal.session_root();
     let bound = tokio::select! {
         biased;
         () = stopping(stop, input) => None,
         bound = bind(&mut portal, options) => Some(bound),
+        revoked = revocation(&mut changes, &session_root) => Some(Err(revoked)),
     };
     let outcome = match bound {
-        Some(Ok(bound)) => serve(&portal, bound, input, options, requests, stop).await,
+        Some(Ok(bound)) => serve(&portal, bound, changes, input, options, requests, stop).await,
         Some(Err(error)) => Err(error),
         None => Ok(()),
     };
@@ -646,6 +640,7 @@ async fn request_clipboard(portal: &Portal, session: &OwnedObjectPath) -> anyhow
 async fn serve(
     portal: &Portal,
     mut bound: Bound,
+    changes: DesktopChanges,
     input: &InputSender,
     options: &DesktopOptions,
     requests: Receiver<Insertion>,
@@ -655,7 +650,6 @@ async fn serve(
     let clipboard = portal.proxy(CLIPBOARD).await?;
     let mut transfer_requests = clipboard.receive_signal("SelectionTransfer").await?;
     let owners = selection_owner_changes(&portal.connection).await?;
-    let changes = desktop_changes(&portal.connection).await?;
     let (notify, notices) = async_channel::bounded(SIGNAL_BACKLOG);
     let (selecting, selections) = async_channel::bounded(1);
     // Dropping the set aborts the pump once serving ends.
@@ -664,7 +658,7 @@ async fn serve(
         Pump {
             input: input.clone(),
             shortcut_session: bound.shortcut_session.clone(),
-            sessions: portal.sessions.clone(),
+            session_root: portal.session_root(),
             shortcuts,
             changes,
             owners,
@@ -765,6 +759,40 @@ async fn selection_owner_changes(connection: &Connection) -> anyhow::Result<Mess
     Ok(MessageStream::for_match_rule(rule, connection, Some(SIGNAL_BACKLOG)).await?)
 }
 
+/// Resolves with why desktop access ended once a session under `session_root` closes, the portal
+/// restarts, or monitoring stops.
+async fn revocation(changes: &mut DesktopChanges, session_root: &str) -> anyhow::Error {
+    loop {
+        let checked = match changes.next().await {
+            Some(Ok(event)) => check_revocation(&event, session_root),
+            Some(Err(error)) => Err(error.into()),
+            None => Err(anyhow!("Portal session monitoring stopped")),
+        };
+        if let Err(revoked) = checked {
+            return revoked;
+        }
+    }
+}
+
+/// Fails when `event` revokes desktop access: a portal restart, or the closure of a session under
+/// `session_root`. Another connection's sessions sit under another root.
+fn check_revocation(event: &Message, session_root: &str) -> anyhow::Result<()> {
+    let header = event.header();
+    if header
+        .member()
+        .is_some_and(|member| member.as_str() == "NameOwnerChanged")
+    {
+        bail!("The desktop portal restarted");
+    }
+    if header
+        .path()
+        .is_some_and(|closed| closed.as_str().starts_with(session_root))
+    {
+        bail!("Desktop permissions were revoked");
+    }
+    Ok(())
+}
+
 /// Session closures and portal restarts, either of which revokes desktop access.
 async fn desktop_changes(connection: &Connection) -> anyhow::Result<DesktopChanges> {
     let closed = MatchRule::builder()
@@ -843,6 +871,27 @@ mod tests {
         assert!(!lacks_registry(&reply(
             "org.freedesktop.portal.Error.Failed"
         )?));
+        Ok(())
+    }
+
+    #[test]
+    fn only_this_connections_sessions_and_portal_restarts_revoke_access() -> anyhow::Result<()> {
+        let root = format!("{DESKTOP}/session/1_23/");
+        let closed = |path: &str| -> anyhow::Result<Message> {
+            Ok(Message::signal(path, SESSION, "Closed")?.build(&())?)
+        };
+        assert!(check_revocation(&closed(&format!("{root}s1_2"))?, &root).is_err());
+        assert!(
+            check_revocation(&closed(&format!("{DESKTOP}/session/1_234/s1_2"))?, &root).is_ok(),
+            "Another connection's session closure revoked access"
+        );
+        let restarted = Message::signal(
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "NameOwnerChanged",
+        )?
+        .build(&(DESTINATION, ":1.7", ":1.8"))?;
+        assert!(check_revocation(&restarted, &root).is_err());
         Ok(())
     }
 
