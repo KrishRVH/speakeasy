@@ -58,10 +58,17 @@ impl CaptureEvent {
 }
 
 /// Speech sealed for recognition: a WAV, and how much leading quiet was trimmed before it, which
-/// places times the recognizer reports back on the recording's clock.
+/// places times the recognizer reports back on the recording's clock. The WAV is zeroed on drop,
+/// best effort, wherever the audio is discarded; recognition takes it with `mem::take` first.
 pub(crate) struct Sealed {
     pub wav: Vec<u8>,
     pub trimmed: Duration,
+}
+
+impl Drop for Sealed {
+    fn drop(&mut self) {
+        self.wav.fill(0);
+    }
 }
 
 /// A recording device the owner opens, finishes, and retires: the microphone or a Show's

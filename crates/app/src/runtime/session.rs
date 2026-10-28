@@ -146,8 +146,7 @@ pub(super) enum Stage {
     Recording,
     /// The gesture has finished; waits for the capture's audio.
     Stopping,
-    /// Captured audio awaiting a ready worker; its WAV is zeroed, best effort, if the session is
-    /// abandoned.
+    /// Captured audio awaiting a ready worker.
     AwaitingWorker(Sealed),
     /// The worker holds the WAV; `trimmed` places the times it returns on the recording's clock.
     Transcribing {

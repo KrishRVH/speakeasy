@@ -601,11 +601,13 @@ impl<P: Ports> Owner<P> {
         match session.stage {
             Stage::Opening | Stage::Recording | Stage::Stopping => self.microphone.retire(),
             Stage::Delivering(task) => self.retiring.push(task),
-            Stage::AwaitingWorker(mut sealed) => sealed.wav.fill(0),
             Stage::Transcribing { .. } if self.worker.is_transcribing() => {
                 self.worker.recover(&self.ports, &self.config);
             },
-            Stage::Queued | Stage::Transcribing { .. } | Stage::AwaitingFootage(_) => {},
+            Stage::Queued
+            | Stage::AwaitingWorker(_)
+            | Stage::Transcribing { .. }
+            | Stage::AwaitingFootage(_) => {},
         }
     }
 
