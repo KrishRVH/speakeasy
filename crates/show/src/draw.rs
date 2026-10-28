@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use tiny_skia::{FillRule, Paint, Path, PathBuilder, PixmapMut, Stroke as Line, Transform};
+use tiny_skia::{FillRule, Paint, Path, PathBuilder, PixmapMut, Transform};
 
 use crate::{
     Image, Keyframe, Mark, Moment, Point, Rect, Shape, Span, Typeface, ink,
@@ -24,7 +24,8 @@ const _: () = assert!(
 );
 /// A keyframe without a click or drag of its own ripples at a click this close to its moment.
 const RIPPLE_REACH: Duration = Duration::from_millis(600);
-/// The top band where a badge sits; the left and right thirds decide which corner it takes.
+/// The top band where a badge sits, and the share of the width at each side that decides which
+/// corner it takes.
 const BADGE_BAND: f32 = 0.18;
 const BADGE_SIDE: f32 = 0.30;
 /// How far a cubic Bézier's handles reach along its tangents, in radii, to trace a quarter circle.
@@ -40,10 +41,10 @@ pub(crate) enum Corner {
 /// Draws a keyframe's ink, numbered labels, and click ripple onto its frame, returning the corner
 /// its badge should take so it does not cover what the keyframe is about.
 ///
-/// A keyframe made for marks shows all their ink. Any other keyframe shows the ink drawn up to its
-/// moment from strokes still in progress or lifted within [`RECENT_INK`], as the screen looked
-/// then. Each of `marks`, the selection's, that the keyframe is for, or whose ink or pin it shows
-/// that way, is labeled with its number. The ripple marks the keyframe's own click or drag, which a
+/// A keyframe made for marks shows all their ink and pins. Any other keyframe shows the ink drawn
+/// up to its moment from strokes still in progress or lifted within [`RECENT_INK`], and pins
+/// dropped within it, as the screen looked then. Each of the selection's `marks` whose ink or pin
+/// it shows is labeled with its number. The ripple marks the keyframe's own click or drag, which a
 /// mark's keyframe can carry too, else the click nearest its moment within [`RIPPLE_REACH`].
 pub(crate) fn annotate(
     image: &mut Image,
@@ -125,13 +126,13 @@ fn ripple(canvas: &mut PixmapMut<'_>, center: Point, scale: f32) {
         PathBuilder::from_circle(center.x, center.y, 14.0 * scale),
         RIPPLE_FILL,
     );
-    let line = Line {
+    let style = tiny_skia::Stroke {
         width: 1.75 * scale,
-        ..Line::default()
+        ..tiny_skia::Stroke::default()
     };
     for (radius, color) in [(15.0, WHITE), (17.5, RIPPLE_RING)] {
         if let Some(ring) = PathBuilder::from_circle(center.x, center.y, radius * scale) {
-            canvas.stroke_path(&ring, &paint(color), &line, Transform::identity(), None);
+            canvas.stroke_path(&ring, &paint(color), &style, Transform::identity(), None);
         }
     }
 }
@@ -191,14 +192,15 @@ pub(crate) fn badge(
     let number_width = typeface.width(&number, number_size);
     let keycap_width = (number_width + 12.0 * scale).max(keycap_height);
     let time_width = typeface.width(&time, time_size);
-    let width = inset + keycap_width + 7.0 * scale + time_width + 9.0 * scale;
+    let gap = 7.0 * scale;
+    let width = inset + keycap_width + gap + time_width + 9.0 * scale;
     let margin = 7.0 * scale;
     let left = match corner {
         Corner::Left => cell.left + margin,
         Corner::Right => (cell.right - width - margin).max(cell.left + margin),
     };
     let top = cell.top + margin;
-    let frame = Rect::from_origin(Point::new(left, top), width, height);
+    let outer = Rect::from_origin(Point::new(left, top), width, height);
 
     let shadow = Rect::from_origin(
         Point::new(left - scale, top - scale),
@@ -206,7 +208,7 @@ pub(crate) fn badge(
         height + 2.0 * scale,
     );
     fill(canvas, rounded(shadow, radius + scale), [0, 0, 0, 96]);
-    fill(canvas, rounded(frame, radius), [255, 255, 255, 78]);
+    fill(canvas, rounded(outer, radius), [255, 255, 255, 78]);
     let border = (1.2 * scale).max(1.0);
     let body = Rect::from_origin(
         Point::new(left + border, top + border),
@@ -239,7 +241,7 @@ pub(crate) fn badge(
         [14, 15, 18, 255],
     );
     let time_origin = Point::new(
-        keycap.right + 7.0 * scale,
+        keycap.right + gap,
         center_line + typeface.cap_height(time_size) / 2.0,
     );
     fill(

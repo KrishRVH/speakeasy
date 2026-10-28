@@ -29,6 +29,7 @@ const WINDOW: Rect = Rect {
     right: 1280.0,
     bottom: 810.0,
 };
+const CORNER: f32 = 14.0;
 const SIDEBAR_RIGHT: f32 = 380.0;
 const TITLE_BAR: f32 = 44.0;
 const SECTIONS: [&str; 4] = ["General", "Shortcuts", "Audio", "Appearance"];
@@ -48,6 +49,7 @@ const ACCENT: [u8; 4] = [10, 132, 255, 255];
 const TEXT: [u8; 4] = [28, 28, 30, 255];
 const SECONDARY: [u8; 4] = [110, 110, 118, 255];
 const TRACK: [u8; 4] = [210, 210, 216, 255];
+const CHROME: [u8; 4] = [233, 233, 238, 255];
 
 const OPEN_APPEARANCE: Moment = Moment::from_millis(2_500);
 const APPEARANCE_SHOWN: Moment = Moment::from_millis(2_800);
@@ -136,22 +138,17 @@ struct Scene<'a> {
 impl Scene<'_> {
     fn draw(&mut self, at: Moment) {
         self.backdrop();
-        self.fill(rounded(WINDOW, 14.0), [245, 245, 247, 255]);
+        self.fill(rounded(WINDOW, CORNER), [245, 245, 247, 255]);
         let title_bar = Rect {
             bottom: WINDOW.top + TITLE_BAR,
             ..WINDOW
         };
-        self.fill(rounded(title_bar, 14.0), [233, 233, 238, 255]);
-        self.fill(
-            rounded(
-                Rect {
-                    top: title_bar.bottom - 14.0,
-                    ..title_bar
-                },
-                0.0,
-            ),
-            [233, 233, 238, 255],
-        );
+        self.fill(rounded(title_bar, CORNER), CHROME);
+        let square_base = Rect {
+            top: title_bar.bottom - CORNER,
+            ..title_bar
+        };
+        self.fill(rounded(square_base, 0.0), CHROME);
         self.centered(
             "Settings",
             17.0,
@@ -238,7 +235,7 @@ impl Scene<'_> {
             Point::new(978.0, row_center(0) + 6.0),
             TEXT,
         );
-        self.chevron(Point::new(1_218.0, row_center(0)));
+        self.chevron(Point::new(1218.0, row_center(0)));
         self.row(1, "Reduce motion");
         self.toggle(row_center(1), false);
         self.row(2, "Text size");
@@ -276,7 +273,7 @@ impl Scene<'_> {
             [48, 209, 88, 255],
         ];
         for (index, color) in swatches.into_iter().enumerate() {
-            let left = 1_080.0 + 34.0 * index as f32;
+            let left = 1080.0 + 34.0 * index as f32;
             let swatch = Rect::from_origin(Point::new(left, row_center(3) - 12.0), 24.0, 24.0);
             self.fill(rounded(swatch, 12.0), color);
         }
@@ -286,7 +283,7 @@ impl Scene<'_> {
             Point::new(830.0, 768.0),
             SECONDARY,
         );
-        let save = Rect::from_origin(Point::new(1_120.0, 742.0), 120.0, 40.0);
+        let save = Rect::from_origin(Point::new(1120.0, 742.0), 120.0, 40.0);
         self.fill(rounded(save, 9.0), ACCENT);
         self.centered("Save", 17.0, save.center().x, 768.0, [255; 4]);
     }
@@ -382,7 +379,7 @@ fn recording() -> Recording {
         strokes: strokes(),
         pins: vec![Pin {
             at: TOGGLE_PIN,
-            point: normalized(1_212.0, row_center(1)),
+            point: normalized(1212.0, row_center(1)),
         }],
         actions: vec![
             Action::Click {
@@ -391,7 +388,7 @@ fn recording() -> Recording {
             },
             Action::Click {
                 at: TOGGLE_CLICK,
-                point: normalized(1_206.0, row_center(1)),
+                point: normalized(1206.0, row_center(1)),
             },
             Action::Drag {
                 span: Span::new(DRAG_START, DRAG_END),
@@ -414,7 +411,7 @@ fn strokes() -> Vec<Stroke> {
         let angle = std::f32::consts::TAU * turn * 1.08 - 1.9;
         let wobble = 1.0 + 0.04 * (turn * 9.0).sin();
         let point = Point::new(
-            1_100.0 + 170.0 * wobble * angle.cos(),
+            1100.0 + 170.0 * wobble * angle.cos(),
             row_center(0) + 40.0 * wobble * angle.sin(),
         );
         let at = 5_600_u64.saturating_add(u64::from(step).saturating_mul(28));
@@ -427,12 +424,12 @@ fn strokes() -> Vec<Stroke> {
             ink(point, at)
         })
     };
-    let tip = Point::new(1_110.0, 748.0);
+    let tip = Point::new(1110.0, 748.0);
     [
         circle.collect(),
         line(Point::new(900.0, 640.0), tip, 8_200, 20).collect(),
-        line(Point::new(1_082.0, 738.0), tip, 8_800, 6).collect(),
-        line(Point::new(1_100.0, 718.0), tip, 9_050, 6).collect(),
+        line(Point::new(1082.0, 738.0), tip, 8_800, 6).collect(),
+        line(Point::new(1100.0, 718.0), tip, 9_050, 6).collect(),
     ]
     .into_iter()
     .filter_map(Stroke::new)

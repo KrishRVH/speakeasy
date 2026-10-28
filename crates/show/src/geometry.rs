@@ -39,10 +39,7 @@ impl Point {
     /// The point `t` of the way from `self` to `other`.
     #[must_use]
     pub(crate) fn lerp(self, other: Self, t: f32) -> Self {
-        Self::new(
-            self.x + (other.x - self.x) * t,
-            self.y + (other.y - self.y) * t,
-        )
+        self + (other - self) * t
     }
 
     /// The dot product of two vectors.

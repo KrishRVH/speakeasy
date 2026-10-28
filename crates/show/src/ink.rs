@@ -13,19 +13,13 @@ const THINNING: f32 = 0.5;
 const SMOOTHING: f32 = 0.5;
 /// How far each sample is pulled toward the previous one, damping hand jitter.
 const STREAMLINE: f32 = 0.5;
+/// How quickly simulated pressure follows the pen's speed.
+const PRESSURE_RATE: f32 = 0.275;
+/// Nodes within this distance of the line's end, other than the last, are lift-off jitter and
+/// skipped.
+const END_JITTER: f32 = 3.0;
 /// Steps in each round cap and corner.
 const ARC_STEPS: u8 = 13;
-
-/// One accepted sample along the stroke's center line.
-struct Node {
-    point: Point,
-    /// The unit vector back toward the previous node.
-    direction: Point,
-    /// Distance from the previous node.
-    step: f32,
-    /// Distance along the line from the first node.
-    run: f32,
-}
 
 /// The red of ink on the overlay and in a bundle's frames.
 pub const COLOR: [u8; 4] = [255, 59, 48, 255];
@@ -101,13 +95,13 @@ pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
     // Pressure follows speed: slow movement presses harder and draws wider.
     let simulate = |pressure: f32, step: f32| {
         let speed = (step / size).min(1.0);
-        (pressure + (1.0 - speed - pressure) * speed * 0.275).min(1.0)
+        (pressure + (1.0 - speed - pressure) * speed * PRESSURE_RATE).min(1.0)
     };
     let mut pressure = nodes.iter().take(10).fold(0.25, |pressure, node| {
         f32::midpoint(pressure, simulate(pressure, node.step))
     });
 
-    let min_spacing = (size * SMOOTHING).powi(2);
+    let min_spacing = size * SMOOTHING;
     let (mut left, mut right) = (Vec::new(), Vec::new());
     let mut previous_direction = first.direction;
     let mut rounding = false;
@@ -115,12 +109,12 @@ pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
     let final_index = nodes.len().saturating_sub(1);
     for (index, node) in nodes.iter().enumerate() {
         let is_last = index == final_index;
-        if !is_last && length - node.run < 3.0 {
+        if !is_last && length - node.run < END_JITTER {
             continue;
         }
         let node_pressure = simulate(pressure, node.step);
-        let width = radius(node_pressure).max(0.01);
-        end_radius = width;
+        let node_radius = radius(node_pressure).max(0.01);
+        end_radius = node_radius;
         let next_direction = nodes
             .get(index.saturating_add(1))
             .map_or(node.direction, |next| next.direction);
@@ -129,7 +123,7 @@ pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
         let sharp_corner =
             (node.direction.dot(previous_direction) < 0.0 && !rounding) || turns_back;
         if sharp_corner {
-            let offset = previous_direction.perpendicular() * width;
+            let offset = previous_direction.perpendicular() * node_radius;
             for angle in arc(0..=ARC_STEPS, ARC_STEPS) {
                 left.push((node.point - offset).rotated(node.point, angle));
                 right.push((node.point + offset).rotated(node.point, -angle));
@@ -143,17 +137,14 @@ pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
         } else {
             next_direction.lerp(node.direction, turn)
         };
-        let offset = along.perpendicular() * width;
+        let offset = along.perpendicular() * node_radius;
         let forced = is_last || index <= 1;
         for (side, point) in [
             (&mut left, node.point - offset),
             (&mut right, node.point + offset),
         ] {
-            if forced
-                || side
-                    .last()
-                    .is_none_or(|&previous| (previous - point).dot(previous - point) > min_spacing)
-            {
+            let spaced = |previous: &Point| previous.distance(point) > min_spacing;
+            if forced || side.last().is_none_or(spaced) {
                 side.push(point);
             }
         }
@@ -176,6 +167,17 @@ pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
     left
 }
 
+/// One accepted sample along the stroke's center line.
+struct Node {
+    point: Point,
+    /// The unit vector back toward the previous node.
+    direction: Point,
+    /// Distance from the previous node.
+    step: f32,
+    /// Distance along the line from the first node.
+    run: f32,
+}
+
 /// The streamlined center line: each point pulled toward the last, and the first pen-width of
 /// travel skipped except for its last point, so the stroke's start does not wobble.
 fn nodes(input: &[Point], size: f32) -> Vec<Node> {
@@ -189,12 +191,12 @@ fn nodes(input: &[Point], size: f32) -> Vec<Node> {
         step: 0.0,
         run: 0.0,
     }];
+    let mut previous = start;
     let mut run = 0.0;
     let mut started = false;
     let final_index = rest.len().saturating_sub(1);
     for (index, &raw) in rest.iter().enumerate() {
         let is_last = index == final_index;
-        let previous = nodes.last().map_or(start, |node| node.point);
         let point = if is_last {
             raw
         } else {
@@ -217,6 +219,7 @@ fn nodes(input: &[Point], size: f32) -> Vec<Node> {
             step,
             run,
         });
+        previous = point;
     }
     if let [first, second, ..] = nodes.as_mut_slice() {
         first.direction = second.direction;
