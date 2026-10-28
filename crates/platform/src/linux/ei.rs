@@ -151,7 +151,7 @@ impl Sender {
     /// Treats modifiers as unknown until libei reports them again.
     pub(super) fn forget_modifiers(&mut self) {
         if let Some(keyboard) = &mut self.keyboard {
-            keyboard.state = PasteState::Unknown;
+            keyboard.forget_modifiers();
         }
     }
 
@@ -166,22 +166,21 @@ impl Sender {
     /// # Errors
     /// Returns what stops automatic paste.
     pub(super) fn ready_paste(&mut self) -> Result<ReadyPaste<'_>, PasteBlocked> {
-        let (keyboard, keys) = self.paste_target()?;
+        let (keyboard, chord) = self.paste_target()?;
         Ok(ReadyPaste {
             sender: self,
             keyboard,
-            keys,
+            chord,
         })
     }
 
     fn paste_target(&self) -> Result<(*mut EiDevice, PasteChord<u32>), PasteBlocked> {
         let keyboard = self.keyboard.as_ref().ok_or(PasteBlocked::NoKeyboard)?;
-        let keys = paste_readiness(
+        let chord = paste_readiness(
             keyboard.device.resumed,
-            keyboard.layouts.as_ref(),
-            keyboard.state,
+            keyboard.paste.as_ref().map(|paste| paste.state),
         )?;
-        Ok((keyboard.device.as_ptr(), keys))
+        Ok((keyboard.device.as_ptr(), chord))
     }
 
     /// Prepares `text` for the resumed text device.
@@ -282,10 +281,13 @@ impl Sender {
             if (self.api.ei_device_has_capability)(device.as_ptr(), CAPABILITY_KEYBOARD) {
                 self.keyboard = Some(Keyboard {
                     device: Device::acquire(&self.api, device),
-                    layouts: device_keymap(&self.api, device.as_ptr())
+                    paste: device_keymap(&self.api, device.as_ptr())
                         .and_then(|keymap| PasteLayouts::new(&keymap, self.terminal))
-                        .ok(),
-                    state: PasteState::Unknown,
+                        .ok()
+                        .map(|layouts| KeymapPaste {
+                            layouts,
+                            state: PasteState::Unknown,
+                        }),
                 });
             }
             if (self.api.ei_device_has_capability)(device.as_ptr(), CAPABILITY_TEXT) {
@@ -308,7 +310,7 @@ impl Sender {
             .filter(|keyboard| keyboard.device.is(device))
         {
             keyboard.device.resumed = resumed;
-            keyboard.state = PasteState::Unknown;
+            keyboard.forget_modifiers();
         }
         if let Some(text) = self.text.as_mut().filter(|text| text.is(device)) {
             text.resumed = resumed;
@@ -316,14 +318,12 @@ impl Sender {
     }
 
     fn update_modifiers(&mut self, event: &Event) {
-        let Some(keyboard) = self
+        let Some(paste) = self
             .keyboard
             .as_mut()
             .filter(|keyboard| keyboard.device.is(event.device))
+            .and_then(|keyboard| keyboard.paste.as_mut())
         else {
-            return;
-        };
-        let Some(layouts) = &keyboard.layouts else {
             return;
         };
         let raw = event.raw.as_ptr();
@@ -336,9 +336,10 @@ impl Sender {
                     | (self.api.ei_event_keyboard_get_xkb_mods_locked)(raw),
             )
         };
-        keyboard.state = if active_mask & layouts.blockers == 0 {
-            layouts
-                .keys(group)
+        paste.state = if active_mask & paste.layouts.blockers == 0 {
+            paste
+                .layouts
+                .chord(group)
                 .map_or(PasteState::NoKeys, PasteState::Ready)
         } else {
             PasteState::Blocked
@@ -376,24 +377,18 @@ pub(super) enum PasteBlocked {
     NoPasteKeys,
 }
 
-/// Decides paste readiness in a fixed order. Without `layouts` from a readable keymap, modifiers
-/// stay unknown forever, so that cause is reported before modifiers are judged and never reads as
-/// held keys.
+/// Checks the paste blockers in a fixed order, so the root one is reported.
 fn paste_readiness(
     resumed: bool,
-    layouts: Option<&PasteLayouts>,
-    state: PasteState,
+    state: Option<PasteState>,
 ) -> Result<PasteChord<u32>, PasteBlocked> {
     if !resumed {
         return Err(PasteBlocked::NoKeyboard);
     }
-    if layouts.is_none() {
-        return Err(PasteBlocked::NoKeyboardState);
-    }
-    match state {
+    match state.ok_or(PasteBlocked::NoKeyboardState)? {
         PasteState::Unknown | PasteState::Blocked => Err(PasteBlocked::ShortcutKeys),
         PasteState::NoKeys => Err(PasteBlocked::NoPasteKeys),
-        PasteState::Ready(keys) => Ok(keys),
+        PasteState::Ready(chord) => Ok(chord),
     }
 }
 
@@ -403,7 +398,7 @@ fn paste_readiness(
 pub(super) struct ReadyPaste<'a> {
     sender: &'a mut Sender,
     keyboard: *mut EiDevice,
-    keys: PasteChord<u32>,
+    chord: PasteChord<u32>,
 }
 
 impl ReadyPaste<'_> {
@@ -412,7 +407,7 @@ impl ReadyPaste<'_> {
         let Self {
             sender,
             keyboard,
-            keys,
+            chord,
         } = self;
         let sequence = sender.next_sequence();
         let api = &sender.api;
@@ -422,11 +417,11 @@ impl ReadyPaste<'_> {
         // every injected key before stopping.
         unsafe {
             (api.ei_device_start_emulating)(keyboard, sequence);
-            for key in keys.presses() {
+            for key in chord.presses() {
                 (api.ei_device_keyboard_key)(keyboard, key, true);
             }
             (api.ei_device_frame)(keyboard, (api.ei_now)(context));
-            for key in keys.presses().rev() {
+            for key in chord.presses().rev() {
                 (api.ei_device_keyboard_key)(keyboard, key, false);
             }
             (api.ei_device_frame)(keyboard, (api.ei_now)(context));
@@ -486,13 +481,26 @@ impl ReadyText<'_, '_> {
 /// the whole value, so nothing learned about an earlier device survives.
 struct Keyboard {
     device: Device,
-    /// None when the device's keymap could not be read; its modifiers then stay unknown.
-    layouts: Option<PasteLayouts>,
+    /// `None` when the device's keymap could not be read, so its modifiers can never be judged.
+    paste: Option<KeymapPaste>,
+}
+
+impl Keyboard {
+    fn forget_modifiers(&mut self) {
+        if let Some(paste) = &mut self.paste {
+            paste.state = PasteState::Unknown;
+        }
+    }
+}
+
+/// The paste layouts of a readable keymap, with the modifier state libei last reported.
+struct KeymapPaste {
+    layouts: PasteLayouts,
     state: PasteState,
 }
 
 /// Whether libei last reported every paste-blocking modifier released, with the active layout's
-/// paste keys.
+/// paste chord.
 #[derive(Clone, Copy)]
 enum PasteState {
     /// Not reported since the device arrived, paused, or resumed, or since the shortcut was
@@ -594,8 +602,8 @@ impl Drop for Event {
 struct PasteLayouts {
     /// The modifier mask that changes what the paste shortcut means.
     blockers: u32,
-    /// Each layout's paste keys as evdev codes, indexed by XKB group.
-    keys: Vec<Option<PasteChord<u32>>>,
+    /// Each layout's paste chord as evdev codes, indexed by XKB group.
+    chords: Vec<Option<PasteChord<u32>>>,
 }
 
 impl PasteLayouts {
@@ -612,7 +620,7 @@ impl PasteLayouts {
         ensure!(blockers != 0, "Missing paste modifier mapping");
         Ok(Self {
             blockers,
-            keys: (0..keymap.num_layouts())
+            chords: (0..keymap.num_layouts())
                 .map(|group| {
                     PasteChord::resolve(terminal, |symbol| {
                         layout_key(keymap, group, symbol)?
@@ -624,10 +632,10 @@ impl PasteLayouts {
         })
     }
 
-    /// The paste keys of layout `group`; none for a group past the last layout, which never
-    /// wraps to another layout's keys.
-    fn keys(&self, group: u32) -> Option<PasteChord<u32>> {
-        *self.keys.get(usize::try_from(group).ok()?)?
+    /// The paste chord of layout `group`; none for a group past the last layout, which never
+    /// wraps to another layout's chord.
+    fn chord(&self, group: u32) -> Option<PasteChord<u32>> {
+        *self.chords.get(usize::try_from(group).ok()?)?
     }
 }
 
@@ -741,14 +749,14 @@ mod tests {
             .context("Fixture keymap")?;
             let layouts = PasteLayouts::new(&keymap, true)?;
             assert_eq!(
-                layouts.keys(group),
+                layouts.chord(group),
                 Some(PasteChord {
                     control: 29,
                     shift: Some(42),
                     v: expected,
                 })
             );
-            assert!(layouts.keys(keymap.num_layouts()).is_none());
+            assert!(layouts.chord(keymap.num_layouts()).is_none());
             assert_eq!(
                 layouts.blockers & (1 << keymap.mod_get_index("Mod2")),
                 0,
@@ -785,7 +793,7 @@ mod tests {
         )
         .context("Fixture keymap")?;
         assert_eq!(
-            PasteLayouts::new(&keymap, false)?.keys(0),
+            PasteLayouts::new(&keymap, false)?.chord(0),
             Some(PasteChord {
                 control: 29,
                 shift: None,
@@ -794,7 +802,7 @@ mod tests {
             "A layout without Shift refused Ctrl+V"
         );
         let terminal = PasteLayouts::new(&keymap, true)?;
-        assert!(terminal.keys(0).is_none());
+        assert!(terminal.chord(0).is_none());
         assert_eq!(
             terminal.blockers & mask(&keymap, "Mod3"),
             0,
@@ -811,38 +819,32 @@ mod tests {
 
     #[test]
     fn paste_readiness_names_the_root_blocker_first() {
-        let keys = PasteChord {
+        let chord = PasteChord {
             control: 29,
             shift: None,
             v: 47,
         };
-        let layouts = PasteLayouts {
-            blockers: 1,
-            keys: vec![Some(keys)],
-        };
-        let readable = Some(&layouts);
+        for state in [None, Some(PasteState::Ready(chord))] {
+            assert_eq!(paste_readiness(false, state), Err(PasteBlocked::NoKeyboard));
+        }
         assert_eq!(
-            paste_readiness(false, None, PasteState::Ready(keys)),
-            Err(PasteBlocked::NoKeyboard)
-        );
-        assert_eq!(
-            paste_readiness(true, None, PasteState::Unknown),
+            paste_readiness(true, None),
             Err(PasteBlocked::NoKeyboardState),
             "An unreadable keymap read as held shortcut keys"
         );
         for state in [PasteState::Unknown, PasteState::Blocked] {
             assert_eq!(
-                paste_readiness(true, readable, state),
+                paste_readiness(true, Some(state)),
                 Err(PasteBlocked::ShortcutKeys)
             );
         }
         assert_eq!(
-            paste_readiness(true, readable, PasteState::NoKeys),
+            paste_readiness(true, Some(PasteState::NoKeys)),
             Err(PasteBlocked::NoPasteKeys)
         );
         assert_eq!(
-            paste_readiness(true, readable, PasteState::Ready(keys)),
-            Ok(keys)
+            paste_readiness(true, Some(PasteState::Ready(chord))),
+            Ok(chord)
         );
     }
 

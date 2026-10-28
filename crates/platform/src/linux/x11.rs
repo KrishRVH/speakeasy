@@ -36,6 +36,16 @@ use crate::{DesktopOptions, Input, InputSender, LinuxPaste, insertion::Insertion
 const MAX_FOCUS_ANCESTRY: usize = 32;
 /// The eight core modifier bits; key-event state also carries pointer-button bits above them.
 const CORE_MODIFIERS: u16 = 0xFF;
+const MODIFIER_KEY_NAMES: [&str; 8] = [
+    "Control_L",
+    "Control_R",
+    "Super_L",
+    "Super_R",
+    "Alt_L",
+    "Alt_R",
+    "Shift_L",
+    "Shift_R",
+];
 
 #[derive(PartialEq, Eq)]
 struct Keyboard {
@@ -370,18 +380,9 @@ fn parse_binding(expression: &str) -> anyhow::Result<(Vec<Keysym>, &str)> {
         "Shortcut needs one to three modifiers"
     );
     ensure!(
-        ![
-            "Control_L",
-            "Control_R",
-            "Super_L",
-            "Super_R",
-            "Alt_L",
-            "Alt_R",
-            "Shift_L",
-            "Shift_R"
-        ]
-        .iter()
-        .any(|modifier| modifier.eq_ignore_ascii_case(key)),
+        !MODIFIER_KEY_NAMES
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(key)),
         "Shortcut needs an ordinary key"
     );
     Ok((modifiers, key))
