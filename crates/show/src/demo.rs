@@ -5,10 +5,9 @@ use std::time::Duration;
 use tiny_skia::{FillRule, LinearGradient, Paint, Path, PixmapMut, SpreadMode, Transform};
 
 use crate::{
-    Action, Bundle, Error, Image, InkPoint, Moment, Narration, Pin, Point, Recording,
+    Action, Bundle, Error, Image, InkPoint, Moment, Narration, Pin, Point, Recording, Rect,
     SAMPLE_INTERVAL, Size, Span, Stroke, Typeface, Word, compose,
     draw::{paint, rounded},
-    geometry::Rect,
     select,
     signature::{Sample, Signature},
 };
@@ -118,13 +117,13 @@ impl Demo {
     }
 }
 
-struct Scene<'a, 'b> {
+struct Scene<'a> {
     canvas: PixmapMut<'a>,
     transform: Transform,
-    typeface: &'b Typeface,
+    typeface: &'a Typeface,
 }
 
-impl Scene<'_, '_> {
+impl Scene<'_> {
     fn draw(&mut self, at: u64) {
         self.backdrop();
         self.fill(rounded(WINDOW, 14.0), [245, 245, 247, 255]);
