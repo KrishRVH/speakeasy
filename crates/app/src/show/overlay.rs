@@ -660,7 +660,7 @@ pub(crate) fn attend(
                 return;
             }
             let show = snapshots.borrow().id;
-            let (misplaced, placement) = async_channel::bounded(1);
+            let (misplaced, misplacements) = async_channel::bounded(1);
             let Ok(opened) = cx.update(|cx| open(canvas.clone(), misplaced, cx)) else {
                 return;
             };
@@ -678,7 +678,7 @@ pub(crate) fn attend(
             let failure = match opened {
                 Ok(overlay) => {
                     overlay.update_if_open(cx, |_, window, _| window.remove_window());
-                    placement.try_recv().ok()
+                    misplacements.try_recv().ok()
                 },
                 Err(error) => Some(error),
             };
@@ -906,14 +906,13 @@ mod tests {
         assert_eq!(
             sheet.strokes,
             Vec::<Arc<[Point]>>::new(),
-            "the pen draws only once the circle has faded"
+            "ink that arrives after the circle has faded starts a clean sheet"
         );
         sheet.update([stroke(4).into()], [], Some(grouped(&[2])), at(1_700));
         assert_eq!(
             shown(&sheet),
             [1],
-            "Shift went down again 1.1 s after the lift, soon enough for the bundle to join the \
-             stroke to mark 1, so it shows that number"
+            "a stroke the bundle joins to a faded mark shows that mark's number"
         );
         sheet.update([], stroke(5), None, at(4_000));
         sheet.update([stroke(5).into()], [], Some(grouped(&[2, 3])), at(4_100));
