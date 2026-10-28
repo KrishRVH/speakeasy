@@ -623,7 +623,7 @@ impl<P: Ports> Owner<P> {
             .record_screen(session.id, session.started, scope, self.show_events.clone())
         {
             Ok(recorder) => {
-                if !session.awaits_audio() || self.gesture.state() == State::Processing {
+                if self.gesture.state() == State::Processing {
                     recorder.finish();
                 }
                 self.screen = Device::Open(recorder);

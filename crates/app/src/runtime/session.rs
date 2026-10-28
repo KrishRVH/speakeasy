@@ -119,12 +119,6 @@ impl Session {
         )
     }
 
-    /// Whether the session's audio is still to come: its microphone is queued behind the previous
-    /// one, or capturing.
-    pub(super) const fn awaits_audio(&self) -> bool {
-        self.is_queued() || self.is_capturing()
-    }
-
     pub(super) const fn awaits_worker(&self) -> bool {
         matches!(self.stage, Stage::AwaitingWorker { .. })
     }
@@ -212,10 +206,10 @@ impl Session {
         self.deliver(async move { Delivered::Inserted(insertion.await) });
     }
 
-    /// Turns a session whose audio is still to come into a Show of what `scope` names; returns
-    /// whether it did.
+    /// Turns a session whose audio is still to come, its microphone queued or capturing, into a
+    /// Show of what `scope` names; returns whether it did.
     pub(super) fn turn_into_show(&mut self, scope: Scope) -> bool {
-        let turns = !self.is_show() && self.awaits_audio();
+        let turns = !self.is_show() && (self.is_queued() || self.is_capturing());
         if turns {
             self.show = Some(Screen::Queued(scope));
         }
