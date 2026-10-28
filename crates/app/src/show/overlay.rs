@@ -255,6 +255,8 @@ struct Overlay {
     window: AnyWindowHandle,
     /// The display covered, and whether an area is being chosen on it.
     cover: Option<(Display, bool)>,
+    /// Takes the first reason the overlay could not cover its display, for its Show to report.
+    misplaced: Sender<anyhow::Error>,
     /// Where a drag choosing an area began and where it is now, in window pixels.
     drag: Option<[gpui::Point<Pixels>; 2]>,
     visibility: Option<Task<()>>,
@@ -264,12 +266,18 @@ struct Overlay {
 }
 
 impl Overlay {
-    fn new(canvas: watch::Receiver<Canvas>, window: &Window, cx: &Context<'_, Self>) -> Self {
+    fn new(
+        canvas: watch::Receiver<Canvas>,
+        misplaced: Sender<anyhow::Error>,
+        window: &Window,
+        cx: &Context<'_, Self>,
+    ) -> Self {
         Self {
             _updates: follow(canvas.clone(), cx, Canvas::cover, Self::cover),
             canvas,
             window: window.window_handle(),
             cover: None,
+            misplaced,
             drag: None,
             visibility: None,
             wake: None,
@@ -285,16 +293,23 @@ impl Overlay {
                 self.drag = None;
             }
             let chosen = self.canvas.borrow().chosen().cloned();
+            let misplaced = self.misplaced.clone();
             self.visibility = Some(defer_native(
                 self.window,
                 "overlay",
                 cx,
                 move |native, _| {
-                    if !place(native, cover)
-                        && let Some(chosen) = chosen
-                    {
+                    let Err(error) = place(native, cover) else {
+                        return;
+                    };
+                    if let Some(chosen) = chosen {
                         chosen.close();
                     }
+                    #[expect(
+                        clippy::let_underscore_must_use,
+                        reason = "A full lane already holds the Show's first failure, and a closed one belongs to a Show that ended"
+                    )]
+                    let _ = misplaced.try_send(error);
                 },
             ));
         }
@@ -377,13 +392,14 @@ impl Overlay {
 }
 
 /// Covers the display of `cover` and shows the overlay, taking clicks only while an area is
-/// chosen there, or hides it, and returns whether it covers a display. An overlay that cannot
-/// cover the display stays hidden rather than misplaced.
-fn place(native: &NativeWindow, cover: Option<(Display, bool)>) -> bool {
-    let covered = cover.filter(|&(display, _)| native.configure_overlay(display).is_ok());
-    native.set_overlay_input(covered.is_some_and(|(_, picking)| picking));
-    native.set_overlay_visible(covered.is_some());
-    covered.is_some()
+/// chosen there, or hides it. An overlay that cannot cover its display stays hidden rather than
+/// misplaced, and says why.
+fn place(native: &NativeWindow, cover: Option<(Display, bool)>) -> anyhow::Result<()> {
+    let placed = cover.map(|(display, _)| native.configure_overlay(display));
+    let covered = matches!(placed, Some(Ok(())));
+    native.set_overlay_input(covered && cover.is_some_and(|(_, picking)| picking));
+    native.set_overlay_visible(covered);
+    placed.unwrap_or(Ok(()))
 }
 
 impl Render for Overlay {
@@ -617,9 +633,9 @@ fn paint(sheet: &Sheet, bounds: Bounds<Pixels>, opacity: f32, window: &mut Windo
 /// window holds GPU memory the size of its display, which an idle app has no use for. A platform
 /// that records no Shows never opens one.
 ///
-/// The first overlay that cannot open goes to `report` once its Show is copied, which the
-/// failure would otherwise leave looking complete. A Show that fails or is cancelled says so
-/// itself, so a later Show reports instead.
+/// The first overlay that cannot open or cover its display goes to `report` once its Show is
+/// copied, which the failure would otherwise leave looking complete. A Show that fails or is
+/// cancelled says so itself, so a later Show reports instead.
 pub(crate) fn attend(
     mut canvas: watch::Receiver<Canvas>,
     mut snapshots: watch::Receiver<Snapshot>,
@@ -637,7 +653,8 @@ pub(crate) fn attend(
                 return;
             }
             let show = snapshots.borrow().id;
-            let (overlay, failure) = match cx.update(|cx| open(canvas.clone(), cx)) {
+            let (misplaced, placement) = async_channel::bounded(1);
+            let (overlay, failure) = match cx.update(|cx| open(canvas.clone(), misplaced, cx)) {
                 Ok(Ok(overlay)) => (Some(overlay), None),
                 Ok(Err(error)) => {
                     // No area can be dragged out without the overlay: the Show records the whole
@@ -645,7 +662,7 @@ pub(crate) fn attend(
                     if let Some(chosen) = canvas.borrow().chosen() {
                         chosen.close();
                     }
-                    (None, (!reported).then_some(error))
+                    (None, Some(error))
                 },
                 Err(_) => return,
             };
@@ -659,7 +676,10 @@ pub(crate) fn attend(
             if !released {
                 return;
             }
-            let Some(error) = failure else {
+            let Some(error) = failure
+                .or_else(|| placement.try_recv().ok())
+                .filter(|_| !reported)
+            else {
                 continue;
             };
             // The next session cannot start until this one leaves the active phases, so waiting
@@ -685,7 +705,11 @@ pub(crate) fn attend(
     .detach();
 }
 
-fn open(canvas: watch::Receiver<Canvas>, cx: &mut App) -> anyhow::Result<WindowHandle<Overlay>> {
+fn open(
+    canvas: watch::Receiver<Canvas>,
+    misplaced: Sender<anyhow::Error>,
+    cx: &mut App,
+) -> anyhow::Result<WindowHandle<Overlay>> {
     let display = cx.primary_display().context("No display available")?;
     let overlay = cx.open_window(
         WindowOptions {
@@ -702,7 +726,7 @@ fn open(canvas: watch::Receiver<Canvas>, cx: &mut App) -> anyhow::Result<WindowH
         },
         |window, cx| {
             window.set_window_title("Speakeasy overlay");
-            cx.new(|cx| Overlay::new(canvas, window, cx))
+            cx.new(|cx| Overlay::new(canvas, misplaced, window, cx))
         },
     )?;
     Ok(overlay)
