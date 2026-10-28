@@ -441,10 +441,7 @@ fn server_command(config: &Config, port: u16, secret: &str, served: &Path) -> Co
 }
 
 async fn contain(child: &mut Child) -> anyhow::Result<ProcessGroup> {
-    let pid = child
-        .id()
-        .context("Local speech exited as it started. Check the selected engine, then try again.")?;
-    match ProcessGroup::attach(pid) {
+    match ProcessGroup::attach(child) {
         Ok(group) => Ok(group),
         Err(error) => {
             kill_and_reap(child).await;

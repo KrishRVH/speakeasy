@@ -1,7 +1,8 @@
 //! Termination authority over the local speech worker and every process it starts, and, on Linux
 //! and Windows, the check that the worker's loopback listener belongs to it.
 //!
-//! Authority comes only from a freshly spawned child's identifier, never from a process lookup.
+//! Authority comes only from a freshly spawned child, through the process handle or identifier its
+//! `Child` holds, never from a process lookup.
 //! Listener lookups only test membership in the group and never grant termination authority.
 
 #[cfg(target_os = "linux")]
@@ -9,10 +10,11 @@ use std::fs;
 #[cfg(target_os = "windows")]
 use std::{
     io,
-    os::windows::io::{AsRawHandle, OwnedHandle},
+    os::windows::io::{AsRawHandle, BorrowedHandle, OwnedHandle},
     ptr::null,
 };
 
+use anyhow::Context as _;
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::{
     Foundation::{ERROR_INSUFFICIENT_BUFFER, FALSE, NO_ERROR},
@@ -25,9 +27,7 @@ use windows_sys::Win32::{
             JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
             JobObjectExtendedLimitInformation, SetInformationJobObject, TerminateJobObject,
         },
-        Threading::{
-            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
-        },
+        Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
     },
 };
 
@@ -41,14 +41,24 @@ pub struct ProcessGroup(OwnedHandle);
 
 #[cfg(target_os = "windows")]
 impl ProcessGroup {
-    /// Attaches to a freshly spawned child, never an unrelated process.
+    /// Attaches to a freshly spawned child through the process handle `child` holds.
     ///
     /// The job holds the child and every process it starts from then on; one it started before
     /// this call stays outside, so attach right after spawning.
     ///
     /// # Errors
-    /// Returns an error if the process identifier or native group setup is invalid.
-    pub fn attach(pid: u32) -> anyhow::Result<Self> {
+    /// Returns an error if the child was already reaped or native group setup fails.
+    pub fn attach(child: &tokio::process::Child) -> anyhow::Result<Self> {
+        let process = child
+            .raw_handle()
+            .context("The child exited before it could be contained")?;
+        // SAFETY: `child` owns this open process handle and outlives the borrow, which ends with
+        // this call.
+        Self::contain(unsafe { BorrowedHandle::borrow_raw(process) })
+    }
+
+    /// Assigns `process` to a new kill-on-close job.
+    fn contain(process: BorrowedHandle<'_>) -> anyhow::Result<Self> {
         // SAFETY: null attributes and name create an unnamed job that only this group owns.
         let job = unsafe { take_handle(CreateJobObjectW(null(), null())) }?;
         let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
@@ -63,14 +73,6 @@ impl ProcessGroup {
                 size,
             )
         })?;
-        // SAFETY: a successful OpenProcess returns a fresh handle that only this function owns.
-        let process = unsafe {
-            take_handle(OpenProcess(
-                PROCESS_SET_QUOTA | PROCESS_TERMINATE,
-                FALSE,
-                pid,
-            ))
-        }?;
         // SAFETY: both handles are open for this call; the job then holds only this child.
         ok_or_last_error(unsafe {
             AssignProcessToJobObject(job.as_raw_handle(), process.as_raw_handle())
@@ -195,14 +197,24 @@ pub struct ProcessGroup(Option<libc::pid_t>);
 
 #[cfg(unix)]
 impl ProcessGroup {
-    /// Attaches to a freshly spawned child, never an unrelated process.
+    /// Attaches to a freshly spawned child through the identifier `child` holds until it is reaped.
     ///
     /// The caller spawns the child with `process_group(0)`, so its identifier names its group, and
     /// terminates the group before reaping its leader.
     ///
     /// # Errors
-    /// Returns an error for an identifier no spawned child can have: 0, 1, or one beyond `pid_t`.
-    pub fn attach(pid: u32) -> anyhow::Result<Self> {
+    /// Returns an error if the child was already reaped.
+    pub fn attach(child: &tokio::process::Child) -> anyhow::Result<Self> {
+        Self::led_by(
+            child
+                .id()
+                .context("The child exited before it could be contained")?,
+        )
+    }
+
+    /// Takes authority over the group `pid` leads, refusing an identifier no spawned child can
+    /// have: 0, 1, or one beyond `pid_t`.
+    fn led_by(pid: u32) -> anyhow::Result<Self> {
         anyhow::ensure!(
             pid > 1,
             "Child process identifier must identify a spawned child"
@@ -332,7 +344,7 @@ mod tests {
     #[test]
     fn invalid_process_ids_never_acquire_group_termination_authority() {
         for pid in [0, 1, u32::MAX] {
-            let mut attached = ProcessGroup::attach(pid);
+            let mut attached = ProcessGroup::led_by(pid);
             // Release authority before dropping so even a regression cannot signal the test
             // runner's group.
             if let Ok(group) = &mut attached {
@@ -361,7 +373,7 @@ mod tests {
             .process_group(0)
             .stdin(Stdio::from(OwnedFd::from(held)))
             .spawn()?;
-        let mut group = ProcessGroup::attach(child.id())?;
+        let mut group = ProcessGroup::led_by(child.id())?;
         assert!(group.holds_loopback_listener(port)?);
         for other in [foreign.local_addr()?.port(), client.local_addr()?.port()] {
             assert!(
@@ -400,7 +412,7 @@ mod tests {
             .stdin(Stdio::from(OwnedFd::from(held)))
             .stdout(Stdio::piped())
             .spawn()?;
-        let mut group = ProcessGroup::attach(leader.id())?;
+        let mut group = ProcessGroup::led_by(leader.id())?;
         let handed_over = leader.stdout.take().context("Leader output missing")?;
         BufReader::new(handed_over).read_line(&mut String::new())?;
         assert!(group.holds_loopback_listener(port)?);
@@ -414,6 +426,7 @@ mod tests {
     fn only_listeners_held_inside_the_job_count() -> anyhow::Result<()> {
         use std::{
             io::{BufRead, BufReader},
+            os::windows::io::AsHandle,
             process::{Command, Stdio},
         };
 
@@ -441,7 +454,7 @@ mod tests {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .spawn()?;
-        let group = ProcessGroup::attach(child.id())?;
+        let group = ProcessGroup::contain(child.as_handle())?;
         let mut reported = String::new();
         BufReader::new(child.stdout.take().context("Child output missing")?)
             .read_line(&mut reported)?;

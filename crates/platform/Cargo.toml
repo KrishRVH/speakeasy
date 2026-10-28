@@ -10,7 +10,7 @@ publish.workspace = true
 anyhow.workspace = true
 async-channel.workspace = true
 raw-window-handle.workspace = true
-tokio = { workspace = true, features = ["rt", "time", "macros"] }
+tokio = { workspace = true, features = ["macros", "process", "rt", "time"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 arboard.workspace = true
