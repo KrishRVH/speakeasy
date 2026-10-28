@@ -8,10 +8,12 @@ on:
 permissions:
   contents: read
 
-# A newer push supersedes a release still being built.
+# Runs queue per ref. A newer branch run cancels the older one, but a main run always finishes: one
+# cancelled between its tag push and `gh release create` would leave a tag that later runs treat as
+# released.
 concurrency:
-  group: release
-  cancel-in-progress: true
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   version:
