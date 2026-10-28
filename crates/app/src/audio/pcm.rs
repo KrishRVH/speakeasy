@@ -14,6 +14,7 @@ const SAMPLE_RATE_OFFSET: usize = 24;
 pub(super) const SAMPLE_BYTES: usize = 2;
 const MINIMUM_RECORDING: Duration = Duration::from_millis(200);
 const RECLAIM_SLACK_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const INCOMPLETE_HEADER: &str = "Recording header is incomplete. Try recording again.";
 
 /// Mono PCM16 behind a reserved WAV header, so encoding never copies the audio. A recording that is
 /// not encoded is zeroed on drop, best effort: audio trimmed from an encoded one, and copies in the
@@ -111,7 +112,7 @@ impl Pcm16 {
 
     fn into_wav(mut self, rate: u32) -> anyhow::Result<Vec<u8>> {
         let Some((header, audio)) = self.bytes.split_first_chunk_mut::<WAV_HEADER_BYTES>() else {
-            bail!("Recording header is incomplete. Try recording again.");
+            bail!(INCOMPLETE_HEADER);
         };
         let Some(encoded) = wav_header(audio.len(), rate) else {
             bail!(
@@ -192,7 +193,7 @@ fn duration_of(bytes: usize, rate: u32) -> Duration {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Context;
+    use anyhow::Context as _;
 
     use super::*;
     use crate::audio::stream::MAX_SAMPLE_RATE;
@@ -233,10 +234,9 @@ mod tests {
 
     #[test]
     fn wav_encoding_rejects_incomplete_headers_partial_samples_and_invalid_rates() {
-        let incomplete = "Recording header is incomplete";
         let unsupported = "Recording format is unsupported";
         for (length, rate, expected) in [
-            (WAV_HEADER_BYTES - 1, 16_000, incomplete),
+            (WAV_HEADER_BYTES - 1, 16_000, INCOMPLETE_HEADER),
             (WAV_HEADER_BYTES + 1, 16_000, unsupported),
             (WAV_HEADER_BYTES + 2, 0, unsupported),
             (WAV_HEADER_BYTES + 2, u32::MAX, unsupported),

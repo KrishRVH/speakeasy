@@ -162,7 +162,7 @@ impl Session {
     }
 
     /// Ends capture with what it sealed, returning whether anything is left to deliver. Speech
-    /// goes on to recognition. A silent Show goes on to its footage, since its ink and clicks
+    /// goes on to transcription. A silent Show goes on to its footage, since its ink and clicks
     /// still tell; silent dictation has nothing. Audio sealed by a capture that never reported its
     /// first samples has no place on the timeline, so it counts as silence.
     pub(super) fn captured(&mut self, sealed: Option<Sealed>) -> bool {

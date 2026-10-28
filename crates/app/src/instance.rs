@@ -5,16 +5,18 @@
 
 use std::{
     fs::{self, File, OpenOptions},
-    io::{self, Read, Write},
+    io::{self, Read, Write as _},
     net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
 };
 
-use anyhow::{Context, bail, ensure};
+use anyhow::{Context as _, bail, ensure};
 use async_channel::{Receiver, Sender};
 use speakeasy_platform::OwnedThread;
+
+use crate::config;
 
 const LOCK_FILE: &str = "instance.lock";
 const PORT_FILE: &str = "instance.port";
@@ -141,10 +143,8 @@ impl Endpoint {
         let mut bytes = [0_u8; 16];
         getrandom::fill(&mut bytes)?;
         let nonce = u128::from_le_bytes(bytes);
-        let mut file = tempfile::NamedTempFile::new_in(directory)?;
-        write!(file, "{port} {nonce:032x}")?;
         let path = directory.join(PORT_FILE);
-        file.persist(&path).map_err(|error| error.error)?;
+        config::replace(&path, format!("{port} {nonce:032x}").as_bytes())?;
         Ok((Self { port, nonce }, PortFile(path)))
     }
 
@@ -278,8 +278,7 @@ fn connect(port_file: &Path) -> anyhow::Result<TcpStream> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const PATIENCE: Duration = Duration::from_secs(2);
+    use crate::testing::PATIENCE;
 
     fn next_request(requests: &Receiver<Request>) -> anyhow::Result<Request> {
         let started = Instant::now();

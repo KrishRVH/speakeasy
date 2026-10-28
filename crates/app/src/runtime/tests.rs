@@ -13,8 +13,7 @@ use super::{
     ports::{Capturing, Listening, Pinning, Sealed, Speech},
     *,
 };
-
-const PATIENCE: Duration = Duration::from_secs(2);
+use crate::testing::{PATIENCE, still_pending};
 
 type Reply = oneshot::Sender<anyhow::Result<String>>;
 type TranscriptionJob = (String, Reply);
@@ -74,7 +73,7 @@ impl<T> GateControl<T> {
 /// steers one side effect.
 struct FakePorts {
     desktop_pending: bool,
-    record_error: Option<&'static str>,
+    microphone_error: Option<&'static str>,
     delayed_finish: bool,
     load_results: Option<Receiver<anyhow::Result<()>>>,
     recovery: Option<Receiver<anyhow::Result<()>>>,
@@ -83,7 +82,7 @@ struct FakePorts {
     insertion: Option<Gate<InsertPermit>>,
     /// Each insertion takes the next queued result once it commits, or reports `Sent`.
     insert_results: Option<Receiver<Inserted>>,
-    show_error: Option<&'static str>,
+    screen_error: Option<&'static str>,
     screen_retirement: Option<Gate<()>>,
     publication: Option<Gate<()>>,
     publish_error: Option<&'static str>,
@@ -122,7 +121,7 @@ impl FakePorts {
         let (sounds, played) = async_channel::unbounded();
         let ports = Self {
             desktop_pending: false,
-            record_error: None,
+            microphone_error: None,
             delayed_finish: false,
             load_results: None,
             recovery: None,
@@ -130,7 +129,7 @@ impl FakePorts {
             stop: None,
             insertion: None,
             insert_results: None,
-            show_error: None,
+            screen_error: None,
             screen_retirement: None,
             publication: None,
             publish_error: None,
@@ -187,7 +186,7 @@ impl Ports for FakePorts {
         _: Option<&str>,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<FakeMicrophone> {
-        if let Some(error) = self.record_error {
+        if let Some(error) = self.microphone_error {
             bail!(error);
         }
         self.captures.try_send((id, events.clone()))?;
@@ -208,7 +207,7 @@ impl Ports for FakePorts {
         scope: Scope,
         events: Sender<ShowEvent>,
     ) -> anyhow::Result<FakeScreen> {
-        if let Some(error) = self.show_error {
+        if let Some(error) = self.screen_error {
             bail!(error);
         }
         self.shows.try_send((id, scope, events.clone()))?;
@@ -300,13 +299,13 @@ impl Ports for FakePorts {
     fn cue(&self, cue: Cue) {
         self.sounds
             .try_send(Sound::Played(cue))
-            .expect("the sound lane is unbounded");
+            .expect("The sound lane is unbounded");
     }
 
     fn hold_cues(&self, held: bool) {
         self.sounds
             .try_send(Sound::Held(held))
-            .expect("the sound lane is unbounded");
+            .expect("The sound lane is unbounded");
     }
 }
 
@@ -325,7 +324,7 @@ impl Capturing for FakeMicrophone {
         }
         self.events
             .try_send(CaptureEvent::Finished(self.id, Ok(Some(sealed()))))
-            .expect("capture lane has room for fake audio");
+            .expect("Capture lane has room for fake audio");
     }
 
     async fn retire(self) {
@@ -339,7 +338,7 @@ impl Listening for FakeMicrophone {
     fn expect_cue(&self) {
         self.sounds
             .try_send(Sound::Expected(self.id))
-            .expect("the sound lane is unbounded");
+            .expect("The sound lane is unbounded");
     }
 }
 
@@ -355,7 +354,7 @@ impl Capturing for FakeScreen {
     fn finish(&self) {
         self.events
             .try_send(ShowEvent::Finished(self.id, Ok(footage())))
-            .expect("show lane has room for fake footage");
+            .expect("Show lane has room for fake footage");
     }
 
     async fn retire(self) {
@@ -369,7 +368,7 @@ impl Pinning for FakeScreen {
     fn pin(&self, taps: Taps) {
         self.pins
             .try_send((self.id, taps))
-            .expect("pin lane has room for the test's pins");
+            .expect("Pin lane has room for the test's pins");
     }
 }
 
@@ -381,11 +380,11 @@ fn sealed() -> Sealed {
 }
 
 fn footage() -> Footage {
-    let frame = Image::from_bgra(2, 2, vec![128; 16]).expect("a 2×2 frame");
+    let frame = Image::from_bgra(2, 2, vec![128; 16]).expect("A 2×2 frame");
     let mut journal = Journal::new();
     journal
         .admit()
-        .expect("an empty journal admits a frame")
+        .expect("An empty journal admits a frame")
         .record(Moment::START, frame);
     Footage {
         recording: Recording {
@@ -553,7 +552,7 @@ impl<Host: Sync> Harness<Host> {
         let cleanup = ports.cleanup_gates();
         // A restarted shell's epoch, so a level tagged with the default epoch fails `observe_level`.
         let (output, updates) = watch::channel(Snapshot {
-            epoch: 1,
+            epoch: SnapshotEpoch::default().next(),
             ..Snapshot::default()
         });
         let (meter, levels) = watch::channel(Meter::default());
@@ -597,7 +596,7 @@ impl<Host: Sync> Harness<Host> {
         let snapshot = self.snapshot();
         assert_eq!(
             (meter.epoch, meter.session),
-            (snapshot.epoch, snapshot.id),
+            (snapshot.epoch, snapshot.session),
             "The level is not tagged with the recording it measured"
         );
         Ok(())
@@ -659,7 +658,7 @@ fn double_tap() -> Taps {
         pressed,
         released: pressed
             .checked_add(Duration::from_millis(300))
-            .expect("the clock reaches 300 ms on"),
+            .expect("The clock reaches 300 ms on"),
     }
 }
 
@@ -673,12 +672,6 @@ fn answer(reply: Reply, text: &str) -> anyhow::Result<()> {
         "The transcription request was abandoned"
     );
     Ok(())
-}
-
-/// Whether `future` is still pending once every task has gone idle on the paused clock. On a real
-/// thread, it only samples 30 ms.
-async fn still_pending(future: impl Future) -> bool {
-    timeout(Duration::from_millis(30), future).await.is_err()
 }
 
 mod cues;

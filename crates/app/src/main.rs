@@ -21,6 +21,8 @@ mod shell;
 mod show;
 mod sounds;
 mod status;
+#[cfg(test)]
+mod testing;
 mod theme;
 mod transcript;
 mod tray;
@@ -28,7 +30,7 @@ mod tray;
 use std::{
     borrow::Cow,
     ffi::OsString,
-    io::{self, Write},
+    io::{self, Write as _},
     path::PathBuf,
     process::ExitCode,
 };

@@ -43,7 +43,7 @@ const VOICES: usize = 4;
 pub(crate) enum Cue {
     /// The microphone is listening: a high note.
     Start,
-    /// A recording ends and goes to recognition: a lower note.
+    /// A recording ends and goes to transcription: a lower note.
     Stop,
     /// A recording or its processing is discarded: a soft low note.
     Cancel,

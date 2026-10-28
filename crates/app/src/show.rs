@@ -8,7 +8,7 @@ mod store;
 
 use std::{
     ffi::OsString,
-    io::{self, Write},
+    io::{self, Write as _},
     path::PathBuf,
     time::SystemTime,
 };

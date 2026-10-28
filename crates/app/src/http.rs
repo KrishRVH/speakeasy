@@ -9,7 +9,7 @@ use reqwest::{Client, ClientBuilder};
 /// operating system's TLS stack elsewhere.
 ///
 /// # Errors
-/// On Linux, returns an error if the system trust store yields no CA certificate.
+/// Fails on Linux when the system trust store yields no CA certificate.
 #[expect(
     clippy::disallowed_methods,
     reason = "the one place that constructs reqwest clients; Linux reqwest has no built-in rustls provider"

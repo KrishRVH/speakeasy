@@ -4,8 +4,8 @@
 use std::{f64::consts::TAU, thread};
 
 use super::*;
+use crate::testing::PATIENCE;
 
-const PATIENCE: Duration = Duration::from_secs(2);
 /// How long the players under test keep a released device open.
 const BRIEF_LINGER: Duration = Duration::from_millis(50);
 
@@ -262,7 +262,7 @@ fn only_errors_that_stop_the_stream_break_the_device() {
 #[ignore = "Plays every cue on the default output device; no microphone, hook, clipboard, or injected input"]
 fn every_cue_plays_on_the_default_output() {
     let opening = Instant::now();
-    let mut output = Output::open().expect("a default output device that can play cues");
+    let mut output = Output::open().expect("A default output device that can play cues");
     println!("opened the default output in {:?}", opening.elapsed());
     for cue in [Cue::Start, Cue::Stop, Cue::Cancel, Cue::Show, Cue::Copied] {
         output.start(cue, by(Instant::now()));

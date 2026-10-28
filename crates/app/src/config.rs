@@ -14,19 +14,19 @@
 
 use std::{
     fs,
-    io::{self, ErrorKind, Write},
+    io::{self, ErrorKind, Write as _},
     ops::Deref,
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, anyhow, ensure};
+use anyhow::{Context as _, anyhow, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use speakeasy_platform::{Delivery, DesktopOptions, LinuxPaste};
 
 use crate::{theme::Theme, transcript::Fillers};
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Engine {
     #[default]
@@ -51,7 +51,7 @@ impl Engine {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 #[expect(
     clippy::struct_excessive_bools,
@@ -94,7 +94,7 @@ impl Default for Config {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct LinuxSettings {
     pub shortcut: String,
@@ -599,7 +599,7 @@ fn changes<'a, T: Serialize + 'a>(
 
 /// Replaces `target` with `contents` all at once from a temporary file beside it, so a failure
 /// never leaves half a file and the rename stays on one filesystem.
-fn replace(target: &Path, contents: &[u8]) -> io::Result<()> {
+pub(crate) fn replace(target: &Path, contents: &[u8]) -> io::Result<()> {
     let directory = target
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())

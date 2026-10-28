@@ -93,7 +93,7 @@ fn exit_diagnostics_identify_actions_without_engine_output() {
     ] {
         assert!(
             exit_remedy(code.map(u32::cast_signed), signal).contains(remedy),
-            "exit code {code:X?}, signal {signal:?}"
+            "Exit code {code:X?}, signal {signal:?}"
         );
     }
 }

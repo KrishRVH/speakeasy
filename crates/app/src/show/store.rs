@@ -351,7 +351,7 @@ mod tests {
             kept.push(days_ago(10));
             assert!(
                 elsewhere.path().exists(),
-                "what a link named like an expired Show points to is left alone"
+                "What a link named like an expired Show points to is left alone"
             );
         }
         kept.sort();
@@ -394,15 +394,15 @@ mod tests {
         let frame = Image::from_bgra(32, 20, vec![255; 2_560])?;
         journal
             .admit()
-            .context("an empty journal admits a frame")?
+            .context("An empty journal admits a frame")?
             .record(Moment::START, frame);
         let recording = Recording::default();
-        let selection = select(&recording, journal.samples()).context("a frame to choose")?;
+        let selection = select(&recording, journal.samples()).context("A frame to choose")?;
         let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;
         compose(
             recording,
             selection,
-            |at| journal.frame_at(at).context("a recorded frame"),
+            |at| journal.frame_at(at).context("A recorded frame"),
             &typeface,
         )
     }
@@ -416,13 +416,13 @@ mod tests {
         assert_eq!(
             fs::read_to_string(first.join("summary.md"))?,
             summary,
-            "the summary returned is the one written"
+            "The summary returned is the one written"
         );
         assert!(summary.contains(&first.display().to_string()));
         assert!(first.join("frames/frame-01.png").is_file());
         assert!(
             stage(&first, bundle()?).is_err(),
-            "an existing bundle is never replaced"
+            "An existing bundle is never replaced"
         );
         #[cfg(unix)]
         {
@@ -475,10 +475,10 @@ mod tests {
         fs::set_permissions(&existing, fs::Permissions::from_mode(0o755))?;
         let link = root.path().join("link");
         symlink(&existing, &link)?;
-        assert!(make_private(&link).is_err(), "a link is never followed");
-        assert_eq!(mode(&existing)?, 0o755, "what a link names is left alone");
+        assert!(make_private(&link).is_err(), "A link is never followed");
+        assert_eq!(mode(&existing)?, 0o755, "What a link names is left alone");
         make_private(&existing)?;
-        assert_eq!(mode(&existing)?, 0o700, "an existing folder is tightened");
+        assert_eq!(mode(&existing)?, 0o700, "An existing folder is tightened");
         Ok(())
     }
 }

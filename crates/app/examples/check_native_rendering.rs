@@ -7,7 +7,7 @@
 mod icons;
 
 use std::{
-    io::{self, Write},
+    io::{self, Write as _},
     time::{Duration, Instant},
 };
 

@@ -151,7 +151,7 @@ fn fatal_stream_errors_keep_the_first_cause_without_blocking() -> anyhow::Result
     );
     let error = capture_failure(&control, &received)
         .err()
-        .context("fatal driver error must abort recording")?
+        .context("Fatal driver error must abort recording")?
         .to_string();
     assert!(
         error.starts_with("Another app is using the microphone."),
@@ -178,7 +178,7 @@ fn device_loss_and_backend_failures_abort_recording() -> anyhow::Result<()> {
         );
         let error = capture_failure(&Control::default(), &received)
             .err()
-            .context("fatal driver error must abort recording")?
+            .context("Fatal driver error must abort recording")?
             .to_string();
         assert!(!error.contains(&format!("{kind:?}")), "{error}");
         // A failure with its own sentence leaves the driver's words out; the rest keep them.
@@ -206,7 +206,7 @@ fn recording_buffer_overflow_has_its_own_actionable_error() -> anyhow::Result<()
     control.mark_overflowed();
     let error = capture_failure(&control, &received)
         .err()
-        .context("application ring overflow must abort recording")?
+        .context("Application ring overflow must abort recording")?
         .to_string();
     assert!(error.contains("Recording buffer filled"));
     assert!(error.contains("Reduce system load"));

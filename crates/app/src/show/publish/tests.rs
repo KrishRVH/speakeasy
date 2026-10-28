@@ -185,27 +185,27 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
     let shows = root.path().join("shows");
     let (_input, permit) = permit();
     let summary = write_bundle(footage, narration.clone(), &permit, || Ok(shows.clone()))?
-        .context("an active permit publishes")?;
+        .context("An active permit publishes")?;
     assert!(!permit.active(), "Publishing spends the permit");
     let mut entries = fs::read_dir(&shows)?;
     let directory = entries
         .next()
-        .context("the bundle is in the Shows folder")??
+        .context("The bundle is in the Shows folder")??
         .path();
     assert!(
         entries.next().is_none(),
-        "the Shows folder holds only the bundle"
+        "The Shows folder holds only the bundle"
     );
 
     assert_eq!(
         fs::read_to_string(directory.join("summary.md"))?,
         summary,
-        "the summary copied is the one written"
+        "The summary copied is the one written"
     );
     let manifest: Manifest = serde_json::from_slice(&fs::read(directory.join("show.json"))?)?;
     assert_eq!(manifest.recording.narration, narration);
-    assert_eq!(manifest.recording.strokes.len(), 1, "the circle");
-    assert_eq!(manifest.recording.actions.len(), 1, "the click");
+    assert_eq!(manifest.recording.strokes.len(), 1, "The circle");
+    assert_eq!(manifest.recording.actions.len(), 1, "The click");
     assert_ne!(manifest.keyframes.len(), 0);
     for keyframe in &manifest.keyframes {
         let index = keyframe.index;
@@ -221,7 +221,7 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
     let sheet = png_size(&fs::read(directory.join("contact-sheet.png"))?);
     assert!(sheet.0 > 0 && sheet.1 > 0);
     assert!(summary.contains(&directory.display().to_string()));
-    assert!(summary.contains("dialog"), "narration reaches the agent");
+    assert!(summary.contains("dialog"), "Narration reaches the agent");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -235,7 +235,7 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
 fn a_cancelled_show_never_reaches_the_disk() -> anyhow::Result<()> {
     let (input, permit) = permit();
     input.cancel();
-    let unprepared = || anyhow::bail!("a cancelled Show never prepares its folder");
+    let unprepared = || anyhow::bail!("A cancelled Show never prepares its folder");
     let (footage, narration) = rehearse(32, 20);
     assert!(write_bundle(footage, narration, &permit, unprepared)?.is_none());
     Ok(())
@@ -340,13 +340,13 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
         journal,
     } = footage;
     recording.narration = narration;
-    let selection = select(&recording, journal.samples()).context("selected")?;
+    let selection = select(&recording, journal.samples()).context("Selected")?;
     let selected = started.elapsed();
     let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;
     let bundle = compose(
         recording,
         selection,
-        |at| journal.frame_at(at).context("recorded"),
+        |at| journal.frame_at(at).context("Recorded"),
         &typeface,
     )?;
     let composed = started.elapsed();

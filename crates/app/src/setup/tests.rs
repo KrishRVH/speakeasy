@@ -12,7 +12,11 @@ use anyhow::{Context as _, bail, ensure};
 use tokio::time::timeout;
 
 use super::*;
-use crate::{local_speech::LocalSpeech, runtime::ports::Speech};
+use crate::{
+    local_speech::LocalSpeech,
+    runtime::ports::Speech,
+    testing::{PATIENCE, still_pending},
+};
 
 /// A setup whose body, once cancelled, reports on `cleaning` and holds its cleanup open until
 /// `release` sends.
@@ -23,7 +27,7 @@ fn setup_held_in_cleanup() -> anyhow::Result<(Setup, mpsc::Receiver<()>, mpsc::S
         let Err(_closed) = cancelled.recv_blocking();
         entered.send(()).unwrap();
         // A timeout, so a failing test cannot strand this owned thread.
-        released.recv_timeout(Duration::from_secs(2)).unwrap();
+        released.recv_timeout(PATIENCE).unwrap();
         None
     })?;
     Ok((setup, cleaning, release))
@@ -34,16 +38,14 @@ async fn cancelled_setup_remains_owned_while_cleanup_is_pending() -> anyhow::Res
     let (setup, cleaning, release) = setup_held_in_cleanup()?;
     setup.request_stop();
     let stopped = setup.stopped();
-    cleaning.recv_timeout(Duration::from_secs(2))?;
+    cleaning.recv_timeout(PATIENCE)?;
     assert!(
-        timeout(Duration::from_millis(30), setup.stopped())
-            .await
-            .is_err(),
+        still_pending(setup.stopped()).await,
         "A cancelled setup reported stopping before its cleanup finished"
     );
     assert!(!setup.is_finished());
     release.send(())?;
-    timeout(Duration::from_secs(2), stopped).await?;
+    timeout(PATIENCE, stopped).await?;
     Ok(())
 }
 
@@ -72,14 +74,14 @@ fn setup_drop_joins_cancelled_cleanup_before_returning() -> anyhow::Result<()> {
         drop(setup);
         finished.send(()).unwrap();
     });
-    cleaning.recv_timeout(Duration::from_secs(2))?;
+    cleaning.recv_timeout(PATIENCE)?;
     assert_eq!(
         joined.recv_timeout(Duration::from_millis(30)),
         Err(RecvTimeoutError::Timeout),
         "Dropping a setup returned before its cleanup finished"
     );
     release.send(())?;
-    joined.recv_timeout(Duration::from_secs(2))?;
+    joined.recv_timeout(PATIENCE)?;
     quit.join().unwrap();
     Ok(())
 }

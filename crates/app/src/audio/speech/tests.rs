@@ -72,15 +72,16 @@ proptest! {
             (0_u64..60, prop_oneof![Just(0_i16), Just(20), Just(98), Just(3000), any::<i16>()]),
             0..12,
         ),
-        leading_ms in edge_millis(),
-        trailing_ms in edge_millis(),
+        leading_millis in edge_millis(),
+        trailing_millis in edge_millis(),
         packet_samples in 1_usize..4096,
     ) {
-        let mut shaped = vec![(bytes_in(samples_in(Duration::from_millis(leading_ms), rate)), 0)];
+        let mut shaped =
+            vec![(bytes_in(samples_in(Duration::from_millis(leading_millis), rate)), 0)];
         shaped.extend(segments.iter().map(|&(millis, amplitude)| {
             (bytes_in(samples_in(Duration::from_millis(millis), rate)), amplitude)
         }));
-        shaped.push((bytes_in(samples_in(Duration::from_millis(trailing_ms), rate)), 0));
+        shaped.push((bytes_in(samples_in(Duration::from_millis(trailing_millis), rate)), 0));
         let recording = audio(&shaped);
         let mut batch = Audibility::new(rate);
         batch.complete(&recording);

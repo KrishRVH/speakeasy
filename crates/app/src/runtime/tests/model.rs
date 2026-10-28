@@ -180,7 +180,7 @@ impl ModelDevice {
     fn log(&self, entry: Log) {
         self.log
             .try_send(entry)
-            .expect("the model log stays open for the whole case");
+            .expect("The model log stays open for the whole case");
     }
 }
 
@@ -248,7 +248,7 @@ impl Speech for ModelSpeech {
         self.stopped = true;
         self.log
             .try_send(Log::Stopped)
-            .expect("the model log stays open for the whole case");
+            .expect("The model log stays open for the whole case");
     }
 }
 
@@ -462,7 +462,7 @@ impl Model {
                     let outcome = match heard {
                         Heard::Speech => Ok(Some(sealed())),
                         Heard::Silence => Ok(None),
-                        Heard::Failure => Err(anyhow!("model microphone failed")),
+                        Heard::Failure => Err(anyhow!("Model microphone failed")),
                     };
                     events.try_send(CaptureEvent::Finished(*id, outcome))?;
                     self.answered(Source::Microphone, *id);
@@ -474,7 +474,7 @@ impl Model {
                         Seen::Complete => {
                             self.finishing(Source::Screen, *id).then(|| Ok(footage()))
                         },
-                        Seen::Failure => Some(Err(anyhow!("model screen failed"))),
+                        Seen::Failure => Some(Err(anyhow!("Model screen failed"))),
                     };
                     if let Some(outcome) = outcome {
                         events.try_send(ShowEvent::Finished(*id, outcome))?;
@@ -487,7 +487,7 @@ impl Model {
                     let result = match said {
                         Said::Words => Ok("model words".to_owned()),
                         Said::Nothing => Ok(String::new()),
-                        Said::Failure => Err(anyhow!("model transcription failed")),
+                        Said::Failure => Err(anyhow!("Model transcription failed")),
                     };
                     answer_unless_abandoned(reply, result);
                 }
@@ -728,25 +728,22 @@ fn the_sequences_that_once_stranded_the_owner_come_to_rest() -> anyhow::Result<(
         screen: Duration::ZERO,
         worker: Duration::ZERO,
     };
-    let speech = Step::Audio(Heard::Speech);
-    let microphone_failure = Step::Audio(Heard::Failure);
-    let screen_failure = Step::Footage(Seen::Failure);
+    let speech = || Step::Audio(Heard::Speech);
+    let microphone_failure = || Step::Audio(Heard::Failure);
+    let screen_failure = || Step::Footage(Seen::Failure);
     let cases = [
-        (
-            vec![keys(&[Key::Toggle]), microphone_failure.clone()],
-            at_once,
-        ),
-        (vec![show(), microphone_failure.clone()], at_once),
+        (vec![keys(&[Key::Toggle]), microphone_failure()], at_once),
+        (vec![show(), microphone_failure()], at_once),
         (
             vec![
                 show(),
                 show(),
-                speech.clone(),
-                screen_failure.clone(),
+                speech(),
+                screen_failure(),
                 Step::Advance(Duration::from_millis(141)),
                 Step::Advance(Duration::ZERO),
                 show(),
-                speech.clone(),
+                speech(),
             ],
             at_once,
         ),
@@ -755,7 +752,7 @@ fn the_sequences_that_once_stranded_the_owner_come_to_rest() -> anyhow::Result<(
                 show(),
                 keys(&[Key::Cancel]),
                 keys(&[Key::Press, Key::Show]),
-                speech,
+                speech(),
             ],
             Releases {
                 screen: Duration::from_millis(2),
@@ -766,19 +763,19 @@ fn the_sequences_that_once_stranded_the_owner_come_to_rest() -> anyhow::Result<(
             vec![
                 show(),
                 show(),
-                microphone_failure.clone(),
+                microphone_failure(),
                 show(),
                 show(),
                 keys(&[Key::Cancel]),
                 show(),
-                screen_failure,
+                screen_failure(),
                 show(),
                 keys(&[Key::Press]),
-                microphone_failure.clone(),
+                microphone_failure(),
                 show(),
                 show(),
                 show(),
-                microphone_failure,
+                microphone_failure(),
                 show(),
                 show(),
             ],

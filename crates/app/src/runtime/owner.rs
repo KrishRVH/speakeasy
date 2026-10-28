@@ -13,7 +13,7 @@ use tokio::{
 };
 
 use super::{
-    LOADING, Meter, Phase, Snapshot, Wiring,
+    LOADING, Meter, Phase, Snapshot, SnapshotEpoch, Wiring,
     device::Device,
     now,
     ports::{CaptureEvent, PUBLISH_STOPPED, Ports, Published, SessionId, ShowEvent},
@@ -121,7 +121,7 @@ struct Owner<P: Ports> {
 
     snapshots: watch::Sender<Snapshot>,
     meter: watch::Sender<Meter>,
-    epoch: u64,
+    epoch: SnapshotEpoch,
     outcome: Outcome,
     notice: Option<Notice>,
     desktop_ready: bool,
@@ -257,8 +257,14 @@ impl<P: Ports> Owner<P> {
             Input::Toggle if self.desktop_ready => self.gesture.toggle(now()),
             Input::Press | Input::Toggle => None,
             Input::Release => self.gesture.release(now()),
-            Input::Lock => self.gesture.lock(),
-            Input::Show(scope) => self.start_show(scope),
+            Input::Lock => {
+                self.gesture.lock();
+                None
+            },
+            Input::Show(scope) => {
+                self.start_show(scope);
+                None
+            },
             Input::Pin(taps) => {
                 self.screen.pin(taps);
                 None
@@ -428,18 +434,20 @@ impl<P: Ports> Owner<P> {
     /// Show only for a press during a physical hold, and its repeats, so a recording already locked
     /// hands-free with Space or a double tap turns too, as does one still waiting for the
     /// microphone.
-    fn start_show(&mut self, scope: Scope) -> Option<Action> {
+    fn start_show(&mut self, scope: Scope) {
         let held = matches!(self.gesture.state(), State::Held | State::HandsFree);
-        let session = self.session.as_mut()?;
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
         if !held || !session.turn_into_show(scope) {
-            return None;
+            return;
         }
         self.latest.show = true;
         // A microphone still opening sounds the Show cue once it listens.
         if session.is_recording() {
             self.cue_heard(Cue::Show);
         }
-        self.gesture.lock()
+        self.gesture.lock();
     }
 
     fn handle_show(&mut self, event: ShowEvent) {
@@ -504,7 +512,7 @@ impl<P: Ports> Owner<P> {
                 self.discard();
                 self.cue(Cue::Cancel);
             },
-            Some(Action::ModeChanged) | None => {},
+            None => {},
         }
         ControlFlow::Continue(())
     }
@@ -567,7 +575,7 @@ impl<P: Ports> Owner<P> {
         self.outcome = outcome;
     }
 
-    /// Discards the session, its insertion and any recognition under way, and shows it cancelled.
+    /// Discards the session, its insertion and any transcription under way, and shows it cancelled.
     fn discard(&mut self) {
         self.abandon();
         self.worker.revive(&self.ports, &self.config);
@@ -704,7 +712,7 @@ impl<P: Ports> Owner<P> {
         let session = self.session.as_ref();
         let snapshot = Snapshot {
             epoch: self.epoch,
-            id: self.latest.id.into(),
+            session: self.latest.id.into(),
             phase: session.map_or_else(|| self.outcome.phase(), Session::phase),
             hands_free: self.gesture.state() == State::HandsFree,
             show: self.latest.show,

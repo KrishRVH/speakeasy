@@ -58,7 +58,8 @@ module unless a test file is named.
   and [speech.rs](../crates/app/src/audio/speech.rs) hears only the voice band beneath the cues,
   through [lowpass.rs](../crates/app/src/lowpass.rs), while a recording may overhear one.
   [sounds/tests.rs](../crates/app/src/sounds/tests.rs) drives the player against a fake device and,
-  opt-in, plays every cue on the default output; speech.rs runs the real cues through the gate at
+  opt-in, plays every cue on the default output;
+  [speech/tests.rs](../crates/app/src/audio/speech/tests.rs) runs the real cues through the gate at
   full scale; [runtime/tests/cues.rs](../crates/app/src/runtime/tests/cues.rs) checks which moments
   sound and when the output is held.
 - **Local recognition**: [local_speech.rs](../crates/app/src/local_speech.rs),
@@ -169,9 +170,9 @@ No single module owns these rules; a change to any party keeps them.
 - **Snapshots only present.** The owner decides from owned state and presents coalesced snapshots;
   views never read PCM, and their timers cannot present session state. Meter levels travel on their
   own lane, applied only to the matching epoch and recording.
-- **The lifecycle epoch fences presenters.** An owner takes the shell's epoch before its thread
-  starts and presents only while that epoch is current, so a retiring owner cannot replace a newer
-  pause or quit notice.
+- **The snapshot epoch fences presenters.** Each status the shell announces advances it. An owner
+  takes the current epoch before its thread starts and presents only while that epoch is current, so
+  a retiring owner cannot replace a newer pause or quit notice.
 - **Quit drains without a timeout.** Every application-owned Quit route awaits audio teardown,
   process reaping, insertion, setup, and requested saves while rendering continues. The instance
   lock is released after the last Settings writer.

@@ -114,11 +114,11 @@ async fn owner_finishes_capture_at_the_five_minute_deadline() -> anyhow::Result<
 #[tokio::test(start_paused = true)]
 async fn failed_capture_start_preserves_its_reason_and_allows_shutdown() -> anyhow::Result<()> {
     let mut h = Harness::with_ports(Config::default(), |ports| {
-        ports.record_error = Some("thread resources exhausted");
+        ports.microphone_error = Some("Thread resources exhausted");
     })?;
     h.input(Input::Press);
     h.phase(Phase::Error).await?;
-    assert!(h.snapshot().message.contains("thread resources exhausted"));
+    assert!(h.snapshot().message.contains("Thread resources exhausted"));
     h.close().await
 }
 
@@ -169,7 +169,7 @@ async fn shutdown_during_a_queued_capture_never_opens_the_new_device() -> anyhow
 }
 
 #[tokio::test(start_paused = true)]
-async fn completed_audio_waits_for_its_microphone_to_retire_before_a_retry() -> anyhow::Result<()> {
+async fn completed_capture_retires_before_retry() -> anyhow::Result<()> {
     let (retirement, retiring) = gate(2);
     let mut h = Harness::with_ports(Config::default(), |ports| {
         ports.retirement = Some(retirement);
@@ -412,7 +412,7 @@ async fn cancelled_inference_and_late_audio_cannot_affect_the_next_session() -> 
     );
     let (new_id, _) = h.start().await?;
     assert_ne!(new_id, old_id);
-    let late_failure = CaptureEvent::Finished(old_id, Err(anyhow!("old device failed")));
+    let late_failure = CaptureEvent::Finished(old_id, Err(anyhow!("Old device failed")));
     old_events.send(late_failure).await?;
     h.finish_as("new session").await?;
     assert_eq!(receive(&h.pasted).await?, "new session");
@@ -678,7 +678,7 @@ async fn retired_publisher_cannot_overwrite_shell_lifecycle_notice() -> anyhow::
     let mut h = Harness::new()?;
     h.start().await?;
     h.output.send_modify(|snapshot| {
-        snapshot.epoch += 1;
+        snapshot.epoch = snapshot.epoch.next();
         snapshot.phase = Phase::Idle;
         snapshot.message = PAUSING.into();
     });
@@ -696,7 +696,7 @@ async fn retired_publisher_cannot_overwrite_shell_lifecycle_notice() -> anyhow::
 async fn delayed_owner_start_cannot_claim_a_newer_shell_publisher() -> anyhow::Result<()> {
     let h = Harness::new()?;
     h.output.send_modify(|snapshot| {
-        snapshot.epoch += 1;
+        snapshot.epoch = snapshot.epoch.next();
         snapshot.message = PAUSED.into();
     });
     let updates = h.updates.clone();

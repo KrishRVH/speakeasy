@@ -3,7 +3,7 @@
 
 use std::{
     fs::{self, File, OpenOptions},
-    io::{self, Write},
+    io::{self, Write as _},
     path::{Path, PathBuf},
 };
 
@@ -188,7 +188,7 @@ mod tests {
         let mut buffer = [0; 1024];
         while !request.ends_with(b"\r\n\r\n") {
             let read = stream.read(&mut buffer).await?;
-            anyhow::ensure!(read > 0, "request ended early");
+            anyhow::ensure!(read > 0, "Request ended early");
             request.extend_from_slice(&buffer[..read]);
         }
         let start = String::from_utf8(request)?

@@ -56,9 +56,9 @@ impl CaptureEvent {
     }
 }
 
-/// Speech sealed for recognition: a WAV, and how much leading quiet was trimmed before it, which
+/// Speech sealed for transcription: a WAV, and how much leading quiet was trimmed before it, which
 /// places times the recognizer reports back on the recording's clock. The WAV is zeroed on drop
-/// wherever the audio is discarded; recognition takes it with `mem::take` first.
+/// wherever the audio is discarded; transcription takes it with `mem::take` first.
 pub(crate) struct Sealed {
     pub wav: Vec<u8>,
     pub trimmed: Duration,
@@ -75,11 +75,10 @@ pub(crate) enum ShowEvent {
     Finished(SessionId, anyhow::Result<Footage>),
 }
 
-/// What a Show's screen side recorded, up to the moment recording stopped.
+/// What a Show's screen side recorded, up to the moment recording stopped; publishing adds the
+/// narration its recording still lacks.
 pub(crate) struct Footage {
-    /// Everything but the frames, with the narration left for publishing to add.
     pub recording: Recording,
-    /// The recorded frames.
     pub journal: Journal,
 }
 

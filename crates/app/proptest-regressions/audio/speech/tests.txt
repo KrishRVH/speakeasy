@@ -4,4 +4,4 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc 6942619de74168602e1b510fc8f89126027e3923ff3e906b8149859b482494ee # shrinks to rate = 44101, segments = [(33, 3000), (47, 3000)], leading_ms = 1001, trailing_ms = 499, packet_samples = 1
+cc 6942619de74168602e1b510fc8f89126027e3923ff3e906b8149859b482494ee # shrinks to rate = 44101, segments = [(33, 3000), (47, 3000)], leading_millis = 1001, trailing_millis = 499, packet_samples = 1

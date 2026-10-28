@@ -29,7 +29,7 @@ pub(super) async fn play(
     meter: watch::Sender<Meter>,
     canvas: watch::Sender<Canvas>,
 ) {
-    let mut snapshot = starting(output.borrow().id.wrapping_add(1));
+    let mut snapshot = starting(output.borrow().session.wrapping_add(1));
     present(&output, &snapshot, Duration::from_millis(350)).await;
     snapshot.phase = Phase::Recording;
     let start = Instant::now();
@@ -53,9 +53,9 @@ pub(super) async fn play(
         snapshot.phase = phase;
         present(&output, &snapshot, duration).await;
     }
-    let show_id = snapshot.id.wrapping_add(1);
-    play_show(&output, &meter, &canvas, show_id).await;
-    play_interruptions(&output, show_id).await;
+    let show_session = snapshot.session.wrapping_add(1);
+    play_show(&output, &meter, &canvas, show_session).await;
+    play_interruptions(&output, show_session).await;
 }
 
 /// A held recording that S turns into a Show, circled on the overlay, finished hands-free, and
@@ -64,12 +64,12 @@ async fn play_show(
     output: &watch::Sender<Snapshot>,
     meter: &watch::Sender<Meter>,
     canvas: &watch::Sender<Canvas>,
-    id: u64,
+    session: u64,
 ) {
     // A platform that records no Shows has no display to draw on, and the preview draws nothing.
     let display = Display::under_pointer().ok();
     let clear = Clear::new(canvas);
-    let mut snapshot = starting(id);
+    let mut snapshot = starting(session);
     present(output, &snapshot, Duration::from_millis(250)).await;
     snapshot.phase = Phase::Recording;
     let start = Instant::now();
@@ -175,7 +175,7 @@ fn circle(canvas: &watch::Sender<Canvas>, display: Display, seconds: f32) -> boo
 
 /// Each recording cuts off the previous ending, and a cancel is followed at once by the next
 /// recording.
-async fn play_interruptions(output: &watch::Sender<Snapshot>, mut id: u64) {
+async fn play_interruptions(output: &watch::Sender<Snapshot>, mut session: u64) {
     for (ending, message, held) in [
         (Phase::Cancelled, "", Duration::from_millis(60)),
         (Phase::Empty, "", Duration::from_secs(2)),
@@ -190,8 +190,8 @@ async fn play_interruptions(output: &watch::Sender<Snapshot>, mut id: u64) {
             Duration::from_secs(2),
         ),
     ] {
-        id = id.wrapping_add(1);
-        let mut snapshot = starting(id);
+        session = session.wrapping_add(1);
+        let mut snapshot = starting(session);
         present(output, &snapshot, Duration::from_millis(180)).await;
         snapshot.phase = Phase::Recording;
         present(output, &snapshot, Duration::from_millis(700)).await;
@@ -201,9 +201,9 @@ async fn play_interruptions(output: &watch::Sender<Snapshot>, mut id: u64) {
     }
 }
 
-fn starting(id: u64) -> Snapshot {
+fn starting(session: u64) -> Snapshot {
     Snapshot {
-        id,
+        session,
         phase: Phase::Starting,
         model: ModelState::Ready,
         ..Snapshot::default()
@@ -226,7 +226,7 @@ async fn present(output: &watch::Sender<Snapshot>, snapshot: &Snapshot, duration
 fn measure(meter: &watch::Sender<Meter>, snapshot: &Snapshot, level: f32) {
     meter.send_replace(Meter {
         epoch: snapshot.epoch,
-        session: snapshot.id,
+        session: snapshot.session,
         level,
     });
 }

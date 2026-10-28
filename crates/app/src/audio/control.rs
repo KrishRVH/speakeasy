@@ -107,6 +107,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::testing::PATIENCE;
 
     #[test]
     fn quiescence_waits_for_a_callback_that_began_before_the_finish() {
@@ -121,10 +122,7 @@ mod tests {
                 closing.recv().unwrap();
             }
         });
-        assert_eq!(
-            open.recv_timeout(Duration::from_secs(2)).unwrap(),
-            Mode::Recording
-        );
+        assert_eq!(open.recv_timeout(PATIENCE).unwrap(), Mode::Recording);
         control.finish();
         let (quiesced, done) = mpsc::channel();
         let consumer = thread::spawn(move || {
@@ -137,6 +135,6 @@ mod tests {
         callback.join().unwrap();
         consumer.join().unwrap();
         assert!(!premature, "Quiesced while a callback was still publishing");
-        done.recv_timeout(Duration::from_secs(2)).unwrap();
+        done.recv_timeout(PATIENCE).unwrap();
     }
 }

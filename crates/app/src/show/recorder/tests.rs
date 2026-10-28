@@ -122,9 +122,9 @@ async fn a_take_finished_after_its_first_frame_ends_then_and_records_no_teardown
         feed.finish().await;
     })
     .await;
-    let footage = recorded?.context("finished, not cancelled")?;
+    let footage = recorded?.context("Finished, not cancelled")?;
     assert_eq!(footage.journal.samples().len(), 1);
-    assert_eq!(ran, Duration::from_secs(1) + TEARDOWN, "sources stop first");
+    assert_eq!(ran, Duration::from_secs(1) + TEARDOWN, "Sources stop first");
     let finished = Moment::from_millis(1_000);
     assert_eq!(footage.recording.duration, finished);
     assert_eq!(
@@ -134,7 +134,7 @@ async fn a_take_finished_after_its_first_frame_ends_then_and_records_no_teardown
             from: Point::new(0.2, 0.2),
             to: Point::new(0.6, 0.6),
         }],
-        "a drag still held when the Show finishes ends with it"
+        "A drag still held when the Show finishes ends with it"
     );
     Ok(())
 }
@@ -148,7 +148,7 @@ async fn a_take_finished_before_its_first_frame_waits_three_seconds_for_one() ->
         feed.frame(2_900).await;
     })
     .await;
-    let footage = recorded?.context("finished, not cancelled")?;
+    let footage = recorded?.context("Finished, not cancelled")?;
     assert_eq!(footage.journal.samples().len(), 1);
     assert_eq!(footage.recording.duration, Moment::from_millis(2_900));
     assert_eq!(ran, Duration::from_millis(2_900) + TEARDOWN);
@@ -157,7 +157,7 @@ async fn a_take_finished_before_its_first_frame_waits_three_seconds_for_one() ->
     assert_eq!(
         ran,
         FIRST_FRAME_WAIT + TEARDOWN,
-        "without a frame, the Show fails once the wait is over"
+        "Without a frame, the Show fails once the wait is over"
     );
     Ok(())
 }
@@ -209,7 +209,7 @@ async fn a_pin_is_judged_after_the_pointer_samples_queued_before_it() -> anyhow:
         feed.finish().await;
     })
     .await;
-    let recording = recorded?.context("finished, not cancelled")?.recording;
+    let recording = recorded?.context("Finished, not cancelled")?.recording;
     assert_eq!(recording.strokes.len(), 1);
     assert_eq!(
         recording.pins,
@@ -243,17 +243,17 @@ async fn an_area_is_dragged_out_or_recorded_whole_and_earlier_pins_mark_nothing(
     })?;
     chosen.try_send(dragged)?;
     assert_eq!(pick(&choice, &lanes).await, Some((dragged, false)));
-    assert!(lanes.pinned.is_empty(), "the early pin was dropped");
+    assert!(lanes.pinned.is_empty(), "The early pin was dropped");
     finish.try_send(())?;
     assert_eq!(pick(&choice, &lanes).await, Some((Part::WHOLE, true)));
     chosen.close();
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(5), pick(&choice, &lanes)).await?,
         Some((Part::WHOLE, false)),
-        "the overlay could not appear"
+        "The overlay could not appear"
     );
     finish.close();
-    assert_eq!(pick(&choice, &lanes).await, None, "cancelled");
+    assert_eq!(pick(&choice, &lanes).await, None, "Cancelled");
     Ok(())
 }
 
@@ -265,12 +265,12 @@ fn a_recording_that_unwinds_hides_the_overlay_and_reports_a_fixed_failure() -> a
         scope
             .spawn(|| {
                 let _ending = Ending::new(SessionId::FIRST, events, &canvas);
-                panic!("a recording bug");
+                panic!("A recording bug");
             })
             .join()
     });
     assert!(unwound.is_err());
-    assert!(overlay.has_changed()?, "the overlay was told to hide");
+    assert!(overlay.has_changed()?, "The overlay was told to hide");
     let ShowEvent::Finished(id, outcome) = reported.try_recv()?;
     assert_eq!(id, SessionId::FIRST);
     assert_eq!(failure(outcome).as_deref(), Some(CAPTURE_STOPPED));

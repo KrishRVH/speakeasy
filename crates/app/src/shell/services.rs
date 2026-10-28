@@ -19,7 +19,7 @@ use crate::{
     gpui_ext::AppUpdate,
     instance::{Instance, Request},
     pill::Pill,
-    runtime::{self, Meter, ModelState, Phase, Runtime, Snapshot},
+    runtime::{self, Meter, ModelState, Phase, Runtime, Snapshot, SnapshotEpoch},
     show::Canvas,
     status::{PAUSED, PAUSING, QUITTING, ServiceState, Status},
 };
@@ -445,9 +445,9 @@ fn announce(output: &watch::Sender<Snapshot>, message: &str) {
 
 /// The snapshot after one from `epoch` that says the shell's `message`. No owner has reported a
 /// model under it yet, so the model reads as loading rather than unavailable.
-fn announcement(epoch: u64, message: &str) -> Snapshot {
+fn announcement(epoch: SnapshotEpoch, message: &str) -> Snapshot {
     Snapshot {
-        epoch: epoch.wrapping_add(1),
+        epoch: epoch.next(),
         message: message.into(),
         model: ModelState::Loading,
         ..Snapshot::default()
@@ -479,7 +479,7 @@ mod tests {
     fn a_resume_check_and_a_start_read_as_busy_until_the_owner_reports() {
         for message in [CHECKING, runtime::LOADING] {
             let status = Status::new(
-                &announcement(0, message),
+                &announcement(SnapshotEpoch::default(), message),
                 ServiceState::Running,
                 Engine::Whisper,
             );

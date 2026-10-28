@@ -38,8 +38,6 @@ pub enum Action {
     Finish,
     /// Discards the recording and revokes its insertion authority.
     Cancel,
-    /// Refreshes the displayed capture mode without replacing the recording.
-    ModeChanged,
 }
 
 /// Hold-to-talk, double-tap hands-free, and Space locking for one shortcut.
@@ -79,7 +77,7 @@ impl Gesture {
             },
             Phase::PendingTap { started, .. } => {
                 self.phase = Phase::HandsFree { started };
-                Some(Action::ModeChanged)
+                None
             },
             Phase::HandsFree { .. } => self.finish(),
             Phase::Held { .. } | Phase::Processing => None,
@@ -98,7 +96,7 @@ impl Gesture {
                 started,
                 released: now,
             };
-            Some(Action::ModeChanged)
+            None
         } else {
             self.finish()
         }
@@ -106,12 +104,10 @@ impl Gesture {
 
     /// Switches a hold to hands-free, keeping its capture: Space locks a hold, and a Show starts
     /// locked.
-    pub fn lock(&mut self) -> Option<Action> {
-        let Phase::Held { started } = self.phase else {
-            return None;
-        };
-        self.phase = Phase::HandsFree { started };
-        Some(Action::ModeChanged)
+    pub fn lock(&mut self) {
+        if let Phase::Held { started } = self.phase {
+            self.phase = Phase::HandsFree { started };
+        }
     }
 
     /// Starts hands-free recording or finishes the active recording.
@@ -235,7 +231,10 @@ mod tests {
             match self {
                 Self::Press => gesture.press(now),
                 Self::Release => gesture.release(now),
-                Self::Lock => gesture.lock(),
+                Self::Lock => {
+                    gesture.lock();
+                    None
+                },
                 Self::Toggle => gesture.toggle(now),
                 Self::Cancel => gesture.cancel(),
                 Self::Complete => {
@@ -312,7 +311,7 @@ mod tests {
         let just_before_expiry = (start + TAP + DOUBLE_TAP)
             .checked_sub(Duration::from_millis(1))
             .unwrap();
-        assert_eq!(gesture.press(just_before_expiry), Some(Action::ModeChanged));
+        assert_eq!(gesture.press(just_before_expiry), None);
         assert_eq!(gesture.phase, Phase::HandsFree { started: start });
     }
 
@@ -321,10 +320,10 @@ mod tests {
         let start = Instant::now();
         let mut gesture = Gesture::default();
         assert_eq!(gesture.press(start), Some(Action::Start));
-        assert_eq!(gesture.lock(), Some(Action::ModeChanged));
+        gesture.lock();
         assert_eq!(gesture.release(start + Duration::from_secs(1)), None);
         assert_eq!(gesture.phase, Phase::HandsFree { started: start });
-        assert_eq!(gesture.lock(), None);
+        gesture.lock();
         assert_eq!(
             gesture.press(start + Duration::from_secs(2)),
             Some(Action::Finish)

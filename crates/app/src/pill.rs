@@ -161,7 +161,7 @@ impl Pill {
     fn apply_snapshot(&mut self, snapshot: Snapshot, cx: &mut Context<'_, Self>) {
         let now = Instant::now();
         let previous = &self.snapshot;
-        let new_session = snapshot.id != previous.id;
+        let new_session = snapshot.session != previous.session;
         let new_phase = new_session || snapshot.phase != previous.phase;
         let new_message = snapshot.message != previous.message;
         let state_changed = new_phase
@@ -193,7 +193,7 @@ impl Pill {
         let snapshot = &self.snapshot;
         if snapshot.phase != Phase::Recording
             || meter.epoch != snapshot.epoch
-            || meter.session != snapshot.id
+            || meter.session != snapshot.session
         {
             return;
         }
@@ -613,7 +613,7 @@ fn draw_hint_until(
     now: Instant,
     until: Option<Instant>,
 ) -> Option<Instant> {
-    let until = until.filter(|_| snapshot.id == previous.id);
+    let until = until.filter(|_| snapshot.session == previous.session);
     if until.is_none() && snapshot.show && snapshot.phase == Phase::Recording {
         now.checked_add(DRAW_HINT_FOR)
     } else {
@@ -746,8 +746,8 @@ mod tests {
 
     #[test]
     fn the_drawing_hint_starts_when_a_show_records_and_ends_with_its_session() {
-        let snapshot = |id, phase, show| Snapshot {
-            id,
+        let snapshot = |session, phase, show| Snapshot {
+            session,
             phase,
             hands_free: show,
             show,

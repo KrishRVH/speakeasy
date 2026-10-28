@@ -659,7 +659,7 @@ pub(crate) fn attend(
             {
                 return;
             }
-            let show = snapshots.borrow().id;
+            let show = snapshots.borrow().session;
             let (misplaced, misplacements) = async_channel::bounded(1);
             let Ok(opened) = cx.update(|cx| open(canvas.clone(), misplaced, cx)) else {
                 return;
@@ -695,9 +695,9 @@ pub(crate) fn attend(
             // here never delays the next Show's overlay. A new id means pause, quit or a newer
             // session took the snapshot first.
             let Ok(copied) = snapshots
-                .wait_for(|snapshot| snapshot.id != show || !snapshot.phase.is_active())
+                .wait_for(|snapshot| snapshot.session != show || !snapshot.phase.is_active())
                 .await
-                .map(|snapshot| snapshot.id == show && snapshot.phase == Phase::Copied)
+                .map(|snapshot| snapshot.session == show && snapshot.phase == Phase::Copied)
             else {
                 return;
             };
@@ -778,7 +778,7 @@ mod tests {
         assert!(sheet.update([], stroke(4), None, at(600)));
         assert!(
             whole(&sheet, at(5_000)),
-            "drawing again keeps every mark whole for as long as the stroke takes"
+            "Drawing again keeps every mark whole for as long as the stroke takes"
         );
     }
 
@@ -806,18 +806,18 @@ mod tests {
         assert_eq!(
             sheet.strokes.len(),
             2,
-            "an arrow drawn while the circle fades keeps it"
+            "An arrow drawn while the circle fades keeps it"
         );
         sheet.update([], stroke(5), None, at(1_150));
         assert!(sheet.update([stroke(5).into()], stroke(2), None, at(1_200)));
         assert!(
             whole(&sheet, at(9_000)),
-            "a stroke cut for length while the pen keeps drawing stays whole"
+            "A stroke cut for length while the pen keeps drawing stays whole"
         );
         assert_eq!(sheet.strokes.len(), 3);
         assert!(
             !sheet.update([], stroke(2), None, at(1_300)),
-            "a pointer that moved too little to add ink changes nothing"
+            "A pointer that moved too little to add ink changes nothing"
         );
         sheet.update([stroke(2).into()], [], None, at(1_400));
         assert_eq!(sheet.next_frame(at(1_400)), Redraw::After(HOLD));
@@ -825,7 +825,7 @@ mod tests {
         assert_eq!(
             sheet.strokes,
             Vec::<Arc<[Point]>>::new(),
-            "ink once everything has faded starts a clean sheet"
+            "Ink once everything has faded starts a clean sheet"
         );
         assert!(!Sheet::new(Part::WHOLE).update([], [], None, at(0)));
     }
@@ -873,17 +873,17 @@ mod tests {
         assert!(sheet.update([stroke(3).into()], [], Some(marks(1)), at(100)));
         assert_eq!(shown(&sheet), [1]);
         assert!(sheet.update([], [], Some(marks(2)), at(700)));
-        assert_eq!(shown(&sheet), [1, 2], "a pin keeps the ink before it");
+        assert_eq!(shown(&sheet), [1, 2], "A pin keeps the ink before it");
         assert_eq!(
             sheet.next_frame(at(700)),
             Redraw::After(HOLD),
-            "a pin holds the ink again"
+            "A pin holds the ink again"
         );
         assert!(sheet.update([], [], Some(marks(3)), at(2_100)));
         assert_eq!(
             shown(&sheet),
             [3],
-            "once everything has faded, a pin starts clean, numbered on from the last mark"
+            "Once everything has faded, a pin starts clean, numbered on from the last mark"
         );
         assert_eq!(sheet.strokes, Vec::<Arc<[Point]>>::new());
         assert!(whole(&sheet, at(2_100)));
@@ -892,7 +892,7 @@ mod tests {
         assert_eq!(
             shown(&sheet),
             [4],
-            "once everything has faded, a stroke starts clean too"
+            "Once everything has faded, a stroke starts clean too"
         );
     }
 
@@ -906,20 +906,20 @@ mod tests {
         assert_eq!(
             sheet.strokes,
             Vec::<Arc<[Point]>>::new(),
-            "ink that arrives after the circle has faded starts a clean sheet"
+            "Ink that arrives after the circle has faded starts a clean sheet"
         );
         sheet.update([stroke(4).into()], [], Some(grouped(&[2])), at(1_700));
         assert_eq!(
             shown(&sheet),
             [1],
-            "a stroke the bundle joins to a faded mark shows that mark's number"
+            "A stroke the bundle joins to a faded mark shows that mark's number"
         );
         sheet.update([], stroke(5), None, at(4_000));
         sheet.update([stroke(5).into()], [], Some(grouped(&[2, 3])), at(4_100));
         assert_eq!(
             shown(&sheet),
             [2],
-            "a stroke after everything has faded again starts a mark of its own"
+            "A stroke after everything has faded again starts a mark of its own"
         );
     }
 
@@ -936,12 +936,12 @@ mod tests {
         assert_eq!(
             dragged(at(300.0, 200.0), at(100.0, 100.0), size),
             Some(part(0.1, 0.2, 0.3, 0.4)),
-            "dragged up and to the left"
+            "Dragged up and to the left"
         );
         assert_eq!(
             dragged(at(900.0, 400.0), at(1_200.0, 600.0), size),
             Some(part(0.9, 0.8, 1.0, 1.0)),
-            "past the display's edge, the area stops at it"
+            "Past the display's edge, the area stops at it"
         );
         assert_eq!(dragged(at(100.0, 100.0), at(110.0, 300.0), size), None);
         assert_eq!(dragged(at(100.0, 100.0), at(100.0, 100.0), size), None);

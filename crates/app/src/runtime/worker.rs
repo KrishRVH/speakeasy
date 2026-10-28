@@ -31,7 +31,7 @@ pub(super) enum Worker<W> {
     /// Starting a worker, or recovering the one a cancelled transcription left behind.
     Loading(Job<W>),
     Ready(W),
-    Transcribing(Job<(W, Recognition)>),
+    Transcribing(Job<(W, Transcription)>),
 }
 
 impl<W: Speech> Worker<W> {
@@ -63,11 +63,11 @@ impl<W: Speech> Worker<W> {
         let completion = match self {
             Self::Loading(job) => Completion::Loaded(joined((&mut job.task).await)),
             Self::Transcribing(job) => match joined((&mut job.task).await) {
-                Ok((worker, Recognition::Heard(transcript))) => {
+                Ok((worker, Transcription::Heard(transcript))) => {
                     Completion::Transcribed(Ok((worker, transcript)))
                 },
                 // Only a job moved out of observation is cancelled; its worker is sound anyway.
-                Ok((worker, Recognition::Cancelled)) => Completion::Loaded(Ok(worker)),
+                Ok((worker, Transcription::Cancelled)) => Completion::Loaded(Ok(worker)),
                 Err(error) => Completion::Transcribed(Err(error)),
             },
             Self::Unavailable | Self::Ready(_) => pending().await,
@@ -133,15 +133,15 @@ impl<W: Speech> Worker<W> {
         let language = config.language.clone();
         let fillers = config.fillers();
         *self = Self::Transcribing(Job::spawn(|mut cancelled| async move {
-            let recognition = tokio::select! {
+            let transcription = tokio::select! {
                 biased;
-                _ = cancelled.changed() => Ok(Recognition::Cancelled),
-                result = recognize(&worker, wav, &language, detail, fillers) => {
-                    result.map(Recognition::Heard)
+                _ = cancelled.changed() => Ok(Transcription::Cancelled),
+                result = transcript_of(&worker, wav, &language, detail, fillers) => {
+                    result.map(Transcription::Heard)
                 },
             };
-            match recognition {
-                Ok(recognition) => Ok((worker, recognition)),
+            match transcription {
+                Ok(transcription) => Ok((worker, transcription)),
                 Err(error) => {
                     worker.stop().await;
                     Err(error)
@@ -194,8 +194,8 @@ impl<W: Speech> Worker<W> {
         match self {
             Self::Ready(worker) => Some((worker, false)),
             Self::Loading(job) => job.task.await.ok()?.ok().map(|worker| (worker, false)),
-            Self::Transcribing(job) => job.task.await.ok()?.ok().map(|(worker, recognition)| {
-                (worker, matches!(recognition, Recognition::Heard(_)))
+            Self::Transcribing(job) => job.task.await.ok()?.ok().map(|(worker, transcription)| {
+                (worker, matches!(transcription, Transcription::Heard(_)))
             }),
             Self::Unavailable => None,
         }
@@ -221,7 +221,7 @@ pub(super) enum Transcript {
 
 /// How a transcription job ends: with its transcript, or cancelled once moved out of
 /// observation.
-pub(super) enum Recognition {
+pub(super) enum Transcription {
     Heard(Transcript),
     Cancelled,
 }
@@ -257,8 +257,8 @@ fn joined<T>(result: Result<anyhow::Result<T>, JoinError>) -> anyhow::Result<T> 
     })
 }
 
-/// Recognizes `wav` as dictation text or as a Show's timed narration, cleaned up either way.
-async fn recognize<W: Speech>(
+/// Transcribes `wav` as dictation text or as a Show's timed narration, cleaned up either way.
+async fn transcript_of<W: Speech>(
     worker: &W,
     wav: Vec<u8>,
     language: &str,

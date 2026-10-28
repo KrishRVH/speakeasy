@@ -90,12 +90,11 @@ fn enumerate_microphones() -> Listing {
 mod tests {
     use std::{sync::mpsc, thread, time::Duration};
 
-    use anyhow::{Context, bail};
+    use anyhow::{Context as _, bail};
     use tokio::time::timeout;
 
     use super::*;
-
-    const PATIENCE: Duration = Duration::from_secs(2);
+    use crate::testing::PATIENCE;
 
     #[tokio::test]
     async fn a_blocked_microphone_scan_serves_the_next_request_instead_of_another_thread()

@@ -8,7 +8,7 @@ use anyhow::{Context as _, bail};
 use tokio::time::timeout;
 
 use super::*;
-use crate::{config::valid_config, theme::Theme};
+use crate::{config::valid_config, testing::PATIENCE, theme::Theme};
 
 fn durable(config: Config) -> SavedConfig {
     SavedConfig {
@@ -276,7 +276,7 @@ fn save_worker_returns_before_storage_and_joins_owned_work() -> anyhow::Result<(
         released.recv()?;
         Ok(durable(Config::default()))
     })?;
-    started.recv_timeout(Duration::from_secs(2))?;
+    started.recv_timeout(PATIENCE)?;
     assert!(work.result.try_recv().is_err());
     let (joining, joined) = mpsc::channel();
     let (finished, completion) = mpsc::channel();
@@ -285,10 +285,10 @@ fn save_worker_returns_before_storage_and_joins_owned_work() -> anyhow::Result<(
         drop(work);
         finished.send(()).unwrap();
     });
-    joined.recv_timeout(Duration::from_secs(2))?;
+    joined.recv_timeout(PATIENCE)?;
     assert!(completion.recv_timeout(Duration::from_millis(10)).is_err());
     release.send(())?;
-    completion.recv_timeout(Duration::from_secs(2))?;
+    completion.recv_timeout(PATIENCE)?;
     cleanup.join().unwrap();
     Ok(())
 }
@@ -316,7 +316,7 @@ fn flush_finishes_the_running_write_before_a_revert_queued_behind_it() -> anyhow
         )?;
         Ok(durable(first))
     })?;
-    started.recv_timeout(Duration::from_secs(2))?;
+    started.recv_timeout(PATIENCE)?;
     let mut queue = SaveQueue {
         writing: Some(Running {
             work: running,

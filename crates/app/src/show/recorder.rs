@@ -1,5 +1,5 @@
-//! Records a Show's screen side on an owned thread: frames into a journal with their signatures,
-//! and the pointer's ink, pins, and actions, publishing live ink and numbered marks to the
+//! A Show's screen recorder, on an owned thread. It journals frames with their signatures and
+//! records the pointer's ink, pins, and actions, publishing live ink and numbered marks to the
 //! overlay as they are made. An area Show first has the user drag out its area on the overlay.
 
 use std::{

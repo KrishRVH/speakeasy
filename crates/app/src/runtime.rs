@@ -60,13 +60,23 @@ pub(crate) enum ModelState {
     Unavailable,
 }
 
+/// Which of the shell's own announcements a snapshot follows. Each announcement advances it, and an
+/// owner presents only while the epoch it started under is current.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SnapshotEpoch(u64);
+
+impl SnapshotEpoch {
+    pub(crate) const fn next(self) -> Self {
+        Self(self.0.wrapping_add(1))
+    }
+}
+
 /// The presentation of owned session state that Settings, the tray, and the pill render.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Snapshot {
-    /// The shell lifecycle it belongs to; an owner presents only while its epoch is current.
-    pub epoch: u64,
+    pub epoch: SnapshotEpoch,
     /// The latest session, so a new session differs even when its phase repeats.
-    pub id: u64,
+    pub session: u64,
     pub phase: Phase,
     pub hands_free: bool,
     /// Whether the latest session became a Show, recording the screen as well as the microphone.
@@ -84,8 +94,8 @@ pub(crate) struct Snapshot {
 impl Default for Snapshot {
     fn default() -> Self {
         Self {
-            epoch: 0,
-            id: 0,
+            epoch: SnapshotEpoch::default(),
+            session: 0,
             phase: Phase::Idle,
             hands_free: false,
             show: false,
@@ -104,7 +114,7 @@ impl Default for Snapshot {
 /// epoch and session recording.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Meter {
-    pub epoch: u64,
+    pub epoch: SnapshotEpoch,
     pub session: u64,
     pub level: f32,
 }
@@ -317,7 +327,7 @@ impl Ports for Desktop {
     }
 }
 
-/// The owner's ends of its lanes, with its ports and the lifecycle epoch it presents under.
+/// The owner's ends of its lanes, with its ports and the snapshot epoch it presents under.
 struct Wiring<P> {
     changes: watch::Receiver<Config>,
     inputs: Receiver<Input>,
@@ -327,7 +337,7 @@ struct Wiring<P> {
     permits: InputSender,
     stopping: Receiver<Infallible>,
     ports: P,
-    epoch: u64,
+    epoch: SnapshotEpoch,
 }
 
 impl<P: Ports> Wiring<P> {

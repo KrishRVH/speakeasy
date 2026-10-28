@@ -5,7 +5,7 @@
 use std::os::unix::process::ExitStatusExt;
 use std::{net::TcpListener, path::Path, process::ExitStatus, time::Duration};
 
-use anyhow::{Context, anyhow, bail, ensure};
+use anyhow::{Context as _, anyhow, bail, ensure};
 use reqwest::{Client, Response, multipart};
 use serde::{Deserialize, de::DeserializeOwned};
 use speakeasy_platform::ProcessGroup;
@@ -167,7 +167,7 @@ impl LocalSpeech {
         }
     }
 
-    /// Sends `wav` for recognition and reads the engine's reply as `R`.
+    /// Sends `wav` for transcription and reads the engine's reply as `R`.
     async fn request<R: Reply>(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<R> {
         // The engine may have exited and lost its port since readiness. Each request connects
         // afresh, leaving only the moment between this check and that connection.
@@ -180,8 +180,7 @@ impl LocalSpeech {
         );
         let request = match self.engine {
             Engine::Parakeet => {
-                let rate = audio::wav_sample_rate(&wav)
-                    .context("Recording header is incomplete. Try recording again.")?;
+                let rate = audio::wav_sample_rate(&wav).context(audio::INCOMPLETE_HEADER)?;
                 ensure!(
                     (8_000..=96_000).contains(&rate),
                     "Parakeet needs 8–96 kHz audio. Set your microphone to 48 kHz in OS settings or choose Whisper."
@@ -214,7 +213,7 @@ impl LocalSpeech {
 
 impl Speech for LocalSpeech {
     async fn transcribe(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<String> {
-        self.request::<Transcription>(wav, language)
+        self.request::<Plain>(wav, language)
             .await?
             .text
             .context("Local speech returned no transcript. Check the selected model and engine, then try again.")
@@ -276,11 +275,11 @@ trait Reply: DeserializeOwned {
 
 /// The part of either engine's JSON reply that Speakeasy reads.
 #[derive(Deserialize)]
-struct Transcription {
+struct Plain {
     text: Option<String>,
 }
 
-impl Reply for Transcription {
+impl Reply for Plain {
     const FORMAT: &'static str = "json";
 }
 

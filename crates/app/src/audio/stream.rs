@@ -1,9 +1,9 @@
-//! Validates the microphone's format and builds CPAL input streams with real-time callbacks that
-//! never allocate or block. Stream errors are classified here for the capture thread.
+//! Microphone format validation and the CPAL input streams it admits. Their real-time callbacks
+//! never allocate or block, and stream errors are classified here for the capture thread.
 
 use std::{num::NonZeroUsize, sync::Arc, time::Instant};
 
-use anyhow::{Context, anyhow, bail, ensure};
+use anyhow::{Context as _, anyhow, bail, ensure};
 use async_channel::{Receiver, Sender};
 use cpal::{SampleFormat, SizedSample, traits::DeviceTrait};
 use rtrb::Producer;

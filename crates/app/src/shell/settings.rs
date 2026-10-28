@@ -25,7 +25,6 @@ use crate::{
     runtime::Snapshot,
     setup::{Installed, Setup},
     status::Indicator,
-    theme::Theme,
 };
 
 const PROGRESS_THROTTLE: Duration = Duration::from_millis(100);
@@ -184,9 +183,8 @@ impl Settings {
         self.config.theme = self.config.theme.next();
         self.edited();
         if is_demo(cx) {
-            let theme = self.config.theme;
-            cx.global_mut::<Services>().config.theme = theme;
-            show_theme(theme, cx);
+            cx.global_mut::<Services>().config.theme = self.config.theme;
+            show_theme(cx);
         }
     }
 
@@ -425,7 +423,7 @@ impl Settings {
             .or_else(|| applied.err().map(|error| error.to_string()))
             .map(|error| Notice::Problem(error.into()));
         show_motion(cx.global::<Services>().config.prefers_reduced_motion(), cx);
-        show_theme(cx.global::<Services>().config.theme, cx);
+        show_theme(cx);
     }
 
     pub(super) fn cancel_background_work(&mut self) {
@@ -609,9 +607,10 @@ fn next_microphone(microphones: &[InputDevice], current: Option<&str>) -> Option
     next.map(|device| device.id.clone())
 }
 
-/// Shows `theme` on the pill and the tray.
-fn show_theme(theme: Theme, cx: &mut App) {
-    let pill = cx.global::<Services>().pill;
+/// Shows Services' theme on the pill and the tray.
+fn show_theme(cx: &mut App) {
+    let services = cx.global::<Services>();
+    let (pill, theme) = (services.pill, services.config.theme);
     pill.update_if_open(cx, |view, _, cx| view.set_theme(theme, cx));
     // Republishing the current snapshot makes the tray redraw its icon.
     cx.global::<Services>().output.send_modify(|_| ());

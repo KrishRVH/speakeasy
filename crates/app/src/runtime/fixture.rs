@@ -130,7 +130,7 @@ impl Capturing for FixtureDevice {
         );
         self.events
             .try_send(finished)
-            .expect("capture lane has room for fixture audio");
+            .expect("Capture lane has room for fixture audio");
     }
 
     async fn retire(self) {}

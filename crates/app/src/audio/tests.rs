@@ -8,9 +8,10 @@ use anyhow::ensure;
 use tokio::time::timeout;
 
 use super::{pcm::SAMPLE_BYTES, *};
-use crate::sounds::Cue;
-
-const PATIENCE: Duration = Duration::from_secs(2);
+use crate::{
+    sounds::Cue,
+    testing::{PATIENCE, still_pending},
+};
 
 #[test]
 fn speech_meter_spans_sixty_to_six_dbfs() {
@@ -51,9 +52,7 @@ async fn pending_until_released(
     release: &Sender<()>,
 ) -> anyhow::Result<bool> {
     tokio::pin!(retirement);
-    let pending = timeout(Duration::from_millis(30), retirement.as_mut())
-        .await
-        .is_err();
+    let pending = still_pending(retirement.as_mut()).await;
     release.send(()).await?;
     timeout(PATIENCE, retirement).await?;
     Ok(pending)
@@ -220,11 +219,7 @@ async fn closing_audio_events_unblocks_owned_capture_retirement() -> anyhow::Res
     })?;
     let retirement = capture.retire();
     tokio::pin!(retirement);
-    assert!(
-        timeout(Duration::from_millis(30), retirement.as_mut())
-            .await
-            .is_err()
-    );
+    assert!(still_pending(retirement.as_mut()).await);
     audio.close();
     timeout(PATIENCE, retirement).await?;
     Ok(())
@@ -243,7 +238,7 @@ async fn a_panicked_capture_reports_failure_and_still_retires() -> anyhow::Resul
     let report = timeout(PATIENCE, audio.recv()).await??;
     assert!(
         matches!(&report, CaptureEvent::Finished(SessionId::FIRST, Err(error))
-            if error.to_string().contains("stopped unexpectedly")),
+            if error.to_string() == CAPTURE_STOPPED),
         "A panicked capture left its session waiting"
     );
     timeout(PATIENCE, capture.retire()).await?;

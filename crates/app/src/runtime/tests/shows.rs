@@ -121,14 +121,14 @@ async fn cancelling_while_publishing_leaves_no_trace() -> anyhow::Result<()> {
 #[tokio::test(start_paused = true)]
 async fn a_show_that_cannot_be_published_explains_why() -> anyhow::Result<()> {
     let mut h = Harness::with_ports(Config::default(), |ports| {
-        ports.publish_error = Some("disk full");
+        ports.publish_error = Some("Disk full");
     })?;
     start_show(&mut h).await?;
     h.input(Input::Release);
     h.input(Input::Press);
     h.transcribe_next_as("look").await?;
     h.phase(Phase::Error).await?;
-    assert!(h.snapshot().message.contains("disk full"));
+    assert!(h.snapshot().message.contains("Disk full"));
     h.close().await
 }
 
@@ -183,13 +183,13 @@ async fn shutdown_revokes_and_owns_pending_publication_cleanup() -> anyhow::Resu
 #[tokio::test(start_paused = true)]
 async fn a_screen_that_cannot_be_recorded_explains_why() -> anyhow::Result<()> {
     let mut h = Harness::with_ports(Config::default(), |ports| {
-        ports.show_error = Some("screen recording denied");
+        ports.screen_error = Some("Screen recording denied");
     })?;
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     h.input(Input::Show(Scope::Screen));
     h.phase(Phase::Error).await?;
-    assert!(h.snapshot().message.contains("screen recording denied"));
+    assert!(h.snapshot().message.contains("Screen recording denied"));
     h.close().await
 }
 

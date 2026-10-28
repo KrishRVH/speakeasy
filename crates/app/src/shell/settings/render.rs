@@ -420,9 +420,10 @@ fn row() -> Div {
     div().flex().gap(ROW_GAP)
 }
 
-/// The primary command and its label, if any. A demo replays its preview. Otherwise the command
-/// saves, unless dictation is paused with nothing to save: then "Resume dictation", the label
-/// failure remedies name, resumes the saved settings as the tray does.
+/// The primary command and its label. A demo replays its preview; quitting offers none. Otherwise
+/// the command saves, unless there is nothing to save while dictation pauses: once paused,
+/// "Resume dictation", the label failure remedies name, resumes the saved settings as the tray
+/// does, and until then there is none.
 fn primary_command(
     demo: bool,
     service: ServiceState,

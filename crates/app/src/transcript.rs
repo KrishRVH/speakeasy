@@ -118,7 +118,7 @@ mod tests {
             .to_vec();
         let Narration::Words(kept) = for_show(Narration::Words(words.clone()), Fillers::Remove)
         else {
-            panic!("timed words stay timed");
+            panic!("Timed words stay timed");
         };
         let texts: Vec<&str> = kept.iter().map(|word| word.text.as_str()).collect();
         assert_eq!(texts, ["it", "works.", "Then", "nothing!"]);
