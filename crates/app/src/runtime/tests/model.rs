@@ -32,7 +32,7 @@ enum Log {
     /// The owner asked for the device's release, which takes its generated time.
     Retiring(Source, SessionId),
     Retired(Source, SessionId),
-    Pinned(Source, SessionId),
+    Pinned(SessionId),
     /// A speech worker started.
     Loaded,
     /// A speech worker finished stopping.
@@ -204,7 +204,7 @@ impl Listening for ModelDevice {
 
 impl Pinning for ModelDevice {
     fn pin(&self, _: Taps) {
-        self.log(Log::Pinned(self.source, self.id));
+        self.log(Log::Pinned(self.id));
     }
 }
 
@@ -432,10 +432,7 @@ impl Model {
             jobs,
             releases,
         };
-        let (output, updates) = watch::channel(Snapshot {
-            epoch: 1,
-            ..Snapshot::default()
-        });
+        let (output, updates) = watch::channel(Snapshot::default());
         let (meter, _) = watch::channel(Meter::default());
         let runtime = Runtime::on_task(Config::default(), output, meter, ports)?;
         Ok(Self {
@@ -599,13 +596,11 @@ impl Model {
                         "{source:?} {id:?} released without being retired"
                     );
                 },
-                Log::Pinned(source, id) => ensure!(
-                    source == Source::Screen
-                        && self
-                            .open
-                            .get(&source)
-                            .is_some_and(|open| open.id == id && !open.retiring),
-                    "{source:?} {id:?} took a pin while not recording a Show"
+                Log::Pinned(id) => ensure!(
+                    self.open
+                        .get(&Source::Screen)
+                        .is_some_and(|open| open.id == id && !open.retiring),
+                    "Screen {id:?} took a pin while not recording a Show"
                 ),
                 Log::Loaded => {
                     ensure!(
@@ -733,11 +728,15 @@ fn the_sequences_that_once_stranded_the_owner_come_to_rest() -> anyhow::Result<(
         screen: Duration::ZERO,
         worker: Duration::ZERO,
     };
+    let speech = Step::Audio(Heard::Speech);
+    let microphone_failure = Step::Audio(Heard::Failure);
     let screen_failure = Step::Footage(Seen::Failure);
-    let (speech, failure) = (Step::Audio(Heard::Speech), Step::Audio(Heard::Failure));
     let cases = [
-        (vec![keys(&[Key::Toggle]), failure.clone()], at_once),
-        (vec![show(), failure.clone()], at_once),
+        (
+            vec![keys(&[Key::Toggle]), microphone_failure.clone()],
+            at_once,
+        ),
+        (vec![show(), microphone_failure.clone()], at_once),
         (
             vec![
                 show(),
@@ -767,7 +766,7 @@ fn the_sequences_that_once_stranded_the_owner_come_to_rest() -> anyhow::Result<(
             vec![
                 show(),
                 show(),
-                failure.clone(),
+                microphone_failure.clone(),
                 show(),
                 show(),
                 keys(&[Key::Cancel]),
@@ -775,11 +774,11 @@ fn the_sequences_that_once_stranded_the_owner_come_to_rest() -> anyhow::Result<(
                 screen_failure,
                 show(),
                 keys(&[Key::Press]),
-                failure.clone(),
+                microphone_failure.clone(),
                 show(),
                 show(),
                 show(),
-                failure,
+                microphone_failure,
                 show(),
                 show(),
             ],

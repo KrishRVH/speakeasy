@@ -123,7 +123,7 @@ async fn failed_capture_start_preserves_its_reason_and_allows_shutdown() -> anyh
 }
 
 #[tokio::test(start_paused = true)]
-async fn cancelled_capture_retires_before_retry_and_pause_waits_for_it() -> anyhow::Result<()> {
+async fn cancelled_capture_retires_before_retry_and_shutdown_waits_for_it() -> anyhow::Result<()> {
     let (retirement, retiring) = gate(2);
     let mut h = Harness::with_ports(Config::default(), |ports| {
         ports.retirement = Some(retirement);
@@ -149,7 +149,7 @@ async fn cancelled_capture_retires_before_retry_and_pause_waits_for_it() -> anyh
 }
 
 #[tokio::test(start_paused = true)]
-async fn pause_during_a_queued_capture_never_opens_the_new_device() -> anyhow::Result<()> {
+async fn shutdown_during_a_queued_capture_never_opens_the_new_device() -> anyhow::Result<()> {
     let (retirement, retiring) = gate(1);
     let mut h = Harness::with_ports(Config::default(), |ports| {
         ports.retirement = Some(retirement);
@@ -169,7 +169,7 @@ async fn pause_during_a_queued_capture_never_opens_the_new_device() -> anyhow::R
 }
 
 #[tokio::test(start_paused = true)]
-async fn completed_audio_does_not_allow_retry_before_device_teardown() -> anyhow::Result<()> {
+async fn completed_audio_waits_for_its_microphone_to_retire_before_a_retry() -> anyhow::Result<()> {
     let (retirement, retiring) = gate(2);
     let mut h = Harness::with_ports(Config::default(), |ports| {
         ports.retirement = Some(retirement);
@@ -192,7 +192,7 @@ async fn completed_audio_does_not_allow_retry_before_device_teardown() -> anyhow
 }
 
 #[tokio::test(start_paused = true)]
-async fn pause_starts_capture_and_model_cleanup_together() -> anyhow::Result<()> {
+async fn shutdown_starts_capture_and_model_cleanup_together() -> anyhow::Result<()> {
     let (retirement, retiring) = gate(1);
     let (stop, stopping) = gate(1);
     let mut h = Harness::with_ports(Config::default(), |ports| {
@@ -451,7 +451,8 @@ async fn levels_after_a_capture_ends_never_reach_the_meter() -> anyhow::Result<(
 }
 
 #[tokio::test(start_paused = true)]
-async fn failures_recover_the_worker_and_hook_loss_stops_the_owner() -> anyhow::Result<()> {
+async fn failures_recover_the_worker_and_a_closed_input_lane_stops_the_owner() -> anyhow::Result<()>
+{
     let mut h = Harness::new()?;
     receive(&h.loads).await?;
     let (id, events) = h.start().await?;
@@ -822,10 +823,11 @@ async fn recovery_failure_keeps_a_queued_dictation_until_microphone_retirement()
 #[tokio::test]
 #[ignore = "Reports owner reply-to-insertion latency with fake devices; scheduler noise must not gate it"]
 async fn profile_ready_text_latency() -> anyhow::Result<()> {
+    const RUNS: usize = 100;
     let mut h = Harness::on_own_thread(Config::default(), |_| {})?;
     receive(&h.loads).await?;
-    let mut samples = Vec::with_capacity(100);
-    for _ in 0..100 {
+    let mut samples = Vec::with_capacity(RUNS);
+    for _ in 0..RUNS {
         h.start().await?;
         let reply = h.finish().await?;
         let started = Instant::now();
@@ -836,10 +838,9 @@ async fn profile_ready_text_latency() -> anyhow::Result<()> {
     }
     samples.sort_unstable();
     eprintln!(
-        "Ready text -> fake insertion: median={}us p95={}us n={}",
-        samples[50],
-        samples[95],
-        samples.len()
+        "Ready text -> fake insertion: median={}us p95={}us n={RUNS}",
+        samples[RUNS / 2],
+        samples[RUNS * 95 / 100],
     );
     Ok(())
 }
