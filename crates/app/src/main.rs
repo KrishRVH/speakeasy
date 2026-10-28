@@ -64,18 +64,13 @@ enum Invocation {
     Show(anyhow::Result<show::Command>),
 }
 
-impl Cli {
-    fn parse(args: impl Iterator<Item = String>) -> anyhow::Result<Invocation> {
+impl Invocation {
+    fn parse(args: impl Iterator<Item = String>) -> anyhow::Result<Self> {
         let mut args = args.peekable();
         if args.next_if(|arg| arg == "show").is_some() {
-            return Ok(Invocation::Show(show::Command::parse(args)));
+            return Ok(Self::Show(show::Command::parse(args)));
         }
-        Ok(Self::parse_app(args)?.map_or(Invocation::Help, Invocation::App))
-    }
-
-    /// Returns `None` when help was requested.
-    fn parse_app(mut args: impl Iterator<Item = String>) -> anyhow::Result<Option<Self>> {
-        let mut cli = Self {
+        let mut cli = Cli {
             mode: LaunchMode::Live,
             command: None,
             path: None,
@@ -93,33 +88,20 @@ impl Cli {
                 },
                 "--toggle" => cli.command = Some(Request::Toggle),
                 "--cancel" => cli.command = Some(Request::Cancel),
-                "--help" | "-h" => return Ok(None),
+                "--help" | "-h" => return Ok(Self::Help),
                 _ => bail!("Unknown option: {arg}"),
             }
         }
-        Ok(Some(cli))
+        Ok(Self::App(cli))
     }
 }
 
 fn main() -> ExitCode {
-    let invocation = Cli::parse(std::env::args().skip(1));
-    if matches!(invocation, Ok(Invocation::Show(_) | Invocation::Help)) {
-        attach_console();
-    }
-    match invocation {
-        Ok(Invocation::Help) => report(print_help().map_err(anyhow::Error::from)),
-        Ok(Invocation::Show(command)) => report(command.and_then(show::Command::run)),
-        Ok(Invocation::App(cli)) => match run(cli) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                speakeasy_platform::show_startup_error(&format!("{error:#}"));
-                ExitCode::FAILURE
-            },
-        },
-        Err(error) => {
-            speakeasy_platform::show_startup_error(&format!("{error:#}"));
-            ExitCode::FAILURE
-        },
+    match Invocation::parse(std::env::args().skip(1)) {
+        Ok(Invocation::Help) => in_terminal(|| Ok(print_help()?)),
+        Ok(Invocation::Show(command)) => in_terminal(|| command.and_then(show::Command::run)),
+        Ok(Invocation::App(cli)) => in_dialog(run(cli)),
+        Err(error) => in_dialog(Err(error)),
     }
 }
 
@@ -230,16 +212,12 @@ fn launch(
     });
 }
 
-/// Gives command-line output a terminal on Windows. Only commands attach: an app sharing the
-/// launching console would also receive its Ctrl+C.
-fn attach_console() {
+/// Runs a command in the terminal that launched it and reports its failure there. Only commands
+/// attach a console on Windows: an app sharing the launching console would also receive its Ctrl+C.
+fn in_terminal(command: impl FnOnce() -> anyhow::Result<()>) -> ExitCode {
     #[cfg(target_os = "windows")]
     speakeasy_platform::attach_console();
-}
-
-/// Commands report to the terminal that ran them, not in a dialog.
-fn report(outcome: anyhow::Result<()>) -> ExitCode {
-    match outcome {
+    match command() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             #[expect(
@@ -247,6 +225,17 @@ fn report(outcome: anyhow::Result<()>) -> ExitCode {
                 reason = "stderr is the last channel left to report a failed command"
             )]
             let _ = writeln!(io::stderr().lock(), "speakeasy: {error:#}");
+            ExitCode::FAILURE
+        },
+    }
+}
+
+/// Reports a failed launch in a dialog, since the app has no terminal to report to.
+fn in_dialog(launched: anyhow::Result<()>) -> ExitCode {
+    match launched {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            speakeasy_platform::show_startup_error(&format!("{error:#}"));
             ExitCode::FAILURE
         },
     }
@@ -331,22 +320,30 @@ fn release_services(cx: &mut App) -> impl Future<Output = ()> + use<> {
 mod tests {
     use super::*;
 
-    fn parse(args: &[&str]) -> anyhow::Result<Option<Cli>> {
-        Cli::parse_app(args.iter().map(|arg| (*arg).to_owned()))
+    fn parse(args: &[&str]) -> anyhow::Result<Invocation> {
+        Invocation::parse(args.iter().map(|arg| (*arg).to_owned()))
+    }
+
+    fn launch_mode(args: &[&str]) -> anyhow::Result<LaunchMode> {
+        let Invocation::App(cli) = parse(args)? else {
+            bail!("{args:?} did not launch the app");
+        };
+        Ok(cli.mode)
     }
 
     #[test]
     fn demo_never_downgrades_a_tray_preview() -> anyhow::Result<()> {
-        let cli = parse(&["--demo-tray", "--demo"])?.context("Help was not requested")?;
-        assert_eq!(cli.mode, LaunchMode::DemoTray);
-        let cli = parse(&["--demo"])?.context("Help was not requested")?;
-        assert_eq!(cli.mode, LaunchMode::Demo);
+        assert_eq!(
+            launch_mode(&["--demo-tray", "--demo"])?,
+            LaunchMode::DemoTray
+        );
+        assert_eq!(launch_mode(&["--demo"])?, LaunchMode::Demo);
         Ok(())
     }
 
     #[test]
     fn help_stops_parsing_and_unknown_options_fail() -> anyhow::Result<()> {
-        assert!(parse(&["--help", "--unknown"])?.is_none());
+        assert!(matches!(parse(&["--help", "--unknown"])?, Invocation::Help));
         assert!(parse(&["--unknown", "--help"]).is_err());
         assert!(parse(&["--config"]).is_err());
         Ok(())
@@ -354,17 +351,13 @@ mod tests {
 
     #[test]
     fn show_is_a_subcommand_only_in_first_position() -> anyhow::Result<()> {
-        let invoke = |args: &[&str]| Cli::parse(args.iter().map(|arg| (*arg).to_owned()));
+        assert!(matches!(parse(&["show", "demo"])?, Invocation::Show(Ok(_))));
         assert!(matches!(
-            invoke(&["show", "demo"])?,
-            Invocation::Show(Ok(_))
-        ));
-        assert!(matches!(
-            invoke(&["show", "record"])?,
+            parse(&["show", "record"])?,
             Invocation::Show(Err(_))
         ));
-        assert!(matches!(invoke(&["--help"])?, Invocation::Help));
-        assert!(invoke(&["--demo", "show"]).is_err());
+        assert!(matches!(parse(&["--help"])?, Invocation::Help));
+        assert!(parse(&["--demo", "show"]).is_err());
         Ok(())
     }
 }

@@ -75,20 +75,33 @@ pub(crate) struct Setup {
 
 impl Setup {
     pub(crate) fn start() -> anyhow::Result<Self> {
-        let root = crate::paths::data_root()?;
+        Self::start_in(crate::paths::data_root()?, install)
+    }
+
+    fn start_in(
+        root: PathBuf,
+        work: impl AsyncFnOnce(
+            &Path,
+            &watch::Sender<Progress>,
+            &mut Installation,
+        ) -> anyhow::Result<Installed>
+        + Send
+        + 'static,
+    ) -> anyhow::Result<Self> {
         Self::spawn(move |progress, cancelled| {
-            match tokio::runtime::Builder::new_current_thread()
+            let runtime = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
             {
-                Ok(runtime) => runtime.block_on(Installation::run(
-                    &root,
-                    &progress,
-                    &cancelled,
-                    async |installation| install(&root, &progress, installation).await,
-                )),
-                Err(error) => Some(Err(error.into())),
-            }
+                Ok(runtime) => runtime,
+                Err(error) => return Some(Err(error.into())),
+            };
+            runtime.block_on(Installation::run(
+                &root,
+                &progress,
+                &cancelled,
+                async |installation| work(&root, &progress, installation).await,
+            ))
         })
     }
 
@@ -167,16 +180,13 @@ impl Installation {
         cancelled: &async_channel::Receiver<Infallible>,
         work: impl AsyncFnOnce(&mut Self) -> anyhow::Result<T>,
     ) -> Option<anyhow::Result<T>> {
-        let lock = tokio::select! {
+        let installation = tokio::select! {
             biased;
             _ = cancelled.recv() => return None,
-            lock = Self::lock(root, progress) => lock,
+            installation = Self::acquire(root, progress) => installation,
         };
-        let mut installation = match lock {
-            Ok(lock) => Self {
-                child: None,
-                _lock: lock,
-            },
+        let mut installation = match installation {
+            Ok(installation) => installation,
             Err(error) => return Some(Err(error)),
         };
         let result = tokio::select! {
@@ -188,7 +198,8 @@ impl Installation {
         result
     }
 
-    async fn lock(root: &Path, progress: &watch::Sender<Progress>) -> anyhow::Result<File> {
+    /// Creates `root` if needed and waits for its setup lock, reporting the wait.
+    async fn acquire(root: &Path, progress: &watch::Sender<Progress>) -> anyhow::Result<Self> {
         fs::create_dir_all(root).map_err(file_error(root))?;
         let lock = OpenOptions::new()
             .create(true)
@@ -201,7 +212,10 @@ impl Installation {
             match lock.try_lock() {
                 Ok(()) => {
                     progress.send_replace(Progress::default());
-                    return Ok(lock);
+                    return Ok(Self {
+                        child: None,
+                        _lock: lock,
+                    });
                 },
                 Err(fs::TryLockError::WouldBlock) => {
                     progress.send_replace(Progress {

@@ -175,10 +175,7 @@ mod tests {
         fs::write(root.join("downloads/fixture.tar.gz"), b"unused archive")?;
         fs::write(root.join("engines/fixture.part"), b"not a directory")?;
         let (progress, _) = watch::channel(Progress::default());
-        let mut installation = Installation {
-            child: None,
-            _lock: Installation::lock(root, &progress).await?,
-        };
+        let mut installation = Installation::acquire(root, &progress).await?;
         let archive = Download {
             url: "http://127.0.0.1:0/fixture.tar.gz",
             size: 0,
@@ -195,15 +192,13 @@ mod tests {
                 && message.ends_with("check that you can write there, then try again."),
             "{message}"
         );
-        assert_eq!(
-            fs::read(root.join("engines/fixture.part"))?,
-            b"not a directory"
-        );
+        assert_eq!(fs::read(&staging)?, b"not a directory");
         Ok(())
     }
 
     /// An uncompressed ustar archive holding one file, a format every system tar reads.
     fn ustar(name: &str, contents: &[u8]) -> Vec<u8> {
+        const BLOCK: usize = 512;
         let size = format!("{:011o}\0", contents.len());
         let fields: [(usize, &[u8]); 10] = [
             (0, name.as_bytes()),
@@ -218,7 +213,7 @@ mod tests {
             (257, b"ustar\0"),
             (263, b"00"),
         ];
-        let mut header = [0; 512];
+        let mut header = [0; BLOCK];
         for (offset, field) in fields {
             header[offset..][..field.len()].copy_from_slice(field);
         }
@@ -226,9 +221,8 @@ mod tests {
         header[148..156].copy_from_slice(format!("{checksum:06o}\0 ").as_bytes());
         let mut archive = header.to_vec();
         archive.extend_from_slice(contents);
-        // Pad the file to whole blocks, then end the archive with two empty blocks.
-        archive.resize(archive.len().next_multiple_of(512), 0);
-        archive.extend_from_slice(&[0; 1024]);
+        archive.resize(archive.len().next_multiple_of(BLOCK), 0);
+        archive.extend_from_slice(&[0; 2 * BLOCK]);
         archive
     }
 
@@ -243,10 +237,7 @@ mod tests {
             ustar(&entry, b"engine fixture"),
         )?;
         let (progress, _) = watch::channel(Progress::default());
-        let mut installation = Installation {
-            child: None,
-            _lock: Installation::lock(root, &progress).await?,
-        };
+        let mut installation = Installation::acquire(root, &progress).await?;
         let archive = Download {
             url: "http://127.0.0.1:0/fixture.tar",
             size: 0,

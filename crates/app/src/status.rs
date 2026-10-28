@@ -1,4 +1,6 @@
-//! What Settings and the tray show for a runtime snapshot and the service state.
+//! What Settings and the tray show for a runtime snapshot and the service state. `PAUSING`,
+//! `PAUSED`, and `QUITTING` are also the snapshot messages Services announces, so the status line
+//! and the message say the same words.
 
 use std::borrow::Cow;
 
@@ -7,11 +9,8 @@ use crate::{
     runtime::{LOADING, ModelState, Phase, Snapshot},
 };
 
-/// The status while dictation pauses, shared by Services, Settings, and the tray.
 pub(crate) const PAUSING: &str = "Pausing dictation…";
-/// The status once dictation is paused, shared by Services, Settings, and the tray.
 pub(crate) const PAUSED: &str = "Dictation paused";
-/// The status once Quit has begun, shared by Services, Settings, and the tray.
 pub(crate) const QUITTING: &str = "Quitting Speakeasy…";
 
 /// Whether dictation runs, as the tray and Settings present it.

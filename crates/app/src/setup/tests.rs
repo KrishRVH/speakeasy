@@ -2,25 +2,36 @@
 //! fixture process, checks what its file failures tell the user, and installs and recognizes a
 //! public recording in an opt-in run.
 
-use std::process::Stdio;
+use std::{
+    process::Stdio,
+    sync::mpsc::{self, RecvTimeoutError},
+    time::Instant,
+};
 
-use anyhow::Context as _;
+use anyhow::{Context as _, bail, ensure};
 use tokio::time::timeout;
 
 use super::*;
 use crate::{local_speech::LocalSpeech, runtime::ports::Speech};
 
-#[tokio::test]
-async fn cancelled_setup_remains_owned_while_cleanup_is_pending() -> anyhow::Result<()> {
-    let (entered, cleaning) = std::sync::mpsc::channel();
-    let (release, released) = std::sync::mpsc::channel();
+/// A setup whose body, once cancelled, reports on `cleaning` and holds its cleanup open until
+/// `release` sends.
+fn setup_held_in_cleanup() -> anyhow::Result<(Setup, mpsc::Receiver<()>, mpsc::Sender<()>)> {
+    let (entered, cleaning) = mpsc::channel();
+    let (release, released) = mpsc::channel();
     let setup = Setup::spawn(move |_, cancelled| {
-        assert!(cancelled.recv_blocking().is_err());
+        let Err(_closed) = cancelled.recv_blocking();
         entered.send(()).unwrap();
         // A timeout, so a failing test cannot strand this owned thread.
         released.recv_timeout(Duration::from_secs(2)).unwrap();
         None
     })?;
+    Ok((setup, cleaning, release))
+}
+
+#[tokio::test]
+async fn cancelled_setup_remains_owned_while_cleanup_is_pending() -> anyhow::Result<()> {
+    let (setup, cleaning, release) = setup_held_in_cleanup()?;
     setup.request_stop();
     let stopped = setup.stopped();
     cleaning.recv_timeout(Duration::from_secs(2))?;
@@ -33,24 +44,6 @@ async fn cancelled_setup_remains_owned_while_cleanup_is_pending() -> anyhow::Res
     assert!(!setup.is_finished());
     release.send(())?;
     timeout(Duration::from_secs(2), stopped).await?;
-    Ok(())
-}
-
-#[test]
-fn keeping_the_chosen_engine_removes_only_the_other_builds() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let engines = root.path().join("engines");
-    for build in ["chosen", "rejected"] {
-        fs::create_dir_all(engines.join(build))?;
-    }
-    let chosen = engines.join("chosen");
-    let engine = engine::ChosenEngine {
-        directory: chosen.clone(),
-        use_gpu: false,
-    };
-    assert_eq!(engine.keep(root.path())?, chosen.join(archive::EXECUTABLE));
-    assert!(chosen.is_dir(), "The chosen build was removed");
-    assert!(!engines.join("rejected").exists(), "Another build was kept");
     Ok(())
 }
 
@@ -73,21 +66,18 @@ fn a_full_disk_asks_for_space_and_other_file_failures_for_access() {
 
 #[test]
 fn setup_drop_joins_cancelled_cleanup_before_returning() -> anyhow::Result<()> {
-    let (entered, cleaning) = std::sync::mpsc::channel();
-    let (release, released) = std::sync::mpsc::channel();
-    let setup = Setup::spawn(move |_, cancelled| {
-        assert!(cancelled.recv_blocking().is_err());
-        entered.send(()).unwrap();
-        released.recv_timeout(Duration::from_secs(2)).unwrap();
-        None
-    })?;
-    let (finished, joined) = std::sync::mpsc::channel();
+    let (setup, cleaning, release) = setup_held_in_cleanup()?;
+    let (finished, joined) = mpsc::channel();
     let quit = std::thread::spawn(move || {
         drop(setup);
         finished.send(()).unwrap();
     });
     cleaning.recv_timeout(Duration::from_secs(2))?;
-    assert!(joined.recv_timeout(Duration::from_millis(30)).is_err());
+    assert_eq!(
+        joined.recv_timeout(Duration::from_millis(30)),
+        Err(RecvTimeoutError::Timeout),
+        "Dropping a setup returned before its cleanup finished"
+    );
     release.send(())?;
     joined.recv_timeout(Duration::from_secs(2))?;
     quit.join().unwrap();
@@ -98,54 +88,36 @@ fn setup_drop_joins_cancelled_cleanup_before_returning() -> anyhow::Result<()> {
 fn setup_drop_reaps_its_child_and_releases_the_directory() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let root = directory.path().to_path_buf();
-    let installation_root = root.clone();
-    let setup = Setup::spawn(move |progress, cancelled| {
-        let runtime = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(runtime) => runtime,
-            Err(error) => return Some(Err(error.into())),
-        };
-        runtime.block_on(Installation::run(
-            &installation_root,
-            &progress,
-            &cancelled,
-            async |installation| {
-                installation
-                    .output(&mut fixture_child(&installation_root)?)
-                    .await?;
-                Ok(Installed {
-                    engine_executable: PathBuf::new(),
-                    model: PathBuf::new(),
-                    use_gpu: false,
-                })
-            },
-        ))
+    let setup = Setup::start_in(root.clone(), async |root, _, installation| {
+        installation.output(&mut fixture_child(root)?).await?;
+        Ok(Installed {
+            engine_executable: PathBuf::new(),
+            model: PathBuf::new(),
+            use_gpu: false,
+        })
     })?;
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let started = Instant::now();
     while !root.join("child.ready").exists() {
-        anyhow::ensure!(
-            std::time::Instant::now() < deadline,
+        ensure!(
+            started.elapsed() < Duration::from_secs(10),
             "Setup child did not start"
         );
         std::thread::sleep(Duration::from_millis(10));
     }
-    let child_lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(root.join("child.lock"))?;
-    assert!(matches!(
-        child_lock.try_lock(),
-        Err(fs::TryLockError::WouldBlock)
-    ));
+    let child_lock = root.join("child.lock");
+    ensure!(
+        is_locked(&child_lock)?,
+        "The setup child did not take its lock"
+    );
     drop(setup);
-    child_lock.try_lock()?;
-    let setup_lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(root.join("setup.lock"))?;
-    setup_lock.try_lock()?;
+    ensure!(
+        !is_locked(&child_lock)?,
+        "Dropping setup left its child running"
+    );
+    ensure!(
+        !is_locked(&root.join("setup.lock"))?,
+        "Dropping setup kept the directory locked"
+    );
     Ok(())
 }
 
@@ -174,6 +146,14 @@ fn fixture_child(root: &Path) -> anyhow::Result<Command> {
     Ok(command)
 }
 
+fn is_locked(path: &Path) -> anyhow::Result<bool> {
+    match File::open(path)?.try_lock() {
+        Ok(()) => Ok(false),
+        Err(fs::TryLockError::WouldBlock) => Ok(true),
+        Err(fs::TryLockError::Error(error)) => Err(error.into()),
+    }
+}
+
 #[tokio::test]
 async fn cancellation_stops_the_child_before_another_setup_owns_the_directory() -> anyhow::Result<()>
 {
@@ -196,23 +176,21 @@ async fn cancellation_stops_the_child_before_another_setup_owns_the_directory() 
         }
     })
     .await?;
-    let child_lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(root.join("child.lock"))?;
-    assert!(matches!(
-        child_lock.try_lock(),
-        Err(fs::TryLockError::WouldBlock)
-    ));
+    let child_lock = root.join("child.lock");
+    ensure!(
+        is_locked(&child_lock)?,
+        "The setup child did not take its lock"
+    );
 
     let (progress, mut updates) = watch::channel(Progress::default());
     let (_second_cancel, second_cancelled) = async_channel::bounded::<Infallible>(1);
     let second_root = root.clone();
     let second = tokio::spawn(async move {
         Installation::run(&second_root, &progress, &second_cancelled, async |_| {
-            child_lock.try_lock().context(
-                "A retry entered the directory while the cancelled child could still write there",
-            )?;
+            ensure!(
+                !is_locked(&child_lock)?,
+                "A retry entered the directory while the cancelled child could still write there"
+            );
             assert_eq!(fs::read(second_root.join("model.gguf.part"))?, partial);
             Ok(())
         })
@@ -236,13 +214,13 @@ async fn cancellation_stops_the_child_before_another_setup_owns_the_directory() 
 async fn cancellation_while_waiting_for_setup_leaves_the_owner_locked() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let (progress, _) = watch::channel(Progress::default());
-    let _owner = Installation::lock(directory.path(), &progress).await?;
+    let _owner = Installation::acquire(directory.path(), &progress).await?;
     let (progress, mut updates) = watch::channel(Progress::default());
     let (cancel, cancelled) = async_channel::bounded::<Infallible>(1);
     let root = directory.path().to_path_buf();
     let waiting = tokio::spawn(async move {
         Installation::run(&root, &progress, &cancelled, async |_| {
-            anyhow::bail!("A waiting setup entered the owned directory")
+            bail!("A waiting setup entered the owned directory")
         })
         .await
     });
@@ -250,14 +228,10 @@ async fn cancellation_while_waiting_for_setup_leaves_the_owner_locked() -> anyho
     drop(cancel);
     let result: Option<anyhow::Result<()>> = timeout(Duration::from_secs(5), waiting).await??;
     assert!(result.is_none());
-    let contender = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(directory.path().join("setup.lock"))?;
-    assert!(matches!(
-        contender.try_lock(),
-        Err(fs::TryLockError::WouldBlock)
-    ));
+    ensure!(
+        is_locked(&directory.path().join("setup.lock"))?,
+        "A cancelled waiter released the owner's lock"
+    );
     Ok(())
 }
 
@@ -270,7 +244,7 @@ async fn setup_names_the_directory_it_cannot_prepare_and_what_to_do() -> anyhow:
     fs::create_dir_all(lock_is_a_directory.join("setup.lock"))?;
     let (progress, _) = watch::channel(Progress::default());
     for root in [beneath_a_file, lock_is_a_directory] {
-        let failure = Installation::lock(&root, &progress)
+        let failure = Installation::acquire(&root, &progress)
             .await
             .err()
             .context("Setup prepared a directory it cannot lock")?

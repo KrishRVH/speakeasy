@@ -75,7 +75,7 @@ const METAL: Download<'static> = Download {
 /// The engine build setup chose, and whether it should run on the GPU. The other builds stay until
 /// the model is in place, so a setup paused before then resumes without downloading them again.
 pub(super) struct ChosenEngine {
-    pub(super) directory: PathBuf,
+    directory: PathBuf,
     pub(super) use_gpu: bool,
 }
 
@@ -113,7 +113,7 @@ pub(super) async fn choose_engine(
 ) -> anyhow::Result<ChosenEngine> {
     if nvidia_driver() {
         let cuda = unpack(client, &CUDA, root, progress, installation).await?;
-        if doctor(&cuda, installation, progress)
+        if doctor(&cuda, progress, installation)
             .await
             .is_some_and(|report| has_discrete_gpu(&report))
         {
@@ -124,14 +124,14 @@ pub(super) async fn choose_engine(
         }
     }
     let vulkan = unpack(client, &VULKAN, root, progress, installation).await?;
-    if let Some(report) = doctor(&vulkan, installation, progress).await {
+    if let Some(report) = doctor(&vulkan, progress, installation).await {
         return Ok(ChosenEngine {
             directory: vulkan,
             use_gpu: has_discrete_gpu(&report),
         });
     }
     let cpu = unpack(client, &CPU, root, progress, installation).await?;
-    if cfg!(target_os = "linux") && doctor(&cpu, installation, progress).await.is_none() {
+    if cfg!(target_os = "linux") && doctor(&cpu, progress, installation).await.is_none() {
         bail!(
             "The downloaded engine cannot run on this Linux CPU. Choose a portable NeMo-Speech.cpp build in Settings."
         );
@@ -150,7 +150,7 @@ pub(super) async fn choose_engine(
     installation: &mut Installation,
 ) -> anyhow::Result<ChosenEngine> {
     let metal = unpack(client, &METAL, root, progress, installation).await?;
-    let report = doctor(&metal, installation, progress)
+    let report = doctor(&metal, progress, installation)
         .await
         .context(
             "The speech engine cannot run on this Mac. Choose a compatible engine executable in Settings.",
@@ -188,8 +188,8 @@ fn nvidia_driver() -> bool {
 /// Asks the build at `directory` whether it runs here, which can take up to a minute on a cold GPU.
 async fn doctor(
     directory: &Path,
-    installation: &mut Installation,
     progress: &watch::Sender<Progress>,
+    installation: &mut Installation,
 ) -> Option<serde_json::Value> {
     progress.send_replace(Progress {
         step: Some("Checking the speech engine on this machine"),
@@ -250,5 +250,23 @@ mod tests {
             51_061_784_576
         )));
         assert!(!has_discrete_gpu(&report(false, "gpu", 25_756_696_576)));
+    }
+
+    #[test]
+    fn keeping_the_chosen_engine_removes_only_the_other_builds() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let engines = root.path().join("engines");
+        for build in ["chosen", "rejected"] {
+            fs::create_dir_all(engines.join(build))?;
+        }
+        let chosen = engines.join("chosen");
+        let engine = ChosenEngine {
+            directory: chosen.clone(),
+            use_gpu: false,
+        };
+        assert_eq!(engine.keep(root.path())?, chosen.join(EXECUTABLE));
+        assert!(chosen.is_dir(), "The chosen build was removed");
+        assert!(!engines.join("rejected").exists(), "Another build was kept");
+        Ok(())
     }
 }

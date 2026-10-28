@@ -127,17 +127,15 @@ async fn hash_partial(
     });
     let mut file = tokio::fs::File::open(partial).await?;
     // Every asynchronous read is a blocking-pool round trip, so read a MiB at a time.
-    let mut buffer = vec![0; 1024 * 1024];
+    let mut chunk = Vec::with_capacity(1024 * 1024);
     let mut hasher = Sha256::new();
     loop {
-        let count = file.read(&mut buffer).await?;
+        chunk.clear();
+        let count = file.read_buf(&mut chunk).await?;
         if count == 0 {
             break;
         }
-        let chunk = buffer
-            .get(..count)
-            .ok_or_else(|| io::Error::other("the read size is invalid"))?;
-        hasher.update(chunk);
+        hasher.update(&chunk);
         progress.send_modify(|progress| {
             progress.done = progress.done.saturating_add(count as u64);
         });
@@ -148,7 +146,7 @@ async fn hash_partial(
 }
 
 pub(super) fn file_name(url: &str) -> &str {
-    url.rsplit('/').next().unwrap_or(url)
+    url.rsplit_once('/').map_or(url, |(_, name)| name)
 }
 
 #[cfg(test)]
@@ -225,6 +223,21 @@ mod tests {
         hex_digest(&Sha256::digest(bytes))
     }
 
+    async fn fetch_into(
+        download: &Download<'_>,
+        directory: &Path,
+        progress: &watch::Sender<Progress>,
+    ) -> anyhow::Result<PathBuf> {
+        fetch(
+            &client_builder()?.build()?,
+            download,
+            directory,
+            "fixture",
+            progress,
+        )
+        .await
+    }
+
     #[tokio::test]
     async fn fetch_promotes_a_verified_complete_partial_without_a_request() -> anyhow::Result<()> {
         let (base, requests) = serve_body().await?;
@@ -239,19 +252,12 @@ mod tests {
         let partial = directory.path().join("model.gguf.part");
         fs::write(&partial, BODY)?;
         let (progress, _) = watch::channel(Progress::default());
-        let path = fetch(
-            &client_builder()?.build()?,
-            &download,
-            directory.path(),
-            "fixture",
-            &progress,
-        )
-        .await?;
+        let path = fetch_into(&download, directory.path(), &progress).await?;
         assert_eq!(fs::read(path)?, BODY);
         assert!(!partial.exists());
         assert!(
-            requests.try_recv().is_err(),
-            "Complete verified audio model was downloaded again"
+            requests.is_empty(),
+            "A verified complete partial was downloaded again"
         );
         Ok(())
     }
@@ -272,14 +278,7 @@ mod tests {
             vec![0; BODY.len()],
         )?;
         let (progress, _) = watch::channel(Progress::default());
-        let path = fetch(
-            &client_builder()?.build()?,
-            &download,
-            directory.path(),
-            "fixture",
-            &progress,
-        )
-        .await?;
+        let path = fetch_into(&download, directory.path(), &progress).await?;
         assert_eq!(fs::read(path)?, BODY);
         assert_eq!(requests.recv().await?, None);
         Ok(())
@@ -311,14 +310,7 @@ mod tests {
             Ok::<_, anyhow::Error>(())
         };
         let work = Installation::run(directory.path(), &progress, &cancelled, async |_| {
-            fetch(
-                &client_builder()?.build()?,
-                &download,
-                directory.path(),
-                "fixture",
-                &progress,
-            )
-            .await
+            fetch_into(&download, directory.path(), &progress).await
         });
         let (result, cancellation) = timeout(Duration::from_secs(5), async {
             tokio::join!(work, cancel_when_verifying)
@@ -344,14 +336,7 @@ mod tests {
         let directory = tempfile::tempdir()?;
         fs::write(directory.path().join("model.gguf.part"), &BODY[..20])?;
         let (progress, _) = watch::channel(Progress::default());
-        let path = fetch(
-            &client_builder()?.build()?,
-            &download,
-            directory.path(),
-            "fixture",
-            &progress,
-        )
-        .await?;
+        let path = fetch_into(&download, directory.path(), &progress).await?;
         assert_eq!(requests.recv().await?, Some(20));
         assert_eq!(fs::read(&path)?, BODY);
         assert!(!directory.path().join("model.gguf.part").exists());
@@ -371,21 +356,11 @@ mod tests {
         };
         let directory = tempfile::tempdir()?;
         let (progress, _) = watch::channel(Progress::default());
-        let result = fetch(
-            &client_builder()?.build()?,
-            &download,
-            directory.path(),
-            "fixture",
-            &progress,
-        )
-        .await;
-        let error = result.err().map(|error| format!("{error:#}"));
-        assert!(
-            error
-                .as_deref()
-                .is_some_and(|error| error.contains("checksum")),
-            "{error:?}"
-        );
+        let error = fetch_into(&download, directory.path(), &progress)
+            .await
+            .err()
+            .context("A download that failed its checksum was kept")?;
+        assert!(format!("{error:#}").contains("checksum"), "{error:#}");
         assert!(!directory.path().join("model.gguf").exists());
         assert!(!directory.path().join("model.gguf.part").exists());
         Ok(())

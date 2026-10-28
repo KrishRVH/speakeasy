@@ -94,7 +94,7 @@ fn main() -> anyhow::Result<()> {
     clippy::future_not_send,
     reason = "Owned-window acceptance resolves and mutates native GPUI windows only on their UI thread"
 )]
-async fn exercise(cx: &AsyncApp) -> anyhow::Result<()> {
+async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     let window = cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::new(
@@ -109,41 +109,28 @@ async fn exercise(cx: &AsyncApp) -> anyhow::Result<()> {
         },
         |_, cx| cx.new(|_| Scene::default()),
     )?;
-    let (native, raw, scale) = cx.update(|cx| {
-        window.update(cx, |_, window, _| {
-            let handle = HasWindowHandle::window_handle(window)
-                .map_err(|error| anyhow::anyhow!("Native window handle: {error}"))?;
-            anyhow::Ok((
-                speakeasy_platform::NativeWindow::new(handle)?,
-                handle.as_raw(),
-                window.scale_factor(),
-            ))
-        })?
+    let native = window.update(cx, |_, window, _| {
+        let handle = HasWindowHandle::window_handle(window)
+            .map_err(|error| anyhow::anyhow!("Native window handle: {error}"))?;
+        speakeasy_platform::NativeWindow::new(handle)
     })??;
-    #[cfg(not(target_os = "linux"))]
-    let _ = (raw, scale);
     native.configure_pill()?;
     #[cfg(target_os = "linux")]
-    let xcb = match raw {
-        raw_window_handle::RawWindowHandle::Xcb(handle) => handle.window.get(),
-        _ => anyhow::bail!("Expected an XCB window on the private display"),
-    };
+    let sampler = window.update(cx, |_, window, _| linux::Sampler::of(window))??;
     for iteration in 0..CYCLES {
         // A pathless first cycle makes a later one exercise the renderer's lazy path targets.
         let draws_path = iteration != 0;
-        cx.update(|cx| window.update(cx, |scene, _, _| scene.draws_path = draws_path))??;
+        window.update(cx, |scene, _, _| scene.draws_path = draws_path)?;
         native.set_pill_visible(true);
         let preceding = window.read_with(cx, |scene, _| scene.renders)?;
         let width = if iteration % 2 == 0 { 64.0 } else { 96.0 };
-        cx.update(|cx| {
-            window.update(cx, |_, window, _| {
-                window.resize(size(px(width), px(64.0)));
-                window.refresh();
-            })
-        })??;
+        window.update(cx, |_, window, _| {
+            window.resize(size(px(width), px(64.0)));
+            window.refresh();
+        })?;
         wait_for_render(window, preceding, cx).await?;
         #[cfg(target_os = "linux")]
-        linux::wait_for_pixels(xcb, scale, draws_path).await?;
+        sampler.wait_for_pixels(draws_path).await?;
         native.set_pill_visible(false);
         Timer::after(PRESENT_SETTLE).await;
     }
@@ -172,11 +159,10 @@ async fn wait_for_render(
     cx: &AsyncApp,
 ) -> anyhow::Result<()> {
     let started = Instant::now();
-    let deadline = started.checked_add(TIMEOUT).unwrap_or(started);
     while window.read_with(cx, |scene, _| scene.renders)? == preceding {
         Timer::after(POLL_INTERVAL).await;
         ensure!(
-            Instant::now() < deadline,
+            started.elapsed() < TIMEOUT,
             "Native frame source did not redraw"
         );
     }
@@ -203,8 +189,9 @@ mod linux {
 
     use std::time::Instant;
 
-    use anyhow::{Context as _, ensure};
-    use gpui::Timer;
+    use anyhow::{Context as _, anyhow, bail, ensure};
+    use gpui::{Timer, Window};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use x11rb::{
         protocol::xproto::{ConnectionExt as _, ImageFormat},
         xcb_ffi::XCBConnection,
@@ -212,70 +199,84 @@ mod linux {
 
     use super::{POLL_INTERVAL, TIMEOUT};
 
-    pub(super) async fn wait_for_pixels(
+    /// The owned window's id and display scale on the private X11 display.
+    pub(super) struct Sampler {
         window: u32,
         scale: f32,
-        draws_path: bool,
-    ) -> anyhow::Result<()> {
-        let (connection, _) = XCBConnection::connect(None)?;
-        let started = Instant::now();
-        let deadline = started.checked_add(TIMEOUT).unwrap_or(started);
-        loop {
-            let verified = verify_pixels(&connection, window, scale, draws_path);
-            if verified.is_ok() || Instant::now() >= deadline {
-                return verified;
-            }
-            Timer::after(POLL_INTERVAL).await;
-        }
     }
 
-    fn verify_pixels(
-        connection: &XCBConnection,
-        window: u32,
-        scale: f32,
-        draws_path: bool,
-    ) -> anyhow::Result<()> {
-        let geometry = connection.get_geometry(window)?.reply()?;
-        let image = connection
-            .get_image(
-                ImageFormat::Z_PIXMAP,
-                window,
-                0,
-                0,
-                geometry.width,
-                geometry.height,
-                u32::MAX,
-            )?
-            .reply()?;
-        let pixels = image.data.as_chunks::<4>().0;
-        let color = |x: u16, y: u16| -> anyhow::Result<u32> {
-            let column = pixel_coordinate(x, scale)?;
-            let row = pixel_coordinate(y, scale)?;
-            ensure!(
-                column < usize::from(geometry.width) && row < usize::from(geometry.height),
-                "Sample coordinate is outside the owned window"
-            );
-            let index = row
-                .checked_mul(usize::from(geometry.width))
-                .and_then(|offset| offset.checked_add(column))
-                .context("Native image geometry is unsupported")?;
-            let pixel = pixels
-                .get(index)
-                .context("Native image is shorter than its geometry")?;
-            Ok(u32::from_ne_bytes(*pixel) & 0x00FF_FFFF)
-        };
-        ensure!(color(13, 13)? == 0xCC_99_55, "Embedded SVG did not render");
-        ensure!(
-            color(50, 50)? == 0x11_33_55,
-            "Window background did not render"
-        );
-        if draws_path {
-            ensure!(
-                color(24, 24)? == 0xFF_77_33,
-                "Path did not render after allocation or resize"
-            );
+    impl Sampler {
+        pub(super) fn of(window: &Window) -> anyhow::Result<Self> {
+            let handle = HasWindowHandle::window_handle(window)
+                .map_err(|error| anyhow!("Native window handle: {error}"))?;
+            let RawWindowHandle::Xcb(xcb) = handle.as_raw() else {
+                bail!("Expected an XCB window on the private display");
+            };
+            Ok(Self {
+                window: xcb.window.get(),
+                scale: window.scale_factor(),
+            })
         }
-        Ok(())
+
+        pub(super) async fn wait_for_pixels(&self, draws_path: bool) -> anyhow::Result<()> {
+            let (connection, _) = XCBConnection::connect(None)?;
+            let started = Instant::now();
+            loop {
+                let verified = self.verify_pixels(&connection, draws_path);
+                if verified.is_ok() || started.elapsed() >= TIMEOUT {
+                    return verified;
+                }
+                Timer::after(POLL_INTERVAL).await;
+            }
+        }
+
+        fn verify_pixels(
+            &self,
+            connection: &XCBConnection,
+            draws_path: bool,
+        ) -> anyhow::Result<()> {
+            let geometry = connection.get_geometry(self.window)?.reply()?;
+            let image = connection
+                .get_image(
+                    ImageFormat::Z_PIXMAP,
+                    self.window,
+                    0,
+                    0,
+                    geometry.width,
+                    geometry.height,
+                    u32::MAX,
+                )?
+                .reply()?;
+            let pixels = image.data.as_chunks::<4>().0;
+            let color = |x: u16, y: u16| -> anyhow::Result<u32> {
+                let column = pixel_coordinate(x, self.scale)?;
+                let row = pixel_coordinate(y, self.scale)?;
+                ensure!(
+                    column < usize::from(geometry.width) && row < usize::from(geometry.height),
+                    "Sample coordinate is outside the owned window"
+                );
+                let index = row
+                    .checked_mul(usize::from(geometry.width))
+                    .and_then(|offset| offset.checked_add(column))
+                    .context("Native image geometry is unsupported")?;
+                let pixel = pixels
+                    .get(index)
+                    .context("Native image is shorter than its geometry")?;
+                Ok(u32::from_ne_bytes(*pixel) & 0x00FF_FFFF)
+            };
+            ensure!(color(13, 13)? == 0xCC_99_55, "Embedded SVG did not render");
+            ensure!(
+                color(50, 50)? == 0x11_33_55,
+                "Window background did not render"
+            );
+            if draws_path {
+                ensure!(
+                    color(24, 24)? == 0xFF_77_33,
+                    "Path did not render after allocation or resize"
+                );
+            }
+            Ok(())
+        }
     }
 
     fn pixel_coordinate(logical: u16, scale: f32) -> anyhow::Result<usize> {
