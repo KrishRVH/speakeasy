@@ -60,7 +60,7 @@ async fn queued_save_applies_only_latest_successful_draft() -> anyhow::Result<()
     );
     assert_eq!(Config::read(&path)?.threads, 16);
     assert_eq!(finished, epoch);
-    assert!(error.is_none());
+    assert_eq!(error, None);
     assert!(queue.is_idle());
     assert!(queue.saved.is_none());
     Ok(())
@@ -131,7 +131,7 @@ async fn a_revert_queued_behind_a_write_reaches_the_file() -> anyhow::Result<()>
     let SaveProgress::Finished { error, .. } = queue.finish(write_result(revert).await?) else {
         bail!("The revert did not finish");
     };
-    assert!(error.is_none());
+    assert_eq!(error, None);
     assert_eq!(Config::read(&path)?.theme, original.theme);
     Ok(())
 }
@@ -162,7 +162,7 @@ async fn a_save_queued_behind_a_write_keeps_the_path_spellings_it_did_not_change
     let SaveProgress::Finished { error, .. } = queue.finish(write_result(queued).await?) else {
         bail!("The queued save did not finish");
     };
-    assert!(error.is_none());
+    assert_eq!(error, None);
     let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
     assert_eq!(
         saved,
@@ -235,7 +235,7 @@ async fn a_draft_needs_saving_until_the_file_holds_it_or_a_write_is_making_it() 
     else {
         bail!("The save did not finish");
     };
-    assert!(error.is_none());
+    assert_eq!(error, None);
     let saved = saved.context("The save was lost")?;
     assert!(
         !queue.needs_save(&edited),
@@ -318,8 +318,10 @@ fn flush_finishes_the_running_write_before_a_revert_queued_behind_it() -> anyhow
     })?;
     started.recv_timeout(Duration::from_secs(2))?;
     let mut queue = SaveQueue {
-        writing: Some(running),
-        pending: Some(original.clone()),
+        writing: Some(Running {
+            work: running,
+            queued: Some(original.clone()),
+        }),
         ..SaveQueue::new(path.clone(), original.clone())
     };
     let cleanup = std::thread::spawn(move || queue.flush());

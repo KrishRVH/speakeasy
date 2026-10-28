@@ -35,7 +35,7 @@ pub(super) struct Settings {
     notice: Option<Notice>,
     microphones: Vec<InputDevice>,
     file_picker: Option<Task<()>>,
-    microphone_scan: Option<Task<()>>,
+    microphone_listing: Option<Task<()>>,
     preview: Option<Task<()>>,
     setup: Option<(Setup, Task<()>)>,
     retiring_setups: Vec<(Setup, Task<()>)>,
@@ -72,7 +72,7 @@ impl Settings {
             notice: None,
             microphones: Vec::new(),
             file_picker: None,
-            microphone_scan: None,
+            microphone_listing: None,
             preview: None,
             setup: None,
             retiring_setups: Vec::new(),
@@ -118,7 +118,7 @@ impl Settings {
                 self.notice = None;
             },
             Action::Pause => {
-                cx.update_global::<Services, _>(|services, cx| services.stop(cx));
+                cx.update_global::<Services, _>(|services, cx| services.pause(cx));
                 self.notice = None;
             },
             Action::Preview => self.play(cx),
@@ -195,17 +195,12 @@ impl Settings {
     fn refresh_microphones(&mut self, cx: &mut Context<'_, Self>) {
         // The demo is simulated and never touches audio devices, and Quit waits only for a scan
         // that started before it.
-        if is_demo(cx) || cx.global::<Services>().quitting() || self.microphone_scan.is_some() {
+        if is_demo(cx) || cx.global::<Services>().quitting() || self.microphone_listing.is_some() {
             return;
         }
-        let listing = cx.update_global::<Services, _>(|services, _| {
-            MicrophoneScan::listing(&mut services.microphone_scan)
-        });
-        self.microphone_scan = Some(cx.spawn(async move |this, cx| {
-            let result = match listing {
-                Ok(listing) => listing.await,
-                Err(error) => Err(error),
-            };
+        let listing = MicrophoneScan::listing(&mut cx.global_mut::<Services>().microphone_scan);
+        self.microphone_listing = Some(cx.spawn(async move |this, cx| {
+            let result = async move { listing?.await }.await;
             this.update_if_alive(cx, |view, cx| {
                 match result {
                     Ok(microphones) => view.microphones = microphones,
@@ -215,7 +210,7 @@ impl Settings {
                         ));
                     },
                 }
-                view.microphone_scan = None;
+                view.microphone_listing = None;
                 cx.notify();
             });
         }));
@@ -427,7 +422,7 @@ impl Settings {
 
     pub(super) fn cancel_background_work(&mut self) {
         self.file_picker = None;
-        self.microphone_scan = None;
+        self.microphone_listing = None;
         self.preview = None;
         self.request_setup_stops();
     }
@@ -496,7 +491,7 @@ impl Presentation {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
     Setup,
     Engine,
@@ -541,13 +536,13 @@ impl Action {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EngineFile {
     Executable,
     Model,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Setting {
     PreferGpu,
     ReduceMotion,
@@ -693,7 +688,7 @@ mod tests {
             notice: None,
             microphones: Vec::new(),
             file_picker: None,
-            microphone_scan: None,
+            microphone_listing: None,
             preview: None,
             setup: None,
             retiring_setups: Vec::new(),

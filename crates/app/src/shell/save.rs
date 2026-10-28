@@ -46,9 +46,7 @@ pub(super) enum SaveProgress {
 pub(super) struct SaveQueue {
     /// The settings file every write patches.
     path: PathBuf,
-    writing: Option<SaveWork>,
-    /// The draft queued behind the running write.
-    pending: Option<Config>,
+    writing: Option<Running>,
     saved: Option<SavedConfig>,
     /// The settings the file holds as of the last write that succeeded, in each spelling a draft
     /// may have of them, which the next write compares its draft against.
@@ -69,7 +67,6 @@ impl SaveQueue {
         Self {
             path,
             writing: None,
-            pending: None,
             saved: None,
             durable: [held.clone(), held],
             opened: Some(draft),
@@ -93,19 +90,18 @@ impl SaveQueue {
     pub(super) fn submit(&mut self, draft: Config, epoch: ConfigEpoch) -> Option<SaveProgress> {
         self.epoch = epoch;
         self.requested = Some(draft.clone());
-        if self.writing.is_some() {
-            self.pending = Some(draft);
-            None
-        } else {
-            Some(self.start(draft))
+        if let Some(running) = &mut self.writing {
+            running.queued = Some(draft);
+            return None;
         }
+        Some(self.start(draft))
     }
 
     /// Records the running write's result, then starts the queued request or reports the drained
     /// queue.
     pub(super) fn finish(&mut self, result: anyhow::Result<SavedConfig>) -> SaveProgress {
         // The result follows the durable write, so this join never waits on storage.
-        self.writing = None;
+        let queued = self.writing.take().and_then(|running| running.queued);
         let error = match result {
             Ok(saved) => {
                 self.durable = saved.held();
@@ -115,7 +111,7 @@ impl SaveQueue {
             },
             Err(error) => Some(format!("{error:#}")),
         };
-        if let Some(next) = self.pending.take() {
+        if let Some(next) = queued {
             return self.start(next);
         }
         self.requested = None;
@@ -128,33 +124,47 @@ impl SaveQueue {
 
     fn start(&mut self, draft: Config) -> SaveProgress {
         match SaveWork::start(self.durable.clone(), draft, self.path.clone()) {
-            Ok(work) => SaveProgress::Writing(self.writing.insert(work).result.clone()),
+            Ok(work) => {
+                let running = self.writing.insert(Running { work, queued: None });
+                SaveProgress::Writing(running.work.result.clone())
+            },
             Err(error) => self.finish(Err(error)),
         }
     }
 
     pub(super) fn is_idle(&self) -> bool {
-        self.writing.is_none() && self.pending.is_none()
+        self.writing.is_none()
     }
 
     /// Blocks until the running write finishes, then writes the latest queued request and waits for
     /// that write too.
     pub(super) fn flush(&mut self) {
-        if let Some(SaveWork { thread, result }) = self.writing.take() {
-            drop(thread);
-            // The queued write compares against this one, so a revert queued behind it still lands.
-            if let Ok(Ok(saved)) = result.try_recv() {
-                self.durable = saved.held();
-            }
+        let Some(Running {
+            work: SaveWork { thread, result },
+            queued,
+        }) = self.writing.take()
+        else {
+            return;
+        };
+        drop(thread);
+        // The queued write compares against this one, so a revert queued behind it still lands.
+        if let Ok(Ok(saved)) = result.try_recv() {
+            self.durable = saved.held();
         }
-        if let Some(pending) = self.pending.take() {
+        if let Some(queued) = queued {
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "Dropping the work joins its thread; a closing view has no one to tell of a failed start"
             )]
-            let _ = SaveWork::start(self.durable.clone(), pending, self.path.clone());
+            let _ = SaveWork::start(self.durable.clone(), queued, self.path.clone());
         }
     }
+}
+
+/// A write in progress and the latest draft queued behind it.
+struct Running {
+    work: SaveWork,
+    queued: Option<Config>,
 }
 
 /// Validates and writes settings on its own thread; dropping it joins that thread.

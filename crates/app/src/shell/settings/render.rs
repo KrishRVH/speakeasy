@@ -125,6 +125,7 @@ impl Settings {
         let shortcut = &self.presentation.shortcut;
         let cancel_shortcut = &self.presentation.cancel_shortcut;
         let desktop_bindings = cfg!(target_os = "linux") && self.config.linux.external_shortcut;
+        let records_shows = !cfg!(target_os = "linux");
         let hold_hint = if desktop_bindings {
             "Use your desktop shortcut to start or finish dictation.".into()
         } else {
@@ -142,8 +143,7 @@ impl Settings {
             .line_height(px(23.0))
             .child(hold_hint)
             .child(div().child(gesture_hint))
-            // Linux records no Shows.
-            .when(!cfg!(target_os = "linux"), |panel| {
+            .when(records_shows, |panel| {
                 panel.child(div().child("Add S for a Show, then hold Shift to draw."))
             })
     }
@@ -206,8 +206,7 @@ impl Settings {
             None => "System default".into(),
             Some(id) => match self.microphones.iter().find(|device| device.id == *id) {
                 Some(device) => device.name.clone().into(),
-                // Until the scan reports, the chosen microphone is unknown, not missing.
-                None if self.microphone_scan.is_some() => "Checking microphones…".into(),
+                None if self.microphone_listing.is_some() => "Checking microphones…".into(),
                 None => "Unavailable · Choose another".into(),
             },
         };
@@ -303,8 +302,11 @@ impl Settings {
     fn commands(&self, ui: &Ui<'_>, unsaved: bool) -> impl IntoElement {
         let services = ui.cx.global::<Services>();
         let running = services.running();
-        let primary = primary_command(is_demo(ui.cx), services.service_state(), unsaved)
-            .filter(|_| !self.is_setting_up());
+        let primary = if self.is_setting_up() {
+            None
+        } else {
+            primary_command(is_demo(ui.cx), services.service_state(), unsaved)
+        };
         row()
             .when_some(primary, |row, (label, action)| {
                 row.child(ui.button(label, action))
@@ -442,14 +444,14 @@ fn primary_command(
 }
 
 fn setup_detail(progress: Option<Progress>) -> String {
+    const MACHINE: &str = if cfg!(target_os = "macos") {
+        "Mac"
+    } else {
+        "PC"
+    };
     let Some(Progress { step, done, total }) = progress else {
         return format!(
-            "Speakeasy downloads the Parakeet speech model and the engine that suits this {}, about 0.8 GB, then turns dictation on.",
-            if cfg!(target_os = "macos") {
-                "Mac"
-            } else {
-                "PC"
-            }
+            "Speakeasy downloads the Parakeet speech model and the engine that suits this {MACHINE}, about 0.8 GB, then turns dictation on."
         );
     };
     match step {
@@ -535,7 +537,7 @@ fn jewel(color: u32, size: f32) -> impl IntoElement {
         .flex_none()
 }
 
-// GPUI text has no letter spacing, so the wordmark lays its capitals out as glyphs.
+/// The capitals laid out as separate glyphs, since GPUI text has no letter spacing.
 fn wordmark(palette: &'static Palette) -> impl IntoElement {
     div()
         .flex()
@@ -568,31 +570,27 @@ mod tests {
 
     #[test]
     fn resume_dictation_resumes_and_only_unsaved_edits_save_first() {
-        // Each label, and whether its command saves the draft.
-        let command = |service, unsaved| {
-            primary_command(false, service, unsaved)
-                .map(|(label, action)| (label, matches!(action, Action::Save)))
-        };
+        let command = |service, unsaved| primary_command(false, service, unsaved);
         assert_eq!(
             command(ServiceState::Paused, false),
-            Some(("Resume dictation", false))
+            Some(("Resume dictation", Action::Resume))
         );
         assert_eq!(
             command(ServiceState::Paused, true),
-            Some(("Save and resume", true))
+            Some(("Save and resume", Action::Save))
         );
         assert_eq!(
             command(ServiceState::Pausing, true),
-            Some(("Save and resume", true))
+            Some(("Save and resume", Action::Save))
         );
         assert_eq!(command(ServiceState::Pausing, false), None);
         assert_eq!(
             command(ServiceState::Running, false),
-            Some(("Save changes", true))
+            Some(("Save changes", Action::Save))
         );
         assert_eq!(
             command(ServiceState::NotSetUp, true),
-            Some(("Enable dictation", true))
+            Some(("Enable dictation", Action::Save))
         );
     }
 }

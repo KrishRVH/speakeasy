@@ -6,9 +6,9 @@
 
 use std::time::Duration;
 
-use gpui::{App, Timer};
+use gpui::{App, AsyncApp, Timer, WindowHandle};
 
-use super::Services;
+use super::{Services, settings::Settings};
 use crate::gpui_ext::{AppUpdate, WindowUpdate};
 
 const DRAIN_POLL: Duration = Duration::from_millis(10);
@@ -18,27 +18,18 @@ pub(crate) fn request_quit(cx: &mut App) {
         cx.quit();
         return;
     }
-    let Some(stopped) = cx.global_mut::<Services>().begin_quit() else {
+    let services = cx.global_mut::<Services>();
+    let Some(stopped) = services.begin_quit() else {
         return;
     };
-    let settings = cx.global::<Services>().settings;
+    let settings = services.settings;
     let task = cx.spawn(async move |cx| {
         // The action that requested Quit may still hold the view; touch it only from here.
         if let Some(settings) = settings {
             settings.update_if_open(cx, |view, _, _| view.cancel_background_work());
         }
         stopped.await;
-        // Save tasks drain their queue, and Quitting stops setup from queuing another. Views and
-        // the instance lock stay alive until then.
-        loop {
-            let drained = settings.is_none_or(|settings| {
-                settings
-                    .update(cx, |view, _, _| view.drain_finished())
-                    .unwrap_or(true)
-            });
-            if drained {
-                break;
-            }
+        while !drained(settings, cx) {
             Timer::after(DRAIN_POLL).await;
         }
         cx.update_if_running(|cx| {
@@ -47,4 +38,14 @@ pub(crate) fn request_quit(cx: &mut App) {
         });
     });
     cx.global_mut::<Services>().quit = Some(task);
+}
+
+/// Whether Settings, if still open, has no setup or save left: save tasks drain their queue, and
+/// Quitting stops setup from queuing another.
+fn drained(settings: Option<WindowHandle<Settings>>, cx: &mut AsyncApp) -> bool {
+    settings.is_none_or(|settings| {
+        settings
+            .update(cx, |view, _, _| view.drain_finished())
+            .unwrap_or(true)
+    })
 }

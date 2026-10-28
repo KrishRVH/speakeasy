@@ -93,9 +93,8 @@ fn window_options(cx: &App) -> WindowOptions {
     let height = cx
         .primary_display()
         .map_or(SETTINGS_SIZE.height, |display| {
-            SETTINGS_SIZE
-                .height
-                .min((display.bounds().size.height - DISPLAY_CLEARANCE).max(MIN_HEIGHT))
+            (display.bounds().size.height - DISPLAY_CLEARANCE)
+                .clamp(MIN_HEIGHT, SETTINGS_SIZE.height)
         });
     WindowOptions {
         #[cfg(target_os = "linux")]

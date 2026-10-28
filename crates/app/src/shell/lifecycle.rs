@@ -89,7 +89,7 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
     /// Starts checking the saved settings under a new epoch and returns it, unless owners exist or
     /// Quit has begun.
     pub(super) fn validate(&mut self) -> Option<ConfigEpoch> {
-        if !matches!(self.state, State::Disabled | State::Validating(_)) {
+        if !self.may_start() {
             return None;
         }
         self.epoch = self.epoch.next();
@@ -113,11 +113,12 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         &mut self,
         launch: impl FnOnce() -> Result<Owners, E>,
     ) -> Result<bool, E> {
-        if !matches!(self.state, State::Disabled | State::Validating(_)) {
+        if !self.may_start() {
             return Ok(false);
         }
         self.state = State::Disabled;
-        self.state = State::Running(launch()?);
+        let owners = launch()?;
+        self.state = State::Running(owners);
         Ok(true)
     }
 
@@ -168,6 +169,11 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
                 ..
             }
         )
+    }
+
+    /// Whether owners may start: none exist, live or retiring, and Quit has not begun.
+    const fn may_start(&self) -> bool {
+        matches!(self.state, State::Disabled | State::Validating(_))
     }
 
     /// Advances the epoch and moves live owners to Stopping, abandoning any validation or queued
@@ -346,7 +352,6 @@ mod tests {
 
     #[test]
     fn a_save_during_a_resume_check_supersedes_the_check() {
-        // The save's settings start owners; the check that finishes afterward is stale.
         let mut state = Lifecycle::<u8, ()>::default();
         let checking = state.validate().unwrap();
         assert!(state.save_may_enable(state.epoch(), |_| false));
@@ -355,7 +360,10 @@ mod tests {
         assert_eq!(state.start(|| Ok::<_, ()>(1)), Ok(true));
         assert!(!state.validated(checking));
         assert_eq!(state.active(), Some(&1));
-        // Owners that fail to start still end the check, which would apply older settings.
+    }
+
+    #[test]
+    fn owners_that_fail_to_start_still_end_the_check_they_superseded() {
         let mut state = Lifecycle::<u8, ()>::default();
         let checking = state.validate().unwrap();
         assert!(state.reconfigure());

@@ -64,7 +64,9 @@ impl Owners {
         self.monitor.request_stop();
     }
 
-    fn stopped(&self) -> impl Future<Output = ()> + use<> {
+    /// Asks both owners to stop, returning a future that resolves once both have exited.
+    fn retire(&self) -> impl Future<Output = ()> + use<> {
+        self.request_stop();
         let runtime = self.runtime.stopped();
         let monitor = self.monitor.stopped();
         async move {
@@ -234,12 +236,12 @@ impl Services {
         if !self.lifecycle.reconfigure() {
             return Ok(());
         }
-        // A dead runtime or changed desktop options need fresh owners: stopping makes the queue
+        // A dead runtime or changed desktop options need fresh owners: pausing makes the queue
         // below restart with `config` once the current owners retire.
         if self.runtime().is_some_and(|runtime| {
             !runtime.is_running() || self.config.change_to(&config) == Change::Desktop
         }) {
-            self.stop(cx);
+            self.pause(cx);
         }
         self.config = Config::clone(&config);
         if self.lifecycle.queue(Restart::Apply(config.clone())) {
@@ -304,7 +306,7 @@ impl Services {
             return;
         }
         if self.runtime().is_some() {
-            self.stop(cx);
+            self.pause(cx);
             self.lifecycle.queue(Restart::Validate);
             return;
         }
@@ -324,27 +326,28 @@ impl Services {
     }
 
     fn validation_complete(epoch: ConfigEpoch, result: anyhow::Result<ValidConfig>, cx: &mut App) {
-        let result = cx.update_global::<Self, _>(|services, cx| {
+        let applied = cx.update_global::<Self, _>(|services, cx| {
             if !services.lifecycle.validated(epoch) {
                 return Ok(());
             }
             services.validation = None;
             result.and_then(|config| services.apply(config, cx))
         });
-        if let Err(error) = result {
-            // Settings shows the reason; if it cannot open, the pill shows both.
-            let error = match window::open(cx) {
-                Ok(()) => error,
-                Err(open_error) => anyhow!(
-                    "{}. Settings could not open: {open_error:#}",
-                    error.to_string().trim_end_matches('.')
-                ),
-            };
-            cx.global::<Self>().publish_error(&error);
-        }
+        let Err(error) = applied else {
+            return;
+        };
+        // Settings shows the reason; if it cannot open, the pill shows both.
+        let error = match window::open(cx) {
+            Ok(()) => error,
+            Err(open_error) => anyhow!(
+                "{}. Settings could not open: {open_error:#}",
+                error.to_string().trim_end_matches('.')
+            ),
+        };
+        cx.global::<Self>().publish_error(&error);
     }
 
-    pub(super) fn stop(&mut self, cx: &App) {
+    pub(super) fn pause(&mut self, cx: &App) {
         if self.quitting() {
             return;
         }
@@ -361,11 +364,9 @@ impl Services {
         if !started {
             return;
         }
-        let Some(owners) = self.lifecycle.retiring() else {
+        let Some(stopped) = self.lifecycle.retiring().map(Owners::retire) else {
             return;
         };
-        owners.request_stop();
-        let stopped = owners.stopped();
         self.retirement = Some(cx.spawn(async move |cx| {
             stopped.await;
             cx.update_if_running(|cx| {
@@ -399,10 +400,7 @@ impl Services {
         self.requests = None;
         self.visibility = None;
         announce(&self.output, QUITTING);
-        let stopped = self.lifecycle.retiring().map(|owners| {
-            owners.request_stop();
-            owners.stopped()
-        });
+        let stopped = self.lifecycle.retiring().map(Owners::retire);
         let scanned = self.microphone_scan.as_ref().map(MicrophoneScan::exited);
         Some(async move {
             if let Some(stopped) = stopped {
@@ -426,7 +424,7 @@ pub(crate) fn toggle_enabled(cx: &mut App) {
             return;
         }
         if services.running() {
-            services.stop(cx);
+            services.pause(cx);
         } else {
             services.resume(cx);
         }
