@@ -263,6 +263,10 @@ impl MenuItem {
             ("visible".into(), Value::from(true)),
         ])
     }
+
+    fn layout(&self) -> Layout {
+        (self.entry.id(), self.properties(), Vec::new())
+    }
 }
 
 struct Menu {
@@ -311,26 +315,25 @@ impl Menu {
 
     fn get_layout(&self, parent: i32, depth: i32, property_names: Vec<String>) -> (u32, Layout) {
         let _ = property_names;
-        let children = if parent == ROOT_ID && depth != 0 {
-            self.items
-                .iter()
-                .map(|item| {
-                    Value::from((
-                        item.entry.id(),
-                        item.properties(),
-                        Vec::<Value<'static>>::new(),
-                    ))
-                })
-                .collect()
+        let layout = if parent == ROOT_ID {
+            let children = if depth == 0 {
+                Vec::new()
+            } else {
+                self.items
+                    .iter()
+                    .map(|item| Value::from(item.layout()))
+                    .collect()
+            };
+            (
+                ROOT_ID,
+                HashMap::from([("children-display".into(), Value::from("submenu"))]),
+                children,
+            )
         } else {
-            Vec::new()
+            self.item(parent)
+                .map_or_else(|| (parent, Properties::new(), Vec::new()), MenuItem::layout)
         };
-        let root = if parent == ROOT_ID {
-            HashMap::from([("children-display".into(), Value::from("submenu"))])
-        } else {
-            self.item(parent).map_or_default(MenuItem::properties)
-        };
-        (self.revision, (parent, root, children))
+        (self.revision, layout)
     }
 
     fn get_group_properties(
@@ -516,20 +519,17 @@ fn is_host_change(signal: &Message) -> bool {
 
 /// Registers the item with the watcher; returns whether a tray host can show it.
 async fn register(connection: &Connection) -> bool {
+    let Some(name) = connection.unique_name() else {
+        return false;
+    };
     let registration = async {
         let watcher = zbus::Proxy::new(connection, WATCHER, WATCHER_PATH, WATCHER).await?;
-        let name = connection
-            .unique_name()
-            .context("Tray connection has no name")?
-            .as_str();
         watcher
-            .call::<_, _, ()>("RegisterStatusNotifierItem", &(name,))
+            .call::<_, _, ()>("RegisterStatusNotifierItem", &(name.as_str(),))
             .await?;
-        Ok::<_, anyhow::Error>(
-            watcher
-                .get_property::<bool>("IsStatusNotifierHostRegistered")
-                .await?,
-        )
+        watcher
+            .get_property::<bool>("IsStatusNotifierHostRegistered")
+            .await
     };
     matches!(
         tokio::time::timeout(REGISTRATION_TIMEOUT, registration).await,

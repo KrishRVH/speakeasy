@@ -15,6 +15,7 @@ use async_channel::Receiver;
 use x11rb::{
     connection::Connection,
     errors::ReplyError,
+    properties::WmHints,
     protocol::{
         ErrorKind, Event, shape,
         shape::ConnectionExt as _,
@@ -35,8 +36,6 @@ use crate::{DesktopOptions, Input, InputSender, insertion::Insertion};
 const MAX_FOCUS_ANCESTRY: usize = 32;
 /// The eight core modifier bits; key-event state also carries pointer-button bits above them.
 const CORE_MODIFIERS: u16 = 0xFF;
-/// `WM_HINTS` with only the input hint set, to false: the window never takes keyboard focus.
-const NO_INPUT_HINTS: [u32; 9] = [1, 0, 0, 0, 0, 0, 0, 0, 0];
 
 #[derive(PartialEq, Eq)]
 struct Keyboard {
@@ -212,8 +211,7 @@ struct ShortcutTracker<'a> {
     keyboard: &'a Keyboard,
     shortcuts: Option<Shortcuts>,
     lock: u16,
-    /// Whether a changed keyboard mapping stops input, as [`depends_on_mapping`] decides.
-    mapped: bool,
+    depends_on_mapping: bool,
     input: &'a InputSender,
     /// The dictation chord while it is held.
     held: Option<KeyBinding>,
@@ -223,10 +221,8 @@ impl ShortcutTracker<'_> {
     fn observe(&mut self, event: Event) -> anyhow::Result<()> {
         match event {
             Event::KeyPress(key) => self.press(&key),
-            Event::XinputRawKeyRelease(_) | Event::KeyRelease(_) => {
-                self.held.map_or(Ok(()), |dictate| self.release(dictate))
-            },
-            Event::MappingNotify(_) if self.mapped => self.check_mapping(),
+            Event::XinputRawKeyRelease(_) | Event::KeyRelease(_) => self.release(),
+            Event::MappingNotify(_) if self.depends_on_mapping => self.check_mapping(),
             _ => Ok(()),
         }
     }
@@ -262,7 +258,10 @@ impl ShortcutTracker<'_> {
         Ok(())
     }
 
-    fn release(&mut self, dictate: KeyBinding) -> anyhow::Result<()> {
+    fn release(&mut self) -> anyhow::Result<()> {
+        let Some(dictate) = self.held else {
+            return Ok(());
+        };
         let keys = self.connection.query_keymap()?.reply()?.keys;
         if !is_key_down(&keys, dictate.key)
             || self.keyboard.held_modifiers(&keys) & dictate.modifiers != dictate.modifiers
@@ -313,7 +312,7 @@ pub(super) async fn run(
         keyboard: &keyboard,
         shortcuts,
         lock,
-        mapped: depends_on_mapping(options),
+        depends_on_mapping: depends_on_mapping(options),
         input,
         held: None,
     };
@@ -460,15 +459,12 @@ pub(super) fn configure_pill(window: Window) -> anyhow::Result<()> {
             &xproto::ChangeWindowAttributesAux::new().override_redirect(1),
         )?
         .check()?;
-    connection
-        .change_property32(
-            xproto::PropMode::REPLACE,
-            window,
-            xproto::AtomEnum::WM_HINTS,
-            xproto::AtomEnum::WM_HINTS,
-            &NO_INPUT_HINTS,
-        )?
-        .check()?;
+    WmHints {
+        input: Some(false),
+        ..WmHints::default()
+    }
+    .set(&connection, window)?
+    .check()?;
     // An empty input region lets clicks pass through.
     connection
         .shape_rectangles(

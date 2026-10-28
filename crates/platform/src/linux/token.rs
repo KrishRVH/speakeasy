@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, ensure};
+use anyhow::ensure;
 
 const MAX_TOKEN_LEN: usize = 4096;
 /// One byte past the limit, so a file that grew after its size check fails validation instead of
@@ -18,7 +18,7 @@ const READ_LIMIT: u64 = MAX_TOKEN_LEN as u64 + 1;
 const GROUP_OR_OTHER_ACCESS: u32 = 0o077;
 
 pub(super) struct TokenStore {
-    path: PathBuf,
+    directory: PathBuf,
 }
 
 impl TokenStore {
@@ -36,15 +36,20 @@ impl TokenStore {
         );
         fs::set_permissions(directory, fs::Permissions::from_mode(0o700))?;
         Ok(Self {
-            path: directory.join("desktop-token"),
+            directory: directory.to_owned(),
         })
     }
 
+    fn path(&self) -> PathBuf {
+        self.directory.join("desktop-token")
+    }
+
     pub(super) fn consume(&self) -> anyhow::Result<Option<String>> {
+        let path = self.path();
         let file = match fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW)
-            .open(&self.path)
+            .open(&path)
         {
             Ok(file) => file,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
@@ -61,7 +66,7 @@ impl TokenStore {
         file.take(READ_LIMIT).read_to_string(&mut token)?;
         ensure!(is_well_formed(&token), "Invalid portal token");
         // Delete before presenting it: the portal may spend the token even on a cancelled restore.
-        fs::remove_file(&self.path)?;
+        fs::remove_file(path)?;
         Ok((!token.is_empty()).then_some(token))
     }
 
@@ -70,14 +75,10 @@ impl TokenStore {
             !token.is_empty() && is_well_formed(token),
             "Invalid portal token"
         );
-        let directory = self
-            .path
-            .parent()
-            .context("Portal state has no directory")?;
-        let mut file = tempfile::NamedTempFile::new_in(directory)?;
+        let mut file = tempfile::NamedTempFile::new_in(&self.directory)?;
         file.write_all(token.as_bytes())?;
         file.as_file().sync_all()?;
-        file.persist(&self.path)?;
+        file.persist(self.path())?;
         Ok(())
     }
 }
@@ -108,12 +109,12 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let store = TokenStore::at(&directory.path().join("state"))?;
         store.save("fixture-one")?;
-        assert_eq!(store.path.metadata()?.permissions().mode() & 0o777, 0o600);
+        assert_eq!(store.path().metadata()?.permissions().mode() & 0o777, 0o600);
         store.save("fixture-two")?;
         assert_eq!(store.consume()?.as_deref(), Some("fixture-two"));
         assert!(store.consume()?.is_none());
         store.save("fixture-three")?;
-        fs::set_permissions(&store.path, fs::Permissions::from_mode(0o644))?;
+        fs::set_permissions(store.path(), fs::Permissions::from_mode(0o644))?;
         assert!(store.consume().is_err());
         Ok(())
     }

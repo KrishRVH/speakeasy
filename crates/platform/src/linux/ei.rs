@@ -36,9 +36,19 @@ const MAX_TEXT_FRAME: usize = 254;
 /// XKB keycodes are evdev keycodes offset by eight.
 const XKB_KEYCODE_OFFSET: u32 = 8;
 
-type Pointer = *mut c_void;
-type Unref = unsafe extern "C" fn(Pointer) -> Pointer;
-type TextInput = unsafe extern "C" fn(Pointer, *const u8, usize);
+#[repr(C)]
+struct Ei([u8; 0]);
+#[repr(C)]
+struct EiEvent([u8; 0]);
+#[repr(C)]
+struct EiSeat([u8; 0]);
+#[repr(C)]
+struct EiDevice([u8; 0]);
+#[repr(C)]
+struct EiKeymap([u8; 0]);
+
+type Unref<T> = unsafe extern "C" fn(*mut T) -> *mut T;
+type TextInput = unsafe extern "C" fn(*mut EiDevice, *const u8, usize);
 
 macro_rules! api {
     ($($name:ident: $kind:ty),+ $(,)?) => {
@@ -72,34 +82,34 @@ macro_rules! api {
 }
 
 api! {
-    ei_new_sender: unsafe extern "C" fn(Pointer) -> Pointer,
-    ei_setup_backend_fd: unsafe extern "C" fn(Pointer, i32) -> i32,
-    ei_get_fd: unsafe extern "C" fn(Pointer) -> i32,
-    ei_dispatch: unsafe extern "C" fn(Pointer),
-    ei_get_event: unsafe extern "C" fn(Pointer) -> Pointer,
-    ei_event_get_type: unsafe extern "C" fn(Pointer) -> i32,
-    ei_event_get_device: unsafe extern "C" fn(Pointer) -> Pointer,
-    ei_event_get_seat: unsafe extern "C" fn(Pointer) -> Pointer,
-    ei_event_unref: Unref,
-    ei_unref: Unref,
-    ei_seat_bind_capabilities: unsafe extern "C" fn(Pointer, ...),
-    ei_seat_has_capability: unsafe extern "C" fn(Pointer, i32) -> bool,
-    ei_device_has_capability: unsafe extern "C" fn(Pointer, i32) -> bool,
-    ei_device_ref: unsafe extern "C" fn(Pointer) -> Pointer,
-    ei_device_unref: Unref,
-    ei_device_keyboard_get_keymap: unsafe extern "C" fn(Pointer) -> Pointer,
-    ei_keymap_get_fd: unsafe extern "C" fn(Pointer) -> i32,
-    ei_keymap_get_size: unsafe extern "C" fn(Pointer) -> usize,
-    ei_keymap_get_type: unsafe extern "C" fn(Pointer) -> i32,
-    ei_device_start_emulating: unsafe extern "C" fn(Pointer, u32),
-    ei_device_keyboard_key: unsafe extern "C" fn(Pointer, u32, bool),
-    ei_device_frame: unsafe extern "C" fn(Pointer, u64),
-    ei_device_stop_emulating: unsafe extern "C" fn(Pointer),
-    ei_now: unsafe extern "C" fn(Pointer) -> u64,
-    ei_event_keyboard_get_xkb_mods_depressed: unsafe extern "C" fn(Pointer) -> u32,
-    ei_event_keyboard_get_xkb_mods_latched: unsafe extern "C" fn(Pointer) -> u32,
-    ei_event_keyboard_get_xkb_mods_locked: unsafe extern "C" fn(Pointer) -> u32,
-    ei_event_keyboard_get_xkb_group: unsafe extern "C" fn(Pointer) -> u32,
+    ei_new_sender: unsafe extern "C" fn(*mut c_void) -> *mut Ei,
+    ei_setup_backend_fd: unsafe extern "C" fn(*mut Ei, RawFd) -> i32,
+    ei_get_fd: unsafe extern "C" fn(*mut Ei) -> RawFd,
+    ei_dispatch: unsafe extern "C" fn(*mut Ei),
+    ei_get_event: unsafe extern "C" fn(*mut Ei) -> *mut EiEvent,
+    ei_event_get_type: unsafe extern "C" fn(*mut EiEvent) -> i32,
+    ei_event_get_device: unsafe extern "C" fn(*mut EiEvent) -> *mut EiDevice,
+    ei_event_get_seat: unsafe extern "C" fn(*mut EiEvent) -> *mut EiSeat,
+    ei_event_unref: Unref<EiEvent>,
+    ei_unref: Unref<Ei>,
+    ei_seat_bind_capabilities: unsafe extern "C" fn(*mut EiSeat, ...),
+    ei_seat_has_capability: unsafe extern "C" fn(*mut EiSeat, i32) -> bool,
+    ei_device_has_capability: unsafe extern "C" fn(*mut EiDevice, i32) -> bool,
+    ei_device_ref: unsafe extern "C" fn(*mut EiDevice) -> *mut EiDevice,
+    ei_device_unref: Unref<EiDevice>,
+    ei_device_keyboard_get_keymap: unsafe extern "C" fn(*mut EiDevice) -> *mut EiKeymap,
+    ei_keymap_get_fd: unsafe extern "C" fn(*mut EiKeymap) -> RawFd,
+    ei_keymap_get_size: unsafe extern "C" fn(*mut EiKeymap) -> usize,
+    ei_keymap_get_type: unsafe extern "C" fn(*mut EiKeymap) -> i32,
+    ei_device_start_emulating: unsafe extern "C" fn(*mut EiDevice, u32),
+    ei_device_keyboard_key: unsafe extern "C" fn(*mut EiDevice, u32, bool),
+    ei_device_frame: unsafe extern "C" fn(*mut EiDevice, u64),
+    ei_device_stop_emulating: unsafe extern "C" fn(*mut EiDevice),
+    ei_now: unsafe extern "C" fn(*mut Ei) -> u64,
+    ei_event_keyboard_get_xkb_mods_depressed: unsafe extern "C" fn(*mut EiEvent) -> u32,
+    ei_event_keyboard_get_xkb_mods_latched: unsafe extern "C" fn(*mut EiEvent) -> u32,
+    ei_event_keyboard_get_xkb_mods_locked: unsafe extern "C" fn(*mut EiEvent) -> u32,
+    ei_event_keyboard_get_xkb_group: unsafe extern "C" fn(*mut EiEvent) -> u32,
 }
 
 pub(super) struct Sender {
@@ -164,7 +174,7 @@ impl Sender {
         })
     }
 
-    fn paste_target(&self) -> Result<(Pointer, PasteChord<u32>), PasteBlocked> {
+    fn paste_target(&self) -> Result<(*mut EiDevice, PasteChord<u32>), PasteBlocked> {
         let keyboard = self.keyboard.as_ref().ok_or(PasteBlocked::NoKeyboard)?;
         let keys = paste_readiness(
             keyboard.device.resumed,
@@ -213,14 +223,7 @@ impl Sender {
                 EVENT_DISCONNECT => bail!("Wayland input permission was disconnected"),
                 EVENT_SEAT_ADDED => self.bind_seat(&event),
                 EVENT_DEVICE_ADDED => self.add_device(&event),
-                EVENT_DEVICE_REMOVED => {
-                    // Our references drop here; the event still holds its own until it drops.
-                    drop(
-                        self.keyboard
-                            .take_if(|keyboard| keyboard.device.is(event.device)),
-                    );
-                    drop(self.text.take_if(|text| text.is(event.device)));
-                },
+                EVENT_DEVICE_REMOVED => self.remove_device(event.device),
                 EVENT_DEVICE_PAUSED => self.set_resumed(event.device, false),
                 EVENT_DEVICE_RESUMED => self.set_resumed(event.device, true),
                 EVENT_KEYBOARD_MODIFIERS => self.update_modifiers(&event),
@@ -279,7 +282,9 @@ impl Sender {
             if (self.api.ei_device_has_capability)(device.as_ptr(), CAPABILITY_KEYBOARD) {
                 self.keyboard = Some(Keyboard {
                     device: Device::acquire(&self.api, device),
-                    layouts: device_keymap(&self.api, device.as_ptr(), self.terminal).ok(),
+                    layouts: device_keymap(&self.api, device.as_ptr())
+                        .and_then(|keymap| PasteLayouts::new(&keymap, self.terminal))
+                        .ok(),
                     state: PasteState::Unknown,
                 });
             }
@@ -289,7 +294,14 @@ impl Sender {
         }
     }
 
-    fn set_resumed(&mut self, device: Option<NonNull<c_void>>, resumed: bool) {
+    /// Releases the sender's references to a removed `device`; the removal event still holds its own
+    /// until it drops.
+    fn remove_device(&mut self, device: Option<NonNull<EiDevice>>) {
+        drop(self.keyboard.take_if(|keyboard| keyboard.device.is(device)));
+        drop(self.text.take_if(|text| text.is(device)));
+    }
+
+    fn set_resumed(&mut self, device: Option<NonNull<EiDevice>>, resumed: bool) {
         if let Some(keyboard) = self
             .keyboard
             .as_mut()
@@ -390,7 +402,7 @@ fn paste_readiness(
 #[must_use]
 pub(super) struct ReadyPaste<'a> {
     sender: &'a mut Sender,
-    keyboard: Pointer,
+    keyboard: *mut EiDevice,
     keys: PasteChord<u32>,
 }
 
@@ -440,7 +452,7 @@ pub(super) enum TextBlocked {
 pub(super) struct ReadyText<'a, 't> {
     sender: &'a mut Sender,
     input: TextInput,
-    device: Pointer,
+    device: *mut EiDevice,
     text: &'t str,
 }
 
@@ -495,8 +507,8 @@ enum PasteState {
 
 /// The sender's owning reference to its libei context.
 struct EiContext {
-    raw: NonNull<c_void>,
-    unref: Unref,
+    raw: NonNull<Ei>,
+    unref: Unref<Ei>,
 }
 
 impl EiContext {
@@ -509,7 +521,7 @@ impl EiContext {
         })
     }
 
-    const fn as_ptr(&self) -> Pointer {
+    const fn as_ptr(&self) -> *mut Ei {
         self.raw.as_ptr()
     }
 }
@@ -525,10 +537,10 @@ impl Drop for EiContext {
 
 /// A device reference the sender holds, released when dropped.
 struct Device {
-    raw: NonNull<c_void>,
+    raw: NonNull<EiDevice>,
     /// Whether libei has resumed the device, so it accepts emulated input.
     resumed: bool,
-    unref: Unref,
+    unref: Unref<EiDevice>,
 }
 
 impl Device {
@@ -536,7 +548,7 @@ impl Device {
     ///
     /// # Safety
     /// `device` must be a live libei device.
-    unsafe fn acquire(api: &Api, device: NonNull<c_void>) -> Self {
+    unsafe fn acquire(api: &Api, device: NonNull<EiDevice>) -> Self {
         // SAFETY: the caller keeps the device live while this reference is taken.
         unsafe { (api.ei_device_ref)(device.as_ptr()) };
         Self {
@@ -546,11 +558,11 @@ impl Device {
         }
     }
 
-    fn is(&self, device: Option<NonNull<c_void>>) -> bool {
+    fn is(&self, device: Option<NonNull<EiDevice>>) -> bool {
         device == Some(self.raw)
     }
 
-    const fn as_ptr(&self) -> Pointer {
+    const fn as_ptr(&self) -> *mut EiDevice {
         self.raw.as_ptr()
     }
 }
@@ -565,10 +577,10 @@ impl Drop for Device {
 
 /// One queued libei event, released when dropped.
 struct Event {
-    raw: NonNull<c_void>,
+    raw: NonNull<EiEvent>,
     kind: i32,
-    device: Option<NonNull<c_void>>,
-    unref: Unref,
+    device: Option<NonNull<EiDevice>>,
+    unref: Unref<EiEvent>,
 }
 
 impl Drop for Event {
@@ -592,14 +604,11 @@ impl PasteLayouts {
         // Locked modifiers count as active, yet neither lock changes Ctrl+V: Caps Lock is always
         // Lock, and Num Lock is whatever the keymap's Num Lock key locks. Blocking on either would
         // disable paste while it is on.
-        let mut blockers = 0;
-        for name in ["Shift", "Control", "Mod1", "Mod2", "Mod3", "Mod4", "Mod5"] {
-            let index = keymap.mod_get_index(name);
-            if index < u32::BITS {
-                blockers |= 1 << index;
-            }
-        }
-        blockers &= !num_lock_modifiers(keymap);
+        let blockers = ["Shift", "Control", "Mod1", "Mod2", "Mod3", "Mod4", "Mod5"]
+            .into_iter()
+            .filter_map(|name| 1_u32.checked_shl(keymap.mod_get_index(name)))
+            .fold(0, |mask, bit| mask | bit)
+            & !num_lock_modifiers(keymap);
         ensure!(blockers != 0, "Missing paste modifier mapping");
         Ok(Self {
             blockers,
@@ -660,15 +669,11 @@ unsafe fn register_readiness(fd: RawFd) -> anyhow::Result<AsyncFd<OwnedFd>> {
     super::watch_readable(unsafe { BorrowedFd::borrow_raw(fd) })
 }
 
-/// Compiles the XKB keymap libei advertises for `device`, for terminal paste when `terminal`.
+/// Compiles the XKB keymap libei advertises for `device`.
 ///
 /// # Safety
 /// `device` must be a live keyboard-capable libei device.
-unsafe fn device_keymap(
-    api: &Api,
-    device: Pointer,
-    terminal: bool,
-) -> anyhow::Result<PasteLayouts> {
+unsafe fn device_keymap(api: &Api, device: *mut EiDevice) -> anyhow::Result<xkb::Keymap> {
     // SAFETY: the caller keeps the device live, so its borrowed keymap and descriptor are too.
     let (fd, size) = unsafe {
         let keymap = (api.ei_device_keyboard_get_keymap)(device);
@@ -692,14 +697,13 @@ unsafe fn device_keymap(
     let mut source = String::from_utf8(bytes)?;
     source.truncate(source.trim_end_matches('\0').len());
     let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-    let keymap = xkb::Keymap::new_from_string(
+    xkb::Keymap::new_from_string(
         &context,
         source,
         xkb::KEYMAP_FORMAT_TEXT_V1,
         xkb::KEYMAP_COMPILE_NO_FLAGS,
     )
-    .context("Invalid XKB keymap")?;
-    PasteLayouts::new(&keymap, terminal)
+    .context("Invalid XKB keymap")
 }
 
 fn utf8_chunks(mut text: &str) -> impl Iterator<Item = &str> {
@@ -818,25 +822,28 @@ mod tests {
         };
         let readable = Some(&layouts);
         assert_eq!(
-            paste_readiness(false, None, PasteState::Ready(keys)).err(),
-            Some(PasteBlocked::NoKeyboard)
+            paste_readiness(false, None, PasteState::Ready(keys)),
+            Err(PasteBlocked::NoKeyboard)
         );
         assert_eq!(
-            paste_readiness(true, None, PasteState::Unknown).err(),
-            Some(PasteBlocked::NoKeyboardState),
+            paste_readiness(true, None, PasteState::Unknown),
+            Err(PasteBlocked::NoKeyboardState),
             "An unreadable keymap read as held shortcut keys"
         );
         for state in [PasteState::Unknown, PasteState::Blocked] {
             assert_eq!(
-                paste_readiness(true, readable, state).err(),
-                Some(PasteBlocked::ShortcutKeys)
+                paste_readiness(true, readable, state),
+                Err(PasteBlocked::ShortcutKeys)
             );
         }
         assert_eq!(
-            paste_readiness(true, readable, PasteState::NoKeys).err(),
-            Some(PasteBlocked::NoPasteKeys)
+            paste_readiness(true, readable, PasteState::NoKeys),
+            Err(PasteBlocked::NoPasteKeys)
         );
-        assert!(paste_readiness(true, readable, PasteState::Ready(keys)).is_ok());
+        assert_eq!(
+            paste_readiness(true, readable, PasteState::Ready(keys)),
+            Ok(keys)
+        );
     }
 
     #[test]
