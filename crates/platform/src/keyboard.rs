@@ -202,7 +202,7 @@ enum Action {
     Show(Scope),
     Pin(Taps),
     Cancel,
-    /// Interrupt, then release: another shortcut, a session change, or unseen key events ended
+    /// Interrupt, then release: another shortcut, a session change, or a key-tap outage ended
     /// dictation.
     Interrupt,
 }

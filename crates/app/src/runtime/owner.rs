@@ -259,7 +259,7 @@ impl<P: Ports> Owner<P> {
                 None
             },
             Input::Cancel => self.gesture.cancel(),
-            // Another shortcut, a session change, or unseen key events ended dictation: the
+            // Another shortcut, a session change, or a macOS key-tap outage ended dictation: the
             // recording ends without the cue that confirms a cancel the user never asked for.
             Input::Interrupt => {
                 if self.gesture.cancel().is_some() {
