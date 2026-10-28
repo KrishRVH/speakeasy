@@ -72,9 +72,9 @@ pub(super) struct TransferPayload {
 ///
 /// Every failure, including a refused or stalled report, fails only this transfer: the editor reads
 /// nothing. A lost portal or bus connection ends serving through the session monitor instead.
-pub(super) async fn transfer<D: Future<Output = anyhow::Result<()>>>(
+pub(super) async fn transfer(
     write: impl Future<Output = anyhow::Result<OwnedFd>>,
-    done: impl FnOnce(bool) -> D,
+    done: impl AsyncFnOnce(bool) -> anyhow::Result<()>,
     payload: Option<TransferPayload>,
 ) {
     // Editors may request the payload after paste commits, so only selection loss ends serving.
@@ -160,7 +160,7 @@ mod tests {
                     entered.try_send(())?;
                     Ok(OwnedFd::from(writer))
                 },
-                |_| async { Ok(()) },
+                async |_| Ok(()),
                 Some(selection.payload()),
             )
             .boxed_local(),
@@ -193,7 +193,7 @@ mod tests {
         let (sent, reported) = async_channel::bounded(1);
         transfer(
             async { Ok(OwnedFd::from(writer)) },
-            move |success| async move {
+            async move |success| {
                 sent.send(success).await?;
                 Ok(())
             },
@@ -217,7 +217,7 @@ mod tests {
         reader.set_read_timeout(Some(Duration::from_millis(100)))?;
         transfer(
             async { Ok(OwnedFd::from(writer)) },
-            move |success| async move {
+            async move |success| {
                 sent.send(success).await?;
                 Ok(())
             },
@@ -252,7 +252,7 @@ mod tests {
             TRANSFER_TIMEOUT + Duration::from_millis(500),
             transfer(
                 std::future::pending(),
-                move |success| async move {
+                async move |success| {
                     sent.send(success).await?;
                     Ok(())
                 },
@@ -263,7 +263,11 @@ mod tests {
         assert!(!reported.recv().await?);
         tokio::time::timeout(
             TRANSFER_TIMEOUT + Duration::from_millis(500),
-            transfer(std::future::pending(), |_| std::future::pending(), None),
+            transfer(
+                std::future::pending(),
+                async |_| std::future::pending().await,
+                None,
+            ),
         )
         .await
         .context("SelectionWriteDone had no deadline")?;

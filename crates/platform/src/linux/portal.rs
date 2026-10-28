@@ -451,8 +451,8 @@ pub(super) async fn run(
         connected = Portal::connect() => connected?,
     };
     // A portal restart, or a session closed while a later consent dialog is open, ends binding,
-    // which closes that dialog. Binding is polled first: a declined dialog answers before the
-    // portal closes its session, and that answer names the cause.
+    // which closes that dialog. Binding is polled before revocation: a declined dialog answers
+    // before the portal closes its session, and that answer names the cause.
     let session_root = portal.session_root();
     let bound = tokio::select! {
         biased;
@@ -474,15 +474,14 @@ async fn bind(portal: &mut Portal, options: &DesktopOptions) -> anyhow::Result<B
     let libei = (options.paste != LinuxPaste::Manual)
         .then(ei::Api::load)
         .transpose()?;
-    let mut labels = ShortcutLabels::new(options);
-    let shortcut_session = if options.external_shortcut {
-        None
+    let (shortcut_session, labels) = if options.external_shortcut {
+        (None, ShortcutLabels::new(options))
     } else {
-        Some(bind_shortcuts(portal, options, &mut labels).await?)
+        let (session, labels) = bind_shortcuts(portal, options).await?;
+        (Some(session), labels)
     };
-    let terminal = options.paste == LinuxPaste::Terminal;
     let remote = match libei {
-        Some(libei) => Some(start_remote_desktop(portal, libei, terminal).await?),
+        Some(libei) => Some(start_remote_desktop(portal, libei, options.paste).await?),
         None => None,
     };
     Ok(Bound {
@@ -492,11 +491,11 @@ async fn bind(portal: &mut Portal, options: &DesktopOptions) -> anyhow::Result<B
     })
 }
 
+/// Binds the dictate and cancel shortcuts, returning their session and the labels Settings shows.
 async fn bind_shortcuts(
     portal: &mut Portal,
     options: &DesktopOptions,
-    labels: &mut ShortcutLabels,
-) -> anyhow::Result<OwnedObjectPath> {
+) -> anyhow::Result<(OwnedObjectPath, ShortcutLabels)> {
     let session = portal.create_session(SHORTCUTS).await?;
     let (handle, request) = portal.request_options();
     let shortcuts = vec![
@@ -532,6 +531,7 @@ async fn bind_shortcuts(
             && bindings.iter().any(|(id, _)| id == CANCEL_ID),
         "Both dictate and cancel shortcuts must be enabled"
     );
+    let mut labels = ShortcutLabels::new(options);
     for (id, mut values) in bindings {
         if let Some(trigger) = values.remove("trigger_description") {
             match id.as_str() {
@@ -541,13 +541,13 @@ async fn bind_shortcuts(
             }
         }
     }
-    Ok(session)
+    Ok((session, labels))
 }
 
 async fn start_remote_desktop(
     portal: &mut Portal,
     libei: ei::Api,
-    terminal_paste: bool,
+    paste: LinuxPaste,
 ) -> anyhow::Result<Remote> {
     let tokens = TokenStore::open();
     let session = portal.create_session(REMOTE).await?;
@@ -604,8 +604,12 @@ async fn start_remote_desktop(
         .call("ConnectToEIS", &(&session, Options::new()))
         .await?;
     Ok(Remote {
-        sender: ei::Sender::connect(libei, OwnedFd::from(descriptor), terminal_paste)?,
         session,
+        sender: ei::Sender::connect(
+            libei,
+            OwnedFd::from(descriptor),
+            paste == LinuxPaste::Terminal,
+        )?,
         shares_clipboard,
     })
 }

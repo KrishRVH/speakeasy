@@ -34,8 +34,6 @@ const PLAIN_TEXT: [&str; 2] = ["text/plain;charset=utf-8", "text/plain"];
 const MAX_TRANSFERS: usize = 4;
 const SELECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
-type Stage<'a> = LocalBoxFuture<'a, anyhow::Result<Prepared>>;
-
 /// The insertion pipeline. A paste request waits for released modifiers unless the user pastes
 /// manually, then copies through the portal or X11 clipboard and confirms ownership; direct text
 /// skips both. Every request checks focus before it pastes or types through libei.
@@ -131,10 +129,10 @@ impl<'a> Insertions<'a> {
     fn accepts_transfers(&self) -> bool {
         self.bound.clipboard_session().is_some()
             && self.transfers.len() < MAX_TRANSFERS
-            && !self
+            && self
                 .preparing
                 .as_ref()
-                .is_some_and(|work| work.setting_selection)
+                .is_none_or(|work| !work.setting_selection)
     }
 
     fn apply_queued_notices(&mut self) {
@@ -177,14 +175,19 @@ impl<'a> Insertions<'a> {
             request.reply.send(Ok(Inserted::Cancelled));
             return Ok(());
         }
-        let (task, setting_selection) = match request.delivery {
-            Delivery::Direct => (
-                query_focus(self.worker, request.permit.clone(), Route::Direct).boxed_local(),
+        let permit = request.permit.clone();
+        let (task, setting_selection) = match (request.delivery, self.bound.clipboard_session()) {
+            (Delivery::Direct, _) => (
+                query_focus(self.worker, permit, Route::Direct).boxed_local(),
                 false,
             ),
-            Delivery::Paste => (
-                self.copy(&request),
-                self.bound.clipboard_session().is_some(),
+            (Delivery::Paste, Some(session)) => (
+                set_selection(self.clipboard, session.clone(), permit).boxed_local(),
+                true,
+            ),
+            (Delivery::Paste, None) => (
+                copy_with_x11(self.worker, request.text.clone(), permit).boxed_local(),
+                false,
             ),
         };
         self.preparing = Some(Preparing {
@@ -193,14 +196,6 @@ impl<'a> Insertions<'a> {
             task,
         });
         Ok(())
-    }
-
-    fn copy(&self, request: &Insertion) -> Stage<'a> {
-        let permit = request.permit.clone();
-        match self.bound.clipboard_session() {
-            Some(session) => set_selection(self.clipboard, session.clone(), permit).boxed_local(),
-            None => copy_with_x11(self.worker, request.text.clone(), permit).boxed_local(),
-        }
     }
 
     fn advance_preparation(&mut self, prepared: anyhow::Result<Prepared>) -> anyhow::Result<()> {
@@ -285,7 +280,7 @@ impl<'a> Insertions<'a> {
                 clipboard.call("SelectionWrite", &(session, serial)).await?;
             Ok(OwnedFd::from(fd))
         };
-        let done = move |success: bool| async move {
+        let done = async move |success: bool| {
             clipboard
                 .call::<_, _, ()>("SelectionWriteDone", &(path, serial, success))
                 .await?;
@@ -311,7 +306,7 @@ struct Preparing<'a> {
     /// Whether `task` is `SetSelection`. Transfers wait until it returns, because only then does
     /// `selection` hold the new text.
     setting_selection: bool,
-    task: Stage<'a>,
+    task: LocalBoxFuture<'a, anyhow::Result<Prepared>>,
 }
 
 /// The outcome of one preparation stage.
