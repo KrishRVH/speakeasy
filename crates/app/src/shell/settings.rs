@@ -445,10 +445,8 @@ impl Drop for Settings {
     fn drop(&mut self) {
         self.request_setup_stops();
         // Quit may release this view before its save task sees a completion, so finish the writes
-        // here, in order, before joining setups.
+        // here, in order, before the setup fields join their threads.
         self.saves.flush();
-        self.setup = None;
-        self.retiring_setups.clear();
     }
 }
 
