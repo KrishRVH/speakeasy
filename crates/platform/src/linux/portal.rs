@@ -129,6 +129,8 @@ impl Portal {
         Ok(Proxy::new(&self.connection, DESTINATION, DESKTOP, interface).await?)
     }
 
+    /// Calls a portal method that answers through a Request object and awaits that answer. A portal
+    /// restart leaves the request unanswered; binding, its only caller, watches for restarts.
     async fn request<B: serde::Serialize + zbus::zvariant::DynamicType + Sync>(
         &mut self,
         interface: &'static str,
@@ -140,12 +142,6 @@ impl Portal {
             format!("{DESKTOP}/request/{}/{token}", self.sender_segment).try_into()?;
         let request = Proxy::new(&self.connection, DESTINATION, path.clone(), REQUEST).await?;
         let mut responses = request.receive_signal("Response").await?;
-        let mut restarts = MessageStream::for_match_rule(
-            owner_changes(DESTINATION)?,
-            &self.connection,
-            Some(REVOCATION_BACKLOG),
-        )
-        .await?;
         // Track the request before calling, so retirement can close a consent dialog that has
         // not answered yet.
         self.unanswered.push(path.clone());
@@ -154,10 +150,10 @@ impl Portal {
             returned == path,
             "Portal returned an unexpected request path"
         );
-        let response = tokio::select! {
-            response = responses.next() => response.context("Portal request disconnected")?,
-            _ = restarts.next() => bail!("The desktop portal restarted during permission setup"),
-        };
+        let response = responses
+            .next()
+            .await
+            .context("Portal request disconnected")?;
         let (status, values): (u32, Results) = response.body().deserialize()?;
         self.unanswered.retain(|pending| pending != &path);
         ensure!(status == 0, "Desktop permission was declined or cancelled");
@@ -459,9 +455,9 @@ pub(super) async fn run(
         () = stopping(stop, input) => return Ok(()),
         connected = Portal::connect() => connected?,
     };
-    // A session closed while a later consent dialog is open ends binding, which closes that dialog.
-    // Binding is polled first: a declined dialog answers before the portal closes its session, and
-    // that answer names the cause.
+    // A portal restart, or a session closed while a later consent dialog is open, ends binding,
+    // which closes that dialog. Binding is polled first: a declined dialog answers before the
+    // portal closes its session, and that answer names the cause.
     let session_root = portal.session_root();
     let bound = tokio::select! {
         biased;
