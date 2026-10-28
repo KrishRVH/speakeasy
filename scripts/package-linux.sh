@@ -33,7 +33,6 @@ cargo about generate --locked --fail -c packaging/about.toml --target x86_64-unk
 install -Dm644 "$staging/THIRD-PARTY-NOTICES.txt" "$app_dir/usr/share/licenses/speakeasy/THIRD-PARTY-NOTICES.txt"
 install -Dm644 crates/app/assets/JosefinSans-OFL.txt "$app_dir/usr/share/licenses/speakeasy/JosefinSans-OFL.txt"
 install -Dm644 crates/show/NOTICE.md "$app_dir/usr/share/licenses/speakeasy/NOTICE.md"
-install -Dm644 settings.example.json "$app_dir/usr/share/speakeasy/settings.example.json"
 {
   printf 'Architecture: x86_64\nApplication glibc requirement: %s\n' "$required"
   echo 'Rendering requires X11 or Xwayland and a working Vulkan driver.'
