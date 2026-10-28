@@ -63,9 +63,9 @@ Clipboard writes are followed by ownership and cancellation checks; cleanup neve
 clipboard payload. Submitted synthetic keys receive release cleanup even after partial failure. X11
 queues each paste and its releases before one server synchronization and checks every submission.
 Manual copy skips the modifier wait. Wayland serves bounded, asynchronous clipboard transfers while
-receiving input and cancellation; clipboard calls through Xwayland run on a serialized, owned
-worker. A committed clipboard selection remains available until ownership changes or the service
-retires.
+receiving input and cancellation, and a failed transfer fails only that paste; clipboard calls
+through Xwayland run on a serialized, owned worker. A committed clipboard selection remains
+available until ownership changes or the service retires.
 
 Settings' **Insert** control offers **Paste (Ctrl+V)**, **Paste (Ctrl+Shift+V)** for terminals,
 **Type (Keep clipboard)**, and **Copy for manual paste**. In the settings file, `manual_paste` takes

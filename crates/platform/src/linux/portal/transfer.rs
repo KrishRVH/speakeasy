@@ -66,11 +66,14 @@ pub(super) struct TransferPayload {
 /// Answers one `SelectionTransfer`: writes `payload` to the descriptor `write` yields unless its
 /// selection drops first, then reports through `done` whether the whole payload reached the pipe.
 /// A missing payload reports failure. Each step is bounded by [`TRANSFER_TIMEOUT`].
+///
+/// Every failure, including a refused or stalled report, fails only this transfer: the editor reads
+/// nothing. A lost portal or bus connection ends serving through the session monitor instead.
 pub(super) async fn transfer<D: Future<Output = anyhow::Result<()>>>(
     write: impl Future<Output = anyhow::Result<OwnedFd>>,
     done: impl FnOnce(bool) -> D,
     payload: Option<TransferPayload>,
-) -> anyhow::Result<()> {
+) {
     // Editors may request the payload after paste commits, so only selection loss ends serving.
     let success = match payload {
         Some(payload) => tokio::select! {
@@ -80,8 +83,11 @@ pub(super) async fn transfer<D: Future<Output = anyhow::Result<()>>>(
         },
         None => false,
     };
-    tokio::time::timeout(TRANSFER_TIMEOUT, done(success)).await??;
-    Ok(())
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "A report the portal refuses or never answers fails only this transfer; the session monitor reports a lost portal"
+    )]
+    let _ = tokio::time::timeout(TRANSFER_TIMEOUT, done(success)).await;
 }
 
 async fn write_payload(
@@ -193,7 +199,7 @@ mod tests {
             },
             Some(selected.transfer()),
         )
-        .await?;
+        .await;
         assert!(
             reported.recv().await?,
             "Paste commitment invalidated clipboard serving"
@@ -217,7 +223,7 @@ mod tests {
             },
             Some(previous_payload),
         )
-        .await?;
+        .await;
         assert!(!reported.recv().await?);
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes)?;
@@ -253,14 +259,14 @@ mod tests {
                 Some(selected.transfer()),
             ),
         )
-        .await??;
+        .await?;
         assert!(!reported.recv().await?);
-        let result = tokio::time::timeout(
+        tokio::time::timeout(
             TRANSFER_TIMEOUT + Duration::from_millis(500),
             transfer(std::future::pending(), |_| std::future::pending(), None),
         )
-        .await?;
-        assert!(result.is_err(), "SelectionWriteDone had no deadline");
+        .await
+        .context("SelectionWriteDone had no deadline")?;
         Ok(())
     }
 }

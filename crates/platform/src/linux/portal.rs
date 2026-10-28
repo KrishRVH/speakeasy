@@ -56,7 +56,7 @@ const OWNERSHIP_SETTLE: Duration = Duration::from_millis(500);
 type Results = HashMap<String, OwnedValue>;
 type Options = HashMap<&'static str, Value<'static>>;
 type DesktopChanges = futures_util::stream::Select<MessageStream, MessageStream>;
-type Transfers<'a> = FuturesUnordered<LocalBoxFuture<'a, anyhow::Result<()>>>;
+type Transfers<'a> = FuturesUnordered<LocalBoxFuture<'a, ()>>;
 
 struct Portal {
     connection: Connection,
@@ -706,9 +706,7 @@ async fn serve(
                 insertions.apply(notice.context("Desktop monitoring stopped")?);
             },
             prepared = prepared => insertions.advance_preparation(prepared)?,
-            written = insertions.transfers.next(), if !insertions.transfers.is_empty() => {
-                written.context("Clipboard transfer stopped")??;
-            },
+            _ = insertions.transfers.next(), if !insertions.transfers.is_empty() => {},
             event = transfer_requests.next(), if accepts_transfers => {
                 insertions.serve_transfer(&event.context("Clipboard portal disconnected")?)?;
             },
