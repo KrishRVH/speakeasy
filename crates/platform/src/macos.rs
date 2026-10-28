@@ -6,11 +6,10 @@
 pub(crate) mod screen;
 
 use std::{
-    cell::RefCell,
     ffi::c_void,
     panic::{self, AssertUnwindSafe},
     ptr::NonNull,
-    sync::Arc,
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
     time::Instant,
 };
 
@@ -80,11 +79,12 @@ pub(super) fn start(
     _: DesktopOptions,
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
     let (insertion, inserter) = insertion::Worker::start(input.clone())?;
-    let observers = lifecycle_observers(&input);
+    let policy = Arc::new(SharedPolicy::default());
+    let observers = lifecycle_observers(&input, &policy);
     let control = Arc::new(MonitorControl::default());
     let thread = OwnedThread::spawn("input-monitor", {
         let control = Arc::clone(&control);
-        move || monitor(&input, &control)
+        move || monitor(&input, &control, policy)
     })?;
     let monitor = Monitor {
         control,
@@ -117,6 +117,25 @@ impl RunLoopReady<'_> {
     }
 }
 
+/// The Fn policy, which the event tap decides on its run-loop thread and lifecycle notifications
+/// interrupt from the thread that posts them.
+#[derive(Default)]
+struct SharedPolicy {
+    #[expect(
+        clippy::disallowed_types,
+        reason = "AppKit posts lifecycle notifications on its own thread while the event tap decides keys on its run loop, which cannot receive them as events; deciding and delivering under one lock keeps the owner's inputs in decision order"
+    )]
+    policy: Mutex<keyboard::Mac>,
+}
+
+impl SharedPolicy {
+    /// A panic while deciding already closed the input lane, so a poisoned policy decides nothing
+    /// the owner still hears.
+    fn lock(&self) -> MutexGuard<'_, keyboard::Mac> {
+        self.policy.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 /// Removes a notification observer when dropped.
 struct Observer {
     center: Retained<NSNotificationCenter>,
@@ -128,13 +147,21 @@ impl Observer {
         center: Retained<NSNotificationCenter>,
         name: &NSString,
         input: &InputSender,
+        policy: &Arc<SharedPolicy>,
     ) -> Self {
         let input = input.clone();
-        let callback =
-            RcBlock::new(move |_: NonNull<NSNotification>| input.deliver(Input::Interrupt));
+        let policy = Arc::clone(policy);
+        let callback = RcBlock::new(move |_: NonNull<NSNotification>| {
+            // A panic must not unwind into AppKit.
+            let interrupted =
+                panic::catch_unwind(AssertUnwindSafe(|| policy.lock().interrupt(&input)));
+            if interrupted.is_err() {
+                input.close();
+            }
+        });
         // SAFETY: with no queue the block runs on whichever thread posts the notification; it
-        // captures only an `InputSender`, which any thread may use, touches no AppKit object, and
-        // the center retains it until the observer is removed.
+        // captures only an `InputSender` and the locked policy, which any thread may use, touches
+        // no AppKit object, and the center retains it until the observer is removed.
         let token = unsafe {
             center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &callback)
         };
@@ -151,7 +178,7 @@ impl Drop for Observer {
     }
 }
 
-fn lifecycle_observers(input: &InputSender) -> Vec<Observer> {
+fn lifecycle_observers(input: &InputSender, policy: &Arc<SharedPolicy>) -> Vec<Observer> {
     let workspace = NSWorkspace::sharedWorkspace().notificationCenter();
     // SAFETY: AppKit's exported notification names are immutable constants.
     let (will_sleep, resigned) = unsafe {
@@ -163,14 +190,14 @@ fn lifecycle_observers(input: &InputSender) -> Vec<Observer> {
     let distributed = NSDistributedNotificationCenter::defaultCenter().into_super();
     let screen_locked = NSString::from_str("com.apple.screenIsLocked");
     vec![
-        Observer::interrupt_on(workspace.clone(), will_sleep, input),
-        Observer::interrupt_on(workspace, resigned, input),
-        Observer::interrupt_on(distributed, &screen_locked, input),
+        Observer::interrupt_on(workspace.clone(), will_sleep, input, policy),
+        Observer::interrupt_on(workspace, resigned, input, policy),
+        Observer::interrupt_on(distributed, &screen_locked, input, policy),
     ]
 }
 
-fn monitor(input: &InputSender, control: &MonitorControl<CFRunLoop>) {
-    if let Err(error) = run_event_loop(input, control)
+fn monitor(input: &InputSender, control: &MonitorControl<CFRunLoop>, policy: Arc<SharedPolicy>) {
+    if let Err(error) = run_event_loop(input, control, policy)
         && !control.stopping()
         && !input.is_closed()
     {
@@ -180,11 +207,15 @@ fn monitor(input: &InputSender, control: &MonitorControl<CFRunLoop>) {
     input.close();
 }
 
-fn run_event_loop(input: &InputSender, control: &MonitorControl<CFRunLoop>) -> anyhow::Result<()> {
+fn run_event_loop(
+    input: &InputSender,
+    control: &MonitorControl<CFRunLoop>,
+    policy: Arc<SharedPolicy>,
+) -> anyhow::Result<()> {
     if control.stopping() {
         return Ok(());
     }
-    let tap = shortcut_tap(input)?;
+    let tap = shortcut_tap(input, policy)?;
     let source = tap.mach_port().create_runloop_source(0).map_err(|()| {
         anyhow!("Cannot watch the dictation shortcut. Resume dictation to try again.")
     })?;
@@ -224,12 +255,10 @@ fn run_event_loop(input: &InputSender, control: &MonitorControl<CFRunLoop>) -> a
     Ok(())
 }
 
-fn shortcut_tap(input: &InputSender) -> anyhow::Result<CGEventTap<'static>> {
-    #[expect(
-        clippy::disallowed_types,
-        reason = "CGEventTap requires an Fn callback; this policy belongs exclusively to that callback on its native run-loop thread"
-    )]
-    let policy = RefCell::new(keyboard::Mac::default());
+fn shortcut_tap(
+    input: &InputSender,
+    policy: Arc<SharedPolicy>,
+) -> anyhow::Result<CGEventTap<'static>> {
     let input = input.clone();
     CGEventTap::new(
         CGEventTapLocation::Session,
@@ -244,7 +273,7 @@ fn shortcut_tap(input: &InputSender) -> anyhow::Result<CGEventTap<'static>> {
             // A panic must not unwind into the OS. Closing the input makes the owner cancel rather
             // than continue with lost key edges.
             panic::catch_unwind(AssertUnwindSafe(|| {
-                observe(&input, &mut policy.borrow_mut(), kind, event)
+                observe(&input, &mut policy.lock(), kind, event)
             }))
             .unwrap_or_else(|_| {
                 input.close();
@@ -296,14 +325,20 @@ fn observe(
         return CallbackResult::Keep;
     }
     let code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
+    // Both crates mirror the same CGEventFlags bits.
+    let held = held(objc2_core_graphics::CGEventFlags(event.get_flags().bits()));
     let key_event = match kind {
-        CGEventType::KeyDown => MacEvent::Key { code, down: true },
-        CGEventType::KeyUp => MacEvent::Key { code, down: false },
-        // Both crates mirror the same CGEventFlags bits.
-        CGEventType::FlagsChanged => MacEvent::FlagsChanged {
+        CGEventType::KeyDown => MacEvent::Key {
             code,
-            held: held(objc2_core_graphics::CGEventFlags(event.get_flags().bits())),
+            down: true,
+            held,
         },
+        CGEventType::KeyUp => MacEvent::Key {
+            code,
+            down: false,
+            held,
+        },
+        CGEventType::FlagsChanged => MacEvent::FlagsChanged { code, held },
         _ => return CallbackResult::Keep,
     };
     let decision = policy.observe(key_event, Instant::now());

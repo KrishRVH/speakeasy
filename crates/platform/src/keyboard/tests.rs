@@ -25,6 +25,18 @@ const NONE_HELD: Physical = Physical {
     chord_keys: [false; 4],
     shortcut: false,
 };
+/// What a macOS key event's flags report while Fn is held.
+const FN_HELD: Modifiers = Modifiers {
+    shift: false,
+    shortcut: false,
+    talk: true,
+};
+/// What a macOS key event's flags report with no modifier held.
+const NO_MODIFIERS: Modifiers = Modifiers {
+    shift: false,
+    shortcut: false,
+    talk: false,
+};
 
 /// What Windows reports while `keys` are held.
 fn held(keys: &[u32]) -> Physical {
@@ -51,8 +63,12 @@ fn function(down: bool) -> MacEvent {
     }
 }
 
-fn key(code: i64, down: bool) -> MacEvent {
-    MacEvent::Key { code, down }
+fn key(code: i64, down: bool, held: Modifiers) -> MacEvent {
+    MacEvent::Key { code, down, held }
+}
+
+fn delivered(decision: &Decision) -> Vec<Action> {
+    decision.actions().collect()
 }
 
 #[test]
@@ -174,7 +190,7 @@ fn s_during_a_hold_starts_a_show_and_is_swallowed_through_its_release() {
 
     let mut mac = Mac::default();
     mac.observe(function(true), now());
-    let show = mac.observe(key(Mac::SCREEN, true), now());
+    let show = mac.observe(key(Mac::SCREEN, true, FN_HELD), now());
     assert!(show.swallows());
     assert_eq!(show.action, Some(Action::Show(Scope::Screen)));
     // macOS reports Shift as a flag change while Fn stays held, and it keeps the Show too.
@@ -222,10 +238,10 @@ fn w_and_a_during_a_hold_start_window_and_area_shows() {
 
         let mut mac = Mac::default();
         mac.observe(function(true), now());
-        let show = mac.observe(key(mac_key, true), now());
+        let show = mac.observe(key(mac_key, true, FN_HELD), now());
         assert!(show.swallows());
         assert_eq!(show.action, Some(Action::Show(scope)));
-        assert!(mac.observe(key(mac_key, false), now()).swallows());
+        assert!(mac.observe(key(mac_key, false, FN_HELD), now()).swallows());
     }
 }
 
@@ -444,32 +460,103 @@ fn windows_missed_release_and_other_shortcuts_do_not_restart_hold() {
             .starts()
     );
     assert_eq!(
-        policy.observe(LEFT_CONTROL, true, NONE_HELD, now()).action,
-        Some(Action::Release)
+        delivered(&policy.observe(LEFT_CONTROL, true, NONE_HELD, now())),
+        [Action::Release]
     );
+}
+
+#[test]
+fn a_missed_release_lets_s_reach_the_app() {
+    // Ctrl+Win went up on the secure desktop, where the hook sees nothing.
+    let mut policy = Windows::default();
+    policy.observe(LEFT_CONTROL, true, NONE_HELD, now());
+    assert!(
+        policy
+            .observe(LEFT_WINDOWS, true, held(&[LEFT_CONTROL]), now())
+            .starts()
+    );
+    let typed = policy.observe(LETTER_S, true, NONE_HELD, now());
+    assert!(!typed.swallows(), "S after a missed release was swallowed");
+    assert_eq!(delivered(&typed), [Action::Release]);
+    assert!(!policy.observe(LETTER_S, false, NONE_HELD, now()).swallows());
+
+    // The tap missed Fn's release, so the next key's flags show Fn up.
+    let mut mac = Mac::default();
+    assert!(mac.observe(function(true), now()).starts());
+    let typed = mac.observe(key(Mac::SCREEN, true, NO_MODIFIERS), now());
+    assert!(
+        !typed.swallows(),
+        "S after a missed Fn release was swallowed"
+    );
+    assert_eq!(delivered(&typed), [Action::Release]);
+    assert!(mac.observe(function(true), now()).starts());
+    // Fn has one key, so a second press proves the release between them was missed.
+    assert_eq!(
+        delivered(&mac.observe(function(true), now())),
+        [Action::Release, Action::Press]
+    );
+}
+
+#[test]
+fn mac_lifecycle_interruption_waits_for_fn_release() -> anyhow::Result<()> {
+    let (sender, events) = async_channel::bounded(4);
+    let input = InputSender::new(sender);
+    let mut policy = Mac::default();
+    assert!(policy.observe(function(true), now()).starts());
+    policy.interrupt(&input);
+    assert!(matches!(events.try_recv()?, Input::Interrupt));
+    assert!(matches!(events.try_recv()?, Input::Release));
+    let typed = policy.observe(key(Mac::SCREEN, true, FN_HELD), now());
+    assert!(
+        !typed.swallows(),
+        "S during an interrupted hold was swallowed"
+    );
+    assert_eq!(delivered(&typed), []);
+    assert_eq!(delivered(&policy.observe(function(false), now())), []);
+    assert!(policy.observe(function(true), now()).starts());
+
+    // Fn went up while the Mac slept, unseen; the first press after waking still starts.
+    policy.interrupt(&input);
+    assert!(
+        policy.observe(function(true), now()).starts(),
+        "The first press after an unseen release was lost"
+    );
+    Ok(())
 }
 
 #[test]
 fn mac_function_space_and_escape_are_observed_without_native_events() {
     let mut policy = Mac::default();
     assert!(policy.observe(function(true), now()).starts());
-    assert_eq!(policy.observe(function(true), now()).action, None);
-    assert!(policy.observe(key(Mac::SPACE, true), now()).swallows());
+    assert!(
+        policy
+            .observe(key(Mac::SPACE, true, FN_HELD), now())
+            .swallows()
+    );
     assert_eq!(
         policy.observe(function(false), now()).action,
         Some(Action::Release)
     );
-    assert!(policy.observe(key(Mac::SPACE, false), now()).swallows());
-    let escape = policy.observe(key(Mac::ESCAPE, true), now());
+    assert!(
+        policy
+            .observe(key(Mac::SPACE, false, NO_MODIFIERS), now())
+            .swallows()
+    );
+    let escape = policy.observe(key(Mac::ESCAPE, true, NO_MODIFIERS), now());
     assert_eq!(escape.action, Some(Action::Cancel));
     assert!(!escape.swallows());
     assert!(policy.observe(function(true), now()).starts());
     assert_eq!(
-        policy.observe(key(MAC_Q, true), now()).action,
+        policy.observe(key(MAC_Q, true, FN_HELD), now()).action,
         Some(Action::Interrupt)
     );
-    assert!(!policy.observe(function(true), now()).starts());
-    policy.observe(function(false), now());
+    assert!(
+        !policy
+            .observe(key(Mac::SPACE, true, FN_HELD), now())
+            .swallows(),
+        "Space after another shortcut interrupted the hold was swallowed"
+    );
+    assert_eq!(delivered(&policy.observe(function(false), now())), []);
     assert!(policy.observe(function(true), now()).starts());
 }
 

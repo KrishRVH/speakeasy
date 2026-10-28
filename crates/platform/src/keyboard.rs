@@ -102,6 +102,19 @@ impl Chord {
         }
         held
     }
+
+    /// Ends dictation for a session change or lost key events, then waits for the chord's release.
+    fn interrupt_dictation(&mut self, input: &InputSender) {
+        Action::Interrupt.deliver(input);
+        self.interrupt();
+    }
+
+    /// Ends the hold when the chord was not `held` just before this event, so its release never
+    /// arrived, as on the secure desktop or across sleep. Returns whether that ended an
+    /// uninterrupted hold, whose release the owner still has to hear.
+    fn reconcile(&mut self, held: bool) -> bool {
+        !held && self.release().is_some()
+    }
 }
 
 /// Two quick taps of Shift alone, which drop a numbered pin during a Show.
@@ -204,6 +217,9 @@ impl Action {
 
 /// What a native callback does with one key event.
 pub(super) struct Decision {
+    /// The hold ended before this event without its release arriving; the owner hears that
+    /// release before `action`.
+    missed_release: bool,
     action: Option<Action>,
     swallowed: bool,
 }
@@ -211,6 +227,7 @@ pub(super) struct Decision {
 impl Decision {
     const fn pass(action: Option<Action>) -> Self {
         Self {
+            missed_release: false,
             action,
             swallowed: false,
         }
@@ -218,9 +235,25 @@ impl Decision {
 
     const fn swallow(action: Option<Action>) -> Self {
         Self {
+            missed_release: false,
             action,
             swallowed: true,
         }
+    }
+
+    const fn after_missed_release(self, missed_release: bool) -> Self {
+        Self {
+            missed_release,
+            ..self
+        }
+    }
+
+    /// The actions to deliver, in order.
+    fn actions(&self) -> impl Iterator<Item = Action> {
+        self.missed_release
+            .then_some(Action::Release)
+            .into_iter()
+            .chain(self.action)
     }
 
     /// Whether the focused app must not receive the event.
@@ -235,7 +268,7 @@ impl Decision {
     }
 
     pub(super) fn deliver(&self, input: &InputSender) {
-        if let Some(action) = self.action {
+        for action in self.actions() {
             action.deliver(input);
         }
     }
@@ -320,8 +353,7 @@ impl Windows {
 
     /// Ends dictation for a session change, then waits for the chord's release.
     pub(super) fn interrupt(&mut self, input: &InputSender) {
-        Action::Interrupt.deliver(input);
-        self.chord.interrupt();
+        self.chord.interrupt_dictation(input);
     }
 
     /// Decides one hook event at `at`. `physical` is what the OS reports held before this event;
@@ -334,6 +366,27 @@ impl Windows {
         physical: Physical,
         at: Instant,
     ) -> Decision {
+        let missed_release = self.reconcile(physical.chord_keys);
+        self.decide(key, down, physical, at)
+            .after_missed_release(missed_release)
+    }
+
+    /// Forgets the chord keys Windows reports up before this event and ends a hold they no longer
+    /// make.
+    fn reconcile(&mut self, physical_before_event: [bool; 4]) -> bool {
+        for (tracked, physically_down) in self.chord_keys_down.iter_mut().zip(physical_before_event)
+        {
+            *tracked &= physically_down;
+        }
+        self.chord.reconcile(self.chord_held())
+    }
+
+    const fn chord_held(&self) -> bool {
+        let [left_control, right_control, left_windows, right_windows] = self.chord_keys_down;
+        (left_control || right_control) && (left_windows || right_windows)
+    }
+
+    fn decide(&mut self, key: u32, down: bool, physical: Physical, at: Instant) -> Decision {
         let key = u16::try_from(key).unwrap_or(u16::MAX);
         if Self::SHIFT_KEYS.contains(&key) {
             let pinned = if physical.shortcut {
@@ -345,7 +398,7 @@ impl Windows {
             return Decision::pass(pinned.map(Action::Pin));
         }
         if Self::CHORD_KEYS.contains(&key) {
-            return self.chord_key(key, down, physical.chord_keys);
+            return self.chord_key(key, down);
         }
         self.taps.interrupt();
         match key {
@@ -358,13 +411,9 @@ impl Windows {
         }
     }
 
-    fn chord_key(&mut self, key: u16, down: bool, physical_before_event: [bool; 4]) -> Decision {
+    fn chord_key(&mut self, key: u16, down: bool) -> Decision {
         let mut fresh = false;
-        for ((&chord_key, tracked), physically_down) in Self::CHORD_KEYS
-            .iter()
-            .zip(&mut self.chord_keys_down)
-            .zip(physical_before_event)
-        {
+        for (&chord_key, tracked) in Self::CHORD_KEYS.iter().zip(&mut self.chord_keys_down) {
             if chord_key == key {
                 fresh = down && !*tracked;
                 if *tracked != down {
@@ -373,13 +422,9 @@ impl Windows {
                     self.taps.interrupt();
                 }
                 *tracked = down;
-            } else if !physically_down {
-                *tracked = false;
             }
         }
-        let [left_control, right_control, left_windows, right_windows] = self.chord_keys_down;
-        let complete = (left_control || right_control) && (left_windows || right_windows);
-        Decision::pass(match (complete, fresh) {
+        Decision::pass(match (self.chord_held(), fresh) {
             (false, _) => self.chord.release(),
             (true, true) => self.chord.press(),
             (true, false) => None,
@@ -387,13 +432,32 @@ impl Windows {
     }
 }
 
-/// One event from the macOS keyboard event tap.
+/// One event from the macOS keyboard event tap, with the modifiers its flags report held.
 #[cfg(any(target_os = "macos", test))]
 pub(super) enum MacEvent {
     /// A key went down, including autorepeat, or up.
-    Key { code: i64, down: bool },
-    /// Modifier flags changed, leaving `held` held.
+    Key {
+        code: i64,
+        down: bool,
+        held: Modifiers,
+    },
+    /// Modifier flags changed.
     FlagsChanged { code: i64, held: Modifiers },
+}
+
+#[cfg(any(target_os = "macos", test))]
+impl MacEvent {
+    /// Whether Fn was held just before this event. Fn's own flag change reports its new state, so
+    /// Fn was in the other state before; every other event leaves Fn as its flags report.
+    const fn fn_held_before(&self) -> bool {
+        match *self {
+            Self::FlagsChanged {
+                code: Mac::FUNCTION,
+                held,
+            } => !held.talk,
+            Self::Key { held, .. } | Self::FlagsChanged { held, .. } => held.talk,
+        }
+    }
 }
 
 /// Fn policy over virtual key codes from the macOS event tap.
@@ -415,8 +479,18 @@ impl Mac {
     const SPACE: i64 = 49;
     const WINDOW: i64 = 13;
 
-    /// Decides one event-tap event at `at`.
+    /// Ends dictation for a session change or lost key events, then waits for Fn's release.
+    pub(super) fn interrupt(&mut self, input: &InputSender) {
+        self.chord.interrupt_dictation(input);
+    }
+
+    /// Decides one event-tap event at `at`; its flags end a hold whose Fn release the tap missed.
     pub(super) fn observe(&mut self, event: MacEvent, at: Instant) -> Decision {
+        let missed_release = self.chord.reconcile(event.fn_held_before());
+        self.decide(event, at).after_missed_release(missed_release)
+    }
+
+    fn decide(&mut self, event: MacEvent, at: Instant) -> Decision {
         match event {
             MacEvent::FlagsChanged {
                 code: Self::FUNCTION,
@@ -442,7 +516,7 @@ impl Mac {
                 self.taps.interrupt();
                 Decision::pass(None)
             },
-            MacEvent::Key { code, down } => {
+            MacEvent::Key { code, down, .. } => {
                 self.taps.interrupt();
                 match code {
                     Self::ESCAPE => Decision::pass(down.then_some(Action::Cancel)),
