@@ -48,7 +48,8 @@ struct Segment {
 /// A tile as one frame left it: rows of pixels, each byte replaced by its difference from the
 /// same byte of the pixel to its left, then deflated.
 struct Version {
-    frame: usize,
+    /// The index of the first frame that shows this version.
+    first: usize,
     data: Box<[u8]>,
 }
 
@@ -265,9 +266,9 @@ impl Segment {
             .tiles
             .into_iter()
             .map(|versions| {
-                with_ends(versions, |version| version.frame, end)
+                with_ends(versions, |version| version.first, end)
                     .filter_map(|(version, until)| {
-                        kept_from(version.frame, until).map(|frame| Version { frame, ..version })
+                        kept_from(version.first, until).map(|first| Version { first, ..version })
                     })
                     .collect()
             })
@@ -297,9 +298,10 @@ impl Segment {
         let stride = self.width.saturating_mul(PIXEL);
         let mut rgba = vec![0; stride.saturating_mul(self.height)];
         for (tile, versions) in tiles(self.width, self.height).zip(&self.tiles) {
-            let latest = versions.partition_point(|version| version.frame <= index);
-            let version = versions.get(latest.saturating_sub(1))?;
-            version.restore(tile, stride, &mut rgba)?;
+            let shown = versions
+                .partition_point(|version| version.first <= index)
+                .saturating_sub(1);
+            versions.get(shown)?.restore(tile, stride, &mut rgba)?;
         }
         Image::from_premultiplied(
             u32::try_from(self.width).ok()?,
@@ -311,10 +313,10 @@ impl Segment {
 }
 
 impl Version {
-    fn of(frame: usize, image: &Image, tile: Tile) -> Self {
+    fn of(first: usize, frame: &Image, tile: Tile) -> Self {
         let mut filtered =
             Vec::with_capacity(tile.width.saturating_mul(tile.height).saturating_mul(PIXEL));
-        for row in tile_rows(image, tile) {
+        for row in tile_rows(frame, tile) {
             let mut left = [0_u8; PIXEL];
             for pixel in row.as_chunks::<PIXEL>().0 {
                 filtered.extend(
@@ -327,7 +329,7 @@ impl Version {
             }
         }
         Self {
-            frame,
+            first,
             data: fdeflate::compress_to_vec(&filtered).into_boxed_slice(),
         }
     }
@@ -424,13 +426,13 @@ mod tests {
             .expect("a journal without a budget admits every arrival")
     }
 
-    /// A frame of four flat quadrants in `shade`, 70 × 70 when `size` is 2 and 150 × 90 otherwise.
+    /// A frame of four flat quadrants in `shade`, 70 × 70 when `small` and 150 × 90 otherwise.
     #[expect(
         clippy::arithmetic_side_effects,
         reason = "A quadrant index under 4; debug overflow checks fail the test"
     )]
-    fn quadrants(shade: [u8; 4], size: usize) -> Image {
-        let (width, height) = if size == 2 { (70, 70) } else { (150, 90) };
+    fn quadrants(shade: [u8; 4], small: bool) -> Image {
+        let (width, height) = if small { (70, 70) } else { (150, 90) };
         frame(width, height, move |x, y| {
             let quadrant = usize::from(x >= 64) + usize::from(y >= 64) * 2;
             let value = *shade.get(quadrant).unwrap();
@@ -533,7 +535,7 @@ mod tests {
             if let Some(admission) = journal.admit() {
                 admitted.push(arrival);
                 let moment = at(u64::from(arrival) * 200);
-                admission.record(moment, quadrants([arrival; 4], 2));
+                admission.record(moment, quadrants([arrival; 4], true));
             }
         }
         assert_eq!(admitted, [0, 1, 2, 4, 8]);
@@ -542,11 +544,11 @@ mod tests {
     #[test]
     fn debugging_a_journal_never_prints_its_frames() {
         let mut journal = Journal::new();
-        admitted(&mut journal).record(at(0), quadrants([0; 4], 2));
+        admitted(&mut journal).record(at(0), quadrants([0; 4], true));
         let one = format!("{journal:?}");
         for shade in 1_u8..20 {
             let moment = at(u64::from(shade) * 200);
-            admitted(&mut journal).record(moment, quadrants([shade, 0, shade, 0], 3));
+            admitted(&mut journal).record(moment, quadrants([shade, 0, shade, 0], false));
         }
         let many = format!("{journal:?}");
         assert!(many.len() <= one.len() + 8, "{one}\n{many}");
@@ -559,17 +561,20 @@ mod tests {
         )]
         #[test]
         fn thinning_keeps_every_other_frame_exact(
-            changes in prop::collection::vec((0_u8..4, 0_usize..3), 1..24),
+            changes in prop::collection::vec(
+                (0_u8..4, (0_usize..3).prop_map(|draw| draw == 2)),
+                1..24,
+            ),
             rounds in 1_usize..4,
         ) {
             let mut journal = Journal::new();
             let mut recorded = Vec::new();
             let mut shade = [0_u8; 4];
-            for (index, (quadrant, size)) in changes.into_iter().enumerate() {
+            for (index, (quadrant, small)) in changes.into_iter().enumerate() {
                 if let Some(value) = shade.get_mut(usize::from(quadrant)) {
                     *value = value.wrapping_add(40);
                 }
-                let image = quadrants(shade, size);
+                let image = quadrants(shade, small);
                 let moment = at(u64::try_from(index).unwrap() * 100);
                 admitted(&mut journal).record(moment, image.clone());
                 recorded.push((moment, image));
@@ -596,14 +601,17 @@ mod tests {
 
         #[test]
         fn a_budget_thins_frames_and_their_samples_together(
-            arrivals in prop::collection::vec((-300_i64..=300, 0_u8..4, 0_usize..3), 1..48),
+            arrivals in prop::collection::vec(
+                (-300_i64..=300, 0_u8..4, (0_usize..3).prop_map(|draw| draw == 2)),
+                1..48,
+            ),
         ) {
             // A few frames' worth, so arrivals overrun it and the journal thins again and again.
             const BUDGET: usize = 1_500;
             let mut journal = Journal::with_budget(BUDGET);
             let (mut shade, mut millis) = ([0_u8; 4], 0_u64);
             let (mut first, mut last) = (None, None);
-            for (delta, quadrant, size) in arrivals {
+            for (delta, quadrant, small) in arrivals {
                 // Capture clocks can repeat a moment or step back.
                 millis = millis.saturating_add_signed(delta);
                 if let Some(value) = shade.get_mut(usize::from(quadrant)) {
@@ -612,18 +620,26 @@ mod tests {
                 let Some(admission) = journal.admit() else {
                     continue;
                 };
-                let image = quadrants(shade, size);
+                let image = quadrants(shade, small);
                 first.get_or_insert_with(|| (at(millis), image.clone()));
                 last = Some(image.clone());
                 admission.record(at(millis), image);
                 let held = journal.samples().len();
-                prop_assert!(journal.bytes() <= BUDGET || held <= 2, "{} bytes in {held} frames", journal.bytes());
+                prop_assert!(
+                    journal.bytes() <= BUDGET || held <= 2,
+                    "{} bytes in {held} frames",
+                    journal.bytes()
+                );
             }
             let samples = journal.samples();
             prop_assert!(samples.is_sorted_by(|earlier, later| earlier.at < later.at));
             for sample in samples {
                 let shown = journal.frame_at(sample.at).unwrap();
-                prop_assert!(Signature::of(&shown) == sample.signature, "at {}", sample.at.as_millis());
+                prop_assert!(
+                    Signature::of(&shown) == sample.signature,
+                    "at {}",
+                    sample.at.as_millis()
+                );
             }
             let (first_at, first_image) = first.unwrap();
             prop_assert_eq!(samples.first().map(|sample| sample.at), Some(first_at));
@@ -636,7 +652,11 @@ mod tests {
             reason = "Noise mixed from coordinates under 150; debug overflow checks fail the test"
         )]
         #[test]
-        fn rebuilding_is_lossless_for_any_size(width in 1_u32..150, height in 1_u32..150, seed in 0_u8..=255) {
+        fn rebuilding_is_lossless_for_any_size(
+            width in 1_u32..150,
+            height in 1_u32..150,
+            seed in 0_u8..=255,
+        ) {
             let noise = move |x: usize, y: usize| {
                 let mixed = x * 31 + y * 17 + usize::from(seed);
                 let value = u8::try_from(mixed % 251).unwrap();

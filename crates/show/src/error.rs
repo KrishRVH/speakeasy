@@ -41,12 +41,10 @@ impl Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {
-            Kind::Dimensions { width, height } => {
-                write!(
-                    f,
-                    "a {width}×{height} image is empty, too large, or mismatched"
-                )
-            },
+            Kind::Dimensions { width, height } => write!(
+                f,
+                "a {width}×{height} image is empty, too large, or mismatched"
+            ),
             Kind::Unsampled => f.write_str("no frames were sampled to choose keyframes from"),
             Kind::Manifest(_) => f.write_str("the manifest could not be encoded"),
             Kind::Png(_) => f.write_str("the PNG could not be encoded"),

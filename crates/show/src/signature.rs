@@ -95,7 +95,8 @@ impl Signature {
         self.change(other).max((fourth * LOCAL_BOOST).min(1.0))
     }
 
-    /// The share of cells inside `region`, normalized to the frame, whose luma changed.
+    /// The share of the cells under `region`, a rectangle in coordinates normalized to the frame,
+    /// whose luma changed.
     pub(crate) fn region_change(&self, other: &Self, region: Rect) -> f32 {
         let rows = cell_range(region.top, region.bottom, ROWS);
         let columns = cell_range(region.left, region.right, COLUMNS);
@@ -214,7 +215,7 @@ pub(crate) mod tests {
         );
     }
 
-    /// A gray frame with one lighter rectangle, in pixels.
+    /// The signature of a gray frame with one lighter rectangle, given in pixels.
     fn with_patch(width: u32, height: u32, patch: [f32; 4]) -> Signature {
         let mut image = gray(40, width, height);
         let [left, top, right, bottom] = patch;

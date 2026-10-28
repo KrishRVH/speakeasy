@@ -5,8 +5,8 @@ use serde_json::json;
 
 use super::*;
 use crate::{
-    Action, InkPoint, Moment, Narration, Pin, Reason, Sample, Shape, Size, Span, Stroke, Word,
-    select, signature::tests::signature, typeface::tests::typeface,
+    Action, InkPoint, Narration, Pin, Reason, Sample, Shape, Size, Span, Stroke, Word, select,
+    signature::tests::signature, typeface::tests::typeface,
 };
 
 fn at(millis: u64) -> Moment {
@@ -157,7 +157,13 @@ fn show_json_keeps_its_wire_format() {
                 "marks": [0, 0],
                 "action": click,
             },
-            {"index": 3, "at": 1500, "reason": "sceneChange", "event": "scene changed", "marks": [0, 0]},
+            {
+                "index": 3,
+                "at": 1500,
+                "reason": "sceneChange",
+                "event": "scene changed",
+                "marks": [0, 0],
+            },
         ],
     });
     let changed =
@@ -185,7 +191,7 @@ fn debugging_a_file_never_prints_its_contents() {
 }
 
 #[test]
-fn a_provider_failure_stops_before_loading_the_next_page() {
+fn a_failed_frame_stops_loading_before_the_next_sheet() {
     let selection = Selection {
         marks: Vec::new(),
         keyframes: (1..=13)
