@@ -412,7 +412,7 @@ fn startup_classifies_saved_settings() -> anyhow::Result<()> {
     let (config, startup) = Config::load(&path);
     assert!(matches!(startup, Startup::Unconfigured));
     assert_eq!(config.theme, Theme::Iris);
-    // Files written before engines were chosen were Whisper settings, and keep reading as them.
+    // A file without an engine key reads as Whisper, the engine such files were written for.
     assert!(config.engine == Engine::Whisper);
 
     // A failed validation leaves the draft as the user wrote it.
