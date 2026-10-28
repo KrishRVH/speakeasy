@@ -394,7 +394,7 @@ impl Config {
         }
         #[cfg(target_os = "linux")]
         {
-            use std::os::unix::fs::PermissionsExt;
+            use std::os::unix::fs::PermissionsExt as _;
             let engine = &config.engine_executable;
             let metadata = engine
                 .metadata()
@@ -599,7 +599,7 @@ fn changes<'a, T: Serialize + 'a>(
 
 /// Replaces `target` with `contents` all at once from a temporary file beside it, so a failure
 /// never leaves half a file and the rename stays on one filesystem.
-pub(crate) fn replace(target: &Path, contents: &[u8]) -> io::Result<()> {
+fn replace(target: &Path, contents: &[u8]) -> io::Result<()> {
     let directory = target
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -622,7 +622,7 @@ pub(crate) fn valid_config(directory: &Path) -> anyhow::Result<Config> {
     fs::write(&model, b"fake model")?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::PermissionsExt as _;
         fs::set_permissions(&engine_executable, fs::Permissions::from_mode(0o700))?;
     }
     Ok(Config {

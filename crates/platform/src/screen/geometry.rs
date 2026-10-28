@@ -19,8 +19,8 @@ impl Bounds {
     pub(crate) fn normalize(self, [x, y]: [f64; 2]) -> Option<[f32; 2]> {
         let [left, top] = self.origin;
         let [width, height] = self.size;
-        let share = |offset: f64, extent: f64| (extent > 0.0).then(|| narrow(offset / extent));
-        Some([share(x - left, width)?, share(y - top, height)?])
+        let normalized = |offset: f64, extent: f64| (extent > 0.0).then(|| narrow(offset / extent));
+        Some([normalized(x - left, width)?, normalized(y - top, height)?])
     }
 
     /// Whether `point` lies within these bounds, counting the edges through `origin` but not the
@@ -75,10 +75,10 @@ pub(crate) fn pixel_box(part: Part, [width, height]: [u32; 2]) -> [u32; 4] {
     [left, top, right, bottom]
 }
 
-/// The pixels between `start` and `end`, normalized to `extent` pixels.
+/// The pixels of an `extent`-pixel axis between the normalized edges `start` and `end`.
 #[cfg(any(target_os = "windows", test))]
 fn pixel_span(start: f32, end: f32, extent: u32) -> (u32, u32) {
-    let edge = |share: f32| whole_within(f64::from(share) * f64::from(extent), extent);
+    let edge = |normalized: f32| whole_within(f64::from(normalized) * f64::from(extent), extent);
     let first = edge(start).min(extent.saturating_sub(1));
     (first, edge(end).max(first.saturating_add(1)).min(extent))
 }
@@ -87,7 +87,7 @@ fn pixel_span(start: f32, end: f32, extent: u32) -> (u32, u32) {
 /// shows.
 #[cfg(any(target_os = "windows", test))]
 pub(crate) fn part_of_box([left, top, right, bottom]: [u32; 4], [width, height]: [u32; 2]) -> Part {
-    let share = |pixels: u32, extent: u32| {
+    let normalized = |pixels: u32, extent: u32| {
         if extent == 0 {
             0.0
         } else {
@@ -95,10 +95,10 @@ pub(crate) fn part_of_box([left, top, right, bottom]: [u32; 4], [width, height]:
         }
     };
     Part {
-        left: share(left, width),
-        top: share(top, height),
-        right: share(right, width),
-        bottom: share(bottom, height),
+        left: normalized(left, width),
+        top: normalized(top, height),
+        right: normalized(right, width),
+        bottom: normalized(bottom, height),
     }
 }
 

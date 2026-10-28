@@ -5,7 +5,7 @@ use std::{
     convert::Infallible,
     fs::File,
     io::Write as _,
-    os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd},
+    os::fd::{AsFd as _, AsRawFd as _, BorrowedFd, OwnedFd},
     sync::Arc,
     time::Duration,
 };
@@ -138,7 +138,7 @@ mod tests {
     };
 
     use anyhow::bail;
-    use futures_util::{FutureExt, StreamExt};
+    use futures_util::{FutureExt as _, StreamExt as _};
 
     use super::*;
     use crate::InputSender;

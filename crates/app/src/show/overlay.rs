@@ -488,8 +488,8 @@ fn on_overlay(part: Part, size: Size<Pixels>) -> Bounds<Pixels> {
 /// The part of the display a drag from `from` to `to` covers on an overlay `size` across, or
 /// `None` for a drag too short to mean an area.
 fn dragged(from: gpui::Point<Pixels>, to: gpui::Point<Pixels>, size: Size<Pixels>) -> Option<Part> {
-    let share = |point: gpui::Point<Pixels>| [point.x / size.width, point.y / size.height];
-    let part = Part::between(share(from), share(to));
+    let normalized = |point: gpui::Point<Pixels>| [point.x / size.width, point.y / size.height];
+    let part = Part::between(normalized(from), normalized(to));
     let area = on_overlay(part, size).size;
     (f32::from(area.width) >= SMALLEST_AREA && f32::from(area.height) >= SMALLEST_AREA)
         .then_some(part)
@@ -692,8 +692,8 @@ pub(crate) fn attend(
                 continue;
             };
             // The next session cannot start until this one leaves the active phases, so waiting
-            // here never delays the next Show's overlay. A new id means pause, quit or a newer
-            // session took the snapshot first.
+            // here never delays the next Show's overlay. Another session means pause, quit or a
+            // newer session took the snapshot first.
             let Ok(copied) = snapshots
                 .wait_for(|snapshot| snapshot.session != show || !snapshot.phase.is_active())
                 .await

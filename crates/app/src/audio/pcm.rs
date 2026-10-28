@@ -14,7 +14,7 @@ const SAMPLE_RATE_OFFSET: usize = 24;
 pub(super) const SAMPLE_BYTES: usize = 2;
 const MINIMUM_RECORDING: Duration = Duration::from_millis(200);
 const RECLAIM_SLACK_BYTES: usize = 8 * 1024 * 1024;
-pub(crate) const INCOMPLETE_HEADER: &str = "Recording header is incomplete. Try recording again.";
+const INCOMPLETE_HEADER: &str = "Recording header is incomplete. Try recording again.";
 
 /// Mono PCM16 behind a reserved WAV header, so encoding never copies the audio. A recording that is
 /// not encoded is zeroed on drop, best effort: audio trimmed from an encoded one, and copies in the
@@ -167,9 +167,11 @@ fn wav_header(data_bytes: usize, rate: u32) -> Option<[u8; WAV_HEADER_BYTES]> {
 }
 
 /// The sample rate field of a header written by this module.
-pub(crate) fn wav_sample_rate(wav: &[u8]) -> Option<u32> {
-    let field = wav.get(SAMPLE_RATE_OFFSET..)?.first_chunk()?;
-    Some(u32::from_le_bytes(*field))
+pub(crate) fn wav_sample_rate(wav: &[u8]) -> anyhow::Result<u32> {
+    let Some(field) = wav.get(SAMPLE_RATE_OFFSET..).and_then(<[u8]>::first_chunk) else {
+        bail!(INCOMPLETE_HEADER);
+    };
+    Ok(u32::from_le_bytes(*field))
 }
 
 pub(crate) fn silent_wav(rate: u32, duration: Duration) -> anyhow::Result<Vec<u8>> {
@@ -256,9 +258,12 @@ mod tests {
     #[test]
     fn silence_round_trips_its_sample_rate() -> anyhow::Result<()> {
         let silence = silent_wav(16_000, Duration::from_secs(1))?;
-        assert_eq!(wav_sample_rate(&silence), Some(16_000));
+        assert_eq!(wav_sample_rate(&silence)?, 16_000);
         assert_eq!(silence.len(), WAV_HEADER_BYTES + 32_000);
-        assert_eq!(wav_sample_rate(&silence[..27]), None);
+        assert_eq!(
+            wav_sample_rate(&silence[..27]).map_err(|error| error.to_string()),
+            Err(INCOMPLETE_HEADER.to_owned())
+        );
         Ok(())
     }
 
@@ -279,7 +284,7 @@ mod tests {
         let rate = u32::try_from(rate).unwrap();
         let sealed = pcm.seal(Audibility::new(rate), rate).unwrap().unwrap();
         assert_eq!(&sealed.wav[WAV_HEADER_BYTES..], expected);
-        assert_eq!(wav_sample_rate(&sealed.wav), Some(rate));
+        assert_eq!(wav_sample_rate(&sealed.wav).unwrap(), rate);
         // Two quiet seconds lead the speech; half a second of padding is kept before it.
         assert_eq!(sealed.trimmed, Duration::from_millis(1_500));
 

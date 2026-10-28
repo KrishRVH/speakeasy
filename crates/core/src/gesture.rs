@@ -17,7 +17,7 @@ const DOUBLE_TAP: Duration = Duration::from_millis(300);
 /// Logical dictation mode, independent of the physical shortcut state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
-    /// No recording or recognition is active.
+    /// No recording or transcription is active.
     Idle,
     /// Recording while the shortcut is held.
     Held,
@@ -25,7 +25,7 @@ pub enum State {
     PendingTap,
     /// Recording until the next press, cancellation, or deadline.
     HandsFree,
-    /// Capture is complete; recognition or insertion is pending.
+    /// Capture is complete; transcription or insertion is pending.
     Processing,
 }
 
@@ -34,7 +34,7 @@ pub enum State {
 pub enum Action {
     /// Opens a new recording.
     Start,
-    /// Stops capture and recognizes its audio.
+    /// Stops capture and transcribes its audio.
     Finish,
     /// Discards the recording and revokes its insertion authority.
     Cancel,
@@ -227,21 +227,25 @@ mod tests {
             Self::Finish,
         ];
 
-        fn apply(self, gesture: &mut Gesture, now: Instant) -> Option<Action> {
+        fn apply(self, gesture: &mut Gesture, now: Instant) {
             match self {
-                Self::Press => gesture.press(now),
-                Self::Release => gesture.release(now),
-                Self::Lock => {
-                    gesture.lock();
-                    None
+                Self::Press => {
+                    gesture.press(now);
                 },
-                Self::Toggle => gesture.toggle(now),
-                Self::Cancel => gesture.cancel(),
-                Self::Complete => {
-                    gesture.complete();
-                    None
+                Self::Release => {
+                    gesture.release(now);
                 },
-                Self::Finish => gesture.finish(),
+                Self::Lock => gesture.lock(),
+                Self::Toggle => {
+                    gesture.toggle(now);
+                },
+                Self::Cancel => {
+                    gesture.cancel();
+                },
+                Self::Complete => gesture.complete(),
+                Self::Finish => {
+                    gesture.finish();
+                },
             }
         }
     }

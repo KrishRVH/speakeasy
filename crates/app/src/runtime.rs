@@ -355,7 +355,7 @@ impl<P: Ports> Wiring<P> {
         }
     }
 
-    /// Reports the failure unless a newer shell lifecycle owns the snapshot.
+    /// Reports the failure unless the shell has announced a newer snapshot epoch.
     fn fail_startup(&self, error: &io::Error) {
         self.snapshots.send_if_modified(|snapshot| {
             if snapshot.epoch != self.epoch {

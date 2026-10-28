@@ -5,7 +5,7 @@ use std::{
     ffi::OsString,
     fs,
     io::{ErrorKind, Read as _, Write as _},
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _},
     path::{Path, PathBuf},
 };
 

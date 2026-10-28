@@ -8,7 +8,7 @@ mod clipboard;
 mod native_tests;
 mod paste;
 
-use std::{convert::Infallible, os::fd::AsFd};
+use std::{convert::Infallible, os::fd::AsFd as _};
 
 use anyhow::{Context as _, anyhow, bail, ensure};
 use async_channel::Receiver;

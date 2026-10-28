@@ -420,10 +420,8 @@ fn row() -> Div {
     div().flex().gap(ROW_GAP)
 }
 
-/// The primary command and its label. A demo replays its preview; quitting offers none. Otherwise
-/// the command saves, unless there is nothing to save while dictation pauses: once paused,
-/// "Resume dictation", the label failure remedies name, resumes the saved settings as the tray
-/// does, and until then there is none.
+/// The primary command and its label, if any. Failure remedies tell users to "Resume dictation", so
+/// that label keeps their wording.
 fn primary_command(
     demo: bool,
     service: ServiceState,

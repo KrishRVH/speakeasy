@@ -162,13 +162,13 @@ pub(crate) fn start(
     input: InputSender,
     options: DesktopOptions,
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
-    start_serving(input, options, serve_desktop)
+    spawn(input, options, serve_desktop)
 }
 
 /// Runs `serve` on the desktop thread. Once it returns, by any path, the thread reports why and then
 /// abandons every insertion still queued, since nothing reads the lane after that; the report comes
 /// first, so the owner learns why before those requests fail.
-fn start_serving(
+fn spawn(
     input: InputSender,
     options: DesktopOptions,
     serve: impl FnOnce(
@@ -323,8 +323,7 @@ mod tests {
             released.recv_timeout(PATIENCE)?;
             Ok(())
         };
-        let (_thread, _monitor, inserter) =
-            start_serving(input.clone(), DesktopOptions::default(), serve)?;
+        let (_thread, _monitor, inserter) = spawn(input.clone(), DesktopOptions::default(), serve)?;
         let permit = input.begin().context("Recording")?;
         let in_hand = inserter.insert("fixture".into(), permit.clone(), Delivery::Paste);
         let mut in_hand = Box::pin(in_hand);

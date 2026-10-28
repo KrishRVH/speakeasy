@@ -31,7 +31,7 @@ use self::{
 };
 pub(crate) use self::{
     microphones::{InputDevice, MicrophoneScan},
-    pcm::{INCOMPLETE_HEADER, silent_wav, wav_sample_rate},
+    pcm::{silent_wav, wav_sample_rate},
 };
 use crate::runtime::ports::{CaptureEvent, Capturing, Listening, Sealed, SessionId};
 

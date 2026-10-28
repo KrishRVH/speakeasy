@@ -16,8 +16,6 @@ use anyhow::{Context as _, bail, ensure};
 use async_channel::{Receiver, Sender};
 use speakeasy_platform::OwnedThread;
 
-use crate::config;
-
 const LOCK_FILE: &str = "instance.lock";
 const PORT_FILE: &str = "instance.port";
 /// Bounds the read of a damaged port file; a port and its secret need at most 38 bytes.
@@ -143,8 +141,10 @@ impl Endpoint {
         let mut bytes = [0_u8; 16];
         getrandom::fill(&mut bytes)?;
         let nonce = u128::from_le_bytes(bytes);
+        let mut file = tempfile::NamedTempFile::new_in(directory)?;
+        write!(file, "{port} {nonce:032x}")?;
         let path = directory.join(PORT_FILE);
-        config::replace(&path, format!("{port} {nonce:032x}").as_bytes())?;
+        file.persist(&path).map_err(|error| error.error)?;
         Ok((Self { port, nonce }, PortFile(path)))
     }
 
@@ -390,7 +390,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn only_the_owner_can_read_the_published_secret() -> anyhow::Result<()> {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::PermissionsExt as _;
 
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("settings.json");

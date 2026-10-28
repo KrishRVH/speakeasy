@@ -187,8 +187,8 @@ mod tests {
 
     #[test]
     fn dropping_a_stoppable_thread_stops_its_body_before_joining() -> anyhow::Result<()> {
-        let stoppable = StoppableThread::spawn("stops", |stop| {
-            let Err(_closed) = stop.recv_blocking();
+        let stoppable = StoppableThread::spawn("stops", |stopping| {
+            let Err(_closed) = stopping.recv_blocking();
         })?;
         let (dropped, observed) = mpsc::channel();
         // A drop that joined without closing the lane would block forever, so it runs off the test

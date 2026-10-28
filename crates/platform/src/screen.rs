@@ -63,12 +63,12 @@ impl Part {
     /// the display.
     #[must_use]
     pub fn between([x, y]: [f32; 2], [other_x, other_y]: [f32; 2]) -> Self {
-        let share = |value: f32| value.clamp(0.0, 1.0);
+        let clip = |value: f32| value.clamp(0.0, 1.0);
         Self {
-            left: share(x.min(other_x)),
-            top: share(y.min(other_y)),
-            right: share(x.max(other_x)),
-            bottom: share(y.max(other_y)),
+            left: clip(x.min(other_x)),
+            top: clip(y.min(other_y)),
+            right: clip(x.max(other_x)),
+            bottom: clip(y.max(other_y)),
         }
     }
 
@@ -88,7 +88,7 @@ impl Part {
     /// part fall outside `0.0..=1.0`, and an empty part leaves the point as it was.
     #[must_use]
     pub fn within(self, [x, y]: [f32; 2]) -> [f32; 2] {
-        let share = |value: f32, start: f32, extent: f32| {
+        let normalized = |value: f32, start: f32, extent: f32| {
             if extent > 0.0 {
                 (value - start) / extent
             } else {
@@ -96,8 +96,8 @@ impl Part {
             }
         };
         [
-            share(x, self.left, self.width()),
-            share(y, self.top, self.height()),
+            normalized(x, self.left, self.width()),
+            normalized(y, self.top, self.height()),
         ]
     }
 }

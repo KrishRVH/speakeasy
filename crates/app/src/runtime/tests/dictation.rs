@@ -1,5 +1,5 @@
 //! Dictation scenarios: capture, gestures and deadlines, shutdown ordering, inference, insertion,
-//! configuration, lifecycle epochs, warmup, failure reports, and the reply-to-insertion latency
+//! configuration, snapshot epochs, warmup, failure reports, and the reply-to-insertion latency
 //! profile.
 
 use super::*;

@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn only_listeners_held_inside_the_group_count() -> anyhow::Result<()> {
         use std::{
-            os::{fd::OwnedFd, unix::process::CommandExt},
+            os::{fd::OwnedFd, unix::process::CommandExt as _},
             process::{Command, Stdio},
         };
 
@@ -408,7 +408,7 @@ mod tests {
     fn listeners_held_by_members_other_than_the_leader_count() -> anyhow::Result<()> {
         use std::{
             io::{BufRead as _, BufReader},
-            os::{fd::OwnedFd, unix::process::CommandExt},
+            os::{fd::OwnedFd, unix::process::CommandExt as _},
             process::{Command, Stdio},
         };
 
@@ -442,7 +442,7 @@ mod tests {
     fn only_listeners_held_inside_the_job_count() -> anyhow::Result<()> {
         use std::{
             io::{BufRead as _, BufReader},
-            os::windows::io::AsHandle,
+            os::windows::io::AsHandle as _,
             process::{Command, Stdio},
         };
 

@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
-use futures_util::{FutureExt, StreamExt, future::LocalBoxFuture};
+use futures_util::{FutureExt as _, StreamExt as _, future::LocalBoxFuture};
 use x11rb::protocol::xproto::Window;
 use zbus::{
     Message, Proxy,

@@ -5,7 +5,7 @@ use std::{collections::HashMap, convert::Infallible, fmt, time::Duration};
 
 use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
-use futures_util::{StreamExt, stream::Select};
+use futures_util::{StreamExt as _, stream::Select};
 use zbus::{
     Connection, MatchRule, Message, MessageStream,
     object_server::{InterfaceRef, SignalEmitter},

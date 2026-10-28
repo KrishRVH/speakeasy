@@ -209,7 +209,7 @@ async fn a_truncated_reply_reports_only_a_stopped_engine() -> anyhow::Result<()>
 
 #[cfg(target_os = "linux")]
 fn fake_engine(script: &str) -> anyhow::Result<(tempfile::TempDir, Config)> {
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::PermissionsExt as _;
     let directory = tempfile::tempdir()?;
     let executable = directory.path().join("worker");
     std::fs::write(&executable, script)?;

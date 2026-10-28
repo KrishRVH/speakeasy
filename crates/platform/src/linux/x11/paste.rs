@@ -293,7 +293,7 @@ mod tests {
     use std::{mem, sync::mpsc};
 
     use anyhow::bail;
-    use futures_util::FutureExt;
+    use futures_util::FutureExt as _;
 
     use super::*;
     use crate::{Input, PATIENCE};

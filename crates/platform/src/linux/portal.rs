@@ -14,7 +14,7 @@ use std::{
 
 use anyhow::{Context as _, bail, ensure};
 use async_channel::{Receiver, Sender};
-use futures_util::{FutureExt, StreamExt};
+use futures_util::{FutureExt as _, StreamExt as _};
 use tokio::task::JoinSet;
 use zbus::{
     Connection, MatchRule, Message, MessageStream, Proxy,

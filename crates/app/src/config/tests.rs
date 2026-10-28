@@ -374,7 +374,7 @@ fn a_save_that_cannot_write_names_the_file_and_what_to_do() -> anyhow::Result<()
 #[cfg(target_os = "linux")]
 #[test]
 fn validation_requires_an_executable_engine() -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::PermissionsExt as _;
     let directory = tempfile::tempdir()?;
     let config = valid_config(directory.path())?;
     let path = directory.path().join("settings.json");
