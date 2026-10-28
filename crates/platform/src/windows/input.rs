@@ -302,11 +302,13 @@ impl Registration {
         };
     }
 
-    /// How long, in milliseconds, the message loop may wait before the next attempt is due.
+    /// How long, in milliseconds, the message loop waits for the next attempt to fall due. Rounding
+    /// up keeps a fraction of a millisecond from becoming a zero timeout that spins until then.
     fn wait(self, now: Instant) -> u32 {
         match self {
             Self::Pending { at, .. } => {
-                u32::try_from(at.saturating_duration_since(now).as_millis()).unwrap_or(INFINITE)
+                let remaining = at.saturating_duration_since(now);
+                u32::try_from(remaining.as_nanos().div_ceil(1_000_000)).unwrap_or(INFINITE)
             },
             Self::Registered | Self::Abandoned => INFINITE,
         }
@@ -542,6 +544,16 @@ mod tests {
         registration.attempt_when_due(start + Registration::RETRY_AFTER, || true);
         assert_eq!(registration, Registration::Registered);
         assert_eq!(registration.wait(start), INFINITE);
+
+        let almost_due = Registration::Pending {
+            at: start + Duration::from_micros(1),
+            retries: 0,
+        };
+        assert_eq!(
+            almost_due.wait(start),
+            1,
+            "The last fraction of a millisecond spins"
+        );
     }
 
     #[test]
