@@ -6,7 +6,7 @@ const PAUSES: [char; 4] = [',', ';', ':', '…'];
 const SENTENCE_ENDINGS: [char; 3] = ['.', '!', '?'];
 
 /// Whether to remove English hesitation tokens or keep literal engine words.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Fillers {
     Preserve,
     Remove,

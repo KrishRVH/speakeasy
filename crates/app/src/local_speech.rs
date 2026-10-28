@@ -28,7 +28,8 @@ const LOOPBACK: &str = "127.0.0.1";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const HEALTH_TIMEOUT: Duration = Duration::from_millis(200);
 const HEALTH_POLL: Duration = Duration::from_millis(25);
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
+/// Bounds each startup stage on its own: serving, then any warm-up.
+pub(crate) const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 // CPU inference of a five-minute recording can take minutes; Escape and bounded recovery end real
 // waits long before this.
 const INFERENCE_TIMEOUT: Duration = Duration::from_mins(30);

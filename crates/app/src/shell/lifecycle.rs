@@ -58,7 +58,7 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
 
     /// Whether dictation is on: owners run, as `live` judges them, or a resume is checking the
     /// saved settings.
-    pub(super) fn running(&self, live: impl FnOnce(&Owners) -> bool) -> bool {
+    pub(super) fn is_running(&self, live: impl FnOnce(&Owners) -> bool) -> bool {
         match &self.state {
             State::Running(owners) => live(owners),
             State::Validating(epoch) => *epoch == self.epoch,
@@ -74,12 +74,12 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         saved_at: ConfigEpoch,
         live: impl FnOnce(&Owners) -> bool,
     ) -> bool {
-        saved_at == self.epoch || self.running(live) || self.has_pending()
+        saved_at == self.epoch || self.is_running(live) || self.has_pending()
     }
 
     /// Advances the epoch for new settings and returns true, unless Quit has begun.
     pub(super) fn reconfigure(&mut self) -> bool {
-        if self.quitting() {
+        if self.is_quitting() {
             return false;
         }
         self.epoch = self.epoch.next();
@@ -142,11 +142,11 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
     }
 
     /// Whether owners are stopping or Quit has begun; either way, no resume may start owners.
-    pub(super) const fn pausing(&self) -> bool {
+    pub(super) const fn is_pausing(&self) -> bool {
         matches!(self.state, State::Stopping { .. } | State::Quitting(_))
     }
 
-    pub(super) const fn quitting(&self) -> bool {
+    pub(super) const fn is_quitting(&self) -> bool {
         matches!(self.state, State::Quitting(_))
     }
 
@@ -279,9 +279,9 @@ mod tests {
         state.retired();
         dropped.try_recv().unwrap();
         let checking = state.validate().unwrap();
-        assert!(state.running(|_| false));
+        assert!(state.is_running(|_| false));
         assert!(state.quit());
-        assert!(!state.running(|_| false));
+        assert!(!state.is_running(|_| false));
         assert!(!state.validated(checking));
         assert!(state.validate().is_none());
         assert_eq!(state.start(|| Ok::<_, ()>(Owner(completion))), Ok(false));
@@ -319,7 +319,7 @@ mod tests {
         assert!(!state.pause());
         assert!(!state.reconfigure());
         assert_eq!(state.retired(), None);
-        assert!(state.quitting());
+        assert!(state.is_quitting());
         assert!(state.active().is_none());
         assert!(state.retiring().is_none());
     }

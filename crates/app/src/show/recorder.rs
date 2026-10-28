@@ -316,7 +316,9 @@ impl<'a> Take<'a> {
         if frame.part != self.part {
             self.part = frame.part;
             self.canvas.send_if_modified(|canvas| {
-                canvas.sheet().is_some_and(|sheet| sheet.track(frame.part))
+                canvas
+                    .sheet_mut()
+                    .is_some_and(|sheet| sheet.track(frame.part))
             });
         }
         let at = self.moment(frame.captured);
@@ -359,7 +361,7 @@ impl<'a> Take<'a> {
         let now = Instant::now();
         self.canvas.send_if_modified(|canvas| {
             canvas
-                .sheet()
+                .sheet_mut()
                 .is_some_and(|sheet| sheet.update(finished, drawing, marks, now))
         });
     }

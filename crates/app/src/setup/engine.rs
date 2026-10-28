@@ -191,10 +191,7 @@ async fn doctor(
     progress: &watch::Sender<Progress>,
     installation: &mut Installation,
 ) -> Option<serde_json::Value> {
-    progress.send_replace(Progress {
-        step: Some("Checking the speech engine on this machine"),
-        ..Progress::default()
-    });
+    progress.send_replace(Progress::new("Checking the speech engine on this machine"));
     let mut command = hidden_command(directory.join(EXECUTABLE));
     command.args(["doctor", "--json"]).stdout(Stdio::piped());
     let output = timeout(Duration::from_secs(60), installation.output(&mut command)).await;

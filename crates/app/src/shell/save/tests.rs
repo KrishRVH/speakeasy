@@ -194,7 +194,7 @@ fn save_completion_preserves_new_edits() {
     assert!(draft.model.as_os_str().is_empty());
     draft = saved.submitted.clone();
     saved.update_draft(&mut draft);
-    assert!(draft == *saved.validated);
+    assert_eq!(draft, *saved.validated);
 }
 
 #[tokio::test]

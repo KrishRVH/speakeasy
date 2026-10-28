@@ -136,16 +136,18 @@ impl Pill {
         }
     }
 
-    pub(crate) fn set_reduced_motion(&mut self, reduced_motion: bool) {
+    pub(crate) fn set_reduced_motion(&mut self, reduced_motion: bool, cx: &mut Context<'_, Self>) {
         self.reduced_motion = reduced_motion;
+        cx.notify();
     }
 
-    pub(crate) fn set_theme(&mut self, theme: Theme) {
+    pub(crate) fn set_theme(&mut self, theme: Theme, cx: &mut Context<'_, Self>) {
         self.theme = theme;
+        cx.notify();
     }
 
     /// Shows the tray hint unless the pill is already visible; returns whether it did.
-    pub(crate) fn tray_hint(&mut self, cx: &mut Context<'_, Self>) -> bool {
+    pub(crate) fn show_tray_hint(&mut self, cx: &mut Context<'_, Self>) -> bool {
         if self.visible {
             return false;
         }

@@ -40,13 +40,28 @@ const MODEL: Download<'static> = Download {
     sha256: "e3880d0aaaaf2c308ea2c35016b2b895c423eb3fda924c1b463d1c19b7f4d32e",
 };
 
-/// What setup is doing. No step yet means it is checking this machine; `done` and `total` count the
-/// bytes of the current step.
-#[derive(Clone, Copy, Default)]
+/// What setup is doing; `done` and `total` count the bytes of the current step when it has a size.
+#[derive(Clone, Copy)]
 pub(crate) struct Progress {
-    pub step: Option<&'static str>,
+    pub step: &'static str,
     pub done: u64,
     pub total: u64,
+}
+
+impl Progress {
+    const fn new(step: &'static str) -> Self {
+        Self {
+            step,
+            done: 0,
+            total: 0,
+        }
+    }
+}
+
+impl Default for Progress {
+    fn default() -> Self {
+        Self::new("Checking this machine")
+    }
 }
 
 /// The engine and model a finished setup chose for this machine.
@@ -218,10 +233,7 @@ impl Installation {
                     });
                 },
                 Err(fs::TryLockError::WouldBlock) => {
-                    progress.send_replace(Progress {
-                        step: Some("Waiting for another setup to finish"),
-                        ..Progress::default()
-                    });
+                    progress.send_replace(Progress::new("Waiting for another setup to finish"));
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 },
                 Err(fs::TryLockError::Error(error)) => return Err(file_error(root)(error)),

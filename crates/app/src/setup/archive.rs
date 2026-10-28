@@ -48,10 +48,7 @@ pub(super) async fn unpack(
         progress,
     )
     .await?;
-    progress.send_replace(Progress {
-        step: Some("Unpacking the speech engine"),
-        ..Progress::default()
-    });
+    progress.send_replace(Progress::new("Unpacking the speech engine"));
     let staging = engines.join(format!("{stem}.part"));
     remove_engine_directory(&staging)?;
     fs::create_dir_all(&staging).map_err(file_error(&engines))?;

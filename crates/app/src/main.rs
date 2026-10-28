@@ -44,9 +44,8 @@ use crate::{
     shell::{LaunchMode, Services},
 };
 
-// Josefin Sans SemiBold, SIL Open Font License 1.1 (assets/JosefinSans-OFL.txt), draws the
-// wordmark and the badges on Show keyframes.
-const WORDMARK_FONT: &str = "Josefin Sans";
+// Josefin Sans SemiBold, SIL Open Font License 1.1 (assets/JosefinSans-OFL.txt).
+const BRAND_FONT: &str = "Josefin Sans";
 const BRAND_FONT_FILE: &[u8] = include_bytes!("../assets/JosefinSans-SemiBold.ttf");
 
 struct Cli {
@@ -155,7 +154,7 @@ fn launch(
     let application = Application::new().with_assets(icons::Icons);
     application.on_reopen(shell::reveal);
     application.run(move |cx| {
-        load_wordmark_font(cx);
+        load_brand_font(cx);
         let pill = match pill::open(
             updates,
             levels,
@@ -203,7 +202,7 @@ fn launch(
             return;
         }
         // Linux always opens Settings so portal permissions and tray availability stay reachable.
-        if !configured || !cx.global::<Services>().running() || cfg!(target_os = "linux") {
+        if !configured || !cx.global::<Services>().is_running() || cfg!(target_os = "linux") {
             shell::reveal(cx);
         }
         if !mode.is_resident() {
@@ -294,7 +293,7 @@ fn split_startup(startup: Startup) -> (Option<ValidConfig>, Snapshot) {
     }
 }
 
-fn load_wordmark_font(cx: &App) {
+fn load_brand_font(cx: &App) {
     #[expect(
         clippy::let_underscore_must_use,
         reason = "An unavailable embedded brand face falls back to the system font"

@@ -80,7 +80,7 @@ pub(super) async fn fetch(
         )
     };
     progress.send_replace(Progress {
-        step: Some(step),
+        step,
         done,
         total: download.size,
     });
@@ -121,7 +121,7 @@ async fn hash_partial(
     progress: &watch::Sender<Progress>,
 ) -> io::Result<Sha256> {
     progress.send_replace(Progress {
-        step: Some("Verifying downloaded data"),
+        step: "Verifying downloaded data",
         done: 0,
         total: size,
     });
@@ -301,7 +301,7 @@ mod tests {
         let cancel_when_verifying = async {
             updates
                 .wait_for(|progress| {
-                    progress.step == Some("Verifying downloaded data")
+                    progress.step == "Verifying downloaded data"
                         && progress.done > 0
                         && progress.done < progress.total
                 })

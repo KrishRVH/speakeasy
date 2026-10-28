@@ -197,10 +197,7 @@ async fn cancellation_stops_the_child_before_another_setup_owns_the_directory() 
         .await
     });
     timeout(Duration::from_secs(5), updates.changed()).await??;
-    assert_eq!(
-        updates.borrow().step,
-        Some("Waiting for another setup to finish")
-    );
+    assert_eq!(updates.borrow().step, "Waiting for another setup to finish");
     assert!(!second.is_finished());
     drop(cancel);
     assert!(timeout(Duration::from_secs(5), first).await??.is_none());

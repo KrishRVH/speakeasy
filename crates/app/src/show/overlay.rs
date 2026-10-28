@@ -21,7 +21,7 @@ use speakeasy_show::{Mark, Point, Shape, ink};
 use tokio::sync::watch;
 
 use crate::{
-    WORDMARK_FONT,
+    BRAND_FONT,
     gpui_ext::{EntityUpdate, WindowUpdate, defer_native, follow},
     runtime::{Phase, Snapshot},
 };
@@ -88,7 +88,7 @@ impl Canvas {
     }
 
     /// The ink of a canvas covering a display; nothing else takes ink.
-    pub(crate) fn sheet(&mut self) -> Option<&mut Sheet> {
+    pub(crate) fn sheet_mut(&mut self) -> Option<&mut Sheet> {
         match self {
             Self::Covering { sheet, .. } => Some(sheet),
             Self::Hidden | Self::Picking { .. } => None,
@@ -542,7 +542,7 @@ fn label(mark: &Mark, area: Bounds<Pixels>) -> Div {
         radius * (1.0 - ink::LABEL_RING),
         Some(
             div()
-                .font_family(WORDMARK_FONT)
+                .font_family(BRAND_FONT)
                 .text_size(px(size))
                 .line_height(px(size))
                 .text_color(white())

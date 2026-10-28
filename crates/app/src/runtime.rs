@@ -109,10 +109,10 @@ pub(crate) struct Meter {
     pub level: f32,
 }
 
-/// Controls for the dictation owner. `Owner` hosts its loop: a dedicated thread, joined on drop
+/// Controls for the dictation owner, whose loop runs on `Host`: a dedicated thread, joined on drop
 /// once stop has been requested, or a task on the test executor for paused-clock tests.
-pub(crate) struct Runtime<Owner = OwnedThread> {
-    owner: Owner,
+pub(crate) struct Runtime<Host = OwnedThread> {
+    host: Host,
     pub input: InputSender,
     configuration: watch::Sender<Config>,
     reports: Sender<String>,
@@ -166,16 +166,16 @@ impl Runtime {
     }
 
     pub(crate) fn is_running(&self) -> bool {
-        !self.input.is_closed() && !self.owner.is_finished()
+        !self.input.is_closed() && !self.host.is_finished()
     }
 
     /// Resolves once the owner has finished its native cleanup and exited.
     pub(crate) fn stopped(&self) -> impl Future<Output = ()> + use<> {
-        self.owner.exited()
+        self.host.exited()
     }
 }
 
-impl<Owner> Runtime<Owner> {
+impl<Host> Runtime<Host> {
     /// Wires the owner's lanes and hands its loop to `run`, which decides where it executes.
     fn host<P: Ports>(
         config: Config,
@@ -184,7 +184,7 @@ impl<Owner> Runtime<Owner> {
         ports: P,
         input: InputSender,
         inputs: Receiver<Input>,
-        run: impl FnOnce(Wiring<P>) -> io::Result<Owner>,
+        run: impl FnOnce(Wiring<P>) -> io::Result<Host>,
     ) -> anyhow::Result<Self> {
         let epoch = snapshots.borrow().epoch;
         let (configuration, changes) = watch::channel(config);
@@ -192,7 +192,7 @@ impl<Owner> Runtime<Owner> {
         // retention sweep repeats its own; a Settings or overlay failure is not repeated.
         let (reports, reported) = async_channel::bounded(1);
         let (stop, stopping) = async_channel::bounded(1);
-        let owner = run(Wiring {
+        let host = run(Wiring {
             changes,
             inputs,
             reports: reported,
@@ -204,7 +204,7 @@ impl<Owner> Runtime<Owner> {
             epoch,
         })?;
         Ok(Self {
-            owner,
+            host,
             input,
             configuration,
             reports,
@@ -238,7 +238,7 @@ impl<Owner> Runtime<Owner> {
     }
 }
 
-impl<Owner> Drop for Runtime<Owner> {
+impl<Host> Drop for Runtime<Host> {
     fn drop(&mut self) {
         self.request_stop();
     }

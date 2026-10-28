@@ -150,8 +150,9 @@ impl Services {
     }
 
     /// Whether dictation is on: live owners run, or a resume is checking the saved settings.
-    pub(crate) fn running(&self) -> bool {
-        self.lifecycle.running(|owners| owners.runtime.is_running())
+    pub(crate) fn is_running(&self) -> bool {
+        self.lifecycle
+            .is_running(|owners| owners.runtime.is_running())
     }
 
     /// The epoch a save records when it is requested.
@@ -159,16 +160,16 @@ impl Services {
         self.lifecycle.epoch()
     }
 
-    pub(super) fn quitting(&self) -> bool {
-        self.lifecycle.quitting()
+    pub(super) fn is_quitting(&self) -> bool {
+        self.lifecycle.is_quitting()
     }
 
     pub(crate) fn service_state(&self) -> ServiceState {
-        if self.quitting() {
+        if self.is_quitting() {
             ServiceState::Quitting
-        } else if self.lifecycle.pausing() {
+        } else if self.lifecycle.is_pausing() {
             ServiceState::Pausing
-        } else if self.running() || self.mode.is_demo() {
+        } else if self.is_running() || self.mode.is_demo() {
             ServiceState::Running
         } else if self.config.needs_engine() {
             ServiceState::NotSetUp
@@ -302,7 +303,7 @@ impl Services {
     /// Checks the saved settings off the UI thread, then enables dictation with them, unless
     /// dictation is on, pausing, or quitting. A dead runtime retires first.
     pub(super) fn resume(&mut self, cx: &App) {
-        if self.running() || self.lifecycle.pausing() {
+        if self.is_running() || self.lifecycle.is_pausing() {
             return;
         }
         if self.runtime().is_some() {
@@ -348,14 +349,14 @@ impl Services {
     }
 
     pub(super) fn pause(&mut self, cx: &App) {
-        if self.quitting() {
+        if self.is_quitting() {
             return;
         }
         self.validation = None;
         let started = self.lifecycle.pause();
         announce(
             &self.output,
-            if self.lifecycle.pausing() {
+            if self.lifecycle.is_pausing() {
                 PAUSING
             } else {
                 PAUSED
@@ -378,7 +379,7 @@ impl Services {
     fn retired(&mut self, cx: &App) {
         let pending = self.lifecycle.retired();
         self.retirement = None;
-        if self.quitting() {
+        if self.is_quitting() {
             return;
         }
         match pending {
@@ -423,7 +424,7 @@ pub(crate) fn toggle_enabled(cx: &mut App) {
         if services.mode.is_demo() {
             return;
         }
-        if services.running() {
+        if services.is_running() {
             services.pause(cx);
         } else {
             services.resume(cx);

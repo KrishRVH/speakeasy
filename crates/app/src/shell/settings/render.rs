@@ -10,7 +10,7 @@ use gpui::{
 
 use super::{Action, EngineFile, Setting, Settings, is_demo};
 use crate::{
-    WORDMARK_FONT,
+    BRAND_FONT,
     config::{Engine, TextDelivery},
     icons::KEYSTONE,
     setup::Progress,
@@ -301,7 +301,7 @@ impl Settings {
 
     fn commands(&self, ui: &Ui<'_>, unsaved: bool) -> impl IntoElement {
         let services = ui.cx.global::<Services>();
-        let running = services.running();
+        let running = services.is_running();
         let primary = if self.is_setting_up() {
             None
         } else {
@@ -454,12 +454,10 @@ fn setup_detail(progress: Option<Progress>) -> String {
             "Speakeasy downloads the Parakeet speech model and the engine that suits this {MACHINE}, about 0.8 GB, then turns dictation on."
         );
     };
-    match step {
-        Some(step) if total > 0 => {
-            format!("{step} · {} of {} MB", done / 1_000_000, total / 1_000_000)
-        },
-        Some(step) => format!("{step}…"),
-        None => "Checking this machine…".into(),
+    if total > 0 {
+        format!("{step} · {} of {} MB", done / 1_000_000, total / 1_000_000)
+    } else {
+        format!("{step}…")
     }
 }
 
@@ -542,7 +540,7 @@ fn wordmark(palette: &'static Palette) -> impl IntoElement {
     div()
         .flex()
         .gap(px(5.0))
-        .font_family(WORDMARK_FONT)
+        .font_family(BRAND_FONT)
         .font_weight(FontWeight::SEMIBOLD)
         .text_size(px(19.0))
         .text_color(rgb(palette.ink))

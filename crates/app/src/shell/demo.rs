@@ -148,7 +148,7 @@ fn circle(canvas: &watch::Sender<Canvas>, display: Display, seconds: f32) -> boo
     let lifted = progress >= 1.0;
     let now = Instant::now();
     canvas.send_if_modified(|canvas| {
-        let Some(sheet) = canvas.sheet() else {
+        let Some(sheet) = canvas.sheet_mut() else {
             return false;
         };
         if lifted {

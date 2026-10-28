@@ -645,7 +645,7 @@ impl Model {
     /// The owner still runs, and once no session is active it has retired every device.
     fn check(&self) -> anyhow::Result<()> {
         ensure!(
-            !self.runtime.owner.task.is_finished(),
+            !self.runtime.host.task.is_finished(),
             "The owner stopped on its own"
         );
         let phase = self.updates.borrow().phase;

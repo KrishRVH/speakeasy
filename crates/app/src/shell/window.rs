@@ -161,7 +161,7 @@ fn show_tray_hint(cx: &mut App) {
     }
     let pill = services.pill;
     if pill
-        .update(cx, |pill, _, cx| pill.tray_hint(cx))
+        .update(cx, |pill, _, cx| pill.show_tray_hint(cx))
         .unwrap_or(false)
     {
         cx.global_mut::<Services>().tray_hint_seen = true;

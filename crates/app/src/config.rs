@@ -41,9 +41,17 @@ impl Engine {
             Self::Parakeet => "Parakeet",
         }
     }
+
+    /// The next engine Settings offers, wrapping around.
+    pub(crate) const fn next(self) -> Self {
+        match self {
+            Self::Whisper => Self::Parakeet,
+            Self::Parakeet => Self::Whisper,
+        }
+    }
 }
 
-#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 #[expect(
     clippy::struct_excessive_bools,

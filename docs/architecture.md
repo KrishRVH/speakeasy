@@ -48,9 +48,11 @@ module unless a test file is named.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
   [pcm.rs](../crates/app/src/audio/pcm.rs), and [speech.rs](../crates/app/src/audio/speech.rs)
-  capture, meter, and seal a trimmed WAV before driver teardown.
+  capture, meter, and seal a trimmed WAV before driver teardown;
+  [microphones.rs](../crates/app/src/audio/microphones.rs) lists the input devices Settings offers.
   [audio/tests.rs](../crates/app/src/audio/tests.rs) and
-  [stream/tests.rs](../crates/app/src/audio/stream/tests.rs) use synthetic samples.
+  [stream/tests.rs](../crates/app/src/audio/stream/tests.rs) use synthetic samples; microphones.rs
+  checks that a scan the driver blocks serves the next request.
 - **Sound cues**: [sounds.rs](../crates/app/src/sounds.rs) plays the cues the owner asks for through
   `Ports::cue` on an owned output thread, which `Ports::hold_cues` keeps open through each session,
   and [speech.rs](../crates/app/src/audio/speech.rs) hears only the voice band beneath the cues,

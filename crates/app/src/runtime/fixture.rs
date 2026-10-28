@@ -11,10 +11,12 @@ use super::{
     ports::{Capturing, Listening, Pinning, Sealed},
     *,
 };
-use crate::local_speech::LocalSpeech;
+use crate::local_speech::{self, LocalSpeech};
 
-/// Outlasts the worker's own startup bounds, 120 s to serve and 120 s to warm up, by 5 s.
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(2 * 120 + 5);
+/// Outlasts both of the worker's startup bounds, one to serve and one to warm up.
+const STARTUP_TIMEOUT: Duration = local_speech::STARTUP_TIMEOUT
+    .saturating_mul(2)
+    .saturating_add(Duration::from_secs(5));
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const PHASE_TIMEOUT: Duration = Duration::from_secs(2);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);

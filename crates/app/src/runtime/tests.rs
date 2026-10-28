@@ -481,16 +481,16 @@ impl Runtime<OwnedTask> {
     /// clock reaches `PATIENCE` fails.
     async fn close(&mut self) -> anyhow::Result<()> {
         self.request_stop();
-        timeout(PATIENCE, &mut self.owner.task).await??;
+        timeout(PATIENCE, &mut self.host.task).await??;
         Ok(())
     }
 }
 
 /// The production controls and owner, plus the test's view of the fakes. Gates close before the
 /// owner is stopped and released.
-struct Harness<Owner = OwnedTask> {
+struct Harness<Host = OwnedTask> {
     _cleanup: CleanupGates,
-    runtime: Runtime<Owner>,
+    runtime: Runtime<Host>,
     output: watch::Sender<Snapshot>,
     updates: watch::Receiver<Snapshot>,
     levels: watch::Receiver<Meter>,
@@ -515,7 +515,7 @@ impl Harness {
 
     /// Resolves once the owner has finished its cleanup and exited.
     fn exited(&self) -> impl Future<Output = ()> + use<> {
-        let exit = self.runtime.owner.exit.clone();
+        let exit = self.runtime.host.exit.clone();
         async move { exit.closed().await }
     }
 
@@ -537,7 +537,7 @@ impl Harness<OwnedThread> {
 }
 
 // Sync keeps the futures of the `&self` helpers Send (clippy::future_not_send).
-impl<Owner: Sync> Harness<Owner> {
+impl<Host: Sync> Harness<Host> {
     fn host(
         config: Config,
         customize: impl FnOnce(&mut FakePorts),
@@ -546,7 +546,7 @@ impl<Owner: Sync> Harness<Owner> {
             watch::Sender<Snapshot>,
             watch::Sender<Meter>,
             FakePorts,
-        ) -> anyhow::Result<Runtime<Owner>>,
+        ) -> anyhow::Result<Runtime<Host>>,
     ) -> anyhow::Result<Self> {
         let (mut ports, reports) = FakePorts::new();
         customize(&mut ports);
@@ -612,7 +612,7 @@ impl<Owner: Sync> Harness<Owner> {
     }
 
     /// The cues played and marked since the last call.
-    fn sounds(&self) -> Vec<Sound> {
+    fn take_sounds(&self) -> Vec<Sound> {
         std::iter::from_fn(|| self.sounds.try_recv().ok()).collect()
     }
 

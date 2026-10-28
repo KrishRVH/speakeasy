@@ -150,8 +150,9 @@ fn filler_cleanup_follows_engine_language_and_switch() -> anyhow::Result<()> {
             } else {
                 Fillers::Preserve
             };
-            assert!(
-                config.fillers() == expected,
+            assert_eq!(
+                config.fillers(),
+                expected,
                 "{} with {language}, switch {remove_fillers}",
                 engine.label()
             );
@@ -160,7 +161,7 @@ fn filler_cleanup_follows_engine_language_and_switch() -> anyhow::Result<()> {
     let without_switch: Config = serde_json::from_str(
         r#"{"engine":"parakeet","engine_executable":"","model":"","language":"de"}"#,
     )?;
-    assert!(without_switch.fillers() == Fillers::Remove);
+    assert_eq!(without_switch.fillers(), Fillers::Remove);
     Ok(())
 }
 
@@ -184,7 +185,7 @@ fn manual_paste_wins_over_keep_clipboard() {
 fn shipped_example_is_what_a_first_launch_starts_from() -> anyhow::Result<()> {
     const EXAMPLE: &str = include_str!("../../../../settings.example.json");
     let config: Config = serde_json::from_str(EXAMPLE)?;
-    assert!(config == Config::first_launch());
+    assert_eq!(config, Config::first_launch());
     assert_eq!(
         serde_json::to_value(&config)?,
         serde_json::from_str::<serde_json::Value>(EXAMPLE)?
@@ -213,7 +214,7 @@ fn engine_and_theme_spellings_are_the_wire_format() -> anyhow::Result<()> {
 #[test]
 fn omitted_keys_read_as_the_defaults() -> anyhow::Result<()> {
     let read = serde_json::from_str::<Config>(r#"{"engine_executable":"","model":""}"#)?;
-    assert!(read == Config::default());
+    assert_eq!(read, Config::default());
     Ok(())
 }
 
@@ -230,7 +231,7 @@ fn unknown_top_level_keys_are_ignored_but_linux_keys_stay_strict() -> anyhow::Re
         model: "m".into(),
         ..Config::default()
     };
-    assert!(Config::read(&path)? == expected);
+    assert_eq!(Config::read(&path)?, expected);
     fs::write(
         &path,
         r#"{"engine_executable":"e","model":"m","linux":{"chord":"X"}}"#,
@@ -396,12 +397,12 @@ fn startup_classifies_saved_settings() -> anyhow::Result<()> {
     let path = directory.path().join("settings.json");
     let (config, startup) = Config::load(&path);
     assert!(matches!(startup, Startup::Unconfigured));
-    assert!(config == Config::first_launch());
+    assert_eq!(config, Config::first_launch());
 
     fs::write(&path, "{")?;
     let (config, startup) = Config::load(&path);
     assert!(matches!(startup, Startup::Invalid(_)));
-    assert!(config == Config::default());
+    assert_eq!(config, Config::default());
 
     fs::write(&path, r#"{"theme":"iris"}"#)?;
     let (config, startup) = Config::load(&path);
@@ -442,6 +443,6 @@ fn startup_classifies_saved_settings() -> anyhow::Result<()> {
         valid.engine_executable,
         directory.path().join("engine").canonicalize()?
     );
-    assert!(config == *valid);
+    assert_eq!(config, *valid);
     Ok(())
 }

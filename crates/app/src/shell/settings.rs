@@ -100,7 +100,7 @@ impl Settings {
     }
 
     fn act(&mut self, action: Action, window: &Window, cx: &mut Context<'_, Self>) {
-        if cx.global::<Services>().quitting() {
+        if cx.global::<Services>().is_quitting() {
             return;
         }
         match action {
@@ -129,10 +129,7 @@ impl Settings {
     }
 
     fn switch_engine(&mut self) {
-        self.config.engine = match self.config.engine {
-            Engine::Whisper => Engine::Parakeet,
-            Engine::Parakeet => Engine::Whisper,
-        };
+        self.config.engine = self.config.engine.next();
         self.notice = Some(Notice::Note(
             "Choose the executable and model for this engine, then save.".into(),
         ));
@@ -196,7 +193,8 @@ impl Settings {
     fn refresh_microphones(&mut self, cx: &mut Context<'_, Self>) {
         // The demo is simulated and never touches audio devices, and Quit waits only for a scan
         // that started before it.
-        if is_demo(cx) || cx.global::<Services>().quitting() || self.microphone_listing.is_some() {
+        let services = cx.global::<Services>();
+        if services.mode.is_demo() || services.is_quitting() || self.microphone_listing.is_some() {
             return;
         }
         let listing = MicrophoneScan::listing(&mut cx.global_mut::<Services>().microphone_scan);
@@ -291,7 +289,7 @@ impl Settings {
     }
 
     pub(super) fn start_setup(&mut self, cx: &Context<'_, Self>) {
-        if cx.global::<Services>().quitting() {
+        if cx.global::<Services>().is_quitting() {
             return;
         }
         let setup = match Setup::start() {
@@ -365,7 +363,7 @@ impl Settings {
     fn save(&mut self, cx: &mut Context<'_, Self>) {
         let services = cx.global::<Services>();
         // A demo is simulated yet keeps the real settings path, so it must never write there.
-        if services.quitting() || services.mode.is_demo() {
+        if services.is_quitting() || services.mode.is_demo() {
             return;
         }
         let epoch = services.config_epoch();
@@ -614,10 +612,7 @@ fn next_microphone(microphones: &[InputDevice], current: Option<&str>) -> Option
 /// The pill and tray show the saved theme; only Settings previews the draft.
 fn show_theme(theme: Theme, cx: &mut App) {
     let pill = cx.global::<Services>().pill;
-    pill.update_if_open(cx, |view, _, cx| {
-        view.set_theme(theme);
-        cx.notify();
-    });
+    pill.update_if_open(cx, |view, _, cx| view.set_theme(theme, cx));
     // Republishing the current snapshot makes the tray redraw its icon.
     cx.global::<Services>().output.send_modify(|_| ());
 }
@@ -625,8 +620,7 @@ fn show_theme(theme: Theme, cx: &mut App) {
 fn show_motion(reduced_motion: bool, cx: &mut App) {
     let pill = cx.global::<Services>().pill;
     pill.update_if_open(cx, |view, _, cx| {
-        view.set_reduced_motion(reduced_motion);
-        cx.notify();
+        view.set_reduced_motion(reduced_motion, cx);
     });
 }
 
