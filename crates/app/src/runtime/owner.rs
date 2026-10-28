@@ -1,7 +1,7 @@
 //! The single session authority. Each wake handles one message, advances work whose prerequisites
 //! are satisfied, then publishes a projection of owned state.
 
-use std::{convert::Infallible, mem, ops::ControlFlow, sync::Arc, time::Instant};
+use std::{convert::Infallible, ops::ControlFlow, sync::Arc, time::Instant};
 
 use async_channel::{Receiver, RecvError, Sender};
 use speakeasy_core::gesture::{Action, Gesture, State};
@@ -18,7 +18,7 @@ use super::{
     now,
     ports::{CaptureEvent, Capturing, PUBLISH_STOPPED, Ports, Published, SessionId, ShowEvent},
     reap,
-    session::{Delivered, Screen, Session, Stage},
+    session::{Delivered, Session},
     worker::{Completion, Detail, Transcript, Worker},
 };
 use crate::{
@@ -312,12 +312,12 @@ impl<P: Ports> Owner<P> {
                 session.audio_ready(gesture, now());
                 // The pill opens to listening here, so the cue sounds with it, never before the
                 // microphone listens.
-                let cue = if session.show.is_some() {
+                let cue = if session.is_show() {
                     Cue::Show
                 } else {
                     Cue::Start
                 };
-                if matches!(session.stage, Stage::Recording) {
+                if session.is_recording() {
                     self.cue_heard(cue);
                 }
             },
@@ -328,18 +328,12 @@ impl<P: Ports> Owner<P> {
                     level,
                 });
             },
-            CaptureEvent::Finished(_, Ok(Some(sealed))) => {
-                session.stage = Stage::AwaitingWorker(sealed);
+            CaptureEvent::Finished(_, Ok(sealed)) => {
+                let delivers = session.captured(sealed);
                 self.conclude_capture();
-            },
-            // A Show is worth sending without a word said: its ink and clicks still tell.
-            CaptureEvent::Finished(_, Ok(None)) if session.show.is_some() => {
-                session.stage = Stage::AwaitingFootage(Narration::default());
-                self.conclude_capture();
-            },
-            CaptureEvent::Finished(_, Ok(None)) => {
-                self.conclude_capture();
-                self.end_session(Outcome::Empty);
+                if !delivers {
+                    self.end_session(Outcome::Empty);
+                }
             },
             // Failing retires both devices; the screen is never asked to finish footage for nobody.
             CaptureEvent::Finished(_, Err(error)) => self.fail(error.to_string()),
@@ -399,7 +393,7 @@ impl<P: Ports> Owner<P> {
     fn session_survives_warmup_failure(&self) -> bool {
         self.session
             .as_ref()
-            .is_some_and(|session| !matches!(session.stage, Stage::AwaitingWorker(_)))
+            .is_some_and(|session| !session.awaits_worker())
     }
 
     /// Only the current job's transcript arrives here: abandoning a session first moves its job out
@@ -408,20 +402,15 @@ impl<P: Ports> Owner<P> {
         let Some(session) = self
             .session
             .as_mut()
-            .filter(|session| matches!(session.stage, Stage::Transcribing { .. }))
+            .filter(|session| session.is_transcribing())
         else {
             return;
         };
         if text.is_empty() {
             self.end_session(Outcome::Empty);
         } else {
-            let insertion = self
-                .ports
-                .insert(text, session.permit.clone(), self.config.delivery());
-            session.stage =
-                Stage::Delivering(tokio::spawn(
-                    async move { Delivered::Inserted(insertion.await) },
-                ));
+            let (ports, delivery) = (&self.ports, self.config.delivery());
+            session.insert(|permit| ports.insert(text, permit, delivery));
         }
     }
 
@@ -439,14 +428,13 @@ impl<P: Ports> Owner<P> {
     /// microphone.
     fn start_show(&mut self, scope: Scope) -> Option<Action> {
         let held = matches!(self.gesture.state(), State::Held | State::HandsFree);
-        let session = self
-            .session
-            .as_mut()
-            .filter(|session| held && session.awaits_audio() && session.show.is_none())?;
-        session.show = Some(Screen::Queued(scope));
+        let session = self.session.as_mut().filter(|_| held)?;
+        if !session.turn_into_show(scope) {
+            return None;
+        }
         self.latest_show = true;
         // A microphone still opening sounds the Show cue once it listens.
-        if matches!(session.stage, Stage::Recording) {
+        if session.is_recording() {
             self.cue_heard(Cue::Show);
         }
         self.gesture.lock()
@@ -454,17 +442,16 @@ impl<P: Ports> Owner<P> {
 
     fn handle_show(&mut self, event: ShowEvent) {
         let ShowEvent::Finished(id, footage) = event;
-        let Some(screen) = self
+        let Some(session) = self
             .session
             .as_mut()
-            .filter(|session| session.id == id)
-            .and_then(|session| session.show.as_mut())
+            .filter(|session| session.id == id && session.is_show())
         else {
             return;
         };
         match footage {
             Ok(footage) => {
-                *screen = Screen::Recorded(Box::new(footage));
+                session.footage(footage);
                 self.screen.retire();
             },
             Err(error) => self.fail(format!("{error:#}")),
@@ -473,10 +460,7 @@ impl<P: Ports> Owner<P> {
 
     fn handle_delivered(&mut self, result: Result<Delivered, JoinError>) {
         // Only a Show publishes, and a session cannot become one once transcription starts.
-        let show = self
-            .session
-            .as_ref()
-            .is_some_and(|session| session.show.is_some());
+        let show = self.session.as_ref().is_some_and(Session::is_show);
         let outcome = match result {
             Ok(Delivered::Inserted(Ok(Inserted::Sent))) => Outcome::Done,
             Ok(Delivered::Inserted(Ok(Inserted::Copied(message)))) => {
@@ -595,19 +579,17 @@ impl<P: Ports> Owner<P> {
             return;
         };
         session.permit.revoke();
-        if session.show.is_some() {
+        if session.is_show() {
             self.screen.retire();
         }
-        match session.stage {
-            Stage::Opening | Stage::Recording | Stage::Stopping => self.microphone.retire(),
-            Stage::Delivering(task) => self.retiring.push(task),
-            Stage::Transcribing { .. } if self.worker.is_transcribing() => {
-                self.worker.recover(&self.ports, &self.config);
-            },
-            Stage::Queued
-            | Stage::AwaitingWorker(_)
-            | Stage::Transcribing { .. }
-            | Stage::AwaitingFootage(_) => {},
+        if session.is_capturing() {
+            self.microphone.retire();
+        }
+        if session.is_transcribing() && self.worker.is_transcribing() {
+            self.worker.recover(&self.ports, &self.config);
+        }
+        if let Some(task) = session.into_delivery() {
+            self.retiring.push(task);
         }
     }
 
@@ -634,7 +616,7 @@ impl<P: Ports> Owner<P> {
         let Some(session) = self.session.as_mut() else {
             return;
         };
-        let Some(Screen::Queued(scope)) = session.show else {
+        let Some(scope) = session.queued_screen() else {
             return;
         };
         match self
@@ -646,7 +628,7 @@ impl<P: Ports> Owner<P> {
                     recorder.finish();
                 }
                 self.screen = Device::Open(recorder);
-                session.show = Some(Screen::Recording);
+                session.screen_opened();
             },
             Err(error) => self.fail(format!("Could not record the screen: {error}")),
         }
@@ -654,16 +636,9 @@ impl<P: Ports> Owner<P> {
 
     /// Publishes a Show once its narration and screen recording are both in.
     fn start_publishing(&mut self) {
-        let Some(session) = &mut self.session else {
-            return;
-        };
-        if let Some((footage, narration)) = session.take_publishable() {
-            let publication = self
-                .ports
-                .publish(footage, narration, session.permit.clone());
-            session.stage = Stage::Delivering(tokio::spawn(async move {
-                Delivered::Published(publication.await)
-            }));
+        if let Some(session) = &mut self.session {
+            let ports = &self.ports;
+            session.publish(|footage, narration, permit| ports.publish(footage, narration, permit));
         }
     }
 
@@ -671,11 +646,7 @@ impl<P: Ports> Owner<P> {
         if self.permits.is_closed() || !self.microphone.is_free() {
             return;
         }
-        let Some(session) = self
-            .session
-            .as_mut()
-            .filter(|session| matches!(session.stage, Stage::Queued))
-        else {
+        let Some(session) = self.session.as_mut().filter(|session| session.is_queued()) else {
             return;
         };
         let microphone = self.config.microphone.as_deref();
@@ -688,7 +659,7 @@ impl<P: Ports> Owner<P> {
                     recording.finish();
                 }
                 self.microphone = Device::Open(recording);
-                session.stage = Stage::Opening;
+                session.opened();
             },
             Err(error) => self.fail(format!(
                 "Could not open the microphone ({error}). Try again."
@@ -697,28 +668,23 @@ impl<P: Ports> Owner<P> {
     }
 
     fn start_transcription(&mut self) {
-        let Some(session) = self.session.as_mut() else {
+        let Some(session) = self
+            .session
+            .as_mut()
+            .filter(|session| session.awaits_worker())
+        else {
             return;
         };
-        let detail = if session.show.is_some() {
+        let detail = if session.is_show() {
             Detail::Words
         } else {
             Detail::Text
         };
-        let Stage::AwaitingWorker(sealed) = &mut session.stage else {
-            return;
-        };
         if self.worker.revive(&self.ports, &self.config) {
             self.notice = Some(Notice::LoadingModel);
         }
-        let trimmed = sealed.trimmed;
-        match self
-            .worker
-            .transcribe(mem::take(&mut sealed.wav), detail, &self.config)
-        {
-            Ok(()) => session.stage = Stage::Transcribing { trimmed },
-            Err(unclaimed) => sealed.wav = unclaimed,
-        }
+        let (worker, config) = (&mut self.worker, &self.config);
+        session.transcribe(|wav| worker.transcribe(wav, detail, config));
     }
 
     /// Obsolete insertions and publications finish their own cleanup; they are never aborted, and

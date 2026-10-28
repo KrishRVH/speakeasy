@@ -1,5 +1,6 @@
-//! Authority and presentation stage for one recording. Retired native work belongs to the owner, so
-//! abandoning a session never waits or opens its replacement.
+//! Authority and stage for one recording: what each stage holds and how one stage becomes the
+//! next, while the owner decides when. Retired native work belongs to the owner, so abandoning a
+//! session never waits or opens its replacement.
 
 use std::{
     future::pending,
@@ -22,15 +23,13 @@ pub(super) struct Session {
     pub permit: InsertPermit,
     /// When the session began; a Show's timeline counts from here.
     pub started: Instant,
-    /// When the microphone delivered its first audio.
-    audio_started: Option<Instant>,
-    pub stage: Stage,
+    stage: Stage,
     /// The screen side of a Show; `None` while the session is plain dictation.
-    pub show: Option<Screen>,
+    show: Option<Screen>,
 }
 
 /// A Show's screen recorder, which opens only after the previous one has retired.
-pub(super) enum Screen {
+enum Screen {
     /// Waits to record what the scope names.
     Queued(Scope),
     Recording,
@@ -40,13 +39,48 @@ pub(super) enum Screen {
     Spent,
 }
 
+/// Each offset places audio on the session's timeline, so a Show's narration lands where it was
+/// spoken.
+enum Stage {
+    /// Waits until any previous capture has released the microphone.
+    Queued,
+    Opening,
+    /// `audio` is where the first samples fall.
+    Recording {
+        audio: Duration,
+    },
+    /// The gesture has finished; waits for the capture's audio.
+    Stopping {
+        audio: Duration,
+    },
+    /// Sealed speech, starting at `start`, awaits a ready worker.
+    AwaitingWorker {
+        sealed: Sealed,
+        start: Duration,
+    },
+    /// The worker holds the WAV, which starts at `start`.
+    Transcribing {
+        start: Duration,
+    },
+    /// A Show's narration, placed on its timeline, waits for its screen recording to finish.
+    AwaitingFootage(Narration),
+    /// Dictated text is being inserted, or a Show composed, written, and copied.
+    Delivering(JoinHandle<Delivered>),
+}
+
+/// What a session's last task returns: how its dictated text was inserted, or its Show
+/// published.
+pub(super) enum Delivered {
+    Inserted(anyhow::Result<Inserted>),
+    Published(anyhow::Result<Published>),
+}
+
 impl Session {
     pub(super) const fn new(id: SessionId, permit: InsertPermit, started: Instant) -> Self {
         Self {
             id,
             permit,
             started,
-            audio_started: None,
             stage: Stage::Queued,
             show: None,
         }
@@ -55,52 +89,173 @@ impl Session {
     pub(super) const fn phase(&self) -> Phase {
         match self.stage {
             Stage::Queued | Stage::Opening => Phase::Starting,
-            Stage::Recording => Phase::Recording,
-            Stage::Stopping => Phase::Stopping,
-            Stage::AwaitingWorker(_)
+            Stage::Recording { .. } => Phase::Recording,
+            Stage::Stopping { .. } => Phase::Stopping,
+            Stage::AwaitingWorker { .. }
             | Stage::Transcribing { .. }
             | Stage::AwaitingFootage(_)
             | Stage::Delivering(_) => Phase::Processing,
         }
     }
 
-    /// Places a transcribed Show's narration, timed from the start of its audio, onto the Show's
-    /// timeline, then waits for the footage. Any other stage ignores it.
-    pub(super) fn narrate(&mut self, narration: Narration) {
-        let Stage::Transcribing { trimmed } = self.stage else {
-            return;
-        };
-        let audio = self.audio_started.map_or(Duration::ZERO, |audio| {
-            audio.saturating_duration_since(self.started)
-        });
-        self.stage = Stage::AwaitingFootage(narration.delayed(audio.saturating_add(trimmed)));
+    /// Whether the session became a Show, recording the screen as well as the microphone.
+    pub(super) const fn is_show(&self) -> bool {
+        self.show.is_some()
     }
 
-    /// The finished Show's footage and narration, once both are in hand; its screen is then
-    /// spent.
-    pub(super) fn take_publishable(&mut self) -> Option<(Footage, Narration)> {
-        let (Stage::AwaitingFootage(narration), Some(screen @ Screen::Recorded(_))) =
-            (&mut self.stage, self.show.as_mut())
-        else {
-            return None;
-        };
-        let Screen::Recorded(footage) = mem::replace(screen, Screen::Spent) else {
-            return None;
-        };
-        Some((*footage, mem::take(narration)))
+    /// Whether the session's microphone waits for the previous one to retire.
+    pub(super) const fn is_queued(&self) -> bool {
+        matches!(self.stage, Stage::Queued)
+    }
+
+    pub(super) const fn is_recording(&self) -> bool {
+        matches!(self.stage, Stage::Recording { .. })
     }
 
     pub(super) const fn is_capturing(&self) -> bool {
         matches!(
             self.stage,
-            Stage::Opening | Stage::Recording | Stage::Stopping
+            Stage::Opening | Stage::Recording { .. } | Stage::Stopping { .. }
         )
     }
 
     /// Whether the session's audio is still to come: its microphone is queued behind the previous
     /// one, or capturing.
     pub(super) const fn awaits_audio(&self) -> bool {
-        matches!(self.stage, Stage::Queued) || self.is_capturing()
+        self.is_queued() || self.is_capturing()
+    }
+
+    pub(super) const fn awaits_worker(&self) -> bool {
+        matches!(self.stage, Stage::AwaitingWorker { .. })
+    }
+
+    pub(super) const fn is_transcribing(&self) -> bool {
+        matches!(self.stage, Stage::Transcribing { .. })
+    }
+
+    /// What the Show's screen recorder, queued behind the previous one, is to record.
+    pub(super) const fn queued_screen(&self) -> Option<Scope> {
+        match self.show {
+            Some(Screen::Queued(scope)) => Some(scope),
+            _ => None,
+        }
+    }
+
+    /// The microphone opened; the session waits for its first samples.
+    pub(super) fn opened(&mut self) {
+        if self.is_queued() {
+            self.stage = Stage::Opening;
+        }
+    }
+
+    /// Notes where the first samples fall and starts recording, or stops at once when the gesture
+    /// already finished.
+    pub(super) fn audio_ready(&mut self, gesture: State, at: Instant) {
+        if matches!(self.stage, Stage::Opening) {
+            let audio = at.saturating_duration_since(self.started);
+            self.stage = if gesture == State::Processing {
+                Stage::Stopping { audio }
+            } else {
+                Stage::Recording { audio }
+            };
+        }
+    }
+
+    pub(super) fn finish(&mut self) {
+        if let Stage::Recording { audio } = self.stage {
+            self.stage = Stage::Stopping { audio };
+        }
+    }
+
+    /// Ends capture with what it sealed, returning whether anything is left to deliver. Speech
+    /// goes on to recognition. A silent Show goes on to its footage, since its ink and clicks
+    /// still tell; silent dictation has nothing. Audio sealed by a capture that never reported its
+    /// first samples has no place on the timeline, so it counts as silence.
+    pub(super) fn captured(&mut self, sealed: Option<Sealed>) -> bool {
+        self.stage = match (&self.stage, sealed) {
+            (Stage::Recording { audio } | Stage::Stopping { audio }, Some(sealed)) => {
+                let start = audio.saturating_add(sealed.trimmed);
+                Stage::AwaitingWorker { sealed, start }
+            },
+            _ if self.is_show() => Stage::AwaitingFootage(Narration::default()),
+            _ => return false,
+        };
+        true
+    }
+
+    /// Hands the sealed WAV to `transcribe`, which gives it back while no worker can take it.
+    pub(super) fn transcribe(&mut self, transcribe: impl FnOnce(Vec<u8>) -> Result<(), Vec<u8>>) {
+        let Stage::AwaitingWorker { sealed, start } = &mut self.stage else {
+            return;
+        };
+        let start = *start;
+        match transcribe(mem::take(&mut sealed.wav)) {
+            Ok(()) => self.stage = Stage::Transcribing { start },
+            Err(unclaimed) => sealed.wav = unclaimed,
+        }
+    }
+
+    /// Places a transcribed Show's narration, timed from the start of its WAV, onto the Show's
+    /// timeline, then waits for the footage. Any other stage ignores it.
+    pub(super) fn narrate(&mut self, narration: Narration) {
+        if let Stage::Transcribing { start } = self.stage {
+            self.stage = Stage::AwaitingFootage(narration.delayed(start));
+        }
+    }
+
+    /// Delivers transcribed dictation through `insert`, which receives the session's permit.
+    pub(super) fn insert<F>(&mut self, insert: impl FnOnce(InsertPermit) -> F)
+    where
+        F: Future<Output = anyhow::Result<Inserted>> + Send + 'static,
+    {
+        let insertion = insert(self.permit.clone());
+        self.deliver(async move { Delivered::Inserted(insertion.await) });
+    }
+
+    /// Turns a session whose audio is still to come into a Show of what `scope` names; returns
+    /// whether it did.
+    pub(super) fn turn_into_show(&mut self, scope: Scope) -> bool {
+        let turns = !self.is_show() && self.awaits_audio();
+        if turns {
+            self.show = Some(Screen::Queued(scope));
+        }
+        turns
+    }
+
+    /// The Show's queued screen recorder opened.
+    pub(super) fn screen_opened(&mut self) {
+        if let Some(screen @ Screen::Queued(_)) = &mut self.show {
+            *screen = Screen::Recording;
+        }
+    }
+
+    /// Keeps a Show's footage until its narration is in.
+    pub(super) fn footage(&mut self, footage: Footage) {
+        if let Some(screen) = &mut self.show {
+            *screen = Screen::Recorded(Box::new(footage));
+        }
+    }
+
+    /// Publishes a Show through `publish` once its narration and footage are both in; its screen
+    /// is then spent.
+    pub(super) fn publish<F>(&mut self, publish: impl FnOnce(Footage, Narration, InsertPermit) -> F)
+    where
+        F: Future<Output = anyhow::Result<Published>> + Send + 'static,
+    {
+        let (Stage::AwaitingFootage(narration), Some(screen @ Screen::Recorded(_))) =
+            (&mut self.stage, &mut self.show)
+        else {
+            return;
+        };
+        let Screen::Recorded(footage) = mem::replace(screen, Screen::Spent) else {
+            return;
+        };
+        let publication = publish(*footage, mem::take(narration), self.permit.clone());
+        self.deliver(async move { Delivered::Published(publication.await) });
+    }
+
+    fn deliver(&mut self, delivery: impl Future<Output = Delivered> + Send + 'static) {
+        self.stage = Stage::Delivering(tokio::spawn(delivery));
     }
 
     /// Resolves once the session's insertion or publication finishes, and pends otherwise.
@@ -112,50 +267,14 @@ impl Session {
         }
     }
 
-    /// Notes when the first samples arrived and starts recording, or stops at once when the gesture
-    /// already finished.
-    pub(super) fn audio_ready(&mut self, gesture: State, at: Instant) {
-        if matches!(self.stage, Stage::Opening) {
-            self.audio_started = Some(at);
-            self.stage = if gesture == State::Processing {
-                Stage::Stopping
-            } else {
-                Stage::Recording
-            };
+    /// The insertion or publication still under way, which an abandoned session leaves to finish
+    /// its own cleanup.
+    pub(super) fn into_delivery(self) -> Option<JoinHandle<Delivered>> {
+        match self.stage {
+            Stage::Delivering(task) => Some(task),
+            _ => None,
         }
     }
-
-    pub(super) fn finish(&mut self) {
-        if matches!(self.stage, Stage::Recording) {
-            self.stage = Stage::Stopping;
-        }
-    }
-}
-
-/// What a session's last task returns: how its dictated text was inserted, or its Show
-/// published.
-pub(super) enum Delivered {
-    Inserted(anyhow::Result<Inserted>),
-    Published(anyhow::Result<Published>),
-}
-
-pub(super) enum Stage {
-    /// Waits until any previous capture has released the microphone.
-    Queued,
-    Opening,
-    Recording,
-    /// The gesture has finished; waits for the capture's audio.
-    Stopping,
-    /// Captured audio awaiting a ready worker.
-    AwaitingWorker(Sealed),
-    /// The worker holds the WAV; `trimmed` places the times it returns on the recording's clock.
-    Transcribing {
-        trimmed: Duration,
-    },
-    /// A Show's narration, placed on its timeline, waits for its screen recording to finish.
-    AwaitingFootage(Narration),
-    /// Dictated text is being inserted, or a Show composed, written, and copied.
-    Delivering(JoinHandle<Delivered>),
 }
 
 #[cfg(test)]
@@ -171,13 +290,17 @@ mod tests {
         let permit = InputSender::new(sender).begin().unwrap();
         let started = Instant::now();
         let mut session = Session::new(SessionId::FIRST, permit, started);
-        session.show = Some(Screen::Recording);
-        session.stage = Stage::Opening;
+        assert!(session.turn_into_show(Scope::Screen));
+        session.opened();
         let first_audio = started.checked_add(Duration::from_millis(1_200)).unwrap();
         session.audio_ready(State::Held, first_audio);
-        session.stage = Stage::Transcribing {
+        session.finish();
+        let sealed = Sealed {
+            wav: vec![1, 2],
             trimmed: Duration::from_millis(500),
         };
+        assert!(session.captured(Some(sealed)));
+        session.transcribe(|_| Ok(()));
         let word = |at| Word {
             span: Span::new(Moment::from_millis(at), Moment::from_millis(at + 200)),
             text: "here".into(),
