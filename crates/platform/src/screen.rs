@@ -26,7 +26,7 @@ use crate::{
     owned_thread::{OwnedThread, StoppableThread},
 };
 
-/// How often the pointer is sampled: fast enough to catch a deliberate click.
+/// How often the pointer is sampled.
 const POINTER_INTERVAL: Duration = Duration::from_millis(8);
 
 /// What a Show records.
@@ -308,9 +308,9 @@ pub struct PointerMonitor {
 }
 
 impl PointerMonitor {
-    /// Samples the pointer over `display` every 8 ms, sending a sample whenever its position,
-    /// drawing state, or primary button changes. Polling needs no input hook or permission, and
-    /// never delays the pointer.
+    /// Samples the pointer over `display` often enough to catch a deliberate click, sending a
+    /// sample whenever its position, drawing state, or primary button changes. Polling needs no
+    /// input hook or permission, and never delays the pointer.
     ///
     /// # Errors
     ///

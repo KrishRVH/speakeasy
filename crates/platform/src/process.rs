@@ -2,8 +2,8 @@
 //! and Windows, the check that the worker's loopback listener belongs to it.
 //!
 //! Authority comes only from a freshly spawned child, through the process handle or identifier its
-//! `Child` holds, never from a process lookup.
-//! Listener lookups only test membership in the group and never grant termination authority.
+//! `Child` holds, never from a process lookup. Listener lookups only test membership in the group
+//! and never grant termination authority.
 
 #[cfg(target_os = "linux")]
 use std::fs;
