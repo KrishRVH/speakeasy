@@ -370,9 +370,10 @@ global hook, or touch the clipboard. See the
   the pill. It needs Xvfb, x11-utils, and a Vulkan driver. `bash scripts/check-rendering-linux.sh`
   runs, in an Ubuntu 24.04 Docker container with stock Mesa, the opt-in `idle_native_pill_` tests of
   the pill's window hints, input shape, and visibility, the native rendering example, and that demo
-  check on the release binary that `package-linux.sh` builds; `--packages` checks the AppImage and
-  tar launchers instead. [Linux implementation](docs/linux-implementation.md#setup-and-distribution)
-  explains the Mesa requirement.
+  check on a release binary it builds; `--packages` checks the AppImage and tar launchers that
+  `package-linux.sh` builds instead.
+  [Linux implementation](docs/linux-implementation.md#setup-and-distribution) explains the Mesa
+  requirement.
 - `cargo run --locked -p speakeasy --example check_native_rendering -- --native-gui` opens an owned
   non-activating window, renders an embedded SVG and paths, resizes, and repeats show/hide. It runs
   on the process main thread for AppKit. Linux needs a private display, such as `xvfb-run -a`;

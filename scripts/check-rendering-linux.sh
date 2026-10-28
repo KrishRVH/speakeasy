@@ -20,6 +20,9 @@ for line in sys.stdin:
 ')
 test -x "$test_binary"
 cargo build --locked -p speakeasy --example check_native_rendering
+if [[ "${1:-}" != --packages ]]; then
+  cargo build --release --locked -p speakeasy
+fi
 
 # Keep the builder ABI while using a stock driver with Mesa's X11 PutImage fix.
 # The read-only mount runs the builder's exact binaries, with no host display.
