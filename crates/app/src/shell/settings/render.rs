@@ -420,9 +420,9 @@ fn row() -> Div {
     div().flex().gap(ROW_GAP)
 }
 
-/// The command that saves or resumes, labeled with what it does. Remedies across the app say
-/// "Resume dictation", which resumes the saved settings as the tray does once there is an engine to
-/// resume; edits the file does not hold save first.
+/// The primary command and its label, if any. A demo replays its preview. Otherwise the command
+/// saves, unless dictation is paused with nothing to save: then "Resume dictation", the label
+/// failure remedies name, resumes the saved settings as the tray does.
 fn primary_command(
     demo: bool,
     service: ServiceState,

@@ -273,12 +273,12 @@ impl Settings {
 
     pub(super) fn play(&mut self, cx: &Context<'_, Self>) {
         let services = cx.global::<Services>();
-        let (output, meter, canvas) = (
+        let script = demo::play(
             services.output.clone(),
             services.meter.clone(),
             services.canvas.clone(),
         );
-        self.preview = Some(cx.spawn(async move |_, _| demo::play(output, meter, canvas).await));
+        self.preview = Some(cx.spawn(async move |_, _| script.await));
     }
 
     fn toggle_setup(&mut self, cx: &Context<'_, Self>) {
@@ -609,7 +609,7 @@ fn next_microphone(microphones: &[InputDevice], current: Option<&str>) -> Option
     next.map(|device| device.id.clone())
 }
 
-/// The pill and tray show the saved theme; only Settings previews the draft.
+/// Shows `theme` on the pill and the tray.
 fn show_theme(theme: Theme, cx: &mut App) {
     let pill = cx.global::<Services>().pill;
     pill.update_if_open(cx, |view, _, cx| view.set_theme(theme, cx));

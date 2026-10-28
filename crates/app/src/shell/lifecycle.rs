@@ -246,9 +246,9 @@ mod tests {
 
     /// A lifecycle whose owners are live, as `start` leaves it.
     fn live<Owners, Restart>(owners: Owners) -> Lifecycle<Owners, Restart> {
-        let mut state = Lifecycle::default();
-        assert_eq!(state.start(|| Ok::<_, ()>(owners)), Ok(true));
-        state
+        let mut lifecycle = Lifecycle::default();
+        assert_eq!(lifecycle.start(|| Ok::<_, ()>(owners)), Ok(true));
+        lifecycle
     }
 
     #[test]
@@ -262,116 +262,119 @@ mod tests {
         }
 
         let (completion, dropped) = mpsc::channel();
-        let mut state = live::<_, ()>(Owner(completion.clone()));
-        assert!(state.validate().is_none());
+        let mut lifecycle = live::<_, ()>(Owner(completion.clone()));
+        assert!(lifecycle.validate().is_none());
         assert_eq!(
-            state.start(|| Ok::<_, ()>(Owner(completion.clone()))),
+            lifecycle.start(|| Ok::<_, ()>(Owner(completion.clone()))),
             Ok(false)
         );
         assert!(dropped.try_recv().is_err());
-        assert!(state.pause());
-        assert!(state.validate().is_none());
+        assert!(lifecycle.pause());
+        assert!(lifecycle.validate().is_none());
         assert_eq!(
-            state.start(|| Ok::<_, ()>(Owner(completion.clone()))),
+            lifecycle.start(|| Ok::<_, ()>(Owner(completion.clone()))),
             Ok(false)
         );
         assert!(dropped.try_recv().is_err());
-        state.retired();
+        lifecycle.retired();
         dropped.try_recv().unwrap();
-        let checking = state.validate().unwrap();
-        assert!(state.is_running(|_| false));
-        assert!(state.quit());
-        assert!(!state.is_running(|_| false));
-        assert!(!state.validated(checking));
-        assert!(state.validate().is_none());
-        assert_eq!(state.start(|| Ok::<_, ()>(Owner(completion))), Ok(false));
+        let checking = lifecycle.validate().unwrap();
+        assert!(lifecycle.is_running(|_| false));
+        assert!(lifecycle.quit());
+        assert!(!lifecycle.is_running(|_| false));
+        assert!(!lifecycle.validated(checking));
+        assert!(lifecycle.validate().is_none());
+        assert_eq!(
+            lifecycle.start(|| Ok::<_, ()>(Owner(completion))),
+            Ok(false)
+        );
     }
 
     #[test]
     fn pause_invalidates_validation_and_repeated_pause_discards_resume() {
-        let mut state = Lifecycle::<(), u8>::default();
-        let checking = state.validate().unwrap();
-        assert!(!state.pause());
-        assert!(!state.validated(checking));
-        state = live(());
-        assert!(state.pause());
-        assert!(state.queue(1));
-        assert!(state.queue(2));
-        assert!(!state.pause());
-        assert!(!state.has_pending());
-        assert_eq!(state.retired(), None);
+        let mut lifecycle = Lifecycle::<(), u8>::default();
+        let checking = lifecycle.validate().unwrap();
+        assert!(!lifecycle.pause());
+        assert!(!lifecycle.validated(checking));
+        lifecycle = live(());
+        assert!(lifecycle.pause());
+        assert!(lifecycle.queue(1));
+        assert!(lifecycle.queue(2));
+        assert!(!lifecycle.pause());
+        assert!(!lifecycle.has_pending());
+        assert_eq!(lifecycle.retired(), None);
     }
 
     #[test]
     fn retirement_applies_only_latest_request_once_and_quit_is_terminal() {
-        let mut state = live(());
-        assert!(state.pause());
-        assert!(state.queue(1));
-        assert!(state.queue(2));
-        assert_eq!(state.retired(), Some(2));
-        assert_eq!(state.retired(), None);
-        state = live(());
-        assert!(state.pause());
-        assert!(state.queue(3));
-        assert!(state.quit());
-        assert!(!state.quit());
-        assert!(!state.queue(4));
-        assert!(!state.pause());
-        assert!(!state.reconfigure());
-        assert_eq!(state.retired(), None);
-        assert!(state.is_quitting());
-        assert!(state.active().is_none());
-        assert!(state.retiring().is_none());
+        let mut lifecycle = live(());
+        assert!(lifecycle.pause());
+        assert!(lifecycle.queue(1));
+        assert!(lifecycle.queue(2));
+        assert_eq!(lifecycle.retired(), Some(2));
+        assert_eq!(lifecycle.retired(), None);
+        lifecycle = live(());
+        assert!(lifecycle.pause());
+        assert!(lifecycle.queue(3));
+        assert!(lifecycle.quit());
+        assert!(!lifecycle.quit());
+        assert!(!lifecycle.queue(4));
+        assert!(!lifecycle.pause());
+        assert!(!lifecycle.reconfigure());
+        assert_eq!(lifecycle.retired(), None);
+        assert!(lifecycle.is_quitting());
+        assert!(lifecycle.active().is_none());
+        assert!(lifecycle.retiring().is_none());
     }
 
     #[test]
     fn a_pause_after_save_keeps_dictation_off_unless_resumed() {
-        let mut state = live::<_, ()>(());
-        let saved_at = state.epoch();
-        assert!(state.pause());
+        let mut lifecycle = live::<_, ()>(());
+        let saved_at = lifecycle.epoch();
+        assert!(lifecycle.pause());
         assert!(
-            !state.save_may_enable(saved_at, |()| true),
+            !lifecycle.save_may_enable(saved_at, |()| true),
             "A save requested before Pause would restart the owners Pause is retiring"
         );
-        assert_eq!(state.retired(), None);
+        assert_eq!(lifecycle.retired(), None);
         assert!(
-            !state.save_may_enable(saved_at, |()| true),
+            !lifecycle.save_may_enable(saved_at, |()| true),
             "A save requested before Pause would enable dictation after it"
         );
-        state.validate().unwrap();
+        lifecycle.validate().unwrap();
         assert!(
-            state.save_may_enable(saved_at, |()| true),
+            lifecycle.save_may_enable(saved_at, |()| true),
             "A deliberate Resume after Pause still receives the durable settings"
         );
-        state = Lifecycle::default();
-        state.validate().unwrap();
-        let saved_at = state.epoch();
-        assert!(!state.pause());
-        assert!(!state.save_may_enable(saved_at, |()| true));
+        lifecycle = Lifecycle::default();
+        lifecycle.validate().unwrap();
+        let saved_at = lifecycle.epoch();
+        assert!(!lifecycle.pause());
+        assert!(!lifecycle.save_may_enable(saved_at, |()| true));
     }
 
     #[test]
     fn a_save_during_a_resume_check_supersedes_the_check() {
-        let mut state = Lifecycle::<u8, ()>::default();
-        let checking = state.validate().unwrap();
-        assert!(state.save_may_enable(state.epoch(), |_| false));
-        assert!(state.reconfigure());
-        assert!(!state.queue(()));
-        assert_eq!(state.start(|| Ok::<_, ()>(1)), Ok(true));
-        assert!(!state.validated(checking));
-        assert_eq!(state.active(), Some(&1));
+        let mut lifecycle = Lifecycle::<u8, ()>::default();
+        let checking = lifecycle.validate().unwrap();
+        assert!(lifecycle.save_may_enable(lifecycle.epoch(), |_| false));
+        assert!(lifecycle.reconfigure());
+        assert!(!lifecycle.queue(()));
+        assert_eq!(lifecycle.start(|| Ok::<_, ()>(1)), Ok(true));
+        assert!(!lifecycle.validated(checking));
+        assert_eq!(lifecycle.active(), Some(&1));
     }
 
     #[test]
     fn owners_that_fail_to_start_still_end_the_check_they_superseded() {
-        let mut state = Lifecycle::<u8, ()>::default();
-        let checking = state.validate().unwrap();
-        assert!(state.reconfigure());
-        assert_eq!(state.start(|| Err::<u8, _>(())), Err(()));
+        let mut lifecycle = Lifecycle::<u8, ()>::default();
+        let checking = lifecycle.validate().unwrap();
+        assert!(lifecycle.reconfigure());
+        assert_eq!(lifecycle.start(|| Err::<u8, _>(())), Err(()));
         assert!(
-            !state.validated(checking),
+            !lifecycle.validated(checking),
             "A check outlived newer settings whose owners failed to start"
         );
-        assert!(matches!(state.state, State::Disabled));
+        assert!(matches!(lifecycle.state, State::Disabled));
     }
 }
