@@ -332,8 +332,7 @@ impl Windows {
     const RIGHT_WINDOWS: u16 = 0x5C;
     const SCREEN: u16 = 0x53;
     const SHIFT: u16 = 0x10;
-    /// Shift, left Shift, and right Shift. macOS reports them as flag changes, which never
-    /// interrupt either.
+    /// Shift, left Shift, and right Shift.
     const SHIFT_KEYS: [u16; 3] = [Self::SHIFT, 0xA0, 0xA1];
     const SPACE: u16 = 0x20;
     const WINDOW: u16 = 0x57;
@@ -476,6 +475,8 @@ impl Mac {
     const LEFT_SHIFT: i64 = 56;
     const RIGHT_SHIFT: i64 = 60;
     const SCREEN: i64 = 1;
+    /// Left and right Command, Option, and Control, which make Fn part of another shortcut.
+    const SHORTCUT_MODIFIERS: [i64; 6] = [55, 54, 58, 61, 59, 62];
     const SPACE: i64 = 49;
     const WINDOW: i64 = 13;
 
@@ -511,6 +512,11 @@ impl Mac {
                     self.taps.shift(held.shift, at)
                 };
                 Decision::pass(pinned.map(Action::Pin))
+            },
+            // Command, Option, or Control: a change that leaves one held is a press.
+            MacEvent::FlagsChanged { code, held } if Self::SHORTCUT_MODIFIERS.contains(&code) => {
+                self.taps.interrupt();
+                self.chord.other_key(held.shortcut)
             },
             MacEvent::FlagsChanged { .. } => {
                 self.taps.interrupt();

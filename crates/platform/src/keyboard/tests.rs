@@ -498,6 +498,42 @@ fn a_missed_release_lets_s_reach_the_app() {
 }
 
 #[test]
+fn command_option_or_control_during_fn_is_another_shortcut() {
+    let shortcut = Modifiers {
+        shortcut: true,
+        ..FN_HELD
+    };
+    // Left and right Command, Option, and Control.
+    for code in [55, 54, 58, 61, 59, 62] {
+        let mut mac = Mac::default();
+        assert!(mac.observe(function(true), now()).starts());
+        let pressed = mac.observe(
+            MacEvent::FlagsChanged {
+                code,
+                held: shortcut,
+            },
+            now(),
+        );
+        assert!(!pressed.swallows());
+        assert_eq!(pressed.action, Some(Action::Interrupt), "Key code {code}");
+        // ⌥S belongs to the other shortcut, not to a Show.
+        let typed = mac.observe(key(Mac::SCREEN, true, shortcut), now());
+        assert!(!typed.swallows(), "Key code {code} let S start a Show");
+        assert_eq!(delivered(&typed), []);
+    }
+    // Letting go of Command held since before Fn keeps the hold.
+    let mut mac = Mac::default();
+    mac.observe(function(true), now());
+    let released = MacEvent::FlagsChanged {
+        code: 55,
+        held: FN_HELD,
+    };
+    assert_eq!(delivered(&mac.observe(released, now())), []);
+    let show = mac.observe(key(Mac::SCREEN, true, FN_HELD), now());
+    assert_eq!(show.action, Some(Action::Show(Scope::Screen)));
+}
+
+#[test]
 fn mac_lifecycle_interruption_waits_for_fn_release() -> anyhow::Result<()> {
     let (sender, events) = async_channel::bounded(4);
     let input = InputSender::new(sender);
