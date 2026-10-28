@@ -71,19 +71,17 @@ pub(crate) fn annotate(
             .iter()
             .map(|point| point.scaled(width, height))
             .collect();
-        if let Some(outline) = closed_curve(&ink::outline(&pixels, pen)) {
-            canvas.fill_path(
-                &outline,
-                &paint(ink::COLOR),
-                FillRule::Winding,
-                Transform::identity(),
-                None,
-            );
-        }
+        fill(
+            &mut canvas,
+            closed_curve(&ink::outline(&pixels, pen)),
+            ink::COLOR,
+        );
         ink_points.extend(path);
     }
-    let click = nearest_click(&recording.actions, keyframe.at);
-    let focus = keyframe.action.map(Action::point).or(click);
+    let focus = keyframe
+        .action
+        .map(Action::point)
+        .or_else(|| nearest_click(&recording.actions, keyframe.at));
     if let Some(point) = focus.filter(|point| point.is_finite()) {
         ripple(&mut canvas, point.scaled(width, height), detail);
     }
@@ -121,21 +119,17 @@ fn nearest_click(actions: &[Action], moment: Moment) -> Option<Point> {
 
 /// A translucent disc inside white and blue rings, marking where the pointer acted.
 fn ripple(canvas: &mut PixmapMut<'_>, center: Point, scale: f32) {
-    if let Some(disc) = PathBuilder::from_circle(center.x, center.y, 14.0 * scale) {
-        canvas.fill_path(
-            &disc,
-            &paint(RIPPLE_FILL),
-            FillRule::Winding,
-            Transform::identity(),
-            None,
-        );
-    }
+    fill(
+        canvas,
+        PathBuilder::from_circle(center.x, center.y, 14.0 * scale),
+        RIPPLE_FILL,
+    );
+    let line = Line {
+        width: 1.75 * scale,
+        ..Line::default()
+    };
     for (radius, color) in [(15.0, WHITE), (17.5, RIPPLE_RING)] {
         if let Some(ring) = PathBuilder::from_circle(center.x, center.y, radius * scale) {
-            let line = Line {
-                width: 1.75 * scale,
-                ..Line::default()
-            };
             canvas.stroke_path(&ring, &paint(color), &line, Transform::identity(), None);
         }
     }
