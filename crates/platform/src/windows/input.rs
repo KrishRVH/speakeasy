@@ -11,7 +11,7 @@ use std::{
     panic,
     ptr::{null, null_mut},
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use windows_sys::{
@@ -218,23 +218,97 @@ impl Drop for LifecycleWindow {
 }
 
 /// Session-change notifications for a lifecycle window, unregistered before it is destroyed.
-struct SessionNotifications<'window>(&'window LifecycleWindow);
+///
+/// Registration fails early in logon, before Remote Desktop Services is ready, and wherever those
+/// services are off, so the message loop retries it for a while. The hook runs either way, and
+/// power and end-session messages reach the window without it.
+struct SessionNotifications<'window> {
+    window: &'window LifecycleWindow,
+    registration: Registration,
+}
 
 impl<'window> SessionNotifications<'window> {
-    fn register(window: &'window LifecycleWindow) -> io::Result<Self> {
-        // SAFETY: the borrowed window stays live until this registration is dropped.
-        ok_or_last_error(unsafe {
-            WTSRegisterSessionNotification(window.0, NOTIFY_FOR_THIS_SESSION)
-        })?;
-        Ok(Self(window))
+    fn register(window: &'window LifecycleWindow, now: Instant) -> Self {
+        let mut notifications = Self {
+            window,
+            registration: Registration::due(now),
+        };
+        notifications.attempt_when_due(now);
+        notifications
+    }
+
+    fn attempt_when_due(&mut self, now: Instant) {
+        let window = self.window.0;
+        self.registration.attempt_when_due(now, || {
+            // SAFETY: the borrowed window stays live until this registration is dropped.
+            ok_or_last_error(unsafe {
+                WTSRegisterSessionNotification(window, NOTIFY_FOR_THIS_SESSION)
+            })
+            .is_ok()
+        });
     }
 }
 
 impl Drop for SessionNotifications<'_> {
     fn drop(&mut self) {
-        // SAFETY: registration succeeded for this still-live window.
-        unsafe {
-            WTSUnRegisterSessionNotification(self.0.0);
+        if self.registration == Registration::Registered {
+            // SAFETY: registration succeeded for this still-live window.
+            unsafe {
+                WTSUnRegisterSessionNotification(self.window.0);
+            }
+        }
+    }
+}
+
+/// Where registering for session notifications stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Registration {
+    Registered,
+    /// The next attempt is due at `at`, with `retries` more after it.
+    Pending {
+        at: Instant,
+        retries: u8,
+    },
+    /// Every attempt failed, so session changes go unobserved.
+    Abandoned,
+}
+
+impl Registration {
+    const RETRIES: u8 = 12;
+    const RETRY_AFTER: Duration = Duration::from_secs(5);
+
+    const fn due(now: Instant) -> Self {
+        Self::Pending {
+            at: now,
+            retries: Self::RETRIES,
+        }
+    }
+
+    /// Runs `register` when an attempt is due at `now`, scheduling the next if it fails.
+    fn attempt_when_due(&mut self, now: Instant, register: impl FnOnce() -> bool) {
+        let Self::Pending { at, retries } = *self else {
+            return;
+        };
+        if now < at {
+            return;
+        }
+        *self = if register() {
+            Self::Registered
+        } else {
+            match (retries.checked_sub(1), now.checked_add(Self::RETRY_AFTER)) {
+                (Some(retries), Some(at)) => Self::Pending { at, retries },
+                _ => Self::Abandoned,
+            }
+        };
+    }
+
+    /// How long, in milliseconds, the message loop may wait before the next attempt is due.
+    fn wait(self, now: Instant) -> u32 {
+        match self {
+            Self::Pending { at, .. } => {
+                u32::try_from(at.saturating_duration_since(now).as_millis()).unwrap_or(INFINITE)
+            },
+            Self::Registered | Self::Abandoned => INFINITE,
         }
     }
 }
@@ -277,7 +351,7 @@ fn run_event_loop(input: &InputSender, wake: &OwnedHandle) -> io::Result<()> {
     create_message_queue();
     let _hook = KeyboardHook::install()?;
     let window = LifecycleWindow::create()?;
-    let _notifications = SessionNotifications::register(&window)?;
+    let mut notifications = SessionNotifications::register(&window, Instant::now());
     // A stop landing after this check may still see readiness, which is harmless: each runtime has
     // its own input lane, and the runtime is stopped together with its monitor.
     if stop_requested(wake) {
@@ -287,7 +361,7 @@ fn run_event_loop(input: &InputSender, wake: &OwnedHandle) -> io::Result<()> {
         shortcut: SHORTCUT.into(),
         cancel: CANCEL_SHORTCUT.into(),
     });
-    pump_messages(wake)
+    pump_messages(wake, &mut notifications)
 }
 
 /// Whether a stop has set the monitor's manual-reset event; once set, it stays set.
@@ -306,15 +380,21 @@ fn create_message_queue() {
 }
 
 /// Runs the message loop until a stop or `WM_QUIT`; a stop wins even under continuous input.
-fn pump_messages(wake: &OwnedHandle) -> io::Result<()> {
+/// Between messages, it retries a session registration that failed.
+fn pump_messages(
+    wake: &OwnedHandle,
+    notifications: &mut SessionNotifications<'_>,
+) -> io::Result<()> {
     let handles = [wake.as_raw_handle()];
     while dispatch_queued_messages(wake).is_continue() && !stop_requested(wake) {
+        notifications.attempt_when_due(Instant::now());
+        let timeout = notifications.registration.wait(Instant::now());
         // SAFETY: the one-handle array outlives this synchronous wait.
         let woken = unsafe {
             MsgWaitForMultipleObjectsEx(
                 1,
                 handles.as_ptr(),
-                INFINITE,
+                timeout,
                 QS_ALLINPUT,
                 MWMO_INPUTAVAILABLE,
             )
@@ -441,6 +521,28 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn session_registration_retries_for_a_while_without_spinning() {
+        let start = Instant::now();
+        let mut registration = Registration::due(start);
+        registration.attempt_when_due(start, || false);
+        assert_eq!(registration.wait(start), 5_000, "A failed attempt spins");
+        registration.attempt_when_due(start, || panic!("Retried before it was due"));
+        let mut now = start;
+        for _ in 0..Registration::RETRIES {
+            now += Registration::RETRY_AFTER;
+            registration.attempt_when_due(now, || false);
+        }
+        assert_eq!(registration, Registration::Abandoned);
+        assert_eq!(registration.wait(now), INFINITE, "Abandoned retries wake");
+
+        let mut registration = Registration::due(start);
+        registration.attempt_when_due(start, || false);
+        registration.attempt_when_due(start + Registration::RETRY_AFTER, || true);
+        assert_eq!(registration, Registration::Registered);
+        assert_eq!(registration.wait(start), INFINITE);
+    }
 
     #[test]
     #[ignore = "Creates an owned native window; no microphone, hook, clipboard, or injected input"]
