@@ -331,15 +331,15 @@ impl<'a> Take<'a> {
     fn pointer(&mut self, sample: PointerSample) {
         let at = self.moment(sample.at);
         let earlier = self.tracker.strokes().len();
-        let [x, y] = self.part.within([sample.x, sample.y]);
+        let point = Point::from(self.part.within(sample.position));
         self.tracker
-            .observe(at, Point::new(x, y), sample.drawing, sample.pressed);
+            .observe(at, point, sample.drawing, sample.pressed);
         let finished: Vec<Arc<[Point]>> = self
             .tracker
             .strokes()
             .iter()
             .skip(earlier)
-            .map(|stroke| stroke.points().iter().map(|ink| ink.point).collect())
+            .map(|stroke| stroke.path().collect())
             .collect();
         let marks = (!finished.is_empty()).then(|| self.tracker.marks().into());
         self.publish_ink(finished, marks);

@@ -95,7 +95,7 @@ impl Mark {
     /// pixels, for a disc `radius` pixels in radius: beside the mark rather than over what it
     /// points at, and on the surface wherever the disc fits.
     #[must_use]
-    pub fn label(&self, width: f32, height: f32, radius: f32) -> Point {
+    pub fn label_center(&self, width: f32, height: f32, radius: f32) -> Point {
         let pixels = |point: Point| point.scaled(width, height);
         let Rect {
             top, right, bottom, ..
@@ -462,7 +462,7 @@ mod tests {
                 span: Span::at(Moment::START),
                 bounds: bounds.into(),
             }
-            .label(1000.0, 500.0, 10.0)
+            .label_center(1000.0, 500.0, 10.0)
         };
         let pin = label(
             Shape::Pin {

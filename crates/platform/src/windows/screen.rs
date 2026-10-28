@@ -275,11 +275,9 @@ fn describe(
 pub(crate) fn pointer(display: Display) -> Option<PointerSample> {
     let at = Instant::now();
     let POINT { x, y } = cursor()?;
-    let [x, y] = display.bounds().normalize([x, y].map(f64::from))?;
     Some(PointerSample {
         at,
-        x,
-        y,
+        position: display.bounds().normalize([x, y].map(f64::from))?,
         drawing: modifiers().draws(),
         pressed: primary_button_down(),
     })

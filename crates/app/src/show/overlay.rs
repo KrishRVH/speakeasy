@@ -532,7 +532,7 @@ fn hint() -> Div {
 fn label(mark: &Mark, area: Bounds<Pixels>) -> Div {
     let (width, height) = (f32::from(area.size.width), f32::from(area.size.height));
     let radius = ink::label_radius(width, height);
-    let center = mark.label(width, height, radius);
+    let center = mark.label_center(width, height, radius);
     let digits = mark.number.to_string();
     let size = (ink::LABEL_TYPE * radius)
         .min(ink::LABEL_DIGITS * radius / (DIGIT_EM * digits.len() as f32));

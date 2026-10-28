@@ -43,8 +43,7 @@ impl Feed {
     async fn pointer(&self, millis: u64, x: f32, y: f32, drawing: bool, pressed: bool) {
         let sample = PointerSample {
             at: self.at(millis),
-            x,
-            y,
+            position: [x, y],
             drawing,
             pressed,
         };

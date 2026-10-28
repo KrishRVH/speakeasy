@@ -55,7 +55,7 @@ pub(crate) fn annotate(
     let (width, height) = (image.width() as f32, image.height() as f32);
     let detail = ink::detail(width, height);
     let pen = ink::pen(width, height);
-    let own = marks.get(keyframe.marks.clone()).unwrap_or_default();
+    let own = keyframe.marks_in(marks);
     let shown = |index: usize| own.iter().any(|mark| mark.strokes.contains(&index));
     let recent =
         |span: Span| span.start() <= keyframe.at && keyframe.at.since(span.end()) <= RECENT_INK;
@@ -92,7 +92,7 @@ pub(crate) fn annotate(
         .iter()
         .filter(|mark| own.is_empty() && recent(mark.span));
     for mark in own.iter().chain(recent_marks) {
-        let center = mark.label(width, height, radius);
+        let center = mark.label_center(width, height, radius);
         label(&mut canvas, mark, center, radius, typeface);
         ink_points.push(Point::new(center.x / width, center.y / height));
     }
@@ -366,7 +366,7 @@ mod tests {
         let marks = marks::group(&recording.strokes, &recording.pins, recording.surface);
         let (w, h) = (width as f32, height as f32);
         let radius = ink::label_radius(w, h);
-        let disc = marks[0].label(w, h, radius) + Point::new(0.0, -0.7 * radius);
+        let disc = marks[0].label_center(w, h, radius) + Point::new(0.0, -0.7 * radius);
         let inked = |at: u64, own| {
             let keyframe = Keyframe {
                 index: 1,

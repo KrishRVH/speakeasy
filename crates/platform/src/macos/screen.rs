@@ -518,11 +518,9 @@ fn refused(error: &NSError) -> bool {
 
 pub(crate) fn pointer(display: Display) -> Option<PointerSample> {
     let at = Instant::now();
-    let [x, y] = display.bounds.normalize(pointer_location()?)?;
     Some(PointerSample {
         at,
-        x,
-        y,
+        position: display.bounds.normalize(pointer_location()?)?,
         drawing: super::modifiers().draws(),
         pressed: CGEventSource::button_state(
             CGEventSourceStateID::CombinedSessionState,

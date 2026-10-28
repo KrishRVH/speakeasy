@@ -31,6 +31,11 @@ impl Keyframe {
     pub fn file(&self) -> String {
         format!("frames/frame-{:02}.png", self.index)
     }
+
+    /// The marks drawn on the keyframe, among the selection's `marks`.
+    pub(crate) fn marks_in<'a>(&self, marks: &'a [Mark]) -> &'a [Mark] {
+        marks.get(self.marks.clone()).unwrap_or_default()
+    }
 }
 
 /// Everything a Show recorded and chose, as `show.json` stores it.
@@ -149,11 +154,6 @@ pub fn compose<E: From<Error> + Send>(
     })
 }
 
-/// The marks drawn on a keyframe.
-fn shown<'a>(marks: &'a [Mark], keyframe: &Keyframe) -> &'a [Mark] {
-    marks.get(keyframe.marks.clone()).unwrap_or_default()
-}
-
 /// The summary an agent reads first, naming files under `directory`, where the bundle will be
 /// written.
 ///
@@ -211,7 +211,7 @@ impl fmt::Display for Summary<'_> {
                 Some(said) => writeln!(
                     f,
                     "- #{index} ({at}){} “{said}”",
-                    Marker(keyframe, shown(marks, keyframe))
+                    Marker(keyframe, keyframe.marks_in(marks))
                 ),
                 None => writeln!(f, "- #{index} ({at}) {event}"),
             }?;

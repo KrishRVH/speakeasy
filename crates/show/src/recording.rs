@@ -104,17 +104,17 @@ impl Stroke {
         self.last
     }
 
+    /// Every position the pen passed through, in time order.
+    pub fn path(&self) -> impl Iterator<Item = Point> {
+        self.points.iter().map(|ink| ink.point)
+    }
+
     /// The positions the pen passed through by `moment`.
     pub(crate) fn path_until(&self, moment: Moment) -> impl Iterator<Item = Point> {
         self.points
             .iter()
             .take_while(move |ink| ink.at <= moment)
             .map(|ink| ink.point)
-    }
-
-    /// Every position the pen passed through.
-    pub(crate) fn path(&self) -> impl Iterator<Item = Point> {
-        self.points.iter().map(|ink| ink.point)
     }
 }
 

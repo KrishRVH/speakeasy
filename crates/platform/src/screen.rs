@@ -241,10 +241,9 @@ impl Display {
 pub struct PointerSample {
     /// When it was sampled.
     pub at: Instant,
-    /// Position normalized to the display: `0.0..=1.0` spans it on each axis.
-    pub x: f32,
-    /// Position normalized to the display, from its top edge.
-    pub y: f32,
+    /// Position normalized to the display from its top-left corner: `0.0..=1.0` spans it on each
+    /// axis, and a pointer beyond an edge falls outside.
+    pub position: [f32; 2],
     /// Shift was held, alone or beside the held talk shortcut, which draws ink.
     pub drawing: bool,
     /// The primary button was down.
@@ -253,8 +252,8 @@ pub struct PointerSample {
 
 impl PointerSample {
     fn differs(&self, other: &Self) -> bool {
-        (self.x, self.y, self.drawing, self.pressed)
-            != (other.x, other.y, other.drawing, other.pressed)
+        (self.position, self.drawing, self.pressed)
+            != (other.position, other.drawing, other.pressed)
     }
 }
 
