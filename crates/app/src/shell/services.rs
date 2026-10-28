@@ -18,9 +18,9 @@ use crate::{
     gpui_ext::AppUpdate,
     instance::{Instance, Request},
     pill::Pill,
-    runtime::{self, Meter, Phase, Runtime, Snapshot},
+    runtime::{self, Meter, ModelState, Phase, Runtime, Snapshot},
     show::Canvas,
-    status::{PAUSED, PAUSING, ServiceState, Status},
+    status::{PAUSED, PAUSING, QUITTING, ServiceState, Status},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -155,7 +155,9 @@ impl Services {
     }
 
     pub(crate) fn service_state(&self) -> ServiceState {
-        if self.lifecycle.pausing() {
+        if self.quitting() {
+            ServiceState::Quitting
+        } else if self.lifecycle.pausing() {
             ServiceState::Pausing
         } else if self.running() || self.mode.is_demo() {
             ServiceState::Running
@@ -387,7 +389,7 @@ impl Services {
         self.validation = None;
         self.requests = None;
         self.visibility = None;
-        announce(&self.output, "Quitting Speakeasy…");
+        announce(&self.output, QUITTING);
         let stopped = self.lifecycle.retiring().map(|owners| {
             owners.request_stop();
             owners.stopped()
@@ -426,13 +428,18 @@ pub(crate) fn send(input: Input, cx: &App) {
 
 /// Publishes a status of the shell's own that replaces the last owner's report.
 fn announce(output: &watch::Sender<Snapshot>, message: &str) {
-    output.send_modify(|snapshot| {
-        *snapshot = Snapshot {
-            epoch: snapshot.epoch.wrapping_add(1),
-            message: message.into(),
-            ..Snapshot::default()
-        };
-    });
+    output.send_modify(|snapshot| *snapshot = announcement(snapshot.epoch, message));
+}
+
+/// The snapshot after one from `epoch` that says the shell's `message`. No owner has reported a
+/// model under it yet, so the model reads as loading rather than unavailable.
+fn announcement(epoch: u64, message: &str) -> Snapshot {
+    Snapshot {
+        epoch: epoch.wrapping_add(1),
+        message: message.into(),
+        model: ModelState::Loading,
+        ..Snapshot::default()
+    }
 }
 
 fn handle_request(request: Request, cx: &mut App) {
@@ -448,5 +455,23 @@ fn handle_request(request: Request, cx: &mut App) {
     // owns the gesture.
     if cfg!(target_os = "linux") && cx.global::<Services>().config.linux.external_shortcut {
         send(input, cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::Engine, status::Indicator};
+
+    #[test]
+    fn a_resume_check_and_a_start_read_as_busy_until_the_owner_reports() {
+        for message in ["Checking local speech settings…", runtime::LOADING] {
+            let status = Status::new(
+                &announcement(0, message),
+                ServiceState::Running,
+                Engine::Whisper,
+            );
+            assert_eq!(status.indicator, Indicator::Busy, "{}", status.description);
+        }
     }
 }

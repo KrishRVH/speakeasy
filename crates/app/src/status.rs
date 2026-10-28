@@ -11,6 +11,8 @@ use crate::{
 pub(crate) const PAUSING: &str = "Pausing dictation…";
 /// The status once dictation is paused, shared by Services, Settings, and the tray.
 pub(crate) const PAUSED: &str = "Dictation paused";
+/// The status once Quit has begun, shared by Services, Settings, and the tray.
+pub(crate) const QUITTING: &str = "Quitting Speakeasy…";
 
 /// Whether dictation runs, as the tray and Settings present it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,6 +21,8 @@ pub(crate) enum ServiceState {
     Running,
     /// Dictation resources are being released.
     Pausing,
+    /// Quit has begun; resources are released and nothing restarts them.
+    Quitting,
     /// Dictation is off.
     Paused,
     /// Dictation is off because no speech engine is set up yet.
@@ -45,6 +49,7 @@ impl Status {
     pub(crate) fn new(snapshot: &Snapshot, service: ServiceState, engine: Engine) -> Self {
         let (indicator, description): (_, Cow<'static, str>) =
             match (service, snapshot.phase, snapshot.desktop_ready) {
+                (ServiceState::Quitting, ..) => (Indicator::Busy, QUITTING.into()),
                 (ServiceState::Pausing, ..) => (Indicator::Busy, PAUSING.into()),
                 (_, Phase::Error, _) => (
                     Indicator::Attention,
@@ -198,6 +203,10 @@ mod tests {
             "Pausing dictation…"
         );
         snapshot.phase = Phase::Error;
+        assert_eq!(
+            description(&snapshot, ServiceState::Quitting),
+            "Quitting Speakeasy…"
+        );
         assert_eq!(
             indicator(&snapshot, ServiceState::Running),
             Indicator::Attention

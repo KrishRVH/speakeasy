@@ -140,8 +140,7 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         }
     }
 
-    /// Whether the UI shows Pausing: owners are stopping, or Quit has begun. Either way, no resume
-    /// may start owners.
+    /// Whether owners are stopping or Quit has begun; either way, no resume may start owners.
     pub(super) const fn pausing(&self) -> bool {
         matches!(self.state, State::Stopping { .. } | State::Quitting(_))
     }
