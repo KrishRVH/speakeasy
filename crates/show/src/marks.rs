@@ -10,7 +10,7 @@ use crate::{
 };
 
 /// A pause longer than this between strokes starts a new mark.
-const MARK_GAP: Duration = Duration::from_millis(1_200);
+pub(crate) const MARK_GAP: Duration = Duration::from_millis(1_200);
 /// The most strokes one mark holds.
 const MARK_STROKES: usize = 6;
 /// A stroke whose extent is below this many pixels is a tap.

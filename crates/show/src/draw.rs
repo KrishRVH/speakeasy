@@ -6,6 +6,7 @@ use tiny_skia::{FillRule, Paint, Path, PathBuilder, PixmapMut, Stroke as Line, T
 
 use crate::{
     Image, Keyframe, Mark, Moment, Point, Rect, Shape, Span, Typeface, ink,
+    marks::MARK_GAP,
     recording::{Action, Recording},
 };
 
@@ -15,6 +16,12 @@ const WHITE: [u8; 4] = [255, 255, 255, 255];
 /// Ink lifted this recently before a keyframe without marks of its own still shows on it, as do
 /// pins dropped this recently.
 const RECENT_INK: Duration = Duration::from_millis(1_200);
+// A mark joins strokes at most `MARK_GAP` apart, so while recent ink spans that pause, a mark is
+// recent exactly when one of its strokes is, as `annotate` relies on.
+const _: () = assert!(
+    RECENT_INK.as_nanos() >= MARK_GAP.as_nanos(),
+    "recent ink spans at least the pause that joins strokes into one mark"
+);
 /// A keyframe without a click or drag of its own ripples at a click this close to its moment.
 const RIPPLE_REACH: Duration = Duration::from_millis(600);
 /// The top band where a badge sits; the left and right thirds decide which corner it takes.
@@ -48,8 +55,6 @@ pub(crate) fn annotate(
     let pen = ink::pen(width, height);
     let own = marks.get(keyframe.marks.clone()).unwrap_or_default();
     let shown = |index: usize| own.iter().any(|mark| mark.strokes.contains(&index));
-    // Marks are spans of strokes drawn at most this far apart, so a mark is recent exactly when
-    // one of its strokes is.
     let recent =
         |span: Span| span.start() <= keyframe.at && keyframe.at.since(span.end()) <= RECENT_INK;
     let mut ink_points: Vec<Point> = Vec::new();
