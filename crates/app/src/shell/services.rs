@@ -24,6 +24,9 @@ use crate::{
     status::{PAUSED, PAUSING, QUITTING, ServiceState, Status},
 };
 
+/// The status while a resume checks the saved settings, before any owner exists.
+const CHECKING: &str = "Checking local speech settings…";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LaunchMode {
     Live,
@@ -313,7 +316,7 @@ impl Services {
         let validation = cx
             .background_executor()
             .spawn(async move { config.validated(&path) });
-        announce(&self.output, "Checking local speech settings…");
+        announce(&self.output, CHECKING);
         self.validation = Some(cx.spawn(async move |cx| {
             let result = validation.await;
             cx.update_if_running(|cx| Self::validation_complete(epoch, result, cx));
@@ -475,7 +478,7 @@ mod tests {
 
     #[test]
     fn a_resume_check_and_a_start_read_as_busy_until_the_owner_reports() {
-        for message in ["Checking local speech settings…", runtime::LOADING] {
+        for message in [CHECKING, runtime::LOADING] {
             let status = Status::new(
                 &announcement(0, message),
                 ServiceState::Running,
