@@ -305,12 +305,13 @@ The theme colors Settings, the pill, and the Windows and Linux tray icon: **Jet 
 **Emerald Lounge**, **Iris**, or **Midnight Chrome**.
 
 Settings live in `%APPDATA%\speakeasy\settings.json` on Windows and
-`~/Library/Application Support/speakeasy/settings.json` on Mac. Start from `settings.example.json`
-and pass `--config <path>` to use another file. Speakeasy reads settings files from other releases,
-and saving writes only the settings you changed, so edits you make to the file by hand stay. On
-Windows and Mac, configured launches go straight to the tray or menu bar; Linux opens Settings at
-startup. Closing Settings hides it and keeps unsaved edits; Windows minimize also hides it.
-Reopening Speakeasy or choosing **Settings…** in the tray brings it back.
+`~/Library/Application Support/speakeasy/settings.json` on Mac. The Windows and Mac packages include
+`settings.example.json`, the settings a first launch starts from; pass `--config <path>` to use
+another file. Speakeasy reads settings files from other releases, and saving writes only the
+settings you changed, so edits you make to the file by hand stay. On Windows and Mac, configured
+launches go straight to the tray or menu bar; Linux opens Settings at startup. Closing Settings
+hides it and keeps unsaved edits; Windows minimize also hides it. Reopening Speakeasy or choosing
+**Settings…** in the tray brings it back.
 
 ### Tray
 

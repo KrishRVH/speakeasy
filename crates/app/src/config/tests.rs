@@ -182,9 +182,10 @@ fn manual_paste_wins_over_keep_clipboard() {
 }
 
 #[test]
-fn shipped_example_is_the_wire_format() -> anyhow::Result<()> {
+fn shipped_example_is_what_a_first_launch_starts_from() -> anyhow::Result<()> {
     const EXAMPLE: &str = include_str!("../../../../settings.example.json");
     let config: Config = serde_json::from_str(EXAMPLE)?;
+    assert!(config == Config::first_launch());
     assert_eq!(
         serde_json::to_value(&config)?,
         serde_json::from_str::<serde_json::Value>(EXAMPLE)?
