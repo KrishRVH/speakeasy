@@ -63,32 +63,6 @@ disallowed-methods = [
   { path = "reqwest::get", reason = "build clients through http::client_builder; Linux reqwest has no built-in rustls provider and panics in build()" },
 ]
 
-# Accepted identifiers for documentation prose checked by doc_markdown. The ".." entry extends
-# clippy's default list instead of replacing it.
-doc-valid-idents = [
-  "..",
-  "API",
-  "APIs",
-  "ASCII",
-  "CLI",
-  "CPU",
-  "FFI",
-  "HTTP",
-  "HTTPS",
-  "ID",
-  "IDs",
-  "IO",
-  "JSON",
-  "MSRV",
-  "OS",
-  "TLS",
-  "URI",
-  "URL",
-  "URLs",
-  "UTF-8",
-  "UUID",
-]
-
 # enum-variant-size, bool-params, single-char, and too-many-arguments pin Clippy's current defaults
 # so an upstream change cannot silently loosen the wall. The nesting threshold turns on
 # `excessive_nesting`, which Clippy's default threshold of 0 leaves off.
