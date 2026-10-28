@@ -61,7 +61,6 @@ use windows_sys::Win32::{
     System::{
         Com::CoIncrementMTAUsage,
         Performance::{QueryPerformanceCounter, QueryPerformanceFrequency},
-        Threading::GetCurrentProcessId,
     },
     UI::{
         HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI},
@@ -69,23 +68,23 @@ use windows_sys::Win32::{
         Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
         WindowsAndMessaging::{
             GA_ROOT, GWL_EXSTYLE, GetAncestor, GetClassNameW, GetCursorPos, GetSystemMetrics,
-            GetWindowLongPtrW, GetWindowThreadProcessId, HWND_TOPMOST, IsIconic, IsWindow,
-            SM_SWAPBUTTON, SW_HIDE, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-            SWP_NOMOVE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_NCCALCSIZE,
-            WM_NCDESTROY, WS_EX_TRANSPARENT, WindowFromPoint,
+            GetWindowLongPtrW, HWND_TOPMOST, IsIconic, IsWindow, SM_SWAPBUTTON, SW_HIDE,
+            SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+            SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_NCCALCSIZE, WM_NCDESTROY,
+            WS_EX_TRANSPARENT, WindowFromPoint,
         },
     },
 };
 
 use self::{
-    exclusion::{Exclusions, exclude_always, exclusion_supported},
+    exclusion::{Exclusions, exclude_always, exclusion_supported, owned},
     readback::{Readback, device_for},
 };
-use super::{BASE_DPI, is_key_down, ok_or_last_error};
+use super::{BASE_DPI, is_key_down, modifiers, ok_or_last_error};
 use crate::{
     NativeWindow,
     screen::{
-        Frame, Part, PointerSample, Region, ScreenEvent, Target,
+        self, Frame, Part, PointerSample, Region, ScreenEvent, Target,
         geometry::{Bounds, part_of_box, pixel_box},
     },
 };
@@ -117,7 +116,7 @@ pub(crate) struct Display {
     /// The `HMONITOR`, kept as an integer because handles are not `Send`.
     monitor: isize,
     /// Left, top, right, and bottom edges in physical pixels.
-    bounds: [i32; 4],
+    edges: [i32; 4],
 }
 
 impl Display {
@@ -127,12 +126,12 @@ impl Display {
 
     /// Width and height in physical pixels.
     fn extent(self) -> [i32; 2] {
-        let [left, top, right, bottom] = self.bounds;
+        let [left, top, right, bottom] = self.edges;
         [right.saturating_sub(left), bottom.saturating_sub(top)]
     }
 
-    fn area(self) -> Bounds {
-        let [left, top, right, bottom] = self.bounds;
+    fn bounds(self) -> Bounds {
+        let [left, top, right, bottom] = self.edges;
         Bounds::from(RECT {
             left,
             top,
@@ -146,13 +145,17 @@ impl Display {
 /// cannot overflow.
 impl From<RECT> for Bounds {
     fn from(rect: RECT) -> Self {
-        let [left, top, right, bottom] =
-            [rect.left, rect.top, rect.right, rect.bottom].map(f64::from);
+        let [left, top, right, bottom] = edges(rect).map(f64::from);
         Self {
             origin: [left, top],
             size: [right - left, bottom - top],
         }
     }
+}
+
+/// The left, top, right, and bottom edges of `rect`.
+const fn edges(rect: RECT) -> [i32; 4] {
+    [rect.left, rect.top, rect.right, rect.bottom]
 }
 
 /// A top-level window, kept as an integer because handles are not `Send`.
@@ -168,65 +171,69 @@ impl Window {
 /// The top-level window under the pointer and the part of `display` it covers, unless it is the
 /// desktop, a taskbar, or Speakeasy's own.
 pub(crate) fn window_under_pointer(display: Display) -> Option<(Window, Part)> {
-    // SAFETY: both calls take values and answer null when no window qualifies.
-    let window = unsafe { GetAncestor(WindowFromPoint(cursor()?), GA_ROOT) };
-    if window.is_null() || shell_or_own(window) {
+    let window = top_level_at(cursor()?);
+    if window.is_null() || owned(window) || SHELL_CLASSES.contains(&class_name(window).as_str()) {
         return None;
     }
     let window = Window(window as isize);
     Some((window, window_part(display, window)?))
 }
 
-/// Whether `window` is the desktop, a taskbar, or one of Speakeasy's.
-fn shell_or_own(window: HWND) -> bool {
-    let mut process = 0;
-    let mut class = [0_u16; 32];
-    // SAFETY: each out-parameter is a live local, the class buffer of the length given; a stale
-    // handle reports no process and no class.
-    let (length, own) = unsafe {
-        GetWindowThreadProcessId(window, &raw mut process);
-        (
-            GetClassNameW(
-                window,
-                class.as_mut_ptr(),
-                i32::try_from(class.len()).unwrap_or_default(),
-            ),
-            GetCurrentProcessId(),
+/// The top-level window at `point` on the desktop; null where there is none.
+fn top_level_at(point: POINT) -> HWND {
+    // SAFETY: both calls take values and answer null when no window qualifies.
+    unsafe { GetAncestor(WindowFromPoint(point), GA_ROOT) }
+}
+
+/// The name of `window`'s class, empty once the window is gone.
+fn class_name(window: HWND) -> String {
+    let mut class = [0_u16; 256];
+    // SAFETY: the buffer is a live local of the length given; a stale handle reports no class.
+    let length = unsafe {
+        GetClassNameW(
+            window,
+            class.as_mut_ptr(),
+            i32::try_from(class.len()).unwrap_or_default(),
         )
     };
-    let class = class
-        .get(..usize::try_from(length).unwrap_or_default())
-        .unwrap_or_default();
-    process == own
-        || SHELL_CLASSES
-            .iter()
-            .any(|shell| shell.encode_utf16().eq(class.iter().copied()))
+    String::from_utf16_lossy(
+        class
+            .get(..usize::try_from(length).unwrap_or_default())
+            .unwrap_or_default(),
+    )
 }
 
 /// The part of `display` that `window` covers now, by its visible frame without the resize
 /// border; `None` once it is closed, minimized, or off the display.
 fn window_part(display: Display, window: Window) -> Option<Part> {
     let window = window.handle();
-    let mut frame = RECT::default();
-    // SAFETY: each call tolerates a stale handle; the frame bounds land in a live local of the
-    // size given.
-    let placed = unsafe {
-        IsWindow(window) != FALSE
-            && IsIconic(window) == FALSE
-            && DwmGetWindowAttribute(
-                window,
-                DWMWA_EXTENDED_FRAME_BOUNDS.cast_unsigned(),
-                (&raw mut frame).cast(),
-                u32::try_from(size_of::<RECT>()).ok()?,
-            ) >= 0
-    };
+    // SAFETY: both calls take the handle by value and tolerate a stale one.
+    let placed = unsafe { IsWindow(window) != FALSE && IsIconic(window) == FALSE };
     if !placed {
         return None;
     }
-    display.area().part_covered_by(Bounds::from(frame))
+    let frame = frame_bounds(window)?;
+    display.bounds().part_covered_by(Bounds::from(frame))
 }
 
-pub(crate) fn display_under_pointer() -> anyhow::Result<crate::screen::Display> {
+/// The visible frame of `window` on the desktop, without its resize border; `None` once it is
+/// gone.
+fn frame_bounds(window: HWND) -> Option<RECT> {
+    let mut frame = RECT::default();
+    let size = u32::try_from(size_of::<RECT>()).ok()?;
+    // SAFETY: the bounds land in a live local of the size given; a stale handle fails the call.
+    let read = unsafe {
+        DwmGetWindowAttribute(
+            window,
+            DWMWA_EXTENDED_FRAME_BOUNDS.cast_unsigned(),
+            (&raw mut frame).cast(),
+            size,
+        )
+    };
+    (read >= 0).then_some(frame)
+}
+
+pub(crate) fn display_under_pointer() -> anyhow::Result<screen::Display> {
     let pointer = cursor().context("Cannot find the pointer")?;
     // SAFETY: takes the point by value and always answers with the nearest monitor.
     describe(unsafe { MonitorFromPoint(pointer, MONITOR_DEFAULTTONEAREST) })
@@ -236,38 +243,30 @@ pub(crate) fn display_under_pointer() -> anyhow::Result<crate::screen::Display> 
 /// Where `monitor` sits on the desktop, and its size in logical pixels.
 fn describe(
     monitor: windows_sys::Win32::Graphics::Gdi::HMONITOR,
-) -> anyhow::Result<crate::screen::Display> {
+) -> anyhow::Result<screen::Display> {
     let mut info = MONITORINFO {
         cbSize: u32::try_from(size_of::<MONITORINFO>())?,
         ..Default::default()
     };
+    // SAFETY: fills the live local, whose size field the call checks.
+    ok_or_last_error(unsafe { GetMonitorInfoW(monitor, &raw mut info) })?;
     let (mut dpi, mut vertical_dpi) = (0, 0);
-    // SAFETY: the out-parameters are live locals of the sizes these calls expect.
-    let (measured, scaled) = unsafe {
-        (
-            GetMonitorInfoW(monitor, &raw mut info),
-            GetDpiForMonitor(
-                monitor,
-                MDT_EFFECTIVE_DPI,
-                &raw mut dpi,
-                &raw mut vertical_dpi,
-            ),
+    // SAFETY: both out-parameters are live locals.
+    let scaled = unsafe {
+        GetDpiForMonitor(
+            monitor,
+            MDT_EFFECTIVE_DPI,
+            &raw mut dpi,
+            &raw mut vertical_dpi,
         )
     };
-    ok_or_last_error(measured)?;
     ensure!(scaled >= 0 && dpi > 0, "Cannot read the display's scale");
-    let RECT {
-        left,
-        top,
-        right,
-        bottom,
-    } = info.rcMonitor;
     let native = Display {
         monitor: monitor as isize,
-        bounds: [left, top, right, bottom],
+        edges: edges(info.rcMonitor),
     };
     let scale = dpi as f32 / BASE_DPI as f32;
-    Ok(crate::screen::Display {
+    Ok(screen::Display {
         native,
         size: native.extent().map(|edge| edge as f32 / scale),
     })
@@ -276,12 +275,12 @@ fn describe(
 pub(crate) fn pointer(display: Display) -> Option<PointerSample> {
     let at = Instant::now();
     let POINT { x, y } = cursor()?;
-    let [x, y] = display.area().normalize([x, y].map(f64::from))?;
+    let [x, y] = display.bounds().normalize([x, y].map(f64::from))?;
     Some(PointerSample {
         at,
         x,
         y,
-        drawing: super::modifiers().draws(),
+        drawing: modifiers().draws(),
         pressed: primary_button_down(),
     })
 }
@@ -331,7 +330,6 @@ fn record(
     }
     let mut exclusions = Exclusions::default();
     exclusions.refresh()?;
-    // Frames composed before a Speakeasy window was left out may show it.
     let mut clean_from = clean_after_now();
     let mut capture = Capture::start(target, interval, longest_edge, stopping)?;
     let mut pacer = Pacer::new(interval);
@@ -339,7 +337,7 @@ fn record(
         // A window opened since the last check is in the first frame Windows composes with it.
         if capture.poll(clean_from)? && exclusions.refresh()? {
             clean_from = clean_after_now();
-            capture.forget();
+            capture.discard_pending();
         }
         let now = Instant::now();
         // A full lane leaves the pending frame waiting rather than reading back one to drop.
@@ -388,7 +386,8 @@ impl Pacer {
 /// A capture of one display, all of it or a part, polled on the capture thread.
 struct Capture {
     display: Display,
-    region: Region,
+    /// The window whose place frames follow, when recording one.
+    followed: Option<Window>,
     /// The part of the display frames show: fixed for an area, following a window.
     part: Part,
     /// The size Windows composes the display at.
@@ -423,10 +422,10 @@ impl Capture {
             GraphicsCaptureAccess::RequestAccessAsync(GraphicsCaptureAccessKind::Borderless);
         let monitor = display.handle();
         let (device, context) = device_for(monitor)?;
+        let dxgi: IDXGIDevice = device.cast()?;
         // SAFETY: wraps the live DXGI device; the runtime keeps its own reference.
         let direct3d: IDirect3DDevice =
-            unsafe { CreateDirect3D11DeviceFromDXGIDevice(&device.cast::<IDXGIDevice>()?)? }
-                .cast()?;
+            unsafe { CreateDirect3D11DeviceFromDXGIDevice(&dxgi)? }.cast()?;
         let interop = factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
         // SAFETY: the monitor handle came from the system; a stale one fails the call.
         let item: GraphicsCaptureItem = unsafe { interop.CreateForMonitor(monitor)? };
@@ -452,9 +451,13 @@ impl Capture {
         }
         // Windows refuses this before capture starts, even with access granted.
         best_effort(session.SetIsBorderRequired(false));
+        let followed = match target.region {
+            Region::Window(window, _) => Some(window),
+            Region::Whole | Region::Area(_) => None,
+        };
         Ok(Self {
             display,
-            region: target.region,
+            followed,
             part,
             content: composed,
             device,
@@ -488,14 +491,15 @@ impl Capture {
         let Some(frame) = newest else {
             return Ok(false);
         };
-        let content = frame.ContentSize()?;
-        if pixels(content) != self.content {
+        let size = frame.ContentSize()?;
+        let content = pixels(size);
+        if content != self.content {
             // The display changed resolution or rotation: this frame fills only part of its
             // surface, and the pending one belongs to the pool being replaced.
             self.pending = None;
             self.pool
-                .Recreate(&self.direct3d, POOL_FORMAT, BUFFERS, content)?;
-            self.content = pixels(content);
+                .Recreate(&self.direct3d, POOL_FORMAT, BUFFERS, size)?;
+            self.content = content;
             return Ok(false);
         }
         let captured = composed_at(frame.SystemRelativeTime()?);
@@ -515,7 +519,7 @@ impl Capture {
         }
     }
 
-    fn forget(&mut self) {
+    fn discard_pending(&mut self) {
         self.pending = None;
     }
 
@@ -524,16 +528,13 @@ impl Capture {
         let Some((frame, captured)) = self.pending.take() else {
             return Ok(None);
         };
+        let surface: IDirect3DDxgiInterfaceAccess = frame.Surface()?.cast()?;
         // SAFETY: the frame's surface is a live texture on this capture's device.
-        let texture: ID3D11Texture2D = unsafe {
-            frame
-                .Surface()?
-                .cast::<IDirect3DDxgiInterfaceAccess>()?
-                .GetInterface()?
-        };
+        let texture: ID3D11Texture2D = unsafe { surface.GetInterface()? };
         let crop = pixel_box(self.follow(), self.content);
-        if crop_size(crop) != self.readback.source {
-            self.readback = Readback::new(&self.device, crop_size(crop), self.longest_edge)?;
+        let source = crop_size(crop);
+        if source != self.readback.source {
+            self.readback = Readback::new(&self.device, source, self.longest_edge)?;
         }
         let [left, top, ..] = crop;
         let bgra = self.readback.read(&self.context, &texture, [left, top])?;
@@ -550,18 +551,13 @@ impl Capture {
     /// The part of the display to read: a window's place now, or its last place while it is
     /// minimized, closed, or off the display.
     fn follow(&mut self) -> Part {
-        if let Region::Window(window, _) = self.region
+        if let Some(window) = self.followed
             && let Some(part) = window_part(self.display, window)
         {
             self.part = part;
         }
         self.part
     }
-}
-
-/// The width and height of a box of pixels given by its edges.
-const fn crop_size([left, top, right, bottom]: [u32; 4]) -> [u32; 2] {
-    [right.saturating_sub(left), bottom.saturating_sub(top)]
 }
 
 impl Drop for Capture {
@@ -571,6 +567,11 @@ impl Drop for Capture {
         best_effort(self.session.Close());
         best_effort(self.pool.Close());
     }
+}
+
+/// The width and height of a box of pixels given by its edges.
+const fn crop_size([left, top, right, bottom]: [u32; 4]) -> [u32; 2] {
+    [right.saturating_sub(left), bottom.saturating_sub(top)]
 }
 
 fn pixels(size: windows::Graphics::SizeInt32) -> [u32; 2] {
@@ -708,7 +709,7 @@ pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyh
     // SAFETY: this thread owns the window, which owns the subclass until WM_NCDESTROY on this same
     // thread; installing it again replaces it.
     ok_or_last_error(unsafe { SetWindowSubclass(hwnd, Some(edge_to_edge), 1, 0) })?;
-    let [left, top, ..] = display.bounds;
+    let [left, top, ..] = display.edges;
     let [width, height] = display.extent();
     let place = || {
         // SAFETY: this thread owns the window. A changed frame recomputes the client area through
@@ -811,9 +812,9 @@ mod tests {
         // A display left of and above the primary one, as desktop coordinates allow.
         let display = Display {
             monitor: 0,
-            bounds: [-3840, -794, 0, 1366],
+            edges: [-3840, -794, 0, 1366],
         };
-        let at = |x: i32, y: i32| display.area().normalize([x, y].map(f64::from));
+        let at = |x: i32, y: i32| display.bounds().normalize([x, y].map(f64::from));
         assert_eq!(at(-1920, 286), Some([0.5, 0.5]));
         assert_eq!(
             at(960, 1366),
@@ -822,11 +823,11 @@ mod tests {
         );
         let desktop = Display {
             monitor: 0,
-            bounds: [i32::MIN, i32::MIN, i32::MAX, i32::MAX],
+            edges: [i32::MIN, i32::MIN, i32::MAX, i32::MAX],
         };
         assert_eq!(
             desktop
-                .area()
+                .bounds()
                 .normalize([i32::MAX, i32::MIN].map(f64::from)),
             Some([1.0, 0.0]),
             "Spans across the whole coordinate range must not overflow"
