@@ -321,11 +321,13 @@ impl Recorder {
                 control.finish();
                 control.quiesce();
             }
-            if !ready && !self.ring.is_empty() {
+            consume_pcm(&mut self.ring, &mut self.pcm, &mut meter, self.limit);
+            // Checked after draining, not before, so a callback that fills the ring in between
+            // cannot leave audio in the recording that no `Ready` announced.
+            if !ready && self.pcm.samples() > 0 {
                 ready = true;
                 events.send_blocking(CaptureEvent::Ready(id))?;
             }
-            consume_pcm(&mut self.ring, &mut self.pcm, &mut meter, self.limit);
             classify(&mut self.speech, self.pcm.audio(), cues);
             if let Some(level) = meter.take_level() {
                 #[expect(

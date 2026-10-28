@@ -39,6 +39,7 @@ impl From<SessionId> for u64 {
 
 /// A capture thread's report about the session that opened it.
 pub(crate) enum CaptureEvent {
+    /// The first samples arrived; a capture reports it before any audio it seals.
     Ready(SessionId),
     Level(SessionId, f32),
     Finished(SessionId, anyhow::Result<Option<Sealed>>),
