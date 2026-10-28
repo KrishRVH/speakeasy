@@ -177,8 +177,8 @@ fn show_tray_hint(cx: &mut App) {
 }
 
 /// The file beside `settings` that remembers the tray hint across launches, so the user's settings
-/// file is never rewritten for it. A demo is simulated and leaves the user's files alone, so it
-/// shows the hint once per launch.
+/// file is never rewritten for it. A demo records no hint there, though a tray preview takes the
+/// instance lock beside the settings, so it shows the hint once per launch.
 fn tray_hint_marker(settings: &Path, mode: LaunchMode) -> Option<PathBuf> {
     (!mode.is_demo()).then(|| settings.with_file_name("tray-hint-seen"))
 }
