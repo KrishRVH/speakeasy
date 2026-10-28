@@ -50,16 +50,16 @@ async fn a_keyboard_switch_keeps_shortcuts_and_a_remap_stops_them() -> anyhow::R
     );
     let (connection, _) = connect()?;
     let keyboard = Keyboard::load(&connection)?;
-    let key = |kind, name| -> anyhow::Result<()> {
-        let code = keyboard.keycode(name)?;
+    let key = |kind, symbol| -> anyhow::Result<()> {
+        let code = keyboard.keycode(symbol)?;
         connection
             .xtest_fake_input(kind, code, 0, 0, 0, 0, 0)?
             .check()?;
         Ok(())
     };
 
-    for name in ["Control_L", "Super_L", "space"] {
-        key(xproto::KEY_PRESS_EVENT, name)?;
+    for symbol in [Keysym::Control_L, Keysym::Super_L, Keysym::space] {
+        key(xproto::KEY_PRESS_EVENT, symbol)?;
     }
     // The first synthetic key moves the core keyboard to the XTEST device, which the server
     // announces as a mapping change although the mapping stays the same.
@@ -73,14 +73,14 @@ async fn a_keyboard_switch_keeps_shortcuts_and_a_remap_stops_them() -> anyhow::R
         matches!(pressed, Input::Press),
         "The chord after a keyboard switch gave {pressed:?}"
     );
-    key(xproto::KEY_RELEASE_EVENT, "space")?;
+    key(xproto::KEY_RELEASE_EVENT, Keysym::space)?;
     let released = next().await?;
     ensure!(
         matches!(released, Input::Release),
         "Releasing the chord gave {released:?}"
     );
-    for name in ["Super_L", "Control_L"] {
-        key(xproto::KEY_RELEASE_EVENT, name)?;
+    for symbol in [Keysym::Super_L, Keysym::Control_L] {
+        key(xproto::KEY_RELEASE_EVENT, symbol)?;
     }
 
     // The highest keycode now types F35: a mapping that actually changed.

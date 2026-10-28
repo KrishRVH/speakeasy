@@ -69,74 +69,67 @@ impl Keyboard {
         })
     }
 
-    fn keycode(&self, name: &str) -> anyhow::Result<u8> {
-        let symbol = keysym_from_name(name, KEYSYM_CASE_INSENSITIVE).raw();
-        ensure!(
-            symbol != 0 && self.symbols_per_key != 0,
-            "Unknown shortcut key"
-        );
-        let position = self
-            .symbols
-            .chunks(self.symbols_per_key)
-            .position(|symbols| symbols.contains(&symbol))
-            .context("Shortcut key is unavailable in this keyboard layout")?;
-        self.first_keycode
-            .checked_add(u8::try_from(position)?)
-            .context("Shortcut key is outside the X11 keyboard range")
+    /// Each keycode with the keysyms it types, from the first keycode up.
+    fn keys(&self) -> impl Iterator<Item = (u8, &[u32])> {
+        let rows = (self.symbols_per_key != 0).then(|| self.symbols.chunks(self.symbols_per_key));
+        (self.first_keycode..=u8::MAX).zip(rows.into_iter().flatten())
+    }
+
+    /// Each core modifier's mask with the keycodes mapped to it; a zero keycode fills an unused slot.
+    fn modifiers(&self) -> impl Iterator<Item = (u16, &[u8])> {
+        let groups = (self.keys_per_modifier != 0)
+            .then(|| self.modifier_keys.chunks(self.keys_per_modifier));
+        (0..u16::BITS)
+            .map(|bit| 1 << bit)
+            .zip(groups.into_iter().flatten())
+    }
+
+    fn keycode(&self, symbol: Keysym) -> anyhow::Result<u8> {
+        ensure!(symbol != Keysym::NoSymbol, "Unknown shortcut key");
+        self.keys()
+            .find_map(|(code, symbols)| symbols.contains(&symbol.raw()).then_some(code))
+            .context("Shortcut key is unavailable in this keyboard layout")
     }
 
     fn unshifted_keycode(&self, symbol: Keysym) -> Option<u8> {
-        if self.symbols_per_key == 0 {
-            return None;
-        }
-        let position = self
-            .symbols
-            .chunks(self.symbols_per_key)
-            .position(|symbols| symbols.first() == Some(&symbol.raw()))?;
-        self.first_keycode.checked_add(u8::try_from(position).ok()?)
+        self.keys()
+            .find_map(|(code, symbols)| (symbols.first() == Some(&symbol.raw())).then_some(code))
     }
 
-    fn modifier_mask(&self, name: &str) -> anyhow::Result<u16> {
-        let code = self.keycode(name)?;
+    fn modifier_mask(&self, modifier: Keysym) -> anyhow::Result<u16> {
+        let code = self.keycode(modifier)?;
         ensure!(
             self.keys_per_modifier != 0,
             "Keyboard has no modifier mapping"
         );
-        let group = self
-            .modifier_keys
-            .chunks(self.keys_per_modifier)
-            .position(|codes| codes.contains(&code))
-            .context("Shortcut modifier is not mapped")?;
-        Ok(1 << group)
+        self.modifiers()
+            .find_map(|(mask, codes)| codes.contains(&code).then_some(mask))
+            .context("Shortcut modifier is not mapped")
     }
 
     fn lock_modifiers(&self) -> u16 {
-        self.modifier_mask("Caps_Lock").unwrap_or(0) | self.modifier_mask("Num_Lock").unwrap_or(0)
+        self.modifier_mask(Keysym::Caps_Lock).unwrap_or(0)
+            | self.modifier_mask(Keysym::Num_Lock).unwrap_or(0)
     }
 
     fn held_modifiers(&self, keys: &[u8; 32]) -> u16 {
-        if self.keys_per_modifier == 0 {
-            return 0;
-        }
-        self.modifier_keys
-            .chunks(self.keys_per_modifier)
-            .enumerate()
+        self.modifiers()
             .filter(|(_, codes)| {
                 codes
                     .iter()
                     .any(|&code| code != 0 && is_key_down(keys, code))
             })
-            .fold(0, |held, (group, _)| held | (1 << group))
+            .fold(0, |held, (mask, _)| held | mask)
     }
 
     fn binding(&self, expression: &str) -> anyhow::Result<KeyBinding> {
-        let (modifier_names, key) = parse_binding(expression)?;
+        let (modifier_symbols, key) = parse_binding(expression)?;
         let mut modifiers = 0;
-        for name in modifier_names {
-            modifiers |= self.modifier_mask(name)?;
+        for modifier in modifier_symbols {
+            modifiers |= self.modifier_mask(modifier)?;
         }
         Ok(KeyBinding {
-            key: self.keycode(key)?,
+            key: self.keycode(keysym_from_name(key, KEYSYM_CASE_INSENSITIVE))?,
             modifiers,
         })
     }
@@ -357,24 +350,23 @@ fn is_key_down(keys: &[u8; 32], code: u8) -> bool {
         .is_some_and(|bits| bits & (1 << (code % 8)) != 0)
 }
 
-fn parse_binding(expression: &str) -> anyhow::Result<(Vec<&'static str>, &str)> {
-    let mut parts: Vec<_> = expression.split('+').map(str::trim).collect();
+fn parse_binding(expression: &str) -> anyhow::Result<(Vec<Keysym>, &str)> {
+    let mut parts = expression.split('+').map(str::trim);
     let key = parts
-        .pop()
+        .next_back()
         .filter(|key| !key.is_empty())
         .context("Shortcut needs an ordinary key")?;
     let modifiers = parts
-        .into_iter()
         .map(|part| match part {
-            "CTRL" => Ok("Control_L"),
-            "LOGO" => Ok("Super_L"),
-            "ALT" => Ok("Alt_L"),
-            "SHIFT" => Ok("Shift_L"),
+            "CTRL" => Ok(Keysym::Control_L),
+            "LOGO" => Ok(Keysym::Super_L),
+            "ALT" => Ok(Keysym::Alt_L),
+            "SHIFT" => Ok(Keysym::Shift_L),
             _ => bail!("Use CTRL, LOGO, ALT or SHIFT before the shortcut key"),
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     ensure!(
-        !modifiers.is_empty() && modifiers.len() <= 3,
+        (1..=3).contains(&modifiers.len()),
         "Shortcut needs one to three modifiers"
     );
     ensure!(
@@ -555,8 +547,11 @@ mod tests {
     }
 
     #[test]
-    fn shortcuts_require_explicit_modifiers_and_an_ordinary_key() {
-        assert!(parse_binding("CTRL+LOGO+space").is_ok());
+    fn shortcuts_require_explicit_modifiers_and_an_ordinary_key() -> anyhow::Result<()> {
+        assert_eq!(
+            parse_binding("CTRL+LOGO+space")?,
+            (vec![Keysym::Control_L, Keysym::Super_L], "space")
+        );
         for binding in [
             "space",
             "CTRL+",
@@ -564,8 +559,12 @@ mod tests {
             "CTRL+super_l",
             "CTRL+UNKNOWN+space",
         ] {
-            assert!(parse_binding(binding).is_err());
+            assert!(
+                parse_binding(binding).is_err(),
+                "{binding} parsed as a shortcut"
+            );
         }
+        Ok(())
     }
 
     #[test]
