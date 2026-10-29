@@ -367,6 +367,9 @@ paused clock exercises gesture deadlines and the five-minute cap.
   setup downloads them on first launch. The Mac bundle carries its microphone usage declaration and
   a local signature; grant its permissions as [Get started](#get-started) describes. Distribution
   needs Developer ID signing and notarization.
+- `bash scripts/check-package.sh <package>` unpacks a package and checks, with no display or model,
+  that it prints its version and help, answers a mistyped option on stderr with status 2, and writes
+  `show demo`. The release workflow runs it on every package before upload.
 - `scripts/check-demo-windows.ps1 -Executable <speakeasy.exe>` checks that the demo pill stays
   non-activating and passes clicks through.
   `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks minimize, close, relaunch, and

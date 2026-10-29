@@ -79,6 +79,16 @@ jobs:
       - name: Package Linux against glibc 2.35
         if: runner.os == 'Linux'
         run: bash scripts/package-linux.sh
+      # Launches exactly what the next step uploads. The deadline stops a build that answers a
+      # mistyped option with a dialog, which nothing here would dismiss.
+      - name: Launch the packages
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          shopt -s nullglob
+          for package in artifacts/*.zip artifacts/*.AppImage artifacts/*.tar.gz; do
+            bash scripts/check-package.sh "$package"
+          done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: speakeasy-${{ runner.os }}

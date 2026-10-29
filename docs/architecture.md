@@ -118,6 +118,7 @@ module unless a test file is named.
   secret-gated loopback commands.
 - **Command line**: [main.rs](../crates/app/src/main.rs) parses options and routes what they ask
   for, and [show.rs](../crates/app/src/show.rs) parses `show` commands; both test their parsing.
+  [check-package.sh](../scripts/check-package.sh) launches every release package before upload.
 - **Show recording and publication**: [show.rs](../crates/app/src/show.rs),
   [show/recorder.rs](../crates/app/src/show/recorder.rs),
   [show/publish.rs](../crates/app/src/show/publish.rs), and the session owner.
