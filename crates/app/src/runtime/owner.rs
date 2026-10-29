@@ -392,8 +392,12 @@ impl<P: Ports> Owner<P> {
                 }
             },
             Completion::Transcribed(Err(error)) => {
-                self.fail(error.to_string());
-                self.worker.revive(&self.ports, &self.config);
+                // The session still holds its speech, which `advance` resends once a fresh worker
+                // loads.
+                if !self.session.as_mut().is_some_and(Session::retry) {
+                    self.fail(error.to_string());
+                    self.worker.revive(&self.ports, &self.config);
+                }
             },
         }
     }

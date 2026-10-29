@@ -59,7 +59,8 @@ impl CaptureEvent {
 
 /// Speech sealed for transcription: a WAV, and how much leading quiet was trimmed before it, which
 /// places times the recognizer reports back on the recording's clock. The WAV is zeroed on drop
-/// wherever the audio is discarded; transcription takes it with `mem::take` first.
+/// wherever the audio is discarded; transcription sends copies.
+#[derive(Default)]
 pub(crate) struct Sealed {
     pub wav: Vec<u8>,
     pub trimmed: Duration,

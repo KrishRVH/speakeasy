@@ -53,19 +53,23 @@ enum Stage {
     Stopping {
         audio: Duration,
     },
-    /// Sealed speech, starting at `start`, awaits a ready worker.
-    AwaitingWorker {
-        sealed: Sealed,
-        start: Duration,
-    },
-    /// The worker holds the WAV, which starts at `start`.
-    Transcribing {
-        start: Duration,
-    },
+    /// Sealed speech awaits a ready worker.
+    AwaitingWorker(Speech),
+    /// The worker transcribes a copy of the speech, which stays here until a transcript arrives.
+    Transcribing(Speech),
     /// A Show's narration, placed on its timeline, waits for its screen recording to finish.
     AwaitingFootage(Narration),
     /// Dictated text is being inserted, or a Show composed, written, and copied.
     Delivering(JoinHandle<Delivered>),
+}
+
+/// Sealed speech, starting at `start` on the session's timeline.
+#[derive(Default)]
+struct Speech {
+    sealed: Sealed,
+    start: Duration,
+    /// Whether a failed transcription already sent it back for a fresh worker.
+    retried: bool,
 }
 
 /// What a session's last task returns: how its dictated text was inserted, or its Show
@@ -91,8 +95,8 @@ impl Session {
             Stage::Queued | Stage::Opening => Phase::Starting,
             Stage::Recording { .. } => Phase::Recording,
             Stage::Stopping { .. } => Phase::Stopping,
-            Stage::AwaitingWorker { .. }
-            | Stage::Transcribing { .. }
+            Stage::AwaitingWorker(_)
+            | Stage::Transcribing(_)
             | Stage::AwaitingFootage(_)
             | Stage::Delivering(_) => Phase::Processing,
         }
@@ -120,11 +124,11 @@ impl Session {
     }
 
     pub(super) const fn awaits_worker(&self) -> bool {
-        matches!(self.stage, Stage::AwaitingWorker { .. })
+        matches!(self.stage, Stage::AwaitingWorker(_))
     }
 
     pub(super) const fn is_transcribing(&self) -> bool {
-        matches!(self.stage, Stage::Transcribing { .. })
+        matches!(self.stage, Stage::Transcribing(_))
     }
 
     /// What the Show's screen recorder, queued behind the previous one, is to record.
@@ -169,7 +173,11 @@ impl Session {
         self.stage = match (&self.stage, sealed) {
             (Stage::Recording { audio } | Stage::Stopping { audio }, Some(sealed)) => {
                 let start = audio.saturating_add(sealed.trimmed);
-                Stage::AwaitingWorker { sealed, start }
+                Stage::AwaitingWorker(Speech {
+                    sealed,
+                    start,
+                    retried: false,
+                })
             },
             _ if self.is_show() => Stage::AwaitingFootage(Narration::default()),
             _ => return false,
@@ -177,22 +185,32 @@ impl Session {
         true
     }
 
-    /// Hands the sealed WAV to `transcribe`, which gives it back while no worker can take it.
-    pub(super) fn transcribe(&mut self, transcribe: impl FnOnce(Vec<u8>) -> Result<(), Vec<u8>>) {
-        let Stage::AwaitingWorker { sealed, start } = &mut self.stage else {
-            return;
-        };
-        let start = *start;
-        match transcribe(mem::take(&mut sealed.wav)) {
-            Ok(()) => self.stage = Stage::Transcribing { start },
-            Err(unclaimed) => sealed.wav = unclaimed,
+    /// Offers the sealed WAV to `transcribe`, which reports whether a worker took a copy.
+    pub(super) fn transcribe(&mut self, transcribe: impl FnOnce(&[u8]) -> bool) {
+        if let Stage::AwaitingWorker(speech) = &mut self.stage
+            && transcribe(&speech.sealed.wav)
+        {
+            self.stage = Stage::Transcribing(mem::take(speech));
         }
+    }
+
+    /// Sends speech whose first transcription failed back to await a fresh worker; returns whether
+    /// it did.
+    pub(super) fn retry(&mut self) -> bool {
+        let Stage::Transcribing(speech @ Speech { retried: false, .. }) = &mut self.stage else {
+            return false;
+        };
+        self.stage = Stage::AwaitingWorker(Speech {
+            retried: true,
+            ..mem::take(speech)
+        });
+        true
     }
 
     /// Places a transcribed Show's narration, timed from the start of its WAV, onto the Show's
     /// timeline, then waits for the footage. Any other stage ignores it.
     pub(super) fn narrate(&mut self, narration: Narration) {
-        if let Stage::Transcribing { start } = self.stage {
+        if let Stage::Transcribing(Speech { start, .. }) = self.stage {
             self.stage = Stage::AwaitingFootage(narration.delayed(start));
         }
     }
@@ -294,7 +312,7 @@ mod tests {
             trimmed: Duration::from_millis(500),
         };
         assert!(session.captured(Some(sealed)));
-        session.transcribe(|_| Ok(()));
+        session.transcribe(|_| true);
         let word = |at| Word {
             span: Span::new(Moment::from_millis(at), Moment::from_millis(at + 200)),
             text: "here".into(),

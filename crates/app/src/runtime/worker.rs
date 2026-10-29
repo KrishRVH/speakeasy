@@ -116,20 +116,16 @@ impl<W: Speech> Worker<W> {
         }));
     }
 
-    /// Starts transcribing on a ready worker, or hands the audio back.
-    pub(super) fn transcribe(
-        &mut self,
-        wav: Vec<u8>,
-        detail: Detail,
-        config: &Config,
-    ) -> Result<(), Vec<u8>> {
+    /// Starts transcribing a copy of `wav` on a ready worker; returns whether one took it.
+    pub(super) fn transcribe(&mut self, wav: &[u8], detail: Detail, config: &Config) -> bool {
         let mut worker = match mem::take(self) {
             Self::Ready(worker) => worker,
             other => {
                 *self = other;
-                return Err(wav);
+                return false;
             },
         };
+        let wav = wav.to_vec();
         let language = config.language.clone();
         let fillers = config.fillers();
         *self = Self::Transcribing(Job::spawn(|mut cancelled| async move {
@@ -148,7 +144,7 @@ impl<W: Speech> Worker<W> {
                 },
             }
         }));
-        Ok(())
+        true
     }
 
     fn request_stop(&self) {

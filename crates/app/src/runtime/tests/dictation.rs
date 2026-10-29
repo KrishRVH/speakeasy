@@ -451,6 +451,20 @@ async fn levels_after_a_capture_ends_never_reach_the_meter() -> anyhow::Result<(
 }
 
 #[tokio::test(start_paused = true)]
+async fn failed_transcription_retries_its_speech_on_a_fresh_worker() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    receive(&h.loads).await?;
+    h.start().await?;
+    let reply = h.finish().await?;
+    assert!(reply.send(Err(anyhow!("Engine exited"))).is_ok());
+    receive(&h.loads).await?;
+    h.transcribe_next_as("kept").await?;
+    assert_eq!(receive(&h.pasted).await?, "kept");
+    h.phase(Phase::Done).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
 async fn failures_recover_the_worker_and_a_closed_input_lane_stops_the_owner() -> anyhow::Result<()>
 {
     let mut h = Harness::new()?;
@@ -463,9 +477,12 @@ async fn failures_recover_the_worker_and_a_closed_input_lane_stops_the_owner() -
     h.start().await?;
     let reply = h.finish().await?;
     assert!(reply.send(Err(anyhow!("Fixture request failed"))).is_ok());
+    receive(&h.loads).await?;
+    let (_, retry) = receive(&h.jobs).await?;
+    assert!(retry.send(Err(anyhow!("Fixture retry failed"))).is_ok());
     h.phase(Phase::Error).await?;
     receive(&h.loads).await?;
-    assert!(h.snapshot().message.contains("Fixture request failed"));
+    assert!(h.snapshot().message.contains("Fixture retry failed"));
     h.start().await?;
     h.runtime.input.close();
     h.phase(Phase::Error).await?;
