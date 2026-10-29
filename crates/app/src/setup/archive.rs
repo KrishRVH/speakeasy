@@ -97,7 +97,7 @@ fn normalize_archive(staging: &Path) -> anyhow::Result<()> {
     let mut directories = Vec::new();
     for entry in fs::read_dir(staging).map_err(file_error(staging))? {
         let entry = entry.map_err(file_error(staging))?;
-        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+        if entry.file_type().map_err(file_error(staging))?.is_dir() {
             directories.push(entry.path());
         }
     }
