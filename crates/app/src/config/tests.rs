@@ -354,6 +354,32 @@ fn save_refuses_to_replace_a_file_that_needs_repair() -> anyhow::Result<()> {
 }
 
 #[test]
+fn a_repair_notice_names_the_key_at_fault_but_not_its_value() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    let notice = format!("Invalid settings in {}: ", path.display());
+    for (contents, key, value) in [
+        (r#"{"threads":"four"}"#, "threads", "four"),
+        (r#"{"remove_fillers":true,"theme":"Jet"}"#, "theme", "Jet"),
+        (r#"{"linux":{"cancel":false}}"#, "linux.cancel", "false"),
+    ] {
+        fs::write(&path, contents)?;
+        let error = Config::read(&path)
+            .err()
+            .with_context(|| format!("{key} of the wrong kind was read"))?;
+        let error = format!("{error:#}");
+        let reason = error
+            .strip_prefix(&notice)
+            .with_context(|| format!("The notice does not name the file: {error}"))?;
+        assert!(
+            reason.contains(key) && !reason.contains(value),
+            "{key}: {reason}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn a_save_that_cannot_write_names_the_file_and_what_to_do() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let blocked = directory.path().join("speakeasy");

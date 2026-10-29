@@ -21,7 +21,7 @@ use std::{
 
 use anyhow::{Context as _, anyhow, ensure};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, error::Category};
 use speakeasy_platform::{Delivery, DesktopOptions, LinuxPaste};
 
 use crate::{theme::Theme, transcript::Fillers};
@@ -504,15 +504,37 @@ impl Deref for ValidConfig {
 /// Parses `contents` as settings and as the map a save patches, so a file that reads is always one a
 /// save can patch: skipping an unknown key accepts values that holding it does not, such as `1e400`
 /// or a lone surrogate, and serde reads `linux` from an array that a save cannot patch key by key.
-/// Settings parse first, so a repair notice names the setting to fix.
+/// Settings parse first, because only their failure can name the key at fault; see [`unreadable`].
 fn parse(contents: &[u8], path: &Path) -> anyhow::Result<(Config, Map<String, Value>)> {
     let invalid = || format!("Invalid settings in {}", path.display());
-    let config: Config = serde_json::from_slice(contents).with_context(invalid)?;
+    let mut json = serde_json::Deserializer::from_slice(contents);
+    let config: Config = serde_path_to_error::deserialize(&mut json)
+        .map_err(unreadable)
+        .with_context(invalid)?;
+    json.end().with_context(invalid)?;
     let file: Map<String, Value> = serde_json::from_slice(contents).with_context(invalid)?;
     if file.get("linux").is_some_and(|linux| !linux.is_object()) {
         return Err(anyhow!("The linux settings must be an object").context(invalid()));
     }
     Ok((config, file))
+}
+
+/// What the user is told when settings do not read. JSON that does not parse keeps serde's account,
+/// which gives the line and column. Serde's account of a value of the wrong kind quotes the value,
+/// so a fault in a key, such as that value or a Linux key that does not exist, is told by the key's
+/// path, such as `linux.cancel`, and position instead. Any other fault, such as a top-level key
+/// written twice or a file that holds no object, is told by position alone.
+fn unreadable(error: serde_path_to_error::Error<serde_json::Error>) -> anyhow::Error {
+    let fault = error.inner();
+    if fault.classify() != Category::Data {
+        return error.into_inner().into();
+    }
+    let (line, column) = (fault.line(), fault.column());
+    let key = error.path();
+    if key.iter().len() == 0 {
+        return anyhow!("Cannot read the settings at line {line} column {column}.");
+    }
+    anyhow!("Cannot read {key} at line {line} column {column}. Correct or remove it.")
 }
 
 /// Linux's own limit on following a chain of links, which also ends a loop of them.

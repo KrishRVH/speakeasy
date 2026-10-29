@@ -25,6 +25,7 @@ rtrb.workspace = true
 serde = { workspace = true, features = ["derive"] }
 # Saves patch the user's file in place, so its keys keep their order.
 serde_json = { workspace = true, features = ["preserve_order"] }
+serde_path_to_error.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }
