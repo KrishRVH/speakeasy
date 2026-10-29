@@ -187,17 +187,25 @@ pub(crate) fn attend(report: impl Fn(&anyhow::Error, &mut App) + 'static, cx: &A
 }
 
 /// Deletes the Shows under `parent` that expired by `now`, and staging left by publications that
-/// never finished. Only directories named the way Speakeasy names them are touched.
+/// never finished. Only directories named the way Speakeasy names them are touched. An entry that
+/// cannot be inspected is kept and fails the sweep, which goes on to expire the rest.
 fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
     let entries = match fs::read_dir(parent) {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
         entries => entries.with_context(|| format!("Cannot read {}", parent.display()))?,
     };
     let cutoff = utc_stamp(now.checked_sub(KEPT_FOR).unwrap_or(SystemTime::UNIX_EPOCH));
+    let mut unchecked = None;
     let mut stuck = false;
-    for entry in entries.flatten() {
-        if expired(&entry, &cutoff, now) && fs::remove_dir_all(entry.path()).is_err() {
-            stuck = true;
+    for entry in entries {
+        match entry.and_then(|entry| Ok(expired(&entry, &cutoff, now)?.then(|| entry.path()))) {
+            Ok(Some(show)) => stuck |= fs::remove_dir_all(show).is_err(),
+            Ok(None) => {},
+            // An entry renamed or deleted since the listing has nothing left to expire.
+            Err(error) if error.kind() == ErrorKind::NotFound => {},
+            Err(error) => {
+                unchecked.get_or_insert(error);
+            },
         }
     }
     anyhow::ensure!(
@@ -206,38 +214,45 @@ fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
          Speakeasy tries again within the hour.",
         parent.display()
     );
+    if let Some(error) = unchecked {
+        anyhow::bail!(
+            "Cannot check every Show in {} for expiry: {error}. {}",
+            parent.display(),
+            crate::paths::remedy(&error)
+        );
+    }
     Ok(())
 }
 
 /// Whether `entry`, judged by its own type so a link is never followed out of the folder, is a
 /// directory holding an unpinned Show stamped before `cutoff`, or staging abandoned by `now`.
-fn expired(entry: &fs::DirEntry, cutoff: &str, now: SystemTime) -> bool {
-    if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-        return false;
+fn expired(entry: &fs::DirEntry, cutoff: &str, now: SystemTime) -> io::Result<bool> {
+    if !entry.file_type()?.is_dir() {
+        return Ok(false);
     }
     let name = entry.file_name();
     let Some(name) = name.to_str() else {
-        return false;
+        return Ok(false);
     };
     if name.starts_with(STAGING_PREFIX) {
-        entry
-            .metadata()
-            .and_then(|metadata| metadata.modified())
-            .ok()
-            .and_then(|modified| now.duration_since(modified).ok())
-            .is_some_and(|age| age >= ABANDONED_AFTER)
+        let modified = entry.metadata()?.modified()?;
+        // Staging modified after `now` is the clock stepping back, not abandonment.
+        Ok(now
+            .duration_since(modified)
+            .is_ok_and(|age| age >= ABANDONED_AFTER))
     } else {
-        stamp(name).is_some_and(|stamp| stamp < cutoff) && !pinned(&entry.path())
+        Ok(stamp(name).is_some_and(|stamp| stamp < cutoff) && !pinned(&entry.path())?)
     }
 }
 
 /// Whether the Show at `path` holds a pin. Only a pin known to be absent lets it expire, and a
 /// pin that is itself a link still counts.
-fn pinned(path: &Path) -> bool {
-    !matches!(
-        fs::symlink_metadata(path.join(PIN)),
-        Err(error) if error.kind() == ErrorKind::NotFound
-    )
+fn pinned(path: &Path) -> io::Result<bool> {
+    match fs::symlink_metadata(path.join(PIN)) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// The stamp a Show's directory is named for, such as `20261019T143603Z` in `20261019T143603Z-2`.
@@ -382,6 +397,31 @@ mod tests {
         assert_eq!(names(parent)?, kept);
 
         sweep(&parent.join("missing"), now)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_show_that_cannot_be_inspected_is_kept_and_fails_the_sweep() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = tempfile::tempdir()?;
+        let parent = root.path();
+        let now = SystemTime::now();
+        let sealed = parent.join(utc_stamp(now - Duration::from_hours(8 * 24)));
+        let expired = parent.join(utc_stamp(now - Duration::from_hours(9 * 24)));
+        fs::create_dir(&sealed)?;
+        fs::create_dir(&expired)?;
+        // A folder that can be listed but not searched hides whether it holds a pin.
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o600))?;
+        let probe = fs::symlink_metadata(sealed.join(PIN)).map_err(|error| error.kind());
+
+        let swept = sweep(parent, now);
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o700))?;
+        assert_eq!(probe.err(), Some(ErrorKind::PermissionDenied));
+        let message = format!("{:#}", swept.err().context("The sweep reports the Show")?);
+        assert!(message.contains("Cannot check every Show"), "{message}");
+        assert!(sealed.exists(), "A Show that may be pinned is kept");
+        assert!(!expired.exists(), "The rest of the folder still expires");
+        Ok(())
     }
 
     #[test]
