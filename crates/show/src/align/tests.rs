@@ -1,7 +1,10 @@
-//! Alignment cases on hand-timed narration.
+//! Alignment cases on hand-timed narration and on stretches of real narration: Scrawl's public
+//! recordings, trimmed to the words and marks beside this file in `show.json`'s shape.
+
+use serde::Deserialize;
 
 use super::*;
-use crate::recording::tests::words;
+use crate::{Mark, recording::tests::words};
 
 fn at(anchors: &[u64]) -> Vec<Moment> {
     anchors.iter().copied().map(Moment::from_millis).collect()
@@ -13,6 +16,31 @@ fn texts(anchors: &[u64], narration: &Narration) -> Vec<String> {
         .into_iter()
         .map(Option::unwrap_or_default)
         .collect()
+}
+
+/// The narration of a real recording, word by word as its recognizer timed it, and the marks
+/// drawn meanwhile.
+#[derive(Deserialize)]
+struct Recorded {
+    narration: Narration,
+    marks: Vec<Mark>,
+}
+
+impl Recorded {
+    fn parse(json: &str) -> Self {
+        serde_json::from_str(json).unwrap()
+    }
+
+    /// Each mark's text when every mark has a keyframe of its own, anchored where its ink began,
+    /// as the recording gave each of these marks a frame of its own.
+    fn said_per_mark(&self) -> Vec<String> {
+        let anchors: Vec<u64> = self
+            .marks
+            .iter()
+            .map(|mark| mark.span.start().as_millis())
+            .collect();
+        texts(&anchors, &self.narration)
+    }
 }
 
 const HEADER_THEN_TAP: &[(u64, &str)] = &[
@@ -96,6 +124,42 @@ fn an_action_after_a_finished_sentence_does_not_reopen_it() {
     assert_eq!(
         texts(&[0, 1_800], &Narration::Words(said)),
         ["First the header.", "When I tap it, nothing."]
+    );
+}
+
+#[test]
+fn ink_drawn_in_a_pause_mid_sentence_takes_the_sentence() {
+    // The recognizer folded each pause into the word before it: "There's" lasts 2.6 s and the
+    // second "and" 2 s, and the ink began before the next word.
+    assert_eq!(
+        Recorded::parse(include_str!("hex-motion.json")).said_per_mark(),
+        [
+            "Oh, that's nice. It's faster.",
+            "Um, There's some jumps, though, in the animation."
+        ]
+    );
+    assert_eq!(
+        Recorded::parse(include_str!("hex-shout2.json")).said_per_mark(),
+        [
+            "Uh, and the reflection needs to be better,",
+            "and the eyes."
+        ]
+    );
+}
+
+#[test]
+fn a_sentence_left_hanging_is_over_once_the_silence_runs_long() {
+    let said = words(&[
+        (0, "That's"),
+        (200, "done."),
+        (1_000, "So"),
+        (1_200, "the"),
+        (9_000, "Next"),
+        (9_200, "thing."),
+    ]);
+    assert_eq!(
+        texts(&[0, 6_000], &said),
+        ["That's done. So the", "Next thing."]
     );
 }
 

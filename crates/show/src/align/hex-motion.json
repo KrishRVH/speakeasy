@@ -1,0 +1,23 @@
+{
+  "narration": {
+    "words": [
+      {"span": [5520, 6060], "text": "Oh,"},
+      {"span": [6060, 6300], "text": "that's"},
+      {"span": [6300, 6540], "text": "nice."},
+      {"span": [6600, 6900], "text": "It's"},
+      {"span": [6900, 7560], "text": "faster."},
+      {"span": [8460, 9120], "text": "Um,"},
+      {"span": [9120, 11700], "text": "There's"},
+      {"span": [11700, 11760], "text": "some"},
+      {"span": [11760, 12120], "text": "jumps,"},
+      {"span": [12120, 12300], "text": "though,"},
+      {"span": [12300, 12420], "text": "in"},
+      {"span": [12420, 12540], "text": "the"},
+      {"span": [12540, 13080], "text": "animation."}
+    ]
+  },
+  "marks": [
+    {"number": 1, "shape": "scribble", "strokes": [0, 1], "span": [5964, 6180], "bounds": [0.4206, 0.3724, 0.4501, 0.4095]},
+    {"number": 2, "shape": "scribble", "strokes": [1, 2], "span": [11336, 11839], "bounds": [0.3268, 0.4113, 0.4183, 0.429]}
+  ]
+}

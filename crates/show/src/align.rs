@@ -10,9 +10,12 @@ use crate::{
 /// Narration after a silence this long starts a new thought. Measured from one word's start to the
 /// next because the recognizer stretches a word's end across the pause after it.
 const PAUSE: Duration = Duration::from_secs(2);
-/// A clause lasts at most this long past its last word's start; the recognizer's reported end can
-/// run through the silence that follows.
+/// A finished clause lasts at most this long past its last word's start; the recognizer's
+/// reported end can run through the silence that follows.
 const WORD_REACH: Duration = Duration::from_millis(700);
+/// A clause left unfinished stays in progress through a pause until the next word, up to this long
+/// past its last word's start: people stop mid-sentence to draw what they mean, then go on.
+const HESITATION: Duration = Duration::from_secs(4);
 /// A word belongs to a keyframe whose text starts no later than this after it.
 const ONSET_TOLERANCE: Duration = Duration::from_millis(50);
 /// A comma ends a clause only after this many words, so a short lead-in such as "Um," stays with
@@ -58,23 +61,26 @@ pub(crate) fn align(anchors: &[Moment], narration: &Narration) -> Vec<Option<Str
         .collect()
 }
 
-/// Spans of words that read as one clause.
+/// When each clause of `words` is in progress.
 fn clauses(words: &[&Word]) -> Vec<Span> {
     let mut clauses: Vec<Span> = Vec::new();
     let mut clause_words = 0;
     let mut previous: Option<&Word> = None;
     for word in words {
         let start = word.span.start();
-        let continues = previous.is_some_and(|previous| {
-            !ends_clause(&previous.text, clause_words) && start.since(previous.span.start()) < PAUSE
-        });
+        let unfinished = previous
+            .filter(|previous| !ends_clause(&previous.text, clause_words))
+            .map(|previous| previous.span.start());
         let reach = Span::new(start, word.span.end().min(start.saturating_add(WORD_REACH)));
         match clauses.last_mut() {
-            Some(clause) if continues => {
+            Some(clause) if unfinished.is_some_and(|last| start.since(last) < PAUSE) => {
                 *clause = clause.union(reach);
                 clause_words = clause_words.saturating_add(usize::from(word.is_spoken()));
             },
-            _ => {
+            in_progress => {
+                if let (Some(clause), Some(last)) = (in_progress, unfinished) {
+                    *clause = clause.union(Span::at(start.min(last.saturating_add(HESITATION))));
+                }
                 clauses.push(reach);
                 clause_words = usize::from(word.is_spoken());
             },

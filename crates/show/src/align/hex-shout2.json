@@ -1,0 +1,21 @@
+{
+  "narration": {
+    "words": [
+      {"span": [4860, 5400], "text": "Uh,"},
+      {"span": [5400, 5700], "text": "and"},
+      {"span": [5700, 5880], "text": "the"},
+      {"span": [5880, 6420], "text": "reflection"},
+      {"span": [6420, 6720], "text": "needs"},
+      {"span": [6720, 6900], "text": "to"},
+      {"span": [6900, 7020], "text": "be"},
+      {"span": [7020, 7500], "text": "better,"},
+      {"span": [7500, 9540], "text": "and"},
+      {"span": [9540, 9780], "text": "the"},
+      {"span": [9780, 11580], "text": "eyes."}
+    ]
+  },
+  "marks": [
+    {"number": 1, "shape": "scribble", "strokes": [0, 3], "span": [5764, 7001], "bounds": [0.4663, 0.4295, 0.5051, 0.4866]},
+    {"number": 2, "shape": "underline", "strokes": [3, 5], "span": [8814, 9329], "bounds": [0.4807, 0.4742, 0.5103, 0.4879]}
+  ]
+}

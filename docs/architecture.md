@@ -131,7 +131,8 @@ module unless a test file is named.
   [sheet.rs](../crates/show/src/sheet.rs), and [demo.rs](../crates/show/src/demo.rs), tested in
   their modules, [select/tests.rs](../crates/show/src/select/tests.rs), and
   [journal/tests.rs](../crates/show/src/journal/tests.rs); `speakeasy show demo` writes a bundle to
-  view.
+  view. [align/tests.rs](../crates/show/src/align/tests.rs) also replays narration from Scrawl's
+  public recordings, trimmed beside it to timed words and marks in `show.json`'s shape.
 - **Show bundle format**: [bundle.rs](../crates/show/src/bundle.rs) and
   [describe.rs](../crates/show/src/describe.rs).
   [bundle/tests.rs](../crates/show/src/bundle/tests.rs) checks paginated sheets and pins
