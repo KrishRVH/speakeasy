@@ -10,8 +10,6 @@ use crate::{
     recording::{Action, Recording},
 };
 
-const RIPPLE_FILL: [u8; 4] = [0, 136, 255, 68];
-const RIPPLE_RING: [u8; 4] = [0, 136, 255, 235];
 const WHITE: [u8; 4] = [255, 255, 255, 255];
 /// Ink lifted this recently before a keyframe without marks of its own still shows on it, as do
 /// pins dropped this recently.
@@ -119,21 +117,28 @@ fn nearest_click(actions: &[Action], moment: Moment) -> Option<Point> {
         .map(|(_, point)| point)
 }
 
-/// A translucent disc inside white and blue rings, marking where the pointer acted.
+/// A thin blue ring and a small dot at its center, marking where the pointer acted. Both are
+/// translucent and the ring is unfilled, so what was clicked stays legible; their white edges keep
+/// them visible on dark and blue screens.
 fn ripple(canvas: &mut PixmapMut<'_>, center: Point, scale: f32) {
-    fill(
-        canvas,
-        PathBuilder::from_circle(center.x, center.y, 14.0 * scale),
-        RIPPLE_FILL,
-    );
-    let style = tiny_skia::Stroke {
-        width: 1.75 * scale,
-        ..tiny_skia::Stroke::default()
-    };
-    for (radius, color) in [(15.0, WHITE), (17.5, RIPPLE_RING)] {
+    for (radius, width, color) in [
+        (10.1, 0.9, [255, 255, 255, 102]),
+        (9.0, 1.3, [0, 136, 255, 204]),
+    ] {
+        let style = tiny_skia::Stroke {
+            width: width * scale,
+            ..tiny_skia::Stroke::default()
+        };
         if let Some(ring) = PathBuilder::from_circle(center.x, center.y, radius * scale) {
             canvas.stroke_path(&ring, &paint(color), &style, Transform::identity(), None);
         }
+    }
+    for (radius, color) in [(2.0, [255, 255, 255, 128]), (1.3, [0, 136, 255, 230])] {
+        fill(
+            canvas,
+            PathBuilder::from_circle(center.x, center.y, radius * scale),
+            color,
+        );
     }
 }
 
@@ -408,5 +413,58 @@ mod tests {
         assert_eq!(inked(1_000, 0..1), [true, true], "Its own keyframe");
         assert_eq!(inked(2_000, 0..0), [true, true], "Just after");
         assert_eq!(inked(3_000, 0..0), [false, false], "Long after");
+    }
+
+    #[test]
+    fn a_click_mark_leaves_what_was_clicked_legible() {
+        let (width, height) = (160_u32, 100_u32);
+        let point = Point::new(0.5, 0.5);
+        let keyframe = Keyframe {
+            index: 1,
+            at: Moment::from_millis(1_250),
+            reason: Reason::Click,
+            event: String::new(),
+            said: None,
+            marks: 0..0,
+            action: Some(Action::Click {
+                at: Moment::from_millis(1_000),
+                point,
+            }),
+        };
+        let marked = |shade: u8| {
+            let mut image = Image::filled(width, height, [shade; 3]).unwrap();
+            annotate(
+                &mut image,
+                &keyframe,
+                &Recording::default(),
+                &[],
+                &typeface(),
+            );
+            image
+        };
+        // A pixel the mark hides comes out the same over a black screen and a white one.
+        let (over_black, over_white) = (marked(0), marked(255));
+        let click = point.scaled(width as f32, height as f32);
+        let mut painted = 0;
+        for (index, (dark, light)) in over_black
+            .as_ref()
+            .data()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(over_white.as_ref().data().as_chunks::<4>().0)
+            .enumerate()
+        {
+            let (x, y) = (index % width as usize, index / width as usize);
+            let touched = dark[..3] != [0; 3] || light[..3] != [255; 3];
+            painted += usize::from(touched);
+            assert_ne!(dark, light, "({x}, {y}) hides the screen");
+            let distance = Point::new(x as f32 + 0.5, y as f32 + 0.5).distance(click);
+            assert!(
+                !(touched && (4.0..7.0).contains(&distance)),
+                "({x}, {y}), between the dot and the ring, is covered"
+            );
+        }
+        assert!(painted > 0, "The click is marked");
     }
 }
