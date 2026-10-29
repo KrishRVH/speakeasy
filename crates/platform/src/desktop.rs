@@ -190,9 +190,11 @@ pub fn attach_stdio() -> bool {
 /// Presents an error that prevents or ends a launch: a dialog that blocks until dismissed on
 /// Windows and macOS, a line on stderr on Linux.
 ///
-/// Call it on the main thread, where macOS presents its alert; elsewhere macOS shows nothing. The
-/// app reports runtime failures in its own windows instead. Callers never include audio,
-/// transcripts, or credentials.
+/// Call it on the main thread, where macOS presents its alert; elsewhere macOS shows nothing.
+/// Never call it while GPUI holds the app, as inside `Application::run`'s callback or an update:
+/// the dialog's modal loop runs the app's queued tasks, and one that borrows the app then panics.
+/// A running app calls it from a task of its own, outside any update. The app reports runtime
+/// failures in its own windows instead. Callers never include audio, transcripts, or credentials.
 pub fn show_startup_error(message: &str) {
     native::show_startup_error(message);
 }

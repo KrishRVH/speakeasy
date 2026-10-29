@@ -43,6 +43,7 @@ use tokio::sync::watch;
 
 use crate::{
     config::{Config, Startup, ValidConfig},
+    gpui_ext::AppUpdate as _,
     instance::{Instance, Request},
     runtime::{Meter, Phase, Snapshot},
     shell::{LaunchMode, Services},
@@ -174,8 +175,7 @@ fn launch(
         ) {
             Ok(pill) => pill,
             Err(error) => {
-                speakeasy_platform::show_startup_error(&format!("Cannot open pill: {error:#}"));
-                cx.quit();
+                abandon(error.context("Cannot open pill"), cx);
                 return;
             },
         };
@@ -207,8 +207,7 @@ fn launch(
         if mode.is_resident()
             && let Err(error) = tray::install(cx)
         {
-            speakeasy_platform::show_startup_error(&format!("{error:#}"));
-            shell::request_quit(cx);
+            abandon(error, cx);
             return;
         }
         // Linux always opens Settings so portal permissions and tray availability stay reachable.
@@ -219,6 +218,18 @@ fn launch(
             cx.on_window_closed(shell::quit_after_settings).detach();
         }
     });
+}
+
+/// Ends a launch that cannot go on, once its error has been seen. The dialog waits for a task of
+/// its own because its modal loop runs the app's queued tasks, and those cannot borrow the app
+/// while `Application::run`'s callback holds it.
+fn abandon(error: anyhow::Error, cx: &App) {
+    let message = format!("{error:#}");
+    cx.spawn(async move |cx| {
+        speakeasy_platform::show_startup_error(&message);
+        cx.update_if_running(shell::request_quit);
+    })
+    .detach();
 }
 
 /// Runs a command in the terminal that launched it and reports its failure there. Only commands and
