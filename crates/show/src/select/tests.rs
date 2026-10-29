@@ -4,7 +4,9 @@ use proptest::prelude::*;
 
 use super::*;
 use crate::{
-    InkPoint, Narration, Point, Size, Stroke, recording::tests::words, signature::tests::signature,
+    InkPoint, Narration, Point, Size, Stroke,
+    recording::tests::words,
+    signature::tests::{signature, with_patch},
 };
 
 fn sample(at: u64, level: u8) -> Sample {
@@ -261,6 +263,78 @@ fn a_scene_change_shows_the_settled_view() {
 }
 
 #[test]
+fn a_click_shows_the_screen_once_its_change_settles() {
+    // The pane a click opens fades in over two samples.
+    let fading = samples(200, 3_000, |at| match at {
+        ..1_200 => 40,
+        1_200 => 120,
+        _ => 200,
+    });
+    let clicked = recording(Vec::new(), vec![click(1_000)], Narration::default());
+    let shown = select(&clicked, &fading).unwrap();
+    assert_eq!(times(&shown), [1_400]);
+    assert_eq!(reported(&shown), [Some(click(1_000))]);
+
+    // A dialog lighting a corner of a dark screen is a stronger scene change than the click
+    // alone scores, and its keyframe still reports the click.
+    let dialog: Vec<Sample> = (0..=3_000)
+        .step_by(200)
+        .map(|at| Sample {
+            at: Moment::from_millis(at),
+            signature: if at < 1_200 {
+                signature(40)
+            } else {
+                with_patch(640, 360, [0.0, 0.0, 320.0, 120.0])
+            },
+        })
+        .collect();
+    let shown = select(&clicked, &dialog).unwrap();
+    assert_eq!(times(&shown), [1_200]);
+    assert_eq!(shown.keyframes[0].reason, Reason::Click);
+    assert_eq!(reported(&shown), [Some(click(1_000))]);
+}
+
+#[test]
+fn a_click_waits_only_for_a_change_it_could_have_started() {
+    // A click that changes nothing, then one that opens a pane: the first keeps its own screen.
+    let opening = samples(200, 4_000, |at| match at {
+        ..2_200 => 40,
+        2_200 => 120,
+        _ => 200,
+    });
+    let clicks = vec![click(1_000), click(2_000)];
+    let shown = select(
+        &recording(Vec::new(), clicks, Narration::default()),
+        &opening,
+    )
+    .unwrap();
+    assert_eq!(times(&shown), [1_200, 2_400]);
+    assert_eq!(reported(&shown), [Some(click(1_000)), Some(click(2_000))]);
+
+    // A click as a video starts shows the screen just after it, not where the video stops.
+    let playing = samples(200, 10_000, |at| match at {
+        1_200..8_000 if at / 200 % 2 == 1 => 200,
+        ..8_000 => 40,
+        _ => 120,
+    });
+    let clicked = recording(Vec::new(), vec![click(1_000)], Narration::default());
+    let shown = select(&clicked, &playing).unwrap();
+    assert_eq!(times(&shown), [1_200, 8_000]);
+    assert_eq!(reported(&shown), [Some(click(1_000)), None]);
+
+    // A change already under way before the click is not its result; the pane it opens next is.
+    let animated = samples(200, 4_000, |at| match at {
+        ..1_400 if at / 200 % 2 == 1 => 200,
+        ..1_400 => 40,
+        1_400..1_800 => 120,
+        _ => 250,
+    });
+    let shown = select(&clicked, &animated).unwrap();
+    assert_eq!(times(&shown), [1_800]);
+    assert_eq!(reported(&shown), [Some(click(1_000))]);
+}
+
+#[test]
 fn double_clicks_merge_and_keyframes_keep_apart() {
     let frames = samples(250, 3_000, |_| 128);
     let actions = vec![click(1_000), click(1_100), click(2_300)];
@@ -341,6 +415,23 @@ fn a_spoken_cue_finds_the_change_it_points_at() {
         said(&shown),
         [Some("Here's the list."), Some("Watch it now.")]
     );
+}
+
+#[test]
+fn a_spoken_cue_never_waits_for_a_screen_that_keeps_changing() {
+    // "Look" as a ten-second animation starts: the cue shows the screen as it was said, and the
+    // animation's end gets a keyframe of its own.
+    let animating = samples(250, 20_000, |at| match at {
+        ..2_000 => 40,
+        2_000..12_000 if at / 250 % 2 == 0 => 120,
+        2_000..12_000 => 200,
+        _ => 250,
+    });
+    let looked = recording(Vec::new(), Vec::new(), words(&[(2_000, "Look")]));
+    let shown = select(&looked, &animating).unwrap();
+    assert_eq!(times(&shown), [2_250, 12_000]);
+    assert_eq!(shown.keyframes[0].event, "said “look”");
+    assert_eq!(shown.keyframes[1].reason, Reason::SceneChange);
 }
 
 #[test]

@@ -11,14 +11,19 @@ use crate::{
     signature::{SCENE, Sample, Signature},
 };
 
-/// A click's keyframe shows the screen this long after release, once the app has responded.
+/// A click that started no transition shows the screen this long after release, once the app
+/// has responded.
 const SETTLE: Duration = Duration::from_millis(250);
 /// Scene changes and spoken cues must differ at least this much from every chosen keyframe, and
 /// any keyframe during or near a mark from the mark's.
 const NOVELTY: f32 = 0.03;
-/// A spoken cue points at a transition starting from just before the word to a little after.
-const CUE_LEAD: Duration = Duration::from_millis(300);
-const CUE_REACH: Duration = Duration::from_millis(1_200);
+/// A click or spoken cue points at a transition that starts from just before it to a little after
+/// and settles within [`SETTLE_LIMIT`].
+const LEAD: Duration = Duration::from_millis(300);
+const REACH: Duration = Duration::from_millis(1_200);
+/// A screen still changing this long after a click or cue is playing, as a video or a long scroll
+/// does, so where it settles shows something later than what was pointed at.
+const SETTLE_LIMIT: Duration = Duration::from_secs(2);
 /// Without a transition, a cue shows the screen as the word was said.
 const CUE_LOOK: Duration = Duration::from_millis(150);
 
@@ -121,23 +126,68 @@ impl<'a> Frames<'a> {
         })
     }
 
-    /// The frame that shows `action`'s result, once the app has responded.
-    pub(super) fn result_of(&self, action: Action) -> usize {
-        let end = action.span().end();
-        self.nearest(end.saturating_add(SETTLE))
-            .max(self.first_from(end))
+    /// What each of `actions`, in time order, led to.
+    ///
+    /// An action's result is where the first transition it could have started settled: one that
+    /// starts from [`LEAD`] before the action to [`REACH`] after its release, and settles after
+    /// the release, within [`SETTLE_LIMIT`] of it, and before the next action begins. Without
+    /// one, it is the screen [`SETTLE`] after the release.
+    pub(super) fn responses(
+        &self,
+        actions: &[Action],
+        transitions: &[Transition],
+    ) -> Vec<Response> {
+        let next_starts = actions
+            .iter()
+            .skip(1)
+            .map(|next| Some(next.span().start()))
+            .chain([None]);
+        actions
+            .iter()
+            .zip(next_starts)
+            .map(|(&action, next_start)| {
+                let span = action.span();
+                let released = span.end();
+                let started = transitions.iter().copied().find(|transition| {
+                    let (start, settled) = (transition.span.start(), transition.span.end());
+                    start.saturating_add(LEAD) >= span.start()
+                        && start <= released.saturating_add(REACH)
+                        && settled > released
+                        && settled <= released.saturating_add(SETTLE_LIMIT)
+                        && next_start.is_none_or(|next| settled < next)
+                });
+                let frame = started.map_or_else(
+                    || {
+                        self.nearest(released.saturating_add(SETTLE))
+                            .max(self.first_from(released))
+                    },
+                    |transition| transition.frame,
+                );
+                Response {
+                    action,
+                    frame,
+                    started,
+                }
+            })
+            .collect()
     }
 
-    pub(super) fn action_candidate(&self, action: Action) -> Candidate {
-        let span = action.span();
+    /// The candidate showing `response`'s result, scored at least as high as the transition the
+    /// action started.
+    pub(super) fn action_candidate(&self, response: Response) -> Candidate {
+        let span = response.action.span();
         let before = self.last_before(span.start());
-        let after = self.result_of(action);
-        let change = self.signature(before).change(self.signature(after));
+        let change = self
+            .signature(before)
+            .change(self.signature(response.frame));
         Candidate {
-            frame: after,
+            frame: response.frame,
             span,
-            score: 60.0 + 30.0 * change,
-            basis: Basis::Click(action),
+            score: response
+                .started
+                .map_or(0.0, Transition::score)
+                .max(60.0 + 30.0 * change),
+            basis: Basis::Click(response.action),
         }
     }
 
@@ -152,7 +202,9 @@ impl<'a> Frames<'a> {
             .iter()
             .filter(|transition| {
                 let start = transition.span.start();
-                start.saturating_add(CUE_LEAD) >= said && start <= said.saturating_add(CUE_REACH)
+                start.saturating_add(LEAD) >= said
+                    && start <= said.saturating_add(REACH)
+                    && transition.span.end() <= said.saturating_add(SETTLE_LIMIT)
             })
             .min_by_key(|transition| transition.span.start().distance(said));
         let (frame, score) = match snapped {
@@ -193,6 +245,15 @@ impl<'a> Frames<'a> {
             basis: Basis::Middle,
         }
     }
+}
+
+/// A click or drag and the frame that shows its result.
+#[derive(Clone, Copy)]
+pub(super) struct Response {
+    pub(super) action: Action,
+    pub(super) frame: usize,
+    /// The transition the action started, which `frame` shows settled.
+    started: Option<Transition>,
 }
 
 /// Consecutive frames that changed, ending on the frame where the screen settled.

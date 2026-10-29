@@ -217,8 +217,8 @@ pub(crate) mod tests {
         );
     }
 
-    /// The signature of a gray frame with one lighter rectangle, given in pixels.
-    fn with_patch(width: u32, height: u32, patch: [f32; 4]) -> Signature {
+    /// The signature of a frame at gray level 40 with one white rectangle, given in pixels.
+    pub(crate) fn with_patch(width: u32, height: u32, patch: [f32; 4]) -> Signature {
         let mut image = gray(40, width, height);
         let [left, top, right, bottom] = patch;
         let mut paint = tiny_skia::Paint::default();

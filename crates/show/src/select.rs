@@ -13,7 +13,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use self::{
-    frames::{Frames, Transition},
+    frames::{Frames, Response, Transition},
     groups::group_marks,
 };
 use crate::{
@@ -125,10 +125,12 @@ pub struct Selection {
 ///
 /// Marks come first: every group of ink drawn on one screen gets a keyframe. Clicks, scene
 /// changes, and spoken cues such as "look here" add keyframes anywhere in the recording, and its
-/// last screen gets one unless the latest keyframe already shows it. While ink is drawn and just
-/// after, another keyframe is chosen only where the screen differs from the mark's, and the
-/// nearest mark's keyframe reports the last click or drag then without a keyframe of its own. A
-/// cue never repeats a screen already chosen, so talking over a still screen yields one frame.
+/// last screen gets one unless the latest keyframe already shows it. A click's or cue's keyframe
+/// waits for the change it started or pointed at to settle, unless the screen is still changing
+/// two seconds on. While ink is drawn and just after, another keyframe is chosen only where the
+/// screen differs from the mark's, and the nearest mark's keyframe reports the last click or drag
+/// then without a keyframe of its own. A cue never repeats a screen already chosen, so talking
+/// over a still screen yields one frame.
 ///
 /// A Show holds at most 36 keyframes. Past that, the most alike neighboring marks merge until
 /// they fit, the last screen keeps its keyframe while marks leave it room, and the other keyframes
@@ -150,14 +152,17 @@ fn select_within(recording: &Recording, samples: &[Sample], most: usize) -> Opti
     let actions = merge_double_clicks(&recording.actions);
     let action_starts: Vec<Moment> = actions.iter().map(|action| action.span().start()).collect();
     let transitions = frames.transitions();
+    let responses = frames.responses(&actions, &transitions);
     let mut candidates: Vec<Candidate> = group_marks(&frames, &marks, &action_starts, most)
         .into_iter()
         .filter_map(|group| frames.mark_candidate(&marks, group))
         .collect();
+    // An action ranks at least as high as the transition it started and is listed first, which
+    // wins a tie, so the frame they share reports the action.
     candidates.extend(
-        actions
+        responses
             .iter()
-            .map(|&action| frames.action_candidate(action)),
+            .map(|&response| frames.action_candidate(response)),
     );
     candidates.extend(transitions.iter().map(Transition::candidate));
     candidates.extend(
@@ -179,7 +184,7 @@ fn select_within(recording: &Recording, samples: &[Sample], most: usize) -> Opti
         chosen.push(frames.last_candidate());
     }
     thin(&mut chosen, &frames, most);
-    fold_actions_into_marks(&mut chosen, &actions, &frames);
+    fold_actions_into_marks(&mut chosen, &responses, &frames);
 
     let anchors: Vec<Moment> = chosen
         .iter()
@@ -431,21 +436,20 @@ fn widest(slots: &[Slot], end: Moment) -> Option<usize> {
 /// Gives each chosen mark the last click or drag without a keyframe of its own whose result came
 /// while its ink was drawn or close to its frame; an action two marks qualify for goes to the
 /// nearer.
-fn fold_actions_into_marks(chosen: &mut [Candidate], actions: &[Action], frames: &Frames<'_>) {
-    for &action in actions {
+fn fold_actions_into_marks(chosen: &mut [Candidate], responses: &[Response], frames: &Frames<'_>) {
+    for &Response { action, frame, .. } in responses {
         let shown = chosen
             .iter()
             .any(|candidate| matches!(candidate.basis, Basis::Click(own) if own == action));
         if shown {
             continue;
         }
-        let result = frames.result_of(action);
         let nearest = chosen
             .iter_mut()
             .filter(|candidate| {
-                matches!(candidate.basis, Basis::Mark { .. }) && candidate.during(frames, result)
+                matches!(candidate.basis, Basis::Mark { .. }) && candidate.during(frames, frame)
             })
-            .min_by_key(|candidate| frames.at(candidate.frame).distance(frames.at(result)));
+            .min_by_key(|candidate| frames.at(candidate.frame).distance(frames.at(frame)));
         if let Some(Basis::Mark { during, .. }) = nearest.map(|mark| &mut mark.basis) {
             *during = Some(action);
         }
