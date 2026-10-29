@@ -1,5 +1,6 @@
-//! Pins `show.json`, keeps file contents out of debug output, and checks that contact sheets show
-//! every keyframe once and stop loading at a failed frame.
+//! Pins `show.json`, keeps file contents out of debug output, checks that the summary says how to
+//! read the Show with every path set apart, and that contact sheets show every keyframe once and
+//! stop loading at a failed frame.
 
 use serde_json::json;
 
@@ -170,6 +171,77 @@ fn show_json_keeps_its_wire_format() {
         manifest,
         "{changed}"
     );
+}
+
+#[test]
+fn the_summary_says_how_to_read_every_sheet_and_sets_each_path_apart() {
+    let manifest = Manifest {
+        version: Manifest::VERSION,
+        recording: Recording {
+            duration: Moment::from_millis(8_000),
+            ..Recording::default()
+        },
+        marks: Vec::new(),
+        keyframes: (1..=7)
+            .map(|index| Keyframe {
+                index,
+                at: Moment::from_millis(index as u64 * 1_000),
+                reason: Reason::SceneChange,
+                event: "scene changed".to_owned(),
+                said: None,
+                marks: 0..0,
+                action: None,
+            })
+            .collect(),
+    };
+    let directory = Path::new("My Shows").join("show 1");
+    let summary = Summary {
+        manifest: &manifest,
+        directory: &directory,
+    }
+    .to_string();
+    let lines: Vec<&str> = summary.lines().collect();
+    let sheet = |name| format!("`{}`", directory.join(name).display());
+    assert_eq!(
+        lines[0],
+        format!(
+            "Screen recording (0:08, 7 keyframes): `{}`",
+            directory.display()
+        )
+    );
+    assert!(
+        lines[1].starts_with("Before acting, open the contact sheets, then the full-size frames"),
+        "{}",
+        lines[1]
+    );
+    assert_eq!(
+        lines[2..4],
+        [
+            format!(
+                "Contact sheet 1 (frames #1–#4): {}",
+                sheet("contact-sheet.png")
+            ),
+            format!(
+                "Contact sheet 2 (frames #5–#7): {}",
+                sheet("contact-sheet-02.png")
+            ),
+        ]
+    );
+    assert_eq!(
+        summary.lines().last(),
+        Some(
+            "Full-size keyframes: `frames/frame-01.png` to `frames/frame-07.png`. Timeline: `show.json`."
+        )
+    );
+}
+
+#[test]
+fn a_code_span_holds_any_path_whole() {
+    let span = |text: &str| Code(text).to_string();
+    assert_eq!(span("My Shows/show 1"), "`My Shows/show 1`");
+    assert_eq!(span("a`b``c"), "```a`b``c```");
+    assert_eq!(span("`a"), "`` `a ``");
+    assert_eq!(span(" a"), "`  a `");
 }
 
 #[test]

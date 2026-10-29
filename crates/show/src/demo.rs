@@ -475,13 +475,14 @@ mod tests {
         assert_eq!(
             summary,
             format!(
-                "Screen recording (0:20, 4 keyframes): {}
-Contact sheet: {}
+                "Screen recording (0:20, 4 keyframes): `{}`
+Before acting, open the contact sheet, then the full-size frames that matter: they show what the words leave out. Speech recognition can mishear a name; where the screen spells it differently, trust the screen. Cite frames as #N and marks by their circled numbers.
+Contact sheet: `{}`
 - #1 (0:02) [clicked] “Here's the settings window. When I open Appearance,”
 - #2 (0:09) [① circled, ② drew an arrow] “the theme picker is here, but look, this label runs under the save button.”
 - #3 (0:12) [③ pinned, clicked] “Now I click reduce motion and nothing happens.”
 - #4 (0:17) [dragged right] “Dragging the text size slider works, though.”
-Full-size keyframes: frames/frame-01.png to frames/frame-04.png. Timeline: show.json.
+Full-size keyframes: `frames/frame-01.png` to `frames/frame-04.png`. Timeline: `show.json`.
 ",
                 directory.display(),
                 directory.join("contact-sheet.png").display()

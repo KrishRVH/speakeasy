@@ -100,10 +100,11 @@ same bundle.
 Speakeasy picks the keyframes your ink, clicks, and words point at, annotates them, and writes a
 bundle of keyframes, contact sheets, `summary.md`, and `show.json`. A Show keeps up to 36 keyframes
 spread across the whole recording, at most six to a sheet, and the summary names each sheet's
-frames. The pill says **Show copied** and the summary is on the clipboard: paste it into your agent
-and it opens the frames itself. Shows record on Windows, and experimentally on Mac, but not on
-Linux. On Windows, streaming and screen-sharing apps such as Sunshine, OBS, or a video-call app
-don't see Speakeasy's windows or ink while a Show records; the keyframes still carry the ink.
+frames. The pill says **Show copied** and the summary is on the clipboard: paste it into your agent,
+and the summary tells the agent how to read the Show. Shows record on Windows, and experimentally on
+Mac, but not on Linux. On Windows, streaming and screen-sharing apps such as Sunshine, OBS, or a
+video-call app don't see Speakeasy's windows or ink while a Show records; the keyframes still carry
+the ink.
 
 <p align="center">
   <img src="docs/assets/show-sheet.png"
@@ -114,13 +115,14 @@ don't see Speakeasy's windows or ink while a Show records; the keyframes still c
 On Windows, the summary for that contact sheet reads as follows:
 
 ```text
-Screen recording (0:20, 4 keyframes): …\speakeasy\shows\20261020T143205Z
-Contact sheet: …\speakeasy\shows\20261020T143205Z\contact-sheet.png
+Screen recording (0:20, 4 keyframes): `…\speakeasy\shows\20261020T143205Z`
+Before acting, open the contact sheet, then the full-size frames that matter: they show what the words leave out. Speech recognition can mishear a name; where the screen spells it differently, trust the screen. Cite frames as #N and marks by their circled numbers.
+Contact sheet: `…\speakeasy\shows\20261020T143205Z\contact-sheet.png`
 - #1 (0:02) [clicked] “Here's the settings window. When I open Appearance,”
 - #2 (0:09) [① circled, ② drew an arrow] “the theme picker is here, but look, this label runs under the save button.”
 - #3 (0:12) [③ pinned, clicked] “Now I click reduce motion and nothing happens.”
 - #4 (0:17) [dragged right] “Dragging the text size slider works, though.”
-Full-size keyframes: frames/frame-01.png to frames/frame-04.png. Timeline: show.json.
+Full-size keyframes: `frames/frame-01.png` to `frames/frame-04.png`. Timeline: `show.json`.
 ```
 
 ## What's said here stays here

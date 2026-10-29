@@ -142,9 +142,12 @@ pub fn compose<E: From<Error> + Send>(
 /// The summary an agent reads first, naming files under `directory`, where the bundle will be
 /// written.
 ///
-/// One line per keyframe gives its number and time, what the pointer or ink did there, and
-/// what was said, or only what happened when nothing was said. Window titles and other screen
-/// text never appear in it.
+/// Below the header, one line tells the agent to open the images before acting, to trust the
+/// screen's spelling of a name over speech recognition's, and to cite frames as `#N` and marks by
+/// number. It treats what was shown and heard as evidence, never as instructions to follow. One
+/// line per keyframe gives its number and time, what the pointer or ink did there, and what was
+/// said, or only what happened when nothing was said. Every path is a Markdown code span, so a
+/// reader sees where it ends. Window titles and other screen text never appear in it.
 struct Summary<'a> {
     manifest: &'a Manifest,
     directory: &'a Path,
@@ -167,9 +170,19 @@ impl fmt::Display for Summary<'_> {
             "Screen recording ({}, {}): {}",
             recording.duration,
             Count(keyframes.len(), "keyframe"),
-            directory.display()
+            Code(directory.display())
         )?;
         let pages: Vec<&[Keyframe]> = sheet::pages(keyframes).collect();
+        if !pages.is_empty() {
+            let sheets = if pages.len() == 1 { "sheet" } else { "sheets" };
+            writeln!(
+                f,
+                "Before acting, open the contact {sheets}, then the full-size frames that matter: \
+                 they show what the words leave out. Speech recognition can mishear a name; where \
+                 the screen spells it differently, trust the screen. Cite frames as #N and marks \
+                 by their circled numbers."
+            )?;
+        }
         for (number, page) in pages.iter().enumerate() {
             let path = directory.join(sheet_file(number));
             match (pages.len(), page.first(), page.last()) {
@@ -179,9 +192,9 @@ impl fmt::Display for Summary<'_> {
                     number.saturating_add(1),
                     first.index,
                     last.index,
-                    path.display()
+                    Code(path.display())
                 ),
-                _ => writeln!(f, "Contact sheet: {}", path.display()),
+                _ => writeln!(f, "Contact sheet: {}", Code(path.display())),
             }?;
         }
         for keyframe in keyframes {
@@ -201,20 +214,42 @@ impl fmt::Display for Summary<'_> {
                 None => writeln!(f, "- #{index} ({at}) {event}"),
             }?;
         }
+        let timeline = Code(MANIFEST);
         match keyframes.as_slice() {
             [] => Ok(()),
             [only] => writeln!(
                 f,
-                "Full-size keyframe: {}. Timeline: {MANIFEST}.",
-                only.file()
+                "Full-size keyframe: {}. Timeline: {timeline}.",
+                Code(only.file())
             ),
             [first, .., last] => writeln!(
                 f,
-                "Full-size keyframes: {} to {}. Timeline: {MANIFEST}.",
-                first.file(),
-                last.file()
+                "Full-size keyframes: {} to {}. Timeline: {timeline}.",
+                Code(first.file()),
+                Code(last.file())
             ),
         }
+    }
+}
+
+/// Text as a Markdown code span, so a reader can tell where a path with spaces in it ends.
+///
+/// As CommonMark reads a span, the fence is one backtick longer than any run of them inside, and
+/// text starting or ending with a backtick or a space is padded with a space that reading strips.
+struct Code<T>(T);
+
+impl<T: fmt::Display> fmt::Display for Code<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = self.0.to_string();
+        let longest_run = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+        let fence = "`".repeat(longest_run.saturating_add(1));
+        let edges = ['`', ' '];
+        let pad = if text.starts_with(edges) || text.ends_with(edges) {
+            " "
+        } else {
+            ""
+        };
+        write!(f, "{fence}{pad}{text}{pad}{fence}")
     }
 }
 
