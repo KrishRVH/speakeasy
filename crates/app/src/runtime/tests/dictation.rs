@@ -674,7 +674,8 @@ async fn configuration_revokes_insertion_authority_before_owner_observation() ->
         ..Config::default()
     }));
     assert!(!h.runtime.input.active());
-    h.phase(Phase::Idle).await?;
+    h.phase(Phase::Cancelled).await?;
+    assert_eq!(h.snapshot().message, "Settings applied");
     h.close().await
 }
 

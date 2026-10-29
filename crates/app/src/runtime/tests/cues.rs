@@ -114,6 +114,24 @@ async fn another_shortcut_taking_the_keys_ends_the_recording_silently_and_lets_t
 }
 
 #[tokio::test(start_paused = true)]
+async fn saving_settings_during_a_recording_sounds_its_cancel() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.start().await?;
+    h.take_sounds();
+    let current = h.runtime.configuration.borrow().clone();
+    h.runtime.configure(ValidConfig::assume(Config {
+        remove_fillers: !current.remove_fillers,
+        ..current
+    }));
+    h.phase(Phase::Cancelled).await?;
+    assert_eq!(
+        h.take_sounds(),
+        [Sound::Played(Cue::Cancel), Sound::Held(false)]
+    );
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
 async fn turning_sounds_off_during_a_recording_lets_the_output_close() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     h.start().await?;
@@ -123,7 +141,7 @@ async fn turning_sounds_off_during_a_recording_lets_the_output_close() -> anyhow
         ..h.runtime.configuration.borrow().clone()
     };
     h.runtime.configure(ValidConfig::assume(config));
-    h.phase(Phase::Idle).await?;
+    h.phase(Phase::Cancelled).await?;
     assert_eq!(h.take_sounds(), [Sound::Held(false)]);
     h.close().await
 }

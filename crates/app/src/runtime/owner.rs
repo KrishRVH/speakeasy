@@ -292,17 +292,24 @@ impl<P: Ports> Owner<P> {
         ControlFlow::Break(())
     }
 
+    /// Applies changed settings, which end any session in progress: it shows cancelled, with its
+    /// cue, so its speech never vanishes unannounced.
     fn configure(&mut self) {
         let next = self.changes.borrow_and_update().clone();
         let reload = self.config.change_to(&next) >= Change::Engine;
         self.config = next;
-        self.gesture.cancel();
+        let cancelled = self.gesture.cancel().is_some();
         if reload {
             self.worker.reload(&self.ports, &self.config);
         }
         self.abandon();
         self.worker.revive(&self.ports, &self.config);
-        self.outcome = Outcome::Idle;
+        self.outcome = if cancelled {
+            self.cue(Cue::Cancel);
+            Outcome::Cancelled
+        } else {
+            Outcome::Idle
+        };
         self.notice = Some(if self.worker.is_ready() {
             Notice::SettingsApplied
         } else {
