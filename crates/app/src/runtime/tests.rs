@@ -240,8 +240,9 @@ impl Ports for FakePorts {
             if !permit.commit() {
                 return Ok(Published::Cancelled);
             }
+            let ending = footage.recording.ending;
             published.try_send((footage, narration))?;
-            Ok(Published::Copied)
+            Ok(Published::Copied(ending))
         }
     }
 

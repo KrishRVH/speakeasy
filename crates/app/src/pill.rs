@@ -24,6 +24,7 @@ use gpui::{
 };
 use speakeasy_core::{gesture::RECORDING_LIMIT, motion::Spring};
 use speakeasy_platform::{PILL_HEIGHT, PILL_WIDTH};
+use speakeasy_show::Ending;
 use tokio::sync::watch;
 
 use crate::{
@@ -167,7 +168,8 @@ impl Pill {
         let state_changed = new_phase
             || new_message
             || snapshot.hands_free != previous.hands_free
-            || snapshot.show != previous.show;
+            || snapshot.show != previous.show
+            || snapshot.ending != previous.ending;
         if new_phase || (snapshot.phase == Phase::Error && new_message) {
             self.phase_at = now;
             self.wake = None;
@@ -214,7 +216,6 @@ impl Pill {
         Scene {
             phase,
             since_phase,
-            feedback: feedback_remaining(phase, self.snapshot.show, since_phase),
             tray_hint: self
                 .tray_hint_until
                 .and_then(|until| until.checked_duration_since(now)),
@@ -223,6 +224,7 @@ impl Pill {
                 .and_then(|until| until.checked_duration_since(now)),
             hands_free: self.snapshot.hands_free,
             show: self.snapshot.show,
+            ending: self.snapshot.ending,
             clock: Clock::new(now.duration_since(self.snapshot.started)),
         }
     }
@@ -400,19 +402,30 @@ impl Capsule {
 struct Scene {
     phase: Phase,
     since_phase: Duration,
-    feedback: Option<Duration>,
     tray_hint: Option<Duration>,
     /// Time left on a new Show's drawing hint.
     draw_hint: Option<Duration>,
     hands_free: bool,
     /// Whether the session records the screen as a Show.
     show: bool,
+    /// How a copied Show's screen recording ended.
+    ending: Ending,
     clock: Clock,
 }
 
 impl Scene {
     fn is_shown(&self) -> bool {
-        self.phase.is_active() || self.feedback.is_some() || self.tray_hint.is_some()
+        self.phase.is_active() || self.feedback().is_some() || self.tray_hint.is_some()
+    }
+
+    /// Time left on the completion or failure feedback.
+    fn feedback(&self) -> Option<Duration> {
+        feedback_remaining(self.phase, self.labels_copy(), self.since_phase)
+    }
+
+    /// Whether a copy shows the compact Show label rather than the snapshot's message.
+    fn labels_copy(&self) -> bool {
+        self.show && self.ending == Ending::Finished
     }
 
     fn is_capturing(&self) -> bool {
@@ -425,7 +438,7 @@ impl Scene {
         }
         match self.phase {
             Phase::Error => Content::Error,
-            Phase::Copied if !self.show => Content::Notice,
+            Phase::Copied if !self.labels_copy() => Content::Notice,
             Phase::Starting
             | Phase::Recording
             | Phase::Stopping
@@ -461,7 +474,7 @@ impl Scene {
             Phase::Recording | Phase::Stopping => size(RECORDING_WIDTH, 38.0),
             Phase::Processing => size(104.0, 32.0),
             Phase::Done => size(76.0, 34.0),
-            Phase::Copied if self.show => size(150.0, 34.0),
+            Phase::Copied if self.labels_copy() => size(150.0, 34.0),
             Phase::Empty => size(182.0, 36.0),
             Phase::Copied | Phase::Error => MESSAGE_SIZE,
             Phase::Idle | Phase::Cancelled => RESTING_SIZE,
@@ -469,7 +482,7 @@ impl Scene {
     }
 
     fn wake_after(&self) -> Option<Duration> {
-        self.feedback.or(self.tray_hint).or_else(|| {
+        self.feedback().or(self.tray_hint).or_else(|| {
             if self.is_capturing() {
                 let tick = self.clock.next_tick;
                 Some(self.draw_hint.map_or(tick, |left| left.min(tick)))
@@ -500,7 +513,8 @@ impl Scene {
 enum Content {
     TrayHint,
     Error,
-    /// Copied dictation, whose message says how to paste it; a copied Show keeps its compact slot.
+    /// Copied dictation, whose message says how to paste it, or a copied Show whose screen stopped
+    /// early; any other copied Show keeps its compact slot.
     Notice,
     Slot,
     Idle,
@@ -590,10 +604,12 @@ pub(crate) fn open(
     Ok(pill)
 }
 
-fn feedback_remaining(phase: Phase, show: bool, since_phase: Duration) -> Option<Duration> {
+/// Time left on `phase`'s feedback, which began `since_phase` ago; a copy `labeled` with the compact
+/// Show label is quicker to read than a message.
+fn feedback_remaining(phase: Phase, labeled: bool, since_phase: Duration) -> Option<Duration> {
     let duration = match phase {
         Phase::Done => SUBMITTED_FOR,
-        Phase::Copied if show => COPIED_FOR,
+        Phase::Copied if labeled => COPIED_FOR,
         Phase::Copied => NOTICE_FOR,
         Phase::Empty => EMPTY_FOR,
         Phase::Error => ERROR_FOR,
@@ -688,13 +704,33 @@ mod tests {
         Scene {
             phase: Phase::Recording,
             since_phase: Duration::ZERO,
-            feedback: None,
             tray_hint: None,
             draw_hint: None,
             hands_free: true,
             show: false,
+            ending: Ending::Finished,
             clock: Clock::new(elapsed),
         }
+    }
+
+    #[test]
+    fn a_copied_show_shows_its_label_unless_its_screen_stopped_early() {
+        let copied = |ending| Scene {
+            phase: Phase::Copied,
+            show: true,
+            ending,
+            ..recording(Duration::ZERO)
+        };
+        let finished = copied(Ending::Finished);
+        assert!(finished.content() == Content::Slot);
+        assert_eq!(finished.feedback(), Some(COPIED_FOR));
+        let stopped = copied(Ending::ScreenStopped);
+        assert!(
+            stopped.content() == Content::Notice,
+            "The message says the screen stopped"
+        );
+        assert_eq!(stopped.capsule_size(), MESSAGE_SIZE);
+        assert_eq!(stopped.feedback(), Some(NOTICE_FOR), "Long enough to read");
     }
 
     #[test]

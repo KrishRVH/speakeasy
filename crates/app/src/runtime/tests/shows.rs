@@ -1,6 +1,8 @@
 //! Show scenarios: S, W, or A during a hold, screen lanes, footage, and publication, against a fake
 //! screen and gated publication.
 
+use speakeasy_show::Ending;
+
 use super::{ports::PUBLISH_STOPPED, *};
 
 /// Holds the shortcut and presses S, returning the screen recorder's lane.
@@ -30,7 +32,9 @@ async fn s_during_a_hold_turns_the_recording_into_a_show_and_publishes_it() -> a
     assert_eq!(narration, Narration::Text("look here".into()));
     assert_eq!(footage.journal.samples().len(), 1);
     h.phase(Phase::Copied).await?;
-    assert!(h.snapshot().message.contains("Show copied"));
+    let snapshot = h.snapshot();
+    assert!(snapshot.message.contains("Show copied"));
+    assert_eq!(snapshot.ending, Ending::Finished);
     assert!(h.pasted.try_recv().is_err(), "A Show never pastes");
     h.close().await
 }
@@ -298,16 +302,52 @@ async fn a_screen_that_stops_recording_explains_why_and_frees_the_microphone() -
     h.close().await
 }
 
+/// Footage whose screen stopped recording before the user finished the Show.
+fn stopped_footage() -> Footage {
+    let mut footage = footage();
+    footage.recording.ending = Ending::ScreenStopped;
+    footage
+}
+
 #[tokio::test(start_paused = true)]
-async fn footage_that_ends_before_the_gesture_finishes_the_show() -> anyhow::Result<()> {
+async fn a_screen_that_stops_partway_finishes_the_show_and_says_so() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     let (id, _, events) = start_show(&mut h).await?;
-    events.send(ShowEvent::Finished(id, Ok(footage()))).await?;
+    events
+        .send(ShowEvent::Finished(id, Ok(stopped_footage())))
+        .await?;
     h.transcribe_next_as("before it stopped").await?;
     let (published, narration) = receive(&h.published).await?;
     assert_eq!(narration, Narration::Text("before it stopped".into()));
-    assert_eq!(published.recording, footage().recording);
+    assert_eq!(published.recording, stopped_footage().recording);
     h.phase(Phase::Copied).await?;
+    let snapshot = h.snapshot();
+    assert_eq!(
+        snapshot.ending,
+        Ending::ScreenStopped,
+        "The pill presents the notice"
+    );
+    assert_eq!(
+        snapshot.message,
+        "Show copied, but the screen stopped recording early."
+    );
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancelling_a_show_whose_screen_stopped_publishes_nothing() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    let (id, _, events) = start_show(&mut h).await?;
+    events
+        .send(ShowEvent::Finished(id, Ok(stopped_footage())))
+        .await?;
+    let _transcription = receive(&h.jobs).await?;
+    h.input(Input::Cancel);
+    h.phase(Phase::Cancelled).await?;
+    assert!(
+        still_pending(h.published.recv()).await,
+        "A cancelled Show was published"
+    );
     h.close().await
 }
 

@@ -4,7 +4,7 @@ use proptest::prelude::*;
 
 use super::*;
 use crate::{
-    InkPoint, Narration, Point, Size, Stroke,
+    Ending, InkPoint, Narration, Point, Size, Stroke,
     recording::tests::words,
     signature::tests::{signature, with_patch},
 };
@@ -52,6 +52,7 @@ fn click(at: u64) -> Action {
 fn recording(strokes: Vec<Stroke>, actions: Vec<Action>, narration: Narration) -> Recording {
     Recording {
         duration: Moment::from_millis(60_000),
+        ending: Ending::Finished,
         surface: Size {
             width: 1000.0,
             height: 1000.0,

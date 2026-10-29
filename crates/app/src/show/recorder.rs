@@ -14,7 +14,9 @@ use speakeasy_platform::{
     Display, Frame, OwnedThread, Part, PointerMonitor, PointerSample, Scope, ScreenCapture,
     ScreenEvent, Taps, Target,
 };
-use speakeasy_show::{Image, Journal, Mark, Moment, Point, SAMPLE_INTERVAL, Size, Span, Tracker};
+use speakeasy_show::{
+    Ending, Image, Journal, Mark, Moment, Point, Recording, SAMPLE_INTERVAL, Size, Span, Tracker,
+};
 use tokio::sync::watch;
 
 use super::overlay::Canvas;
@@ -71,8 +73,8 @@ impl ScreenRecorder {
                 pinned,
                 canvas: &canvas,
             };
-            let mut ending = Ending::new(id, events, &canvas);
-            ending.outcome = record(started, scope, &lanes);
+            let mut report = Report::new(id, events, &canvas);
+            report.outcome = record(started, scope, &lanes);
         })?;
         Ok(Self {
             finish,
@@ -108,9 +110,9 @@ impl Pinning for ScreenRecorder {
     }
 }
 
-/// Ends a recording however its thread leaves it: when dropped, it hides the overlay and reports
+/// Reports a recording however its thread leaves it: when dropped, it hides the overlay and sends
 /// `outcome` to the owner. A cancelled recording reports nothing.
-struct Ending<'a> {
+struct Report<'a> {
     id: SessionId,
     events: Sender<ShowEvent>,
     canvas: &'a watch::Sender<Canvas>,
@@ -119,7 +121,7 @@ struct Ending<'a> {
     outcome: anyhow::Result<Option<Footage>>,
 }
 
-impl<'a> Ending<'a> {
+impl<'a> Report<'a> {
     fn new(id: SessionId, events: Sender<ShowEvent>, canvas: &'a watch::Sender<Canvas>) -> Self {
         Self {
             id,
@@ -130,7 +132,7 @@ impl<'a> Ending<'a> {
     }
 }
 
-impl Drop for Ending<'_> {
+impl Drop for Report<'_> {
     fn drop(&mut self) {
         self.canvas.send_replace(Canvas::Hidden);
         if let Some(outcome) = mem::replace(&mut self.outcome, Ok(None)).transpose() {
@@ -269,8 +271,8 @@ impl<'a> Take<'a> {
         } = sources;
         // Set once finished: the latest moment to keep waiting for a first frame.
         let mut finished_by = finished.then(first_frame_deadline);
-        // When the take ended, or `None` once the owner retired this recording, which reports
-        // nothing.
+        // When and how the take ended, or `None` once the owner retired this recording, which
+        // reports nothing.
         let ended = loop {
             tokio::select! {
                 biased;
@@ -279,23 +281,24 @@ impl<'a> Take<'a> {
                         break None;
                     }
                     if !self.journal.is_empty() {
-                        break Some(Ok(runtime::now()));
+                        break Some(Ok((runtime::now(), Ending::Finished)));
                     }
                     finished_by.get_or_insert_with(first_frame_deadline);
                 },
                 () = tokio::time::sleep_until(finished_by.unwrap_or_else(tokio::time::Instant::now)),
-                    if finished_by.is_some() => break Some(Ok(runtime::now())),
+                    if finished_by.is_some() => break Some(Ok((runtime::now(), Ending::Finished))),
                 event = frames.recv() => match event {
                     Ok(ScreenEvent::Frame(frame)) => {
                         self.frame(frame);
                         if finished_by.is_some() && !self.journal.is_empty() {
-                            break Some(Ok(runtime::now()));
+                            break Some(Ok((runtime::now(), Ending::Finished)));
                         }
                     },
                     // Frames already journaled stay sound, so capture failing partway ends the
-                    // take with them.
+                    // take with them. The footage notes only that the screen stopped: the
+                    // failure's native text never reaches a saved file.
                     Ok(ScreenEvent::Failed(_)) | Err(_) if !self.journal.is_empty() => {
-                        break Some(Ok(runtime::now()));
+                        break Some(Ok((runtime::now(), Ending::ScreenStopped)));
                     },
                     Ok(ScreenEvent::Failed(message)) => break Some(Err(anyhow!(message))),
                     Err(_) => break Some(Err(anyhow!(CAPTURE_STOPPED))),
@@ -309,7 +312,10 @@ impl<'a> Take<'a> {
         stop.await;
         match ended {
             None => Ok(None),
-            Some(ended) => self.into_footage(ended?).map(Some),
+            Some(ended) => {
+                let (at, ending) = ended?;
+                self.into_footage(at, ending).map(Some)
+            },
         }
     }
 
@@ -372,12 +378,15 @@ impl<'a> Take<'a> {
         });
     }
 
-    /// What the take recorded, lasting until `ended`.
-    fn into_footage(self, ended: Instant) -> anyhow::Result<Footage> {
+    /// What the take recorded, lasting until `ended`, and how it ended.
+    fn into_footage(self, ended: Instant, ending: Ending) -> anyhow::Result<Footage> {
         let ended = self.moment(ended);
         anyhow::ensure!(!self.journal.is_empty(), NOTHING_RECORDED);
         Ok(Footage {
-            recording: self.tracker.finish(ended),
+            recording: Recording {
+                ending,
+                ..self.tracker.finish(ended)
+            },
             journal: self.journal.sealed(),
         })
     }

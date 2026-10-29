@@ -233,7 +233,9 @@ fn slot_label(scene: &Scene, palette: &Palette) -> Option<AnyElement> {
                 .child("No speech detected")
                 .into_any_element(),
         ),
-        Phase::Copied if scene.show => Some(marked(Symbol::Check, palette.lamp, "Show copied")),
+        Phase::Copied if scene.labels_copy() => {
+            Some(marked(Symbol::Check, palette.lamp, "Show copied"))
+        },
         Phase::Done => Some(Symbol::Check.element(palette.lamp).into_any_element()),
         _ => None,
     }

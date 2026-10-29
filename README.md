@@ -125,6 +125,9 @@ Contact sheet: `…\speakeasy\shows\20261020T143205Z\contact-sheet.png`
 Full-size keyframes: `…\speakeasy\shows\20261020T143205Z\frames\frame-01.png` to `…\speakeasy\shows\20261020T143205Z\frames\frame-04.png`. Timeline: `…\speakeasy\shows\20261020T143205Z\show.json`.
 ```
 
+If screen capture stops before you finish, the Show ends there with what it recorded: the pill says
+the screen stopped early, and the summary's second line says when.
+
 ## What's said here stays here
 
 - Speech runs in a local NeMo-Speech.cpp or whisper.cpp process that Speakeasy owns and stops. Setup

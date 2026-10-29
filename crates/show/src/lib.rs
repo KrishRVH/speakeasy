@@ -44,7 +44,9 @@ pub use crate::{
     journal::{Admission, Journal},
     marks::{Mark, Shape},
     moment::{Moment, Span},
-    recording::{Action, EmptyStroke, InkPoint, Narration, Pin, Recording, Size, Stroke, Word},
+    recording::{
+        Action, EmptyStroke, Ending, InkPoint, Narration, Pin, Recording, Size, Stroke, Word,
+    },
     select::{Keyframe, Reason, SAMPLE_INTERVAL, Selection, select},
     signature::{Sample, Signature},
     tracker::Tracker,

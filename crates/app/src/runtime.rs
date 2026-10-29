@@ -14,7 +14,7 @@ use speakeasy_platform::{
     Delivery, Input, InputMonitor, InputSender, InsertPermit, Inserted, Inserter, OwnedThread,
     Scope,
 };
-use speakeasy_show::Narration;
+use speakeasy_show::{Ending, Narration};
 use tokio::{sync::watch, task::JoinError};
 
 use self::ports::{CaptureEvent, Footage, Ports, Published, SessionId, ShowEvent};
@@ -81,6 +81,9 @@ pub(crate) struct Snapshot {
     pub hands_free: bool,
     /// Whether the latest session became a Show, recording the screen as well as the microphone.
     pub show: bool,
+    /// How the latest Show's screen recording ended once the Show is copied, as its message says;
+    /// `Finished` before then and for dictation.
+    pub ending: Ending,
     /// When the latest session started; the pill's recording clock counts from it.
     pub started: Instant,
     pub message: String,
@@ -99,6 +102,7 @@ impl Default for Snapshot {
             phase: Phase::Idle,
             hands_free: false,
             show: false,
+            ending: Ending::Finished,
             started: now(),
             message: String::new(),
             model: ModelState::Unavailable,

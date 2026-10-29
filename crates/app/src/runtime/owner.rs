@@ -6,7 +6,7 @@ use std::{convert::Infallible, ops::ControlFlow, sync::Arc, time::Instant};
 use async_channel::{Receiver, RecvError, Sender};
 use speakeasy_core::gesture::{Action, Gesture, State};
 use speakeasy_platform::{Input, InputSender, Inserted, Scope};
-use speakeasy_show::Narration;
+use speakeasy_show::{Ending, Narration};
 use tokio::{
     sync::watch,
     task::{JoinError, JoinHandle},
@@ -28,13 +28,17 @@ use crate::{
 
 /// What a copied Show tells the user.
 const SHOW_COPIED: &str = "Show copied. Paste it into your coding agent.";
+/// What a copied Show whose screen stopped recording before the user finished it tells the user.
+const SHOW_COPIED_EARLY: &str = "Show copied, but the screen stopped recording early.";
 
 /// What the status shows while no session is active: the latest result or failure.
 enum Outcome {
     Idle,
     Done,
-    /// The delivery is on the clipboard; the message says how to paste it.
+    /// The dictation is on the clipboard; the message says how to paste it.
     Copied(&'static str),
+    /// The Show's summary is on the clipboard; how its screen recording ended decides the message.
+    ShowCopied(Ending),
     Empty,
     Cancelled,
     /// The pill and Settings show this message as is, so it never includes an error source that
@@ -47,7 +51,7 @@ impl Outcome {
         match self {
             Self::Idle => Phase::Idle,
             Self::Done => Phase::Done,
-            Self::Copied(_) => Phase::Copied,
+            Self::Copied(_) | Self::ShowCopied(_) => Phase::Copied,
             Self::Empty => Phase::Empty,
             Self::Cancelled => Phase::Cancelled,
             Self::Failed(_) => Phase::Error,
@@ -486,7 +490,7 @@ impl<P: Ports> Owner<P> {
         let outcome = match result {
             Ok(Delivered::Inserted(Ok(Inserted::Sent))) => Outcome::Done,
             Ok(Delivered::Inserted(Ok(Inserted::Copied(message)))) => Outcome::Copied(message),
-            Ok(Delivered::Published(Ok(Published::Copied))) => Outcome::Copied(SHOW_COPIED),
+            Ok(Delivered::Published(Ok(Published::Copied(ending)))) => Outcome::ShowCopied(ending),
             Ok(
                 Delivered::Inserted(Ok(Inserted::Cancelled))
                 | Delivered::Published(Ok(Published::Cancelled)),
@@ -501,7 +505,7 @@ impl<P: Ports> Owner<P> {
                     .into(),
             ),
         };
-        if matches!(outcome, Outcome::Copied(_)) {
+        if matches!(outcome, Outcome::Copied(_) | Outcome::ShowCopied(_)) {
             self.cue(Cue::Copied);
         }
         // `wait` already joined this delivery, so the session holds no work left to retire.
@@ -711,6 +715,8 @@ impl<P: Ports> Owner<P> {
         match &self.outcome {
             Outcome::Failed(message) => message,
             Outcome::Copied(message) => message,
+            Outcome::ShowCopied(Ending::Finished) => SHOW_COPIED,
+            Outcome::ShowCopied(Ending::ScreenStopped) => SHOW_COPIED_EARLY,
             Outcome::Idle | Outcome::Done | Outcome::Empty | Outcome::Cancelled => {
                 self.notice.as_ref().map_or("", Notice::text)
             },
@@ -726,6 +732,10 @@ impl<P: Ports> Owner<P> {
             phase: session.map_or_else(|| self.outcome.phase(), Session::phase),
             hands_free: self.gesture.state() == State::HandsFree,
             show: self.latest.show,
+            ending: match self.outcome {
+                Outcome::ShowCopied(ending) => ending,
+                _ => Ending::Finished,
+            },
             started: self.latest.started,
             message: self.message().to_owned(),
             model: self.worker.model(),

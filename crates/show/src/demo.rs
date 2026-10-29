@@ -8,7 +8,7 @@ use tiny_skia::{
 };
 
 use crate::{
-    Action, Bundle, Error, Image, InkPoint, Moment, Narration, Pin, Point, Recording, Rect,
+    Action, Bundle, Ending, Error, Image, InkPoint, Moment, Narration, Pin, Point, Recording, Rect,
     SAMPLE_INTERVAL, Size, Span, Stroke, Typeface, Word, compose,
     draw::{paint, rounded},
     select,
@@ -374,6 +374,7 @@ fn normalized(x: f32, y: f32) -> Point {
 fn recording() -> Recording {
     Recording {
         duration: END,
+        ending: Ending::Finished,
         surface: SCENE,
         strokes: strokes(),
         pins: vec![Pin {

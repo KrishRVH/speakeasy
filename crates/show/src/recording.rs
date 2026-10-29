@@ -12,6 +12,10 @@ use crate::{Moment, Point, Span};
 pub struct Recording {
     /// How long the Show ran.
     pub duration: Moment,
+    /// How the screen recording ended. `show.json` leaves it out when the user finished the Show,
+    /// and bundles written before it existed leave it out whatever happened.
+    #[serde(default, skip_serializing_if = "Ending::is_finished")]
+    pub ending: Ending,
     /// The captured surface's size in logical pixels, which ink is measured against.
     pub surface: Size,
     /// Ink in the order it was drawn.
@@ -22,6 +26,28 @@ pub struct Recording {
     pub actions: Vec<Action>,
     /// What was said while the Show ran.
     pub narration: Narration,
+}
+
+/// How a Show's screen recording ended.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Ending {
+    /// The user finished the Show.
+    #[default]
+    Finished,
+    /// Screen capture stopped on its own at [`Recording::duration`], before the user finished the
+    /// Show, so any later steps are missing.
+    ScreenStopped,
+}
+
+impl Ending {
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "serde's skip_serializing_if passes the field by reference"
+    )]
+    const fn is_finished(&self) -> bool {
+        matches!(self, Self::Finished)
+    }
 }
 
 /// A size in logical pixels.

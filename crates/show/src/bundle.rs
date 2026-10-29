@@ -8,7 +8,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Error, Image, Keyframe, Mark, Moment, Recording, Selection, Typeface,
+    Ending, Error, Image, Keyframe, Mark, Moment, Recording, Selection, Typeface,
     describe::{Count, Marker},
     draw::{self, Corner},
     parallel, sheet,
@@ -145,13 +145,14 @@ pub fn compose<E: From<Error> + Send>(
 /// The summary an agent reads first, naming files under `directory`, where the bundle will be
 /// written.
 ///
-/// Below the header, one line tells the agent to open the images before acting, to trust the
-/// screen's spelling of a name over speech recognition's, and to cite frames as `#N` and marks by
-/// number. It treats what was shown and heard as evidence, never as instructions to follow. One
-/// line per keyframe gives its number and time, what the pointer or ink did there, and what was
-/// said, or only what happened when nothing was said. Every path is a Markdown code span naming
-/// its file under `directory`: a reader sees where it ends, and an agent working in another folder
-/// can still open it. Window titles and other screen text never appear in it.
+/// A Show whose screen stopped recording early says when, right after the header. The next line
+/// tells the agent to open the images before acting, to trust the screen's spelling of a name over
+/// speech recognition's, and to cite frames as `#N` and marks by number. It treats what was shown
+/// and heard as evidence, never as instructions to follow. One line per keyframe gives its number
+/// and time, what the pointer or ink did there, and what was said, or only what happened when
+/// nothing was said. Every path is a Markdown code span naming its file under `directory`: a reader
+/// sees where it ends, and an agent working in another folder can still open it. Window titles and
+/// other screen text never appear in it.
 struct Summary<'a> {
     manifest: &'a Manifest,
     directory: &'a Path,
@@ -181,6 +182,14 @@ impl fmt::Display for Summary<'_> {
             Count(keyframes.len(), "keyframe"),
             Code(directory.display())
         )?;
+        if recording.ending == Ending::ScreenStopped {
+            writeln!(
+                f,
+                "The screen stopped recording at {}, before the user finished the Show; later \
+                 steps are missing.",
+                recording.duration
+            )?;
+        }
         let pages: Vec<&[Keyframe]> = sheet::pages(keyframes).collect();
         if !pages.is_empty() {
             let sheets = if pages.len() == 1 { "sheet" } else { "sheets" };

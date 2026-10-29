@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use async_channel::Sender;
 use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope, Taps};
-use speakeasy_show::{Journal, Narration, Recording};
+use speakeasy_show::{Ending, Journal, Narration, Recording};
 use tokio::sync::watch;
 use zeroize::Zeroize;
 
@@ -77,8 +77,8 @@ pub(crate) enum ShowEvent {
     Finished(SessionId, anyhow::Result<Footage>),
 }
 
-/// What a Show's screen side recorded, up to the moment recording stopped; publishing adds the
-/// narration its recording still lacks.
+/// What a Show's screen side recorded, up to the moment recording stopped, and whether that came
+/// before the user finished the Show; publishing adds the narration its recording still lacks.
 pub(crate) struct Footage {
     pub recording: Recording,
     pub journal: Journal,
@@ -86,8 +86,8 @@ pub(crate) struct Footage {
 
 /// What publishing a Show did.
 pub(crate) enum Published {
-    /// The bundle was written and its summary copied.
-    Copied,
+    /// The bundle was written and its summary copied, with how its screen recording ended.
+    Copied(Ending),
     /// Cancellation came first; no bundle appeared and nothing was copied.
     Cancelled,
 }

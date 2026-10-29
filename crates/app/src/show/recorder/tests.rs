@@ -132,6 +132,7 @@ async fn a_take_finished_after_its_first_frame_ends_then_and_records_no_teardown
     assert_eq!(ran, Duration::from_secs(1) + TEARDOWN, "Sources stop first");
     let finished = Moment::from_millis(1_000);
     assert_eq!(footage.recording.duration, finished);
+    assert_eq!(footage.recording.ending, Ending::Finished);
     assert_eq!(
         footage.recording.actions,
         [Action::Drag {
@@ -156,6 +157,7 @@ async fn a_take_finished_before_its_first_frame_waits_three_seconds_for_one() ->
     let footage = recorded?.context("Finished, not cancelled")?;
     assert_eq!(footage.journal.samples().len(), 1);
     assert_eq!(footage.recording.duration, Moment::from_millis(2_900));
+    assert_eq!(footage.recording.ending, Ending::Finished);
     assert_eq!(ran, Duration::from_millis(2_900) + TEARDOWN);
     let (recorded, ran) = record(false, async |feed| feed.finish().await).await;
     assert_eq!(failure(recorded).as_deref(), Some(NOTHING_RECORDED));
@@ -181,7 +183,8 @@ async fn cancelling_a_take_reports_nothing_once_its_sources_stop() -> anyhow::Re
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_capture_that_fails_or_stops_keeps_its_frames_or_says_what_to_do() -> anyhow::Result<()> {
+async fn a_capture_that_fails_or_stops_keeps_its_frames_marked_early_or_says_what_to_do()
+-> anyhow::Result<()> {
     const OFF: &str = "Screen recording is off for Speakeasy. Turn it on, then try again.";
     let failed = || ScreenEvent::Failed(OFF.to_owned());
     let (recorded, _) = record(false, async |feed| {
@@ -203,6 +206,20 @@ async fn a_capture_that_fails_or_stops_keeps_its_frames_or_says_what_to_do() -> 
     let footage = recorded?.context("Footage recorded before the failure")?;
     assert_eq!(footage.journal.samples().len(), 1);
     assert_eq!(footage.recording.duration, Moment::from_millis(700));
+    assert_eq!(footage.recording.ending, Ending::ScreenStopped);
+    let (recorded, _) = record(false, async |feed| {
+        feed.frame(0).await;
+        wait(300).await;
+        feed.frames.close();
+    })
+    .await;
+    let recording = recorded?
+        .context("Footage recorded before capture stopped")?
+        .recording;
+    assert_eq!(
+        (recording.duration, recording.ending),
+        (Moment::from_millis(300), Ending::ScreenStopped)
+    );
     Ok(())
 }
 
@@ -299,7 +316,7 @@ fn a_recording_that_unwinds_hides_the_overlay_and_reports_a_fixed_failure() -> a
     let unwound = std::thread::scope(|scope| {
         scope
             .spawn(|| {
-                let _ending = Ending::new(SessionId::FIRST, events, &canvas);
+                let _report = Report::new(SessionId::FIRST, events, &canvas);
                 panic!("A recording bug");
             })
             .join()

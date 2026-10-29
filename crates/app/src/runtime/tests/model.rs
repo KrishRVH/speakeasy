@@ -119,20 +119,17 @@ impl Ports for ModelPorts {
         Ok(self.device(Source::Screen, id))
     }
 
-    #[expect(
-        clippy::manual_async_fn,
-        reason = "The port's future is 'static, which an async fn borrowing self cannot return"
-    )]
     fn publish(
         &self,
-        _: Footage,
+        footage: Footage,
         _: Narration,
         permit: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
+        let ending = footage.recording.ending;
         // Commits once the task runs, as publishing does, so a cancel can still come first.
         async move {
             Ok(if permit.commit() {
-                Published::Copied
+                Published::Copied(ending)
             } else {
                 Published::Cancelled
             })

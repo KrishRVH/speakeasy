@@ -18,6 +18,7 @@ pub(crate) async fn publish(
     narration: Narration,
     permit: InsertPermit,
 ) -> anyhow::Result<Published> {
+    let ending = footage.recording.ending;
     tokio::task::spawn_blocking(move || {
         let Some(summary) = write_bundle(footage, narration, &permit, store::private_directory)?
         else {
@@ -25,7 +26,7 @@ pub(crate) async fn publish(
         };
         speakeasy_platform::copy_text(&summary)
             .context("The Show was saved, but its summary could not be copied")?;
-        Ok(Published::Copied)
+        Ok(Published::Copied(ending))
     })
     .await
     // A failed join reports a fixed message, since a panic payload could carry private text.
