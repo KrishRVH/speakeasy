@@ -139,7 +139,9 @@ impl LocalSpeech {
                 // The reserved port is released before the engine binds it, so another program can
                 // take it and answer. That program must never receive audio or choose the text to
                 // insert. Whisper's probe carries its route secret, which opens nothing on an
-                // engine that lost the port. macOS has no ownership lookup, so it trusts the answer.
+                // engine that lost the port. macOS has no ownership lookup, so it trusts the answer
+                // and each request checks that the engine, which exits once its port is lost,
+                // still runs.
                 #[cfg(not(target_os = "macos"))]
                 ensure!(
                     self.group
@@ -166,10 +168,23 @@ impl LocalSpeech {
         }
     }
 
+    /// Whether the engine process still runs. Reaping its exit ends the group's claim on its PID.
+    fn running(&mut self) -> bool {
+        match self.child.try_wait() {
+            Ok(None) => true,
+            Ok(Some(_)) => {
+                self.group.leader_reaped();
+                false
+            },
+            Err(_) => false,
+        }
+    }
+
     /// Sends `wav` for transcription and reads the engine's reply as `R`.
-    async fn request<R: Reply>(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<R> {
+    async fn request<R: Reply>(&mut self, wav: Vec<u8>, language: &str) -> anyhow::Result<R> {
         // The engine may have exited and lost its port since readiness. Each request connects
-        // afresh, leaving only the moment between this check and that connection.
+        // afresh, leaving only the moment between these checks and that connection.
+        ensure!(self.running(), STOPPED);
         #[cfg(not(target_os = "macos"))]
         ensure!(
             self.group
@@ -211,18 +226,22 @@ impl LocalSpeech {
 }
 
 impl Speech for LocalSpeech {
-    async fn transcribe(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<String> {
+    async fn transcribe(&mut self, wav: Vec<u8>, language: &str) -> anyhow::Result<String> {
         self.request::<Plain>(wav, language)
             .await?
             .text
             .context("The speech engine returned no transcript. Check the selected model and engine, then try again.")
     }
 
-    async fn transcribe_words(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<Narration> {
+    async fn transcribe_words(
+        &mut self,
+        wav: Vec<u8>,
+        language: &str,
+    ) -> anyhow::Result<Narration> {
         self.request::<Timed>(wav, language).await?.into_narration()
     }
 
-    async fn probe_with_silence(&self) -> anyhow::Result<()> {
+    async fn probe_with_silence(&mut self) -> anyhow::Result<()> {
         let silence = audio::silent_wav(16_000, Duration::from_secs(1))?;
         self.transcribe(silence, "en").await?;
         Ok(())

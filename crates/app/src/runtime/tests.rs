@@ -406,17 +406,21 @@ struct FakeSpeech {
 }
 
 impl Speech for FakeSpeech {
-    async fn transcribe(&self, _: Vec<u8>, language: &str) -> anyhow::Result<String> {
+    async fn transcribe(&mut self, _: Vec<u8>, language: &str) -> anyhow::Result<String> {
         let (reply, result) = oneshot::channel();
         self.jobs.send((language.to_owned(), reply)).await?;
         result.await?
     }
 
-    async fn transcribe_words(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<Narration> {
+    async fn transcribe_words(
+        &mut self,
+        wav: Vec<u8>,
+        language: &str,
+    ) -> anyhow::Result<Narration> {
         self.transcribe(wav, language).await.map(Narration::Text)
     }
 
-    async fn probe_with_silence(&self) -> anyhow::Result<()> {
+    async fn probe_with_silence(&mut self) -> anyhow::Result<()> {
         match &self.recovery {
             Some(result) => result.recv().await?,
             None => Ok(()),

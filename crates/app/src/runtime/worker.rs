@@ -132,7 +132,7 @@ impl<W: Speech> Worker<W> {
             let transcription = tokio::select! {
                 biased;
                 _ = cancelled.changed() => Ok(Transcription::Cancelled),
-                result = transcript_of(&worker, wav, &language, detail, fillers) => {
+                result = transcript_of(&mut worker, wav, &language, detail, fillers) => {
                     result.map(Transcription::Heard)
                 },
             };
@@ -171,7 +171,9 @@ impl<W: Speech> Worker<W> {
         cancelled: &mut watch::Receiver<bool>,
     ) -> Option<W> {
         let (mut worker, transcribed) = self.into_worker().await?;
-        if !*cancelled.borrow() && (transcribed || (probe && responds(&worker, cancelled).await)) {
+        if !*cancelled.borrow()
+            && (transcribed || (probe && responds(&mut worker, cancelled).await))
+        {
             return Some(worker);
         }
         worker.stop().await;
@@ -251,7 +253,7 @@ fn joined<T>(result: Result<anyhow::Result<T>, JoinError>) -> anyhow::Result<T> 
 
 /// Transcribes `wav` as dictation text or as a Show's timed narration, cleaned up either way.
 async fn transcript_of<W: Speech>(
-    worker: &W,
+    worker: &mut W,
     wav: Vec<u8>,
     language: &str,
     detail: Detail,
@@ -270,7 +272,7 @@ async fn transcript_of<W: Speech>(
 }
 
 /// Whether a silent request completes within the recovery bound, unless cancellation comes first.
-async fn responds<W: Speech>(worker: &W, cancelled: &mut watch::Receiver<bool>) -> bool {
+async fn responds<W: Speech>(worker: &mut W, cancelled: &mut watch::Receiver<bool>) -> bool {
     tokio::select! {
         biased;
         _ = cancelled.changed() => false,

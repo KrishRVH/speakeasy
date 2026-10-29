@@ -305,27 +305,8 @@ async fn a_program_that_takes_the_released_port_never_becomes_the_engine() -> an
 #[tokio::test]
 async fn audio_never_reaches_a_program_that_took_a_ready_engines_port() -> anyhow::Result<()> {
     let squatter = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
-    let mut command = hidden_command("sleep");
-    command.arg("60").process_group(0);
-    let mut child = command.spawn()?;
-    // A ready engine that has since lost its port to the squatter.
-    let mut speech = LocalSpeech {
-        engine: Engine::Whisper,
-        group: contain(&mut child).await?,
-        child,
-        port: squatter.local_addr()?.port(),
-        secret: random_token()?,
-        client: engine_client()?,
-        _directory: tempfile::tempdir()?,
-    };
-    let wav = audio::silent_wav(16_000, Duration::from_secs(1))?;
-    let transcribed = tokio::select! {
-        transcribed = speech.transcribe(wav, "en") => transcribed,
-        failed = impersonate_engine(&squatter) => {
-            failed?;
-            bail!("The impersonated engine stopped answering");
-        },
-    };
+    let mut speech = sleeping_engine(squatter.local_addr()?.port()).await?;
+    let transcribed = transcribe_beside(&mut speech, &squatter).await?;
     speech.stop().await;
     let error = transcribed
         .err()
@@ -334,9 +315,56 @@ async fn audio_never_reaches_a_program_that_took_a_ready_engines_port() -> anyho
     Ok(())
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn audio_never_reaches_a_program_that_took_an_exited_engines_port() -> anyhow::Result<()> {
+    let squatter = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
+    let mut speech = sleeping_engine(squatter.local_addr()?.port()).await?;
+    speech.stop().await;
+    let error = transcribe_beside(&mut speech, &squatter)
+        .await?
+        .err()
+        .context("The program on the exited engine's port transcribed")?;
+    assert_eq!(error.to_string(), STOPPED);
+    Ok(())
+}
+
+/// A ready engine, idle in `sleep`, that has since lost `port` to another program.
+#[cfg(unix)]
+async fn sleeping_engine(port: u16) -> anyhow::Result<LocalSpeech> {
+    let mut command = hidden_command("sleep");
+    command.arg("60").process_group(0);
+    let mut child = command.spawn()?;
+    Ok(LocalSpeech {
+        engine: Engine::Whisper,
+        group: contain(&mut child).await?,
+        child,
+        port,
+        secret: random_token()?,
+        client: engine_client()?,
+        _directory: tempfile::tempdir()?,
+    })
+}
+
+/// Asks `speech` to transcribe while `squatter` impersonates the engine on its port.
+#[cfg(unix)]
+async fn transcribe_beside(
+    speech: &mut LocalSpeech,
+    squatter: &tokio::net::TcpListener,
+) -> anyhow::Result<anyhow::Result<String>> {
+    let wav = audio::silent_wav(16_000, Duration::from_secs(1))?;
+    tokio::select! {
+        transcribed = speech.transcribe(wav, "en") => Ok(transcribed),
+        failed = impersonate_engine(squatter) => {
+            failed?;
+            bail!("The impersonated engine stopped answering");
+        },
+    }
+}
+
 /// Answers every request on `listener` with an empty transcript, as a program that took the
 /// engine's port could; returns only on failure.
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 async fn impersonate_engine(listener: &tokio::net::TcpListener) -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     loop {

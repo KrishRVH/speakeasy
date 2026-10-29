@@ -115,10 +115,10 @@ pub(crate) trait Pinning: Capturing {
     fn pin(&self, taps: Taps);
 }
 
-pub(crate) trait Speech: Send + Sync + 'static {
+pub(crate) trait Speech: Send + 'static {
     /// Returns raw engine text. The worker applies transcript cleanup before insertion.
     fn transcribe(
-        &self,
+        &mut self,
         wav: Vec<u8>,
         language: &str,
     ) -> impl Future<Output = anyhow::Result<String>> + Send;
@@ -126,7 +126,7 @@ pub(crate) trait Speech: Send + Sync + 'static {
     /// Returns raw engine words timed from the start of `wav`, or untimed text when the engine
     /// gives no timings.
     fn transcribe_words(
-        &self,
+        &mut self,
         wav: Vec<u8>,
         language: &str,
     ) -> impl Future<Output = anyhow::Result<Narration>> + Send;
@@ -134,7 +134,7 @@ pub(crate) trait Speech: Send + Sync + 'static {
     /// Transcribes silence and discards the text. Engines serialize requests, so completion proves
     /// that an abandoned inference has drained and the model still responds, which a health check
     /// cannot.
-    fn probe_with_silence(&self) -> impl Future<Output = anyhow::Result<()>> + Send;
+    fn probe_with_silence(&mut self) -> impl Future<Output = anyhow::Result<()>> + Send;
 
     /// Terminates the engine; resolves only once its process has been reaped.
     fn stop(&mut self) -> impl Future<Output = ()> + Send;

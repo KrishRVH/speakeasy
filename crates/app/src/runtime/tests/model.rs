@@ -229,17 +229,21 @@ impl Drop for ModelSpeech {
 }
 
 impl Speech for ModelSpeech {
-    async fn transcribe(&self, _: Vec<u8>, _: &str) -> anyhow::Result<String> {
+    async fn transcribe(&mut self, _: Vec<u8>, _: &str) -> anyhow::Result<String> {
         let (reply, result) = oneshot::channel();
         self.jobs.try_send(reply)?;
         result.await?
     }
 
-    async fn transcribe_words(&self, wav: Vec<u8>, language: &str) -> anyhow::Result<Narration> {
+    async fn transcribe_words(
+        &mut self,
+        wav: Vec<u8>,
+        language: &str,
+    ) -> anyhow::Result<Narration> {
         self.transcribe(wav, language).await.map(Narration::Text)
     }
 
-    fn probe_with_silence(&self) -> impl Future<Output = anyhow::Result<()>> + Send {
+    fn probe_with_silence(&mut self) -> impl Future<Output = anyhow::Result<()>> + Send {
         std::future::ready(Ok(()))
     }
 

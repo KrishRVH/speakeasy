@@ -227,11 +227,12 @@ Remote microphone routing belongs to the OS and the user's audio bridge; see
 
 The speech worker listens on loopback only. On Linux and Windows, Speakeasy declares the worker
 ready, and sends each request, only after checking that the worker's own process group, a job object
-on Windows, holds its listener; macOS has no such check. Each worker gets a fresh random key.
-Parakeet receives it in its owner-only environment, but whisper-server accepts its route only on the
-command line, so on Linux other local accounts can read it through `/proc` unless `/proc` is mounted
-with `hidepid`. That route is the only guard on Whisper's `/inference` and model-loading `/load`
-requests, so prefer Parakeet on shared Linux machines; automatic setup installs it.
+on Windows, holds its listener. macOS has no listener lookup, so each request there checks only that
+the worker still runs. Each worker gets a fresh random key. Parakeet receives it in its owner-only
+environment, but whisper-server accepts its route only on the command line, so on Linux other local
+accounts can read it through `/proc` unless `/proc` is mounted with `hidepid`. That route is the
+only guard on Whisper's `/inference` and model-loading `/load` requests, so prefer Parakeet on
+shared Linux machines; automatic setup installs it.
 
 ## Verification
 
