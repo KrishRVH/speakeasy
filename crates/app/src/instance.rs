@@ -356,7 +356,9 @@ mod tests {
         let (instance, _requests) = Instance::acquire(&path)?.context("First owner missing")?;
         let endpoint = Endpoint::read(&path.with_file_name(PORT_FILE))?;
         let mut slow = TcpStream::connect_timeout(&instance.address, PATIENCE)?;
+        // Set before the server's timeout: macOS refuses socket options once the peer has closed.
         slow.set_nodelay(true)?;
+        slow.set_read_timeout(Some(PATIENCE))?;
         // Each byte arrives well within IO_TIMEOUT of the last; the whole secret does not.
         for byte in endpoint.nonce.to_le_bytes() {
             if slow.write_all(&[byte]).is_err() {
@@ -364,7 +366,6 @@ mod tests {
             }
             thread::sleep(Duration::from_millis(20));
         }
-        slow.set_read_timeout(Some(PATIENCE))?;
         assert!(
             slow.read_exact(&mut [0]).is_err(),
             "A trickled secret held the server past its timeout"
