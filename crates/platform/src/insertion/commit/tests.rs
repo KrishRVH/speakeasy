@@ -1,6 +1,5 @@
-//! Drives the pre-commit focus and modifier checks and the paste and direct commit protocol
-//! through a recording fake adapter, plus the insertion thread's stop and panic answers; no test
-//! touches the clipboard or sends input.
+//! Drives the paste and direct commit protocol through a recording fake adapter, plus the
+//! insertion thread's stop and panic answers; no test touches the clipboard or sends input.
 
 use std::panic;
 
@@ -9,47 +8,11 @@ use anyhow::Context as _;
 use super::{CLIPBOARD_CHANGED, CLIPBOARD_CHANGED_BEFORE_PASTE, NativeInsert, Worker, insert};
 use crate::{
     InputSender, InsertPermit, PATIENCE,
-    insertion::{Delivery, INSERTION_STOPPED, Inserted},
+    insertion::{
+        Delivery, INSERTION_STOPPED, Inserted,
+        tests::{DELIVERIES, EXTERNAL_FOCUS, OWN_FOCUS, RELEASED},
+    },
 };
-
-const DELIVERIES: [Delivery; 2] = [Delivery::Paste, Delivery::Direct];
-const OWN_FOCUS: bool = false;
-const EXTERNAL_FOCUS: bool = true;
-const HELD: bool = false;
-const RELEASED: bool = true;
-
-#[test]
-fn own_focus_outranks_a_held_shortcut() {
-    for delivery in DELIVERIES {
-        let own_focus = delivery.check_focus(OWN_FOCUS);
-        assert!(own_focus.is_some());
-        assert_eq!(delivery.preflight(OWN_FOCUS, HELD), own_focus);
-        assert_eq!(delivery.preflight(OWN_FOCUS, RELEASED), own_focus);
-        assert_ne!(delivery.preflight(EXTERNAL_FOCUS, HELD), own_focus);
-    }
-}
-
-#[test]
-fn an_external_editor_with_released_keys_proceeds() {
-    for delivery in DELIVERIES {
-        assert_eq!(delivery.check_focus(EXTERNAL_FOCUS), None);
-        assert_eq!(delivery.preflight(EXTERNAL_FOCUS, RELEASED), None);
-    }
-}
-
-#[test]
-fn paste_leaves_text_copied_and_direct_input_leaves_the_clipboard_alone() {
-    for (external_focus, shortcut_released) in [(OWN_FOCUS, RELEASED), (EXTERNAL_FOCUS, HELD)] {
-        assert!(matches!(
-            Delivery::Paste.preflight(external_focus, shortcut_released),
-            Some(Inserted::Copied(_))
-        ));
-        assert!(matches!(
-            Delivery::Direct.preflight(external_focus, shortcut_released),
-            Some(Inserted::Unavailable(_))
-        ));
-    }
-}
 
 /// A native step of one insertion, as [`Fake`] records it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -136,6 +136,32 @@ impl Delivery {
             ),
         })
     }
+
+    /// Returns the outcome that stops insertion before it touches the target: Speakeasy has focus,
+    /// or shortcut keys are still held. Focus takes precedence.
+    ///
+    /// Each adapter runs it after its last slow preparation step, so the focus and keys it judges
+    /// are current.
+    pub(crate) fn preflight(
+        self,
+        external_focus: bool,
+        shortcut_released: bool,
+    ) -> Option<Inserted> {
+        self.check_focus(external_focus)
+            .or_else(|| self.check_shortcut(shortcut_released))
+    }
+
+    fn check_shortcut(self, shortcut_released: bool) -> Option<Inserted> {
+        if shortcut_released {
+            return None;
+        }
+        Some(match self {
+            Self::Paste => PASTE_AFTER_RELEASE,
+            Self::Direct => {
+                Inserted::Unavailable("Release the shortcut and try again. Clipboard preserved.")
+            },
+        })
+    }
 }
 
 /// Submission outcome; native input cannot prove that the target accepted text.

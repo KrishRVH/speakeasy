@@ -7,7 +7,7 @@ use async_channel::Receiver;
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use super::wait_for_released_modifiers;
-use super::{Delivery, INSERTION_STOPPED, Inserted, Inserter, Insertion, PASTE_AFTER_RELEASE};
+use super::{Delivery, INSERTION_STOPPED, Inserted, Inserter, Insertion};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use crate::native;
 use crate::{InputSender, InsertPermit, OwnedThread};
@@ -94,30 +94,6 @@ fn deliver(request: &Insertion) -> anyhow::Result<Inserted> {
         &request.permit,
         request.delivery,
     )
-}
-
-impl Delivery {
-    /// Returns the outcome that stops insertion before it touches the target: Speakeasy has focus,
-    /// or shortcut keys are still held. Focus takes precedence.
-    ///
-    /// [`insert`] runs it after its last slow preparation step, so the focus and keys it judges are
-    /// current.
-    fn preflight(self, external_focus: bool, shortcut_released: bool) -> Option<Inserted> {
-        self.check_focus(external_focus)
-            .or_else(|| self.check_shortcut(shortcut_released))
-    }
-
-    fn check_shortcut(self, shortcut_released: bool) -> Option<Inserted> {
-        if shortcut_released {
-            return None;
-        }
-        Some(match self {
-            Self::Paste => PASTE_AFTER_RELEASE,
-            Self::Direct => {
-                Inserted::Unavailable("Release the shortcut and try again. Clipboard preserved.")
-            },
-        })
-    }
 }
 
 /// The clipboard no longer holds the text just written, so pasting would insert someone else's.

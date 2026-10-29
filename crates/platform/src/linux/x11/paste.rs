@@ -1,5 +1,5 @@
-//! X11 insertion: waits for released shortcut keys, copies, confirms clipboard ownership and focus,
-//! then sends the paste shortcut once through XTEST.
+//! X11 insertion: waits for released shortcut keys, copies, confirms clipboard ownership, focus,
+//! and released keys again, then sends the paste shortcut once through XTEST.
 
 use std::{
     ops::ControlFlow,
@@ -165,13 +165,8 @@ impl Paster {
         request: &Insertion,
     ) -> anyhow::Result<ControlFlow<Inserted, Window>> {
         let previous_owner = self.clipboard.owner()?;
-        let shortcut_held = self.options.paste != LinuxPaste::Manual && {
-            let locks = self.keyboard.lock_modifiers();
-            wait_for_released_modifiers(&request.permit, || {
-                let keys = self.clipboard.connection.query_keymap()?.reply()?.keys;
-                Ok(self.keyboard.held_modifiers(&keys) & !locks != 0)
-            })?
-        };
+        let shortcut_held = self.options.paste != LinuxPaste::Manual
+            && wait_for_released_modifiers(&request.permit, || self.modifiers_held())?;
         let owner_changed = self.clipboard.owner()? != previous_owner;
         // Checked after that round trip, so a cancel during it never reaches the clipboard.
         if !request.permit.active() {
@@ -198,6 +193,12 @@ impl Paster {
         Ok(ControlFlow::Continue(owner))
     }
 
+    /// Whether a modifier other than a lock is down.
+    fn modifiers_held(&self) -> anyhow::Result<bool> {
+        let keys = self.clipboard.connection.query_keymap()?.reply()?.keys;
+        Ok(self.keyboard.held_modifiers(&keys) & !self.keyboard.lock_modifiers() != 0)
+    }
+
     fn paste_copied(&self, request: &Insertion, owner: Window) -> anyhow::Result<Inserted> {
         let terminal = self.options.paste == LinuxPaste::Terminal;
         // The first layout is the only one XTEST types through.
@@ -221,7 +222,9 @@ impl Paster {
             .clipboard
             .external_target(HostSession::X11)
             .unwrap_or(false);
-        if let Some(outcome) = Delivery::Paste.check_focus(external) {
+        // Modifiers pressed during those round trips would join the synthetic paste chord.
+        let released = !self.modifiers_held()?;
+        if let Some(outcome) = Delivery::Paste.preflight(external, released) {
             return Ok(outcome);
         }
         if !request.permit.commit() {
