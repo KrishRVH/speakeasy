@@ -1,10 +1,12 @@
 //! Generated sequences of input bursts, clock jumps, audio, footage, transcripts, and settings
 //! changes drive the production owner through gate-free fakes whose devices and workers take
-//! generated time to release. After every step the owner still runs, never reopens a device before
-//! its release, never loads a worker before the previous one has stopped or drops one unstopped,
-//! and has retired every device once no session is active; a final drain must bring every session
-//! to rest with every device released, and shutdown must stop the last worker. Gated windows stay
-//! with the scripted scenarios.
+//! generated time to release, and whose workers fail to load or answer a probe when generated
+//! faults say so. After every step the owner still runs, never reopens a device before its
+//! release, never loads a worker before the previous one has stopped or drops one unstopped,
+//! inserts a session's text only while that session is the latest, and has retired every device
+//! once no session is active; a final drain must bring every session to rest with every device
+//! released, and shutdown must stop the last worker. Gated windows stay with the scripted
+//! scenarios.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -33,6 +35,12 @@ enum Log {
     Retiring(Source, SessionId),
     Retired(Source, SessionId),
     Pinned(SessionId),
+    /// Text was inserted under a permit that still held authority, while `latest` was the latest
+    /// session.
+    Inserted {
+        text: String,
+        latest: u64,
+    },
     /// A speech worker started.
     Loaded,
     /// A speech worker finished stopping.
@@ -42,11 +50,15 @@ enum Log {
 }
 
 /// Ports with no gates: devices log and report nothing on their own beyond the microphone's
-/// `Ready`, a worker logs its start and stop and is ready at once, and transcription waits for the
-/// test's answer.
+/// `Ready`, a worker logs its start and stop and is ready at once unless the next fault fails it,
+/// and transcription waits for the test's answer.
 struct ModelPorts {
     log: Sender<Log>,
-    jobs: Sender<Reply>,
+    jobs: Sender<Job>,
+    /// Whether each load or probe in turn fails; the rest succeed.
+    faults: Receiver<bool>,
+    /// What the owner presents, which names the latest session.
+    presented: watch::Receiver<Snapshot>,
     /// How long each device or worker takes to release once retired or stopped, on the paused
     /// clock.
     releases: Releases,
@@ -132,35 +144,36 @@ impl Ports for ModelPorts {
         _: Config,
         _: watch::Receiver<bool>,
     ) -> impl Future<Output = anyhow::Result<ModelSpeech>> + Send + 'static {
-        let (jobs, log, release) = (self.jobs.clone(), self.log.clone(), self.releases.worker);
+        let (jobs, log, faults) = (self.jobs.clone(), self.log.clone(), self.faults.clone());
+        let release = self.releases.worker;
         // Starts once polled, as the port promises.
         async move {
+            ensure!(faults.try_recv() != Ok(true), "Model engine failed to load");
             log.try_send(Log::Loaded)?;
             Ok(ModelSpeech {
                 jobs,
                 log,
+                faults,
                 release,
                 stopped: false,
             })
         }
     }
 
-    #[expect(
-        clippy::manual_async_fn,
-        reason = "The port's future is 'static, which an async fn borrowing self cannot return"
-    )]
     fn insert(
         &self,
-        _: String,
+        text: String,
         permit: InsertPermit,
         _: Delivery,
     ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static {
+        let (log, presented) = (self.log.clone(), self.presented.clone());
         async move {
-            Ok(if permit.commit() {
-                Inserted::Sent
-            } else {
-                Inserted::Cancelled
-            })
+            if !permit.commit() {
+                return Ok(Inserted::Cancelled);
+            }
+            let latest = presented.borrow().session;
+            log.try_send(Log::Inserted { text, latest })?;
+            Ok(Inserted::Sent)
         }
     }
 
@@ -209,8 +222,9 @@ impl Pinning for ModelDevice {
 }
 
 struct ModelSpeech {
-    jobs: Sender<Reply>,
+    jobs: Sender<Job>,
     log: Sender<Log>,
+    faults: Receiver<bool>,
     /// How long stopping takes; a successor that loads meanwhile overlaps this worker.
     release: Duration,
     stopped: bool,
@@ -229,9 +243,9 @@ impl Drop for ModelSpeech {
 }
 
 impl Speech for ModelSpeech {
-    async fn transcribe(&mut self, _: Vec<u8>, _: &str) -> anyhow::Result<String> {
+    async fn transcribe(&mut self, wav: Vec<u8>, _: &str) -> anyhow::Result<String> {
         let (reply, result) = oneshot::channel();
-        self.jobs.try_send(reply)?;
+        self.jobs.try_send((wav, reply))?;
         result.await?
     }
 
@@ -244,7 +258,12 @@ impl Speech for ModelSpeech {
     }
 
     fn probe_with_silence(&mut self) -> impl Future<Output = anyhow::Result<()>> + Send {
-        std::future::ready(Ok(()))
+        let responds = self.faults.try_recv() != Ok(true);
+        std::future::ready(if responds {
+            Ok(())
+        } else {
+            Err(anyhow!("Model engine stopped responding"))
+        })
     }
 
     async fn stop(&mut self) {
@@ -382,6 +401,22 @@ fn releases() -> impl Strategy<Value = Releases> {
     })
 }
 
+/// A transcription request: the WAV, which names the session that spoke it, and its answer.
+type Job = (Vec<u8>, Reply);
+
+/// Speech whose WAV names the session that spoke it, so its transcript can.
+fn spoken_by(id: SessionId) -> Sealed {
+    Sealed {
+        wav: u64::from(id).to_le_bytes().to_vec(),
+        trimmed: Duration::ZERO,
+    }
+}
+
+/// The transcript of speech `spoken_by` a session: its number.
+fn transcript_of(wav: &[u8]) -> anyhow::Result<String> {
+    Ok(u64::from_le_bytes(wav.try_into()?).to_string())
+}
+
 /// Answers a transcription request that the owner may already have abandoned.
 #[expect(
     clippy::let_underscore_must_use,
@@ -416,9 +451,9 @@ struct Model {
     runtime: Runtime<OwnedTask>,
     updates: watch::Receiver<Snapshot>,
     log: Receiver<Log>,
-    jobs: Receiver<Reply>,
-    /// Transcription requests not yet answered, oldest first.
-    replies: VecDeque<Reply>,
+    jobs: Receiver<Job>,
+    /// Transcription requests not yet answered, oldest first, with the transcript of their speech.
+    replies: VecDeque<(String, Reply)>,
     microphone: Option<(SessionId, Sender<CaptureEvent>)>,
     screen: Option<(SessionId, Sender<ShowEvent>)>,
     open: HashMap<Source, Open>,
@@ -428,15 +463,21 @@ struct Model {
 }
 
 impl Model {
-    fn start(releases: Releases) -> anyhow::Result<Self> {
+    fn start(releases: Releases, faults: &[bool]) -> anyhow::Result<Self> {
         let (log, logged) = async_channel::unbounded();
         let (jobs, requested) = async_channel::unbounded();
+        let (fault, faults_in_turn) = async_channel::unbounded();
+        for &fails in faults {
+            fault.try_send(fails)?;
+        }
+        let (output, updates) = watch::channel(Snapshot::default());
         let ports = ModelPorts {
             log,
             jobs,
+            faults: faults_in_turn,
+            presented: updates.clone(),
             releases,
         };
-        let (output, updates) = watch::channel(Snapshot::default());
         let (meter, _) = watch::channel(Meter::default());
         let runtime = Runtime::on_task(Config::default(), output, meter, ports)?;
         Ok(Self {
@@ -464,7 +505,7 @@ impl Model {
             Step::Audio(heard) => {
                 if let Some((id, events)) = &self.microphone {
                     let outcome = match heard {
-                        Heard::Speech => Ok(Some(sealed())),
+                        Heard::Speech => Ok(Some(spoken_by(*id))),
                         Heard::Silence => Ok(None),
                         Heard::Failure => Err(anyhow!("Model microphone failed")),
                     };
@@ -487,9 +528,9 @@ impl Model {
                 }
             },
             Step::Answer(said) => {
-                if let Some(reply) = self.replies.pop_front() {
+                if let Some((transcript, reply)) = self.replies.pop_front() {
                     let result = match said {
-                        Said::Words => Ok("model words".to_owned()),
+                        Said::Words => Ok(transcript),
                         Said::Nothing => Ok(String::new()),
                         Said::Failure => Err(anyhow!("Model transcription failed")),
                     };
@@ -515,8 +556,8 @@ impl Model {
     async fn drain(&mut self) -> anyhow::Result<()> {
         for _ in 0..DRAIN_ROUNDS {
             let mut acted = false;
-            while let Some(reply) = self.replies.pop_front() {
-                answer_unless_abandoned(reply, Ok("model words".to_owned()));
+            while let Some((transcript, reply)) = self.replies.pop_front() {
+                answer_unless_abandoned(reply, Ok(transcript));
                 acted = true;
             }
             for (source, id) in self.unanswered() {
@@ -544,7 +585,7 @@ impl Model {
     fn complete(&mut self, source: Source, id: SessionId) -> anyhow::Result<()> {
         match (source, &self.microphone, &self.screen) {
             (Source::Microphone, Some((_, events)), _) => {
-                events.try_send(CaptureEvent::Finished(id, Ok(Some(sealed()))))?;
+                events.try_send(CaptureEvent::Finished(id, Ok(Some(spoken_by(id)))))?;
             },
             (Source::Screen, _, Some((_, events))) => {
                 events.try_send(ShowEvent::Finished(id, Ok(footage())))?;
@@ -566,8 +607,9 @@ impl Model {
     }
 
     /// Takes in what the ports logged, checking that a device opens only once its previous session
-    /// released it and releases only after the owner retired it, and that a worker starts only once
-    /// the previous one stopped and is never dropped unstopped; returns whether anything arrived.
+    /// released it and releases only after the owner retired it, that text is inserted only while
+    /// the session that spoke it is the latest, and that a worker starts only once the previous one
+    /// stopped and is never dropped unstopped; returns whether anything arrived.
     fn absorb(&mut self) -> anyhow::Result<bool> {
         let mut arrived = false;
         while let Ok(entry) = self.log.try_recv() {
@@ -606,6 +648,10 @@ impl Model {
                         .is_some_and(|open| open.id == id && !open.retiring),
                     "Screen {id:?} took a pin while not recording a Show"
                 ),
+                Log::Inserted { text, latest } => ensure!(
+                    text == latest.to_string(),
+                    "Session {text}'s text was inserted after session {latest} began"
+                ),
                 Log::Loaded => {
                     ensure!(
                         !self.worker,
@@ -620,9 +666,9 @@ impl Model {
                 Log::Abandoned => bail!("A worker was dropped without being stopped"),
             }
         }
-        while let Ok(reply) = self.jobs.try_recv() {
+        while let Ok((wav, reply)) = self.jobs.try_recv() {
             arrived = true;
-            self.replies.push_back(reply);
+            self.replies.push_back((transcript_of(&wav)?, reply));
         }
         Ok(arrived)
     }
@@ -690,8 +736,8 @@ impl Model {
     }
 }
 
-async fn run(steps: &[Step], releases: Releases) -> anyhow::Result<()> {
-    let mut model = Model::start(releases)?;
+async fn run(steps: &[Step], releases: Releases, faults: &[bool]) -> anyhow::Result<()> {
+    let mut model = Model::start(releases, faults)?;
     settle().await;
     model.absorb()?;
     for step in steps {
@@ -714,9 +760,10 @@ proptest! {
     fn the_owner_releases_every_device_and_comes_to_rest(
         steps in prop::collection::vec(step(), 0..=40),
         releases in releases(),
+        faults in prop::collection::vec(prop::bool::weighted(0.3), 0..=6),
     ) {
         paused()?
-            .block_on(run(&steps, releases))
+            .block_on(run(&steps, releases, &faults))
             .map_err(|error| TestCaseError::fail(format!("{error:#}")))?;
     }
 }
@@ -787,7 +834,7 @@ fn the_sequences_that_once_stranded_the_owner_come_to_rest() -> anyhow::Result<(
         ),
     ];
     for (steps, releases) in cases {
-        paused()?.block_on(run(&steps, releases))?;
+        paused()?.block_on(run(&steps, releases, &[]))?;
     }
     Ok(())
 }
