@@ -627,6 +627,10 @@ pub(super) fn reduced_motion() -> bool {
     NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
 }
 
+pub(super) fn attach_stdio() -> bool {
+    true
+}
+
 pub(super) fn show_startup_error(message: &str) {
     if let Some(main) = MainThreadMarker::new() {
         let alert = NSAlert::new(main);

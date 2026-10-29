@@ -1,5 +1,6 @@
 //! Speakeasy's entry point: parses the command line, then launches the native dictation and Show
-//! app around its single-owner recording runtime, or runs a `show` command in the terminal.
+//! app around its single-owner recording runtime, or runs a command in the terminal. A command line
+//! it cannot follow gets its reason on that terminal and status 2, and a dialog only without one.
 
 #![forbid(unsafe_code)]
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
@@ -62,15 +63,16 @@ struct Cli {
 enum Invocation {
     Help,
     App(Cli),
-    /// A `show` subcommand, or why its arguments were not understood.
-    Show(anyhow::Result<show::Command>),
+    Show(show::Command),
 }
 
 impl Invocation {
+    /// Reads the arguments after the program name, refusing any Speakeasy does not offer, such as
+    /// desktop commands outside Linux or in a demo.
     fn parse(args: impl Iterator<Item = OsString>) -> anyhow::Result<Self> {
         let mut args = args.peekable();
         if args.next_if(|arg| arg == "show").is_some() {
-            return Ok(Self::Show(show::Command::parse(args)));
+            return show::Command::parse(args).map(Self::Show);
         }
         let mut cli = Cli {
             mode: LaunchMode::Live,
@@ -94,6 +96,16 @@ impl Invocation {
                 _ => bail!("Unknown option: {}", arg.display()),
             }
         }
+        if cli.command.is_some() {
+            ensure!(
+                !cli.mode.is_demo(),
+                "Desktop commands cannot be combined with a demo"
+            );
+            ensure!(
+                cfg!(target_os = "linux"),
+                "Desktop commands are available on Linux"
+            );
+        }
         Ok(Self::App(cli))
     }
 }
@@ -101,9 +113,9 @@ impl Invocation {
 fn main() -> ExitCode {
     match Invocation::parse(std::env::args_os().skip(1)) {
         Ok(Invocation::Help) => in_terminal(|| Ok(print_help()?)),
-        Ok(Invocation::Show(command)) => in_terminal(|| command.and_then(show::Command::run)),
+        Ok(Invocation::Show(command)) => in_terminal(|| command.run()),
         Ok(Invocation::App(cli)) => in_dialog(run(cli)),
-        Err(error) => in_dialog(Err(error)),
+        Err(error) => reject(&error, speakeasy_platform::attach_stdio().then(io::stderr)),
     }
 }
 
@@ -116,14 +128,6 @@ fn run(
 ) -> anyhow::Result<()> {
     let path = std::path::absolute(path.map_or_else(paths::settings_file, Ok)?)?;
     if let Some(command) = command {
-        ensure!(
-            !mode.is_demo(),
-            "Desktop commands cannot be combined with a demo"
-        );
-        ensure!(
-            cfg!(target_os = "linux"),
-            "Desktop commands are available on Linux"
-        );
         return Instance::send(&path, command);
     }
     let acquired = if mode.is_resident() {
@@ -214,11 +218,11 @@ fn launch(
     });
 }
 
-/// Runs a command in the terminal that launched it and reports its failure there. Only commands
-/// attach a console on Windows: an app sharing the launching console would also receive its Ctrl+C.
+/// Runs a command in the terminal that launched it and reports its failure there. Only commands and
+/// rejected command lines attach a console on Windows: an app sharing the launching console would
+/// also receive its Ctrl+C.
 fn in_terminal(command: impl FnOnce() -> anyhow::Result<()>) -> ExitCode {
-    #[cfg(target_os = "windows")]
-    speakeasy_platform::attach_console();
+    speakeasy_platform::attach_stdio();
     match command() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -230,6 +234,26 @@ fn in_terminal(command: impl FnOnce() -> anyhow::Result<()>) -> ExitCode {
             ExitCode::FAILURE
         },
     }
+}
+
+/// Rejects a command line Speakeasy cannot follow with the usage-error status 2, explaining why on
+/// the `terminal` that launched it, so a script or agent reads the reason instead of waiting on a
+/// dialog no one sees. Only a launch without one, as from a Windows shortcut, gets the dialog.
+fn reject(error: &anyhow::Error, terminal: Option<impl io::Write>) -> ExitCode {
+    match terminal {
+        Some(mut terminal) => {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "stderr is the last channel left to report a rejected command line"
+            )]
+            let _ = writeln!(
+                terminal,
+                "speakeasy: {error:#}\nspeakeasy --help lists what it accepts."
+            );
+        },
+        None => speakeasy_platform::show_startup_error(&format!("{error:#}")),
+    }
+    ExitCode::from(2)
 }
 
 /// Reports a failed launch in a dialog, since the app has no terminal to report to.
@@ -353,12 +377,28 @@ mod tests {
 
     #[test]
     fn show_is_a_subcommand_only_in_first_position() -> anyhow::Result<()> {
-        assert!(matches!(parse(&["show", "demo"])?, Invocation::Show(Ok(_))));
-        assert!(matches!(
-            parse(&["show", "record"])?,
-            Invocation::Show(Err(_))
-        ));
+        assert!(matches!(parse(&["show", "demo"])?, Invocation::Show(_)));
+        assert!(parse(&["show", "record"]).is_err());
         assert!(parse(&["--demo", "show"]).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn desktop_commands_need_linux_and_the_live_app() {
+        assert_eq!(parse(&["--toggle"]).is_ok(), cfg!(target_os = "linux"));
+        assert!(parse(&["--cancel", "--demo"]).is_err());
+        assert!(parse(&["--demo-tray", "--toggle"]).is_err());
+    }
+
+    #[test]
+    fn a_rejected_command_line_is_a_usage_error_on_its_terminal() -> anyhow::Result<()> {
+        let error = parse(&["--verbose"]).err().context("--verbose parsed")?;
+        let mut terminal = Vec::new();
+        assert_eq!(reject(&error, Some(&mut terminal)), ExitCode::from(2));
+        assert_eq!(
+            String::from_utf8(terminal)?,
+            "speakeasy: Unknown option: --verbose\nspeakeasy --help lists what it accepts.\n"
+        );
         Ok(())
     }
 

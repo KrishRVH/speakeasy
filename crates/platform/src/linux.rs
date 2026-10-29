@@ -302,6 +302,10 @@ pub(crate) fn copy_text(_: &str) -> anyhow::Result<()> {
     bail!(SHOWS_UNSUPPORTED)
 }
 
+pub(crate) fn attach_stdio() -> bool {
+    true
+}
+
 pub(crate) fn show_startup_error(message: &str) {
     #[expect(
         clippy::let_underscore_must_use,

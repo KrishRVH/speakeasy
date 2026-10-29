@@ -1,10 +1,10 @@
 //! Windows adapter: the Ctrl+Win keyboard hook and session-change cancellation, clipboard or direct
 //! text insertion, GPUI window presentation, the file dialog, and Show screen capture.
 //!
-//! This module serves `desktop`'s reduced-motion query and startup error dialog, attaches the
-//! launching console for the crate root's Windows-only export, and keeps what the Windows code
-//! shares: held modifiers, synthetic input tagged so the hook ignores it, the thread-checked window
-//! behind `NativeWindow`, which process owns a window, and handle and string conversions.
+//! This module serves `desktop`'s reduced-motion query, launching-console attachment, and startup
+//! error dialog, and keeps what the Windows code shares: held modifiers, synthetic input tagged so
+//! the hook ignores it, the thread-checked window behind `NativeWindow`, which process owns a
+//! window, and handle and string conversions.
 
 mod dialog;
 mod input;
@@ -22,9 +22,12 @@ use anyhow::{Context as _, bail, ensure};
 use raw_window_handle::{RawWindowHandle, WindowHandle};
 use windows_sys::{
     Win32::{
-        Foundation::{FALSE, HANDLE, HWND, TRUE},
+        Foundation::{FALSE, HANDLE, HWND, INVALID_HANDLE_VALUE, TRUE},
         System::{
-            Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE},
+            Console::{
+                ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE,
+                STD_OUTPUT_HANDLE,
+            },
             Threading::GetCurrentThreadId,
         },
         UI::{
@@ -75,16 +78,14 @@ pub(crate) fn reduced_motion() -> bool {
     animates == FALSE
 }
 
-/// Sends output to the terminal that launched this windowed executable, if one did.
-///
-/// A windowed executable starts without a console, so command-line output would vanish. Output
-/// already redirected to a pipe or file keeps its destination.
-pub fn attach_console() {
-    // SAFETY: neither call takes pointers; a failed attach leaves output where it was.
+pub(crate) fn attach_stdio() -> bool {
+    // SAFETY: none of these calls takes pointers; a failed attach leaves the handles as they were.
     unsafe {
         if GetStdHandle(STD_OUTPUT_HANDLE).is_null() {
             AttachConsole(ATTACH_PARENT_PROCESS);
         }
+        let error = GetStdHandle(STD_ERROR_HANDLE);
+        !error.is_null() && error != INVALID_HANDLE_VALUE
     }
 }
 

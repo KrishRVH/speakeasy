@@ -172,6 +172,21 @@ pub fn copy_text(text: &str) -> anyhow::Result<()> {
     native::copy_text(text)
 }
 
+/// Gives a command-line run the standard streams of whatever launched it, and reports whether it
+/// now has a standard error to report to.
+///
+/// A windowed Windows executable starts without a console, so this attaches its parent's, unless
+/// the launcher already redirected output. A launch from Explorer or a shortcut has neither, and
+/// this returns false. On macOS and Linux it returns true: every process starts with standard
+/// streams there, since Rust's runtime opens `/dev/null` in place of any that are closed.
+#[expect(
+    clippy::must_use_candidate,
+    reason = "Attaching is the point; only a caller with a dialog to fall back on needs the answer"
+)]
+pub fn attach_stdio() -> bool {
+    native::attach_stdio()
+}
+
 /// Presents an error that prevents or ends a launch: a dialog that blocks until dismissed on
 /// Windows and macOS, a line on stderr on Linux.
 ///

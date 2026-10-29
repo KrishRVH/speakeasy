@@ -116,6 +116,8 @@ module unless a test file is named.
   [platform/src/linux/tray.rs](../crates/platform/src/linux/tray.rs) mirror service state.
 - **Instance and relaunch**: [instance.rs](../crates/app/src/instance.rs) owns the lock and the
   secret-gated loopback commands.
+- **Command line**: [main.rs](../crates/app/src/main.rs) parses options and routes what they ask
+  for, and [show.rs](../crates/app/src/show.rs) parses `show` commands; both test their parsing.
 - **Show recording and publication**: [show.rs](../crates/app/src/show.rs),
   [show/recorder.rs](../crates/app/src/show/recorder.rs),
   [show/publish.rs](../crates/app/src/show/publish.rs), and the session owner.

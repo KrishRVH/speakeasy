@@ -31,12 +31,10 @@ pub use self::linux::{APPLICATION_ID, NativeTray, TrayAction, TrayPresentation};
 use self::macos as native;
 #[cfg(target_os = "windows")]
 use self::windows as native;
-#[cfg(target_os = "windows")]
-pub use self::windows::attach_console;
 pub use self::{
     desktop::{
-        DesktopOptions, FileFilter, InputMonitor, LinuxPaste, NativeWindow, copy_text, prepare,
-        reduced_motion, show_startup_error,
+        DesktopOptions, FileFilter, InputMonitor, LinuxPaste, NativeWindow, attach_stdio,
+        copy_text, prepare, reduced_motion, show_startup_error,
     },
     input::{Input, InputSender, InsertPermit, Taps},
     insertion::{Delivery, Inserted, Inserter},
