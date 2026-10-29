@@ -31,8 +31,9 @@ const COMMA_CLAUSE_WORDS: usize = 3;
 ///
 /// Each keyframe's text runs from the start of the clause in progress at its anchor until the
 /// next keyframe's text starts, so the narration is partitioned in order with nothing repeated or
-/// dropped. Narration before the first keyframe belongs to it. Each text is trimmed, and a
-/// keyframe with nothing said gets `None`.
+/// dropped; punctuation the recognizer split from a word stays with that word. Narration before
+/// the first keyframe belongs to it. Each text is trimmed, and a keyframe with nothing said gets
+/// `None`.
 pub(crate) fn align(anchors: &[Moment], narration: &Narration) -> Vec<Option<String>> {
     let mut said = vec![String::new(); anchors.len()];
     match narration {
@@ -48,14 +49,18 @@ pub(crate) fn align(anchors: &[Moment], narration: &Narration) -> Vec<Option<Str
                 .collect();
             words.sort_by_key(|word| word.span.start());
             let starts = text_starts(anchors, &clauses(&words));
+            let mut owner = 0;
             for word in words {
-                let onset = word.span.start().saturating_add(ONSET_TOLERANCE);
-                let owner = starts
-                    .iter()
-                    .rposition(|start| *start <= onset)
-                    .unwrap_or(0);
-                if let Some(text) = said.get_mut(owner) {
-                    append(text, word.text.trim());
+                let text = word.text.trim();
+                if !attaches(text) {
+                    let onset = word.span.start().saturating_add(ONSET_TOLERANCE);
+                    owner = starts
+                        .iter()
+                        .rposition(|start| *start <= onset)
+                        .unwrap_or(0);
+                }
+                if let Some(keyframe) = said.get_mut(owner) {
+                    append(keyframe, text);
                 }
             }
         },
@@ -122,11 +127,15 @@ fn ends_clause(text: &str, clause_words: usize) -> bool {
         || (clause_words >= COMMA_CLAUSE_WORDS && text.ends_with(','))
 }
 
-/// Joins a word to running text the way it was written: punctuation and closing marks attach to
-/// the word before, and nothing follows an opening mark.
+/// Whether `word` belongs to the word before it, as punctuation and closing marks do.
+fn attaches(word: &str) -> bool {
+    word.starts_with([',', '.', '!', '?', ';', ':', '’', '\'', ')', ']', '”'])
+}
+
+/// Joins a word to running text the way it was written: what [`attaches`] joins the word before,
+/// and nothing follows an opening mark.
 fn append(text: &mut String, word: &str) {
-    let attached = word.starts_with([',', '.', '!', '?', ';', ':', '’', '\'', ')', ']', '”']);
-    if !text.is_empty() && !attached && !text.ends_with(['(', '[', '“']) {
+    if !text.is_empty() && !attaches(word) && !text.ends_with(['(', '[', '“']) {
         text.push(' ');
     }
     text.push_str(word);

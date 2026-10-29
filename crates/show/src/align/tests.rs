@@ -72,6 +72,18 @@ fn words_partition_without_duplicates_or_gaps() {
 }
 
 #[test]
+fn punctuation_split_from_its_word_closes_that_words_text() {
+    let said = words(&[
+        (0, "Lots"),
+        (500, "of"),
+        (900, "glitches"),
+        (5_000, "."),
+        (5_200, "Yeah"),
+    ]);
+    assert_eq!(texts(&[1_000, 5_000], &said), ["Lots of glitches.", "Yeah"]);
+}
+
+#[test]
 fn an_action_mid_sentence_takes_the_sentence_from_its_start() {
     let said = words(HEADER_THEN_TAP);
     assert_eq!(
