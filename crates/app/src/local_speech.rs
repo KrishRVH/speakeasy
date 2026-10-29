@@ -125,7 +125,6 @@ impl LocalSpeech {
         });
         loop {
             if let Some(status) = self.child.try_wait()? {
-                self.group.leader_reaped();
                 bail!(startup_exit(status));
             }
             if let Ok(response) = self
@@ -168,23 +167,11 @@ impl LocalSpeech {
         }
     }
 
-    /// Whether the engine process still runs. Reaping its exit ends the group's claim on its PID.
-    fn running(&mut self) -> bool {
-        match self.child.try_wait() {
-            Ok(None) => true,
-            Ok(Some(_)) => {
-                self.group.leader_reaped();
-                false
-            },
-            Err(_) => false,
-        }
-    }
-
     /// Sends `wav` for transcription and reads the engine's reply as `R`.
     async fn request<R: Reply>(&mut self, wav: Vec<u8>, language: &str) -> anyhow::Result<R> {
         // The engine may have exited and lost its port since readiness. Each request connects
         // afresh, leaving only the moment between these checks and that connection.
-        ensure!(self.running(), STOPPED);
+        ensure!(matches!(self.child.try_wait(), Ok(None)), STOPPED);
         #[cfg(not(target_os = "macos"))]
         ensure!(
             self.group

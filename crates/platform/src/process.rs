@@ -7,6 +7,8 @@
 
 #[cfg(target_os = "linux")]
 use std::fs;
+#[cfg(unix)]
+use std::mem::MaybeUninit;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::net::Ipv4Addr;
 #[cfg(target_os = "windows")]
@@ -98,18 +100,6 @@ impl ProcessGroup {
             TerminateJobObject(self.job.as_raw_handle(), 1);
         }
     }
-
-    /// Records that the caller reaped the group leader. A job names its members by handle, not by
-    /// process identifier, so it keeps terminating any surviving children; nothing changes.
-    #[expect(
-        clippy::unused_self,
-        reason = "Unix forgets the leader here; callers share one signature on every platform"
-    )]
-    #[expect(
-        clippy::needless_pass_by_ref_mut,
-        reason = "Unix forgets the leader here; callers share one signature on every platform"
-    )]
-    pub fn leader_reaped(&mut self) {}
 
     /// Reports whether at least one IPv4 listener exists on 127.0.0.1:`port` and every one belongs
     /// to a process in this job.
@@ -205,8 +195,7 @@ fn listener_owners(table: &[u32], port: u16) -> Vec<u32> {
 #[cfg(unix)]
 #[derive(Debug)]
 pub struct ProcessGroup {
-    /// The leader, whose identifier names the group, until the group is terminated or its leader
-    /// reaped.
+    /// The leader, whose identifier names the group until the group is terminated.
     leader: Option<libc::pid_t>,
 }
 
@@ -215,7 +204,8 @@ impl ProcessGroup {
     /// Attaches to a freshly spawned child through the identifier `child` holds until it is reaped.
     ///
     /// The caller spawns the child with `process_group(0)`, so its identifier names its group, and
-    /// terminates the group before reaping its leader.
+    /// terminates the group before reaping its leader: once reaped, the identifier may name another
+    /// process, so the group is never signaled again.
     ///
     /// # Errors
     /// Fails when the child was already reaped.
@@ -241,20 +231,33 @@ impl ProcessGroup {
 
     /// Terminates only the owned child group; repeated calls have no effect.
     pub fn terminate(&mut self) {
-        if let Some(leader) = self.leader.take() {
-            // SAFETY: killpg takes plain values. `leader` is above 1, so it names only the child's
-            // own group, and ownership is cleared before signaling so no group is signaled twice.
+        if let Some(leader) = self.leader.take().filter(|&leader| unreaped(leader)) {
+            // SAFETY: killpg takes plain values. `leader` is above 1 and still an unreaped child,
+            // so it names only the child's own group, and ownership is cleared before signaling so
+            // no group is signaled twice.
             unsafe {
                 // A failure needs no handling: ESRCH means the group has already exited.
                 libc::killpg(leader, libc::SIGKILL);
             }
         }
     }
+}
 
-    /// Records that the caller reaped the group leader. The leader's identifier may now name an
-    /// unrelated process group, so this group is never signaled again.
-    pub fn leader_reaped(&mut self) {
-        self.leader = None;
+/// Whether `pid` names a child of this process, running or exited, that nobody has reaped, so the
+/// system cannot have given its identifier to another process.
+#[cfg(unix)]
+fn unreaped(pid: libc::pid_t) -> bool {
+    let mut info = MaybeUninit::<libc::siginfo_t>::uninit();
+    // SAFETY: waitid writes at most one siginfo_t through the pointer, which `info` keeps valid
+    // for the call. WNOHANG returns at once, and WNOWAIT leaves an exited child for its owner to
+    // reap.
+    unsafe {
+        libc::waitid(
+            libc::P_PID,
+            pid.cast_unsigned(),
+            info.as_mut_ptr(),
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        ) == 0
     }
 }
 
@@ -273,7 +276,7 @@ impl ProcessGroup {
     /// # Errors
     /// Fails when the system's socket table cannot be read.
     pub fn holds_loopback_listener(&self, port: u16) -> anyhow::Result<bool> {
-        let Some(leader) = self.leader else {
+        let Some(leader) = self.leader.filter(|&leader| unreaped(leader)) else {
             return Ok(false);
         };
         let mut unheld = loopback_listeners(&fs::read_to_string("/proc/net/tcp")?, port);
@@ -360,14 +363,70 @@ mod tests {
     #[test]
     fn invalid_process_ids_never_acquire_group_termination_authority() {
         for pid in [0, 1, u32::MAX] {
-            let mut attached = ProcessGroup::led_by(pid);
-            // Release authority before dropping so even a regression cannot signal the test
-            // runner's group.
-            if let Ok(group) = &mut attached {
-                group.leader_reaped();
-            }
-            assert!(attached.is_err(), "Accepted invalid child identifier {pid}");
+            assert!(
+                ProcessGroup::led_by(pid).is_err(),
+                "Accepted invalid child identifier {pid}"
+            );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminating_kills_the_group_its_unreaped_child_leads() -> anyhow::Result<()> {
+        use std::{
+            os::unix::process::{CommandExt as _, ExitStatusExt as _},
+            process::Command,
+        };
+
+        let mut child = Command::new("sleep").arg("60").process_group(0).spawn()?;
+        ProcessGroup::led_by(child.id())?.terminate();
+        assert_eq!(child.wait()?.signal(), Some(libc::SIGKILL));
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_group_led_by_a_process_this_one_never_spawned_is_never_signaled() -> anyhow::Result<()> {
+        use std::{
+            io::{BufRead as _, BufReader},
+            os::fd::OwnedFd,
+            process::{Command, Stdio},
+            thread,
+            time::{Duration, Instant},
+        };
+
+        use anyhow::Context as _;
+
+        let held = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let port = held.local_addr()?.port();
+        // A group leader that a child started and handed the listener, as a reaped leader's
+        // recycled identifier could name; the child reports the status it ended with.
+        let mut parent = Command::new("sh")
+            .args([
+                "-c",
+                "exec 3<&0 0</dev/null; setsid sleep 60 <&3 3<&- & exec 3<&-; echo $!; wait $!; \
+                 echo $?",
+            ])
+            .stdin(Stdio::from(OwnedFd::from(held)))
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let mut reports =
+            BufReader::new(parent.stdout.take().context("Parent output missing")?).lines();
+        let stranger = reports.next().context("No identifier")??.parse()?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while super::process_group(stranger) != Some(stranger) {
+            anyhow::ensure!(Instant::now() < deadline, "It never led its own group");
+            thread::sleep(Duration::from_millis(5));
+        }
+        let mut group = ProcessGroup::led_by(stranger.cast_unsigned())?;
+        let counted = group.holds_loopback_listener(port);
+        group.terminate();
+        Command::new("kill").arg(stranger.to_string()).status()?;
+        let ended = reports.next().context("No status")??;
+        parent.wait()?;
+        assert!(!counted?, "Its listener counted");
+        assert_eq!(ended, "143", "Ended by SIGTERM, not SIGKILL");
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
