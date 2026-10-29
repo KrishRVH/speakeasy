@@ -200,8 +200,13 @@ fn lifecycle_observers(input: &InputSender, policy: &Arc<SharedPolicy>) -> Vec<O
     ]
 }
 
+/// Why the shortcut cannot be watched, when no more specific reason applies.
+const UNWATCHED: &str = "Cannot watch the dictation shortcut. Resume dictation to try again.";
+
 fn monitor(input: &InputSender, control: &MonitorControl<CFRunLoop>, policy: &SharedPolicy) {
-    if let Err(error) = run_event_loop(input, control, policy)
+    let watched = panic::catch_unwind(AssertUnwindSafe(|| run_event_loop(input, control, policy)))
+        .unwrap_or_else(|_| Err(anyhow!(UNWATCHED)));
+    if let Err(error) = watched
         && !control.stopping()
         && !input.is_closed()
     {
@@ -216,8 +221,6 @@ fn run_event_loop(
     control: &MonitorControl<CFRunLoop>,
     policy: &SharedPolicy,
 ) -> anyhow::Result<()> {
-    const UNWATCHED: &str = "Cannot watch the dictation shortcut. Resume dictation to try again.";
-
     if control.stopping() {
         return Ok(());
     }

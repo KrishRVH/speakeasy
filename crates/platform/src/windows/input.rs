@@ -8,7 +8,7 @@ use std::{
     io,
     ops::ControlFlow,
     os::windows::io::{AsRawHandle, OwnedHandle},
-    panic,
+    panic::{self, AssertUnwindSafe},
     ptr::{null, null_mut},
     sync::Arc,
     time::{Duration, Instant},
@@ -331,7 +331,9 @@ fn monitor(input: &InputSender, stop: &StopEvent) {
         input: input.clone(),
         policy: keyboard::Windows::default(),
     }));
-    if let Err(error) = run_event_loop(input, stop)
+    let watched = panic::catch_unwind(AssertUnwindSafe(|| run_event_loop(input, stop)))
+        .unwrap_or_else(|_| Err(io::Error::other("it stopped unexpectedly")));
+    if let Err(error) = watched
         && !stop.is_set()
         && !input.is_closed()
     {

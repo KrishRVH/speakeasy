@@ -13,6 +13,7 @@ use std::{
     fmt,
     io::{self, Write as _},
     os::fd::{BorrowedFd, OwnedFd},
+    panic::{self, AssertUnwindSafe},
 };
 
 use anyhow::bail;
@@ -75,6 +76,11 @@ impl<K: Copy> PasteChord<K> {
             .flatten()
     }
 }
+
+/// Why desktop access ended when the desktop thread panicked; never the panic payload, which could
+/// quote dictated text.
+const DESKTOP_STOPPED: &str =
+    "Linux desktop access stopped unexpectedly. Resume dictation to reconnect.";
 
 /// A desktop-access failure whose message already says what to do, so it reaches the user as is
 /// rather than beside the general remedy for a failed desktop connection.
@@ -165,7 +171,7 @@ pub(crate) fn start(
     spawn(input, options, serve_desktop)
 }
 
-/// Runs `serve` on the desktop thread. Once it returns, by any path, the thread reports why and then
+/// Runs `serve` on the desktop thread. Once it returns or panics, the thread reports why and then
 /// abandons every insertion still queued, since nothing reads the lane after that; the report comes
 /// first, so the owner learns why before those requests fail.
 fn spawn(
@@ -184,7 +190,11 @@ fn spawn(
     let (stop, stopping) = async_channel::bounded(1);
     let thread = OwnedThread::spawn("desktop-access", move || {
         let lane = incoming.clone();
-        match serve(&input, &options, incoming, &stopping) {
+        let served = panic::catch_unwind(AssertUnwindSafe(|| {
+            serve(&input, &options, incoming, &stopping)
+        }))
+        .unwrap_or_else(|_| Err(Actionable(DESKTOP_STOPPED).into()));
+        match served {
             Err(error) if !input.is_closed() => {
                 input.fail(match error.downcast_ref::<Actionable>() {
                     Some(actionable) => actionable.0.to_owned(),
@@ -338,6 +348,22 @@ mod tests {
                 .context("An insertion request was left waiting")?;
             assert!(answer.is_err());
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_panicking_desktop_thread_reports_why_and_closes_the_lane() -> anyhow::Result<()> {
+        let (events, received) = async_channel::bounded(4);
+        let input = InputSender::new(events);
+        // Unwinds without the panic hook, so the payload never reaches test output.
+        let serve = |_: &_, _: &_, _, _: &_| panic::resume_unwind(Box::new("private payload"));
+        let (thread, _monitor, _inserter) = spawn(input.clone(), DesktopOptions::default(), serve)?;
+        tokio::time::timeout(PATIENCE, thread.exited()).await?;
+        match received.try_recv() {
+            Ok(Input::Unavailable(reason)) => assert_eq!(reason, DESKTOP_STOPPED),
+            other => anyhow::bail!("The panicked desktop thread did not report why: {other:?}"),
+        }
+        assert!(input.is_closed());
         Ok(())
     }
 
