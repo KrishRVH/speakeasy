@@ -176,12 +176,11 @@ async fn cancelling_a_take_reports_nothing_once_its_sources_stop() -> anyhow::Re
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_capture_that_fails_or_stops_ends_the_take_with_what_to_do() {
+async fn a_capture_that_fails_or_stops_keeps_its_frames_or_says_what_to_do() -> anyhow::Result<()> {
     const OFF: &str = "Screen recording is off for Speakeasy. Turn it on, then try again.";
+    let failed = || ScreenEvent::Failed(OFF.to_owned());
     let (recorded, _) = record(false, async |feed| {
-        feed.frame(0).await;
-        let failed = ScreenEvent::Failed(OFF.to_owned());
-        feed.frames.send(failed).await.unwrap();
+        feed.frames.send(failed()).await.unwrap();
     })
     .await;
     assert_eq!(failure(recorded).as_deref(), Some(OFF));
@@ -190,6 +189,16 @@ async fn a_capture_that_fails_or_stops_ends_the_take_with_what_to_do() {
     })
     .await;
     assert_eq!(failure(recorded).as_deref(), Some(CAPTURE_STOPPED));
+    let (recorded, _) = record(false, async |feed| {
+        feed.frame(0).await;
+        wait(700).await;
+        feed.frames.send(failed()).await.unwrap();
+    })
+    .await;
+    let footage = recorded?.context("Footage recorded before the failure")?;
+    assert_eq!(footage.journal.samples().len(), 1);
+    assert_eq!(footage.recording.duration, Moment::from_millis(700));
+    Ok(())
 }
 
 #[tokio::test(start_paused = true)]

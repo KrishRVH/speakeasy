@@ -228,10 +228,7 @@ impl<P: Ports> Owner<P> {
                 self.handle_capture(event);
                 None
             },
-            Wake::Show(event) => {
-                self.handle_show(event);
-                None
-            },
+            Wake::Show(event) => self.handle_show(event),
             Wake::Retired => None,
             Wake::Worker(completion) => {
                 self.handle_worker(completion);
@@ -455,21 +452,24 @@ impl<P: Ports> Owner<P> {
         self.gesture.lock();
     }
 
-    fn handle_show(&mut self, event: ShowEvent) {
+    /// Keeps a Show's footage. A screen that stopped before the gesture finished, as a capture
+    /// failing partway does, finishes the Show with it.
+    fn handle_show(&mut self, event: ShowEvent) -> Option<Action> {
         let ShowEvent::Finished(id, footage) = event;
-        let Some(session) = self
+        let session = self
             .session
             .as_mut()
-            .filter(|session| session.id == id && session.is_show())
-        else {
-            return;
-        };
+            .filter(|session| session.id == id && session.is_show())?;
         match footage {
             Ok(footage) => {
                 session.screen_recorded(footage);
                 self.screen.retire();
+                self.gesture.finish()
             },
-            Err(error) => self.fail(format!("{error:#}")),
+            Err(error) => {
+                self.fail(format!("{error:#}"));
+                None
+            },
         }
     }
 

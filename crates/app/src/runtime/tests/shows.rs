@@ -299,6 +299,19 @@ async fn a_screen_that_stops_recording_explains_why_and_frees_the_microphone() -
 }
 
 #[tokio::test(start_paused = true)]
+async fn footage_that_ends_before_the_gesture_finishes_the_show() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    let (id, _, events) = start_show(&mut h).await?;
+    events.send(ShowEvent::Finished(id, Ok(footage()))).await?;
+    h.transcribe_next_as("before it stopped").await?;
+    let (published, narration) = receive(&h.published).await?;
+    assert_eq!(narration, Narration::Text("before it stopped".into()));
+    assert_eq!(published.recording, footage().recording);
+    h.phase(Phase::Copied).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
 async fn footage_from_an_earlier_show_never_reaches_a_later_one() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     let (earlier, _, stale) = start_show(&mut h).await?;

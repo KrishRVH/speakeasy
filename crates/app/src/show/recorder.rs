@@ -255,7 +255,8 @@ impl<'a> Take<'a> {
     /// Records what `sources` send until finished, or from the start when `finished`, then stops
     /// them before returning the footage; `None` once cancelled. A Show finished before its first
     /// frame waits up to [`FIRST_FRAME_WAIT`] for one. The footage lasts until finishing was asked
-    /// for, or until the first frame such a wait received; stopping the sources adds nothing.
+    /// for, the first frame such a wait received, or capture failed; stopping the sources adds
+    /// nothing.
     async fn run(
         mut self,
         finished: bool,
@@ -291,6 +292,11 @@ impl<'a> Take<'a> {
                         if finished_by.is_some() && !self.journal.is_empty() {
                             break Some(Ok(runtime::now()));
                         }
+                    },
+                    // Frames already journaled stay sound, so capture failing partway ends the
+                    // take with them.
+                    Ok(ScreenEvent::Failed(_)) | Err(_) if !self.journal.is_empty() => {
+                        break Some(Ok(runtime::now()));
                     },
                     Ok(ScreenEvent::Failed(message)) => break Some(Err(anyhow!(message))),
                     Err(_) => break Some(Err(anyhow!(CAPTURE_STOPPED))),
