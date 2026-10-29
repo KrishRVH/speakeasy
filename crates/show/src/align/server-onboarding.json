@@ -1,0 +1,45 @@
+{
+  "narration": {
+    "words": [
+      {"span": [4440, 4920], "text": "Also,"},
+      {"span": [4920, 5040], "text": "this"},
+      {"span": [5040, 5220], "text": "thing"},
+      {"span": [5220, 5640], "text": "shouldn't"},
+      {"span": [5640, 5700], "text": "be"},
+      {"span": [5700, 6060], "text": "floating"},
+      {"span": [6060, 6300], "text": "on"},
+      {"span": [6300, 6420], "text": "the"},
+      {"span": [6420, 6720], "text": "bottom."},
+      {"span": [6780, 6900], "text": "It"},
+      {"span": [6900, 7140], "text": "covers"},
+      {"span": [7140, 7320], "text": "up"},
+      {"span": [7320, 7440], "text": "too"},
+      {"span": [7440, 7560], "text": "much"},
+      {"span": [7560, 8160], "text": "space."},
+      {"span": [9180, 9720], "text": "Um,"},
+      {"span": [9720, 10260], "text": "be"},
+      {"span": [10260, 10560], "text": "way"},
+      {"span": [10560, 10800], "text": "more"},
+      {"span": [10800, 11100], "text": "minimal"},
+      {"span": [11100, 11280], "text": "and"},
+      {"span": [11280, 11400], "text": "I"},
+      {"span": [11400, 11640], "text": "like"},
+      {"span": [11640, 11760], "text": "the"},
+      {"span": [11760, 11820], "text": "right"},
+      {"span": [11820, 11940], "text": "side"},
+      {"span": [11940, 12120], "text": "or"},
+      {"span": [12120, 12360], "text": "something."},
+      {"span": [12420, 12600], "text": "We"},
+      {"span": [12600, 12780], "text": "take"},
+      {"span": [12780, 12900], "text": "up"},
+      {"span": [12900, 13020], "text": "the"},
+      {"span": [13020, 13080], "text": "full"},
+      {"span": [13080, 13500], "text": "window."}
+    ]
+  },
+  "marks": [
+    {"number": 1, "shape": "scribble", "strokes": [0, 2], "span": [4737, 6763], "bounds": [0.2701, 0.9202, 0.8643, 0.976]},
+    {"number": 2, "shape": "underline", "strokes": [2, 3], "span": [9462, 9632], "bounds": [0.5627, 0.94, 0.6106, 0.9434]},
+    {"number": 3, "shape": "scribble", "strokes": [3, 5], "span": [11150, 12570], "bounds": [0.0295, 0.1627, 0.9069, 0.2733]}
+  ]
+}

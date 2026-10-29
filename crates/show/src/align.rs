@@ -16,6 +16,10 @@ const WORD_REACH: Duration = Duration::from_millis(700);
 /// A clause left unfinished stays in progress through a pause until the next word, up to this long
 /// past its last word's start: people stop mid-sentence to draw what they mean, then go on.
 const HESITATION: Duration = Duration::from_secs(4);
+/// An anchor in silence takes the clause that begins up to this long after it: people mark or
+/// click something just before saying what it is, and removing a filler such as "um" leaves
+/// silence where the clause began.
+const SPEECH_LAG: Duration = Duration::from_secs(1);
 /// A word belongs to a keyframe whose text starts no later than this after it.
 const ONSET_TOLERANCE: Duration = Duration::from_millis(50);
 /// A comma ends a clause only after this many words, so a short lead-in such as "Um," stays with
@@ -90,14 +94,17 @@ fn clauses(words: &[&Word]) -> Vec<Span> {
     clauses
 }
 
-/// Where each keyframe's text starts: the start of the clause holding its anchor. When two
-/// keyframes fall in one clause, the later one takes the words from its own moment.
+/// Where each keyframe's text starts: the start of the clause holding its anchor, or else of the
+/// clause beginning within [`SPEECH_LAG`] after it. When two keyframes fall in one clause, the
+/// later one takes the words from its own moment.
 fn text_starts(anchors: &[Moment], clauses: &[Span]) -> Vec<Moment> {
     let mut starts: Vec<Moment> = Vec::with_capacity(anchors.len());
     for &anchor in anchors {
+        let lag = Span::new(anchor, anchor.saturating_add(SPEECH_LAG));
         let mut start = clauses
             .iter()
             .find(|clause| clause.contains(anchor))
+            .or_else(|| clauses.iter().find(|clause| lag.contains(clause.start())))
             .map_or(anchor, |clause| clause.start());
         if let Some(&previous) = starts.last()
             && start <= previous

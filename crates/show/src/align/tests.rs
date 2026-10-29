@@ -148,6 +148,40 @@ fn ink_drawn_in_a_pause_mid_sentence_takes_the_sentence() {
 }
 
 #[test]
+fn ink_drawn_just_before_speaking_takes_what_is_said_next() {
+    // The underline was drawn during "Um,". Speakeasy removes fillers by default, which leaves
+    // the underline in the silence before the clause the filler opened, and the next mark inside
+    // that clause.
+    let mut recorded = Recorded::parse(include_str!("server-onboarding.json"));
+    let before =
+        "Also, this thing shouldn't be floating on the bottom. It covers up too much space.";
+    let after = "and I like the right side or something. We take up the full window.";
+    assert_eq!(
+        recorded.said_per_mark(),
+        [before, "Um, be way more minimal", after]
+    );
+    recorded.narration = Narration::Words(
+        recorded
+            .narration
+            .words()
+            .iter()
+            .filter(|word| word.text != "Um,")
+            .cloned()
+            .collect(),
+    );
+    assert_eq!(
+        recorded.said_per_mark(),
+        [before, "be way more minimal", after]
+    );
+}
+
+#[test]
+fn ink_drawn_long_before_speaking_leaves_the_words_to_ink_drawn_while_saying_them() {
+    let said = words(&[(3_000, "This"), (3_200, "one"), (3_400, "flickers.")]);
+    assert_eq!(texts(&[0, 3_300], &said), ["", "This one flickers."]);
+}
+
+#[test]
 fn a_sentence_left_hanging_is_over_once_the_silence_runs_long() {
     let said = words(&[
         (0, "That's"),
