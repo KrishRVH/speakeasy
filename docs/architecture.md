@@ -127,9 +127,11 @@ module unless a test file is named.
 - **Show composition**: [crates/show/src](../crates/show/src), notably
   [select.rs](../crates/show/src/select.rs) and [select/](../crates/show/src/select),
   [journal.rs](../crates/show/src/journal.rs), [tracker.rs](../crates/show/src/tracker.rs),
-  [marks.rs](../crates/show/src/marks.rs), [align.rs](../crates/show/src/align.rs),
-  [sheet.rs](../crates/show/src/sheet.rs), and [demo.rs](../crates/show/src/demo.rs), tested in
-  their modules, [select/tests.rs](../crates/show/src/select/tests.rs), and
+  [marks.rs](../crates/show/src/marks.rs) and [marks/](../crates/show/src/marks),
+  [align.rs](../crates/show/src/align.rs), [sheet.rs](../crates/show/src/sheet.rs), and
+  [demo.rs](../crates/show/src/demo.rs), tested in their modules,
+  [select/tests.rs](../crates/show/src/select/tests.rs),
+  [marks/tests.rs](../crates/show/src/marks/tests.rs), and
   [journal/tests.rs](../crates/show/src/journal/tests.rs); `speakeasy show demo` writes a bundle to
   view. [align/tests.rs](../crates/show/src/align/tests.rs) also replays narration from Scrawl's
   public recordings, trimmed beside it to timed words and marks in `show.json`'s shape.

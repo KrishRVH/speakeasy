@@ -5,9 +5,9 @@
 - [Scrawl](https://github.com/kitlangton/scrawl), Copyright (c) 2026 Kit Langton: keyframe
   selection, narration alignment, mark shapes, the contact-sheet layout, the summary's reading line,
   and the badge and ripple designs, in `src/select.rs` and `src/select/`, `src/align.rs` and
-  `src/align/`, `src/marks.rs`, `src/describe.rs`, `src/sheet.rs`, `src/bundle.rs`, and `src/draw.rs`.
-  The timed words and marks in `src/align/*.json` are trimmed from recordings in Scrawl's test
-  fixtures.
+  `src/align/`, `src/marks.rs` and `src/marks/`, `src/describe.rs`, `src/sheet.rs`, `src/bundle.rs`,
+  and `src/draw.rs`. The timed words and marks in `src/align/*.json` are trimmed from recordings in
+  Scrawl's test fixtures, and `src/marks/tests.rs` reads strokes drawn in its captures.
 - [perfect-freehand](https://github.com/steveruizok/perfect-freehand) 1.2.2, Copyright (c) 2021
   Stephen Ruiz Ltd: the stroke outline in `src/ink.rs`.
 

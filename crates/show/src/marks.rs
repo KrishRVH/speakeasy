@@ -1,5 +1,7 @@
 //! Strokes drawn together and pins dropped, numbered in one sequence, and what they look like.
 
+mod stroke;
+
 use std::{ops::Range, time::Duration};
 
 use serde::{Deserialize, Serialize};
@@ -13,23 +15,6 @@ use crate::{
 pub(crate) const MARK_GAP: Duration = Duration::from_millis(1_200);
 /// The most strokes one mark holds.
 const MARK_STROKES: usize = 6;
-/// A stroke whose extent is below this many pixels is a tap.
-const TAP_PIXELS: f32 = 14.0;
-/// A circle is at least this many pixels across both ways.
-const CIRCLE_PIXELS: f32 = 18.0;
-/// A circle's short side is at least this share of its long side. People circle wide controls
-/// and lines of text with flat loops; the enclosed-area test still rejects flat zigzags.
-const CIRCLE_FLATNESS: f32 = 0.15;
-/// A loop's ends meet within this share of its long side.
-const LOOP_CLOSURE: f32 = 0.35;
-/// A loop's path runs at least this many times its long side.
-const LOOP_LENGTH: f32 = 2.0;
-/// A loop encloses at least this share of its bounding box.
-const LOOP_FILL: f32 = 0.32;
-/// A stroke is straight when its ends lie at least this share of its path length apart.
-const STRAIGHTNESS: f32 = 0.88;
-/// A straight stroke at least this many times wider than tall is an underline.
-const UNDERLINE_ASPECT: f32 = 2.5;
 /// An arrowhead's strokes cluster within this share of the shaft's length from its tip.
 const ARROWHEAD_REACH: f32 = 0.35;
 /// How far a number sits from what it labels, in its disc's radii: diagonally out from a pinned
@@ -55,7 +40,8 @@ pub enum Shape {
         /// Where it lifted.
         to: Point,
     },
-    /// A straight stroke with a short stroke or two at one end.
+    /// A straight stroke with a short head at one end, drawn in one go or with a stroke or two
+    /// more.
     Arrow {
         /// The tail.
         from: Point,
@@ -189,7 +175,7 @@ fn shape(strokes: &[Stroke], surface: Size) -> Shape {
             let bounds = Rect::bounding(stroke.path())?;
             Some(Measured {
                 stroke,
-                shape: stroke_shape(stroke, surface),
+                shape: stroke::shape(stroke, surface),
                 bounds,
                 size: bounds.width() * surface.width + bounds.height() * surface.height,
             })
@@ -204,7 +190,7 @@ fn shape(strokes: &[Stroke], surface: Size) -> Shape {
     }
     match main.shape {
         Shape::Circle => Shape::Circle,
-        Shape::Line { .. } if !rest.is_empty() => Shape::Scribble,
+        Shape::Line { .. } | Shape::Arrow { .. } if !rest.is_empty() => Shape::Scribble,
         shape if rest.iter().all(|other| other.shape.same_kind(shape)) => shape,
         _ => Shape::Scribble,
     }
@@ -236,52 +222,6 @@ impl Shape {
     fn same_kind(self, other: Self) -> bool {
         std::mem::discriminant(&self) == std::mem::discriminant(&other)
     }
-}
-
-fn stroke_shape(stroke: &Stroke, surface: Size) -> Shape {
-    let pixels = |point: Point| point.scaled(surface.width, surface.height);
-    let path: Vec<Point> = stroke.path().map(pixels).collect();
-    let Some(bounds) = Rect::bounding(path.iter().copied()) else {
-        return Shape::Tap;
-    };
-    let (width, height) = (bounds.width(), bounds.height());
-    let (longest, shortest) = (width.max(height), width.min(height));
-    let length: f32 = path
-        .array_windows()
-        .map(|&[one, next]| one.distance(next))
-        .sum();
-    let chord = pixels(stroke.first().point).distance(pixels(stroke.last().point));
-    if width.hypot(height) < TAP_PIXELS {
-        Shape::Tap
-    } else if chord < LOOP_CLOSURE * longest
-        && length > LOOP_LENGTH * longest
-        && shortest >= CIRCLE_PIXELS
-        && shortest > CIRCLE_FLATNESS * longest
-        && enclosed_area(&path) > LOOP_FILL * width * height
-    {
-        Shape::Circle
-    } else if chord > STRAIGHTNESS * length {
-        if width > UNDERLINE_ASPECT * height {
-            Shape::Underline
-        } else {
-            Shape::Line {
-                from: stroke.first().point,
-                to: stroke.last().point,
-            }
-        }
-    } else {
-        Shape::Scribble
-    }
-}
-
-/// The area `path` encloses once closed by its chord, by the shoelace formula.
-fn enclosed_area(path: &[Point]) -> f32 {
-    let doubled: f32 = path
-        .iter()
-        .zip(path.iter().cycle().skip(1))
-        .map(|(one, next)| one.x * next.y - next.x * one.y)
-        .sum();
-    0.5 * doubled.abs()
 }
 
 #[cfg(test)]
