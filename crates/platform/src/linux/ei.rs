@@ -246,7 +246,8 @@ impl Sender {
     }
 
     fn bind_seat(&self, event: &Event) {
-        // SAFETY: the live event keeps its seat alive; each capability list ends with null.
+        // SAFETY: the live event keeps its seat alive. libei reads each variadic argument as a
+        // capability enum until one is not positive, so each list ends with an int 0.
         unsafe {
             let seat = (self.api.ei_event_get_seat)(event.raw.as_ptr());
             if seat.is_null() || !(self.api.ei_seat_has_capability)(seat, CAPABILITY_KEYBOARD) {
@@ -259,14 +260,10 @@ impl Sender {
                     seat,
                     CAPABILITY_KEYBOARD,
                     CAPABILITY_TEXT,
-                    ptr::null::<c_void>(),
+                    0_i32,
                 );
             } else {
-                (self.api.ei_seat_bind_capabilities)(
-                    seat,
-                    CAPABILITY_KEYBOARD,
-                    ptr::null::<c_void>(),
-                );
+                (self.api.ei_seat_bind_capabilities)(seat, CAPABILITY_KEYBOARD, 0_i32);
             }
         }
     }
