@@ -224,6 +224,8 @@ struct Sources<S> {
 struct Take<'a> {
     started: Instant,
     canvas: &'a watch::Sender<Canvas>,
+    /// The display's size in logical pixels.
+    display: [f32; 2],
     /// The part of the display the latest frame showed, which the pointer is placed in.
     part: Part,
     tracker: Tracker,
@@ -239,15 +241,12 @@ impl<'a> Take<'a> {
         part: Part,
         canvas: &'a watch::Sender<Canvas>,
     ) -> Self {
-        let [width, height] = size;
         Self {
             started,
             canvas,
+            display: size,
             part,
-            tracker: Tracker::new(Size {
-                width: width * part.width(),
-                height: height * part.height(),
-            }),
+            tracker: Tracker::new(surface(size, part)),
             journal: Journal::with_budget(JOURNAL_BUDGET),
         }
     }
@@ -321,6 +320,7 @@ impl<'a> Take<'a> {
     fn frame(&mut self, frame: Frame) {
         if frame.part != self.part {
             self.part = frame.part;
+            self.tracker.resize(surface(self.display, frame.part));
             self.canvas.send_if_modified(|canvas| {
                 canvas
                     .sheet_mut()
@@ -380,6 +380,14 @@ impl<'a> Take<'a> {
             recording: self.tracker.finish(ended),
             journal: self.journal.sealed(),
         })
+    }
+}
+
+/// The size in logical pixels of the `part` of a display `display` logical pixels across.
+fn surface([width, height]: [f32; 2], part: Part) -> Size {
+    Size {
+        width: width * part.width(),
+        height: height * part.height(),
     }
 }
 

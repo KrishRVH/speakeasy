@@ -68,6 +68,12 @@ impl Tracker {
         }
     }
 
+    /// Measures distances against a surface now `surface` logical pixels in size, as a resized
+    /// window's is; the recording reports the latest size.
+    pub const fn resize(&mut self, surface: Size) {
+        self.surface = surface;
+    }
+
     /// Observes the pointer at `at`, in time order, with `drawing` while Shift is held to draw and
     /// `pressed` while the primary button is down. `point` is normalized to the surface, and may
     /// lie outside it when the pointer is on another display.

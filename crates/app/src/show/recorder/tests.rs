@@ -28,12 +28,17 @@ impl Feed {
 
     /// A small frame of the whole display, on screen `millis` into the take.
     async fn frame(&self, millis: u64) {
+        self.frame_showing(millis, Part::WHOLE).await;
+    }
+
+    /// A small frame of the `part` of the display, on screen `millis` into the take.
+    async fn frame_showing(&self, millis: u64, part: Part) {
         let frame = Frame {
             at: self.at(millis),
             width: 4,
             height: 4,
             bgra: vec![0x80; 64],
-            part: Part::WHOLE,
+            part,
         };
         self.frames.send(ScreenEvent::Frame(frame)).await.unwrap();
     }
@@ -198,6 +203,27 @@ async fn a_capture_that_fails_or_stops_keeps_its_frames_or_says_what_to_do() -> 
     let footage = recorded?.context("Footage recorded before the failure")?;
     assert_eq!(footage.journal.samples().len(), 1);
     assert_eq!(footage.recording.duration, Moment::from_millis(700));
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_window_that_resizes_is_measured_at_its_latest_size() -> anyhow::Result<()> {
+    let (recorded, _) = record(false, async |feed| {
+        feed.frame(0).await;
+        feed.frame_showing(200, Part::between([0.0, 0.0], [0.5, 1.0]))
+            .await;
+        wait(10).await;
+        feed.finish().await;
+    })
+    .await;
+    let recording = recorded?.context("Finished, not cancelled")?.recording;
+    assert_eq!(
+        recording.surface,
+        Size {
+            width: 500.0,
+            height: 500.0
+        }
+    );
     Ok(())
 }
 
