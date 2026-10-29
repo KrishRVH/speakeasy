@@ -15,7 +15,8 @@ Use `mise run` for project workflows; run `mise tasks` and read the task you use
 - `mise run rust:lock` refreshes Cargo.lock through Cargo after dependency changes and checks that
   packaging can cite every dependency's license.
 - `mise run standards` applies safe formatters and autofixes.
-- `mise run standards:check` is the final local gate. CI builds and publishes release packages.
+- `mise run standards:check` is the final local gate. CI lints and tests each push to `main` on
+  Windows and macOS, and builds and publishes release packages.
 
 Run `git`, `rg`, `tokei`, and focused native commands directly. Extend an existing task before
 adding one. Measure the routine gate cost before adding checks. Mutation testing, dependency

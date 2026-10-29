@@ -1,0 +1,33 @@
+name: Check
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+# The local gate runs on Linux, where the app cannot build for macOS or for Windows' MSVC target
+# without their SDKs, so its code for those systems compiles and runs here.
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.10.15
+          install_args: rust github:nextest-rs/nextest
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: check-${{ matrix.os }}
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: mise run rust:test
