@@ -130,9 +130,9 @@ Full-size keyframes: frames/frame-01.png to frames/frame-04.png. Timeline: show.
 - The microphone opens only while you dictate. Audio, transcripts, and engine output are never
   logged.
 - The screen is recorded only during a Show you start, and Speakeasy's own windows stay out of it. A
-  Show is written to the `shows` folder beside the engine and model, readable only by you, and
-  deleted after seven days unless pinned: a file named `.pinned` in its folder keeps it. Cancelling
-  leaves nothing behind.
+  Show is written to the `shows` folder beside the engine and model, readable only by you. Speakeasy
+  deletes Shows over seven days old when it starts and hourly while it runs; a file named `.pinned`
+  in a Show's folder keeps it. Cancelling leaves nothing behind.
 - There are no accounts, cloud providers, telemetry, or dictation history.
 
 ## Get started
