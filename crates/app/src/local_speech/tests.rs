@@ -7,7 +7,7 @@ use std::{path::PathBuf, time::Instant};
 use super::*;
 
 fn narration(body: &str) -> anyhow::Result<Narration> {
-    reply::<Timed>(body.as_bytes())?.into_narration()
+    Ok(reply::<Timed>(body.as_bytes())?.into_narration())
 }
 
 fn timed(words: &[(u64, u64, &str)]) -> Narration {
@@ -51,7 +51,7 @@ fn whisper_tokens_join_into_words_without_control_tokens() -> anyhow::Result<()>
 }
 
 #[test]
-fn replies_without_timings_keep_their_text_and_bad_timings_fail() -> anyhow::Result<()> {
+fn replies_without_usable_timings_keep_only_their_text() -> anyhow::Result<()> {
     assert_eq!(
         narration(r#"{"text":" Untimed. "}"#)?,
         Narration::Text("Untimed.".into())
@@ -60,11 +60,20 @@ fn replies_without_timings_keep_their_text_and_bad_timings_fail() -> anyhow::Res
         narration(r#"{"text":"","words":[]}"#)?,
         Narration::Words(Vec::new())
     );
-    for bad in [
-        r#"{"words":[{"word":"x","start":2.0,"end":1.0}]}"#,
-        r#"{"words":[{"word":"x","start":-1.0,"end":1.0}]}"#,
+    // One unusable time, beside good ones, leaves the whole reply untimed.
+    for timings in [
+        r#""words":[{"word":"Kept","start":0.1,"end":0.3},{"word":"text.","start":2.0,"end":1.0}]"#,
+        r#""words":[{"word":"Kept","start":-1.0,"end":0.3},{"word":"text.","start":0.3,"end":0.6}]"#,
+        r#""words":[{"word":"Kept","start":null,"end":0.3},{"word":"text.","start":0.3,"end":0.6}]"#,
+        r#""words":[{"word":"Kept","start":0.1,"end":0.3},{"word":"text.","start":0.3}]"#,
+        r#""segments":[{"words":[{"word":" Kept","start":0.1,"end":0.3},{"word":" text.","start":0.6,"end":0.3}]}]"#,
+        r#""segments":[{"words":[{"word":" Kept","start":0.1,"end":0.3},{"word":" te","start":0.3,"end":0.4},{"word":"xt.","start":null,"end":0.6}]}]"#,
     ] {
-        assert!(narration(bad).is_err(), "{bad}");
+        assert_eq!(
+            narration(&format!(r#"{{"text":" Kept text. ",{timings}}}"#))?,
+            Narration::Text("Kept text.".into()),
+            "{timings}"
+        );
     }
     Ok(())
 }

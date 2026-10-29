@@ -35,8 +35,6 @@ pub(crate) const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 const INFERENCE_TIMEOUT: Duration = Duration::from_mins(30);
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const STOPPED: &str = "Transcription stopped. Check the selected model and engine, then try again.";
-/// The engine returned word times Speakeasy cannot place on the recording.
-const INVALID_TIMINGS: &str = "The speech engine returned invalid word timings. Check the selected model and engine, then try again.";
 const SIGILL: i32 = 4;
 const USAGE_ERROR: u32 = 2;
 const STATUS_ILLEGAL_INSTRUCTION: u32 = 0xC000_001D;
@@ -225,7 +223,7 @@ impl Speech for LocalSpeech {
         wav: Vec<u8>,
         language: &str,
     ) -> anyhow::Result<Narration> {
-        self.request::<Timed>(wav, language).await?.into_narration()
+        Ok(self.request::<Timed>(wav, language).await?.into_narration())
     }
 
     async fn probe_with_silence(&mut self) -> anyhow::Result<()> {
@@ -310,58 +308,57 @@ struct TimedSegment {
     words: Vec<Token>,
 }
 
-/// A word or word piece, timed in seconds from the start of the audio.
+/// A word or word piece, timed in seconds from the start of the audio. A time the engine could not
+/// compute can be absent, or `null`, which is how JSON writers print NaN.
 #[derive(Deserialize)]
 struct Token {
     word: String,
-    start: f64,
-    end: f64,
+    start: Option<f64>,
+    end: Option<f64>,
 }
 
 impl Timed {
-    fn into_narration(self) -> anyhow::Result<Narration> {
+    /// The reply's words at their times. Times are best effort: when any of them cannot be placed
+    /// on the recording, the reply keeps only its text, since a guessed time could give a word to
+    /// the wrong keyframe.
+    fn into_narration(self) -> Narration {
         let words = if self.words.is_empty() {
-            joined(self.segments.into_iter().flat_map(|segment| segment.words))?
+            joined(self.segments.into_iter().flat_map(|segment| segment.words))
         } else {
             self.words
                 .into_iter()
                 .filter(|token| !token.word.trim().is_empty())
                 .map(Token::into_word)
-                .collect::<anyhow::Result<_>>()?
+                .collect()
         };
         let text = self.text.trim();
-        Ok(if words.is_empty() && !text.is_empty() {
-            Narration::Text(text.to_owned())
-        } else {
-            Narration::Words(words)
-        })
+        match words {
+            Some(words) if !words.is_empty() || text.is_empty() => Narration::Words(words),
+            _ => Narration::Text(text.to_owned()),
+        }
     }
 }
 
 impl Token {
-    fn into_word(self) -> anyhow::Result<Word> {
-        Ok(Word {
+    fn into_word(self) -> Option<Word> {
+        Some(Word {
             span: self.span()?,
             text: self.word.trim().to_owned(),
         })
     }
 
-    fn span(&self) -> anyhow::Result<Span> {
-        let time = |seconds: f64| {
-            Duration::try_from_secs_f64(seconds)
-                .map(Moment::from)
-                .ok()
-                .context(INVALID_TIMINGS)
-        };
+    /// Where the token lies in the audio, unless a time is missing, negative, or reversed.
+    fn span(&self) -> Option<Span> {
+        let time =
+            |seconds: Option<f64>| Duration::try_from_secs_f64(seconds?).ok().map(Moment::from);
         let (start, end) = (time(self.start)?, time(self.end)?);
-        ensure!(start <= end, INVALID_TIMINGS);
-        Ok(Span::new(start, end))
+        (start <= end).then(|| Span::new(start, end))
     }
 }
 
 /// whisper.cpp splits words into tokens; a token that starts with a space starts a word. Its
-/// bracketed control tokens are not speech.
-fn joined(tokens: impl Iterator<Item = Token>) -> anyhow::Result<Vec<Word>> {
+/// bracketed control tokens are not speech. `None` when a token of speech has no usable time.
+fn joined(tokens: impl Iterator<Item = Token>) -> Option<Vec<Word>> {
     let mut words: Vec<Word> = Vec::new();
     for token in tokens {
         if token.word.trim().is_empty() || token.word.trim_start().starts_with("[_") {
@@ -375,7 +372,7 @@ fn joined(tokens: impl Iterator<Item = Token>) -> anyhow::Result<Vec<Word>> {
             _ => words.push(token.into_word()?),
         }
     }
-    Ok(words)
+    Some(words)
 }
 
 /// The empty directory Whisper serves in place of its bundled web UI. tempfile's error already
