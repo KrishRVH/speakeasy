@@ -20,7 +20,7 @@ use crate::{
     audio,
     child::{hidden_command, kill_and_reap},
     config::{Config, Engine},
-    http::client_builder,
+    http::{Trust, client_builder},
     runtime::ports::{STARTUP_CANCELLED, Speech},
 };
 
@@ -459,7 +459,7 @@ fn server_command(config: &Config, port: u16, secret: &str, served: &Path) -> Co
 /// never over an idle pooled connection, which could outlive the listener check that precedes
 /// each request.
 fn engine_client() -> anyhow::Result<Client> {
-    Ok(client_builder()?
+    Ok(client_builder(Trust::Nobody)?
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(CONNECT_TIMEOUT)

@@ -31,7 +31,7 @@ use self::{
 use crate::{
     child::kill_and_reap,
     config::{Config, Engine},
-    http::client_builder,
+    http::{Trust, client_builder},
 };
 
 const MODEL: Download<'static> = Download {
@@ -270,7 +270,7 @@ async fn install(
     progress: &watch::Sender<Progress>,
     installation: &mut Installation,
 ) -> anyhow::Result<Installed> {
-    let client = client_builder()?
+    let client = client_builder(Trust::System)?
         .connect_timeout(Duration::from_secs(15))
         .read_timeout(Duration::from_secs(30))
         .build()?;

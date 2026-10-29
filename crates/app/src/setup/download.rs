@@ -160,7 +160,10 @@ mod tests {
     };
 
     use super::*;
-    use crate::{http::client_builder, setup::Installation};
+    use crate::{
+        http::{Trust, client_builder},
+        setup::Installation,
+    };
 
     const BODY: &[u8] = b"Say the word. The door opens, and what is said stays inside.";
 
@@ -229,7 +232,7 @@ mod tests {
         progress: &watch::Sender<Progress>,
     ) -> anyhow::Result<PathBuf> {
         fetch(
-            &client_builder()?.build()?,
+            &client_builder(Trust::Nobody)?.build()?,
             download,
             directory,
             "fixture",

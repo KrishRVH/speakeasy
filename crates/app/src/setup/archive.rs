@@ -120,7 +120,7 @@ fn normalize_archive(staging: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::http::client_builder;
+    use crate::http::{Trust, client_builder};
 
     #[test]
     fn archives_preserve_the_complete_runtime_layout() -> anyhow::Result<()> {
@@ -178,7 +178,7 @@ mod tests {
             size: 0,
             sha256: "unused: replacement must fail before extraction",
         };
-        let client = client_builder()?.build()?;
+        let client = client_builder(Trust::Nobody)?.build()?;
         let failure = unpack(&client, &archive, root, &progress, &mut installation)
             .await
             .unwrap_err();
@@ -241,7 +241,7 @@ mod tests {
             size: 0,
             sha256: "unused: the archive is already downloaded",
         };
-        let client = client_builder()?.build()?;
+        let client = client_builder(Trust::Nobody)?.build()?;
         let engine = unpack(&client, &archive, root, &progress, &mut installation).await?;
         assert_eq!(fs::read(engine.join(EXECUTABLE))?, b"engine fixture");
         let engines = fs::read_dir(root.join("engines"))?
