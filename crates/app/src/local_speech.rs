@@ -3,7 +3,7 @@
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
-use std::{net::TcpListener, path::Path, process::ExitStatus, time::Duration};
+use std::{fmt, net::TcpListener, path::Path, process::ExitStatus, time::Duration};
 
 use anyhow::{Context as _, anyhow, bail, ensure};
 use reqwest::{Client, Response, multipart};
@@ -35,8 +35,11 @@ pub(crate) const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 const INFERENCE_TIMEOUT: Duration = Duration::from_mins(30);
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const STOPPED: &str = "Transcription stopped. Check the selected model and engine, then try again.";
+/// How long an engine that stopped answering may take to exit: one that crashed can close its
+/// connections before its exit status is readable.
+const EXIT_GRACE: Duration = Duration::from_millis(500);
 const SIGILL: i32 = 4;
-const USAGE_ERROR: u32 = 2;
+const USAGE_ERROR: i32 = 2;
 const STATUS_ILLEGAL_INSTRUCTION: u32 = 0xC000_001D;
 const STATUS_DLL_NOT_FOUND: u32 = 0xC000_0135;
 const STATUS_ENTRYPOINT_NOT_FOUND: u32 = 0xC000_0139;
@@ -169,7 +172,9 @@ impl LocalSpeech {
     async fn request<R: Reply>(&mut self, wav: Vec<u8>, language: &str) -> anyhow::Result<R> {
         // The engine may have exited and lost its port since readiness. Each request connects
         // afresh, leaving only the moment between these checks and that connection.
-        ensure!(matches!(self.child.try_wait(), Ok(None)), STOPPED);
+        if !matches!(self.child.try_wait(), Ok(None)) {
+            return Err(self.stopped().await);
+        }
         #[cfg(not(target_os = "macos"))]
         ensure!(
             self.group
@@ -196,17 +201,37 @@ impl LocalSpeech {
                 self.client.post(self.url("inference")).multipart(form)
             },
         };
-        let response = request
-            .timeout(INFERENCE_TIMEOUT)
-            .send()
-            .await
-            .map_err(transport_error)?;
-        ensure!(
-            response.status().is_success(),
-            "The speech engine returned HTTP {}. Check the selected model and engine, then try again.",
-            response.status().as_u16()
-        );
-        reply(&read_bounded(response).await?)
+        let exchange = async {
+            let response = request
+                .timeout(INFERENCE_TIMEOUT)
+                .send()
+                .await
+                .map_err(transport_error)?;
+            ensure!(
+                response.status().is_success(),
+                "The speech engine returned HTTP {}. Check the selected model and engine, then try again.",
+                response.status().as_u16()
+            );
+            read_bounded(response).await
+        };
+        match exchange.await {
+            Ok(body) => reply(&body),
+            Err(error) if error.is::<Disconnected>() => Err(self.stopped().await),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Ends an engine that stopped answering, and says why it stopped: its exit status, when that
+    /// names a remedy. A crash settles the status before the engine's connections close, so ending
+    /// the group first keeps it, and signals the group before its leader is reaped.
+    async fn stopped(&mut self) -> anyhow::Error {
+        self.group.terminate();
+        if let Ok(Ok(status)) = timeout(EXIT_GRACE, self.child.wait()).await
+            && let Some(remedy) = exit_remedy(status)
+        {
+            return anyhow!("The speech engine exited ({status}). {remedy}");
+        }
+        anyhow!(STOPPED)
     }
 }
 
@@ -508,7 +533,18 @@ fn transport_error(error: reqwest::Error) -> anyhow::Error {
     if error.is_timeout() {
         anyhow!("Transcription timed out. Try a smaller model, or turn on Prefer GPU in Settings.")
     } else {
-        anyhow!(STOPPED)
+        anyhow!(Disconnected)
+    }
+}
+
+/// The engine's connection broke before its reply was complete. The engine may have crashed, so a
+/// request reports the engine's exit status in place of this when that names a remedy.
+#[derive(Debug)]
+struct Disconnected;
+
+impl fmt::Display for Disconnected {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(STOPPED)
     }
 }
 
@@ -525,33 +561,35 @@ async fn read_bounded(mut response: Response) -> anyhow::Result<Vec<u8>> {
 }
 
 fn startup_exit(status: ExitStatus) -> String {
+    // Only startup reads Speakeasy's arguments.
+    let remedy = if status.code() == Some(USAGE_ERROR) {
+        "The selected engine does not accept Speakeasy's server arguments. Switch Engine to match it, or choose a supported engine executable in Settings."
+    } else {
+        exit_remedy(status).unwrap_or(
+            "Check the selected model and the engine's dependencies, or choose a compatible engine executable in Settings.",
+        )
+    };
+    format!("The speech engine exited before it was ready ({status}). {remedy}")
+}
+
+/// The remedy an engine's exit status names whenever the engine exits: the engine cannot run on
+/// this machine. Any other status names none.
+fn exit_remedy(status: ExitStatus) -> Option<&'static str> {
     #[cfg(unix)]
     let signal = status.signal();
     #[cfg(not(unix))]
     let signal = None;
-    format!(
-        "The speech engine exited before it was ready ({status}). {}",
-        exit_remedy(status.code(), signal)
-    )
-}
-
-fn exit_remedy(code: Option<i32>, signal: Option<i32>) -> &'static str {
-    match (code.map(i32::cast_unsigned), signal) {
-        (Some(STATUS_ILLEGAL_INSTRUCTION), _) | (_, Some(SIGILL)) => {
-            "This engine uses CPU instructions unavailable on this machine. Choose a compatible engine executable in Settings."
-        },
+    match (status.code().map(i32::cast_unsigned), signal) {
+        (Some(STATUS_ILLEGAL_INSTRUCTION), _) | (_, Some(SIGILL)) => Some(
+            "This engine uses CPU instructions unavailable on this machine. Choose a compatible engine executable in Settings.",
+        ),
         (
             Some(STATUS_DLL_NOT_FOUND | STATUS_ENTRYPOINT_NOT_FOUND | STATUS_INVALID_IMAGE_FORMAT),
             _,
-        ) => {
-            "This engine needs native libraries that are missing or incompatible. Install its dependencies, or choose another engine executable in Settings."
-        },
-        (Some(USAGE_ERROR), _) => {
-            "The selected engine does not accept Speakeasy's server arguments. Switch Engine to match it, or choose a supported engine executable in Settings."
-        },
-        _ => {
-            "Check the selected model and the engine's dependencies, or choose a compatible engine executable in Settings."
-        },
+        ) => Some(
+            "This engine needs native libraries that are missing or incompatible. Install its dependencies, or choose another engine executable in Settings.",
+        ),
+        _ => None,
     }
 }
 

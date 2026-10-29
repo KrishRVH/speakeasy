@@ -90,20 +90,33 @@ fn malformed_replies_never_quote_engine_text() {
 }
 
 #[test]
-fn exit_diagnostics_identify_actions_without_engine_output() {
-    for (code, signal, remedy) in [
-        (Some(2), None, "server arguments"),
-        (None, Some(4), "CPU instructions"),
-        (Some(0xC000_001D), None, "CPU instructions"),
-        (Some(0xC000_0135), None, "native libraries"),
-        (Some(0xC000_0139), None, "native libraries"),
-        (Some(0xC000_007B), None, "native libraries"),
-        (Some(1), None, "selected model"),
-    ] {
-        assert!(
-            exit_remedy(code.map(u32::cast_signed), signal).contains(remedy),
-            "Exit code {code:X?}, signal {signal:?}"
-        );
+fn only_exits_that_prove_the_machine_cannot_run_the_engine_name_a_remedy() {
+    #[cfg(windows)]
+    use std::os::windows::process::ExitStatusExt as _;
+
+    // Raw Unix statuses carry an exit code in their second byte, or the ending signal alone.
+    #[cfg(unix)]
+    let exits = [
+        (SIGILL, Some("CPU instructions")),
+        (USAGE_ERROR << 8, None),
+        (1 << 8, None),
+        (9, None),
+    ];
+    #[cfg(windows)]
+    let exits = [
+        (STATUS_ILLEGAL_INSTRUCTION, Some("CPU instructions")),
+        (STATUS_DLL_NOT_FOUND, Some("native libraries")),
+        (STATUS_ENTRYPOINT_NOT_FOUND, Some("native libraries")),
+        (STATUS_INVALID_IMAGE_FORMAT, Some("native libraries")),
+        (USAGE_ERROR.cast_unsigned(), None),
+        (1, None),
+    ];
+    for (raw, cause) in exits {
+        let status = ExitStatus::from_raw(raw);
+        match (exit_remedy(status), cause) {
+            (Some(remedy), Some(cause)) => assert!(remedy.contains(cause), "{status}"),
+            (remedy, cause) => assert_eq!(remedy, cause, "{status}"),
+        }
     }
 }
 
@@ -338,12 +351,128 @@ async fn audio_never_reaches_a_program_that_took_an_exited_engines_port() -> any
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn an_engine_that_died_while_idle_names_the_remedy_its_exit_proves() -> anyhow::Result<()> {
+    let listener = std::net::TcpListener::bind((LOOPBACK, 0))?;
+    let (_directory, mut speech) = shell_engine("kill -s ILL $$", listener).await?;
+    speech.child.wait().await?;
+    let wav = audio::silent_wav(16_000, Duration::from_secs(1))?;
+    let transcribed = speech.transcribe(wav, "en").await;
+    speech.stop().await;
+    let error = transcribed.err().context("The exited engine transcribed")?;
+    assert!(error.to_string().contains("CPU instructions"), "{error}");
+    Ok(())
+}
+
+/// A crash settles the engine's exit status before its connections close, and can leave other
+/// processes of its group running.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_request_the_engine_crashes_during_names_its_remedy_and_ends_its_group()
+-> anyhow::Result<()> {
+    use tokio::io::AsyncWriteExt as _;
+
+    use crate::testing::PATIENCE;
+
+    let held = std::net::TcpListener::bind((LOOPBACK, 0))?;
+    let listener = held.try_clone()?;
+    listener.set_nonblocking(true)?;
+    let listener = tokio::net::TcpListener::from_std(listener)?;
+    let (directory, mut speech) = shell_engine(
+        "sleep 60 & printf '%s' \"$!\" > member.pid; read -r _ && kill -s ILL $$",
+        held,
+    )
+    .await?;
+    let leader = speech.child.id().context("The engine exited at once")?;
+    let mut crash = speech
+        .child
+        .stdin
+        .take()
+        .context("The engine has no input")?;
+    let wav = audio::silent_wav(16_000, Duration::from_secs(1))?;
+    let engine = async {
+        // The request has reached the engine once its connection is accepted.
+        let connection = listener.accept().await?;
+        crash.write_all(b"\n").await?;
+        until(|| process_state(leader) == Some('Z')).await;
+        drop(connection);
+        anyhow::Ok(())
+    };
+    let (transcribed, crashed) = timeout(PATIENCE, async {
+        tokio::join!(speech.transcribe(wav, "en"), engine)
+    })
+    .await?;
+    crashed?;
+    let member: u32 = timeout(
+        PATIENCE,
+        fixture_number(&directory.path().join("member.pid")),
+    )
+    .await?;
+    let ended = timeout(
+        PATIENCE,
+        until(|| process_state(member).is_none_or(|state| state == 'Z')),
+    )
+    .await
+    .is_ok();
+    speech.stop().await;
+    let error = transcribed
+        .err()
+        .context("The crashed engine transcribed")?;
+    assert!(error.to_string().contains("CPU instructions"), "{error}");
+    assert!(
+        ended,
+        "A process of the crashed engine's group kept running"
+    );
+    Ok(())
+}
+
+/// A ready engine running `script` in `sh`, without core dumps, in a fresh working directory. It
+/// reads standard input and holds `listener` as its standard output.
+#[cfg(target_os = "linux")]
+async fn shell_engine(
+    script: &str,
+    listener: std::net::TcpListener,
+) -> anyhow::Result<(tempfile::TempDir, LocalSpeech)> {
+    let directory = tempfile::tempdir()?;
+    let port = listener.local_addr()?.port();
+    let mut command = hidden_command("sh");
+    command
+        .arg("-c")
+        .arg(format!("ulimit -c 0; {script}"))
+        .current_dir(directory.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::os::fd::OwnedFd::from(listener));
+    Ok((directory, engine_from(command, port).await?))
+}
+
+/// The state letter `/proc` reports for `pid`, such as `Z` for exited but unreaped; `None` once no
+/// such process exists.
+#[cfg(target_os = "linux")]
+fn process_state(pid: u32) -> Option<char> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    stat.rsplit_once(')')?.1.trim_start().chars().next()
+}
+
+#[cfg(target_os = "linux")]
+async fn until(mut condition: impl FnMut() -> bool) {
+    while !condition() {
+        sleep(Duration::from_millis(5)).await;
+    }
+}
+
 /// A ready engine, idle in `sleep`, that has since lost `port` to another program.
 #[cfg(unix)]
 async fn sleeping_engine(port: u16) -> anyhow::Result<LocalSpeech> {
     let mut command = hidden_command("sleep");
-    command.arg("60").process_group(0);
-    let mut child = command.spawn()?;
+    command.arg("60");
+    engine_from(command, port).await
+}
+
+/// A ready engine serving `port` from the process `command` spawns.
+#[cfg(unix)]
+async fn engine_from(mut command: Command, port: u16) -> anyhow::Result<LocalSpeech> {
+    let mut child = command.process_group(0).spawn()?;
     Ok(LocalSpeech {
         engine: Engine::Whisper,
         group: contain(&mut child).await?,
