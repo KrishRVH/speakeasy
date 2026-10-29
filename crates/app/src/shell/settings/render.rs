@@ -143,8 +143,15 @@ impl Settings {
             .line_height(px(23.0))
             .child(hold_hint)
             .child(div().child(gesture_hint))
+            // One clause a line, none wider than the hands-free line, so the legend wraps no sooner
+            // than the hints above it.
             .when(records_shows, |panel| {
-                panel.child(div().child("Add S, W, or A for a Show, then hold Shift to draw."))
+                panel
+                    .child(div().child("For a Show, add S screen · W window · A area."))
+                    .child(div().child("Hold Shift and move to draw; double-tap Shift to pin."))
+                    .child(div().child(format!(
+                        "Release {shortcut}, then press it again to finish."
+                    )))
             })
     }
 
