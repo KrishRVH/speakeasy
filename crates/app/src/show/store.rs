@@ -1,8 +1,9 @@
 //! Where Shows live on disk: stamp naming, private all-at-once writes, and seven-day expiry.
 
 use std::{
+    collections::BTreeSet,
     fs,
-    io::{self, ErrorKind},
+    io::{self, ErrorKind, Write as _},
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
@@ -127,18 +128,37 @@ pub(super) fn stage(directory: &Path, bundle: Bundle) -> anyhow::Result<Staged> 
         builder.permissions(fs::Permissions::from_mode(0o700));
     }
     let staging = builder.tempdir_in(parent).map_err(cannot_save(parent))?;
+    let folders: BTreeSet<PathBuf> = files
+        .iter()
+        .filter_map(|file| Some(staging.path().join(&file.name).parent()?.to_owned()))
+        .collect();
+    for folder in &folders {
+        fs::create_dir_all(folder).map_err(cannot_save(parent))?;
+    }
     for file in files {
-        let path = staging.path().join(&file.name);
-        if let Some(folder) = path.parent() {
-            fs::create_dir_all(folder).map_err(cannot_save(parent))?;
-        }
-        fs::write(&path, &file.contents).map_err(cannot_save(parent))?;
+        write_flushed(&staging.path().join(&file.name), &file.contents)
+            .map_err(cannot_save(parent))?;
+    }
+    // Flushed before the rename, so a crash leaves either no bundle or all of it. On Unix a
+    // folder's entries survive a crash only once the folder itself is flushed.
+    #[cfg(unix)]
+    for folder in folders {
+        fs::File::open(folder)
+            .and_then(|folder| folder.sync_all())
+            .map_err(cannot_save(parent))?;
     }
     Ok(Staged {
         staging,
         directory: directory.to_path_buf(),
         summary,
     })
+}
+
+/// Writes a new file holding `contents` and flushes it to disk.
+fn write_flushed(path: &Path, contents: &[u8]) -> io::Result<()> {
+    let mut file = fs::File::create_new(path)?;
+    file.write_all(contents)?;
+    file.sync_all()
 }
 
 /// Deletes expired Shows now and then hourly for the app's life, giving each failure to `report`;
