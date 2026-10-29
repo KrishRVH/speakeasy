@@ -62,6 +62,7 @@ struct Cli {
 /// What the command line asks for.
 enum Invocation {
     Help,
+    Version,
     App(Cli),
     Show(show::Command),
 }
@@ -93,6 +94,7 @@ impl Invocation {
                 Some("--toggle") => cli.command = Some(Request::Toggle),
                 Some("--cancel") => cli.command = Some(Request::Cancel),
                 Some("--help" | "-h") => return Ok(Self::Help),
+                Some("--version") => return Ok(Self::Version),
                 _ => bail!("Unknown option: {}", arg.display()),
             }
         }
@@ -113,6 +115,7 @@ impl Invocation {
 fn main() -> ExitCode {
     match Invocation::parse(std::env::args_os().skip(1)) {
         Ok(Invocation::Help) => in_terminal(|| Ok(print_help()?)),
+        Ok(Invocation::Version) => in_terminal(|| Ok(print_version()?)),
         Ok(Invocation::Show(command)) => in_terminal(|| command.run()),
         Ok(Invocation::App(cli)) => in_dialog(run(cli)),
         Err(error) => reject(&error, speakeasy_platform::attach_stdio().then(io::stderr)),
@@ -295,7 +298,15 @@ fn print_help() -> io::Result<()> {
     )?;
     writeln!(
         out,
-        "speakeasy show demo [--out NEW_DIR] writes a scripted Show bundle and prints its summary."
+        "speakeasy --version prints the version.\nspeakeasy show demo [--out NEW_DIR] writes a scripted Show bundle and prints its summary."
+    )
+}
+
+fn print_version() -> io::Result<()> {
+    writeln!(
+        io::stdout().lock(),
+        "speakeasy {}",
+        env!("CARGO_PKG_VERSION")
     )
 }
 
@@ -368,9 +379,13 @@ mod tests {
     }
 
     #[test]
-    fn help_stops_parsing_and_unknown_options_fail() -> anyhow::Result<()> {
+    fn help_and_version_stop_parsing_and_unknown_options_fail() -> anyhow::Result<()> {
         assert!(matches!(parse(&["--help", "--unknown"])?, Invocation::Help));
-        assert!(parse(&["--unknown", "--help"]).is_err());
+        assert!(matches!(
+            parse(&["--version", "--unknown"])?,
+            Invocation::Version
+        ));
+        assert!(parse(&["--unknown", "--version"]).is_err());
         assert!(parse(&["--config"]).is_err());
         Ok(())
     }
