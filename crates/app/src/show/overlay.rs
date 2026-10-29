@@ -373,6 +373,11 @@ impl Overlay {
                 ),
             ],
         };
+        let release = || {
+            cx.listener(|this: &mut Self, event: &MouseUpEvent, window, cx| {
+                this.pick(event.position, window.viewport_size(), cx);
+            })
+        };
         div()
             .size_full()
             .cursor_crosshair()
@@ -391,12 +396,10 @@ impl Overlay {
                     cx.notify();
                 }
             }))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, event: &MouseUpEvent, window, cx| {
-                    this.pick(event.position, window.viewport_size(), cx);
-                }),
-            )
+            .on_mouse_up(MouseButton::Left, release())
+            // The overlay covers one display, so a drag can end on another; the area then stops
+            // at this display's edge.
+            .on_mouse_up_out(MouseButton::Left, release())
             .children(shades)
             .children(hole.map(frame))
             .when(hole.is_none(), |picker| picker.child(hint()))
