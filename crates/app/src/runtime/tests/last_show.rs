@@ -260,8 +260,14 @@ fn without_an_owner_a_report_shows_while_idle_and_forgets_only_the_show_found_go
     }
     assert!(Report::ShowGone(saved("older")).present(&mut paused));
     assert_eq!(
-        (paused.phase, paused.last_show),
-        (Phase::Notice, Some(saved("first")))
+        (paused.phase, paused.last_show.as_ref()),
+        (Phase::Notice, Some(&saved("first")))
+    );
+    assert!(Report::Failed("Disk full".into()).present(&mut paused));
+    assert_eq!(
+        (paused.phase, paused.reported),
+        (Phase::Error, 3),
+        "A failure counted as a report the menu asked for"
     );
 
     let mut recording = Snapshot {

@@ -345,7 +345,8 @@ impl<P: Ports> Owner<P> {
         ControlFlow::Break(())
     }
 
-    /// Shows `report` as [`Report::present`] describes, counting it so that a repeat presents anew.
+    /// Shows `report` as [`Report::present`] describes, counting the menu's so that a repeat
+    /// presents anew.
     fn report(&mut self, report: Report) {
         report.forget_gone(&mut self.last_show);
         // The owner's own state, not a presented copy, decides idleness, so a session that started
@@ -353,7 +354,9 @@ impl<P: Ports> Owner<P> {
         if self.session.is_some() {
             return;
         }
-        self.reported = self.reported.wrapping_add(1);
+        if report.answers_the_menu() {
+            self.reported = self.reported.wrapping_add(1);
+        }
         self.outcome = match report {
             Report::Failed(message) => Outcome::Failed(message),
             Report::ShowCopied => Outcome::ShowCopied {

@@ -753,6 +753,19 @@ async fn an_idle_report_survives_model_load_and_desktop_readiness() -> anyhow::R
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_failure_reported_again_is_not_new_feedback() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.report(Report::Failed(REPORT.into()))?;
+    h.phase(Phase::Error).await?;
+    h.report(Report::Failed(REPORT.into()))?;
+    assert!(
+        still_pending(h.observe(|snapshot| snapshot.reported != 0)).await,
+        "A failure counted as a report the menu asked for"
+    );
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_report_during_a_held_recording_is_dropped_and_the_text_still_pastes()
 -> anyhow::Result<()> {
     let mut h = Harness::new()?;

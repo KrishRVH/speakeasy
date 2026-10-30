@@ -86,8 +86,8 @@ pub(crate) struct Snapshot {
     pub epoch: SnapshotEpoch,
     /// The latest session, so a new session differs even when its phase repeats.
     pub session: u64,
-    /// How many reports from outside a session have shown, so one that repeats the last still
-    /// reads as new.
+    /// How many of the menu's reports have shown, so a copy that repeats the last still reads as
+    /// new; a failure reported again reads as new only when it says something new.
     pub reported: u64,
     pub phase: Phase,
     pub hands_free: bool,
@@ -169,7 +169,9 @@ impl Report {
         if snapshot.phase.is_active() {
             return forgot;
         }
-        snapshot.reported = snapshot.reported.wrapping_add(1);
+        if self.answers_the_menu() {
+            snapshot.reported = snapshot.reported.wrapping_add(1);
+        }
         (snapshot.phase, snapshot.message) = match self {
             Self::Failed(message) => (Phase::Error, message),
             Self::ShowCopied => {
@@ -180,6 +182,12 @@ impl Report {
             Self::ShowGone(_) => (Phase::Notice, SHOW_GONE.to_owned()),
         };
         true
+    }
+
+    /// Whether the menu asked for this report, so each one presents anew. A failure, such as one
+    /// each retention sweep repeats, is not counted, so it shows again only when it changes.
+    fn answers_the_menu(&self) -> bool {
+        !matches!(self, Self::Failed(_))
     }
 
     /// Forgets `last_show` if this report found that same Show gone, returning whether it did; a
