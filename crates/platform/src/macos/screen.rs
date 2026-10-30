@@ -62,6 +62,8 @@ use crate::{
     },
 };
 
+/// Why a Show cannot tell what lies under the pointer.
+const NO_POINTER: &str = "Cannot find the pointer. Try again.";
 /// How long `ScreenCaptureKit` may take to answer, and capture may go without a frame, before the
 /// Show reports that capture stopped.
 const PATIENCE: Duration = Duration::from_secs(5);
@@ -138,20 +140,22 @@ struct Described {
 }
 
 /// The frontmost visible app window under the pointer and the part of `display` it covers, unless
-/// it is Speakeasy's own or Core Graphics cannot list windows. Windows above app windows, such as
-/// the Dock, menus, and the menu bar, and invisible windows are passed over.
-pub(crate) fn window_under_pointer(display: Display) -> Option<(Window, Part)> {
-    let pointer = pointer_location()?;
+/// it is Speakeasy's own. Windows above app windows, such as the Dock, menus, and the menu bar, and
+/// invisible windows are passed over. Fails when the pointer cannot be read or Core Graphics cannot
+/// list windows.
+pub(crate) fn window_under_pointer(display: Display) -> anyhow::Result<Option<(Window, Part)>> {
+    let pointer = pointer_location().context(NO_POINTER)?;
     let options =
         CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements;
-    let front = windows(options, kCGNullWindowID)?
+    let listed = windows(options, kCGNullWindowID).context("Cannot list windows. Try again.")?;
+    Ok(listed
         .into_iter()
         .find(|window| window.layer == 0 && window.alpha > 0.0 && window.bounds.contains(pointer))
-        .filter(|window| !super::is_own_process(window.owner))?;
-    Some((
-        Window(front.number),
-        display.bounds.part_covered_by(front.bounds)?,
-    ))
+        .filter(|window| !super::is_own_process(window.owner))
+        .and_then(|front| {
+            let part = display.bounds.part_covered_by(front.bounds)?;
+            Some((Window(front.number), part))
+        }))
 }
 
 /// Where a target lies on its display, as far as Core Graphics can tell.
@@ -233,7 +237,7 @@ fn describe(window: &CFDictionary<CFString, CFType>) -> Option<Described> {
 }
 
 pub(crate) fn display_under_pointer() -> anyhow::Result<screen::Display> {
-    let [x, y] = pointer_location().context("Cannot read the pointer position. Try again.")?;
+    let [x, y] = pointer_location().context(NO_POINTER)?;
     let mut id = kCGNullDirectDisplay;
     let mut found = 0;
     // SAFETY: both out-pointers name live locals, with room for the one display requested.

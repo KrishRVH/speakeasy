@@ -90,6 +90,8 @@ use crate::{
     },
 };
 
+/// Why a Show cannot tell what lies under the pointer.
+const NO_POINTER: &str = "Cannot find the pointer. Try again.";
 /// How often the capture thread drains the frame pool and checks for a stop.
 const POLL: Duration = Duration::from_millis(10);
 /// Pool buffers, each a full-resolution frame of GPU memory: one may wait for its turn to be sent
@@ -170,14 +172,17 @@ impl Window {
 }
 
 /// The top-level window under the pointer and the part of `display` it covers, unless it is the
-/// desktop, a taskbar, or Speakeasy's own, or capture could not follow it.
-pub(crate) fn window_under_pointer(display: Display) -> Option<(Window, Part)> {
-    let window = top_level_at(pointer_location()?)?;
+/// desktop, a taskbar, or Speakeasy's own, or capture could not follow it. Fails when the pointer
+/// cannot be found.
+pub(crate) fn window_under_pointer(display: Display) -> anyhow::Result<Option<(Window, Part)>> {
+    let Some(window) = top_level_at(pointer_location().context(NO_POINTER)?) else {
+        return Ok(None);
+    };
     if is_own_window(window) || SHELL_CLASSES.contains(&class_name(window).as_str()) {
-        return None;
+        return Ok(None);
     }
     let window = Window(window as isize);
-    Some((window, window_part(display, window).ok()?))
+    Ok(window_part(display, window).ok().map(|part| (window, part)))
 }
 
 /// The top-level window at `point` on the desktop, if any.
@@ -263,7 +268,7 @@ fn frame_bounds(window: HWND) -> Option<RECT> {
 }
 
 pub(crate) fn display_under_pointer() -> anyhow::Result<screen::Display> {
-    let pointer = pointer_location().context("Cannot find the pointer")?;
+    let pointer = pointer_location().context(NO_POINTER)?;
     // SAFETY: takes the point by value and always answers with the nearest monitor.
     describe(unsafe { MonitorFromPoint(pointer, MONITOR_DEFAULTTONEAREST) })
         .context("Cannot measure the display under the pointer")

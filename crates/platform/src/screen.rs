@@ -135,11 +135,12 @@ impl Target {
     /// Speakeasy's. A Show never records the display in its place.
     ///
     /// # Errors
-    /// Fails as [`screen_under_pointer`](Self::screen_under_pointer) does.
+    /// Fails as [`screen_under_pointer`](Self::screen_under_pointer) does, or when the windows under
+    /// the pointer cannot be listed, so neither failure reads as no window.
     pub fn window_under_pointer() -> anyhow::Result<Option<Self>> {
         let display = Display::under_pointer()?;
         Ok(
-            native::window_under_pointer(display.native).map(|(window, part)| Self {
+            native::window_under_pointer(display.native)?.map(|(window, part)| Self {
                 display,
                 region: Region::Window(window, part),
             }),
@@ -402,8 +403,8 @@ mod unsupported {
         bail!(SHOWS_UNSUPPORTED)
     }
 
-    pub(super) const fn window_under_pointer(_: Display) -> Option<(Window, Part)> {
-        None
+    pub(super) fn window_under_pointer(_: Display) -> anyhow::Result<Option<(Window, Part)>> {
+        bail!(SHOWS_UNSUPPORTED)
     }
 
     pub(super) const fn capture(
