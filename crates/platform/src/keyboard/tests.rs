@@ -231,6 +231,36 @@ fn windows_sides_repeats_space_and_passive_escape() {
     assert_eq!(escape.action, Some(Action::Escape));
 }
 
+/// Escape during a hold is the keyboard's only way to cancel a Show, so it must reach the owner as
+/// itself, never as another shortcut interrupting the hold.
+#[test]
+fn escape_during_a_hold_reaches_the_app_and_keeps_the_hold() {
+    let (mut policy, both) = windows_holding();
+    let escape = policy.observe(ESCAPE, true, both, now());
+    assert!(!escape.swallows(), "Escape during a hold was swallowed");
+    assert_eq!(delivered(&escape), [Action::Escape]);
+    assert_eq!(delivered(&policy.observe(ESCAPE, false, both, now())), []);
+    assert_eq!(
+        delivered(&policy.observe(LEFT_CONTROL, false, both, now())),
+        [Action::Release],
+        "Escape interrupted the hold"
+    );
+
+    let mut mac = mac_holding();
+    let escape = mac.observe(key(MAC_ESCAPE, true, FN_HELD), keyboard_fn_up, now());
+    assert!(!escape.swallows(), "Escape during a hold was swallowed");
+    assert_eq!(delivered(&escape), [Action::Escape]);
+    assert_eq!(
+        delivered(&mac.observe(key(MAC_ESCAPE, false, FN_HELD), keyboard_fn_up, now())),
+        []
+    );
+    assert_eq!(
+        delivered(&mac.observe(function(false), keyboard_fn_up, now())),
+        [Action::Release],
+        "Escape interrupted the hold"
+    );
+}
+
 #[test]
 fn s_during_a_hold_starts_a_show_and_is_swallowed_through_its_release() {
     let (mut policy, both) = windows_holding();
