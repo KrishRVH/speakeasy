@@ -1,5 +1,6 @@
 //! Windows adapter: the Ctrl+Win keyboard hook and session-change cancellation, clipboard or direct
-//! text insertion, GPUI window presentation, the file dialog, and Show screen capture.
+//! text insertion, GPUI window presentation, the file dialog, Show screen capture, and the sign-in
+//! launch.
 //!
 //! This module serves `desktop`'s reduced-motion query, launching-console attachment, and startup
 //! error dialog, and keeps what the Windows code shares: held modifiers, synthetic input tagged so
@@ -9,6 +10,7 @@
 mod dialog;
 mod input;
 mod insertion;
+pub(crate) mod login;
 mod presentation;
 pub(crate) mod screen;
 

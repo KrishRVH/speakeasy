@@ -1,4 +1,5 @@
-//! Native desktop input, screen capture, presentation, and child-process ownership.
+//! Native desktop input, screen capture, presentation, child-process ownership, and the Windows
+//! sign-in launch.
 //!
 //! Callbacks deliver events to the session owner. Insertion permits authorize one recording and can
 //! be revoked while a native clipboard call is blocked.
@@ -31,6 +32,8 @@ pub use self::linux::{APPLICATION_ID, NativeTray, TrayAction, TrayPresentation};
 use self::macos as native;
 #[cfg(target_os = "windows")]
 use self::windows as native;
+#[cfg(target_os = "windows")]
+pub use self::windows::login::{start_at_login, startup_approved};
 pub use self::{
     desktop::{
         DesktopOptions, FileFilter, InputMonitor, LinuxPaste, NativeWindow, attach_stdio,
