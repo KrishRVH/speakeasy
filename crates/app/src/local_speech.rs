@@ -3,7 +3,7 @@
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
-use std::{fmt, net::TcpListener, path::Path, process::ExitStatus, time::Duration};
+use std::{fmt, iter, net::TcpListener, path::Path, process::ExitStatus, time::Duration};
 
 use anyhow::{Context as _, anyhow, bail, ensure};
 use reqwest::{Client, RequestBuilder, multipart};
@@ -237,7 +237,9 @@ impl Speech for LocalSpeech {
         wav: Vec<u8>,
         language: &str,
     ) -> anyhow::Result<Narration> {
-        Ok(self.request::<Timed>(wav, language).await?.into_narration())
+        self.request::<Timed>(wav, language)
+            .await
+            .map(Timed::into_narration)
     }
 
     async fn probe_with_silence(&mut self) -> anyhow::Result<()> {
@@ -341,34 +343,52 @@ struct Token {
     end: Option<f64>,
 }
 
+/// A word of a reply, and where it lies in the audio when its times say.
+struct Heard {
+    text: String,
+    span: Option<Span>,
+}
+
 impl Timed {
-    /// The reply's words at their times. Times are best effort: when any of them cannot be placed
-    /// on the recording, the reply keeps only its text, since a guessed time could give a word to
-    /// the wrong keyframe.
+    /// The reply's words at their times. When any time cannot be placed on the recording, the
+    /// narration is only text, the reply's or else its words'. Untimed text visibly goes to the
+    /// first keyframe, while a guessed time would silently misplace a word.
     fn into_narration(self) -> Narration {
-        let words = if self.words.is_empty() {
+        let heard: Vec<Heard> = if self.words.is_empty() {
             joined(self.segments.into_iter().flat_map(|segment| segment.words))
         } else {
             self.words
                 .into_iter()
                 .filter(|token| !token.word.trim().is_empty())
-                .map(Token::into_word)
+                .map(Token::into_heard)
                 .collect()
         };
         let text = self.text.trim();
-        match words {
-            Some(words) if !words.is_empty() || text.is_empty() => Narration::Words(words),
-            _ => Narration::Text(text.to_owned()),
+        let spans: Option<Vec<Span>> = heard.iter().map(|word| word.span).collect();
+        match spans {
+            Some(spans) if !spans.is_empty() || text.is_empty() => Narration::Words(
+                iter::zip(spans, heard)
+                    .map(|(span, Heard { text, .. })| Word { span, text })
+                    .collect(),
+            ),
+            _ if !text.is_empty() => Narration::Text(text.to_owned()),
+            _ => Narration::Text(
+                heard
+                    .into_iter()
+                    .map(|word| word.text)
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ),
         }
     }
 }
 
 impl Token {
-    fn into_word(self) -> Option<Word> {
-        Some(Word {
-            span: self.span()?,
+    fn into_heard(self) -> Heard {
+        Heard {
+            span: self.span(),
             text: self.word.trim().to_owned(),
-        })
+        }
     }
 
     /// Where the token lies in the audio, unless a time is missing, negative, or reversed.
@@ -381,22 +401,25 @@ impl Token {
 }
 
 /// whisper.cpp splits words into tokens; a token that starts with a space starts a word. Its
-/// bracketed control tokens are not speech. `None` when a token of speech has no usable time.
-fn joined(tokens: impl Iterator<Item = Token>) -> Option<Vec<Word>> {
-    let mut words: Vec<Word> = Vec::new();
+/// bracketed control tokens are not speech.
+fn joined(tokens: impl Iterator<Item = Token>) -> Vec<Heard> {
+    let mut words: Vec<Heard> = Vec::new();
     for token in tokens {
         if token.word.trim().is_empty() || token.word.trim_start().starts_with("[_") {
             continue;
         }
         match words.last_mut() {
             Some(word) if !token.word.starts_with(char::is_whitespace) => {
-                word.span = word.span.union(token.span()?);
+                word.span = word
+                    .span
+                    .zip(token.span())
+                    .map(|(whole, piece)| whole.union(piece));
                 word.text.push_str(&token.word);
             },
-            _ => words.push(token.into_word()?),
+            _ => words.push(token.into_heard()),
         }
     }
-    Some(words)
+    words
 }
 
 /// The empty directory Whisper serves in place of its bundled web UI. tempfile's error already
