@@ -3,9 +3,10 @@
 //! Capture polls `ScreenCaptureKit` for stills of one display with Speakeasy's own application
 //! filtered out, so neither the pill nor the overlay ever appears in a frame. A Show of part of the
 //! display asks each still for that part only, looking up a window's place in Core Graphics' window
-//! list before each still. `ScreenCaptureKit` answers on queues of its own: each answer is read
-//! where it arrives and crosses to the capture thread over a channel, and the capture thread stops
-//! waiting the moment the Show stops.
+//! list before and after each still, and stops once the window closes or goes off screen.
+//! `ScreenCaptureKit` answers on queues of its own: each answer is read where it arrives and
+//! crosses to the capture thread over a channel, and the capture thread stops waiting the moment
+//! the Show stops.
 
 use std::{
     convert::Infallible,
@@ -55,7 +56,7 @@ use tokio::{runtime, time};
 use crate::{
     NativeWindow,
     screen::{
-        self, Frame, Part, PointerSample, Region, ScreenEvent, Target,
+        self, Frame, Part, PointerSample, Region, ScreenEvent, Target, WindowGone,
         geometry::{Bounds, fit, narrow, pack_rows, pixels},
     },
 };
@@ -67,6 +68,8 @@ const PATIENCE: Duration = Duration::from_secs(5);
 /// Why a capture ended early, worded for the person recording.
 #[derive(Clone, Copy, Debug)]
 enum Failure {
+    /// The recorded window can no longer be followed.
+    Window(WindowGone),
     Permission,
     Stalled,
     Unstarted,
@@ -74,9 +77,25 @@ enum Failure {
     Exposed,
 }
 
+impl From<WindowGone> for Failure {
+    fn from(gone: WindowGone) -> Self {
+        Self::Window(gone)
+    }
+}
+
+impl From<Failure> for ScreenEvent {
+    fn from(failure: Failure) -> Self {
+        match failure {
+            Failure::Window(gone) => Self::WindowGone(gone),
+            failure => Self::Failed(failure.to_string()),
+        }
+    }
+}
+
 impl fmt::Display for Failure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
+        let message = match self {
+            Self::Window(gone) => return gone.fmt(f),
             Self::Permission => {
                 "Allow Screen & System Audio Recording for Speakeasy in System Settings › Privacy & Security. If it is already on, remove it with − and add it again, then start the Show again."
             },
@@ -88,7 +107,8 @@ impl fmt::Display for Failure {
             Self::Exposed => {
                 "Cannot keep Speakeasy's windows out of the Show. Start the Show again."
             },
-        })
+        };
+        f.write_str(message)
     }
 }
 
@@ -133,13 +153,20 @@ pub(crate) fn window_under_pointer(display: Display) -> Option<(Window, Part)> {
     ))
 }
 
-/// The part of `display` that `window` covers now; `None` once it is closed, minimized, hidden,
-/// or off the display.
-fn window_part(display: Display, window: Window) -> Option<Part> {
+/// The part of `display` that `window` covers now, or why it covers none: minimized, hidden, and
+/// on another Space all leave it off screen.
+fn window_part(display: Display, window: Window) -> Result<Part, WindowGone> {
     let described = windows(CGWindowListOption::OptionIncludingWindow, window.0)
         .into_iter()
-        .find(|described| described.number == window.0 && described.on_screen)?;
-    display.bounds.part_covered_by(described.bounds)
+        .find(|described| described.number == window.0)
+        .ok_or(WindowGone::Closed)?;
+    if !described.on_screen {
+        return Err(WindowGone::OffScreen);
+    }
+    display
+        .bounds
+        .part_covered_by(described.bounds)
+        .ok_or(WindowGone::OffScreen)
 }
 
 /// The windows Core Graphics lists for `options` relative to `window`, front to back.
@@ -218,14 +245,14 @@ pub(crate) fn capture(
             clippy::let_underscore_must_use,
             reason = "A closed lane means nobody is waiting for this capture"
         )]
-        let _ = events.try_send(ScreenEvent::Failed(Failure::Unstarted.to_string()));
+        let _ = events.try_send(Failure::Unstarted.into());
         return;
     };
     runtime.block_on(async {
         let failed = async {
             let Err(failure) = capture_stills(target, interval, longest_edge, events).await;
             // Unlike a frame, the failure waits for room: it is the capture's last word.
-            events.send(ScreenEvent::Failed(failure.to_string())).await
+            events.send(failure.into()).await
         };
         tokio::select! {
             _ = stopping.recv() => {},
@@ -246,15 +273,24 @@ async fn capture_stills(
     let source = answer(Source::fetch(display.id, longest_edge))
         .await
         .unwrap_or(Err(Failure::Stalled))?;
+    let followed = match target.region {
+        Region::Window(window, _) => Some(window),
+        Region::Whole | Region::Area(_) => None,
+    };
     let mut part = target.part();
     let mut last_frame = Instant::now();
     loop {
-        if let Region::Window(window, _) = target.region {
-            part = window_part(display, window).unwrap_or(part);
+        if let Some(window) = followed {
+            part = window_part(display, window)?;
         }
         // An unanswered request is a missed still, and a long enough run of misses is a stall.
         match answer(source.still(part)?).await.unwrap_or(Ok(None))? {
             Some(frame) => {
+                // A window gone while its still was taken has left its place to whatever is
+                // behind it, which the still may show.
+                if let Some(window) = followed {
+                    window_part(display, window)?;
+                }
                 last_frame = frame.at;
                 #[expect(
                     clippy::let_underscore_must_use,

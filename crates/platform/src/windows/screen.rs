@@ -7,7 +7,7 @@
 //! to capture again, so they still appear in the user's own screen sharing.
 //!
 //! A Show of part of the display reads only that part of each frame back, following a window's
-//! frame bounds from frame to frame.
+//! frame bounds from frame to frame until it closes or goes off screen.
 //!
 //! Every position is in physical pixels: the manifest makes Speakeasy per-monitor DPI aware, so the
 //! cursor, monitor bounds, and window placement share one coordinate space.
@@ -56,7 +56,7 @@ use windows_future::{AsyncStatus, IAsyncOperation};
 use windows_sys::Win32::{
     Foundation::{FALSE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
     Graphics::{
-        Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute},
+        Dwm::{DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute},
         Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint},
     },
     System::{
@@ -69,9 +69,10 @@ use windows_sys::Win32::{
         Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
         WindowsAndMessaging::{
             GA_ROOT, GWL_EXSTYLE, GetAncestor, GetClassNameW, GetCursorPos, GetSystemMetrics,
-            HWND_TOPMOST, IsIconic, IsWindow, SM_SWAPBUTTON, SW_HIDE, SW_SHOWNOACTIVATE,
-            SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, ShowWindow,
-            WM_NCCALCSIZE, WM_NCDESTROY, WS_EX_TRANSPARENT, WindowFromPoint,
+            HWND_TOPMOST, IsIconic, IsWindow, IsWindowVisible, SM_SWAPBUTTON, SW_HIDE,
+            SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+            SetWindowPos, ShowWindow, WM_NCCALCSIZE, WM_NCDESTROY, WS_EX_TRANSPARENT,
+            WindowFromPoint,
         },
     },
 };
@@ -84,7 +85,7 @@ use super::{BASE_DPI, is_key_down, is_own_window, modifiers, ok_or_last_error};
 use crate::{
     NativeWindow,
     screen::{
-        self, Frame, Part, PointerSample, Region, ScreenEvent, Target,
+        self, Frame, Part, PointerSample, Region, ScreenEvent, Target, WindowGone,
         geometry::{Bounds, part_of_box, pixel_box},
     },
 };
@@ -169,14 +170,14 @@ impl Window {
 }
 
 /// The top-level window under the pointer and the part of `display` it covers, unless it is the
-/// desktop, a taskbar, or Speakeasy's own.
+/// desktop, a taskbar, or Speakeasy's own, or capture could not follow it.
 pub(crate) fn window_under_pointer(display: Display) -> Option<(Window, Part)> {
     let window = top_level_at(pointer_location()?)?;
     if is_own_window(window) || SHELL_CLASSES.contains(&class_name(window).as_str()) {
         return None;
     }
     let window = Window(window as isize);
-    Some((window, window_part(display, window)?))
+    Some((window, window_part(display, window).ok()?))
 }
 
 /// The top-level window at `point` on the desktop, if any.
@@ -202,16 +203,46 @@ fn class_name(window: HWND) -> String {
 }
 
 /// The part of `display` that `window` covers now, by its visible frame without the resize
-/// border; `None` once it is closed, minimized, or off the display.
-fn window_part(display: Display, window: Window) -> Option<Part> {
+/// border, or why it covers none.
+fn window_part(display: Display, window: Window) -> Result<Part, WindowGone> {
     let window = window.handle();
-    // SAFETY: both calls take the handle by value and tolerate a stale one.
-    let placed = unsafe { IsWindow(window) != FALSE && IsIconic(window) == FALSE };
-    if !placed {
-        return None;
+    // SAFETY: each call takes the handle by value and tolerates a stale one.
+    let (exists, shown) = unsafe {
+        (
+            IsWindow(window) != FALSE,
+            IsWindowVisible(window) != FALSE && IsIconic(window) == FALSE,
+        )
+    };
+    if !exists {
+        return Err(WindowGone::Closed);
     }
-    let frame = frame_bounds(window)?;
-    display.bounds().part_covered_by(Bounds::from(frame))
+    if !shown || is_cloaked(window) {
+        return Err(WindowGone::OffScreen);
+    }
+    let frame = frame_bounds(window).ok_or(WindowGone::Closed)?;
+    display
+        .bounds()
+        .part_covered_by(Bounds::from(frame))
+        .ok_or(WindowGone::OffScreen)
+}
+
+/// Whether the compositor keeps `window` off screen while it still counts as visible, as it does
+/// a window on another virtual desktop.
+fn is_cloaked(window: HWND) -> bool {
+    let mut cloaked = 0_u32;
+    let Ok(size) = u32::try_from(size_of_val(&cloaked)) else {
+        return false;
+    };
+    // SAFETY: the reason lands in a live local of the size given; a stale handle fails the call.
+    let read = unsafe {
+        DwmGetWindowAttribute(
+            window,
+            DWMWA_CLOAKED.cast_unsigned(),
+            (&raw mut cloaked).cast(),
+            size,
+        )
+    };
+    read >= 0 && cloaked != 0
 }
 
 /// The visible frame of `window` on the desktop, without its resize border; `None` once it is
@@ -309,7 +340,7 @@ pub(crate) fn capture(
             clippy::let_underscore_must_use,
             reason = "A closed lane means nobody is left to tell"
         )]
-        let _ = events.force_send(ScreenEvent::Failed(failure.to_string()));
+        let _ = events.force_send(failure.into());
     }
 }
 
@@ -528,7 +559,7 @@ impl Capture {
         let surface: IDirect3DDxgiInterfaceAccess = frame.Surface()?.cast()?;
         // SAFETY: the frame's surface is a live texture on this capture's device.
         let texture: ID3D11Texture2D = unsafe { surface.GetInterface()? };
-        let crop = pixel_box(self.follow(), self.content);
+        let crop = pixel_box(self.follow()?, self.content);
         let source = crop_size(crop);
         if source != self.readback.source() {
             self.readback = Readback::new(&self.device, source, self.longest_edge)?;
@@ -545,15 +576,14 @@ impl Capture {
         }))
     }
 
-    /// The part of the display to read: a window's place now, or its last place while it is
-    /// minimized, closed, or off the display.
-    fn follow(&mut self) -> Part {
-        if let Some(window) = self.followed
-            && let Some(part) = window_part(self.display, window)
-        {
-            self.part = part;
+    /// The part of the display to read: a window's place now, measured after Windows composed
+    /// the frame. A window gone by then has left its place to whatever is behind it, which the
+    /// frame would show.
+    fn follow(&mut self) -> Result<Part, WindowGone> {
+        if let Some(window) = self.followed {
+            self.part = window_part(self.display, window)?;
         }
-        self.part
+        Ok(self.part)
     }
 }
 
@@ -649,6 +679,8 @@ fn join_lasting_apartment() -> windows::core::Result<()> {
 /// Why a capture ended early, worded for the person recording.
 #[derive(Debug)]
 enum Failure {
+    /// The recorded window can no longer be followed.
+    Window(WindowGone),
     /// Windows predates leaving windows out of capture.
     OldWindows,
     /// A Speakeasy window could not be left out of capture.
@@ -673,9 +705,25 @@ impl From<windows::core::Error> for Failure {
     }
 }
 
+impl From<WindowGone> for Failure {
+    fn from(gone: WindowGone) -> Self {
+        Self::Window(gone)
+    }
+}
+
+impl From<Failure> for ScreenEvent {
+    fn from(failure: Failure) -> Self {
+        match failure {
+            Failure::Window(gone) => Self::WindowGone(gone),
+            failure => Self::Failed(failure.to_string()),
+        }
+    }
+}
+
 impl fmt::Display for Failure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Window(gone) => gone.fmt(f),
             Self::OldWindows => f.write_str("Shows need Windows 10 version 2004 or later."),
             Self::Exposed => f.write_str(
                 "Cannot keep Speakeasy's windows out of the Show. Start the Show again.",

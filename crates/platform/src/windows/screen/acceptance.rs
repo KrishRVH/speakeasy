@@ -7,13 +7,13 @@ use std::{
     ptr::{null, null_mut},
 };
 
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use windows::Win32::Graphics::Direct3D11::D3D11_SUBRESOURCE_DATA;
 use windows_sys::{
     Win32::{
         Foundation::{HWND, LPARAM, LRESULT, TRUE, WPARAM},
         Graphics::{
-            Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute},
+            Dwm::{DWMWA_CLOAK, DwmSetWindowAttribute},
             Gdi::{
                 BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BeginPaint, ClientToScreen, CreateSolidBrush,
                 DIB_RGB_COLORS, EndPaint, EnumDisplayMonitors, HBRUSH, HDC,
@@ -29,8 +29,8 @@ use windows_sys::{
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWL_EXSTYLE,
                 GetClientRect, GetWindowLongW, GetWindowRect, IsWindowVisible, MSG,
-                NCCALCSIZE_PARAMS, PM_REMOVE, PeekMessageW, RegisterClassW, SWP_NOZORDER,
-                SetWindowDisplayAffinity, TranslateMessage, UnregisterClassW,
+                NCCALCSIZE_PARAMS, PM_REMOVE, PeekMessageW, RegisterClassW, SW_SHOWMINNOACTIVE,
+                SWP_NOZORDER, SetWindowDisplayAffinity, TranslateMessage, UnregisterClassW,
                 WDA_EXCLUDEFROMCAPTURE, WDA_MONITOR, WDA_NONE, WM_DPICHANGED, WM_NCCALCSIZE,
                 WM_PAINT, WNDCLASSW, WNDPROC, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
                 WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
@@ -78,6 +78,7 @@ const BACKDROP_CLASS: PCWSTR = w!("SpeakeasyCaptureBackdrop");
 const PATTERN_CLASS: PCWSTR = w!("SpeakeasyCapturePattern");
 const OVERLAY_CLASS: PCWSTR = w!("SpeakeasyCaptureOverlay");
 const RESCALING_CLASS: PCWSTR = w!("SpeakeasyRescalingOverlay");
+const SUBJECT_CLASS: PCWSTR = w!("SpeakeasyCaptureSubject");
 /// GPUI's client-area insets, left, top, right, and bottom, for a window without a title bar on
 /// Windows 11 at 96 DPI: a resize border's width on three sides and one pixel on top.
 const GPUI_INSETS: [i32; 4] = [8, 1, 8, 8];
@@ -211,6 +212,110 @@ fn a_window_or_area_capture_reads_back_only_its_part() -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+#[test]
+#[ignore = "Shows an owned window briefly and takes it off screen each way a Show can lose it; inspects no pixels"]
+fn a_window_capture_stops_once_its_window_closes_or_goes_off_screen() -> anyhow::Result<()> {
+    per_monitor_aware()?;
+    join_lasting_apartment()?;
+    let display = display_under_pointer()?;
+    // SAFETY: takes a color by value; the brush becomes the class's, which Windows deletes on
+    // unregistering.
+    let gray = unsafe { CreateSolidBrush(0x0060_6060) };
+    let _class = Class::register(SUBJECT_CLASS, Some(DefWindowProcW), gray)?;
+    let bounds = Layout::centered_on(display.native).pattern;
+    for (departure, gone) in [
+        (Departure::Hide, WindowGone::OffScreen),
+        (Departure::Minimize, WindowGone::OffScreen),
+        (Departure::Cloak, WindowGone::OffScreen),
+        (Departure::MoveAway, WindowGone::OffScreen),
+        (Departure::Close, WindowGone::Closed),
+    ] {
+        let window = Popup::create(
+            SUBJECT_CLASS,
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            bounds,
+        )?;
+        window.show();
+        dispatch_messages_for(COMPOSED);
+        let followed = Window(window.0 as isize);
+        let part = window_part(display.native, followed).map_err(|gone| anyhow!(gone))?;
+        let target = Target {
+            display,
+            region: Region::Window(followed, part),
+        };
+        let (_stop, stopping) = async_channel::bounded::<Infallible>(1);
+        let started = Instant::now();
+        let mut capture = Capture::start(target, INTERVAL, u32::MAX, &stopping)?;
+        read_next(&mut capture, started)?.context("No frame arrived")?;
+        // Any frame composed from here on may show the change, so none of them may be read.
+        let departing = Instant::now();
+        let _remaining = departure.take_off_screen(window)?;
+        let stopped = read_next(&mut capture, departing);
+        assert!(
+            matches!(stopped, Err(Failure::Window(reason)) if reason == gone),
+            "{departure:?} left capture at {stopped:?}"
+        );
+    }
+    Ok(())
+}
+
+/// A way a recorded window leaves the screen.
+#[derive(Clone, Copy, Debug)]
+enum Departure {
+    Hide,
+    Minimize,
+    /// As DWM keeps a window on another virtual desktop off screen.
+    Cloak,
+    MoveAway,
+    Close,
+}
+
+impl Departure {
+    /// Takes `window` off screen this way, returning it unless it closed.
+    fn take_off_screen(self, window: Popup) -> anyhow::Result<Option<Popup>> {
+        let hwnd = window.0;
+        match self {
+            // SAFETY: hides this thread's own live window.
+            Self::Hide => unsafe {
+                ShowWindow(hwnd, SW_HIDE);
+            },
+            // SAFETY: minimizes this thread's own live window without activating another.
+            Self::Minimize => unsafe {
+                ShowWindow(hwnd, SW_SHOWMINNOACTIVE);
+            },
+            Self::Cloak => {
+                let cloaked = TRUE;
+                // SAFETY: cloaks this process's own window, reading the flag from a live local of
+                // the size given.
+                HRESULT(unsafe {
+                    DwmSetWindowAttribute(
+                        hwnd,
+                        DWMWA_CLOAK.cast_unsigned(),
+                        (&raw const cloaked).cast(),
+                        u32::try_from(size_of_val(&cloaked))?,
+                    )
+                })
+                .ok()?;
+            },
+            // SAFETY: moves this thread's own window where minimized windows wait, off every
+            // display.
+            Self::MoveAway => ok_or_last_error(unsafe {
+                SetWindowPos(
+                    hwnd,
+                    null_mut(),
+                    -32_000,
+                    -32_000,
+                    0,
+                    0,
+                    SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                )
+            })?,
+            Self::Close => return Ok(None),
+        }
+        Ok(Some(window))
+    }
 }
 
 #[test]
@@ -461,16 +566,22 @@ fn unfiltered_frame(target: Target, longest_edge: u32) -> anyhow::Result<Frame> 
     let (_stop, stopping) = async_channel::bounded::<Infallible>(1);
     let started = Instant::now();
     let mut capture = Capture::start(target, INTERVAL, longest_edge, &stopping)?;
-    let deadline = started.checked_add(FIRST_FRAME).unwrap();
+    read_next(&mut capture, started)?.context("No frame arrived")
+}
+
+/// The first frame Windows composes from `since` on that `capture` reads back within
+/// [`FIRST_FRAME`], or what stopped it.
+fn read_next(capture: &mut Capture, since: Instant) -> Result<Option<Frame>, Failure> {
+    let deadline = Instant::now().checked_add(FIRST_FRAME).unwrap();
     while Instant::now() < deadline {
-        if capture.poll(started)?
+        if capture.poll(since)?
             && let Some(frame) = capture.read_pending()?
         {
-            return Ok(frame);
+            return Ok(Some(frame));
         }
         thread::sleep(POLL);
     }
-    bail!("No frame arrived")
+    Ok(None)
 }
 
 /// The next event to arrive before `until`.
@@ -487,6 +598,7 @@ fn next_event(events: &Receiver<ScreenEvent>, until: Instant) -> Option<ScreenEv
 fn frame_of(event: ScreenEvent) -> anyhow::Result<Frame> {
     match event {
         ScreenEvent::Frame(frame) => Ok(frame),
+        ScreenEvent::WindowGone(gone) => bail!(gone),
         ScreenEvent::Failed(message) => bail!(message),
     }
 }
@@ -730,23 +842,16 @@ impl Drop for Scene {
 /// Whether `window` is visible on this virtual desktop over `area`, other than the
 /// handwriting canvas.
 fn shows_over(window: HWND, area: RECT) -> bool {
-    let mut cloaked = 0_u32;
     let mut bounds = RECT::default();
-    // SAFETY: each call reads a window by handle into a live local of the size passed.
-    let (visible, cloak_read, measured) = unsafe {
+    // SAFETY: both calls read a window by handle, into a live local for the bounds.
+    let (visible, measured) = unsafe {
         (
             IsWindowVisible(window) != FALSE,
-            DwmGetWindowAttribute(
-                window,
-                DWMWA_CLOAKED.cast_unsigned(),
-                (&raw mut cloaked).cast(),
-                4,
-            ),
             GetWindowRect(window, &raw mut bounds) != FALSE,
         )
     };
     visible
-        && (cloak_read < 0 || cloaked == 0)
+        && !is_cloaked(window)
         && measured
         && !class_name(window).starts_with(HANDWRITING_CANVAS)
         && bounds.left < area.right
@@ -850,7 +955,6 @@ fn paint_scene(
     replies.try_send(Ok(overlay.0 as isize))?;
     let mut pattern = None;
     let deadline = Instant::now().checked_add(ON_SCREEN).unwrap();
-    let mut message = MSG::default();
     while !closing.is_closed() && Instant::now() < deadline {
         if pattern.is_none() && requests.try_recv().is_ok() {
             let window = Popup::create(PATTERN_CLASS, topmost, layout.pattern)?;
@@ -860,16 +964,31 @@ fn paint_scene(
             replies.try_send(Ok(window.0 as isize))?;
             pattern = Some(window);
         }
-        // SAFETY: messages come from this thread's queue and reach only its windows.
-        unsafe {
-            while PeekMessageW(&raw mut message, null_mut(), 0, 0, PM_REMOVE) != FALSE {
-                TranslateMessage(&raw const message);
-                DispatchMessageW(&raw const message);
-            }
-        }
+        dispatch_messages();
         thread::sleep(Duration::from_millis(5));
     }
     Ok(())
+}
+
+/// Delivers the messages waiting for this thread's windows.
+fn dispatch_messages() {
+    let mut message = MSG::default();
+    // SAFETY: messages come from this thread's queue and reach only its windows.
+    unsafe {
+        while PeekMessageW(&raw mut message, null_mut(), 0, 0, PM_REMOVE) != FALSE {
+            TranslateMessage(&raw const message);
+            DispatchMessageW(&raw const message);
+        }
+    }
+}
+
+/// Keeps delivering this thread's window messages for `duration`, so its windows paint.
+fn dispatch_messages_for(duration: Duration) {
+    let until = Instant::now().checked_add(duration).unwrap();
+    while Instant::now() < until {
+        dispatch_messages();
+        thread::sleep(Duration::from_millis(5));
+    }
 }
 
 /// A window class this thread registers and unregisters.

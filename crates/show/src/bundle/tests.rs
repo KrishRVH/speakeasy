@@ -1,4 +1,4 @@
-//! Pins `show.json`, notes a screen that stopped early in both files, keeps file contents out of
+//! Pins `show.json`, notes a recording that stopped early in both files, keeps file contents out of
 //! debug output, checks that the summary says how to read the Show with every path whole and set
 //! apart, and that contact sheets show every keyframe once and stop loading at a failed frame.
 
@@ -257,40 +257,60 @@ fn a_code_span_holds_any_path_whole() {
 }
 
 #[test]
-fn a_show_whose_screen_stopped_early_says_when_in_both_files() {
-    let recording = Recording {
-        duration: Moment::from_millis(42_000),
-        ending: Ending::ScreenStopped,
-        surface: Size {
-            width: 800.0,
-            height: 600.0,
-        },
-        ..Recording::default()
-    };
-    let samples = [Sample {
-        at: Moment::START,
-        signature: signature(128),
-    }];
-    let selection = select(&recording, &samples).unwrap();
-    let bundle = compose(
-        recording,
-        selection,
-        |_| Image::filled(160, 120, [90; 3]),
-        &typeface(),
-    )
-    .unwrap();
-    let (summary, files) = bundle.into_files(Path::new("show")).unwrap();
-    assert_eq!(
-        summary.lines().nth(1),
-        Some(
-            "The screen stopped recording at 0:42, before the user finished the Show; later steps \
-             are missing."
+fn a_show_whose_recording_stopped_early_says_why_and_when_in_both_files() {
+    for (ending, why, field) in [
+        (
+            Ending::ScreenStopped,
+            "The screen stopped recording",
+            "screenStopped",
         ),
-        "Right after the header"
-    );
-    let manifest = files.iter().find(|file| file.name == MANIFEST).unwrap();
-    let manifest: serde_json::Value = serde_json::from_slice(&manifest.contents).unwrap();
-    assert_eq!(manifest["ending"], "screenStopped");
+        (
+            Ending::WindowClosed,
+            "The recorded window closed",
+            "windowClosed",
+        ),
+        (
+            Ending::WindowOffScreen,
+            "The recorded window went off screen",
+            "windowOffScreen",
+        ),
+    ] {
+        let recording = Recording {
+            duration: Moment::from_millis(42_000),
+            ending,
+            surface: Size {
+                width: 800.0,
+                height: 600.0,
+            },
+            ..Recording::default()
+        };
+        let samples = [Sample {
+            at: Moment::START,
+            signature: signature(128),
+        }];
+        let selection = select(&recording, &samples).unwrap();
+        let bundle = compose(
+            recording,
+            selection,
+            |_| Image::filled(160, 120, [90; 3]),
+            &typeface(),
+        )
+        .unwrap();
+        let (summary, files) = bundle.into_files(Path::new("show")).unwrap();
+        assert_eq!(
+            summary.lines().nth(1),
+            Some(
+                format!(
+                    "{why} at 0:42, before the user finished the Show; later steps are missing."
+                )
+                .as_str()
+            ),
+            "Right after the header"
+        );
+        let manifest = files.iter().find(|file| file.name == MANIFEST).unwrap();
+        let manifest: serde_json::Value = serde_json::from_slice(&manifest.contents).unwrap();
+        assert_eq!(manifest["ending"], field);
+    }
 }
 
 #[test]

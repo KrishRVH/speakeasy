@@ -207,8 +207,29 @@ impl fmt::Debug for Frame {
 pub enum ScreenEvent {
     /// A new image of the display.
     Frame(Frame),
+    /// The recorded window can no longer be followed, so capture stopped; no frame shows what
+    /// took its place.
+    WindowGone(WindowGone),
     /// Capture stopped and cannot resume; the message explains what the user can do.
     Failed(String),
+}
+
+/// Why a recorded window can no longer be followed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowGone {
+    /// It closed, or can no longer be found.
+    Closed,
+    /// It was minimized or hidden, moved to another desktop, or moved wholly off the display.
+    OffScreen,
+}
+
+impl fmt::Display for WindowGone {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Closed => "The recorded window closed.",
+            Self::OffScreen => "The recorded window went off screen.",
+        })
+    }
 }
 
 /// A display that a Show records and its overlay covers.
@@ -260,11 +281,12 @@ impl ScreenCapture {
     /// Starts capturing `target`.
     ///
     /// Frames reach `events` at most once per `interval`, each halved in size until its long edge
-    /// fits `longest_edge`. A window's frames follow it as it moves or resizes, and keep its last
-    /// place while it is minimized, closed, or off the display. No frame waits behind a full lane:
-    /// Windows holds back its newest frame until there is room or a newer one replaces it, and
-    /// macOS drops it. No frame shows a Speakeasy window, including one opened while capturing;
-    /// they still appear in the user's own screen sharing before and after.
+    /// fits `longest_edge`. A window's frames follow it as it moves or resizes; once it closes or
+    /// goes off screen, capture stops with [`ScreenEvent::WindowGone`] rather than show whatever
+    /// took its place. No frame waits behind a full lane: Windows holds back its newest frame
+    /// until there is room or a newer one replaces it, and macOS drops it. No frame shows a
+    /// Speakeasy window, including one opened while capturing; they still appear in the user's own
+    /// screen sharing before and after.
     ///
     /// # Errors
     /// Fails when the thread cannot start. Failures after starting arrive as

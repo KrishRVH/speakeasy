@@ -12,7 +12,7 @@ use anyhow::anyhow;
 use async_channel::{Receiver, Sender};
 use speakeasy_platform::{
     Display, Frame, OwnedThread, Part, PointerMonitor, PointerSample, Scope, ScreenCapture,
-    ScreenEvent, Taps, Target,
+    ScreenEvent, Taps, Target, WindowGone,
 };
 use speakeasy_show::{
     Ending, Image, Journal, Mark, Moment, Point, Recording, SAMPLE_INTERVAL, Size, Span, Tracker,
@@ -256,8 +256,8 @@ impl<'a> Take<'a> {
     /// Records what `sources` send until finished, or from the start when `finished`, then stops
     /// them before returning the footage; `None` once cancelled. A Show finished before its first
     /// frame waits up to [`FIRST_FRAME_WAIT`] for one. The footage lasts until finishing was asked
-    /// for, the first frame such a wait received, or capture failed; stopping the sources adds
-    /// nothing.
+    /// for, the first frame such a wait received, or capture stopped on its own; stopping the
+    /// sources adds nothing.
     async fn run(
         mut self,
         finished: bool,
@@ -287,21 +287,31 @@ impl<'a> Take<'a> {
                 },
                 () = tokio::time::sleep_until(finished_by.unwrap_or_else(tokio::time::Instant::now)),
                     if finished_by.is_some() => break Some(Ok((runtime::now(), Ending::Finished))),
-                event = frames.recv() => match event {
-                    Ok(ScreenEvent::Frame(frame)) => {
-                        self.frame(frame);
-                        if finished_by.is_some() && !self.journal.is_empty() {
-                            break Some(Ok((runtime::now(), Ending::Finished)));
-                        }
-                    },
-                    // Frames already journaled stay sound, so capture failing partway ends the
-                    // take with them. The footage notes only that the screen stopped: the
-                    // failure's native text never reaches a saved file.
-                    Ok(ScreenEvent::Failed(_)) | Err(_) if !self.journal.is_empty() => {
-                        break Some(Ok((runtime::now(), Ending::ScreenStopped)));
-                    },
-                    Ok(ScreenEvent::Failed(message)) => break Some(Err(anyhow!(message))),
-                    Err(_) => break Some(Err(anyhow!(CAPTURE_STOPPED))),
+                event = frames.recv() => {
+                    let (ending, failure) = match event {
+                        Ok(ScreenEvent::Frame(frame)) => {
+                            self.frame(frame);
+                            if finished_by.is_some() && !self.journal.is_empty() {
+                                break Some(Ok((runtime::now(), Ending::Finished)));
+                            }
+                            continue;
+                        },
+                        Ok(ScreenEvent::WindowGone(gone)) => {
+                            (window_ending(gone), anyhow!("{gone} Start the Show again."))
+                        },
+                        Ok(ScreenEvent::Failed(message)) => {
+                            (Ending::ScreenStopped, anyhow!(message))
+                        },
+                        Err(_) => (Ending::ScreenStopped, anyhow!(CAPTURE_STOPPED)),
+                    };
+                    // Frames already journaled stay sound, so capture stopping partway ends the
+                    // take with them. The footage notes only why: a failure's native text never
+                    // reaches a saved file.
+                    break Some(if self.journal.is_empty() {
+                        Err(failure)
+                    } else {
+                        Ok((runtime::now(), ending))
+                    });
                 },
                 // Samples first, so a pin lands where the pointer is and sees the taps that asked
                 // for it.
@@ -389,6 +399,14 @@ impl<'a> Take<'a> {
             },
             journal: self.journal.sealed(),
         })
+    }
+}
+
+/// How a take ends once the window it records can no longer be followed.
+const fn window_ending(gone: WindowGone) -> Ending {
+    match gone {
+        WindowGone::Closed => Ending::WindowClosed,
+        WindowGone::OffScreen => Ending::WindowOffScreen,
     }
 }
 

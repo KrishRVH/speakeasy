@@ -30,6 +30,10 @@ use crate::{
 const SHOW_COPIED: &str = "Show copied. Paste it into your coding agent.";
 /// What a copied Show whose screen stopped recording early tells the user.
 const SHOW_SCREEN_STOPPED: &str = "Show copied, but the screen stopped recording early.";
+/// What a copied Show whose window closed while it recorded tells the user.
+const SHOW_WINDOW_CLOSED: &str = "Show copied, but the recorded window closed.";
+/// What a copied Show whose window went off screen while it recorded tells the user.
+const SHOW_WINDOW_OFF_SCREEN: &str = "Show copied, but the recorded window went off screen.";
 
 /// What the status shows while no session is active: the latest result or failure.
 enum Outcome {
@@ -718,6 +722,8 @@ impl<P: Ports> Owner<P> {
             Outcome::Copied(message) => message,
             Outcome::ShowCopied(Ending::Finished) => SHOW_COPIED,
             Outcome::ShowCopied(Ending::ScreenStopped) => SHOW_SCREEN_STOPPED,
+            Outcome::ShowCopied(Ending::WindowClosed) => SHOW_WINDOW_CLOSED,
+            Outcome::ShowCopied(Ending::WindowOffScreen) => SHOW_WINDOW_OFF_SCREEN,
             Outcome::Idle | Outcome::Done | Outcome::Empty | Outcome::Cancelled => {
                 self.notice.as_ref().map_or("", Notice::text)
             },

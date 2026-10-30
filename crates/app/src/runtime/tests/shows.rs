@@ -384,28 +384,37 @@ fn stopped_footage() -> Footage {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_screen_that_stops_partway_finishes_the_show_and_says_so() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
-    let (id, _, events) = start_show(&mut h).await?;
-    events
-        .send(ShowEvent::Finished(id, Ok(stopped_footage())))
-        .await?;
-    h.transcribe_next_as("before it stopped").await?;
-    let (published, narration) = receive(&h.published).await?;
-    assert_eq!(narration, Narration::Text("before it stopped".into()));
-    assert_eq!(published.recording, stopped_footage().recording);
-    h.phase(Phase::Copied).await?;
-    let snapshot = h.snapshot();
-    assert_eq!(
-        snapshot.ending,
-        Ending::ScreenStopped,
-        "The pill presents the notice"
-    );
-    assert_eq!(
-        snapshot.message,
-        "Show copied, but the screen stopped recording early."
-    );
-    h.close().await
+async fn a_screen_that_stops_partway_finishes_the_show_and_says_why() -> anyhow::Result<()> {
+    for (ending, message) in [
+        (
+            Ending::ScreenStopped,
+            "Show copied, but the screen stopped recording early.",
+        ),
+        (
+            Ending::WindowClosed,
+            "Show copied, but the recorded window closed.",
+        ),
+        (
+            Ending::WindowOffScreen,
+            "Show copied, but the recorded window went off screen.",
+        ),
+    ] {
+        let mut h = Harness::new()?;
+        let (id, _, events) = start_show(&mut h).await?;
+        let mut stopped = footage();
+        stopped.recording.ending = ending;
+        events.send(ShowEvent::Finished(id, Ok(stopped))).await?;
+        h.transcribe_next_as("before it stopped").await?;
+        let (published, narration) = receive(&h.published).await?;
+        assert_eq!(narration, Narration::Text("before it stopped".into()));
+        assert_eq!(published.recording.ending, ending);
+        h.phase(Phase::Copied).await?;
+        let snapshot = h.snapshot();
+        assert_eq!(snapshot.ending, ending, "The pill presents the notice");
+        assert_eq!(snapshot.message, message);
+        h.close().await?;
+    }
+    Ok(())
 }
 
 #[tokio::test(start_paused = true)]

@@ -41,7 +41,7 @@ non-activating and click-through.
 | Processing       | The lid partly closes; a lamp highlight sweeps the opening after 250 ms.                                           |
 | Submitted        | Closed lid with a lamp check for 350 ms, then collapse and fade.                                                   |
 | Show copied      | Closed lid with a lamp check and “Show copied” for 1.6 seconds, once the bundle is written and its summary copied. |
-| Screen stopped   | A muted notice of up to two lines saying the Show was copied but its screen stopped early, for six seconds.        |
+| Stopped early    | A muted notice of up to two lines saying the Show was copied but stopped early, and why, for six seconds.          |
 | Text copied      | A muted notice of up to two lines saying how to paste the copied text, for six seconds.                            |
 | No speech        | “No speech detected” on the closed lid for 1.2 seconds.                                                            |
 | Cancelled        | Quiet dismissal without a completion mark.                                                                         |
@@ -131,7 +131,9 @@ line stay in view below the scrolling controls.
 - During a Windows/macOS hold, S, W, or A turns the recording into a Show, hands-free and keeping
   the narration since the press; pressing the shortcut again finishes it on release. The pill table
   shows what the pill presents. S records the display under the pointer and W the window under it,
-  cropped from the display and followed as it moves; over the desktop, the taskbar, or a Speakeasy
+  cropped from the display and followed as it moves until it closes, is minimized or hidden, moves
+  to another desktop, or moves wholly off its display, which ends the Show with what it recorded
+  until then, and the pill and summary say why; over the desktop, the taskbar, or a Speakeasy
   window, W records the display. A shades that display until the user drags out an area of at least
   24 px each way; finishing first, or a shade that cannot appear, records the whole display. A thin
   red line outside a window or area marks it while it records, and no frame shows it.

@@ -28,16 +28,21 @@ pub struct Recording {
     pub narration: Narration,
 }
 
-/// How a Show's screen recording ended.
+/// How a Show's screen recording ended. Every way but [`Finished`](Self::Finished) stopped it at
+/// [`Recording::duration`], before the Show was finished, so any later steps are missing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Ending {
     /// The Show ran until it was finished, by the user or the recording limit.
     #[default]
     Finished,
-    /// Screen capture stopped on its own at [`Recording::duration`], before the Show was finished,
-    /// so any later steps are missing.
+    /// Screen capture stopped on its own.
     ScreenStopped,
+    /// The recorded window closed.
+    WindowClosed,
+    /// The recorded window was minimized or hidden, moved to another desktop, or moved off the
+    /// recorded display.
+    WindowOffScreen,
 }
 
 impl Ending {

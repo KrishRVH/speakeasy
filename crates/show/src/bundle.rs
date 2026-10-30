@@ -145,7 +145,7 @@ pub fn compose<E: From<Error> + Send>(
 /// The summary an agent reads first, naming files under `directory`, where the bundle will be
 /// written.
 ///
-/// A Show whose screen stopped recording early says when, right after the header. When there are
+/// A Show whose recording stopped early says why and when, right after the header. When there are
 /// keyframes, the next line tells the agent to open the images before acting, to trust the
 /// screen's spelling of a name over speech recognition's, and to cite frames as `#N` and marks by
 /// number. One line per keyframe gives its number and time, what the pointer or ink did there, and
@@ -181,11 +181,16 @@ impl fmt::Display for Summary<'_> {
             Count(keyframes.len(), "keyframe"),
             Code(directory.display())
         )?;
-        if recording.ending == Ending::ScreenStopped {
+        let stopped = match recording.ending {
+            Ending::Finished => None,
+            Ending::ScreenStopped => Some("The screen stopped recording"),
+            Ending::WindowClosed => Some("The recorded window closed"),
+            Ending::WindowOffScreen => Some("The recorded window went off screen"),
+        };
+        if let Some(stopped) = stopped {
             writeln!(
                 f,
-                "The screen stopped recording at {}, before the user finished the Show; later \
-                 steps are missing.",
+                "{stopped} at {}, before the user finished the Show; later steps are missing.",
                 recording.duration
             )?;
         }

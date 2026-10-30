@@ -42,7 +42,7 @@ pub use self::{
     process::ProcessGroup,
     screen::{
         Display, Frame, Part, PointerMonitor, PointerSample, Scope, ScreenCapture, ScreenEvent,
-        Target,
+        Target, WindowGone,
     },
 };
 

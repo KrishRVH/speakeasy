@@ -224,6 +224,54 @@ async fn a_capture_that_fails_or_stops_keeps_its_frames_marked_early_or_says_wha
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_window_that_closes_or_goes_off_screen_ends_the_take_with_its_frames_or_says_so()
+-> anyhow::Result<()> {
+    for (gone, ending, without_frames) in [
+        (
+            WindowGone::Closed,
+            Ending::WindowClosed,
+            "The recorded window closed. Start the Show again.",
+        ),
+        (
+            WindowGone::OffScreen,
+            Ending::WindowOffScreen,
+            "The recorded window went off screen. Start the Show again.",
+        ),
+    ] {
+        let (recorded, ran) = record(false, async |feed| {
+            feed.frame(0).await;
+            wait(900).await;
+            feed.frames
+                .send(ScreenEvent::WindowGone(gone))
+                .await
+                .unwrap();
+        })
+        .await;
+        let recording = recorded?
+            .context("Footage recorded before the window went")?
+            .recording;
+        assert_eq!(
+            (recording.duration, recording.ending),
+            (Moment::from_millis(900), ending)
+        );
+        assert_eq!(
+            ran,
+            Duration::from_millis(900) + TEARDOWN,
+            "No finish needed"
+        );
+        let (recorded, _) = record(false, async |feed| {
+            feed.frames
+                .send(ScreenEvent::WindowGone(gone))
+                .await
+                .unwrap();
+        })
+        .await;
+        assert_eq!(failure(recorded).as_deref(), Some(without_frames));
+    }
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_window_that_resizes_is_measured_at_its_latest_size() -> anyhow::Result<()> {
     let (recorded, _) = record(false, async |feed| {
         feed.frame(0).await;

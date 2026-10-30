@@ -149,10 +149,12 @@ module unless a test file is named.
   [screen/geometry.rs](../crates/platform/src/screen/geometry.rs),
   [windows/screen.rs](../crates/platform/src/windows/screen.rs) with
   [windows/screen/](../crates/platform/src/windows/screen), and
-  [macos/screen.rs](../crates/platform/src/macos/screen.rs) capture a display, a window as it moves,
-  or an area, and [show/overlay.rs](../crates/app/src/show/overlay.rs) shows ink, mark numbers, and
-  the area picker. Geometry, overlay timing, and the area drag run on every host; native capture is
-  opt-in, and window lookup and the picker's clicks need native acceptance.
+  [macos/screen.rs](../crates/platform/src/macos/screen.rs) capture a display, a window as it moves
+  until it closes or goes off screen, or an area, and
+  [show/overlay.rs](../crates/app/src/show/overlay.rs) shows ink, mark numbers, and the area picker.
+  Geometry, overlay timing, and the area drag run on every host; native capture is opt-in, and
+  window lookup and the picker's clicks need native acceptance. On Windows, an opt-in acceptance
+  test stops an owned window's capture as it hides, minimizes, cloaks, moves away, and closes.
 - **Scripts and packaging**: [scripts/](../scripts) and [packaging/](../packaging) profile, check,
   package, and launch the app, and [app/build.rs](../crates/app/build.rs) embeds the Windows
   resources. [tests/test_profiling.py](../tests/test_profiling.py) checks the Linux profiler, and
