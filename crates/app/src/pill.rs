@@ -442,9 +442,8 @@ impl Scene {
         }
         match self.phase {
             Phase::Error => Content::Error,
-            Phase::Notice => Content::Notice,
+            Phase::Notice | Phase::Unchosen => Content::Notice,
             Phase::Copied if !self.labels_copy() => Content::Notice,
-            Phase::Unchosen => Content::Notice,
             Phase::Starting
             | Phase::Recording
             | Phase::Stopping
