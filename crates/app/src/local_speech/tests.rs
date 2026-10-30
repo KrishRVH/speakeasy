@@ -96,33 +96,51 @@ fn malformed_replies_never_quote_engine_text() {
 }
 
 #[test]
-fn only_exits_that_prove_the_machine_cannot_run_the_engine_name_a_remedy() {
+fn exits_name_the_remedies_their_status_proves_and_only_startup_blames_arguments() {
     #[cfg(windows)]
     use std::os::windows::process::ExitStatusExt as _;
 
-    // Raw Unix statuses carry an exit code in their second byte, or the ending signal alone.
+    // Each status's remedy whenever the engine exits, then before it is ready. Raw Unix statuses
+    // carry an exit code in their second byte, or the ending signal alone.
     #[cfg(unix)]
     let exits = [
-        (SIGILL, Some("CPU instructions")),
-        (USAGE_ERROR << 8, None),
-        (1 << 8, None),
-        (9, None),
+        (SIGILL, Some("CPU instructions"), "CPU instructions"),
+        (USAGE_ERROR << 8, None, "server arguments"),
+        (1 << 8, None, "selected model"),
+        (9, None, "selected model"),
     ];
     #[cfg(windows)]
     let exits = [
-        (STATUS_ILLEGAL_INSTRUCTION, Some("CPU instructions")),
-        (STATUS_DLL_NOT_FOUND, Some("native libraries")),
-        (STATUS_ENTRYPOINT_NOT_FOUND, Some("native libraries")),
-        (STATUS_INVALID_IMAGE_FORMAT, Some("native libraries")),
-        (USAGE_ERROR.cast_unsigned(), None),
-        (1, None),
+        (
+            STATUS_ILLEGAL_INSTRUCTION,
+            Some("CPU instructions"),
+            "CPU instructions",
+        ),
+        (
+            STATUS_DLL_NOT_FOUND,
+            Some("native libraries"),
+            "native libraries",
+        ),
+        (
+            STATUS_ENTRYPOINT_NOT_FOUND,
+            Some("native libraries"),
+            "native libraries",
+        ),
+        (
+            STATUS_INVALID_IMAGE_FORMAT,
+            Some("native libraries"),
+            "native libraries",
+        ),
+        (USAGE_ERROR.cast_unsigned(), None, "server arguments"),
+        (1, None, "selected model"),
     ];
-    for (raw, cause) in exits {
+    for (raw, whenever, before_ready) in exits {
         let status = ExitStatus::from_raw(raw);
-        match (exit_remedy(status), cause) {
+        match (exit_remedy(status), whenever) {
             (Some(remedy), Some(cause)) => assert!(remedy.contains(cause), "{status}"),
             (remedy, cause) => assert_eq!(remedy, cause, "{status}"),
         }
+        assert!(startup_exit(status).contains(before_ready), "{status}");
     }
 }
 
