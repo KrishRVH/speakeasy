@@ -239,13 +239,14 @@ async fn choose(scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<Choice> {
 enum Picked {
     /// The part of the display dragged out.
     Area(Part),
-    /// The Show finished first, or the overlay could not appear to take a drag.
+    /// The Show finished first, a click chose no area, or the overlay could not appear to take a
+    /// drag.
     Unchosen,
     Cancelled,
 }
 
-/// Waits for the part of the display dragged out on `choice`, which the overlay closes when it
-/// cannot appear. Pins asked for before it returns mark nothing.
+/// Waits for the part of the display dragged out on `choice`, which the overlay closes for a click
+/// or when it cannot appear. Pins asked for before it returns mark nothing.
 async fn pick(choice: &Receiver<Part>, lanes: &Lanes<'_>) -> Picked {
     let picked = tokio::select! {
         biased;

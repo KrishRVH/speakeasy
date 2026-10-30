@@ -95,7 +95,8 @@ impl ShowEvent {
 pub(crate) enum Unchosen {
     /// W found no window it can record under the pointer.
     Window,
-    /// A finished, or its shade could not appear, before an area was dragged out.
+    /// A finished, a click on its shade declined, or the shade could not appear, before an area
+    /// was dragged out.
     Area,
 }
 

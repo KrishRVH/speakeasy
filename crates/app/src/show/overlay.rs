@@ -16,7 +16,7 @@ use gpui::{
     Size, Task, Timer, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind,
     WindowOptions, canvas, div, point, prelude::*, px, relative, white,
 };
-use speakeasy_platform::{Display, NativeWindow, Part, SHORTCUT};
+use speakeasy_platform::{Display, NativeWindow, Part};
 use speakeasy_show::{Ending, Mark, Point, Shape, ink};
 use tokio::sync::watch;
 
@@ -51,7 +51,7 @@ const SHADE: Rgba = Rgba {
     b: 0.0,
     a: 0.4,
 };
-/// The smallest area a drag chooses, in logical pixels each way; a shorter drag is a stray click.
+/// The smallest area a drag chooses, in logical pixels each way; a shorter drag is a click.
 const SMALLEST_AREA: f32 = 24.0;
 
 /// What the overlay shows, published by a Show's recorder or the demo's.
@@ -327,18 +327,17 @@ impl Overlay {
         cx.notify();
     }
 
-    /// Ends a drag at `to` on an overlay `size` across, sending the area it covers to the
-    /// recorder. A chosen area stays clear until recording takes over; a stray click starts over.
+    /// Ends a drag at `to` on an overlay `size` across, answering the recorder as [`answer`] does.
+    /// A chosen area stays clear until recording takes over.
     fn pick(&mut self, to: gpui::Point<Pixels>, size: Size<Pixels>, cx: &mut Context<'_, Self>) {
         let Some([from, _]) = self.drag else {
             return;
         };
-        let sent = dragged(from, to, size).is_some_and(|part| {
-            self.canvas
-                .borrow()
-                .chosen()
-                .is_some_and(|chosen| chosen.try_send(part).is_ok())
-        });
+        let sent = self
+            .canvas
+            .borrow()
+            .chosen()
+            .is_some_and(|chosen| answer(chosen, from, to, size));
         self.drag = sent.then_some([from, to]);
         cx.notify();
     }
@@ -487,6 +486,23 @@ fn on_overlay(part: Part, size: Size<Pixels>) -> Bounds<Pixels> {
     )
 }
 
+/// Answers the recorder waiting on `chosen` for a drag from `from` to `to` on an overlay `size`
+/// across: with the area it covers, or, for a click, by closing the lane, which ends the Show with
+/// no area chosen. Returns whether an area went.
+fn answer(
+    chosen: &Sender<Part>,
+    from: gpui::Point<Pixels>,
+    to: gpui::Point<Pixels>,
+    size: Size<Pixels>,
+) -> bool {
+    if let Some(part) = dragged(from, to, size) {
+        chosen.try_send(part).is_ok()
+    } else {
+        chosen.close();
+        false
+    }
+}
+
 /// The part of the display a drag from `from` to `to` covers on an overlay `size` across, or
 /// `None` for a drag too short to mean an area.
 fn dragged(from: gpui::Point<Pixels>, to: gpui::Point<Pixels>, size: Size<Pixels>) -> Option<Part> {
@@ -525,9 +541,7 @@ fn hint() -> Div {
                 .bg(Rgba { a: 0.75, ..SHADE })
                 .text_color(white())
                 .text_size(px(15.0))
-                .child(format!(
-                    "Drag over the area to record · Hold {SHORTCUT} and press Esc to cancel"
-                )),
+                .child("Drag over the area to record · Click to cancel"),
         )
 }
 
@@ -1015,5 +1029,19 @@ mod tests {
         );
         assert_eq!(dragged(at(100.0, 100.0), at(110.0, 300.0), size), None);
         assert_eq!(dragged(at(100.0, 100.0), at(100.0, 100.0), size), None);
+    }
+
+    #[test]
+    fn a_click_instead_of_a_drag_stops_waiting_for_an_area() {
+        let size = gpui::size(px(1_000.0), px(500.0));
+        let at = |x, y| point(px(x), px(y));
+        let (chosen, choice) = async_channel::bounded(1);
+        assert!(answer(&chosen, at(100.0, 100.0), at(300.0, 200.0), size));
+        assert!(choice.try_recv().is_ok(), "A drag sent no area");
+        assert!(!answer(&chosen, at(100.0, 100.0), at(100.0, 100.0), size));
+        assert!(
+            choice.is_closed(),
+            "A click left the Show waiting for an area"
+        );
     }
 }

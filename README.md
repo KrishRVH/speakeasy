@@ -73,19 +73,19 @@ word said over one still counts. Turn them off with **Play sounds** in Settings.
 
 A Show is a narrated screen recording a coding agent can read. While holding the shortcut, press
 <kbd>S</kbd> to record the display under the pointer, <kbd>W</kbd> for the window under the pointer,
-followed as it moves, or <kbd>A</kbd> to drag out an area of the display. Speakeasy records it along
-with your voice, keeping what you said since you pressed the shortcut, and a thin red line marks the
-window or area while it records. The pill shows a red screen mark and **Hold Shift to draw**, then
-the elapsed time. Release the shortcut and keep talking. To draw circles and arrows, hold
-<kbd>Shift</kbd> and move the pointer without clicking; double-tap <kbd>Shift</kbd> to drop a pin
-where the pointer is. Each mark and pin is numbered ① ② ③ beside it, on screen and in the bundle, so
-you and the agent can refer to it by number. The ink fades as you go. Click through your app as
-usual, then press and release the shortcut to finish. Without the shortcut, for example on a Mac
-keyboard with no Fn key, choose **Show screen** or **Show area…** in the tray to start a Show and
-**Finish Show** to end it. Escape alone stays with your app: to cancel, hold the shortcut and press
-<kbd>Escape</kbd>, or choose **Cancel Show** in the tray. Pressing another shortcut while you hold
-Speakeasy's, locking the screen, or sleeping finishes the Show rather than discarding it. Once you
-finish, the Show is saved even if you press Escape.
+followed as it moves, or <kbd>A</kbd> to drag out an area of the display; a click there instead
+cancels. Speakeasy records it along with your voice, keeping what you said since you pressed the
+shortcut, and a thin red line marks the window or area while it records. The pill shows a red screen
+mark and **Hold Shift to draw**, then the elapsed time. Release the shortcut and keep talking. To
+draw circles and arrows, hold <kbd>Shift</kbd> and move the pointer without clicking; double-tap
+<kbd>Shift</kbd> to drop a pin where the pointer is. Each mark and pin is numbered ① ② ③ beside it,
+on screen and in the bundle, so you and the agent can refer to it by number. The ink fades as you
+go. Click through your app as usual, then press and release the shortcut to finish. Without the
+shortcut, for example on a Mac keyboard with no Fn key, choose **Show screen** or **Show area…** in
+the tray to start a Show and **Finish Show** to end it. Escape alone stays with your app: to cancel,
+hold the shortcut and press <kbd>Escape</kbd>, or choose **Cancel Show** in the tray. Pressing
+another shortcut while you hold Speakeasy's, locking the screen, or sleeping finishes the Show
+rather than discarding it. Once you finish, the Show is saved even if you press Escape.
 
 In this example, a Show reports bugs in a made-up settings app, and `speakeasy show demo` writes the
 same bundle.

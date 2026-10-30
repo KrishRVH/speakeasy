@@ -152,10 +152,10 @@ line stay in view below the scrolling controls.
   an area of at least 24 px each way. A thin red line outside a window or area marks it while it
   records, and no frame shows it.
 - A Show never records more than it names. W over no window it can record, such as the desktop, the
-  taskbar, or a Speakeasy window, and A finished before an area is dragged out, or whose shade
-  cannot appear, cancel the Show, narration and all, and say why; nothing is pasted or saved. A
-  recorded window that closes, is minimized or hidden, moves to another desktop, or moves wholly off
-  its display ends the Show with what it recorded until then, and the pill and summary say why.
+  taskbar, or a Speakeasy window, and A finished or clicked before an area is dragged out, or whose
+  shade cannot appear, cancel the Show, narration and all, and say why; nothing is pasted or saved.
+  A recorded window that closes, is minimized or hidden, moves to another desktop, or moves wholly
+  off its display ends the Show with what it recorded until then, and the pill and summary say why.
 - Shift draws ink, alone or while the shortcut is still held; the ink holds briefly after the pen
   lifts, then fades, and clicks pass through to the apps underneath. Two taps of Shift alone, each
   released within 300 ms and the second pressed within 400 ms of the first's release, drop a pin at
