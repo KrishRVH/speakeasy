@@ -16,7 +16,7 @@ const WORD_REACH: Duration = Duration::from_millis(700);
 /// A clause left unfinished stays in progress through a pause until the next word, up to this long
 /// past its last word's start: people stop mid-sentence to draw what they mean, then go on.
 const HESITATION: Duration = Duration::from_secs(4);
-/// An anchor in silence takes the clause that begins up to this long after it: people mark or
+/// An anchor in silence may take a clause beginning up to this long after it: people mark or
 /// click something just before saying what it is, and removing a filler such as "um" leaves
 /// silence where the clause began.
 const SPEECH_LAG: Duration = Duration::from_secs(1);
@@ -29,8 +29,12 @@ const COMMA_CLAUSE_WORDS: usize = 3;
 /// The words said for each keyframe, given each keyframe's anchor in keyframe order: the moment
 /// its story begins, such as when its ink or action began or its cue was spoken.
 ///
-/// Each keyframe's text runs from the start of the clause in progress at its anchor until the
-/// next keyframe's text starts, so the narration is partitioned in order with nothing repeated or
+/// A keyframe's clause is the one in progress at its anchor or, for an anchor in the silence just
+/// before speech, the clause about to begin, unless the next anchor lies nearer that clause's
+/// start: a click just before speaking leaves the words to ink drawn as they begin. A keyframe's
+/// text starts where its clause began or, once an earlier keyframe's text holds that, at its
+/// anchor, and always after the previous keyframe's text starts. Each text runs until the next
+/// keyframe's text starts, so the narration is partitioned in order with nothing repeated or
 /// dropped; punctuation the recognizer split from a word stays with that word. Narration before
 /// the first keyframe belongs to it. Each text is trimmed, and a keyframe with nothing said gets
 /// `None`.
@@ -99,17 +103,15 @@ fn clauses(words: &[&Word]) -> Vec<Span> {
     clauses
 }
 
-/// Where each keyframe's text starts: the start of the clause holding its anchor, or else of the
-/// clause beginning within [`SPEECH_LAG`] after it. When two keyframes fall in one clause, the
-/// later one takes the words from its own moment.
+/// Where each keyframe's text starts, by the rules [`align`] gives.
 fn text_starts(anchors: &[Moment], clauses: &[Span]) -> Vec<Moment> {
     let mut starts: Vec<Moment> = Vec::with_capacity(anchors.len());
-    for &anchor in anchors {
-        let lag = Span::new(anchor, anchor.saturating_add(SPEECH_LAG));
+    let mut anchors = anchors.iter().copied().peekable();
+    while let Some(anchor) = anchors.next() {
         let mut start = clauses
             .iter()
             .find(|clause| clause.contains(anchor))
-            .or_else(|| clauses.iter().find(|clause| lag.contains(clause.start())))
+            .or_else(|| about_to_begin(clauses, anchor, anchors.peek().copied()))
             .map_or(anchor, |clause| clause.start());
         if let Some(&previous) = starts.last()
             && start <= previous
@@ -119,6 +121,18 @@ fn text_starts(anchors: &[Moment], clauses: &[Span]) -> Vec<Moment> {
         starts.push(start);
     }
     starts
+}
+
+/// The clause beginning up to [`SPEECH_LAG`] after `anchor`, which lies in silence, unless the
+/// `next` anchor lies nearer that clause's start.
+fn about_to_begin(clauses: &[Span], anchor: Moment, next: Option<Moment>) -> Option<&Span> {
+    clauses
+        .iter()
+        .find(|clause| clause.start() > anchor)
+        .filter(|clause| {
+            let lead = clause.start().since(anchor);
+            lead <= SPEECH_LAG && next.is_none_or(|next| next.distance(clause.start()) >= lead)
+        })
 }
 
 fn ends_clause(text: &str, clause_words: usize) -> bool {

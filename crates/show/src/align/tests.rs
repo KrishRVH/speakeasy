@@ -194,6 +194,20 @@ fn ink_drawn_long_before_speaking_leaves_the_words_to_ink_drawn_while_saying_the
 }
 
 #[test]
+fn a_click_just_before_speaking_leaves_the_words_to_ink_drawn_nearer_their_start() {
+    // A click 0.8 s before speech and ink 0.3 s into it; then a click 0.2 s before and ink 0.35 s
+    // in.
+    let said = words(&[
+        (2_000, "This"),
+        (2_200, "dialog"),
+        (2_400, "is"),
+        (2_600, "wrong."),
+    ]);
+    assert_eq!(texts(&[1_200, 2_300], &said), ["", "This dialog is wrong."]);
+    assert_eq!(texts(&[1_800, 2_350], &said), ["This dialog", "is wrong."]);
+}
+
+#[test]
 fn a_sentence_left_hanging_is_over_once_the_silence_runs_long() {
     let said = words(&[
         (0, "That's"),
