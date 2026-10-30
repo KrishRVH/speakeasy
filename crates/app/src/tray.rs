@@ -38,7 +38,7 @@ impl TrayState {
             theme: services.config.theme,
             menu: dictation_menu(
                 services.service_state(),
-                activity(snapshot.phase),
+                activity(snapshot),
                 snapshot.desktop_ready,
                 !services.mode.is_demo(),
             ),
@@ -69,14 +69,30 @@ fn dictation_menu(
         toggle: TrayItem {
             label: match activity {
                 Activity::Dictating => "Finish dictation",
-                Activity::Idle | Activity::Finishing => "Start dictation",
+                Activity::Showing => "Finish Show",
+                Activity::Idle | Activity::Finishing | Activity::Saving => "Start dictation",
             },
             // The owner ignores Toggle until desktop input is ready.
-            enabled: interactive && running && desktop_ready && activity != Activity::Finishing,
+            enabled: interactive
+                && running
+                && desktop_ready
+                && matches!(
+                    activity,
+                    Activity::Idle | Activity::Dictating | Activity::Showing
+                ),
         },
         cancel: TrayItem {
-            label: "Cancel dictation",
-            enabled: interactive && running && activity != Activity::Idle,
+            label: match activity {
+                Activity::Showing | Activity::Saving => "Cancel Show",
+                Activity::Idle | Activity::Dictating | Activity::Finishing => "Cancel dictation",
+            },
+            // The owner keeps a Show being saved, whatever cancels it.
+            enabled: interactive
+                && running
+                && matches!(
+                    activity,
+                    Activity::Dictating | Activity::Showing | Activity::Finishing
+                ),
         },
     }
 }
@@ -145,20 +161,29 @@ enum Activity {
     Idle,
     /// Capture is starting or recording.
     Dictating,
+    /// A Show is starting or recording.
+    Showing,
     /// Capture is ending or speech is being transcribed.
     Finishing,
+    /// A finished Show is being saved.
+    Saving,
 }
 
-fn activity(phase: Phase) -> Activity {
-    match phase {
-        Phase::Starting | Phase::Recording => Activity::Dictating,
-        Phase::Stopping | Phase::Processing => Activity::Finishing,
-        Phase::Idle
-        | Phase::Done
-        | Phase::Copied
-        | Phase::Empty
-        | Phase::Cancelled
-        | Phase::Error => Activity::Idle,
+fn activity(snapshot: &Snapshot) -> Activity {
+    match (snapshot.phase, snapshot.show) {
+        (Phase::Starting | Phase::Recording, false) => Activity::Dictating,
+        (Phase::Starting | Phase::Recording, true) => Activity::Showing,
+        (Phase::Stopping | Phase::Processing, false) => Activity::Finishing,
+        (Phase::Stopping | Phase::Processing, true) => Activity::Saving,
+        (
+            Phase::Idle
+            | Phase::Done
+            | Phase::Copied
+            | Phase::Empty
+            | Phase::Cancelled
+            | Phase::Error,
+            _,
+        ) => Activity::Idle,
     }
 }
 
@@ -168,7 +193,7 @@ mod tests {
 
     #[test]
     fn dictation_entries_are_enabled_only_while_their_command_can_act() {
-        use Activity::{Dictating, Finishing, Idle};
+        use Activity::{Dictating, Finishing, Idle, Saving, Showing};
         use ServiceState::{NotSetUp, Paused, Pausing, Quitting, Running};
         // Service, activity, desktop ready, interactive: whether Pause, Toggle, and Cancel act.
         let table = [
@@ -176,6 +201,8 @@ mod tests {
             (Running, Idle, false, true, [true, false, false]),
             (Running, Dictating, true, true, [true, true, true]),
             (Running, Finishing, true, true, [true, false, true]),
+            (Running, Showing, true, true, [true, true, true]),
+            (Running, Saving, true, true, [true, false, false]),
             (Pausing, Dictating, true, true, [false, false, false]),
             (Quitting, Idle, true, true, [false, false, false]),
             (Paused, Idle, true, true, [true, false, false]),
@@ -193,6 +220,46 @@ mod tests {
                 [pause.enabled, toggle.enabled, cancel.enabled],
                 expected,
                 "{service:?}, {activity:?}, desktop ready {desktop_ready}, interactive {interactive}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_show_names_itself_in_the_finish_and_cancel_entries() {
+        let snapshot = |phase, show| Snapshot {
+            phase,
+            show,
+            ..Snapshot::default()
+        };
+        // Phase, whether the latest session is a Show: the Toggle and Cancel labels.
+        let table = [
+            (
+                Phase::Recording,
+                false,
+                ["Finish dictation", "Cancel dictation"],
+            ),
+            (
+                Phase::Processing,
+                false,
+                ["Start dictation", "Cancel dictation"],
+            ),
+            (Phase::Starting, true, ["Finish Show", "Cancel Show"]),
+            (Phase::Recording, true, ["Finish Show", "Cancel Show"]),
+            (Phase::Stopping, true, ["Start dictation", "Cancel Show"]),
+            (Phase::Processing, true, ["Start dictation", "Cancel Show"]),
+            (Phase::Copied, true, ["Start dictation", "Cancel dictation"]),
+        ];
+        for (phase, show, expected) in table {
+            let TrayMenu { toggle, cancel, .. } = dictation_menu(
+                ServiceState::Running,
+                activity(&snapshot(phase, show)),
+                true,
+                true,
+            );
+            assert_eq!(
+                [toggle.label, cancel.label],
+                expected,
+                "{phase:?}, Show {show}"
             );
         }
     }

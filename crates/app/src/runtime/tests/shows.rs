@@ -107,28 +107,97 @@ async fn cancelling_a_show_frees_the_screen_for_the_next() -> anyhow::Result<()>
 }
 
 #[tokio::test(start_paused = true)]
-async fn cancelling_while_publishing_leaves_no_trace() -> anyhow::Result<()> {
+async fn escape_alone_leaves_a_hands_free_show_recording_and_publishable() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    start_show(&mut h).await?;
+    h.input(Input::Release);
+    h.input(Input::Escape);
+    assert!(
+        still_pending(h.phase(Phase::Cancelled)).await,
+        "Escape alone cancelled a hands-free Show"
+    );
+    h.input(Input::Press);
+    h.input(Input::Release);
+    h.transcribe_next_as("still here").await?;
+    let (_, narration) = receive(&h.published).await?;
+    assert_eq!(narration, Narration::Text("still here".into()));
+    h.phase(Phase::Copied).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn escape_cancels_a_show_while_the_shortcut_is_held() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    start_show(&mut h).await?;
+    h.input(Input::Escape);
+    h.phase(Phase::Cancelled).await?;
+    h.input(Input::Release);
+    start_show(&mut h).await?;
+    h.input(Input::Release);
+    h.input(Input::Press);
+    h.input(Input::Escape);
+    h.phase(Phase::Cancelled).await?;
+    h.input(Input::Release);
+    assert!(
+        still_pending(h.jobs.recv()).await,
+        "Releasing the shortcut finished a cancelled Show"
+    );
+    assert!(h.published.try_recv().is_err());
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_recording_escape_revoked_before_it_became_a_show_stays_dictation_and_cancels()
+-> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    receive(&h.captures).await?;
+    tokio::time::advance(Duration::from_secs(1)).await;
+    // Delivered back to back, so Escape revokes the recording before the owner sees S.
+    for input in [Input::Show(Scope::Screen), Input::Release, Input::Escape] {
+        h.input(input);
+    }
+    h.phase(Phase::Cancelled).await?;
+    assert!(
+        h.shows.try_recv().is_err(),
+        "A revoked recording opened the screen"
+    );
+    assert!(!h.snapshot().show);
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_show_being_saved_survives_escape_the_tray_and_interruptions() -> anyhow::Result<()> {
     let (publication, publishing) = gate(1);
     let mut h = Harness::with_ports(Config::default(), |ports| {
         ports.publication = Some(publication);
     })?;
     start_show(&mut h).await?;
     finish_show(&h);
-    h.transcribe_next_as("this broke").await?;
+    let (_, reply) = receive(&h.jobs).await?;
+    for input in [Input::Escape, Input::Cancel, Input::Interrupt] {
+        h.input(input);
+    }
+    answer(reply, "this broke")?;
     publishing.reached().await?;
-    h.input(Input::Cancel);
-    h.phase(Phase::Cancelled).await?;
-    h.runtime.request_stop();
+    for input in [
+        Input::Press,
+        Input::Escape,
+        Input::Release,
+        Input::Cancel,
+        Input::Interrupt,
+    ] {
+        h.input(input);
+    }
     assert!(
-        still_pending(h.exited()).await,
-        "Shutdown left the cancelled publication running"
+        still_pending(h.phase(Phase::Cancelled)).await,
+        "A Show being saved was discarded"
     );
     publishing.release().await?;
-    timeout(PATIENCE, h.exited()).await?;
-    assert!(
-        h.published.try_recv().is_err(),
-        "A cancelled Show was published"
-    );
+    let (_, narration) = receive(&h.published).await?;
+    assert_eq!(narration, Narration::Text("this broke".into()));
+    h.phase(Phase::Copied).await?;
     h.close().await
 }
 
@@ -340,23 +409,28 @@ async fn a_screen_that_stops_partway_finishes_the_show_and_says_so() -> anyhow::
 }
 
 #[tokio::test(start_paused = true)]
-async fn cancelling_a_show_whose_screen_stopped_publishes_nothing() -> anyhow::Result<()> {
+async fn new_settings_discard_a_show_whose_screen_stopped_while_it_is_saved() -> anyhow::Result<()>
+{
     let mut h = Harness::new()?;
     let (id, _, events) = start_show(&mut h).await?;
     events
         .send(ShowEvent::Finished(id, Ok(stopped_footage())))
         .await?;
     let (_, mut reply) = receive(&h.jobs).await?;
-    h.input(Input::Cancel);
+    let config = Config {
+        remove_fillers: !h.runtime.configuration.borrow().remove_fillers,
+        ..h.runtime.configuration.borrow().clone()
+    };
+    h.runtime.configure(ValidConfig::assume(config));
     h.phase(Phase::Cancelled).await?;
     timeout(PATIENCE, reply.closed()).await?;
     assert!(
         answer(reply, "too late").is_err(),
-        "The cancelled Show's transcription stayed alive"
+        "The discarded Show's transcription stayed alive"
     );
     assert!(
         still_pending(h.published.recv()).await,
-        "A cancelled Show was published"
+        "A discarded Show was published"
     );
     h.close().await
 }

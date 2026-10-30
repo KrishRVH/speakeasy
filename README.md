@@ -31,7 +31,7 @@ slot on screen while you speak, and keeps every word on your machine.
 | ------------------------------------------------ | ----------------------------------------------------------- | ----------------------------------------------------------- |
 | Dictate while held; release to type              | <kbd>Ctrl</kbd> + <kbd>Win</kbd>                            | <kbd>Fn</kbd>                                               |
 | Hands-free; press the shortcut again to finish   | <kbd>Ctrl</kbd> + <kbd>Win</kbd> + <kbd>Space</kbd>         | <kbd>Fn</kbd> + <kbd>Space</kbd>                            |
-| Cancel; the key still reaches your app           | <kbd>Escape</kbd>                                           | <kbd>Escape</kbd>                                           |
+| Cancel dictation; the key still reaches your app | <kbd>Escape</kbd>                                           | <kbd>Escape</kbd>                                           |
 | Show the screen, a window, or an area; see below | <kbd>S</kbd>, <kbd>W</kbd>, or <kbd>A</kbd> during the hold | <kbd>S</kbd>, <kbd>W</kbd>, or <kbd>A</kbd> during the hold |
 
 The shortcuts match Wispr Flow's defaults, and double-tapping the shortcut also starts hands-free.
@@ -80,7 +80,9 @@ the elapsed time. Release the shortcut and keep talking. To draw circles and arr
 <kbd>Shift</kbd> and move the pointer without clicking; double-tap <kbd>Shift</kbd> to drop a pin
 where the pointer is. Each mark and pin is numbered ① ② ③ beside it, on screen and in the bundle, so
 you and the agent can refer to it by number. The ink fades as you go. Click through your app as
-usual, then press and release the shortcut to finish.
+usual, then press and release the shortcut to finish. Escape alone stays with your app: to cancel,
+hold the shortcut and press <kbd>Escape</kbd>, or choose **Cancel Show** in the tray. Once you
+finish, the Show is saved even if you press Escape.
 
 In this example, a Show reports bugs in a made-up settings app, and `speakeasy show demo` writes the
 same bundle.

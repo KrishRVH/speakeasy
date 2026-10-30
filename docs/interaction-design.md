@@ -110,10 +110,11 @@ The tray shows the Grille mark with its slot lit in the theme's lamp color and i
 Recording turns the slot red; busy, paused, and attention add a cut-jewel badge. macOS renders a
 template icon, so recording also adds a diamond badge and every state differs by shape. On Windows
 and Linux a faint keyline keeps the lamp color legible on light taskbars. The menu shows current
-status and engine, Pause/Resume, Start/Finish, Cancel, Settings, and Quit; before any engine is set
-up, it says so and Resume waits for setup. It never animates while idle. Errors remain accessible in
-Settings after the pill's notice expires, including while there are unsaved edits: its commands and
-status line stay in view below the scrolling controls.
+status and engine, Pause/Resume, Start/Finish, Cancel, Settings, and Quit; Finish and Cancel name a
+Show while it records and are disabled while it is saved. Before any engine is set up, the menu says
+so and Resume waits for setup. It never animates while idle. Errors remain accessible in Settings
+after the pill's notice expires, including while there are unsaved edits: its commands and status
+line stay in view below the scrolling controls.
 
 ## Interaction contracts
 
@@ -132,9 +133,8 @@ status line stay in view below the scrolling controls.
   shows what the pill presents. S records the display under the pointer and W the window under it,
   cropped from the display and followed as it moves; over the desktop, the taskbar, or a Speakeasy
   window, W records the display. A shades that display until the user drags out an area of at least
-  24 px each way; finishing first, or a shade that cannot appear, records the whole display, and
-  Escape cancels. A thin red line outside a window or area marks it while it records, and no frame
-  shows it.
+  24 px each way; finishing first, or a shade that cannot appear, records the whole display. A thin
+  red line outside a window or area marks it while it records, and no frame shows it.
 - Shift draws ink, alone or while the shortcut is still held; the ink holds briefly after the pen
   lifts, then fades, and clicks pass through to the apps underneath. Two taps of Shift alone, each
   released within 300 ms and the second pressed within 400 ms of the first's release, drop a pin at
@@ -142,7 +142,11 @@ status line stay in view below the scrolling controls.
   the recorded window or area. Marks and pins share one numbering in the order they began, ① ② ③;
   each number sits beside what it numbers on the overlay, fading with the ink, and in the bundle's
   keyframes and summary.
-- Windows/macOS Escape cancels immediately and continues to the focused app. Linux uses a reserved
+- Windows/macOS Escape continues to the focused app. It cancels dictation immediately at any stage,
+  but a Show, area choice included, only while the shortcut is held: during the hold that started it
+  or the press that would finish it. Otherwise a recording Show ignores Escape, and the tray's
+  Cancel Show discards it. Once a Show finishes, neither Escape, the tray, nor an interruption
+  discards it while it is saved; a settings change, Pause, and Quit still do. Linux uses a reserved
   Ctrl+Super+Escape chord or an explicit command binding; bare Escape is not globally captured.
   Animation never delays cancellation or owns the microphone lifetime.
 - Readiness follows the first captured buffer. Startup feedback does not imply that speech before

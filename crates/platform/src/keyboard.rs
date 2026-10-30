@@ -204,7 +204,7 @@ enum Action {
     Lock,
     Show(Scope),
     Pin(Taps),
-    Cancel,
+    Escape,
     /// Interrupt, then release: another shortcut, a session change, or a key-tap outage ended
     /// dictation.
     Interrupt,
@@ -218,7 +218,7 @@ impl Action {
             Self::Lock => input.deliver(Input::Lock),
             Self::Show(scope) => input.deliver(Input::Show(scope)),
             Self::Pin(taps) => input.deliver(Input::Pin(taps)),
-            Self::Cancel => input.deliver(Input::Cancel),
+            Self::Escape => input.deliver(Input::Escape),
             Self::Interrupt => {
                 input.deliver(Input::Interrupt);
                 input.deliver(Input::Release);
@@ -426,7 +426,7 @@ impl Windows {
         }
         self.taps.interrupt();
         match key {
-            Self::ESCAPE => Decision::pass(down.then_some(Action::Cancel)),
+            Self::ESCAPE => Decision::pass(down.then_some(Action::Escape)),
             Self::SPACE => self.chord.hold_key(HoldKey::Space, down),
             Self::SCREEN => self.chord.hold_key(HoldKey::Show(Scope::Screen), down),
             Self::WINDOW => self.chord.hold_key(HoldKey::Show(Scope::Window), down),
@@ -577,7 +577,7 @@ impl Mac {
             MacEvent::Key { code, down, .. } => {
                 self.taps.interrupt();
                 match code {
-                    Self::ESCAPE => Decision::pass(down.then_some(Action::Cancel)),
+                    Self::ESCAPE => Decision::pass(down.then_some(Action::Escape)),
                     Self::SPACE => self.chord.hold_key(HoldKey::Space, down),
                     Self::SCREEN => self.chord.hold_key(HoldKey::Show(Scope::Screen), down),
                     Self::WINDOW => self.chord.hold_key(HoldKey::Show(Scope::Window), down),

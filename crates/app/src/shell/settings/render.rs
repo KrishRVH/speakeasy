@@ -150,6 +150,7 @@ impl Settings {
                         "To draw, hold Shift and move the pointer without clicking.".into(),
                         "Double-tap Shift to pin.".into(),
                         format!("To finish a Show, press and release {shortcut} again.").into(),
+                        format!("To cancel a Show, hold {shortcut} and press Escape.").into(),
                     ]
                     .map(|line: SharedString| div().child(line)),
                 )

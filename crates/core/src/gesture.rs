@@ -42,7 +42,9 @@ pub enum Action {
 
 /// Hold-to-talk, double-tap hands-free, Space locking, and Shows for one shortcut.
 ///
-/// Hands-free dictation finishes on the next press, a Show on that press's release.
+/// Hands-free dictation finishes on the next press, a Show on that press's release, so Escape can
+/// cancel a Show while the shortcut is held; Escape alone leaves a Show recording. No request to
+/// cancel discards a Show once it is being saved: only [`abandon`](Self::abandon) does.
 ///
 /// Physical key state survives completion and cancellation, preventing autorepeat from starting a
 /// new session before the user releases the shortcut.
@@ -63,7 +65,7 @@ impl Gesture {
             Phase::HandsFree { .. } | Phase::Show { .. } | Phase::ShowArmed { .. } => {
                 State::HandsFree
             },
-            Phase::Processing => State::Processing,
+            Phase::Processing | Phase::Saving => State::Processing,
         }
     }
 
@@ -89,7 +91,9 @@ impl Gesture {
                 self.phase = Phase::ShowArmed { started };
                 None
             },
-            Phase::Held { .. } | Phase::ShowArmed { .. } | Phase::Processing => None,
+            Phase::Held { .. } | Phase::ShowArmed { .. } | Phase::Processing | Phase::Saving => {
+                None
+            },
         }
     }
 
@@ -110,7 +114,8 @@ impl Gesture {
             | Phase::PendingTap { .. }
             | Phase::HandsFree { .. }
             | Phase::Show { .. }
-            | Phase::Processing => expired,
+            | Phase::Processing
+            | Phase::Saving => expired,
         }
     }
 
@@ -141,7 +146,7 @@ impl Gesture {
             | Phase::HandsFree { .. }
             | Phase::Show { .. }
             | Phase::ShowArmed { .. } => self.finish(),
-            Phase::Processing => None,
+            Phase::Processing | Phase::Saving => None,
         }
     }
 
@@ -149,7 +154,7 @@ impl Gesture {
     #[must_use]
     pub fn deadline(&self) -> Option<Instant> {
         match self.phase {
-            Phase::Idle | Phase::Processing => None,
+            Phase::Idle | Phase::Processing | Phase::Saving => None,
             Phase::Held { started }
             | Phase::HandsFree { started }
             | Phase::Show { started }
@@ -169,23 +174,39 @@ impl Gesture {
         }
     }
 
-    /// Moves active capture into processing without changing physical key state.
+    /// Moves active capture into processing, or a Show into saving, without changing physical key
+    /// state.
     pub fn finish(&mut self) -> Option<Action> {
-        match self.phase {
-            Phase::Idle | Phase::Processing => None,
-            Phase::Held { .. }
-            | Phase::PendingTap { .. }
-            | Phase::HandsFree { .. }
-            | Phase::Show { .. }
-            | Phase::ShowArmed { .. } => {
-                self.phase = Phase::Processing;
-                Some(Action::Finish)
+        self.phase = match self.phase {
+            Phase::Idle | Phase::Processing | Phase::Saving => return None,
+            Phase::Held { .. } | Phase::PendingTap { .. } | Phase::HandsFree { .. } => {
+                Phase::Processing
             },
+            Phase::Show { .. } | Phase::ShowArmed { .. } => Phase::Saving,
+        };
+        Some(Action::Finish)
+    }
+
+    /// Observes Escape, which also reaches the focused app: it cancels dictation at any stage, but
+    /// a Show only while the shortcut is held, and never once it is being saved.
+    pub fn escape(&mut self) -> Option<Action> {
+        match self.phase {
+            Phase::Show { .. } | Phase::ShowArmed { .. } if !self.down => None,
+            _ => self.cancel(),
         }
     }
 
-    /// Abandons capture or processing; a held shortcut still requires release.
+    /// Cancels at the user's request or for an interruption: anything but a Show being saved.
     pub fn cancel(&mut self) -> Option<Action> {
+        if self.phase == Phase::Saving {
+            return None;
+        }
+        self.abandon()
+    }
+
+    /// Abandons capture or processing, a Show being saved included, as a failure or new settings
+    /// do; a held shortcut still requires release.
+    pub fn abandon(&mut self) -> Option<Action> {
         if self.phase == Phase::Idle {
             return None;
         }
@@ -193,9 +214,9 @@ impl Gesture {
         Some(Action::Cancel)
     }
 
-    /// Acknowledges processing completion; an active recording is unaffected.
+    /// Acknowledges that processing or saving completed; an active recording is unaffected.
     pub fn complete(&mut self) {
-        if self.phase == Phase::Processing {
+        if matches!(self.phase, Phase::Processing | Phase::Saving) {
             self.phase = Phase::Idle;
         }
     }
@@ -225,6 +246,8 @@ enum Phase {
         started: Instant,
     },
     Processing,
+    /// A finished Show waits for its narration and footage and is saved.
+    Saving,
 }
 
 /// `start + after`, or `start` itself when that instant is unrepresentable, so an overflowing

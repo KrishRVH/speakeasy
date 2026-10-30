@@ -12,7 +12,9 @@ enum Event {
     Lock,
     Show,
     Toggle,
+    Escape,
     Cancel,
+    Abandon,
     Complete,
     Finish,
 }
@@ -24,7 +26,9 @@ impl Event {
         Self::Lock,
         Self::Show,
         Self::Toggle,
+        Self::Escape,
         Self::Cancel,
+        Self::Abandon,
         Self::Complete,
         Self::Finish,
     ];
@@ -42,8 +46,14 @@ impl Event {
             Self::Toggle => {
                 gesture.toggle(now);
             },
+            Self::Escape => {
+                gesture.escape();
+            },
             Self::Cancel => {
                 gesture.cancel();
+            },
+            Self::Abandon => {
+                gesture.abandon();
             },
             Self::Complete => gesture.complete(),
             Self::Finish => {
@@ -60,7 +70,7 @@ fn capture_start(gesture: &Gesture) -> Option<Instant> {
         | Phase::HandsFree { started }
         | Phase::Show { started }
         | Phase::ShowArmed { started } => Some(started),
-        Phase::Idle | Phase::Processing => None,
+        Phase::Idle | Phase::Processing | Phase::Saving => None,
     }
 }
 
@@ -80,7 +90,7 @@ fn unrepresentable_recording_deadline_expires_immediately() {
 
 proptest! {
     #[test]
-    fn arbitrary_event_sequences_keep_capture_bounded(
+    fn arbitrary_event_sequences_keep_capture_bounded_and_a_saving_show_saved(
         events in prop::collection::vec(
             (prop::sample::select(Event::ALL), 0_u32..600_000),
             0..128,
@@ -92,9 +102,13 @@ proptest! {
             now = now
                 .checked_add(Duration::from_millis(u64::from(elapsed)))
                 .expect("The generated sequence spans less than one day");
+            let saving = gesture.phase == Phase::Saving;
             event.apply(&mut gesture, now);
             // Stands in for the owner's timer, which ticks once a deadline passes.
             gesture.tick(now);
+            if saving && !matches!(event, Event::Abandon | Event::Complete) {
+                prop_assert_eq!(gesture.phase, Phase::Saving, "{:?} ended a Show being saved", event);
+            }
             if let Some(started) = capture_start(&gesture) {
                 let limit = started.checked_add(RECORDING_LIMIT).expect("Bounded test clock");
                 let deadline = gesture.deadline().expect("Active capture retains its deadline");
@@ -216,4 +230,67 @@ fn a_show_keeps_its_capture_start_and_finishes_at_the_limit_even_while_armed() {
         None,
         "The release finished the Show a second time"
     );
+    assert_eq!(
+        gesture.cancel(),
+        None,
+        "The limit's Show was not being saved"
+    );
+}
+
+#[test]
+fn escape_cancels_a_show_only_while_the_shortcut_is_held() {
+    let start = Instant::now();
+    let mut gesture = Gesture::default();
+    gesture.press(start);
+    gesture.show();
+    assert_eq!(
+        gesture.escape(),
+        Some(Action::Cancel),
+        "Escape during the opening hold"
+    );
+    gesture.release(start);
+    gesture.press(start);
+    gesture.show();
+    gesture.release(start);
+    assert_eq!(
+        gesture.escape(),
+        None,
+        "Escape alone cancelled a hands-free Show"
+    );
+    gesture.press(start);
+    assert_eq!(
+        gesture.escape(),
+        Some(Action::Cancel),
+        "Escape during the finishing press"
+    );
+    assert_eq!(gesture.release(start), None, "A cancelled Show finished");
+    assert_eq!(gesture.state(), State::Idle);
+}
+
+#[test]
+fn only_abandoning_discards_a_show_being_saved() {
+    let start = Instant::now();
+    let mut gesture = Gesture::default();
+    gesture.press(start);
+    gesture.show();
+    assert_eq!(gesture.toggle(start), Some(Action::Finish));
+    assert_eq!(gesture.escape(), None);
+    assert_eq!(gesture.cancel(), None);
+    assert_eq!(gesture.state(), State::Processing);
+    assert_eq!(gesture.abandon(), Some(Action::Cancel));
+    assert_eq!(gesture.state(), State::Idle);
+}
+
+#[test]
+fn escape_and_cancel_discard_dictation_recording_or_processing() {
+    let start = Instant::now();
+    let mut gesture = Gesture::default();
+    let discards: [fn(&mut Gesture) -> Option<Action>; 2] = [Gesture::escape, Gesture::cancel];
+    for discard in discards {
+        assert_eq!(gesture.toggle(start), Some(Action::Start));
+        assert_eq!(discard(&mut gesture), Some(Action::Cancel), "Hands-free");
+        assert_eq!(gesture.toggle(start), Some(Action::Start));
+        assert_eq!(gesture.toggle(start), Some(Action::Finish));
+        assert_eq!(discard(&mut gesture), Some(Action::Cancel), "Processing");
+    }
 }

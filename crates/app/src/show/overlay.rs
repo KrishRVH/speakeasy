@@ -16,7 +16,7 @@ use gpui::{
     Size, Task, Timer, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind,
     WindowOptions, canvas, div, point, prelude::*, px, relative, white,
 };
-use speakeasy_platform::{Display, NativeWindow, Part};
+use speakeasy_platform::{Display, NativeWindow, Part, SHORTCUT};
 use speakeasy_show::{Mark, Point, Shape, ink};
 use tokio::sync::watch;
 
@@ -53,7 +53,6 @@ const SHADE: Rgba = Rgba {
 };
 /// The smallest area a drag chooses, in logical pixels each way; a shorter drag is a stray click.
 const SMALLEST_AREA: f32 = 24.0;
-const PICK_HINT: &str = "Drag over the area to record · Esc cancels";
 
 /// What the overlay shows, published by a Show's recorder or the demo's.
 #[derive(Clone, Debug, Default)]
@@ -526,7 +525,9 @@ fn hint() -> Div {
                 .bg(Rgba { a: 0.75, ..SHADE })
                 .text_color(white())
                 .text_size(px(15.0))
-                .child(PICK_HINT),
+                .child(format!(
+                    "Drag over the area to record · Hold {SHORTCUT} and press Esc to cancel"
+                )),
         )
 }
 

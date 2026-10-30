@@ -33,9 +33,10 @@ crates. Find the area you are changing, read its owners, and run their tests, wh
 module unless a test file is named.
 
 - **Gestures and deadlines**: [core/src/gesture.rs](../crates/core/src/gesture.rs) turns timestamped
-  shortcut transitions into actions and deadlines.
-  [runtime/tests/dictation.rs](../crates/app/src/runtime/tests/dictation.rs) drives the owner on
-  paused Tokio time with production deadlines.
+  shortcut transitions into actions and deadlines, and decides which cancels reach a Show.
+  [runtime/tests/dictation.rs](../crates/app/src/runtime/tests/dictation.rs) and
+  [shows.rs](../crates/app/src/runtime/tests/shows.rs) drive the owner on paused Tokio time with
+  production deadlines.
 - **Session owner**: [runtime.rs](../crates/app/src/runtime.rs),
   [runtime/owner.rs](../crates/app/src/runtime/owner.rs),
   [session.rs](../crates/app/src/runtime/session.rs),
@@ -169,7 +170,9 @@ No single module owns these rules; a change to any party keeps them.
 - **Revoke before cleanup.** Escape, the Linux cancel chord, a settings change the session reads,
   Pause, and Quit revoke the recording's insertion permit before any cleanup is awaited, even while
   a clipboard call is blocked. `commit()` runs immediately before the irreversible effect, and an
-  obsolete permit never authorizes newer work.
+  obsolete permit never authorizes newer work. A Show pastes nothing, so its permit is shielded:
+  Escape, the tray, and an interruption reach the owner, which may keep the Show, while a settings
+  change, Pause, and Quit still revoke it at once.
 - **Stale results cannot reach a newer session.** A capture event applies only after one lookup
   matches its `SessionId` and a capturing stage, and footage only to its own session. Abandoning a
   session first moves its transcription or delivery out of observation, so a late callback cannot
@@ -204,7 +207,8 @@ No single module owns these rules; a change to any party keeps them.
 Capture starts on the first shortcut press, and the five-minute cap holds whatever the UI animates;
 [interaction design](interaction-design.md#interaction-contracts) owns the gestures. Each wake of
 `owner.rs` handles one message, advances ready work, and presents a snapshot. A `Session` holds its
-permit and one stage, and cancellation or a failure ends it from any stage:
+permit and one stage. A failure or a settings change ends it from any stage, and so does
+cancellation, except for a finished Show being saved:
 
 ```mermaid
 stateDiagram-v2

@@ -226,8 +226,14 @@ impl Session {
 
     /// Turns a session whose audio is still to come, its microphone queued or capturing, into a
     /// Show of what `scope` names; returns whether it did.
+    ///
+    /// A Show pastes nothing, and the owner decides which cancels discard it, so its permit is
+    /// shielded from the cancels that desktop callbacks revoke on their way to the owner. A permit
+    /// already revoked keeps the session dictation, which the revoking cancel or settings change
+    /// then discards.
     pub(super) fn turn_into_show(&mut self, scope: Scope) -> bool {
-        let turns = !self.is_show() && (self.is_queued() || self.is_capturing());
+        let turns =
+            !self.is_show() && (self.is_queued() || self.is_capturing()) && self.permit.shield();
         if turns {
             self.show = Some(Screen::Queued(scope));
         }

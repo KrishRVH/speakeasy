@@ -271,6 +271,7 @@ impl<P: Ports> Owner<P> {
                 self.screen.pin(taps);
                 None
             },
+            Input::Escape => self.gesture.escape(),
             Input::Cancel => self.gesture.cancel(),
             // Unlike `Cancel`, no cue: the user never asked to cancel.
             Input::Interrupt => {
@@ -302,7 +303,7 @@ impl<P: Ports> Owner<P> {
         let next = self.changes.borrow_and_update().clone();
         let reload = self.config.change_to(&next) >= Change::Engine;
         self.config = next;
-        let cancelled = self.gesture.cancel().is_some();
+        let cancelled = self.gesture.abandon().is_some();
         if reload {
             self.worker.reload(&self.ports, &self.config);
         }
@@ -537,7 +538,7 @@ impl<P: Ports> Owner<P> {
         // A closed lane still holds whatever closed it: the next wake reads a queued
         // `Unavailable`, the stop lane, or the drained lane's error through `handle_input`.
         let Some(permit) = self.permits.begin() else {
-            self.gesture.cancel();
+            self.gesture.abandon();
             return ControlFlow::Continue(());
         };
         let Some(id) = self.latest.id.next() else {
@@ -619,7 +620,7 @@ impl<P: Ports> Owner<P> {
     }
 
     fn fail(&mut self, message: String) {
-        self.gesture.cancel();
+        self.gesture.abandon();
         self.abandon();
         self.outcome = Outcome::Failed(message);
     }

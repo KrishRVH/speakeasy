@@ -228,7 +228,7 @@ fn windows_sides_repeats_space_and_passive_escape() {
     assert!(policy.observe(SPACE, false, NONE_HELD, now()).swallows());
     let escape = policy.observe(ESCAPE, true, NONE_HELD, now());
     assert!(!escape.swallows());
-    assert_eq!(escape.action, Some(Action::Cancel));
+    assert_eq!(escape.action, Some(Action::Escape));
 }
 
 #[test]
@@ -717,7 +717,7 @@ fn mac_function_space_and_escape_are_observed_without_native_events() {
             .swallows()
     );
     let escape = policy.observe(key(MAC_ESCAPE, true, NO_MODIFIERS), keyboard_fn_up, now());
-    assert_eq!(escape.action, Some(Action::Cancel));
+    assert_eq!(escape.action, Some(Action::Escape));
     assert!(!escape.swallows());
     assert!(
         policy

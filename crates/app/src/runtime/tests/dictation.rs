@@ -254,7 +254,7 @@ async fn preparing_insertion_cancels_without_blocking_a_new_recording() -> anyho
     h.start().await?;
     h.finish_as("old fixture").await?;
     let old = preparing.reached().await?;
-    h.input(Input::Cancel);
+    h.input(Input::Escape);
     h.phase(Phase::Cancelled).await?;
     h.start().await?;
     assert!(!old.active(), "A newer capture authorized stale insertion");
@@ -403,7 +403,7 @@ async fn cancelled_inference_and_late_audio_cannot_affect_the_next_session() -> 
     receive(&h.loads).await?;
     let (old_id, old_events) = h.start().await?;
     let mut old_reply = h.finish().await?;
-    h.input(Input::Cancel);
+    h.input(Input::Escape);
     h.phase(Phase::Cancelled).await?;
     timeout(PATIENCE, old_reply.closed()).await?;
     assert!(
