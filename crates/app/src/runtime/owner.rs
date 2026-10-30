@@ -50,8 +50,8 @@ const SHOW_UNNARRATED_WINDOW_OFF_SCREEN: &str =
     "Show copied without narration, and the recorded window went off screen.";
 /// What a window Show tells the user when no window it can record is under the pointer.
 const NO_WINDOW: &str = "No window to record under the pointer, so the Show was cancelled.";
-/// What an area Show tells the user when it finished, or could not shade its display, before an
-/// area was dragged out.
+/// What an area Show tells the user when it finished, was clicked away, or could not shade its
+/// display before an area was dragged out.
 const NO_AREA: &str = "No area was chosen, so the Show was cancelled.";
 
 /// What the status shows while no session is active: the latest result or failure.
