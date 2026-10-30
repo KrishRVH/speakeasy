@@ -172,13 +172,17 @@ pub fn copy_text(text: &str) -> anyhow::Result<()> {
     native::copy_text(text)
 }
 
-/// Gives a command-line run the standard streams of whatever launched it, and reports whether it
-/// now has a standard error to report to.
+/// Gives a run the standard streams of whatever launched it, and reports whether its standard
+/// error reaches anyone.
 ///
-/// A windowed Windows executable starts without a console, so this attaches its parent's, unless
-/// the launcher already redirected output. A launch from Explorer or a shortcut has neither, and
-/// this returns false. On macOS and Linux it returns true: every process starts with standard
-/// streams there, since Rust's runtime opens `/dev/null` in place of any that are closed.
+/// A launch from the desktop, as from Explorer, Finder, or a shortcut, reaches no one, so this
+/// returns false. Call it only for a command or a run about to end. Windows gives a windowed
+/// executable no console handles, not even ones its launcher passed, so this attaches the parent's
+/// console for standard output or error when either is missing; an app sharing that console would
+/// also receive its Ctrl+C. macOS starts a desktop launch as a child of launchd with standard error
+/// closed or on `/dev/null`; a terminal or agent that sends standard error there chose to discard
+/// it, so this still returns true. Linux, which reports startup errors on standard error, always
+/// returns true.
 #[expect(
     clippy::must_use_candidate,
     reason = "Attaching is the point; only a caller with a dialog to fall back on needs the answer"

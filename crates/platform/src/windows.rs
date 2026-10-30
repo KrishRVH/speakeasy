@@ -79,14 +79,17 @@ pub(crate) fn reduced_motion() -> bool {
 }
 
 pub(crate) fn attach_stdio() -> bool {
-    // SAFETY: none of these calls takes pointers; a failed attach leaves the handles as they were.
-    unsafe {
-        if GetStdHandle(STD_OUTPUT_HANDLE).is_null() {
-            AttachConsole(ATTACH_PARENT_PROCESS);
-        }
-        let error = GetStdHandle(STD_ERROR_HANDLE);
-        !error.is_null() && error != INVALID_HANDLE_VALUE
+    let missing = |stream| {
+        // SAFETY: GetStdHandle takes no pointers.
+        let handle = unsafe { GetStdHandle(stream) };
+        handle.is_null() || handle == INVALID_HANDLE_VALUE
+    };
+    if missing(STD_OUTPUT_HANDLE) || missing(STD_ERROR_HANDLE) {
+        // Attaching fills in only the missing handles, so a redirected stream keeps its destination.
+        // SAFETY: AttachConsole takes no pointers; a failed attach changes nothing.
+        unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
     }
+    !missing(STD_ERROR_HANDLE)
 }
 
 pub(crate) fn show_startup_error(message: &str) {

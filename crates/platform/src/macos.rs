@@ -8,6 +8,9 @@ pub(crate) mod screen;
 use std::{
     cell::OnceCell,
     ffi::c_void,
+    fs::{self, File},
+    io,
+    os::{fd::AsFd as _, unix::fs::MetadataExt as _},
     panic::{self, AssertUnwindSafe},
     ptr::NonNull,
     sync::{Arc, Mutex, MutexGuard, PoisonError},
@@ -628,7 +631,20 @@ pub(super) fn reduced_motion() -> bool {
 }
 
 pub(super) fn attach_stdio() -> bool {
-    true
+    const LAUNCHD: u32 = 1;
+    std::os::unix::process::parent_id() != LAUNCHD || !discards_stderr()
+}
+
+/// Whether standard error is closed or is `/dev/null`.
+fn discards_stderr() -> bool {
+    let stderr = io::stderr()
+        .as_fd()
+        .try_clone_to_owned()
+        .and_then(|fd| File::from(fd).metadata());
+    let (Ok(stderr), Ok(null)) = (stderr, fs::metadata("/dev/null")) else {
+        return true;
+    };
+    (stderr.dev(), stderr.ino()) == (null.dev(), null.ino())
 }
 
 pub(super) fn show_startup_error(message: &str) {
