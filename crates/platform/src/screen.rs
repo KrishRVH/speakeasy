@@ -135,8 +135,8 @@ impl Target {
     /// Speakeasy's. A Show never records the display in its place.
     ///
     /// # Errors
-    /// Fails as [`screen_under_pointer`](Self::screen_under_pointer) does, or when the windows under
-    /// the pointer cannot be listed, so neither failure reads as no window.
+    /// Fails as [`screen_under_pointer`](Self::screen_under_pointer) does, or when the window under
+    /// the pointer cannot be listed or measured, so no failure reads as no window.
     pub fn window_under_pointer() -> anyhow::Result<Option<Self>> {
         let display = Display::under_pointer()?;
         Ok(

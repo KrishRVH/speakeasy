@@ -182,8 +182,9 @@ No single module owns these rules; a change to any party keeps them.
   change, Pause, and Quit still revoke it at once.
 - **Stale results cannot reach a newer session.** A capture event applies only after one lookup
   matches its `SessionId` and a capturing stage, and footage only to its own session. Abandoning a
-  session first moves its transcription or delivery out of observation, so a late callback cannot
-  stop a newer recording, overwrite its state, or deliver stale text.
+  session first detaches its transcription or delivery from it; at most, a late result makes the
+  Show it saved the last Show, so a late callback cannot stop a newer recording, overwrite its
+  state, or deliver stale text.
 - **Retire before reopening.** A microphone, screen recorder, worker, insertion thread, or desktop
   service acknowledges native teardown before its replacement opens. Retiring work stays owned until
   then, and abandoning a session never waits for it.

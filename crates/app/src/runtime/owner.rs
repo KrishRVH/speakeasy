@@ -163,7 +163,8 @@ struct Owner<P: Ports> {
     session: Option<Session>,
     latest: Latest,
     /// The latest Show saved, which only a later saved Show replaces and only a report that finds
-    /// it gone forgets; an abandoned publication's result is never awaited, so it cannot.
+    /// it gone forgets. A publication that commits after its session is abandoned still counts,
+    /// unless a later session's Show already does.
     last_show: Option<SavedShow>,
     /// How many reports have shown since this owner started.
     reported: u64,
@@ -662,10 +663,9 @@ impl<P: Ports> Owner<P> {
         self.end_session(outcome);
     }
 
-    /// Remembers `show` as the last Show. A pause may already have announced over this owner,
-    /// whose presentations the epoch then drops, yet the Show outlives it: the announced snapshot
-    /// takes it too, so the next owner starts from it.
-    /// Remembers `show`, which `session` saved.
+    /// Remembers `show`, which `session` saved, as the last Show. A pause may already have
+    /// announced over this owner, whose presentations the epoch then drops, yet the Show outlives
+    /// it: the announced snapshot takes it too, so the next owner starts from it.
     fn remember(&mut self, show: SavedShow, session: SessionId) {
         keep_presented(&self.snapshots, &show);
         self.last_show = Some(show);
