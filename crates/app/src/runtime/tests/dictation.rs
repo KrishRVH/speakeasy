@@ -753,15 +753,17 @@ async fn an_idle_report_survives_model_load_and_desktop_readiness() -> anyhow::R
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_failure_reported_again_is_not_new_feedback() -> anyhow::Result<()> {
+async fn only_a_recurring_failure_that_repeats_is_not_new_feedback() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
-    h.report(Report::Failed(REPORT.into()))?;
+    h.report(Report::Recurring(REPORT.into()))?;
     h.phase(Phase::Error).await?;
-    h.report(Report::Failed(REPORT.into()))?;
+    h.report(Report::Recurring(REPORT.into()))?;
     assert!(
         still_pending(h.observe(|snapshot| snapshot.reported != 0)).await,
-        "A failure counted as a report the menu asked for"
+        "A sweep's unchanged failure popped up again"
     );
+    h.report(Report::Failed(REPORT.into()))?;
+    h.observe(|snapshot| snapshot.reported == 1).await?;
     h.close().await
 }
 

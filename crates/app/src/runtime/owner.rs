@@ -1,7 +1,10 @@
 //! The single session authority. Each wake handles one message, advances work whose prerequisites
 //! are satisfied, then presents a projection of owned state.
 
-use std::{borrow::Cow, convert::Infallible, ops::ControlFlow, sync::Arc, time::Instant};
+use std::{
+    borrow::Cow, convert::Infallible, future::poll_fn, mem, ops::ControlFlow, pin::Pin, sync::Arc,
+    task::Poll, time::Instant,
+};
 
 use async_channel::{Receiver, RecvError, Sender};
 use speakeasy_core::gesture::{Action, Gesture, State};
@@ -17,7 +20,6 @@ use super::{
     device::Device,
     now,
     ports::{CaptureEvent, PUBLISH_STOPPED, Ports, Published, SessionId, ShowEvent, Unchosen},
-    reap,
     session::{Delivered, Session},
     worker::{Completion, Detail, Transcript, Worker},
 };
@@ -129,6 +131,8 @@ enum Wake<W> {
     Show(ShowEvent),
     Worker(Completion<W>),
     Delivered(Result<Delivered, JoinError>),
+    /// An abandoned session's insertion or publication finished.
+    Abandoned(SessionId, Result<Delivered, JoinError>),
     Retired,
     Timer,
 }
@@ -167,8 +171,12 @@ struct Owner<P: Ports> {
     worker: Worker<P::Speech>,
     microphone: Device<P::Microphone>,
     screen: Device<P::Screen>,
-    /// Abandoned insertions and publications, kept until they finish their own cleanup.
-    retiring: Vec<JoinHandle<Delivered>>,
+    /// Abandoned insertions and publications by session, kept until they finish their own cleanup;
+    /// a publication that committed before it was abandoned still saves its Show.
+    retiring: Vec<(SessionId, JoinHandle<Delivered>)>,
+    /// The session whose Show this owner last remembered, so a publication abandoned earlier
+    /// cannot replace that Show when it finishes.
+    remembered: Option<SessionId>,
     /// Whether the cue output is held open, as it is through every session while sounds are on.
     cues_held: bool,
 
@@ -226,6 +234,7 @@ impl<P: Ports> Owner<P> {
             microphone: Device::Free,
             screen: Device::Free,
             retiring: Vec::new(),
+            remembered: None,
             cues_held: false,
             snapshots,
             meter,
@@ -260,6 +269,9 @@ impl<P: Ports> Owner<P> {
             () = self.screen.retired() => Wake::Retired,
             completion = self.worker.completed() => Wake::Worker(completion),
             delivered = delivered => Wake::Delivered(delivered),
+            (session, finished) = next_finished(&mut self.retiring) => {
+                Wake::Abandoned(session, finished)
+            },
             () = timer => Wake::Timer,
         }
     }
@@ -288,6 +300,10 @@ impl<P: Ports> Owner<P> {
             },
             Wake::Delivered(result) => {
                 self.handle_delivered(result);
+                None
+            },
+            Wake::Abandoned(session, result) => {
+                self.handle_abandoned(session, result);
                 None
             },
             Wake::Timer => self.gesture.tick(now()),
@@ -345,8 +361,7 @@ impl<P: Ports> Owner<P> {
         ControlFlow::Break(())
     }
 
-    /// Shows `report` as [`Report::present`] describes, counting the menu's so that a repeat
-    /// presents anew.
+    /// Shows `report` as [`Report::present`] describes, counting each that presents anew.
     fn report(&mut self, report: Report) {
         report.forget_gone(&mut self.last_show);
         // The owner's own state, not a presented copy, decides idleness, so a session that started
@@ -354,11 +369,11 @@ impl<P: Ports> Owner<P> {
         if self.session.is_some() {
             return;
         }
-        if report.answers_the_menu() {
+        if report.presents_anew() {
             self.reported = self.reported.wrapping_add(1);
         }
         self.outcome = match report {
-            Report::Failed(message) => Outcome::Failed(message),
+            Report::Failed(message) | Report::Recurring(message) => Outcome::Failed(message),
             Report::ShowCopied => Outcome::ShowCopied {
                 ending: Ending::Finished,
                 lost: None,
@@ -601,13 +616,29 @@ impl<P: Ports> Owner<P> {
                 lost,
                 copied,
             }))) => {
-                self.remember(saved);
+                self.remember(saved, self.latest.id);
                 match copied {
                     Ok(()) => Outcome::ShowCopied { ending, lost },
-                    Err(error) => Outcome::Failed(format!(
-                        "The Show was saved but not copied ({error:#}). Choose Copy last Show in \
-                         Speakeasy's menu."
-                    )),
+                    Err(error) => {
+                        // What the Show lost still shows; its summary says how it ended.
+                        let show = if ending == Ending::Finished {
+                            "The Show"
+                        } else {
+                            "The Show, which stopped early,"
+                        };
+                        let (narration, failure) = match lost {
+                            Some(_) => (
+                                " without narration",
+                                self.notice.as_ref().and_then(Notice::failure),
+                            ),
+                            None => ("", None),
+                        };
+                        Outcome::Failed(format!(
+                            "{show} was saved{narration} but not copied ({error:#}). Choose Copy \
+                             last Show in Speakeasy's menu.{}",
+                            failure.map_or_else(String::new, |failure| format!(" {failure}"))
+                        ))
+                    },
                 }
             },
             Ok(
@@ -634,14 +665,11 @@ impl<P: Ports> Owner<P> {
     /// Remembers `show` as the last Show. A pause may already have announced over this owner,
     /// whose presentations the epoch then drops, yet the Show outlives it: the announced snapshot
     /// takes it too, so the next owner starts from it.
-    fn remember(&mut self, show: SavedShow) {
-        // Written straight into the presented copy, so a pause announced before this owner next
-        // presents still keeps it; only a stale copy, which nothing else updates, notifies.
-        self.snapshots.send_if_modified(|presented| {
-            presented.last_show = Some(show.clone());
-            presented.epoch != self.epoch
-        });
+    /// Remembers `show`, which `session` saved.
+    fn remember(&mut self, show: SavedShow, session: SessionId) {
+        keep_presented(&self.snapshots, &show);
         self.last_show = Some(show);
+        self.remembered = Some(session);
     }
 
     fn handle_action(&mut self, action: Option<Action>) -> ControlFlow<()> {
@@ -745,8 +773,9 @@ impl<P: Ports> Owner<P> {
         if session.is_transcribing() && self.worker.is_transcribing() {
             self.worker.recover(&self.ports, &self.config);
         }
+        let id = session.id;
         if let Some(task) = session.into_delivery() {
-            self.retiring.push(task);
+            self.retiring.push((id, task));
         }
     }
 
@@ -761,7 +790,6 @@ impl<P: Ports> Owner<P> {
         self.open_queued_screen();
         self.start_transcription();
         self.start_publishing();
-        self.reap_retired_work();
     }
 
     fn open_queued_capture(&mut self) {
@@ -836,11 +864,12 @@ impl<P: Ports> Owner<P> {
         }
     }
 
-    /// Obsolete insertions and publications finish their own cleanup; they are never aborted, and
-    /// their results cannot reach the current session. A finished one is dropped with its result;
-    /// an unfinished one stays, because dropping its handle would detach it from shutdown.
-    fn reap_retired_work(&mut self) {
-        self.retiring.retain(|task| !task.is_finished());
+    /// Remembers what an abandoned session's publication saved anyway, as [`saved_anyway`]
+    /// describes; the session's presented outcome stands.
+    fn handle_abandoned(&mut self, session: SessionId, result: Result<Delivered, JoinError>) {
+        if let Some(show) = saved_anyway(self.remembered, session, result) {
+            self.remember(show, session);
+        }
     }
 
     fn message(&self) -> Cow<'_, str> {
@@ -918,17 +947,29 @@ impl<P: Ports> Owner<P> {
         // with a blocking send even when cancelled, so a full lane would stall its teardown.
         self.captures.close();
         self.abandon();
+        // Abandoned work is never aborted: each task finishes its own cleanup.
+        let retiring = mem::take(&mut self.retiring);
         let retired = async {
-            for task in self.retiring {
-                reap(task).await;
+            let mut finished = Vec::with_capacity(retiring.len());
+            for (session, task) in retiring {
+                finished.push((session, task.await));
             }
+            finished
         };
-        tokio::join!(
+        let ((), (), (), finished) = tokio::join!(
             self.worker.stop(),
             self.microphone.stop(),
             self.screen.stop(),
             retired
         );
+        // The devices are gone with their stops; only the presented snapshot outlives this owner.
+        let mut remembered = self.remembered;
+        for (session, result) in finished {
+            if let Some(show) = saved_anyway(remembered, session, result) {
+                keep_presented(&self.snapshots, &show);
+                remembered = Some(session);
+            }
+        }
     }
 }
 
@@ -947,10 +988,93 @@ pub(super) async fn run<P: Ports>(wiring: Wiring<P>) {
     owner.shutdown().await;
 }
 
+/// The Show an abandoned `session`'s publication saved anyway, having committed before the cancel
+/// reached it, so the menu acts on the Show whose summary was copied; `None` once a later session's
+/// Show is `remembered`.
+fn saved_anyway(
+    remembered: Option<SessionId>,
+    session: SessionId,
+    result: Result<Delivered, JoinError>,
+) -> Option<SavedShow> {
+    let Ok(Delivered::Published(Ok(Published::Saved { show, .. }))) = result else {
+        return None;
+    };
+    remembered
+        .is_none_or(|later| later < session)
+        .then_some(show)
+}
+
+/// Writes `show` straight into the presented snapshot, even one a pause has announced over, so the
+/// Show outlives an owner that stops before it next presents.
+fn keep_presented(snapshots: &watch::Sender<Snapshot>, show: &SavedShow) {
+    snapshots.send_if_modified(|presented| {
+        presented
+            .last_show
+            .replace(show.clone())
+            .is_none_or(|kept| kept != *show)
+    });
+}
+
+/// Resolves with the first of `tasks` to finish, removing it; pends while none has. Cancel-safe: an
+/// unfinished task stays, and dropping its handle would detach it from shutdown.
+fn next_finished<T>(
+    tasks: &mut Vec<(SessionId, JoinHandle<T>)>,
+) -> impl Future<Output = (SessionId, Result<T, JoinError>)> + '_ {
+    poll_fn(move |cx| {
+        let mut finished = None;
+        tasks.retain_mut(|(session, task)| {
+            if finished.is_some() {
+                return true;
+            }
+            match Pin::new(task).poll(cx) {
+                Poll::Ready(result) => {
+                    finished = Some((*session, result));
+                    false
+                },
+                Poll::Pending => true,
+            }
+        });
+        finished.map_or(Poll::Pending, Poll::Ready)
+    })
+}
+
 /// Pends unless a future is present; resolves once it completes.
 async fn or_pending<F: Future>(future: Option<F>) -> F::Output {
     match future {
         Some(future) => future.await,
         None => std::future::pending().await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn saved(folder: &str) -> Delivered {
+        Delivered::Published(Ok(Published::Saved {
+            show: SavedShow::assume(folder.to_owned()),
+            ending: Ending::Finished,
+            lost: None,
+            copied: Ok(()),
+        }))
+    }
+
+    #[test]
+    fn a_show_saved_after_its_session_was_abandoned_never_replaces_a_later_sessions() {
+        let first = SessionId::FIRST;
+        let second = first.next().expect("a second session");
+        assert_eq!(
+            saved_anyway(None, first, Ok(saved("first"))),
+            Some(SavedShow::assume("first".to_owned()))
+        );
+        assert_eq!(
+            saved_anyway(Some(first), second, Ok(saved("second"))),
+            Some(SavedShow::assume("second".to_owned()))
+        );
+        assert_eq!(
+            saved_anyway(Some(second), first, Ok(saved("first"))),
+            None,
+            "An earlier session's Show replaced a later one"
+        );
     }
 }

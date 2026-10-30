@@ -44,7 +44,7 @@ use crate::{
     config::{Config, Startup, ValidConfig},
     gpui_ext::AppUpdate as _,
     instance::{Instance, Request},
-    runtime::{Meter, Phase, Snapshot},
+    runtime::{Meter, Phase, Report, Snapshot},
     shell::{LaunchMode, Services},
 };
 
@@ -202,7 +202,13 @@ fn launch(
         }
         cx.on_app_quit(release_services).detach();
         if mode.is_resident() {
-            show::attend_retention(|error, cx| cx.global::<Services>().report(error), cx);
+            show::attend_retention(
+                |error, cx| {
+                    cx.global::<Services>()
+                        .report(Report::Recurring(error.to_string()));
+                },
+                cx,
+            );
         }
         if let Some(valid) = valid
             && let Err(error) =

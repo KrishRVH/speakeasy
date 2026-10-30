@@ -200,7 +200,8 @@ No single module owns these rules; a change to any party keeps them.
 - **Reports go through the owner.** Background failures, such as a failed retention sweep, and the
   menu's notices about the last Show reach a running owner's report lane and never interrupt a
   recording; without an owner, Services shows them while idle. Each report shown advances the
-  snapshot's report count, so one that repeats the last still shows again.
+  snapshot's report count, so one that repeats the last still shows again, except a recurring
+  failure, such as each sweep's, which shows again only when it changes.
 - **A Show appears only after commit.** Publishing composes and stages the bundle off the owner's
   thread in a private `.partial-*` directory. The bundle appears and its summary is copied only once
   the permit commits; a Show cancelled first leaves no bundle and no clipboard change. A saved Show
@@ -208,8 +209,9 @@ No single module owns these rules; a change to any party keeps them.
 - **The last Show outlives each owner.** Only a saved Show replaces the one the owner remembers,
   only a report that finds that same Show gone forgets it, and every snapshot presents it. The
   shell's announcements keep it and a new owner starts from the one presented, so Pause and
-  reconfiguration keep it and Quit forgets it. A Show saved after a pause's announcement still
-  reaches that snapshot.
+  reconfiguration keep it and Quit forgets it. A Show that commits before Pause or a settings change
+  abandons its session is still saved and copied, so it becomes the last Show unless a later
+  session's has, and the abandoned session still reads as cancelled.
 - **Insertion is never repeated.** Validation precedes the single commit. After it, a native failure
   reports a partial, unavailable, or manual-paste outcome. Submission cannot prove that an editor
   accepted the text, and Escape cannot retract input already submitted.

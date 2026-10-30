@@ -156,9 +156,10 @@ commands and status line stay in view below the scrolling controls.
   but a Show, area choice included, only while the shortcut is held: during the hold that started it
   or the press that would finish it. Otherwise a recording Show ignores Escape, and the tray's
   Cancel Show discards it. Once a Show finishes, neither Escape, the tray, nor an interruption
-  discards it while it is saved; Pause, Quit, and a settings change that ends a recording still do.
-  Linux uses a reserved Ctrl+Super+Escape chord or an explicit command binding; bare Escape is not
-  globally captured. Animation never delays cancellation or owns the microphone lifetime.
+  discards it while it is saved; Pause, Quit, and a settings change that ends a recording still do,
+  though a Show whose files are already written stays saved and copied. Linux uses a reserved
+  Ctrl+Super+Escape chord or an explicit command binding; bare Escape is not globally captured.
+  Animation never delays cancellation or owns the microphone lifetime.
 - Readiness follows the first captured buffer. Startup feedback does not imply that speech before
   that buffer can be recovered.
 - Insertion does not steal focus. OS submission is the observable result; success in every editor

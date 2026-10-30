@@ -21,7 +21,8 @@ pub(crate) const PUBLISH_STOPPED: &str =
     "Saving the Show stopped unexpectedly. Start the Show again.";
 
 /// Identifies one recording; capture events carry it, so late audio cannot reach a newer session.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// An owner numbers its sessions in order, so a later one compares greater.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct SessionId(u64);
 
 impl SessionId {

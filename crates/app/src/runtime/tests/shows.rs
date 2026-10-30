@@ -496,26 +496,62 @@ async fn a_model_that_fails_to_load_fails_dictation_but_copies_a_show_without_na
     h.close().await
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_show_that_lost_its_screen_and_its_narration_says_both() -> anyhow::Result<()> {
-    let mut h = Harness::with_ports(Config::default(), |ports| ports.delayed_finish = true)?;
-    let (id, microphone) = start_show_listening(&mut h).await?;
+/// Records a Show whose screen recording ends as `ending` and whose microphone then disconnects,
+/// up to its publication.
+async fn lose_screen_and_narration(h: &mut Harness, ending: Ending) -> anyhow::Result<()> {
+    let (id, microphone) = start_show_listening(h).await?;
     let (_, _, screen) = receive(&h.shows).await?;
-    screen
-        .send(ShowEvent::Finished(id, Ok(stopped_footage())))
-        .await?;
+    let mut stopped = footage();
+    stopped.recording.ending = ending;
+    screen.send(ShowEvent::Finished(id, Ok(stopped))).await?;
     h.phase(Phase::Stopping).await?;
     microphone.send(disconnected(id)).await?;
-    h.phase(Phase::Copied).await?;
-    let snapshot = h.snapshot();
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_show_that_lost_its_screen_and_its_narration_says_both() -> anyhow::Result<()> {
+    for (ending, copied) in [
+        (
+            Ending::ScreenStopped,
+            "Show copied without narration, and the screen stopped recording early.",
+        ),
+        (
+            Ending::WindowClosed,
+            "Show copied without narration, and the recorded window closed.",
+        ),
+        (
+            Ending::WindowOffScreen,
+            "Show copied without narration, and the recorded window went off screen.",
+        ),
+    ] {
+        let mut h = Harness::with_ports(Config::default(), |ports| ports.delayed_finish = true)?;
+        lose_screen_and_narration(&mut h, ending).await?;
+        h.phase(Phase::Copied).await?;
+        let snapshot = h.snapshot();
+        assert_eq!(
+            (snapshot.ending, snapshot.narration_lost),
+            (ending, Some(NarrationLoss::AudioStopped))
+        );
+        assert_eq!(snapshot.message, format!("{copied} {DISCONNECTED}"));
+        h.close().await?;
+    }
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_show_saved_but_not_copied_still_says_what_it_lost() -> anyhow::Result<()> {
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.delayed_finish = true;
+        ports.copy_error = Some("Another app holds the clipboard");
+    })?;
+    lose_screen_and_narration(&mut h, Ending::WindowClosed).await?;
+    h.phase(Phase::Error).await?;
     assert_eq!(
-        (snapshot.ending, snapshot.narration_lost),
-        (Ending::ScreenStopped, Some(NarrationLoss::AudioStopped))
-    );
-    assert_eq!(
-        snapshot.message,
+        h.snapshot().message,
         format!(
-            "Show copied without narration, and the screen stopped recording early. {DISCONNECTED}"
+            "The Show, which stopped early, was saved without narration but not copied (Another \
+             app holds the clipboard). Choose Copy last Show in Speakeasy's menu. {DISCONNECTED}"
         )
     );
     h.close().await

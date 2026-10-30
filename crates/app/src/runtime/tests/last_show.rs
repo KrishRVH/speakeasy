@@ -1,6 +1,7 @@
 //! The last saved Show: which publications the owner remembers, which it never does, that the
-//! memory survives a failed copy, a failed, cancelled, or abandoned Show, a later dictation, a
-//! pause, and a new owner, and how the menu's reports about it show and forget it.
+//! memory survives a failed copy, a failed or cancelled Show, a later dictation, a pause, and a new
+//! owner, that a Show saved as its session is abandoned still counts, and how the menu's reports
+//! about it show and forget it.
 
 use super::*;
 
@@ -124,7 +125,7 @@ async fn a_newer_show_replaces_the_last_one_and_dictation_leaves_it() -> anyhow:
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_show_abandoned_after_it_is_saved_changes_neither_the_last_show_nor_the_outcome()
+async fn a_show_saved_as_it_is_abandoned_is_remembered_but_still_reads_as_cancelled()
 -> anyhow::Result<()> {
     let (saving, persisted) = gate(2);
     let mut h = Harness::with_ports(Config::default(), |ports| {
@@ -135,16 +136,17 @@ async fn a_show_abandoned_after_it_is_saved_changes_neither_the_last_show_nor_th
     persisted.release().await?;
     h.phase(Phase::Copied).await?;
     save_show(&mut h, "second").await?;
+    // Committed before the settings change abandons it, so its summary is copied regardless.
     persisted.reached().await?;
     change_settings(&h);
     h.phase(Phase::Cancelled).await?;
     persisted.release().await?;
-    assert!(
-        still_pending(h.observe(|snapshot| {
-            snapshot.last_show != Some(saved("first")) || snapshot.phase != Phase::Cancelled
-        }))
-        .await,
-        "The abandoned Show's result reached the owner"
+    h.observe(|snapshot| snapshot.last_show == Some(saved("second")))
+        .await?;
+    assert_eq!(
+        h.snapshot().phase,
+        Phase::Cancelled,
+        "The abandoned Show's result replaced the cancel"
     );
     h.close().await
 }
@@ -164,6 +166,25 @@ async fn a_show_saved_after_a_pause_announces_still_outlives_its_owner() -> anyh
     h.observe(|snapshot| snapshot.last_show == Some(saved("newer")))
         .await?;
     h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_show_saved_as_a_pause_stops_its_owner_outlives_that_owner() -> anyhow::Result<()> {
+    let (saving, persisted) = gate(1);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.saved = Some(saving);
+    })?;
+    save_show(&mut h, "newer").await?;
+    persisted.reached().await?;
+    // A pause announces and stops the owner in one turn, so the owner abandons this Show.
+    h.output
+        .send_modify(|snapshot| snapshot.epoch = snapshot.epoch.next());
+    h.runtime.request_stop();
+    persisted.release().await?;
+    let updates = h.updates.clone();
+    h.close().await?;
+    assert_eq!(updates.borrow().last_show, Some(saved("newer")));
+    Ok(())
 }
 
 #[tokio::test(start_paused = true)]
@@ -248,13 +269,20 @@ fn without_an_owner_a_report_shows_while_idle_and_forgets_only_the_show_found_go
     let mut paused = Snapshot {
         message: "Dictation paused".into(),
         last_show: Some(saved("first")),
+        narration_lost: Some(NarrationLoss::AudioStopped),
         ..Snapshot::default()
     };
     for reported in [1, 2] {
         assert!(Report::ShowCopied.present(&mut paused));
         assert_eq!(
-            (paused.reported, paused.phase, paused.show, paused.ending),
-            (reported, Phase::Copied, true, Ending::Finished),
+            (
+                paused.reported,
+                paused.phase,
+                paused.show,
+                paused.ending,
+                paused.narration_lost
+            ),
+            (reported, Phase::Copied, true, Ending::Finished, None),
             "Each copy shows anew as a Show just copied"
         );
     }
@@ -263,12 +291,17 @@ fn without_an_owner_a_report_shows_while_idle_and_forgets_only_the_show_found_go
         (paused.phase, paused.last_show.as_ref()),
         (Phase::Notice, Some(&saved("first")))
     );
-    assert!(Report::Failed("Disk full".into()).present(&mut paused));
-    assert_eq!(
-        (paused.phase, paused.reported),
-        (Phase::Error, 3),
-        "A failure counted as a report the menu asked for"
-    );
+    for (report, reported) in [
+        (Report::Recurring("Disk full".into()), 3),
+        (Report::Failed("Disk full".into()), 4),
+    ] {
+        assert!(report.present(&mut paused));
+        assert_eq!(
+            (paused.phase, paused.reported),
+            (Phase::Error, reported),
+            "Only a recurring failure shows again just when it changes"
+        );
+    }
 
     let mut recording = Snapshot {
         phase: Phase::Recording,

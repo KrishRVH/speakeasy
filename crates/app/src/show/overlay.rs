@@ -17,7 +17,7 @@ use gpui::{
     WindowOptions, canvas, div, point, prelude::*, px, relative, white,
 };
 use speakeasy_platform::{Display, NativeWindow, Part, SHORTCUT};
-use speakeasy_show::{Mark, Point, Shape, ink};
+use speakeasy_show::{Ending, Mark, Point, Shape, ink};
 use tokio::sync::watch;
 
 use crate::{
@@ -698,21 +698,21 @@ pub(crate) fn attend(
             // The next session cannot start until this one leaves the active phases, so waiting
             // here never delays the next Show's overlay. Another session means pause, quit or a
             // newer session took the snapshot first.
-            let Ok(ended) = snapshots
+            let Ok(failure) = snapshots
                 .wait_for(|snapshot| snapshot.session != show || !snapshot.phase.is_active())
                 .await
-                .map(|snapshot| (snapshot.session == show).then_some(snapshot.phase))
+                .map(|snapshot| {
+                    if snapshot.session == show {
+                        failure_after(&snapshot, &error)
+                    } else {
+                        None
+                    }
+                })
             else {
                 return;
             };
-            let error = match ended {
-                Some(Phase::Copied) => {
-                    anyhow!("Show copied, but its ink could not appear on screen: {error:#}")
-                },
-                Some(Phase::Unchosen) => anyhow!(
-                    "The Show was cancelled because its area shade could not appear: {error:#}"
-                ),
-                _ => continue,
+            let Some(error) = failure else {
+                continue;
             };
             reported = true;
             if cx.update(|cx| report(&error, cx)).is_err() {
@@ -721,6 +721,29 @@ pub(crate) fn attend(
         }
     })
     .detach();
+}
+
+/// What a Show whose overlay failed with `error` reports once it has ended as `snapshot` presents:
+/// a copied Show keeps saying what it lost, if anything, ahead of its missing ink, and one
+/// cancelled for want of its area shade says so. Any other ending reports nothing.
+fn failure_after(snapshot: &Snapshot, error: &anyhow::Error) -> Option<anyhow::Error> {
+    match snapshot.phase {
+        Phase::Copied
+            if snapshot.ending == Ending::Finished && snapshot.narration_lost.is_none() =>
+        {
+            Some(anyhow!(
+                "Show copied, but its ink could not appear on screen: {error:#}"
+            ))
+        },
+        Phase::Copied => Some(anyhow!(
+            "{} Its ink could not appear on screen: {error:#}",
+            snapshot.message
+        )),
+        Phase::Unchosen => Some(anyhow!(
+            "The Show was cancelled because its area shade could not appear: {error:#}"
+        )),
+        _ => None,
+    }
 }
 
 fn open(
@@ -772,6 +795,44 @@ mod tests {
 
     fn whole(sheet: &Sheet, now: Instant) -> bool {
         (sheet.opacity(now) - 1.0).abs() < f32::EPSILON
+    }
+
+    #[test]
+    fn a_copied_show_whose_ink_failed_still_says_what_it_lost() {
+        let error = anyhow!("No display available");
+        let copied = Snapshot {
+            phase: Phase::Copied,
+            show: true,
+            message: "Show copied. Paste it into your coding agent.".into(),
+            ..Snapshot::default()
+        };
+        let reported = |snapshot: &Snapshot| failure_after(snapshot, &error).map(|e| e.to_string());
+        assert_eq!(
+            reported(&copied).as_deref(),
+            Some("Show copied, but its ink could not appear on screen: No display available")
+        );
+        let unnarrated = Snapshot {
+            ending: Ending::WindowClosed,
+            narration_lost: Some(speakeasy_show::NarrationLoss::AudioStopped),
+            message: "Show copied without narration, and the recorded window closed.".into(),
+            ..copied.clone()
+        };
+        assert_eq!(
+            reported(&unnarrated).as_deref(),
+            Some(
+                "Show copied without narration, and the recorded window closed. Its ink could not \
+                 appear on screen: No display available"
+            ),
+            "The ink failure hid what the Show lost"
+        );
+        let cancelled = Snapshot {
+            phase: Phase::Cancelled,
+            ..copied
+        };
+        assert!(
+            reported(&cancelled).is_none(),
+            "A cancelled Show reported its ink"
+        );
     }
 
     #[test]

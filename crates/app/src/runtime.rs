@@ -86,8 +86,8 @@ pub(crate) struct Snapshot {
     pub epoch: SnapshotEpoch,
     /// The latest session, so a new session differs even when its phase repeats.
     pub session: u64,
-    /// How many of the menu's reports have shown, so a copy that repeats the last still reads as
-    /// new; a failure reported again reads as new only when it says something new.
+    /// How many reports from outside a session have shown, so one that repeats the last still reads
+    /// as new; a recurring failure reads as new only when it says something new.
     pub reported: u64,
     pub phase: Phase,
     pub hands_free: bool,
@@ -138,8 +138,12 @@ impl Default for Snapshot {
 
 /// A result from outside any session, which is shown only while no session is under way.
 pub(crate) enum Report {
-    /// A failure, such as a retention sweep's, shown as its message.
+    /// A failure that met the user's request, such as the menu's or opening Settings, shown as its
+    /// message.
     Failed(String),
+    /// A failure a background job reports at each attempt until it is fixed, such as a retention
+    /// sweep's, shown as its message.
+    Recurring(String),
     /// The last Show's summary went on the clipboard again.
     #[cfg_attr(
         all(target_os = "linux", not(test)),
@@ -169,14 +173,15 @@ impl Report {
         if snapshot.phase.is_active() {
             return forgot;
         }
-        if self.answers_the_menu() {
+        if self.presents_anew() {
             snapshot.reported = snapshot.reported.wrapping_add(1);
         }
         (snapshot.phase, snapshot.message) = match self {
-            Self::Failed(message) => (Phase::Error, message),
+            Self::Failed(message) | Self::Recurring(message) => (Phase::Error, message),
             Self::ShowCopied => {
                 // A Show copied again reads as one just copied, whatever the latest session was.
-                (snapshot.show, snapshot.ending) = (true, Ending::Finished);
+                (snapshot.show, snapshot.ending, snapshot.narration_lost) =
+                    (true, Ending::Finished, None);
                 (Phase::Copied, SHOW_COPIED.to_owned())
             },
             Self::ShowGone(_) => (Phase::Notice, SHOW_GONE.to_owned()),
@@ -184,10 +189,10 @@ impl Report {
         true
     }
 
-    /// Whether the menu asked for this report, so each one presents anew. A failure, such as one
-    /// each retention sweep repeats, is not counted, so it shows again only when it changes.
-    fn answers_the_menu(&self) -> bool {
-        !matches!(self, Self::Failed(_))
+    /// Whether this report shows anew even when it repeats the last, as an answer to the user does.
+    /// A recurring failure shows again only when it changes, so a sweep cannot pop it up hourly.
+    fn presents_anew(&self) -> bool {
+        !matches!(self, Self::Recurring(_))
     }
 
     /// Forgets `last_show` if this report found that same Show gone, returning whether it did; a
