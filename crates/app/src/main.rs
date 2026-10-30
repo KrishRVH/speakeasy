@@ -158,6 +158,7 @@ fn launch(
     acquired: Option<(Instance, async_channel::Receiver<Request>)>,
 ) {
     let (instance, requests) = acquired.unzip();
+    let default_settings = settings_file(None).is_ok_and(|default| default == path);
     // A demo is simulated, so it never reads the user's settings.
     let (config, startup) = if mode.is_demo() {
         (Config::first_launch(), Startup::Unconfigured)
@@ -165,7 +166,7 @@ fn launch(
         Config::load(&path)
     };
     #[cfg(target_os = "windows")]
-    let sign_in = sign_in_launch(mode, &startup, &config);
+    let sign_in = sign_in_launch(mode, default_settings, &startup, &config);
     let (valid, snapshot) = split_startup(startup);
     let configured = valid.is_some();
     let (output, updates) = watch::channel(snapshot);
@@ -195,7 +196,15 @@ fn launch(
             cx,
         );
         cx.set_global(Services::new(
-            path, config, output, meter, canvas, pill, instance, mode,
+            path,
+            default_settings,
+            config,
+            output,
+            meter,
+            canvas,
+            pill,
+            instance,
+            mode,
         ));
         if let Some(requests) = requests {
             cx.update_global::<Services, _>(|services, cx| {
@@ -348,11 +357,17 @@ fn print_version() -> io::Result<()> {
 }
 
 /// Whether a launch turns Windows' sign-in launch on or off, as its settings say, or leaves it
-/// alone (`None`). A demo never touches it, and settings that need repair leave it as it was, so
-/// the next sign-in still opens them.
+/// alone (`None`). Only a live launch of the default settings, the file the sign-in launch opens,
+/// touches it, and settings that need repair leave it as it was, so the next sign-in still opens
+/// them.
 #[cfg(any(target_os = "windows", test))]
-fn sign_in_launch(mode: LaunchMode, startup: &Startup, config: &Config) -> Option<bool> {
-    (mode == LaunchMode::Live && !matches!(startup, Startup::Invalid(_)))
+fn sign_in_launch(
+    mode: LaunchMode,
+    default_settings: bool,
+    startup: &Startup,
+    config: &Config,
+) -> Option<bool> {
+    (mode == LaunchMode::Live && default_settings && !matches!(startup, Startup::Invalid(_)))
         .then_some(config.start_at_login)
 }
 
@@ -457,23 +472,27 @@ mod tests {
     }
 
     #[test]
-    fn only_a_live_launch_with_readable_settings_touches_the_sign_in_launch() {
+    fn only_a_live_launch_of_readable_default_settings_touches_the_sign_in_launch() {
         use LaunchMode::{Demo, DemoTray, Live};
+        let (default, other) = (true, false);
         let on = Config {
             start_at_login: true,
             ..Config::default()
         };
         let configured = Startup::Configured(ValidConfig::assume(on.clone()));
-        assert_eq!(sign_in_launch(Live, &configured, &on), Some(true));
+        assert_eq!(sign_in_launch(Live, default, &configured, &on), Some(true));
+        assert_eq!(sign_in_launch(Live, other, &configured, &on), None);
         let off = Config::default();
+        let unconfigured = Startup::Unconfigured;
         assert_eq!(
-            sign_in_launch(Live, &Startup::Unconfigured, &off),
+            sign_in_launch(Live, default, &unconfigured, &off),
             Some(false)
         );
+        assert_eq!(sign_in_launch(Live, other, &unconfigured, &off), None);
         let invalid = Startup::Invalid("Invalid settings".into());
-        assert_eq!(sign_in_launch(Live, &invalid, &off), None);
+        assert_eq!(sign_in_launch(Live, default, &invalid, &off), None);
         for demo in [Demo, DemoTray] {
-            assert_eq!(sign_in_launch(demo, &Startup::Unconfigured, &off), None);
+            assert_eq!(sign_in_launch(demo, default, &unconfigured, &off), None);
         }
     }
 

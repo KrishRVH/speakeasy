@@ -91,6 +91,9 @@ pub(crate) struct Services {
     validation: Option<Task<()>>,
     pub(super) quit: Option<Task<()>>,
     pub(super) path: PathBuf,
+    /// Whether `path` is the default settings file, which a launch without `--config` opens. Only
+    /// those settings own Windows' sign-in launch, and a desktop shortcut need not name them.
+    pub(super) default_settings: bool,
     pub config: Config,
     pub output: watch::Sender<Snapshot>,
     /// Where microphone levels reach the pill.
@@ -120,6 +123,7 @@ impl Services {
     )]
     pub(crate) fn new(
         path: PathBuf,
+        default_settings: bool,
         config: Config,
         output: watch::Sender<Snapshot>,
         meter: watch::Sender<Meter>,
@@ -134,6 +138,7 @@ impl Services {
             validation: None,
             quit: None,
             path,
+            default_settings,
             config,
             output,
             meter,
@@ -291,8 +296,8 @@ impl Services {
 
     /// Adopts settings that a save made durable, enabling dictation only as
     /// [`Lifecycle::save_may_enable`] allows; otherwise the settings persist and show while
-    /// dictation stays off. On Windows, a save that turns Start at login on or off registers that
-    /// at once, and its failure is returned unless adopting failed first.
+    /// dictation stays off. On Windows, a save of the default settings that turns Start at login on
+    /// or off registers that at once, and its failure is returned unless adopting failed first.
     pub(super) fn adopt_saved(
         &mut self,
         config: ValidConfig,
@@ -312,7 +317,9 @@ impl Services {
             Ok(())
         };
         #[cfg(target_os = "windows")]
-        if let Some(on) = sign_in {
+        if let Some(on) = sign_in
+            && self.default_settings
+        {
             let registered = speakeasy_platform::start_at_login(on);
             return adopted.and(registered);
         }

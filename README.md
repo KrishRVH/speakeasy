@@ -332,7 +332,9 @@ The theme colors Settings, the pill, and the Windows and Linux tray icon: **Jet 
 On Windows, **Start at login** opens Speakeasy in the tray when you sign in; it is off by default.
 While it is on, each launch registers the copy you run, so a moved or updated Speakeasy keeps
 starting; turn it off before you delete Speakeasy. If Windows' Startup apps page, in Settings or
-Task Manager, has turned Speakeasy off, Settings says so beside the switch: turn it on there.
+Task Manager, has turned Speakeasy off, Settings says so beside the switch: turn it on there. Start
+at login belongs to the default settings file, which sign-in opens, so a launch with `--config`
+neither shows nor changes it.
 
 Settings live in `%APPDATA%\speakeasy\settings.json` on Windows and
 `~/Library/Application Support/speakeasy/settings.json` on Mac. The Windows and Mac packages include

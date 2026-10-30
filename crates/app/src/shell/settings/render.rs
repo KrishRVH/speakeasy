@@ -259,9 +259,10 @@ impl Settings {
                         "Select English to remove um / uh."
                     }),
             )
-            .when(cfg!(target_os = "windows"), |section| {
-                section.child(self.start_at_login(ui))
-            })
+            .when(
+                cfg!(target_os = "windows") && ui.cx.global::<Services>().default_settings,
+                |section| section.child(self.start_at_login(ui)),
+            )
     }
 
     /// The sign-in launch, with the remedy beside it while Windows' Startup apps page holds it off.

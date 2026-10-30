@@ -43,7 +43,7 @@ pub(super) struct Settings {
     saves: SaveQueue,
     _updates: Task<()>,
     /// Whether Windows' Startup apps page has turned off the sign-in launch, as last read when
-    /// Settings came to the front; only a live Windows launch reads it.
+    /// Settings came to the front; only a live Windows launch of the default settings reads it.
     startup_apps_off: bool,
     /// What a desktop shortcut runs to reach this instance, without `--toggle` or `--cancel`.
     #[cfg(target_os = "linux")]
@@ -63,12 +63,7 @@ impl Settings {
         let presentation = Presentation::new(&updates.borrow_and_update(), services);
         let saves = SaveQueue::new(services.path.clone(), config.clone());
         #[cfg(target_os = "linux")]
-        let desktop_command = {
-            let default = crate::paths::settings_file()
-                .ok()
-                .and_then(|path| std::path::absolute(path).ok());
-            desktop_command(&services.path, default.as_deref()).into()
-        };
+        let desktop_command = desktop_command(&services.path, services.default_settings).into();
         let mut view = Self {
             config,
             presentation,
@@ -605,8 +600,8 @@ impl Setting {
 /// settings file unless it is the default, because a launch finds its instance through that file's
 /// folder. Desktop shortcut fields split commands like a POSIX shell, so the path is single-quoted.
 #[cfg(any(target_os = "linux", test))]
-fn desktop_command(path: &std::path::Path, default: Option<&std::path::Path>) -> String {
-    if default == Some(path) {
+fn desktop_command(path: &std::path::Path, default: bool) -> String {
+    if default {
         return "speakeasy".into();
     }
     let quoted = path.to_string_lossy().replace('\'', r"'\''");
@@ -676,13 +671,9 @@ mod tests {
     #[test]
     fn desktop_commands_name_only_a_settings_file_other_than_the_default() {
         let default = Path::new("/home/user/.config/speakeasy/settings.json");
-        assert_eq!(desktop_command(default, Some(default)), "speakeasy");
+        assert_eq!(desktop_command(default, true), "speakeasy");
         assert_eq!(
-            desktop_command(default, None),
-            "speakeasy --config '/home/user/.config/speakeasy/settings.json'"
-        );
-        assert_eq!(
-            desktop_command(Path::new("/home/user/it's mine.json"), Some(default)),
+            desktop_command(Path::new("/home/user/it's mine.json"), false),
             r"speakeasy --config '/home/user/it'\''s mine.json'"
         );
     }

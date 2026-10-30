@@ -76,7 +76,7 @@ pub(super) fn open(cx: &mut App) -> anyhow::Result<()> {
         })??;
     }
     #[cfg(target_os = "windows")]
-    if mode == LaunchMode::Live {
+    if mode == LaunchMode::Live && cx.global::<Services>().default_settings {
         settings.update(cx, |view, window, cx| view.follow_startup_apps(window, cx))?;
     }
     cx.global_mut::<Services>().settings = Some(settings);
