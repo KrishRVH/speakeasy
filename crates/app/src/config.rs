@@ -367,7 +367,7 @@ impl Config {
                 self.theme != *theme || self.reduced_motion != *reduced_motion,
                 Change::Presentation,
             ),
-            // Services registers a saved change itself, so a session continues.
+            // Services registers every save itself, so a session continues.
             (self.start_at_login != *start_at_login, Change::Presentation),
         ]
         .into_iter()

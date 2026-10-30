@@ -458,7 +458,7 @@ unsafe extern "system" fn lifecycle_window(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    if interrupts_dictation(message, wparam)
+    if interrupts_recording(message, wparam)
         && panic::catch_unwind(|| {
             HOOK.with_borrow_mut(|slot| {
                 if let Some(state) = slot {
@@ -484,7 +484,7 @@ fn close_input() {
     });
 }
 
-fn interrupts_dictation(message: u32, wparam: WPARAM) -> bool {
+fn interrupts_recording(message: u32, wparam: WPARAM) -> bool {
     match message {
         WM_WTSSESSION_CHANGE => matches!(
             u32::try_from(wparam),

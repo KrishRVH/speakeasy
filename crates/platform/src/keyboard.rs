@@ -78,8 +78,8 @@ impl Chord {
         held
     }
 
-    /// Ends dictation for a session change, then waits for the chord's release.
-    fn interrupt_dictation(&mut self, input: &InputSender) {
+    /// Interrupts the recording for a session change, then waits for the chord's release.
+    fn interrupt_recording(&mut self, input: &InputSender) {
         Action::Interrupt.deliver(input);
         self.interrupt();
     }
@@ -205,8 +205,8 @@ enum Action {
     Show(Scope),
     Pin(Taps),
     Escape,
-    /// Interrupt, then release: another shortcut, a session change, or a key-tap outage ended
-    /// dictation.
+    /// Interrupt, then release: another shortcut, a session change, or a key-tap outage
+    /// interrupted the recording.
     Interrupt,
 }
 
@@ -381,9 +381,9 @@ impl Windows {
         }
     }
 
-    /// Ends dictation for a session change, then waits for the chord's release.
+    /// Interrupts the recording for a session change, then waits for the chord's release.
     pub(super) fn interrupt(&mut self, input: &InputSender) {
-        self.chord.interrupt_dictation(input);
+        self.chord.interrupt_recording(input);
     }
 
     /// Decides one hook event at `at`. `physical` is what the OS reports held before this event;
@@ -519,9 +519,9 @@ impl Mac {
     const SPACE: i64 = 49;
     const WINDOW: i64 = 13;
 
-    /// Ends dictation for a session change, then waits for Fn's release.
+    /// Interrupts the recording for a session change, then waits for Fn's release.
     pub(super) fn interrupt(&mut self, input: &InputSender) {
-        self.chord.interrupt_dictation(input);
+        self.chord.interrupt_recording(input);
     }
 
     /// Key events went by unseen while the tap was off, so no Shift tap pairs across the gap, and a
