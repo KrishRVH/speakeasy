@@ -120,8 +120,9 @@ enum Ended {
 
 /// Reports a recording however its thread leaves it: when dropped, it hides the overlay and tells
 /// the owner how recording ended, with its footage, its failure, or that its scope found nothing to
-/// record. A recording the owner cancelled reports nothing, even one that ended before the cancel
-/// reached it.
+/// record. A recording that finds itself cancelled reports nothing, even one that ended first; a
+/// cancel that lands while it reports leaves the owner a report it ignores, as it does any from a
+/// session it has ended.
 struct Report<'a> {
     id: SessionId,
     events: Sender<ShowEvent>,
