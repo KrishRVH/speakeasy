@@ -528,8 +528,8 @@ impl Runtime<OwnedTask> {
     }
 }
 
-/// The production controls and owner, plus the test's view of the fakes. Gates close before the
-/// owner is stopped and released.
+/// The production controls and owner, plus the test's view of the fakes. Fields drop in declaration
+/// order, so a harness dropped without `close` closes the fakes' gates before stopping the owner.
 struct Harness<Host = OwnedTask> {
     _cleanup: CleanupGates,
     runtime: Runtime<Host>,
