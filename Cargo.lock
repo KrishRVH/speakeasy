@@ -4952,7 +4952,7 @@ dependencies = [
 
 [[package]]
 name = "speakeasy"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
@@ -4982,14 +4982,14 @@ dependencies = [
 
 [[package]]
 name = "speakeasy-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "speakeasy-platform"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -5023,7 +5023,7 @@ dependencies = [
 
 [[package]]
 name = "speakeasy-show"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "fdeflate",
  "png 0.18.1",
