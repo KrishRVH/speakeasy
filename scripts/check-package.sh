@@ -2,12 +2,17 @@
 # Launches a release package the way people and agents first meet it, without a display, model,
 # or microphone: its version and help, a mistyped option, and the scripted Show.
 set -euo pipefail
-if [[ $# -ne 1 ]]; then
-  echo "Usage: bash scripts/check-package.sh <package or executable>" >&2
+if [[ $# -ne 1 || ! -f "$1" ]]; then
+  echo "Usage: bash scripts/check-package.sh <package or executable file>" >&2
+  exit 1
+fi
+manifest=$(dirname -- "$0")/../Cargo.toml
+version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$manifest")
+if [[ -z "$version" ]]; then
+  echo "$manifest names no workspace version" >&2
   exit 1
 fi
 package=$(realpath -- "$1")
-version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$(dirname -- "$0")/../Cargo.toml")
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 fail() {
@@ -19,15 +24,15 @@ fail() {
 cd "$work"
 case "$package" in
   *-windows-x64.zip)
-    unzip -q "$package"
+    unzip -q "$package" || fail "cannot be unzipped"
     app=./speakeasy.exe
     ;;
   *-macos.zip)
-    unzip -q "$package"
+    unzip -q "$package" || fail "cannot be unzipped"
     app=./Speakeasy.app/Contents/MacOS/speakeasy
     ;;
   *.tar.gz)
-    tar -xzf "$package"
+    tar -xzf "$package" || fail "cannot be extracted"
     app=./Speakeasy.AppDir/AppRun
     ;;
   *)
@@ -36,13 +41,16 @@ case "$package" in
     export APPIMAGE_EXTRACT_AND_RUN=1
     ;;
 esac
-printed=$("$app" --version)
+[[ -f "$app" ]] || fail "holds no ${app#./}"
+printed=$("$app" --version) || fail "--version exited $?"
 [[ "$printed" == "speakeasy $version" ]] || fail "--version printed '$printed', not 'speakeasy $version'"
-help=$("$app" --help)
+help=$("$app" --help) || fail "--help exited $?"
 [[ -n "$help" ]] || fail "--help printed nothing"
 status=0
 "$app" --no-such-option 2> rejected.txt || status=$?
-[[ $status -eq 2 && -s rejected.txt ]] || fail "a mistyped option exited $status without a reason on stderr"
-"$app" show demo --out show > /dev/null
-[[ -s show/summary.md && -s show/contact-sheet.png ]] || fail "show demo wrote no summary.md or contact sheet"
+[[ $status -eq 2 ]] || fail "a mistyped option exited $status, not the usage-error status 2"
+[[ -s rejected.txt ]] || fail "a mistyped option gave no reason on stderr"
+"$app" show demo --out show > /dev/null || fail "show demo exited $?"
+[[ -s show/summary.md ]] || fail "show demo wrote no summary.md"
+[[ -s show/contact-sheet.png ]] || fail "show demo wrote no contact-sheet.png"
 echo "Launched $package"
