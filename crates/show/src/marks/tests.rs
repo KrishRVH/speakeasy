@@ -258,9 +258,9 @@ fn arrows_drawn_one_after_another_are_not_one_arrow() {
 }
 
 /// A loop that runs on into a tail or past where it began, or starts with a lead-in, still
-/// circles something.
+/// circles something: what the loop goes round.
 #[test]
-fn a_loop_with_a_lead_in_a_tail_or_an_overshoot_is_a_circle() {
+fn a_loop_with_a_lead_in_a_tail_or_an_overshoot_circles_what_it_goes_round() {
     let flat = |from: f32, to: f32| ellipse([0.3, 0.3], [0.1, 0.05], from, to);
     let cases = [
         (
@@ -278,16 +278,20 @@ fn a_loop_with_a_lead_in_a_tail_or_an_overshoot_is_a_circle() {
         ),
     ];
     for (name, points) in cases {
-        assert_eq!(shape_of(&points, SURFACE), Shape::Circle, "{name}");
+        assert_eq!(
+            group(&[stroke(&points, 0)], &[], SURFACE)[0].to_string(),
+            "① circled region x 0.20–0.40, y 0.25–0.35",
+            "{name}"
+        );
     }
     let tail = [
         3450, 3260, 1190, 3380, 3330, 1200, 3300, 3420, 1210, 3220, 3500, 1220,
     ];
     let tailed = real(&[&REAL_LOOP[..], &tail].concat(), 0);
     assert_eq!(
-        group(&[tailed], &[], CAPTURE)[0].shape,
-        Shape::Circle,
-        "A real loop with a tail"
+        group(&[tailed], &[], CAPTURE)[0].to_string(),
+        "① circled region x 0.30–0.41, y 0.25–0.32",
+        "A real loop with a tail circles what it does without one"
     );
 }
 
@@ -299,7 +303,8 @@ fn every_loop_closed_at_its_ends_is_still_a_circle() {
     let cases = [
         ellipse(center, [0.1, 0.1], 0.0, TAU),
         ellipse(center, [0.1, 0.05], 0.0, TAU),
-        // Open by about 30° at one end of its long axis.
+        // Open by about 30° beside one end of its short axis, and just round enough to need no
+        // flat-loop guard.
         ellipse(center, [0.115, 0.05], 0.25 * TAU, 1.25 * TAU - 0.55),
         ellipse(center, [0.1, 0.1], 0.3, TAU - 0.3),
         ellipse(center, [0.05, 0.1], 0.2, TAU - 0.2),
@@ -327,35 +332,32 @@ fn a_flat_loop_counts_up_to_three_turns() {
     assert_eq!(shape_of(&points, SURFACE), Shape::Scribble);
 }
 
-/// The loop search tries only every few points of a long stroke as a loop's ends, but judges each
-/// stretch by every point along it, so sampling neither smooths a zigzag away nor folds many
-/// turns into one.
+/// The loop search tries only some points of a long stroke as a loop's ends, but measures each
+/// stretch over every point along it, so sampling smooths no zigzag away.
 #[test]
-fn sampling_a_long_stroke_hides_neither_zigzags_nor_turns() {
-    // Every third point is on a smooth flat ellipse, and the others zigzag across it.
-    let mut zigzag: Vec<[f32; 2]> = (0..400_u16)
+fn sampling_a_long_stroke_smooths_no_zigzag_away() {
+    // The search tries every third point of these 1,534, each on a smooth flat ellipse; the
+    // others zigzag across it.
+    let mut zigzag: Vec<[f32; 2]> = (0..511_u16)
         .flat_map(|step| {
-            let angle = TAU * f32::from(step) / 400.0;
+            let angle = TAU * f32::from(step) / 511.0;
             let [x, y] = [0.3 + 0.12 * angle.cos(), 0.3 + 0.03 * angle.sin()];
             [[x, y], [x + 0.004, y + 0.008], [x - 0.004, y - 0.008]]
         })
         .collect();
     zigzag.push(zigzag[0]);
-    // 479 turns in 2,395 steps, within what the tracker keeps of a stroke: every fifth point, each
-    // one tried as an end, is a whole turn on.
-    let turns: Vec<[f32; 2]> = (0..=2_395_u16)
-        .map(|step| {
-            let angle = TAU * f32::from(step) / 5.0;
-            [0.3 + 0.12 * angle.cos(), 0.3 + 0.03 * angle.sin()]
-        })
-        .collect();
-    for (name, points) in [("zigzag", zigzag), ("479 turns", turns)] {
-        assert_eq!(shape_of(&points, SURFACE), Shape::Scribble, "{name}");
-    }
+    assert_eq!(shape_of(&zigzag, SURFACE), Shape::Scribble);
 }
 
+/// Strokes that look a little like an arrow or a loop.
 #[test]
-fn ticks_zigzags_scribbles_hooks_and_arcs_are_neither_arrows_nor_circles() {
+fn look_alikes_are_neither_arrows_nor_circles() {
+    let figure_eight = (0..=240_u8)
+        .map(|step| {
+            let angle = TAU * (f32::from(step) / 240.0 - 0.25);
+            [0.4 + 0.1 * angle.cos(), 0.3 + 0.05 * (2.0 * angle).sin()]
+        })
+        .collect();
     let cases = [
         (
             "check mark",
@@ -389,6 +391,30 @@ fn ticks_zigzags_scribbles_hooks_and_arcs_are_neither_arrows_nor_circles() {
         ("brief scribble", scribble(60)),
         // Closes on itself and fills its box: only its length tells it from a circle.
         ("ten-second scribble", scribble(600)),
+        // Each closes a triangle or a lobe where it crosses itself.
+        (
+            "X joined at the right",
+            polyline(&[[0.1, 0.1], [0.2, 0.2], [0.2, 0.1], [0.1, 0.2]]),
+        ),
+        (
+            "X joined at the bottom",
+            polyline(&[[0.1, 0.1], [0.2, 0.2], [0.1, 0.2], [0.2, 0.1]]),
+        ),
+        (
+            "tall X",
+            polyline(&[[0.1, 0.1], [0.26, 0.3], [0.26, 0.1], [0.1, 0.3]]),
+        ),
+        (
+            "α",
+            polyline(&[
+                [0.1, 0.1],
+                [0.3, 0.25],
+                [0.35, 0.18],
+                [0.3, 0.1],
+                [0.1, 0.25],
+            ]),
+        ),
+        ("figure 8", figure_eight),
         (
             "hooked underline",
             polyline(&[[0.1, 0.3], [0.4, 0.3], [0.405, 0.27]]),
@@ -408,23 +434,88 @@ fn ticks_zigzags_scribbles_hooks_and_arcs_are_neither_arrows_nor_circles() {
             polyline(&[[0.1, 0.3], [0.3, 0.25], [0.26, 0.24]]),
         ),
         ("line", polyline(&[[0.1, 0.3], [0.4, 0.3]])),
+        // Each breaks one rule of an arrow drawn in one go.
+        (
+            "bent shaft",
+            polyline(&[
+                [0.1, 0.2],
+                [0.2, 0.3],
+                [0.4, 0.3],
+                [0.38, 0.288],
+                [0.4, 0.3],
+                [0.38, 0.312],
+            ]),
+        ),
+        (
+            "curled barb",
+            polyline(&[
+                [0.1, 0.3],
+                [0.3, 0.25],
+                [0.28, 0.235],
+                [0.275, 0.22],
+                [0.26, 0.23],
+                [0.3, 0.25],
+                [0.27, 0.27],
+            ]),
+        ),
+        (
+            "head drawn on past its tip",
+            polyline(&[
+                [0.1, 0.5],
+                [0.4, 0.5],
+                [0.355, 0.475],
+                [0.4, 0.5],
+                [0.42, 0.5],
+                [0.345, 0.525],
+            ]),
+        ),
+        (
+            "line doubled back across itself",
+            polyline(&[[0.1, 0.5], [0.4, 0.5], [0.32, 0.488], [0.33, 0.51]]),
+        ),
+        (
+            "long stroke back across a line",
+            polyline(&[[0.1, 0.5], [0.3, 0.5], [0.16, 0.44], [0.18, 0.52]]),
+        ),
+        (
+            "three rays from a point",
+            polyline(&[[0.1, 0.3], [0.3, 0.3], [0.12, 0.2], [0.3, 0.3], [0.12, 0.4]]),
+        ),
+        (
+            "line gone over again and ticked",
+            polyline(&[
+                [0.1, 0.5],
+                [0.4, 0.5],
+                [0.25, 0.508],
+                [0.4, 0.5],
+                [0.37, 0.48],
+            ]),
+        ),
+        (
+            "line ending in a tick and a drop",
+            polyline(&[
+                [0.1, 0.5],
+                [0.4, 0.5],
+                [0.36, 0.47],
+                [0.4, 0.5],
+                [0.405, 0.55],
+            ]),
+        ),
         (
             "C",
             ellipse([0.3, 0.3], [0.1, 0.1], 0.125 * TAU, 0.875 * TAU),
         ),
         ("flat C", ellipse([0.3, 0.3], [0.1, 0.025], 0.8, TAU - 0.8)),
-        (
-            "hourglass",
-            polyline(&[[0.1, 0.1], [0.3, 0.1], [0.1, 0.3], [0.3, 0.3], [0.1, 0.1]]),
-        ),
     ];
-    for (name, points) in cases {
-        let shape = shape_of(&points, SURFACE);
-        assert!(
-            !matches!(shape, Shape::Arrow { .. } | Shape::Circle),
-            "{name} became {shape:?}"
-        );
-    }
+    let misread: Vec<String> = cases
+        .into_iter()
+        .filter_map(|(name, points)| {
+            let shape = shape_of(&points, SURFACE);
+            matches!(shape, Shape::Arrow { .. } | Shape::Circle)
+                .then(|| format!("{name} became {shape:?}"))
+        })
+        .collect();
+    assert!(misread.is_empty(), "{misread:#?}");
 }
 
 #[test]

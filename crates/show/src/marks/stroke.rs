@@ -35,10 +35,14 @@ const FLAT_LOOP_CLOSURE: f64 = 0.6;
 /// Three times round, with slack for a hand's jitter.
 const FLAT_LOOP_TURNS: f64 = 3.5;
 /// A loop inside a stroke with a lead-in, a tail, or an overshoot runs at least this share of the
-/// stroke, its ends meet within [`INNER_LOOP_CLOSURE`] of its long side, and it goes round at most
-/// [`INNER_LOOP_TURNS`] times.
+/// stroke, its ends meet within [`INNER_LOOP_CLOSURE`] of its long side, it encloses
+/// [`INNER_LOOP_FILL`] of its box, and it goes round at most [`INNER_LOOP_TURNS`] times.
 const INNER_LOOP_SHARE: f64 = 0.6;
 const INNER_LOOP_CLOSURE: f64 = 0.15;
+/// More than a triangle can, since an X drawn in one go closes a triangle where it crosses itself: a
+/// triangle fills at most half its box, a little more once the closing slack trims a corner, where
+/// an ellipse fills π/4 of it.
+const INNER_LOOP_FILL: f64 = 0.6;
 const INNER_LOOP_TURNS: f64 = 1.5;
 /// The most points the search for an inner loop tries as its ends, which bounds its quadratic cost.
 const INNER_LOOP_ENDS: usize = 512;
@@ -69,46 +73,55 @@ const LONE_BARB_SPREAD: f32 = 15.0;
 /// underlines whose end hooks back to one side read as one-barbed arrows without it.
 const HEAD_BALANCE: f32 = 0.3;
 
-/// The shape `stroke` makes on a surface `surface` pixels in size.
-pub(super) fn shape(stroke: &Stroke, surface: Size) -> Shape {
+/// What one stroke looks like, and the region it marks.
+pub(super) struct Ink {
+    pub(super) shape: Shape,
+    /// Normalized: the box of a loop found inside a longer stroke, without its lead-in or tail, and
+    /// otherwise of the whole stroke.
+    pub(super) region: Rect,
+}
+
+/// What `stroke` looks like on a surface `surface` pixels in size, and the region it marks.
+pub(super) fn ink(stroke: &Stroke, surface: Size) -> Option<Ink> {
+    let points = stroke.points();
     let path: Vec<Point> = stroke
         .path()
         .map(|point| point.scaled(surface.width, surface.height))
         .collect();
     let traced = trace(&path);
-    let (Some(&start), Some(&end), Some(bounds)) = (
-        traced.first(),
-        traced.last(),
-        Rect::bounding(path.iter().copied()),
-    ) else {
-        return Shape::Tap;
-    };
-    let whole = Stretch::between(start, end, bounds);
-    if whole.width.hypot(whole.height) < TAP_PIXELS {
-        Shape::Tap
-    } else if whole.encloses(LOOP_CLOSURE) {
-        Shape::Circle
+    let bounds = Rect::bounding(path.iter().copied())?;
+    let whole = Stretch::between(*traced.first()?, *traced.last()?, bounds);
+    let (shape, marking) = if whole.width.hypot(whole.height) < TAP_PIXELS {
+        (Shape::Tap, points)
+    } else if whole.encloses(LOOP_CLOSURE, LOOP_FILL) {
+        (Shape::Circle, points)
     } else if whole.gap > STRAIGHTNESS * whole.length {
-        if whole.width > UNDERLINE_ASPECT * whole.height {
+        let straight = if whole.width > UNDERLINE_ASPECT * whole.height {
             Shape::Underline
         } else {
             Shape::Line {
                 from: stroke.first().point,
                 to: stroke.last().point,
             }
-        }
-    } else if has_inner_loop(&traced) {
-        Shape::Circle
-    } else if let Some(tip) = arrow_tip(&path, bounds.width().max(bounds.height()))
-        .and_then(|tip| stroke.points().get(tip))
+        };
+        (straight, points)
+    } else if let Some(round) = inner_loop(&traced).and_then(|round| points.get(round)) {
+        (Shape::Circle, round)
+    } else if let Some(tip) =
+        arrow_tip(&path, bounds.width().max(bounds.height())).and_then(|tip| points.get(tip))
     {
-        Shape::Arrow {
+        let arrow = Shape::Arrow {
             from: stroke.first().point,
             to: tip.point,
-        }
+        };
+        (arrow, points)
     } else {
-        Shape::Scribble
-    }
+        (Shape::Scribble, points)
+    };
+    Some(Ink {
+        shape,
+        region: Rect::bounding(marking.iter().map(|ink| ink.point))?,
+    })
 }
 
 /// A point along a path, with the path's length up to it and twice the signed area its segments
@@ -159,7 +172,7 @@ struct Stretch {
 }
 
 impl Stretch {
-    /// The stretch from `start` to `end`, whose points `bounds` holds.
+    /// The stretch from `start` to `end`, taking `bounds` as its box.
     fn between(start: Traced, end: Traced, bounds: Rect) -> Self {
         Self {
             width: f64::from(bounds.width()),
@@ -171,18 +184,29 @@ impl Stretch {
     }
 
     /// Whether the stretch goes round something: its ends meet within `closure` of its long side,
-    /// it runs [`LOOP_LENGTH`] times that side, encloses [`LOOP_FILL`] of its box, spans
+    /// it runs [`LOOP_LENGTH`] times that side, encloses `fill` of its box, spans
     /// [`CIRCLE_PIXELS`] both ways, and is round or a flat loop as [`CIRCLE_FLATNESS`] describes.
-    fn encloses(&self, closure: f64) -> bool {
-        let (long, short) = (self.width.max(self.height), self.width.min(self.height));
+    fn encloses(&self, closure: f64, fill: f64) -> bool {
+        let (long, short) = self.sides();
         self.gap < closure * long
             && self.length > LOOP_LENGTH * long
             && short >= CIRCLE_PIXELS
-            && self.area > LOOP_FILL * self.width * self.height
+            && self.area > fill * self.width * self.height
             && (short > ROUND * long
                 || (short > CIRCLE_FLATNESS * long
                     && self.gap < FLAT_LOOP_CLOSURE * short
                     && self.turns() <= FLAT_LOOP_TURNS))
+    }
+
+    /// Its long side and its short side.
+    fn sides(&self) -> (f64, f64) {
+        (self.width.max(self.height), self.width.min(self.height))
+    }
+
+    /// How far apart its ends are for its size: their gap as a share of its long side.
+    fn opening(&self) -> f64 {
+        let (long, _) = self.sides();
+        self.gap / long
     }
 
     /// How many times the stretch would go round the ellipse filling its box, by Ramanujan's
@@ -195,44 +219,53 @@ impl Stretch {
     }
 }
 
-/// Whether the path goes round something once inside a longer stroke, after a lead-in or before a
-/// tail or an overshoot, as [`INNER_LOOP_SHARE`] describes.
+/// The points of `path` that go round something once inside a longer stroke, after a lead-in or
+/// before a tail or an overshoot, as [`INNER_LOOP_SHARE`] describes; of several such stretches, the
+/// one whose ends meet closest for its size.
 ///
-/// Trying every pair of points as a loop's ends would cost the square of the points, so only
-/// every few points are tried, at most [`INNER_LOOP_ENDS`]; each stretch is still judged by every
-/// point along it, so sampling smooths no zigzag away and folds no turns together.
-fn has_inner_loop(path: &[Traced]) -> bool {
-    let Some(total) = path.last().map(|end| end.length) else {
-        return false;
-    };
-    let step = path.len().div_ceil(INNER_LOOP_ENDS);
-    let last = path.len().saturating_sub(1);
-    let tried = |index: usize| index.is_multiple_of(step) || index == last;
-    path.iter()
+/// Trying every pair of points as a loop's ends would cost the square of the points, so at most
+/// [`INNER_LOOP_ENDS`] are tried, spread evenly from the first point to the last, and a stretch's
+/// box holds the tried points along it. Its length and area still count every point along it, so
+/// sampling smooths no zigzag away.
+fn inner_loop(path: &[Traced]) -> Option<RangeInclusive<usize>> {
+    let last = path.len().checked_sub(1)?;
+    let total = path.get(last)?.length;
+    let steps = last.min(INNER_LOOP_ENDS.saturating_sub(1));
+    let ends: Vec<(usize, Traced)> = (0..=steps)
+        .filter_map(|step| {
+            let index = step.checked_mul(last)?.checked_div(steps)?;
+            Some((index, *path.get(index)?))
+        })
+        .collect();
+    // No stretch from a later start runs the loop's share of the stroke.
+    let latest = (1.0 - INNER_LOOP_SHARE) * total;
+    ends.iter()
         .enumerate()
-        .filter(|&(index, _)| tried(index))
-        .any(|(from, &start)| {
+        .take_while(|&(_, &(_, start))| start.length <= latest)
+        .flat_map(|(tried, &(from, start))| {
             let mut bounds = Rect::at(start.point);
-            path.iter().enumerate().skip(from).any(|(to, &end)| {
+            ends.iter().skip(tried).filter_map(move |&(to, end)| {
                 bounds = bounds.union(Rect::at(end.point));
-                if !tried(to) || end.length - start.length < INNER_LOOP_SHARE * total {
-                    return false;
-                }
                 let stretch = Stretch::between(start, end, bounds);
-                stretch.turns() <= INNER_LOOP_TURNS && stretch.encloses(INNER_LOOP_CLOSURE)
+                let goes_round = stretch.length >= INNER_LOOP_SHARE * total
+                    && stretch.turns() <= INNER_LOOP_TURNS
+                    && stretch.encloses(INNER_LOOP_CLOSURE, INNER_LOOP_FILL);
+                goes_round.then(|| (stretch.opening(), from..=to))
             })
         })
+        .min_by(|(one, _), (other, _)| one.total_cmp(other))
+        .map(|(_, round)| round)
 }
 
 /// Where an arrow drawn in one go along `path` points, as the index of its tip, for a path whose
 /// box's long side is `size`.
 ///
 /// The shaft runs straight from the first point to the tip, where the pen turns back into one or
-/// two straight barbs that end behind the tip, and nothing runs on past it. Two barbs (out, back,
-/// and out again) may be long; a lone barb is shorter, and it must spread clearly from the shaft
-/// and run on across it, since the head reaches both sides of the shaft. An underline whose end
-/// hooks back, a check mark, a V, and a zigzag are not arrows, and neither is an arrow drawn head
-/// first.
+/// two straight barbs, each drawn out from the tip to end behind it, and nothing runs on past the
+/// tip. Two barbs (out, back, and out again) may be long; a lone barb is shorter, and it must
+/// spread clearly from the shaft and run on across it, since the head reaches both sides of the
+/// shaft. An underline whose end hooks back, a check mark, a V, a zigzag, and an X are not arrows,
+/// and neither is an arrow drawn head first.
 fn arrow_tip(path: &[Point], size: f32) -> Option<usize> {
     let turn = turning_point(path, size)?;
     let shaft = path.get(..=turn)?;
@@ -241,34 +274,37 @@ fn arrow_tip(path: &[Point], size: f32) -> Option<usize> {
     let length = start.distance(tip);
     if shaft
         .iter()
-        .any(|&along| off_line(along, start, tip) > SHAFT_WOBBLE * length)
+        .any(|&point| off_line(point, start, tip) > SHAFT_WOBBLE * length)
     {
         return None;
     }
     let forward = arrival(shaft)?;
     let slack = head_size(length);
-    if head.iter().any(|&after| (after - tip).dot(forward) > slack) {
+    if head.iter().any(|&point| (point - tip).dot(forward) > slack) {
         return None;
     }
     // Each barb's reach from the tip, and its spread from the shaft in degrees.
-    let barbs: Vec<(f32, f32)> = barbs(head, slack)
+    let measured: Vec<(f32, f32)> = barbs(head, slack)
         .into_iter()
         .map(|barb| {
             let barb = head.get(barb)?;
             let (&from, &end) = (barb.first()?, barb.last()?);
             let straight = barb
                 .iter()
-                .all(|&along| off_line(along, from, end) <= BARB_WOBBLE * from.distance(end));
+                .all(|&point| off_line(point, from, end) <= BARB_WOBBLE * from.distance(end));
             let reach = (end - tip).length();
             let spread = (-(end - tip).dot(forward) / reach)
                 .clamp(-1.0, 1.0)
                 .acos()
                 .to_degrees();
-            (straight && reach <= BARB_REACH * length && spread <= BARB_SPREAD)
+            (from.distance(tip) <= slack
+                && straight
+                && reach <= BARB_REACH * length
+                && spread <= BARB_SPREAD)
                 .then_some((reach, spread))
         })
         .collect::<Option<_>>()?;
-    let pointed = match barbs[..] {
+    let pointed = match measured[..] {
         [(reach, spread)] => reach <= LONE_BARB_REACH * length && spread >= LONE_BARB_SPREAD,
         [(_, one), (_, other)] => one.min(other) >= BARBS_SPREAD,
         _ => false,
@@ -276,7 +312,7 @@ fn arrow_tip(path: &[Point], size: f32) -> Option<usize> {
     let across = forward.perpendicular();
     let (left, right) = head
         .iter()
-        .map(|&after| (after - tip).dot(across))
+        .map(|&point| (point - tip).dot(across))
         .fold((0.0_f32, 0.0_f32), |(left, right), side| {
             (left.max(side), right.max(-side))
         });

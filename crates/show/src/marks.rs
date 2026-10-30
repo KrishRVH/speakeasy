@@ -72,7 +72,8 @@ pub struct Mark {
     pub strokes: Range<usize>,
     /// From the first stroke's start to the last stroke's end, or the moment of a pin.
     pub span: Span,
-    /// The smallest normalized rectangle holding the ink, or a pin's point.
+    /// The smallest normalized rectangle holding what the ink marks, or a pin's point. A stroke
+    /// that goes round something after a lead-in or before a tail marks only its loop.
     pub bounds: Rect,
 }
 
@@ -130,10 +131,10 @@ pub(crate) fn group(strokes: &[Stroke], pins: &[Pin], surface: Size) -> Vec<Mark
         .flat_map(|run| run.chunks(MARK_STROKES))
         .filter_map(|members| {
             let span = members.iter().map(Stroke::span).reduce(Span::union)?;
-            let bounds = Rect::bounding(members.iter().flat_map(Stroke::path))?;
+            let (shape, bounds) = read(members, surface)?;
             Some(Mark {
                 number: 0,
-                shape: shape(members, surface),
+                shape,
                 strokes: strokes.subslice_range(members)?.into(),
                 span,
                 bounds,
@@ -164,36 +165,38 @@ struct Measured<'a> {
     shape: Shape,
     /// Normalized, like the stroke's points.
     bounds: Rect,
+    /// The part of `bounds` the stroke marks.
+    region: Rect,
     /// Width plus height in pixels; the largest stroke is the mark's main one.
     size: f32,
 }
 
-fn shape(strokes: &[Stroke], surface: Size) -> Shape {
+/// What `strokes` look like together in the pixels of `surface`, and the region they mark.
+fn read(strokes: &[Stroke], surface: Size) -> Option<(Shape, Rect)> {
     let mut measured: Vec<Measured<'_>> = strokes
         .iter()
         .filter_map(|stroke| {
             let bounds = Rect::bounding(stroke.path())?;
+            let stroke::Ink { shape, region } = stroke::ink(stroke, surface)?;
             Some(Measured {
                 stroke,
-                shape: stroke::shape(stroke, surface),
+                shape,
                 bounds,
+                region,
                 size: bounds.width() * surface.width + bounds.height() * surface.height,
             })
         })
         .collect();
+    let region = measured.iter().map(|one| one.region).reduce(Rect::union)?;
     measured.sort_by(|one, other| other.size.total_cmp(&one.size));
-    let Some((main, rest)) = measured.split_first() else {
-        return Shape::Tap;
-    };
-    if let Some(arrow) = arrow(main, rest, surface) {
-        return arrow;
-    }
-    match main.shape {
+    let (main, rest) = measured.split_first()?;
+    let shape = arrow(main, rest, surface).unwrap_or_else(|| match main.shape {
         Shape::Circle => Shape::Circle,
         Shape::Line { .. } | Shape::Arrow { .. } if !rest.is_empty() => Shape::Scribble,
         shape if rest.iter().all(|other| other.shape.same_kind(shape)) => shape,
         _ => Shape::Scribble,
-    }
+    });
+    Some((shape, region))
 }
 
 /// A straight main stroke with one or two short strokes clustered at one end is an arrow
