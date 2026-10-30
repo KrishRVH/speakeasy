@@ -116,7 +116,8 @@ pub(crate) enum Published {
 /// A recording device the owner opens, finishes, and retires: the microphone or a Show's
 /// screen recorder.
 pub(crate) trait Capturing: Send + 'static {
-    /// Requests the end of capture; the recording then reports its `Finished` event.
+    /// Requests the end of capture; the recording then reports how it ended: `Finished`, or
+    /// `Unchosen` for a Show whose scope found nothing to record.
     fn finish(&self);
 
     /// Cancels capture; resolves only once the device has been released.

@@ -74,7 +74,7 @@ impl ScreenRecorder {
                 pinned,
                 canvas: &canvas,
             };
-            let mut report = Report::new(id, events, &canvas);
+            let mut report = Report::new(id, events, &lanes);
             report.outcome = record(started, scope, &lanes);
         })?;
         Ok(Self {
@@ -111,29 +111,32 @@ impl Pinning for ScreenRecorder {
     }
 }
 
-/// How a recording that was not cancelled ended.
+/// How a recording ended.
 enum Ended {
     Recorded(Box<Footage>),
     Unchosen(Unchosen),
+    Cancelled,
 }
 
-/// Reports a recording however its thread leaves it: when dropped, it hides the overlay and sends
-/// `outcome` to the owner. A cancelled recording reports nothing.
+/// Reports a recording however its thread leaves it: when dropped, it hides the overlay and tells
+/// the owner how recording ended, with its footage, its failure, or that its scope found nothing to
+/// record. A recording the owner cancelled reports nothing, even one that ended before the cancel
+/// reached it.
 struct Report<'a> {
     id: SessionId,
     events: Sender<ShowEvent>,
-    canvas: &'a watch::Sender<Canvas>,
+    lanes: &'a Lanes<'a>,
     /// How recording ended: [`CAPTURE_STOPPED`] until it returns, so a recording that unwinds
     /// reports a fixed failure rather than a panic's message, which could carry private text.
-    outcome: anyhow::Result<Option<Ended>>,
+    outcome: anyhow::Result<Ended>,
 }
 
 impl<'a> Report<'a> {
-    fn new(id: SessionId, events: Sender<ShowEvent>, canvas: &'a watch::Sender<Canvas>) -> Self {
+    fn new(id: SessionId, events: Sender<ShowEvent>, lanes: &'a Lanes<'a>) -> Self {
         Self {
             id,
             events,
-            canvas,
+            lanes,
             outcome: Err(anyhow!(CAPTURE_STOPPED)),
         }
     }
@@ -141,13 +144,18 @@ impl<'a> Report<'a> {
 
 impl Drop for Report<'_> {
     fn drop(&mut self) {
-        self.canvas.send_replace(Canvas::Hidden);
-        let event = match mem::replace(&mut self.outcome, Ok(None)) {
-            Ok(None) => return,
-            Ok(Some(Ended::Recorded(footage))) => ShowEvent::Finished(self.id, Ok(footage)),
-            Ok(Some(Ended::Unchosen(unchosen))) => ShowEvent::Unchosen(self.id, unchosen),
+        self.lanes.canvas.send_replace(Canvas::Hidden);
+        let event = match mem::replace(&mut self.outcome, Ok(Ended::Cancelled)) {
+            Ok(Ended::Recorded(footage)) => ShowEvent::Finished(self.id, Ok(footage)),
+            Ok(Ended::Unchosen(unchosen)) => ShowEvent::Unchosen(self.id, unchosen),
+            Ok(Ended::Cancelled) => return,
             Err(error) => ShowEvent::Finished(self.id, Err(error)),
         };
+        // A recording can end without seeing the cancel, as one looking for a window does, but the
+        // owner that cancelled it waits for no report.
+        if self.lanes.finishing.is_closed() {
+            return;
+        }
         #[expect(
             clippy::let_underscore_must_use,
             reason = "A closed event lane belongs to a departed owner; retirement still observes this thread's exit"
@@ -164,16 +172,16 @@ struct Lanes<'a> {
     canvas: &'a watch::Sender<Canvas>,
 }
 
-/// Records until finished, returning how recording ended, or `None` once cancelled.
-fn record(started: Instant, scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<Option<Ended>> {
+/// Records until finished or cancelled, returning how recording ended.
+fn record(started: Instant, scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<Ended> {
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()?
         .block_on(async {
             let target = match choose(scope, lanes).await? {
-                Some(Ok(target)) => target,
-                Some(Err(unchosen)) => return Ok(Some(Ended::Unchosen(unchosen))),
-                None => return Ok(None),
+                Choice::Chosen(target) => target,
+                Choice::Unchosen(unchosen) => return Ok(Ended::Unchosen(unchosen)),
+                Choice::Cancelled => return Ok(Ended::Cancelled),
             };
             let (frame_lane, frames) = async_channel::bounded(FRAME_LANE);
             let capture = ScreenCapture::start(target, SAMPLE_INTERVAL, LONGEST_EDGE, frame_lane)?;
@@ -190,23 +198,27 @@ fn record(started: Instant, scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<O
             let footage = Take::new(started, display.size, part, lanes.canvas)
                 .run(lanes, sources)
                 .await?;
-            Ok(footage.map(|footage| Ended::Recorded(Box::new(footage))))
+            Ok(footage.map_or(Ended::Cancelled, |footage| {
+                Ended::Recorded(Box::new(footage))
+            }))
         })
 }
 
-/// Resolves what `scope` names into a target, or what found nothing to record; `None` once
-/// cancelled. W takes the window under the pointer, and A the area dragged out on the overlay over
-/// the display under the pointer.
-async fn choose(
-    scope: Scope,
-    lanes: &Lanes<'_>,
-) -> anyhow::Result<Option<Result<Target, Unchosen>>> {
+/// How choosing what a Show's scope names ended.
+enum Choice {
+    Chosen(Target),
+    Unchosen(Unchosen),
+    Cancelled,
+}
+
+/// Resolves what `scope` names into a target. W takes the window under the pointer, and A the area
+/// dragged out on the overlay over the display under the pointer.
+async fn choose(scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<Choice> {
     let display = match scope {
-        Scope::Screen => return Ok(Some(Ok(Target::screen_under_pointer()?))),
+        Scope::Screen => return Ok(Choice::Chosen(Target::screen_under_pointer()?)),
         Scope::Window => {
-            return Ok(Some(
-                Target::window_under_pointer()?.ok_or(Unchosen::Window),
-            ));
+            return Ok(Target::window_under_pointer()?
+                .map_or(Choice::Unchosen(Unchosen::Window), Choice::Chosen));
         },
         Scope::Area => Display::under_pointer()?,
     };
@@ -214,19 +226,33 @@ async fn choose(
     lanes
         .canvas
         .send_replace(Canvas::Picking { display, chosen });
-    Ok(pick(&choice, lanes)
-        .await
-        .map(|picked| picked.map(|part| Target::area(display, part))))
+    Ok(match pick(&choice, lanes).await {
+        Picked::Area(part) => Choice::Chosen(Target::area(display, part)),
+        Picked::Unchosen => Choice::Unchosen(Unchosen::Area),
+        Picked::Cancelled => Choice::Cancelled,
+    })
 }
 
-/// Waits for the part of the display dragged out on `choice`. None is chosen when the Show
-/// finishes first, or when the overlay closes `choice` because it cannot appear; `None` once
-/// cancelled. Pins asked for before it returns mark nothing.
-async fn pick(choice: &Receiver<Part>, lanes: &Lanes<'_>) -> Option<Result<Part, Unchosen>> {
+/// How picking an area ended.
+#[derive(Debug, PartialEq)]
+enum Picked {
+    /// The part of the display dragged out.
+    Area(Part),
+    /// The Show finished first, or the overlay could not appear to take a drag.
+    Unchosen,
+    Cancelled,
+}
+
+/// Waits for the part of the display dragged out on `choice`, which the overlay closes when it
+/// cannot appear. Pins asked for before it returns mark nothing.
+async fn pick(choice: &Receiver<Part>, lanes: &Lanes<'_>) -> Picked {
     let picked = tokio::select! {
         biased;
-        finished = lanes.finishing.recv() => finished.ok().map(|()| Err(Unchosen::Area)),
-        part = choice.recv() => Some(part.map_err(|_closed| Unchosen::Area)),
+        finished = lanes.finishing.recv() => match finished {
+            Ok(()) => Picked::Unchosen,
+            Err(_closed) => Picked::Cancelled,
+        },
+        part = choice.recv() => part.map_or(Picked::Unchosen, Picked::Area),
     };
     while lanes.pinned.try_recv().is_ok() {}
     picked

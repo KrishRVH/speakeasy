@@ -72,16 +72,10 @@ impl Feed {
 /// Records all of a 1000 × 500 display as `drive` feeds it from sources that take [`TEARDOWN`] to
 /// stop. Returns what the take returned and how long it ran on tokio's paused clock.
 async fn record(drive: impl AsyncFnOnce(&Feed)) -> (anyhow::Result<Option<Footage>>, Duration) {
-    let (finish, finishing) = async_channel::bounded(1);
-    let (pins, pinned) = async_channel::bounded(PIN_LANE);
     let (frame_lane, frames) = async_channel::bounded(FRAME_LANE);
     let (sample_lane, samples) = async_channel::bounded(POINTER_LANE);
     let (canvas, _) = watch::channel(Canvas::default());
-    let lanes = Lanes {
-        finishing,
-        pinned,
-        canvas: &canvas,
-    };
+    let (finish, pins, lanes) = lanes(&canvas);
     let start = tokio::time::Instant::now();
     let feed = Feed {
         finish,
@@ -101,6 +95,19 @@ async fn record(drive: impl AsyncFnOnce(&Feed)) -> (anyhow::Result<Option<Footag
         (recorded, start.elapsed())
     };
     tokio::join!(run, drive(&feed)).0
+}
+
+/// The lanes a recording reads, publishing to `canvas`, and the owner's ends of them: finishing,
+/// then pins.
+fn lanes(canvas: &watch::Sender<Canvas>) -> (Sender<()>, Sender<Taps>, Lanes<'_>) {
+    let (finish, finishing) = async_channel::bounded(1);
+    let (pins, pinned) = async_channel::bounded(PIN_LANE);
+    let lanes = Lanes {
+        finishing,
+        pinned,
+        canvas,
+    };
+    (finish, pins, lanes)
 }
 
 /// What a recording that failed says.
@@ -322,14 +329,8 @@ async fn a_pin_is_judged_after_the_pointer_samples_queued_before_it() -> anyhow:
 #[tokio::test]
 async fn an_area_is_dragged_out_or_left_unchosen_and_earlier_pins_mark_nothing()
 -> anyhow::Result<()> {
-    let (finish, finishing) = async_channel::bounded(1);
-    let (pins, pinned) = async_channel::bounded(PIN_LANE);
     let (canvas, _) = watch::channel(Canvas::default());
-    let lanes = Lanes {
-        finishing,
-        pinned,
-        canvas: &canvas,
-    };
+    let (finish, pins, lanes) = lanes(&canvas);
     let (chosen, choice) = async_channel::bounded(1);
     let dragged = Part::between([0.1, 0.2], [0.5, 0.6]);
     let now = Instant::now();
@@ -338,24 +339,24 @@ async fn an_area_is_dragged_out_or_left_unchosen_and_earlier_pins_mark_nothing()
         released: now,
     })?;
     chosen.try_send(dragged)?;
-    assert_eq!(pick(&choice, &lanes).await, Some(Ok(dragged)));
+    assert_eq!(pick(&choice, &lanes).await, Picked::Area(dragged));
     assert!(lanes.pinned.is_empty(), "The early pin was dropped");
     finish.try_send(())?;
     chosen.try_send(dragged)?;
     assert_eq!(
         pick(&choice, &lanes).await,
-        Some(Err(Unchosen::Area)),
+        Picked::Unchosen,
         "Finishing first chooses nothing, even with an area waiting behind it"
     );
     while choice.try_recv().is_ok() {}
     chosen.close();
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(5), pick(&choice, &lanes)).await?,
-        Some(Err(Unchosen::Area)),
+        Picked::Unchosen,
         "The overlay could not appear"
     );
     finish.close();
-    assert_eq!(pick(&choice, &lanes).await, None, "Cancelled");
+    assert_eq!(pick(&choice, &lanes).await, Picked::Cancelled);
     Ok(())
 }
 
@@ -363,10 +364,11 @@ async fn an_area_is_dragged_out_or_left_unchosen_and_earlier_pins_mark_nothing()
 fn a_recording_that_unwinds_hides_the_overlay_and_reports_a_fixed_failure() -> anyhow::Result<()> {
     let (events, reported) = async_channel::bounded(1);
     let (canvas, overlay) = watch::channel(Canvas::default());
+    let (_finish, _pins, lanes) = lanes(&canvas);
     let unwound = std::thread::scope(|scope| {
         scope
             .spawn(|| {
-                let _report = Report::new(SessionId::FIRST, events, &canvas);
+                let _report = Report::new(SessionId::FIRST, events, &lanes);
                 panic!("A recording bug");
             })
             .join()
@@ -378,5 +380,32 @@ fn a_recording_that_unwinds_hides_the_overlay_and_reports_a_fixed_failure() -> a
     };
     assert_eq!(id, SessionId::FIRST);
     assert_eq!(failure(outcome).as_deref(), Some(CAPTURE_STOPPED));
+    Ok(())
+}
+
+#[test]
+fn a_recording_that_found_nothing_to_record_says_so_unless_the_owner_cancelled_it()
+-> anyhow::Result<()> {
+    let (events, reported) = async_channel::bounded(1);
+    let (canvas, overlay) = watch::channel(Canvas::default());
+    let (finish, _pins, lanes) = lanes(&canvas);
+    let report = |outcome| {
+        let mut report = Report::new(SessionId::FIRST, events.clone(), &lanes);
+        report.outcome = outcome;
+    };
+    report(Ok(Ended::Unchosen(Unchosen::Area)));
+    assert!(overlay.has_changed()?, "The overlay was told to hide");
+    let ShowEvent::Unchosen(id, unchosen) = reported.try_recv()? else {
+        anyhow::bail!("An area left unchosen is reported as such");
+    };
+    assert_eq!((id, unchosen), (SessionId::FIRST, Unchosen::Area));
+    report(Ok(Ended::Cancelled));
+    assert!(reported.is_empty(), "A cancelled recording reports nothing");
+    finish.close();
+    report(Ok(Ended::Unchosen(Unchosen::Window)));
+    assert!(
+        reported.is_empty(),
+        "A recording cancelled while it looked for a window reports nothing"
+    );
     Ok(())
 }
