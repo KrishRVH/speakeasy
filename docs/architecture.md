@@ -128,7 +128,10 @@ module unless a test file is named.
 - **Instance and relaunch**: [instance.rs](../crates/app/src/instance.rs) owns the lock and the
   secret-gated loopback commands.
 - **Command line**: [main.rs](../crates/app/src/main.rs) parses options and routes what they ask
-  for, and [show.rs](../crates/app/src/show.rs) parses `show` commands; both test their parsing.
+  for, and [show/command.rs](../crates/app/src/show/command.rs) parses `show` commands. Its
+  [output.rs](../crates/app/src/show/command/output.rs) projects metadata without private text;
+  [command/tests.rs](../crates/app/src/show/command/tests.rs) inspects simulated Shows, checks
+  failure output, and exercises the embedded [agent skill](../skills/speakeasy-show/SKILL.md).
   [check-package.sh](../scripts/check-package.sh) launches every release package before upload.
 - **Show recording and publication**: [show.rs](../crates/app/src/show.rs),
   [show/recorder.rs](../crates/app/src/show/recorder.rs),
@@ -155,9 +158,16 @@ module unless a test file is named.
   [describe.rs](../crates/show/src/describe.rs).
   [bundle/tests.rs](../crates/show/src/bundle/tests.rs) checks paginated sheets and pins
   `show.json`; the demo's summary in demo.rs pins what agents read.
+  [bundle/read.rs](../crates/show/src/bundle/read.rs) validates format versions and references
+  without I/O, exposes sheet membership, and strips private decoder messages from failures. Its
+  [tests](../crates/show/src/bundle/read/tests.rs) reject broken references and exercise generated
+  manifest mutations and sheet sizes.
 - **Show store**: [show/store.rs](../crates/app/src/show/store.rs) names, writes, and expires
-  bundles, and [store/recall.rs](../crates/app/src/show/store/recall.rs) reads a saved one back;
-  [store/tests.rs](../crates/app/src/show/store/tests.rs) checks both.
+  bundles, and [store/recall.rs](../crates/app/src/show/store/recall.rs) reads a saved one back; it
+  also discovers and inspects saved Shows without changing them.
+  [store/tests.rs](../crates/app/src/show/store/tests.rs) checks publication, expiry, and edited
+  summaries; [recall/tests.rs](../crates/app/src/show/store/recall/tests.rs) checks discovery, read
+  limits, damage, links, and moved bundles.
 - **Screen capture and overlay**: [platform/src/screen.rs](../crates/platform/src/screen.rs),
   [screen/geometry.rs](../crates/platform/src/screen/geometry.rs),
   [windows/screen.rs](../crates/platform/src/windows/screen.rs) with

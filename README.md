@@ -145,6 +145,43 @@ one Show, and only until it quits. Once that Show expires or is deleted, either 
 both turn off until your next Show; neither reaches for an older one. If a finished Show cannot be
 copied, it stays saved and the pill points you to Copy last Show.
 
+### Read saved Shows
+
+An agent on the same machine can inspect a Show without launching the app or opening the microphone:
+
+```sh
+speakeasy show list --json
+speakeasy show inspect "PATH_TO_SHOW" --json
+speakeasy show skill
+```
+
+`list` finds saved Shows across app restarts, newest first, including damaged or unsupported ones.
+It lists the timestamp-named folders in Speakeasy's Shows folder; use `inspect` with an explicit
+path for a moved or exported Show. These commands also work on Linux, where recording Shows is
+unavailable. They leave files, edits, permissions, and retention unchanged, and do not change which
+Show the tray remembers. There is no implicit latest Show.
+
+`inspect` maps each contact sheet to its frames and each numbered mark to its saved frame. Its paths
+point to the bundle's current location, even if the summary still names the original folder. Read
+every contact sheet, then the user's current `summary.md`, then the relevant full-size frames.
+Inspection prints metadata and paths, never narration, spoken cues, or screen content. It checks the
+manifest and expected files without decoding images; `ok` means those structural checks passed, not
+that every image decodes. Missing files remain visible beside the frames that survived. A mark with
+no saved frame is reported without substituting another image.
+
+Both commands offer readable text without `--json`. JSON reports `ok`, `damaged`, or `unsupported`
+status. If the manifest cannot be read, duration, counts, and pin status are null, and inspection
+omits its detail fields and frame tables. Inspection exits with status 1 for damage or an
+unsupported format, after printing its findings. A listing succeeds even when individual Shows are
+damaged. An unreadable Shows folder fails the command; a missing one is an empty listing. Manifests
+are limited to 16 MiB and summaries to 1 MiB. Only format 2 is read; unknown fields are ignored.
+
+`show skill` prints the [agent reading guide](skills/speakeasy-show/SKILL.md) embedded in the
+installed binary. Save it as `SKILL.md` in a skill folder your agent loads. It explains the reading
+order, numbered references, private-file handling, and the limits of selected keyframes. These
+commands cannot retrieve discarded frames or retry lost narration. `speakeasy show --help` lists
+their options.
+
 ## What's said here stays here
 
 - Speech runs in a local NeMo-Speech.cpp or whisper.cpp process that Speakeasy owns and stops. Setup
@@ -396,8 +433,9 @@ paused clock exercises gesture deadlines and the five-minute cap.
   needs Developer ID signing and notarization.
 - `bash scripts/check-package.sh <package>` unpacks a package and checks, with no display or model,
   that it prints its version and help, answers a mistyped option on stderr with status 2, and that
-  `show demo` writes a bundle with its summary and contact sheet. The release workflow runs it on
-  every package before upload.
+  `show demo` writes a bundle with its summary and contact sheet. It inspects the bundle, prints the
+  embedded agent skill, and checks that a missing frame produces findings and a failure status. The
+  release workflow runs it on every package before upload.
 - `scripts/check-demo-windows.ps1 -Executable <speakeasy.exe>` checks that the demo pill stays
   non-activating and passes clicks through.
   `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks minimize, close, relaunch, and

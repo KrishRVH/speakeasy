@@ -346,7 +346,7 @@ fn print_help() -> io::Result<()> {
     )?;
     writeln!(
         out,
-        "speakeasy --version prints the version.\nspeakeasy show demo [--out NEW_DIR] writes a scripted Show bundle and prints its summary."
+        "speakeasy --version prints the version.\nspeakeasy show --help lists the Show commands: list, inspect, skill, and demo."
     )
 }
 

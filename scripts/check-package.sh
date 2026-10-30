@@ -53,4 +53,13 @@ status=0
 "$app" show demo --out show > /dev/null || fail "show demo exited $?"
 [[ -s show/summary.md ]] || fail "show demo wrote no summary.md"
 [[ -s show/contact-sheet.png ]] || fail "show demo wrote no contact-sheet.png"
+"$app" show inspect show --json > inspection.json || fail "show inspect exited $?"
+[[ -s inspection.json ]] || fail "show inspect printed nothing"
+"$app" show skill > SKILL.md || fail "show skill exited $?"
+[[ -s SKILL.md ]] || fail "show skill printed nothing"
+rm show/frames/frame-01.png
+status=0
+"$app" show inspect show --json > damaged.json 2> rejected.txt || status=$?
+[[ $status -eq 1 ]] || fail "a damaged Show exited $status, not status 1"
+[[ -s damaged.json && -s rejected.txt ]] || fail "a damaged Show gave no findings or failure"
 echo "Launched $package"

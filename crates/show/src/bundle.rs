@@ -5,7 +5,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+
+mod read;
+pub use read::Unreadable;
 
 use crate::{
     Ending, Error, Image, Keyframe, Mark, Moment, NarrationLoss, Recording, Selection, Typeface,
@@ -15,7 +18,6 @@ use crate::{
 };
 
 const CONTACT_SHEET: &str = "contact-sheet.png";
-const MANIFEST: &str = "show.json";
 
 /// The file for the contact sheet numbered `number` from zero: `contact-sheet.png`, then
 /// `contact-sheet-02.png` onward.
@@ -36,21 +38,23 @@ impl Keyframe {
 }
 
 /// Everything a Show recorded and chose, as `show.json` stores it.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
     /// The format's version, which changes only when a reader must.
-    pub version: u32,
+    pub(crate) version: u32,
     /// What was captured.
     #[serde(flatten)]
-    pub recording: Recording,
+    pub(crate) recording: Recording,
     /// The ink grouped into gestures.
-    pub marks: Vec<Mark>,
+    pub(crate) marks: Vec<Mark>,
     /// The chosen frames, each stored at [`Keyframe::file`].
-    pub keyframes: Vec<Keyframe>,
+    pub(crate) keyframes: Vec<Keyframe>,
 }
 
 impl Manifest {
+    /// The manifest's file name within a Show.
+    pub const FILE: &str = "show.json";
     /// The version this crate writes.
     pub const VERSION: u32 = 2;
 }
@@ -254,7 +258,7 @@ impl fmt::Display for Summary<'_> {
                 None => writeln!(f, "- #{index} ({at}) {event}"),
             }?;
         }
-        let timeline = file(MANIFEST);
+        let timeline = file(Manifest::FILE);
         match keyframes.as_slice() {
             [] => Ok(()),
             [only] => writeln!(
@@ -315,7 +319,7 @@ impl Bundle {
             contents: summary.clone().into_bytes(),
         });
         files.push(File {
-            name: MANIFEST.to_owned(),
+            name: Manifest::FILE.to_owned(),
             contents: serde_json::to_vec_pretty(&self.manifest).map_err(Error::manifest)?,
         });
         Ok((summary, files))

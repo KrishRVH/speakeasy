@@ -27,7 +27,7 @@ const PIN: &str = ".pinned";
 const STAGING_PREFIX: &str = ".partial-";
 
 /// Where Shows live: machine-local, beside the engines and models.
-fn directory() -> anyhow::Result<PathBuf> {
+pub(super) fn directory() -> anyhow::Result<PathBuf> {
     Ok(crate::paths::data_root()?.join("shows"))
 }
 
@@ -334,7 +334,6 @@ fn civil_date(days: u64) -> (u64, u64, u64) {
     (year, month, day)
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos", test))]
-mod recall;
+pub(super) mod recall;
 #[cfg(test)]
 mod tests;

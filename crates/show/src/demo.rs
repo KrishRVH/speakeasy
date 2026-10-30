@@ -522,7 +522,7 @@ Full-size keyframes: `{}` to `{}`. Timeline: `{}`.
         assert_eq!(files[5].contents, summary.as_bytes());
         let sheet = Image::decode_png(&files[0].contents);
         assert!(sheet.width().max(sheet.height()) <= 1_600);
-        let manifest: crate::Manifest = serde_json::from_slice(&files[6].contents).unwrap();
+        let manifest: crate::Manifest = crate::Manifest::parse(&files[6].contents).unwrap();
         assert_eq!(manifest, expected);
     }
 }

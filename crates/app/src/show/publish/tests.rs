@@ -228,12 +228,12 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
         summary,
         "The summary copied is the one written"
     );
-    let manifest: Manifest = serde_json::from_slice(&fs::read(directory.join("show.json"))?)?;
-    assert_eq!(manifest.recording.narration, narration);
-    assert_eq!(manifest.recording.strokes.len(), 1, "The circle");
-    assert_eq!(manifest.recording.actions.len(), 1, "The click");
-    assert_ne!(manifest.keyframes.len(), 0);
-    for keyframe in &manifest.keyframes {
+    let manifest: Manifest = Manifest::parse(&fs::read(directory.join("show.json"))?)?;
+    assert_eq!(manifest.recording().narration, narration);
+    assert_eq!(manifest.recording().strokes.len(), 1, "The circle");
+    assert_eq!(manifest.recording().actions.len(), 1, "The click");
+    assert_ne!(manifest.keyframes().len(), 0);
+    for keyframe in manifest.keyframes() {
         let index = keyframe.index;
         assert!(
             moments.contains(&keyframe.at),
@@ -353,8 +353,8 @@ fn a_show_that_lost_its_narration_says_why_in_its_files() -> anyhow::Result<()> 
         .next()
         .context("The bundle is in the Shows folder")??
         .path();
-    let manifest: Manifest = serde_json::from_slice(&fs::read(directory.join("show.json"))?)?;
-    assert_eq!(manifest.recording.narration_lost, Some(lost));
+    let manifest: Manifest = Manifest::parse(&fs::read(directory.join("show.json"))?)?;
+    assert_eq!(manifest.recording().narration_lost, Some(lost));
     Ok(())
 }
 

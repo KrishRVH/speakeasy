@@ -36,7 +36,7 @@ mod tracker;
 mod typeface;
 
 pub use crate::{
-    bundle::{Bundle, File, Manifest, compose},
+    bundle::{Bundle, File, Manifest, Unreadable, compose},
     demo::Demo,
     error::Error,
     geometry::{Point, Rect},

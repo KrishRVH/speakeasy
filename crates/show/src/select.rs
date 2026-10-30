@@ -39,7 +39,7 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(650);
 const DOUBLE_CLICK_DISTANCE: f32 = 0.03;
 /// The most keyframes any Show holds: six full contact sheets. Each keyframe costs a reading
 /// model about a thousand tokens.
-const MOST_KEYFRAMES: usize = 36;
+pub(crate) const MOST_KEYFRAMES: usize = 36;
 
 /// Why a frame became a keyframe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -170,7 +170,7 @@ fn show_json_keeps_its_wire_format() {
         "{changed}"
     );
     assert_eq!(
-        serde_json::from_value::<Manifest>(golden).unwrap(),
+        Manifest::parse(&serde_json::to_vec(&golden).unwrap()).unwrap(),
         manifest,
         "{changed}"
     );
@@ -273,7 +273,10 @@ fn summary_and_manifest(recording: Recording) -> (String, serde_json::Value) {
     )
     .unwrap();
     let (summary, files) = bundle.into_files(Path::new("show")).unwrap();
-    let manifest = files.iter().find(|file| file.name == MANIFEST).unwrap();
+    let manifest = files
+        .iter()
+        .find(|file| file.name == Manifest::FILE)
+        .unwrap();
     (summary, serde_json::from_slice(&manifest.contents).unwrap())
 }
 
