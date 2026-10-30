@@ -169,8 +169,9 @@ module unless a test file is named.
   window lookup and the picker's clicks need native acceptance. On Windows, an opt-in acceptance
   test stops an owned window's capture as it hides, minimizes, cloaks, moves away, and closes.
 - **Scripts and packaging**: [scripts/](../scripts) and [packaging/](../packaging) profile, check,
-  package, and launch the app, and [app/build.rs](../crates/app/build.rs) embeds the Windows
-  resources. [tests/test_profiling.py](../tests/test_profiling.py) checks the Linux profiler, and
+  package, and launch the app, [app/build.rs](../crates/app/build.rs) embeds the Windows resources,
+  and `mise run hygiene` runs [check_repository.py](../scripts/check_repository.py).
+  [tests/test_profiling.py](../tests/test_profiling.py) checks the Linux profiler, and
   [tests/test_launchers.py](../tests/test_launchers.py) the Linux demo check's process ownership,
   `AppRun`, and script arguments.
 - **Dependency patches**: the root Cargo patch selects a narrowly patched GPUI 0.2.2;
