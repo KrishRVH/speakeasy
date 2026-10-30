@@ -61,6 +61,7 @@ fn recording(strokes: Vec<Stroke>, actions: Vec<Action>, narration: Narration) -
         pins: Vec::new(),
         actions,
         narration,
+        narration_lost: None,
     }
 }
 

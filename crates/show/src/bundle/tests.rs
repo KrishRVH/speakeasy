@@ -1,6 +1,7 @@
-//! Pins `show.json`, notes a recording that stopped early in both files, keeps file contents out of
-//! debug output, checks that the summary says how to read the Show with every path whole and set
-//! apart, and that contact sheets show every keyframe once and stop loading at a failed frame.
+//! Pins `show.json`, notes a recording that stopped early and narration that was lost in both
+//! files, keeps file contents out of debug output, checks that the summary says how to read the
+//! Show with every path whole and set apart, and that contact sheets show every keyframe once and
+//! stop loading at a failed frame.
 
 use serde_json::json;
 
@@ -43,6 +44,7 @@ fn show_json_keeps_its_wire_format() {
                 },
             ],
             narration: words(&[(100, "Look"), (300, "here.")]),
+            narration_lost: None,
         },
         marks: vec![
             Mark {
@@ -256,6 +258,41 @@ fn a_code_span_holds_any_path_whole() {
     assert_eq!(span(" a"), "`  a `");
 }
 
+/// The summary and parsed `show.json` of a one-frame Show of `recording`.
+fn summary_and_manifest(recording: Recording) -> (String, serde_json::Value) {
+    let samples = [Sample {
+        at: Moment::START,
+        signature: signature(128),
+    }];
+    let selection = select(&recording, &samples).unwrap();
+    let bundle = compose(
+        recording,
+        selection,
+        |_| Image::filled(160, 120, [90; 3]),
+        &typeface(),
+    )
+    .unwrap();
+    let (summary, files) = bundle.into_files(Path::new("show")).unwrap();
+    let manifest = files.iter().find(|file| file.name == MANIFEST).unwrap();
+    (summary, serde_json::from_slice(&manifest.contents).unwrap())
+}
+
+/// A 42-second recording of an 800 × 600 surface that ended as `ending`.
+fn ended(ending: Ending) -> Recording {
+    Recording {
+        duration: Moment::from_millis(42_000),
+        ending,
+        surface: Size {
+            width: 800.0,
+            height: 600.0,
+        },
+        ..Recording::default()
+    }
+}
+
+const SCREEN_STOPPED: &str = "The screen stopped recording at 0:42, before the user finished the Show; later steps are \
+     missing.";
+
 #[test]
 fn a_show_whose_recording_stopped_early_says_why_and_when_in_both_files() {
     for (ending, why, field) in [
@@ -275,28 +312,7 @@ fn a_show_whose_recording_stopped_early_says_why_and_when_in_both_files() {
             "windowOffScreen",
         ),
     ] {
-        let recording = Recording {
-            duration: Moment::from_millis(42_000),
-            ending,
-            surface: Size {
-                width: 800.0,
-                height: 600.0,
-            },
-            ..Recording::default()
-        };
-        let samples = [Sample {
-            at: Moment::START,
-            signature: signature(128),
-        }];
-        let selection = select(&recording, &samples).unwrap();
-        let bundle = compose(
-            recording,
-            selection,
-            |_| Image::filled(160, 120, [90; 3]),
-            &typeface(),
-        )
-        .unwrap();
-        let (summary, files) = bundle.into_files(Path::new("show")).unwrap();
+        let (summary, manifest) = summary_and_manifest(ended(ending));
         assert_eq!(
             summary.lines().nth(1),
             Some(
@@ -307,10 +323,32 @@ fn a_show_whose_recording_stopped_early_says_why_and_when_in_both_files() {
             ),
             "Right after the header"
         );
-        let manifest = files.iter().find(|file| file.name == MANIFEST).unwrap();
-        let manifest: serde_json::Value = serde_json::from_slice(&manifest.contents).unwrap();
         assert_eq!(manifest["ending"], field);
     }
+}
+
+#[test]
+fn a_show_whose_narration_was_lost_says_why_in_both_files() {
+    let lost = |ending, loss| Recording {
+        narration_lost: Some(loss),
+        ..ended(ending)
+    };
+    let microphone = "The microphone stopped during the Show; what the user said is missing.";
+    let (summary, manifest) =
+        summary_and_manifest(lost(Ending::Finished, NarrationLoss::MicrophoneStopped));
+    assert_eq!(summary.lines().nth(1), Some(microphone));
+    assert_eq!(manifest["narrationLost"], "microphoneStopped");
+    let (summary, manifest) =
+        summary_and_manifest(lost(Ending::ScreenStopped, NarrationLoss::NotTranscribed));
+    assert_eq!(
+        summary.lines().skip(1).take(2).collect::<Vec<_>>(),
+        [
+            SCREEN_STOPPED,
+            "The user's speech could not be transcribed; what the user said is missing."
+        ],
+        "Both losses survive"
+    );
+    assert_eq!(manifest["narrationLost"], "notTranscribed");
 }
 
 #[test]

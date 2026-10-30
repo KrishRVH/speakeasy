@@ -8,7 +8,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Ending, Error, Image, Keyframe, Mark, Moment, Recording, Selection, Typeface,
+    Ending, Error, Image, Keyframe, Mark, Moment, NarrationLoss, Recording, Selection, Typeface,
     describe::{Count, Marker},
     draw::{self, Corner},
     parallel, sheet,
@@ -145,7 +145,8 @@ pub fn compose<E: From<Error> + Send>(
 /// The summary an agent reads first, naming files under `directory`, where the bundle will be
 /// written.
 ///
-/// A Show whose recording stopped early says why and when, right after the header. When there are
+/// A Show whose recording stopped early says why and when, right after the header, and one whose
+/// narration was lost says why, so the agent never reads lost speech as silence. When there are
 /// keyframes, the next line tells the agent to open the images before acting, to trust the
 /// screen's spelling of a name over speech recognition's, and to cite frames as `#N` and marks by
 /// number. One line per keyframe gives its number and time, what the pointer or ink did there, and
@@ -193,6 +194,13 @@ impl fmt::Display for Summary<'_> {
                 "{stopped} at {}, before the user finished the Show; later steps are missing.",
                 recording.duration
             )?;
+        }
+        if let Some(lost) = recording.narration_lost {
+            let why = match lost {
+                NarrationLoss::MicrophoneStopped => "The microphone stopped during the Show",
+                NarrationLoss::NotTranscribed => "The user's speech could not be transcribed",
+            };
+            writeln!(f, "{why}; what the user said is missing.")?;
         }
         let pages: Vec<&[Keyframe]> = sheet::pages(keyframes).collect();
         if !pages.is_empty() {

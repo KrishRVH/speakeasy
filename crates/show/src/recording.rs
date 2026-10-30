@@ -26,6 +26,10 @@ pub struct Recording {
     pub actions: Vec<Action>,
     /// What was said while the Show ran.
     pub narration: Narration,
+    /// Why the narration holds nothing the user said, when it was lost rather than unspoken.
+    /// `show.json` leaves it out otherwise, as bundles written before it existed do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub narration_lost: Option<NarrationLoss>,
 }
 
 /// How a Show's screen recording ended. Every way but [`Finished`](Self::Finished) stopped it at
@@ -53,6 +57,16 @@ impl Ending {
     const fn is_finished(&self) -> bool {
         matches!(self, Self::Finished)
     }
+}
+
+/// Why a Show's narration was lost. Speakeasy keeps no audio to try again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NarrationLoss {
+    /// The microphone stopped during the Show.
+    MicrophoneStopped,
+    /// The speech recorded could not be transcribed.
+    NotTranscribed,
 }
 
 /// A size in logical pixels.

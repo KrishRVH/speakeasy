@@ -397,6 +397,7 @@ fn recording() -> Recording {
             },
         ],
         narration: narration(),
+        narration_lost: None,
     }
 }
 

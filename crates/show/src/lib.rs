@@ -45,7 +45,8 @@ pub use crate::{
     marks::{Mark, Shape},
     moment::{Moment, Span},
     recording::{
-        Action, EmptyStroke, Ending, InkPoint, Narration, Pin, Recording, Size, Stroke, Word,
+        Action, EmptyStroke, Ending, InkPoint, Narration, NarrationLoss, Pin, Recording, Size,
+        Stroke, Word,
     },
     select::{Keyframe, Reason, SAMPLE_INTERVAL, Selection, select},
     signature::{Sample, Signature},
