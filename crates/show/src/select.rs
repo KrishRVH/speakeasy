@@ -29,7 +29,9 @@ use crate::{
 /// How long a click's result settles and how far apart keyframes keep are tuned against it.
 pub const SAMPLE_INTERVAL: Duration = Duration::from_millis(200);
 /// Keyframes other than marks keep at least this far apart, and from a mark's keyframe unless the
-/// screen has changed since it.
+/// screen has changed since it. Two clicks' keyframes need only show different frames, and
+/// different screens when the clicks came this close. The recording's last screen, added after
+/// the rest, may come closer.
 const FRAME_GAP: Duration = Duration::from_millis(750);
 /// Clicks this close in time and place are one click.
 const DOUBLE_CLICK: Duration = Duration::from_millis(650);
@@ -293,14 +295,22 @@ impl Candidate {
         self.span.start().min(frames.at(self.frame))
     }
 
-    /// Whether this chosen keyframe already stands for `frame`. Another keyframe too close in time
-    /// does. A mark does while its ink was being drawn or close to its frame, unless the screen has
-    /// changed since, so the screen a click opens right after a drawing still gets a keyframe.
-    fn covers(&self, frames: &Frames<'_>, frame: usize) -> bool {
-        match self.basis {
-            Basis::Mark { .. } => self.during(frames, frame) && !frames.novel(self.frame, frame),
-            Basis::Click(_) | Basis::SceneChange | Basis::Cue { .. } | Basis::Middle => {
-                self.near(frames, frame)
+    /// Whether this chosen keyframe already stands for `candidate`. Another keyframe too close in
+    /// time does. A mark does while its ink was being drawn or close to its frame, unless the
+    /// screen has changed since, so the screen a click opens right after a drawing still gets a
+    /// keyframe. A click does for another click on its frame, or on the same screen when the
+    /// clicks themselves came that close, so waiting for one click's result never crowds out the
+    /// next.
+    fn covers(&self, frames: &Frames<'_>, candidate: &Self) -> bool {
+        let same_screen = || !frames.novel(self.frame, candidate.frame);
+        match (&self.basis, &candidate.basis) {
+            (Basis::Mark { .. }, _) => self.during(frames, candidate.frame) && same_screen(),
+            (Basis::Click(_), Basis::Click(_)) => {
+                self.frame == candidate.frame
+                    || (self.span.end().distance(candidate.span.end()) < FRAME_GAP && same_screen())
+            },
+            (Basis::Click(_) | Basis::SceneChange | Basis::Cue { .. } | Basis::Middle, _) => {
+                self.near(frames, candidate.frame)
             },
         }
     }
@@ -342,14 +352,10 @@ fn choose(mut candidates: Vec<Candidate>, frames: &Frames<'_>) -> Vec<Candidate>
 }
 
 /// Whether `candidate` adds something `chosen` does not already show. A mark always does. Nothing
-/// else does where a chosen keyframe already covers its frame, so a crowded click a mark covers is
+/// else does where a chosen keyframe already covers it, so a crowded click a mark covers is
 /// reported on that mark's keyframe instead; a scene change or cue must also show a new screen.
 fn admits(chosen: &[Candidate], candidate: &Candidate, frames: &Frames<'_>) -> bool {
-    let covered = || {
-        chosen
-            .iter()
-            .any(|other| other.covers(frames, candidate.frame))
-    };
+    let covered = || chosen.iter().any(|other| other.covers(frames, candidate));
     let novel = || {
         chosen
             .iter()

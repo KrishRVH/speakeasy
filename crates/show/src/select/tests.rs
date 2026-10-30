@@ -354,6 +354,36 @@ fn a_click_waits_only_for_a_change_it_could_have_started() {
 }
 
 #[test]
+fn a_click_soon_after_another_keeps_its_keyframe() {
+    // A click opens a pane that fades in, and another 600 ms later opens a second pane.
+    let panes = samples(200, 3_000, |at| match at {
+        ..1_200 => 40,
+        1_200 => 120,
+        1_400..1_800 => 200,
+        _ => 90,
+    });
+    let second = Action::Click {
+        at: Moment::from_millis(1_600),
+        point: Point::new(0.2, 0.5),
+    };
+    let clicks = vec![click(1_000), second];
+    let shown = select(&recording(Vec::new(), clicks, Narration::default()), &panes).unwrap();
+    assert_eq!(times(&shown), [1_400, 1_800]);
+    assert_eq!(reported(&shown), [Some(click(1_000)), Some(second)]);
+
+    // A click opens a menu that fades in, and another 800 ms later changes nothing.
+    let menu = samples(200, 3_000, |at| match at {
+        ..1_200 => 40,
+        1_200 => 120,
+        _ => 200,
+    });
+    let clicks = vec![click(1_000), click(1_800)];
+    let shown = select(&recording(Vec::new(), clicks, Narration::default()), &menu).unwrap();
+    assert_eq!(times(&shown), [1_400, 2_000]);
+    assert_eq!(reported(&shown), [Some(click(1_000)), Some(click(1_800))]);
+}
+
+#[test]
 fn double_clicks_merge_and_keyframes_keep_apart() {
     let frames = samples(250, 3_000, |_| 128);
     let actions = vec![click(1_000), click(1_100), click(2_300)];
@@ -364,6 +394,16 @@ fn double_clicks_merge_and_keyframes_keep_apart() {
     .unwrap();
     assert_eq!(times(&shown), [1_250, 2_500]);
     assert_eq!(shown.keyframes[0].event, "clicked (x 0.50, y 0.50)");
+
+    // Clicks between two frames of a thinned recording share the one frame that shows them.
+    let sparse = samples(2_000, 4_000, |_| 128);
+    let actions = vec![click(1_000), click(1_800)];
+    let shown = select(
+        &recording(Vec::new(), actions, Narration::default()),
+        &sparse,
+    )
+    .unwrap();
+    assert_eq!(times(&shown), [2_000]);
 }
 
 #[test]

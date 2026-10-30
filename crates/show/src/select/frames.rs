@@ -15,7 +15,7 @@ use crate::{
 /// has responded.
 const SETTLE: Duration = Duration::from_millis(250);
 /// Scene changes and spoken cues must differ at least this much from every chosen keyframe, and
-/// any keyframe during or near a mark from the mark's.
+/// any keyframe during or near a mark, or a click close to another, from that keyframe.
 const NOVELTY: f32 = 0.03;
 /// A transition that a click started or a spoken cue points at starts at most this long before
 /// it, since a transition starts on the last frame captured before the screen changed.
