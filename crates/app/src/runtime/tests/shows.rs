@@ -1,5 +1,5 @@
-//! Show scenarios: S, W, or A during a hold, interruptions, screen lanes, footage, lost narration,
-//! and publication, against a fake screen and gated publication.
+//! Show scenarios: S, W, or A during a hold, the tray's Shows, interruptions, screen lanes,
+//! footage, lost narration, and publication, against a fake screen and gated publication.
 
 use speakeasy_show::Ending;
 
@@ -240,6 +240,61 @@ async fn an_interruption_finishes_a_recording_show_held_or_hands_free() -> anyho
             "Hands-free {hands_free}"
         );
     }
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_tray_show_records_its_scope_hands_free_until_toggled() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    for scope in [Scope::Screen, Scope::Area] {
+        h.input(Input::StartShow(scope));
+        let (_, recorded, _) = receive(&h.shows).await?;
+        assert_eq!(recorded, scope);
+        let (id, _) = receive(&h.captures).await?;
+        h.observe(|snapshot| {
+            snapshot.phase == Phase::Recording && snapshot.show && snapshot.hands_free
+        })
+        .await?;
+        assert_eq!(
+            h.take_sounds(),
+            [
+                Sound::Held(true),
+                Sound::Expected(id),
+                Sound::Played(Cue::Show)
+            ],
+            "{scope:?}"
+        );
+        h.input(Input::Toggle);
+        h.transcribe_next_as("from the tray").await?;
+        let (_, narration) = receive(&h.published).await?;
+        assert_eq!(narration, Narration::Text("from the tray".into()));
+        h.phase(Phase::Copied).await?;
+        assert_eq!(
+            h.take_sounds(),
+            [
+                Sound::Played(Cue::Stop),
+                Sound::Played(Cue::Copied),
+                Sound::Held(false)
+            ],
+            "{scope:?}"
+        );
+    }
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_tray_show_leaves_a_session_under_way_alone() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.start().await?;
+    h.input(Input::StartShow(Scope::Screen));
+    assert!(
+        still_pending(h.observe(|snapshot| snapshot.show || snapshot.phase != Phase::Recording))
+            .await,
+        "A tray Show turned or ended the dictation under way"
+    );
+    assert!(h.shows.try_recv().is_err(), "A tray Show opened the screen");
+    h.finish_as("still dictation").await?;
+    assert_eq!(receive(&h.pasted).await?, "still dictation");
     h.close().await
 }
 

@@ -86,11 +86,11 @@ already says them. **Play sounds** in Settings turns every cue off.
 
 Each cue echoes the pill. The high note sounds as the pill opens to listening rather than at the
 press, so it never promises a microphone still opening, and a desktop shortcut that takes the keys
-before then makes no sound; S, W, or A during that wait makes the first note the Show's. A cue is
-heard within 300 ms of its moment, counting the output device's reported latency, or not at all. The
-device opens with the press, alongside the microphone, so the first cue never waits for it; it stays
-open through the session and closes ten seconds after the session and its last cue, however the
-session ended, so an idle Speakeasy holds no audio stream.
+before then makes no sound; S, W, or A during that wait, or a Show started from the tray, makes the
+first note the Show's. A cue is heard within 300 ms of its moment, counting the output device's
+reported latency, or not at all. The device opens with the press, alongside the microphone, so the
+first cue never waits for it; it stays open through the session and closes ten seconds after the
+session and its last cue, however the session ended, so an idle Speakeasy holds no audio stream.
 
 The microphone can overhear the start and Show cues, which are high-passed at 400 Hz. For the 600 ms
 after the microphone learns of either, the speech gate counts only sound below 300 Hz, where a
@@ -116,11 +116,14 @@ template icon, so recording also adds a diamond badge and every state differs by
 and Linux a faint keyline keeps the lamp color legible on light taskbars. The menu shows current
 status and engine, Pause/Resume, Start/Finish, Cancel, Settings, and Quit; Finish and Cancel name a
 Show while it records and are disabled while it is saved. Before any engine is set up, the menu says
-so and Resume waits for setup. It never animates while idle. On Windows and macOS, Copy last Show
-and Open last Show sit between Cancel and Settings; they act once a Show is saved and between
-recordings, paused included, until Quit begins or either finds that Show gone. Errors remain
-accessible in Settings after the pill's notice expires, including while there are unsaved edits: its
-commands and status line stay in view below the scrolling controls.
+so and Resume waits for setup. It never animates while idle. On Windows and macOS, Show screen and
+Show area… follow Cancel and act whenever Start would: each starts a hands-free Show without the
+shortcut, of the display under the pointer or of an area dragged out on it, which then behaves like
+any other. There is no window entry, since the pointer is on the menu. Copy last Show and Open last
+Show follow them, before Settings; they act once a Show is saved and between recordings, paused
+included, until Quit begins or either finds that Show gone. Errors remain accessible in Settings
+after the pill's notice expires, including while there are unsaved edits: its commands and status
+line stay in view below the scrolling controls.
 
 ## Interaction contracts
 

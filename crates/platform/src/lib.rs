@@ -93,4 +93,10 @@ pub struct TrayMenu {
     pub toggle: TrayItem,
     /// Discards the active recording or recognition.
     pub cancel: TrayItem,
+    /// Starts a hands-free Show of the display under the pointer.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub show_screen: TrayItem,
+    /// Starts a hands-free Show of an area dragged out on the display under the pointer.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub show_area: TrayItem,
 }

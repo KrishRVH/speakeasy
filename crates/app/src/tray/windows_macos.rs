@@ -2,7 +2,7 @@
 //! thread runs them and presents each tray state.
 
 use gpui::{App, Global, Task};
-use speakeasy_platform::{TrayItem, TrayMenu};
+use speakeasy_platform::{Scope, TrayItem, TrayMenu};
 use tray_icon::{
     BadIcon, Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent,
     menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
@@ -39,6 +39,8 @@ struct Presenter {
     pause: MenuItem,
     toggle: MenuItem,
     cancel: MenuItem,
+    show_screen: MenuItem,
+    show_area: MenuItem,
     copy_last_show: MenuItem,
     open_last_show: MenuItem,
     drawn: Option<(Indicator, Theme)>,
@@ -57,11 +59,15 @@ impl Presenter {
             pause,
             toggle,
             cancel,
+            show_screen,
+            show_area,
         } = state.menu;
         for (entry, TrayItem { label, enabled }) in [
             (&self.pause, pause),
             (&self.toggle, toggle),
             (&self.cancel, cancel),
+            (&self.show_screen, show_screen),
+            (&self.show_area, show_area),
         ] {
             entry.set_text(label);
             entry.set_enabled(enabled);
@@ -90,6 +96,8 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
     let pause = MenuItem::new("Pause dictation", true, None);
     let toggle = MenuItem::new("Start dictation", false, None);
     let cancel = MenuItem::new("Cancel dictation", false, None);
+    let show_screen = MenuItem::new("Show screen", false, None);
+    let show_area = MenuItem::new("Show area…", false, None);
     let copy_last_show = MenuItem::new("Copy last Show", false, None);
     let open_last_show = MenuItem::new("Open last Show", false, None);
     let settings = MenuItem::new("Settings…", true, None);
@@ -101,6 +109,8 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
         &toggle,
         &cancel,
         &PredefinedMenuItem::separator(),
+        &show_screen,
+        &show_area,
         &copy_last_show,
         &open_last_show,
         &PredefinedMenuItem::separator(),
@@ -113,6 +123,8 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
         (pause.id().clone(), TrayCommand::Pause),
         (toggle.id().clone(), TrayCommand::Toggle),
         (cancel.id().clone(), TrayCommand::Cancel),
+        (show_screen.id().clone(), TrayCommand::Show(Scope::Screen)),
+        (show_area.id().clone(), TrayCommand::Show(Scope::Area)),
         (
             copy_last_show.id().clone(),
             TrayCommand::LastShow(LastShow::Copy),
@@ -136,6 +148,8 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
         pause,
         toggle,
         cancel,
+        show_screen,
+        show_area,
         copy_last_show,
         open_last_show,
         drawn: None,

@@ -80,10 +80,12 @@ the elapsed time. Release the shortcut and keep talking. To draw circles and arr
 <kbd>Shift</kbd> and move the pointer without clicking; double-tap <kbd>Shift</kbd> to drop a pin
 where the pointer is. Each mark and pin is numbered ① ② ③ beside it, on screen and in the bundle, so
 you and the agent can refer to it by number. The ink fades as you go. Click through your app as
-usual, then press and release the shortcut to finish. Escape alone stays with your app: to cancel,
-hold the shortcut and press <kbd>Escape</kbd>, or choose **Cancel Show** in the tray. Pressing
-another shortcut while you hold Speakeasy's, locking the screen, or sleeping finishes the Show
-rather than discarding it. Once you finish, the Show is saved even if you press Escape.
+usual, then press and release the shortcut to finish. Without the shortcut, for example on a Mac
+keyboard with no Fn key, choose **Show screen** or **Show area…** in the tray to start a Show and
+**Finish Show** to end it. Escape alone stays with your app: to cancel, hold the shortcut and press
+<kbd>Escape</kbd>, or choose **Cancel Show** in the tray. Pressing another shortcut while you hold
+Speakeasy's, locking the screen, or sleeping finishes the Show rather than discarding it. Once you
+finish, the Show is saved even if you press Escape.
 
 In this example, a Show reports bugs in a made-up settings app, and `speakeasy show demo` writes the
 same bundle.
@@ -346,8 +348,9 @@ hides it and keeps unsaved edits; Windows minimize also hides it. Reopening Spea
 The tray icon shows whether Speakeasy is ready, recording, working (for example loading the model or
 transcribing), paused, or needs attention. The Mac menu bar icon is monochrome, so it marks
 recording with a badge instead of red. The menu pauses or resumes dictation, starts or finishes a
-recording, cancels, opens Settings, and quits. **Pause dictation**, or **Pause** in Settings,
-releases the shortcut and the model until you resume.
+recording, cancels, opens Settings, and quits; on Windows and Mac it also starts a Show of the
+screen or of an area. **Pause dictation**, or **Pause** in Settings, releases the shortcut and the
+model until you resume.
 
 ### Text delivery
 

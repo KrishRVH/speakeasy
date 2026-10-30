@@ -15,6 +15,7 @@ async fn desktop_readiness_blocks_capture_until_native_startup_completes() -> an
     receive(&h.loads).await?;
     h.input(Input::Press);
     h.input(Input::Toggle);
+    h.input(Input::StartShow(Scope::Screen));
     h.input(Input::DesktopReady {
         shortcut: "fixture shortcut".into(),
         cancel: "fixture cancel".into(),

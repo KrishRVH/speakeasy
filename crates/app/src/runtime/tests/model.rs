@@ -288,6 +288,8 @@ enum Key {
     Cancel,
     Interrupt,
     Show,
+    /// A Show the tray starts.
+    StartShow,
     Pin,
 }
 
@@ -302,6 +304,7 @@ impl Key {
             Self::Cancel => Input::Cancel,
             Self::Interrupt => Input::Interrupt,
             Self::Show => Input::Show(Scope::Screen),
+            Self::StartShow => Input::StartShow(Scope::Screen),
             Self::Pin => Input::Pin(double_tap()),
         }
     }
@@ -370,6 +373,7 @@ fn step() -> impl Strategy<Value = Step> {
         2 => Just(Key::Cancel),
         1 => Just(Key::Interrupt),
         1 => Just(Key::Show),
+        1 => Just(Key::StartShow),
         1 => Just(Key::Pin),
     ];
     let inputs = prop_oneof![

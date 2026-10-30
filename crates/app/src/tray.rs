@@ -9,6 +9,8 @@ mod linux;
 mod windows_macos;
 
 use gpui::{App, AsyncApp};
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use speakeasy_platform::Scope;
 use speakeasy_platform::{Input, TrayItem, TrayMenu};
 use tokio::sync::watch;
 
@@ -53,7 +55,8 @@ impl TrayState {
 }
 
 /// The dictation entries, each enabled only while its command can act; a demo is not
-/// `interactive`, so it shows them all disabled.
+/// `interactive`, so it shows them all disabled. The Show entries act whenever Start dictation
+/// would.
 fn dictation_menu(
     service: ServiceState,
     activity: Activity,
@@ -61,6 +64,13 @@ fn dictation_menu(
     interactive: bool,
 ) -> TrayMenu {
     let running = service == ServiceState::Running;
+    // The owner ignores Toggle and the tray's Shows until desktop input is ready.
+    let startable = interactive && running && desktop_ready;
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    let show = |label| TrayItem {
+        label,
+        enabled: startable && activity == Activity::Idle,
+    };
     TrayMenu {
         pause: TrayItem {
             label: match service {
@@ -78,10 +88,7 @@ fn dictation_menu(
                 Activity::Showing => "Finish Show",
                 Activity::Idle | Activity::Finishing | Activity::Saving => "Start dictation",
             },
-            // The owner ignores Toggle until desktop input is ready.
-            enabled: interactive
-                && running
-                && desktop_ready
+            enabled: startable
                 && matches!(
                     activity,
                     Activity::Idle | Activity::Dictating | Activity::Showing
@@ -100,6 +107,10 @@ fn dictation_menu(
                     Activity::Dictating | Activity::Showing | Activity::Finishing
                 ),
         },
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        show_screen: show("Show screen"),
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        show_area: show("Show area…"),
     }
 }
 
@@ -146,6 +157,8 @@ enum TrayCommand {
     Toggle,
     Cancel,
     #[cfg(any(target_os = "windows", target_os = "macos"))]
+    Show(Scope),
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     LastShow(shell::LastShow),
     Quit,
 }
@@ -157,6 +170,8 @@ impl TrayCommand {
             Self::Pause => shell::toggle_enabled(cx),
             Self::Toggle => shell::send(Input::Toggle, cx),
             Self::Cancel => shell::send(Input::Cancel, cx),
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            Self::Show(scope) => shell::send(Input::StartShow(scope), cx),
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             Self::LastShow(action) => action.run(cx),
             Self::Quit => shell::request_quit(cx),
@@ -230,12 +245,36 @@ mod tests {
                 pause,
                 toggle,
                 cancel,
+                ..
             } = dictation_menu(service, activity, desktop_ready, interactive);
             assert_eq!(
                 [pause.enabled, toggle.enabled, cancel.enabled],
                 expected,
                 "{service:?}, {activity:?}, desktop ready {desktop_ready}, interactive {interactive}"
             );
+        }
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[test]
+    fn show_entries_act_exactly_when_start_dictation_would() {
+        use Activity::{Dictating, Finishing, Idle, Saving, Showing};
+        use ServiceState::{NotSetUp, Paused, Pausing, Quitting, Running};
+        for service in [Running, Pausing, Quitting, Paused, NotSetUp] {
+            for activity in [Idle, Dictating, Showing, Finishing, Saving] {
+                for (desktop_ready, interactive) in
+                    [(true, true), (false, true), (true, false), (false, false)]
+                {
+                    let menu = dictation_menu(service, activity, desktop_ready, interactive);
+                    let starts = menu.toggle.enabled && menu.toggle.label == "Start dictation";
+                    assert_eq!(
+                        [menu.show_screen.enabled, menu.show_area.enabled],
+                        [starts; 2],
+                        "{service:?}, {activity:?}, desktop ready {desktop_ready}, interactive \
+                         {interactive}"
+                    );
+                }
+            }
         }
     }
 

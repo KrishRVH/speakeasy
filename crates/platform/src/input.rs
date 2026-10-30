@@ -38,6 +38,9 @@ pub enum Input {
     Interrupt,
     /// Starts or finishes hands-free capture.
     Toggle,
+    /// Starts a hands-free Show of what the scope names, as the tray's Show entries ask; the owner
+    /// ignores it while a session is under way.
+    StartShow(Scope),
     /// Desktop access failed; the message explains how to resume.
     Unavailable(String),
     /// Shortcut and insertion preparation has completed.

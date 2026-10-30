@@ -322,7 +322,15 @@ impl<P: Ports> Owner<P> {
         let action = match input {
             Input::Press if self.desktop_ready => self.gesture.press(now()),
             Input::Toggle if self.desktop_ready => self.gesture.toggle(now()),
-            Input::Press | Input::Toggle => None,
+            Input::StartShow(scope)
+                if self.desktop_ready && self.gesture.state() == State::Idle =>
+            {
+                let start = self.gesture.toggle(now());
+                self.handle_action(start)?;
+                self.start_show(scope);
+                None
+            },
+            Input::Press | Input::Toggle | Input::StartShow(_) => None,
             Input::Release => self.gesture.release(now()),
             Input::Lock => {
                 self.gesture.lock();
@@ -558,7 +566,7 @@ impl<P: Ports> Owner<P> {
     /// captured, and records it hands-free until the shortcut is pressed and released again. The
     /// keyboard policy sends a Show only for a press during a physical hold, and its repeats, so a
     /// recording already locked hands-free with Space or a double tap turns too, as does one still
-    /// waiting for the microphone.
+    /// waiting for the microphone, as a Show the tray starts always is.
     fn start_show(&mut self, scope: Scope) {
         let held = matches!(self.gesture.state(), State::Held | State::HandsFree);
         let Some(session) = self.session.as_mut() else {
