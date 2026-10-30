@@ -109,7 +109,7 @@ On Windows, Start at login, off by default, makes each live launch register the 
 to start at sign-in, or remove that entry, as the setting says; a save that changes it does so at
 once. Demos never touch the entry, and settings that need repair leave it as it was, so sign-in
 still opens them. While Windows' Startup apps page holds the entry off, Settings says so beside the
-switch and sends the user there.
+switch and tells the user to turn it on there.
 
 Close hides the existing window, preserving edits; Windows minimize also hides it. macOS minimize
 retains normal Dock behavior. Relaunch and the tray's Settings action reveal the same window. The
