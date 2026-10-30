@@ -3,7 +3,8 @@
 //! Capture polls `ScreenCaptureKit` for stills of one display with Speakeasy's own application
 //! filtered out, so neither the pill nor the overlay ever appears in a frame. A Show of part of the
 //! display asks each still for that part only, looking up a window's place in Core Graphics' window
-//! list before and after each still, and stops once the window closes or goes off screen.
+//! list before and after each still, and stops once the window closes or goes off screen. A still
+//! the list cannot vouch for is dropped as missed, and capture that misses for too long has stalled.
 //! `ScreenCaptureKit` answers on queues of its own: each answer is read where it arrives and
 //! crosses to the capture thread over a channel, and the capture thread stops waiting the moment
 //! the Show stops.
@@ -137,13 +138,13 @@ struct Described {
 }
 
 /// The frontmost visible app window under the pointer and the part of `display` it covers, unless
-/// it is Speakeasy's own. Windows above app windows, such as the Dock, menus, and the menu bar, and
-/// invisible windows are passed over.
+/// it is Speakeasy's own or Core Graphics cannot list windows. Windows above app windows, such as
+/// the Dock, menus, and the menu bar, and invisible windows are passed over.
 pub(crate) fn window_under_pointer(display: Display) -> Option<(Window, Part)> {
     let pointer = pointer_location()?;
     let options =
         CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements;
-    let front = windows(options, kCGNullWindowID)
+    let front = windows(options, kCGNullWindowID)?
         .into_iter()
         .find(|window| window.layer == 0 && window.alpha > 0.0 && window.bounds.contains(pointer))
         .filter(|window| !super::is_own_process(window.owner))?;
@@ -153,32 +154,48 @@ pub(crate) fn window_under_pointer(display: Display) -> Option<(Window, Part)> {
     ))
 }
 
-/// The part of `display` that `window` covers now, or why it covers none: minimized, hidden, and
-/// on another Space all leave it off screen.
-fn window_part(display: Display, window: Window) -> Result<Part, WindowGone> {
-    let described = windows(CGWindowListOption::OptionIncludingWindow, window.0)
+/// Where a target lies on its display, as far as Core Graphics can tell.
+enum Place {
+    /// It covers this part of the display.
+    Covers(Part),
+    /// The window list could not be read, so where a window lies is unknown for now.
+    Unknown,
+}
+
+/// Where `target` lies now. A window lies where Core Graphics' window list puts it, unless it can
+/// no longer be recorded: minimized, hidden, and on another Space all leave it off screen.
+fn place(target: Target) -> Result<Place, WindowGone> {
+    let Region::Window(window, _) = target.region else {
+        return Ok(Place::Covers(target.part()));
+    };
+    let Some(listed) = windows(CGWindowListOption::OptionIncludingWindow, window.0) else {
+        return Ok(Place::Unknown);
+    };
+    let described = listed
         .into_iter()
         .find(|described| described.number == window.0)
         .ok_or(WindowGone::Closed)?;
     if !described.on_screen {
         return Err(WindowGone::OffScreen);
     }
-    display
+    target
+        .display()
+        .native
         .bounds
         .part_covered_by(described.bounds)
+        .map(Place::Covers)
         .ok_or(WindowGone::OffScreen)
 }
 
-/// The windows Core Graphics lists for `options` relative to `window`, front to back.
-fn windows(options: CGWindowListOption, window: CGWindowID) -> Vec<Described> {
-    let Some(list) = CGWindowListCopyWindowInfo(options, window) else {
-        return Vec::new();
-    };
+/// The windows Core Graphics lists for `options` relative to `window`, front to back; `None` when
+/// it cannot list them.
+fn windows(options: CGWindowListOption, window: CGWindowID) -> Option<Vec<Described>> {
+    let list = CGWindowListCopyWindowInfo(options, window)?;
     // SAFETY: Core Graphics documents the window list as an array of dictionaries keyed by
     // strings, and the retained array keeps its elements alive.
     let list =
         unsafe { CFRetained::cast_unchecked::<CFArray<CFDictionary<CFString, CFType>>>(list) };
-    list.iter().filter_map(|window| describe(&window)).collect()
+    Some(list.iter().filter_map(|window| describe(&window)).collect())
 }
 
 fn describe(window: &CFDictionary<CFString, CFType>) -> Option<Described> {
@@ -269,34 +286,30 @@ async fn capture_stills(
     longest_edge: u32,
     events: &Sender<ScreenEvent>,
 ) -> Result<Infallible, Failure> {
-    let display = target.display().native;
-    let source = answer(Source::fetch(display.id, longest_edge))
+    let source = answer(Source::fetch(target.display().native.id, longest_edge))
         .await
         .unwrap_or(Err(Failure::Stalled))?;
-    let followed = match target.region {
-        Region::Window(window, _) => Some(window),
-        Region::Whole | Region::Area(_) => None,
-    };
-    let mut part = target.part();
     let mut last_frame = Instant::now();
     loop {
-        if let Some(window) = followed {
-            part = window_part(display, window)?;
-        }
-        // An unanswered request is a missed still, and a long enough run of misses is a stall.
-        match answer(source.still(part)?).await.unwrap_or(Ok(None))? {
+        // An unanswered request is a missed still, and so is a window that cannot be placed: a
+        // still of its last place could show whatever took it. A long enough run of misses is a
+        // stall.
+        let still = match place(target)? {
+            Place::Covers(part) => answer(source.still(part)?).await.unwrap_or(Ok(None))?,
+            Place::Unknown => None,
+        };
+        match still {
             Some(frame) => {
                 // A window gone while its still was taken has left its place to whatever is
                 // behind it, which the still may show.
-                if let Some(window) = followed {
-                    window_part(display, window)?;
+                if let Place::Covers(_) = place(target)? {
+                    last_frame = frame.at;
+                    #[expect(
+                        clippy::let_underscore_must_use,
+                        reason = "A frame the lane has no room for is dropped, and a closed lane ends capture"
+                    )]
+                    let _ = events.try_send(ScreenEvent::Frame(frame));
                 }
-                last_frame = frame.at;
-                #[expect(
-                    clippy::let_underscore_must_use,
-                    reason = "A frame the lane has no room for is dropped, and a closed lane ends capture"
-                )]
-                let _ = events.try_send(ScreenEvent::Frame(frame));
             },
             None if last_frame.elapsed() >= PATIENCE => return Err(Failure::Stalled),
             None => {},
