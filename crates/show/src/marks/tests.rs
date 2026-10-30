@@ -714,8 +714,8 @@ const REAL_ARROW: [u16; 120] = [
     4481, 3284, 1308,
 ];
 
-/// Underlines from real Scrawl captures on a 2560 × 1440 screen whose ends hook back like a lone
-/// barb, which a rule that took one barb for an arrowhead called arrows.
+/// Underlines from real Scrawl captures on a 2560 × 1440 screen whose ends hook back like an
+/// arrow's lone barb.
 const HOOK_CAPTURE: Size = Size {
     width: 2560.0,
     height: 1440.0,
