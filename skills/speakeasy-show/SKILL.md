@@ -19,6 +19,11 @@ the command is unavailable, read the bundle's files directly; `show.json` record
 times, and marks. Ask for access when the bundle is on another machine rather than substituting
 another recording.
 
+For a managed Show, inspection reports an exact `id` matching its folder name. That ID can replace
+`BUNDLE_PATH` in commands without quoting a long filesystem path. Use the full ID, including a
+same-second suffix when present. A moved or linked bundle has no managed ID: keep using its explicit
+path. `./ID` forces a relative path; an ID never falls back to a different folder.
+
 1. Open every contact sheet, in order. A Show can have several sheets.
 2. Read `summary.md`, including any edits the user made. For a moved bundle, prefer the paths from
    inspection over the original absolute paths in the summary.
@@ -32,8 +37,15 @@ cannot retrieve intermediate frames, replay video, or retry lost narration. Stat
 they affect the conclusion.
 
 `speakeasy show list --json` lists saved Shows without narration. Use it to find a recording only
-when the user asks; select an explicit path rather than guessing from recency. Inspection is
+when the user asks; select an explicit ID or path rather than guessing from recency. Inspection is
 read-only. Preserve the user's files and edits; reading a Show does not authorize keeping, deleting,
-or sending it elsewhere. Unkept Shows expire after seven days.
+or sending it elsewhere. Unkept Shows expire after seven days. `expiresAt` is the UTC date a managed
+Show becomes eligible for cleanup; null can mean kept, unmanaged, or unavailable.
+
+When the user asks to keep a managed Show, run `speakeasy show keep "BUNDLE_PATH" --json`. When they
+ask to restore expiry, use `speakeasy show keep "BUNDLE_PATH" --off --json`. Restoring expiry uses
+the original recording date; an overdue Show can disappear at the next cleanup. These commands
+change only retention, preserve edits, and refuse missing or unmanaged Shows. They cannot recover a
+recording lost before saving.
 
 `speakeasy show --help` describes the installed commands. `speakeasy show skill` prints this guide.

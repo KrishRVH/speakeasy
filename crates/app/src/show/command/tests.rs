@@ -25,6 +25,14 @@ fn commands_require_explicit_paths_and_accept_only_their_options() -> anyhow::Re
     );
     assert_eq!(parse(&["skill"])?, Command::Skill);
     assert_eq!(
+        parse(&["keep", "20261030T101010Z", "--off", "--json"])?,
+        Command::Keep {
+            directory: "20261030T101010Z".into(),
+            kept: false,
+            json: true,
+        }
+    );
+    assert_eq!(
         parse(&["demo", "--out", "here"])?,
         Command::Demo {
             out: Some("here".into())
@@ -40,9 +48,58 @@ fn commands_require_explicit_paths_and_accept_only_their_options() -> anyhow::Re
         &["demo", "--out"],
         &["skill", "extra"],
         &["record"],
+        &["keep"],
+        &["keep", "here", "--off", "--off"],
+        &["keep", "here", "--json", "--json"],
+        &["inspect", "here", "--off"],
+        &["keep", "here", "extra"],
     ] {
         assert!(parse(args).is_err(), "accepted {args:?}");
     }
+    Ok(())
+}
+
+#[test]
+fn metadata_reports_exact_managed_identity_and_expiry_without_claiming_moved_bundles()
+-> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let managed = root.path().join("20261020T143205Z-2");
+    Command::Demo {
+        out: Some(managed.clone()),
+    }
+    .write(&mut io::sink())?;
+    let mut printed = Vec::new();
+    output::inspect(
+        recall::Entry::open(&managed)?,
+        Some(root.path()),
+        true,
+        &mut printed,
+    )?;
+    let value: Value = serde_json::from_slice(&printed)?;
+    assert_eq!(value["id"], "20261020T143205Z-2");
+    assert_eq!(value["expiresAt"], "2026-10-27T14:32:06Z");
+    assert_eq!(value["pinned"], false);
+    let elsewhere = tempfile::tempdir()?;
+    printed.clear();
+    output::inspect(
+        recall::Entry::open(&managed)?,
+        Some(elsewhere.path()),
+        true,
+        &mut printed,
+    )?;
+    let value: Value = serde_json::from_slice(&printed)?;
+    assert!(value["id"].is_null() && value["expiresAt"].is_null());
+    retention::set_kept(root.path(), &managed, true)?;
+    printed.clear();
+    output::inspect(
+        recall::Entry::open(&managed)?,
+        Some(root.path()),
+        true,
+        &mut printed,
+    )?;
+    let value: Value = serde_json::from_slice(&printed)?;
+    assert_eq!(value["pinned"], true);
+    assert!(value["expiresAt"].is_null());
     Ok(())
 }
 
@@ -68,6 +125,7 @@ fn a_demo_is_inspectable_and_output_never_contains_its_narration() -> anyhow::Re
         let mut listing = Vec::new();
         output::list(
             std::iter::once(recall::Entry::open(&directory)),
+            Some(root.path()),
             json,
             &mut listing,
         )?;
@@ -180,7 +238,7 @@ fn closing_the_output_pipe_preserves_the_io_error_kind() {
         }
     }
     for json in [false, true] {
-        let error = output::list(std::iter::empty(), json, &mut Closed).unwrap_err();
+        let error = output::list(std::iter::empty(), None, json, &mut Closed).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
     }
 }

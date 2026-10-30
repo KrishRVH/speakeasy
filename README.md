@@ -153,25 +153,39 @@ Use Up/Down to choose a Show, Left/Right to step through frames, Home/End to jum
 frame, and Escape to close. Missing frames, early endings, and lost narration stay visible; the
 viewer never substitutes another Show when the selected one expires or is deleted.
 
-**Refresh** rereads the library; returning to the window rereads the selected summary. **Open
-folder** reveals its files, and **Copy summary** on Windows/Mac copies the current file, including
-your edits, between recordings. Summary text is plain text; its links do not execute. The viewer
-leaves files and retention unchanged, and does not change which Show the tray remembers. Linux can
-review saved Shows, although it cannot record them yet.
+**Refresh** rereads the library; returning to the window rereads the selected summary and retention.
+**Open folder** reveals its files, and **Copy summary** on Windows/Mac copies the current file,
+including your edits, between recordings. Summary text is plain text; its links do not execute. The
+viewer does not change which Show the tray remembers. **Keep Show** prevents the selected Show from
+expiring. **Allow expiry** restores its original expiry date, seven days after recording; for an
+already overdue Show the button says **Allow cleanup**, and cleanup can remove it on its next pass.
+Keeping a Show changes only its `.pinned` marker, including when the manifest or a frame is damaged.
+Linux can review saved Shows, although it cannot record them yet.
 
 An agent on the same machine can inspect a Show without launching the app or opening the microphone:
 
 ```sh
 speakeasy show list --json
 speakeasy show inspect "PATH_TO_SHOW" --json
+speakeasy show inspect 20261020T143205Z --json
+speakeasy show keep 20261020T143205Z
+speakeasy show keep 20261020T143205Z --off --json
 speakeasy show skill
 ```
 
 `list` finds saved Shows across app restarts, newest first, including damaged or unsupported ones.
 It lists the timestamp-named folders in Speakeasy's Shows folder; use `inspect` with an explicit
-path for a moved or exported Show. These commands also work on Linux, where recording Shows is
-unavailable. They leave files, edits, permissions, and retention unchanged, and do not change which
-Show the tray remembers. There is no implicit latest Show.
+path for a moved or exported Show. A bare timestamp name, including a same-second suffix such as
+`-2`, is an exact Show ID in Speakeasy's Shows folder. IDs never fall back to another folder or a
+partial name; use `./ID` to force a relative path. These commands also work on Linux, where
+recording Shows is unavailable. `list` and `inspect` leave files, edits, permissions, and retention
+unchanged. There is no implicit latest Show.
+
+`keep` accepts an ID or an explicit path directly inside Speakeasy's Shows folder. `--off` allows
+expiry at the original date; it does not grant another seven days. These actions never recreate a
+missing Show, change the tray's last Show, or modify summaries and manifests. An exported or moved
+folder outside managed storage does not expire and cannot be kept through this command. `--json`
+reports the resulting `pinned` flag and `expiresAt` date.
 
 `inspect` maps each contact sheet to its frames and each numbered mark to its saved frame. Its paths
 point to the bundle's current location, even if the summary still names the original folder. Read
@@ -181,18 +195,28 @@ manifest and expected files without decoding images; `ok` means those structural
 that every image decodes. Missing files remain visible beside the frames that survived. A mark with
 no saved frame is reported without substituting another image.
 
-Both commands offer readable text without `--json`. JSON reports `ok`, `damaged`, or `unsupported`
-status. If the manifest cannot be read, duration, counts, and pin status are null, and inspection
-omits its detail fields and frame tables. Inspection exits with status 1 for damage or an
-unsupported format, after printing its findings. A listing succeeds even when individual Shows are
-damaged. An unreadable Shows folder fails the command; a missing one is an empty listing. Manifests
-are limited to 16 MiB and summaries to 1 MiB. Only format 2 is read; unknown fields are ignored.
+`list` and `inspect` offer readable text without `--json`. JSON reports `ok`, `damaged`, or
+`unsupported` status, plus `id` and `expiresAt`. An ID is non-null only when the directory is
+confirmed to be a managed Show. `expiresAt` is the UTC time the Show becomes eligible for cleanup,
+or null when kept, unmanaged, or unavailable; deletion occurs during a later cleanup pass. The
+`pinned` field describes retention, not numbered pin marks. If the manifest cannot be read,
+duration, counts, and pin status are null, and inspection omits its detail fields and frame tables.
+Inspection exits with status 1 for damage or an unsupported format, after printing its findings. A
+listing succeeds even when individual Shows are damaged. An unreadable Shows folder fails the
+command; a missing one is an empty listing. Manifests are limited to 16 MiB and summaries to 1 MiB.
+Only format 2 is read; unknown fields are ignored.
 
 `show skill` prints the [agent reading guide](skills/speakeasy-show/SKILL.md) embedded in the
 installed binary. Save it as `SKILL.md` in a skill folder your agent loads. It explains the reading
 order, numbered references, private-file handling, and the limits of selected keyframes. These
 commands cannot retrieve discarded frames or retry lost narration. `speakeasy show --help` lists
 their options.
+
+Recording-crash recovery is not available: frames stay in memory during capture and transcription,
+and only selected keyframes survive a successful save. A crash before saving loses the Show and its
+narration. A save failure reports a local error; a copy failure leaves the saved Show available in
+the library. Hidden incomplete saves are removed once they are at least an hour old. Cleanup hides
+expired Shows before deleting their files and retries interrupted deletions on its next pass.
 
 ## What's said here stays here
 

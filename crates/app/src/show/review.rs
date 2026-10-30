@@ -1,12 +1,17 @@
-//! A native, read-only Show library. Selection owns its reads and one decoded frame; no private
-//! content enters the global asset cache, the CLI projections, or the session owner's last Show.
+//! A native Show library with explicit retention controls. Selection owns its reads and one decoded
+//! frame; private content stays out of the global asset cache, CLI output, and owner's last Show.
 
 mod frame;
 mod library;
 mod render;
 mod source;
 
-use std::{io, path::PathBuf, sync::Arc};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::SystemTime,
+};
 
 use anyhow::Context as _;
 use gpui::{
@@ -18,7 +23,7 @@ use source::Root;
 pub(crate) use source::Source;
 use tokio::sync::watch;
 
-use super::store::recall;
+use super::store::{recall, retention};
 use crate::{
     gpui_ext::{AppUpdate, EntityUpdate, defer_native, follow},
     runtime::Snapshot,
@@ -48,11 +53,22 @@ pub(crate) struct Review {
     loading: Option<Task<()>>,
     copying: Option<Task<()>>,
     checking: Option<Task<()>>,
+    keeping: Option<(PathBuf, Task<()>)>,
     visibility: Option<Task<()>>,
     _updates: Task<()>,
     _activation: Subscription,
     // Pending tasks drop before the synthetic folder; already-running reads may finish later.
     fixture: Option<tempfile::TempDir>,
+}
+
+impl Drop for Review {
+    fn drop(&mut self) {
+        // Keep is an accepted filesystem action. Closing the view removes its notice, but the
+        // executor finishes the write; its callback holds only a weak reference to this view.
+        if let Some((_, task)) = self.keeping.take() {
+            task.detach();
+        }
+    }
 }
 
 pub(crate) fn open(
@@ -117,6 +133,7 @@ impl Review {
             loading: None,
             copying: None,
             checking: None,
+            keeping: None,
             visibility: None,
             _updates: follow(
                 snapshots,
@@ -152,6 +169,9 @@ impl Review {
     }
 
     fn refresh(&mut self, cx: &mut Context<'_, Self>) {
+        if self.keeping.is_some() {
+            return;
+        }
         self.notice = None;
         let source = self.source;
         let existing = self.directory.clone();
@@ -286,6 +306,9 @@ impl Review {
     }
 
     fn check_selected(&mut self, cx: &Context<'_, Self>) {
+        if self.keeping.is_some() {
+            return;
+        }
         let Some(key) = self
             .library
             .selected
@@ -297,7 +320,10 @@ impl Review {
         let directory = key.directory.clone();
         let work = cx.background_executor().spawn(async move {
             std::fs::metadata(&directory)?;
-            Ok(recall::summary(&directory))
+            Ok((
+                recall::summary(&directory),
+                super::store::pinned(&directory).ok(),
+            ))
         });
         self.checking = Some(cx.spawn(async move |view, cx| {
             let result = work.await;
@@ -307,12 +333,77 @@ impl Review {
                 }
                 view.checking = None;
                 match result {
-                    Ok(summary) => view.update_summary(summary),
+                    Ok((summary, pinned)) => {
+                        view.update_summary(summary);
+                        view.library.update_retention(&key.directory, pinned);
+                    },
                     Err(error) => view.read_failed(error, cx),
                 }
                 cx.notify();
             });
         }));
+    }
+
+    fn keep(&mut self, cx: &mut Context<'_, Self>) {
+        if self.keeping.is_some() || self.listing.is_some() {
+            return;
+        }
+        let Some((parent, key)) = self.directory.clone().zip(self.library.selected.clone()) else {
+            return;
+        };
+        let Some(kept) = self
+            .library
+            .rows
+            .iter()
+            .find(|row| row.directory == key.directory)
+            .and_then(|row| row.pinned)
+        else {
+            return;
+        };
+        // A read begun before this write must not restore the previous retention afterward.
+        self.checking = None;
+        let directory = key.directory.clone();
+        let work = async move { retention::set_kept(&parent, &directory, !kept) };
+        self.keeping = Some((
+            key.directory.clone(),
+            cx.spawn(async move |view, cx| {
+                let result = cx.background_executor().spawn(work).await;
+                view.update_if_alive(cx, |view, cx| {
+                    view.keeping = None;
+                    view.kept(&key.directory, result, cx);
+                    cx.notify();
+                });
+            }),
+        ));
+        cx.notify();
+    }
+
+    fn kept(
+        &mut self,
+        directory: &Path,
+        result: io::Result<retention::Retention>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let Ok(retention) = &result {
+            self.library
+                .update_retention(directory, Some(*retention == retention::Retention::Kept));
+        }
+        // A completed action's notice belongs only to the Show it targeted.
+        if !self.library.is_selected(directory) {
+            return;
+        }
+        match result {
+            Ok(retention) => {
+                self.notice = Some(format!("{}.", retention.label(SystemTime::now())));
+            },
+            Err(error) if error.kind() == io::ErrorKind::NotFound => self.read_failed(error, cx),
+            Err(error) => {
+                self.notice = Some(format!(
+                    "Cannot change this Show's retention: {error}. {}",
+                    crate::paths::remedy(&error)
+                ));
+            },
+        }
     }
 
     fn copy(&mut self, cx: &mut Context<'_, Self>) {
@@ -395,6 +486,7 @@ impl Review {
                 }
             },
             Action::Copy => self.copy(cx),
+            Action::Keep => self.keep(cx),
             Action::Folder => {
                 if let Some(key) = &self.library.selected {
                     cx.open_with_system(&key.directory);
@@ -420,6 +512,7 @@ enum Action {
     Show(usize),
     Frame(usize),
     Copy,
+    Keep,
     Folder,
 }
 

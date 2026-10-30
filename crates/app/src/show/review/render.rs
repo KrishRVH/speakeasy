@@ -10,7 +10,7 @@ use gpui::{
 use super::{Action, ImageState, Review, Source};
 use crate::{
     BRAND_FONT,
-    show::store::recall::Health,
+    show::store::{recall::Health, retention::Retention},
     theme::{Palette, alpha, mix},
 };
 
@@ -134,8 +134,14 @@ impl Render for Review {
                             )),
                     )
                     .child(
-                        button(Action::Refresh, palette, self.listing.is_none(), false, cx)
-                            .child("Refresh"),
+                        button(
+                            Action::Refresh,
+                            palette,
+                            self.listing.is_none() && self.keeping.is_none(),
+                            false,
+                            cx,
+                        )
+                        .child("Refresh"),
                     ),
             )
             .child(
@@ -236,7 +242,7 @@ impl Review {
                     .child("SUMMARY"),
             )
             .child(self.summary(palette))
-            .child(self.commands(palette, cx))
+            .child(self.commands(palette, now, cx))
     }
 
     fn canvas(&self, palette: &Palette) -> impl IntoElement {
@@ -375,16 +381,64 @@ impl Review {
             .child(text)
     }
 
-    fn commands(&self, palette: &Palette, cx: &Context<'_, Self>) -> impl IntoElement {
+    fn commands(
+        &self,
+        palette: &Palette,
+        now: SystemTime,
+        cx: &Context<'_, Self>,
+    ) -> impl IntoElement {
         let can_copy = self.source != Source::Demo && (self.can_copy)(cx) && self.copying.is_none();
+        let row = self.library.selected.as_ref().and_then(|key| {
+            self.library
+                .rows
+                .iter()
+                .find(|row| row.directory == key.directory)
+        });
+        let kept = row.and_then(|row| row.pinned);
+        let label = if kept == Some(true) {
+            if row
+                .and_then(|row| row.directory.file_name())
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    matches!(Retention::of(name, false), Retention::Expires(at) if at <= now)
+                })
+            {
+                "Allow cleanup"
+            } else {
+                "Allow expiry"
+            }
+        } else {
+            "Keep Show"
+        };
         div()
             .flex()
+            .flex_wrap()
             .items_center()
             .gap(px(8.0))
             .when(!cfg!(target_os = "linux"), |bar| {
                 bar.child(button(Action::Copy, palette, can_copy, false, cx).child("Copy summary"))
             })
             .child(button(Action::Folder, palette, true, false, cx).child("Open folder"))
+            .child(
+                button(
+                    Action::Keep,
+                    palette,
+                    kept.is_some() && self.keeping.is_none() && self.listing.is_none(),
+                    false,
+                    cx,
+                )
+                .child(
+                    if self
+                        .keeping
+                        .as_ref()
+                        .is_some_and(|(directory, _)| self.library.is_selected(directory))
+                    {
+                        "Saving…"
+                    } else {
+                        label
+                    },
+                ),
+            )
     }
 }
 
@@ -412,6 +466,7 @@ fn button(
     cx: &Context<'_, Review>,
 ) -> gpui::Stateful<Div> {
     let id: ElementId = match action {
+        Action::Keep => "keep-show".into(),
         Action::Previous => "previous-frame".into(),
         Action::Next => "next-frame".into(),
         Action::Refresh => "shows-refresh".into(),

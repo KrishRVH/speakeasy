@@ -129,7 +129,9 @@ module unless a test file is named.
   secret-gated loopback commands.
 - **Command line**: [main.rs](../crates/app/src/main.rs) parses options and routes what they ask
   for, and [show/command.rs](../crates/app/src/show/command.rs) parses `show` commands. Its
-  [output.rs](../crates/app/src/show/command/output.rs) projects metadata without private text;
+  [output.rs](../crates/app/src/show/command/output.rs) projects metadata without private text,
+  including exact managed IDs and expiry dates. `show keep` changes retention for one explicit
+  managed Show; inspection stays read-only.
   [command/tests.rs](../crates/app/src/show/command/tests.rs) inspects simulated Shows, checks
   failure output, and exercises the embedded [agent skill](../skills/speakeasy-show/SKILL.md).
   [check-package.sh](../scripts/check-package.sh) launches every release package before upload.
@@ -147,14 +149,17 @@ module unless a test file is named.
   selection, background reads, and one decoded frame. Its
   [library.rs](../crates/app/src/show/review/library.rs) projects content-free rows through the
   shared store reader, without CLI output types; only the selected summary remains in memory.
-  Selection revisions reject stale Show and frame results, and closing cancels owned tasks and
-  releases the image directly, bypassing GPUI's asset cache.
-  [frame.rs](../crates/app/src/show/review/frame.rs) caps PNG files at 32 MiB and dimensions at 4096
-  pixels per side before decoding off the UI thread. Decoder errors never include content.
-  [review/tests.rs](../crates/app/src/show/review/tests.rs) checks navigation, damage, and private
-  text boundaries. Opt-in [native_tests.rs](../crates/app/src/show/review/native_tests.rs) exercises
-  the real view with synthetic files, including rendering on a private Linux display and cleanup on
-  close. The shell supplies copy availability and owns only a window handle.
+  Selection revisions reject stale Show and frame results. Closing cancels reads and releases the
+  image directly, bypassing GPUI's asset cache; an accepted retention write finishes on the executor
+  with only a weak reference to the closed view. [frame.rs](../crates/app/src/show/review/frame.rs)
+  caps PNG files at 32 MiB and dimensions at 4096 pixels per side before decoding off the UI thread.
+  Decoder errors never include content. [review/tests.rs](../crates/app/src/show/review/tests.rs)
+  checks navigation, damage, and private text boundaries. Opt-in
+  [native_tests.rs](../crates/app/src/show/review/native_tests.rs) exercises the real view with
+  synthetic files, including rendering on a private Linux display, retention actions, stale
+  completion notices, and cleanup on close. Retention writes run off the UI thread and stay bound to
+  their original Show; activation rereads the summary and pin. The shell supplies copy availability
+  and owns only a window handle.
 - **Show composition**: [crates/show/src](../crates/show/src), notably
   [select.rs](../crates/show/src/select.rs) and [select/](../crates/show/src/select),
   [journal.rs](../crates/show/src/journal.rs), [tracker.rs](../crates/show/src/tracker.rs),
@@ -181,6 +186,15 @@ module unless a test file is named.
   summaries; [recall/tests.rs](../crates/app/src/show/store/recall/tests.rs) checks discovery, read
   limits, damage, links, and moved bundles. [age.rs](../crates/app/src/show/store/age.rs) parses the
   folder timestamp for review and property-checks it against naming and expiry boundaries.
+  [address.rs](../crates/app/src/show/store/address.rs) resolves exact IDs independently from paths;
+  moved or linked bundles never advertise a managed ID.
+  [retention.rs](../crates/app/src/show/store/retention.rs) owns Keep changes and an OS file lock
+  shared with cleanup across app and CLI processes. Cleanup holds it from the final pin check
+  through renaming an expired Show out of the visible library, then removes files without the lock.
+  Hidden expired directories survive interrupted deletion for the next cleanup pass. Its
+  [tests](../crates/app/src/show/store/retention/tests.rs) exercise ordering, original expiry dates,
+  interrupted deletion, moved bundles, links, and preserved edits. Recording remains in memory;
+  these operations do not recover unsaved Shows or discarded source frames.
 - **Screen capture and overlay**: [platform/src/screen.rs](../crates/platform/src/screen.rs),
   [screen/geometry.rs](../crates/platform/src/screen/geometry.rs),
   [windows/screen.rs](../crates/platform/src/windows/screen.rs) with

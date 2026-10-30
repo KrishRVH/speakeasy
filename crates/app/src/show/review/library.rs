@@ -3,7 +3,7 @@
 use std::{
     io,
     path::{Path, PathBuf},
-    time::{Duration, SystemTime},
+    time::SystemTime,
 };
 
 use speakeasy_show::{Ending, Moment, NarrationLoss, Unreadable};
@@ -11,6 +11,7 @@ use speakeasy_show::{Ending, Moment, NarrationLoss, Unreadable};
 use crate::show::store::{
     age, pinned,
     recall::{self, Entry, Health, ReadError},
+    retention::{Retention, interval},
 };
 
 #[derive(Debug)]
@@ -66,32 +67,12 @@ impl Row {
     }
 
     pub(super) fn retention(&self, now: SystemTime) -> String {
-        match self.pinned {
-            Some(true) => "Kept".into(),
-            None => "Retention status unavailable".into(),
-            Some(false) => age::expires_at(self.name()).map_or_else(
-                || "Expires after seven days unless kept".into(),
-                |expiry| {
-                    expiry.duration_since(now).map_or_else(
-                        |_| "Expires at the next cleanup".into(),
-                        |left| format!("Expires in {}", interval(left)),
-                    )
-                },
-            ),
-        }
+        let retention = match self.pinned {
+            Some(kept) => Retention::of(self.name(), kept),
+            None => Retention::Unknown,
+        };
+        retention.label(now)
     }
-}
-
-fn interval(duration: Duration) -> String {
-    let seconds = duration.as_secs();
-    let (count, unit) = if seconds >= 86_400 {
-        (seconds / 86_400, "day")
-    } else if seconds >= 3_600 {
-        (seconds / 3_600, "hour")
-    } else {
-        ((seconds / 60).max(1), "minute")
-    };
-    format!("{count} {unit}{}", if count == 1 { "" } else { "s" })
 }
 
 pub(super) fn list(directory: &Path) -> io::Result<Vec<Row>> {
@@ -206,6 +187,12 @@ pub(super) struct Library {
 }
 
 impl Library {
+    pub(super) fn update_retention(&mut self, directory: &Path, pinned: Option<bool>) {
+        if let Some(row) = self.rows.iter_mut().find(|row| row.directory == directory) {
+            row.pinned = pinned;
+        }
+    }
+
     pub(super) fn replace(&mut self, rows: Vec<Row>) -> Option<Key> {
         self.rows = rows;
         let path = match &self.selected {

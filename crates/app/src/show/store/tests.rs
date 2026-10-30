@@ -54,6 +54,7 @@ fn a_week_old_show_expires_unless_pinned() -> anyhow::Result<()> {
 
     sweep(parent, now)?;
     let mut kept = vec![
+        ".retention.lock".into(),
         staging.clone(),
         days_ago(9),
         days_ago(6),

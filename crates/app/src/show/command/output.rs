@@ -1,11 +1,16 @@
 //! The CLI's metadata-only projections. Never serialize the manifest or a keyframe's free text.
 
-use std::{io, path::PathBuf};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
 
 use serde::Serialize;
 use speakeasy_show::{Bundle, Ending, Manifest, Moment, NarrationLoss, Reason, Unreadable};
 
 use super::recall::{Entry, Health as Status, ReadError, ReadShow};
+use crate::show::store::{address, retention::Retention};
 
 impl Status {
     const fn text(self) -> &'static str {
@@ -20,9 +25,11 @@ impl Status {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Overview {
+    id: Option<String>,
     directory: PathBuf,
     status: Status,
     pinned: Option<bool>,
+    expires_at: Option<String>,
     duration_ms: Option<u64>,
     keyframes: Option<usize>,
     marks: Option<usize>,
@@ -36,7 +43,7 @@ struct Problem {
 }
 
 impl Overview {
-    fn of(entry: &Entry) -> Self {
+    fn of(entry: &Entry, parent: Option<&Path>) -> Self {
         let (status, problems) = match &entry.show {
             Ok(show) => (
                 entry.health(),
@@ -70,10 +77,19 @@ impl Overview {
             },
         };
         let show = entry.show.as_ref().ok();
+        // Identity is omitted unless membership can be established. An unavailable storage root
+        // must not prevent inspecting a readable moved bundle or advertise a misleading ID.
+        let id =
+            parent.and_then(|parent| address::managed_id(parent, &entry.directory).ok().flatten());
+        let retention = id
+            .as_ref()
+            .and_then(|_| Retention::read(&entry.directory).ok());
         Self {
+            id: id.map(|id| id.as_str().to_owned()),
             directory: entry.directory.clone(),
             status,
             pinned: show.map(|show| show.pinned),
+            expires_at: retention.and_then(Retention::expires_at),
             duration_ms: show.map(|show| show.manifest.recording().duration.as_millis()),
             keyframes: show.map(|show| show.manifest.keyframes().len()),
             marks: show.map(|show| show.manifest.marks().len()),
@@ -190,11 +206,12 @@ fn json(value: &impl Serialize, out: &mut impl io::Write) -> io::Result<()> {
 
 pub(super) fn list(
     entries: impl Iterator<Item = io::Result<Entry>>,
+    parent: Option<&Path>,
     as_json: bool,
     out: &mut impl io::Write,
 ) -> io::Result<()> {
     let entries: Vec<_> = entries
-        .map(|entry| entry.map(|entry| Overview::of(&entry)))
+        .map(|entry| entry.map(|entry| Overview::of(&entry, parent)))
         .collect::<io::Result<_>>()?;
     if as_json {
         return json(&entries, out);
@@ -220,9 +237,14 @@ pub(super) fn list(
     Ok(())
 }
 
-pub(super) fn inspect(entry: Entry, as_json: bool, out: &mut impl io::Write) -> io::Result<()> {
+pub(super) fn inspect(
+    entry: Entry,
+    parent: Option<&Path>,
+    as_json: bool,
+    out: &mut impl io::Write,
+) -> io::Result<()> {
     let report = Inspection {
-        overview: Overview::of(&entry),
+        overview: Overview::of(&entry, parent),
         detail: entry
             .show
             .as_ref()
@@ -238,6 +260,12 @@ pub(super) fn inspect(entry: Entry, as_json: bool, out: &mut impl io::Write) -> 
         report.overview.directory.display(),
         report.overview.status.text()
     )?;
+    if let Some(id) = &report.overview.id {
+        writeln!(out, "ID: {id}")?;
+    }
+    if let Some(expiry) = &report.overview.expires_at {
+        writeln!(out, "Expires: {expiry}")?;
+    }
     if let Some(detail) = report.detail {
         let duration = report.overview.duration_ms.unwrap_or_default();
         writeln!(
@@ -299,6 +327,37 @@ pub(super) fn inspect(entry: Entry, as_json: bool, out: &mut impl io::Write) -> 
         }
     }
     problems(&report.overview.problems, out)
+}
+
+pub(super) fn kept(
+    directory: &Path,
+    retention: Retention,
+    as_json: bool,
+    out: &mut impl io::Write,
+) -> io::Result<()> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Change<'a> {
+        directory: &'a Path,
+        pinned: bool,
+        expires_at: Option<String>,
+    }
+    if as_json {
+        return json(
+            &Change {
+                directory,
+                pinned: retention == Retention::Kept,
+                expires_at: retention.expires_at(),
+            },
+            out,
+        );
+    }
+    writeln!(
+        out,
+        "{}: {}.",
+        directory.display(),
+        retention.label(SystemTime::now())
+    )
 }
 
 fn problems(problems: &[Problem], out: &mut impl io::Write) -> io::Result<()> {

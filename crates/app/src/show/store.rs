@@ -25,6 +25,8 @@ const PIN: &str = ".pinned";
 /// Begins the name of the hidden directory a bundle is staged in, which the sweep deletes once
 /// abandoned.
 const STAGING_PREFIX: &str = ".partial-";
+/// Expired Shows leave the visible library before recursive deletion, which can fail partway.
+const EXPIRED_PREFIX: &str = ".expired-";
 
 /// Where Shows live: machine-local, beside the engines and models.
 pub(super) fn directory() -> anyhow::Result<PathBuf> {
@@ -213,9 +215,16 @@ fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
     let mut unchecked = None;
     let mut stuck = false;
     for entry in entries {
-        match entry.and_then(|entry| Ok(expired(&entry, &cutoff, now)?.then(|| entry.path()))) {
-            Ok(Some(show)) => stuck |= fs::remove_dir_all(show).is_err(),
-            Ok(None) => {},
+        match entry.and_then(|entry| retire_expired(parent, &entry, &cutoff, now)) {
+            Ok(Cleanup::Remove(show)) => {
+                if let Err(error) = fs::remove_dir_all(show)
+                    && error.kind() != ErrorKind::NotFound
+                {
+                    stuck = true;
+                }
+            },
+            Ok(Cleanup::Keep) => {},
+            Ok(Cleanup::Blocked) => stuck = true,
             // An entry renamed or deleted since the listing has nothing left to expire.
             Err(error) if error.kind() == ErrorKind::NotFound => {},
             Err(error) => {
@@ -239,8 +248,46 @@ fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
     Ok(())
 }
 
+enum Cleanup {
+    Keep,
+    Remove(PathBuf),
+    Blocked,
+}
+
+/// The lock orders Keep against the final pin check and rename, across app and CLI processes.
+/// Recursive removal happens after release: an open file cannot stall another Show's Keep.
+fn retire_expired(
+    parent: &Path,
+    entry: &fs::DirEntry,
+    cutoff: &str,
+    now: SystemTime,
+) -> io::Result<Cleanup> {
+    let _lock = retention::lock(parent)?;
+    if !expired(entry, cutoff, now)? {
+        return Ok(Cleanup::Keep);
+    }
+    let path = entry.path();
+    let name = entry.file_name();
+    if name.to_str().is_some_and(|name| stamp(name).is_some()) {
+        let destination = parent.join(format!("{EXPIRED_PREFIX}{}", name.to_string_lossy()));
+        match fs::symlink_metadata(&destination) {
+            Ok(_) => return Ok(Cleanup::Blocked),
+            Err(error) if error.kind() == ErrorKind::NotFound => {},
+            Err(error) => return Err(error),
+        }
+        match fs::rename(path, &destination) {
+            Ok(()) => Ok(Cleanup::Remove(destination)),
+            Err(error) if error.kind() == ErrorKind::NotFound => Err(error),
+            Err(_blocked) => Ok(Cleanup::Blocked),
+        }
+    } else {
+        Ok(Cleanup::Remove(path))
+    }
+}
+
 /// Whether `entry`, judged by its own type so a link is never followed out of the folder, is a
-/// directory holding an unpinned Show stamped before `cutoff`, or staging abandoned by `now`.
+/// directory holding an unpinned Show stamped before `cutoff`, staging abandoned by `now`, or
+/// the remainder of a previously retired Show.
 fn expired(entry: &fs::DirEntry, cutoff: &str, now: SystemTime) -> io::Result<bool> {
     if !entry.file_type()?.is_dir() {
         return Ok(false);
@@ -249,6 +296,12 @@ fn expired(entry: &fs::DirEntry, cutoff: &str, now: SystemTime) -> io::Result<bo
     let Some(name) = name.to_str() else {
         return Ok(false);
     };
+    if name
+        .strip_prefix(EXPIRED_PREFIX)
+        .is_some_and(|name| stamp(name).is_some())
+    {
+        return Ok(true);
+    }
     if name.starts_with(STAGING_PREFIX) {
         let modified = entry.metadata()?.modified()?;
         // Staging modified after `now` is the clock stepping back, not abandonment.
@@ -334,7 +387,9 @@ fn civil_date(days: u64) -> (u64, u64, u64) {
     (year, month, day)
 }
 
+pub(super) mod address;
 pub(super) mod age;
 pub(super) mod recall;
+pub(super) mod retention;
 #[cfg(test)]
 mod tests;

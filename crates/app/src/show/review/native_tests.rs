@@ -103,6 +103,42 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     let root = window
         .read_with(cx, |view, _| view.directory.clone())?
         .context("The loaded preview has a directory")?;
+    let first = window
+        .read_with(cx, |view, _| view.library.selected.clone())?
+        .context("The loaded preview selected a Show")?
+        .directory;
+    window.update(cx, |view, window, cx| {
+        view.act(Action::Keep, window, cx);
+        view.act(Action::Show(1), window, cx);
+    })?;
+    wait_for(
+        window,
+        |view| view.keeping.is_none() && view.opening.is_none(),
+        cx,
+    )
+    .await?;
+    window.read_with(cx, |view, _| {
+        assert!(
+            view.notice.is_none(),
+            "A retention result changed another Show's notice"
+        );
+        assert_eq!(
+            view.library
+                .rows
+                .iter()
+                .find(|row| row.directory == first)
+                .and_then(|row| row.pinned),
+            Some(false)
+        );
+    })?;
+    assert!(!first.join(".pinned").exists());
+    window.update(cx, |view, window, cx| view.act(Action::Show(0), window, cx))?;
+    wait_for(
+        window,
+        |view| view.opening.is_none() && matches!(view.image, ImageState::Ready(_)),
+        cx,
+    )
+    .await?;
     window.update(cx, |view, window, cx| {
         view.act(Action::Next, window, cx);
         view.act(Action::Frame(3), window, cx);
@@ -140,6 +176,33 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         .context("The missing frame must remain selected")?;
     ensure!(selected.frame == 2, "A missing frame selected a substitute");
     let directory = selected.directory;
+    window.update(cx, |view, window, cx| {
+        view.check_selected(cx);
+        view.act(Action::Keep, window, cx);
+        view.act(Action::Refresh, window, cx);
+        view.check_selected(cx);
+        assert!(
+            view.checking.is_none() && view.listing.is_none(),
+            "A read can overwrite an in-flight retention change"
+        );
+    })?;
+    wait_for(window, |view| view.keeping.is_none(), cx).await?;
+    window.read_with(cx, |view, _| {
+        assert_eq!(
+            view.library
+                .rows
+                .iter()
+                .find(|row| row.directory == directory)
+                .and_then(|row| row.pinned),
+            Some(true),
+            "An older read overwrote the retention result"
+        );
+    })?;
+    ensure!(
+        directory.join(".pinned").is_file(),
+        "The Keep action did not keep the selected Show"
+    );
+    fs::remove_file(directory.join(".pinned"))?;
     fs::write(directory.join("summary.md"), "Updated synthetic summary")?;
     window.update(cx, |view, _, cx| view.check_selected(cx))?;
     wait_for(
@@ -152,6 +215,17 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         cx,
     )
     .await?;
+    window.read_with(cx, |view, _| {
+        assert_eq!(
+            view.library
+                .rows
+                .iter()
+                .find(|row| row.directory == directory)
+                .and_then(|row| row.pinned),
+            Some(false),
+            "Activation did not reread retention changed outside the viewer"
+        );
+    })?;
     fs::remove_dir_all(directory)?;
     window.update(cx, |view, _, cx| view.refresh(cx))?;
     wait_for(window, |view| view.listing.is_none(), cx).await?;
@@ -172,7 +246,29 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             _ => None,
         })?
         .context("The wait established a decoded frame")?;
-    window.update(cx, |_, window, _| window.remove_window())?;
+    let (fixture, kept_directory) = window.update(cx, |view, window, cx| {
+        let fixture = view.fixture.take();
+        let directory = view
+            .library
+            .selected
+            .as_ref()
+            .map(|key| key.directory.clone());
+        view.keep(cx);
+        window.remove_window();
+        (fixture, directory)
+    })?;
+    let kept_directory = kept_directory.context("The closing window selected a Show")?;
+    let deadline = Instant::now()
+        .checked_add(Duration::from_secs(5))
+        .context("A short deadline fits")?;
+    while !kept_directory.join(".pinned").exists() && Instant::now() < deadline {
+        Timer::after(Duration::from_millis(10)).await;
+    }
+    ensure!(
+        kept_directory.join(".pinned").is_file(),
+        "Closing review cancelled an accepted Keep action"
+    );
+    drop(fixture);
     Timer::after(Duration::from_millis(100)).await;
     ensure!(
         pixels.upgrade().is_none(),

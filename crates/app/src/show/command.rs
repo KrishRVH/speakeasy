@@ -7,7 +7,7 @@ use std::{ffi::OsString, io, path::PathBuf, time::SystemTime};
 use anyhow::Context as _;
 use speakeasy_show::{Demo, Typeface};
 
-use super::store::{self, recall};
+use super::store::{self, address, recall, retention};
 
 const SKILL: &str = include_str!("../../../../skills/speakeasy-show/SKILL.md");
 /// The demo's keyframes render as a Show records a 2880 × 1800 display, halved to fit
@@ -15,7 +15,8 @@ const SKILL: &str = include_str!("../../../../skills/speakeasy-show/SKILL.md");
 const DEMO_SIZE: (u32, u32) = (1_440, 900);
 
 const HELP: &str = "speakeasy show list [--json]
-speakeasy show inspect PATH [--json]
+speakeasy show inspect SHOW [--json]
+speakeasy show keep SHOW [--off] [--json]
 speakeasy show skill
 speakeasy show demo [--out NEW_DIR]
 
@@ -24,18 +25,34 @@ inspect checks an explicit bundle and maps its sheets, keyframes and marks.
 Both print metadata and current absolute paths, never narration or screen content.
 Images are checked as files, not decoded. Missing files are reported, not repaired.
 inspect exits with status 1 for a damaged or unsupported Show.
+SHOW is an exact folder-name ID in Speakeasy's Shows folder, or an explicit path.
+Use ./ID to address a relative path. No command chooses the latest Show.
+keep prevents expiry; --off restores the original seven-day expiry date.
+An overdue Show then expires at the next cleanup. Only managed Shows can be kept.
 skill prints the agent reading guide for this installed version.
 demo writes a simulated Show and prints its summary.
 All commands work without a display, microphone, speech engine or running app.";
 
-/// What the command line asks of saved Shows; only the scripted demo writes files.
+/// What the command line asks of saved Shows. Retention changes require an explicit target.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Command {
     Help,
-    List { json: bool },
-    Inspect { directory: PathBuf, json: bool },
+    List {
+        json: bool,
+    },
+    Inspect {
+        directory: PathBuf,
+        json: bool,
+    },
+    Keep {
+        directory: PathBuf,
+        kept: bool,
+        json: bool,
+    },
     Skill,
-    Demo { out: Option<PathBuf> },
+    Demo {
+        out: Option<PathBuf>,
+    },
 }
 
 impl Command {
@@ -47,11 +64,17 @@ impl Command {
             return Ok(Self::Help);
         }
         let mut json = false;
+        let mut off = false;
         let mut path = None;
         while let Some(arg) = args.next() {
             match arg.to_str() {
                 Some("--help" | "-h") => return Ok(Self::Help),
-                Some("--json") if (verb == "list" || verb == "inspect") && !json => json = true,
+                Some("--json")
+                    if (verb == "list" || verb == "inspect" || verb == "keep") && !json =>
+                {
+                    json = true;
+                },
+                Some("--off") if verb == "keep" && !off => off = true,
                 Some("--out") if verb == "demo" && path.is_none() => {
                     path = Some(PathBuf::from(
                         args.next()
@@ -59,7 +82,7 @@ impl Command {
                             .context("--out needs a new directory")?,
                     ));
                 },
-                _ if verb == "inspect"
+                _ if (verb == "inspect" || verb == "keep")
                     && path.is_none()
                     && !arg.is_empty()
                     && !arg.to_string_lossy().starts_with('-') =>
@@ -74,7 +97,12 @@ impl Command {
         match verb.to_str() {
             Some("list") => Ok(Self::List { json }),
             Some("inspect") => Ok(Self::Inspect {
-                directory: path.context("show inspect needs a bundle path")?,
+                directory: path.context("show inspect needs an exact Show ID or path")?,
+                json,
+            }),
+            Some("keep") => Ok(Self::Keep {
+                directory: path.context("show keep needs an exact Show ID or path")?,
+                kept: !off,
                 json,
             }),
             Some("skill") => Ok(Self::Skill),
@@ -104,20 +132,35 @@ impl Command {
                 let directory = store::directory()?;
                 let entries = recall::list(&directory)
                     .with_context(|| format!("Cannot list Shows in {}", directory.display()))?;
-                output::list(entries, json, out)?;
+                output::list(entries, Some(&directory), json, out)?;
             },
             Self::Inspect { directory, json } => {
+                let directory =
+                    address::resolve(&directory, || store::directory().map_err(io::Error::other))?;
                 let entry = recall::Entry::open(&directory)
                     .with_context(|| format!("Cannot open Show {}", directory.display()))?;
                 let healthy = entry
                     .show
                     .as_ref()
                     .is_ok_and(|show| show.problems.is_empty());
-                output::inspect(entry, json, out)?;
+                output::inspect(entry, store::directory().ok().as_deref(), json, out)?;
                 anyhow::ensure!(
                     healthy,
                     "The Show is damaged or unsupported; inspection lists the problems."
                 );
+            },
+            Self::Keep {
+                directory,
+                kept,
+                json,
+            } => {
+                let parent = store::directory()?;
+                let directory = address::resolve(&directory, || Ok(parent.clone()))?;
+                let retention =
+                    retention::set_kept(&parent, &directory, kept).with_context(|| {
+                        format!("Cannot change retention for {}", directory.display())
+                    })?;
+                output::kept(&directory, retention, json, out)?;
             },
             Self::Demo { out: directory } => demo(directory, out)?,
         }
