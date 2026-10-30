@@ -127,13 +127,14 @@ status line stay in view below the scrolling controls.
   stays passive so a Show can draw and pin with it, and another app's double Shift still works; any
   other key during a hold belongs to a different shortcut: dictation cancels and waits for release.
   On Windows, an unassigned mask key keeps the released Win key from opening Start.
-- During a Windows/macOS hold, S, W, or A turns the recording into a Show, locked hands-free and
-  keeping the narration since the press; the pill table shows what the pill presents. S records the
-  display under the pointer and W the window under it, cropped from the display and followed as it
-  moves; over the desktop, the taskbar, or a Speakeasy window, W records the display. A shades that
-  display until the user drags out an area of at least 24 px each way; finishing first, or a shade
-  that cannot appear, records the whole display, and Escape cancels. A thin red line outside a
-  window or area marks it while it records, and no frame shows it.
+- During a Windows/macOS hold, S, W, or A turns the recording into a Show, hands-free and keeping
+  the narration since the press; pressing the shortcut again finishes it on release. The pill table
+  shows what the pill presents. S records the display under the pointer and W the window under it,
+  cropped from the display and followed as it moves; over the desktop, the taskbar, or a Speakeasy
+  window, W records the display. A shades that display until the user drags out an area of at least
+  24 px each way; finishing first, or a shade that cannot appear, records the whole display, and
+  Escape cancels. A thin red line outside a window or area marks it while it records, and no frame
+  shows it.
 - Shift draws ink, alone or while the shortcut is still held; the ink holds briefly after the pen
   lifts, then fades, and clicks pass through to the apps underneath. Two taps of Shift alone, each
   released within 300 ms and the second pressed within 400 ms of the first's release, drop a pin at

@@ -149,8 +149,7 @@ impl Settings {
                         "For a Show, add S screen · W window · A area.".into(),
                         "To draw, hold Shift and move the pointer without clicking.".into(),
                         "Double-tap Shift to pin.".into(),
-                        format!("To finish a Show, release {shortcut}, then press it again.")
-                            .into(),
+                        format!("To finish a Show, press and release {shortcut} again.").into(),
                     ]
                     .map(|line: SharedString| div().child(line)),
                 )

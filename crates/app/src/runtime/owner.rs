@@ -443,10 +443,10 @@ impl<P: Ports> Owner<P> {
     }
 
     /// Turns the held recording into a Show of what `scope` names, keeping the narration already
-    /// captured, and locks it hands-free; the next press finishes it. The keyboard policy sends a
-    /// Show only for a press during a physical hold, and its repeats, so a recording already locked
-    /// hands-free with Space or a double tap turns too, as does one still waiting for the
-    /// microphone.
+    /// captured, and records it hands-free until the shortcut is pressed and released again. The
+    /// keyboard policy sends a Show only for a press during a physical hold, and its repeats, so a
+    /// recording already locked hands-free with Space or a double tap turns too, as does one still
+    /// waiting for the microphone.
     fn start_show(&mut self, scope: Scope) {
         let held = matches!(self.gesture.state(), State::Held | State::HandsFree);
         let Some(session) = self.session.as_mut() else {
@@ -460,7 +460,7 @@ impl<P: Ports> Owner<P> {
         if session.is_recording() {
             self.cue_heard(Cue::Show);
         }
-        self.gesture.lock();
+        self.gesture.show();
     }
 
     /// Keeps a Show's footage. A screen that stopped before the gesture finished, as a capture

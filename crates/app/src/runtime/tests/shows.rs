@@ -16,17 +16,29 @@ async fn start_show(h: &mut Harness) -> anyhow::Result<OpenedShow> {
     receive(&h.shows).await
 }
 
+/// Lets go of the shortcut that started the Show, then presses and releases it to finish.
+fn finish_show(h: &Harness) {
+    for input in [Input::Release, Input::Press, Input::Release] {
+        h.input(input);
+    }
+}
+
 #[tokio::test(start_paused = true)]
-async fn s_during_a_hold_turns_the_recording_into_a_show_and_publishes_it() -> anyhow::Result<()> {
+async fn a_show_finishes_on_the_release_after_the_shortcut_is_pressed_again() -> anyhow::Result<()>
+{
     let mut h = Harness::new()?;
     start_show(&mut h).await?;
     h.input(Input::Release);
-    tokio::time::advance(Duration::from_secs(2)).await;
     assert!(
-        h.jobs.try_recv().is_err(),
-        "Releasing the shortcut ended a hands-free Show"
+        still_pending(h.jobs.recv()).await,
+        "Letting go of the shortcut ended a hands-free Show"
     );
     h.input(Input::Press);
+    assert!(
+        still_pending(h.jobs.recv()).await,
+        "Pressing the shortcut finished the Show before its release"
+    );
+    h.input(Input::Release);
     h.transcribe_next_as("look here").await?;
     let (footage, narration) = receive(&h.published).await?;
     assert_eq!(narration, Narration::Text("look here".into()));
@@ -74,8 +86,7 @@ async fn a_silent_show_still_publishes_its_screen() -> anyhow::Result<()> {
     let (id, events) = receive(&h.captures).await?;
     h.input(Input::Show(Scope::Screen));
     receive(&h.shows).await?;
-    h.input(Input::Release);
-    h.input(Input::Press);
+    finish_show(&h);
     events.send(CaptureEvent::Finished(id, Ok(None))).await?;
     let (_, narration) = receive(&h.published).await?;
     assert_eq!(narration, Narration::default());
@@ -102,8 +113,7 @@ async fn cancelling_while_publishing_leaves_no_trace() -> anyhow::Result<()> {
         ports.publication = Some(publication);
     })?;
     start_show(&mut h).await?;
-    h.input(Input::Release);
-    h.input(Input::Press);
+    finish_show(&h);
     h.transcribe_next_as("this broke").await?;
     publishing.reached().await?;
     h.input(Input::Cancel);
@@ -128,8 +138,7 @@ async fn a_show_that_cannot_be_published_explains_why() -> anyhow::Result<()> {
         ports.publish_error = Some("Disk full");
     })?;
     start_show(&mut h).await?;
-    h.input(Input::Release);
-    h.input(Input::Press);
+    finish_show(&h);
     h.transcribe_next_as("look").await?;
     h.phase(Phase::Error).await?;
     assert!(h.snapshot().message.contains("Disk full"));
@@ -140,8 +149,7 @@ async fn a_show_that_cannot_be_published_explains_why() -> anyhow::Result<()> {
 async fn a_publication_that_panics_reports_the_fixed_show_failure() -> anyhow::Result<()> {
     let mut h = Harness::with_ports(Config::default(), |ports| ports.publish_panics = true)?;
     start_show(&mut h).await?;
-    h.input(Input::Release);
-    h.input(Input::Press);
+    finish_show(&h);
     h.transcribe_next_as("look").await?;
     h.phase(Phase::Error).await?;
     assert_eq!(h.snapshot().message, PUBLISH_STOPPED);
@@ -169,8 +177,7 @@ async fn shutdown_revokes_and_owns_pending_publication_cleanup() -> anyhow::Resu
         ports.publication = Some(publication);
     })?;
     start_show(&mut h).await?;
-    h.input(Input::Release);
-    h.input(Input::Press);
+    finish_show(&h);
     h.transcribe_next_as("fixture").await?;
     publishing.reached().await?;
     h.runtime.request_stop();
@@ -219,8 +226,7 @@ async fn s_after_space_locked_the_hold_still_starts_a_show() -> anyhow::Result<(
     h.input(Input::Show(Scope::Screen));
     h.observe(|snapshot| snapshot.show).await?;
     receive(&h.shows).await?;
-    h.input(Input::Release);
-    h.input(Input::Press);
+    finish_show(&h);
     h.transcribe_next_as("locked").await?;
     let (_, narration) = receive(&h.published).await?;
     assert_eq!(narration, Narration::Text("locked".into()));
@@ -251,8 +257,7 @@ async fn s_while_the_last_microphone_retires_still_starts_a_show() -> anyhow::Re
     );
     retiring.release().await?;
     receive(&h.captures).await?;
-    h.input(Input::Release);
-    h.input(Input::Press);
+    finish_show(&h);
     h.transcribe_next_as("queued").await?;
     let (_, narration) = receive(&h.published).await?;
     assert_eq!(narration, Narration::Text("queued".into()));
@@ -371,8 +376,7 @@ async fn footage_from_an_earlier_show_never_reaches_a_later_one() -> anyhow::Res
         still_pending(h.published.recv()).await,
         "A Show published while it was still recording"
     );
-    h.input(Input::Release);
-    h.input(Input::Press);
+    finish_show(&h);
     h.transcribe_next_as("this one").await?;
     let (published, _) = receive(&h.published).await?;
     assert_eq!(published.recording, footage().recording);
@@ -386,20 +390,17 @@ async fn a_show_queued_behind_a_retiring_screen_still_records_it() -> anyhow::Re
         ports.screen_retirement = Some(retirement);
     })?;
     start_show(&mut h).await?;
-    h.input(Input::Release);
-    h.input(Input::Press);
+    finish_show(&h);
     h.transcribe_next_as("first").await?;
     receive(&h.published).await?;
     retiring.reached().await?;
-    h.input(Input::Release);
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     receive(&h.captures).await?;
     h.input(Input::Show(Scope::Screen));
     h.observe(|snapshot| snapshot.show && snapshot.hands_free)
         .await?;
-    h.input(Input::Release);
-    h.input(Input::Press);
+    finish_show(&h);
     h.transcribe_next_as("second").await?;
     assert!(
         still_pending(h.shows.recv()).await,
