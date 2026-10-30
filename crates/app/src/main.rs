@@ -181,7 +181,7 @@ fn launch(
         ) {
             Ok(pill) => pill,
             Err(error) => {
-                abandon(error.context("Cannot open pill"), cx);
+                abandon(error.context("Cannot open pill"), (instance, requests), cx);
                 return;
             },
         };
@@ -213,7 +213,7 @@ fn launch(
         if mode.is_resident()
             && let Err(error) = tray::install(cx)
         {
-            abandon(error, cx);
+            abandon(error, (), cx);
             return;
         }
         // Linux always opens Settings so portal permissions and tray availability stay reachable.
@@ -226,12 +226,14 @@ fn launch(
     });
 }
 
-/// Ends a launch that cannot go on, once its error has been seen. The dialog waits for a task of
-/// its own because its modal loop runs the app's queued tasks, and those cannot borrow the app
-/// while `Application::run`'s callback holds it.
-fn abandon(error: anyhow::Error, cx: &App) {
+/// Ends a launch that cannot go on, once its error has been seen, and keeps `held`, such as the
+/// instance lock, until then, so a launch meanwhile finds this one instead of starting another.
+/// The dialog waits for a task of its own because its modal loop runs the app's queued tasks, and
+/// those cannot borrow the app while `Application::run`'s callback holds it.
+fn abandon<Held: 'static>(error: anyhow::Error, held: Held, cx: &App) {
     let message = format!("{error:#}");
     cx.spawn(async move |cx| {
+        let _held = held;
         speakeasy_platform::show_startup_error(&message);
         cx.update_if_running(shell::request_quit);
     })
