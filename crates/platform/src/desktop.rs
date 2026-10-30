@@ -161,7 +161,8 @@ pub fn reduced_motion() -> bool {
     native::reduced_motion()
 }
 
-/// Places `text` on the clipboard, with CRLF line endings on Windows.
+/// Places `text` on the clipboard as a dictation paste does: marked to stay out of clipboard history
+/// and other devices, with CRLF line endings on Windows.
 ///
 /// Call it off the UI thread: Windows retries for up to 50 ms while another app holds the clipboard.
 ///

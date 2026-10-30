@@ -50,7 +50,8 @@ use raw_window_handle::{RawWindowHandle, WindowHandle};
 
 use super::{
     CANCEL_SHORTCUT, DesktopOptions, Input, InputSender, Inserted, Inserter, NativeWindow,
-    OwnedThread, PILL_MARGIN, PILL_WIDTH, SHORTCUT, insertion,
+    OwnedThread, PILL_MARGIN, PILL_WIDTH, SHORTCUT,
+    insertion::{self, NativeInsert as _},
     keyboard::{self, MacEvent, Modifiers},
     monitor::MonitorControl,
     screen::geometry::Bounds,
@@ -519,8 +520,9 @@ fn modifiers_in(flags: cg::CGEventFlags) -> Modifiers {
 }
 
 pub(super) fn copy_text(text: &str) -> anyhow::Result<()> {
-    arboard::Clipboard::new()?.set_text(text)?;
-    Ok(())
+    let mut insert = Insert;
+    let pasteboard = insert.acquire()?;
+    insert.write(pasteboard, text)
 }
 
 /// The native steps of one macOS insertion, as [`insertion::NativeInsert`] defines them.
@@ -537,7 +539,8 @@ impl insertion::NativeInsert for Insert {
     }
 
     /// Keeps the text on this Mac, out of Universal Clipboard, and marks it transient before it
-    /// arrives, so clipboard managers that follow nspasteboard.org never see it unmarked.
+    /// arrives, so clipboard managers that follow nspasteboard.org never see it unmarked. The mark
+    /// asks them only not to record or display it; the text stays on the pasteboard to paste.
     fn write(&mut self, pasteboard: Retained<NSPasteboard>, text: &str) -> anyhow::Result<()> {
         pasteboard.prepareForNewContentsWithOptions(NSPasteboardContentsOptions::CurrentHostOnly);
         // SAFETY: AppKit's exported pasteboard type is an immutable constant.

@@ -79,10 +79,12 @@ module unless a test file is named.
   [macos.rs](../crates/platform/src/macos.rs), [linux/x11/](../crates/platform/src/linux/x11),
   [linux/portal/](../crates/platform/src/linux/portal), and
   [linux/ei.rs](../crates/platform/src/linux/ei.rs) own delivery, the permit commit, and clipboard
-  checks. [insertion/tests.rs](../crates/platform/src/insertion/tests.rs),
+  checks. On Windows and macOS, `copy_text` writes a Show's summary through the paste's own
+  clipboard write, so both carry the same private markers.
+  [insertion/tests.rs](../crates/platform/src/insertion/tests.rs),
   [insertion/commit/tests.rs](../crates/platform/src/insertion/commit/tests.rs), and the input, X11,
-  portal, and EI modules test them; an opt-in test in windows/insertion.rs checks the Windows
-  clipboard on a private window station.
+  portal, and EI modules test them; an opt-in test in windows/insertion.rs checks pasted and copied
+  text on a private window station's clipboard.
 - **Shortcuts and desktop adapters**: [keyboard.rs](../crates/platform/src/keyboard.rs),
   [desktop.rs](../crates/platform/src/desktop.rs), [monitor.rs](../crates/platform/src/monitor.rs),
   [owned_thread.rs](../crates/platform/src/owned_thread.rs),

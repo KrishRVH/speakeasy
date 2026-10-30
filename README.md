@@ -152,6 +152,9 @@ copied, it stays saved and the pill points you to Copy last Show.
   Show is written to the `shows` folder beside the engine and model, readable only by you. Speakeasy
   deletes Shows over seven days old when it starts and hourly while it runs; a file named `.pinned`
   in a Show's folder keeps it. Cancelling leaves nothing behind.
+- Windows clipboard history and cloud clipboard skip what Speakeasy puts on the clipboard, pasted
+  dictation and Show summaries alike, as do Universal Clipboard and Mac clipboard managers that
+  honor transient data.
 - There are no accounts, cloud providers, telemetry, or dictation history.
 
 ## Get started
@@ -347,11 +350,9 @@ releases the shortcut and the model until you resume.
 
 ### Text delivery
 
-By default the text is pasted through the clipboard and stays there. Windows clipboard history and
-cloud clipboard skip it, as do Universal Clipboard and Mac clipboard managers that honor transient
-data; a copied Show summary is ordinary clipboard text. **Keep clipboard** types the text as direct
-input instead, which some editors reject. Protected fields and elevated Windows apps may refuse
-either method, and no OS submission can confirm that an editor accepted the text.
+By default the text is pasted through the clipboard and stays there. **Keep clipboard** types the
+text as direct input instead, which some editors reject. Protected fields and elevated Windows apps
+may refuse either method, and no OS submission can confirm that an editor accepted the text.
 
 ## Build and verify
 

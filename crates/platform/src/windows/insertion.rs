@@ -15,15 +15,14 @@ use windows_sys::Win32::UI::{
 use super::{modifiers, press, release, send_input, type_unit, window_process};
 use crate::{Inserted, insertion::NativeInsert};
 
-/// Registered clipboard formats whose zero `DWORD` keeps a paste's text out of Windows clipboard
-/// history and cloud sync. Apps still paste it, and it stays on the clipboard.
+/// Registered clipboard formats whose zero `DWORD` keeps Speakeasy's clipboard text out of Windows
+/// clipboard history and cloud sync. Apps still paste it, and it stays on the clipboard.
 const PRIVATE_FORMATS: [&str; 2] = ["CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"];
 
 pub(crate) fn copy_text(text: &str) -> anyhow::Result<()> {
-    let text = windows_line_endings(text);
-    let _clipboard = open_clipboard()?;
-    clipboard_win::raw::set_string(&text)?;
-    Ok(())
+    let mut insert = Insert;
+    let lease = insert.acquire()?;
+    insert.write(lease, text)
 }
 
 /// The native steps of one Windows insertion, as [`NativeInsert`] defines them.
@@ -175,13 +174,14 @@ mod tests {
     use super::*;
     use crate::windows::{ok_or_last_error, to_wide};
 
-    /// Set only in the child that [`a_copied_image_is_a_clipboard_change_not_a_failure`] starts.
+    /// Set only in the child that [`copied_text_stays_private_and_a_copied_image_is_a_change`]
+    /// starts.
     const PRIVATE_STATION: &str = "SPEAKEASY_PRIVATE_WINDOW_STATION";
     const TEXT: &str = "fixture\ntext";
 
     #[test]
     #[ignore = "Starts a child on a private window station, whose clipboard is never the desktop's"]
-    fn a_copied_image_is_a_clipboard_change_not_a_failure() -> anyhow::Result<()> {
+    fn copied_text_stays_private_and_a_copied_image_is_a_change() -> anyhow::Result<()> {
         let module = module_path!()
             .split_once("::")
             .map_or(module_path!(), |(_, module)| module);
@@ -198,6 +198,8 @@ mod tests {
             child.status.success() && report.contains("test result: ok. 1 passed"),
             "The private window station check failed:\n{report}"
         );
+        // The helper's last write is the image, so the desktop's clipboard would hold it had the
+        // helper written there.
         let _clipboard = open_clipboard()?;
         ensure!(
             !clipboard_win::raw::is_format_avail(image_format()?.get()),
@@ -207,12 +209,14 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Subprocess helper; does nothing unless a_copied_image_is_a_clipboard_change_not_a_failure starts it"]
+    #[ignore = "Subprocess helper; does nothing unless copied_text_stays_private_and_a_copied_image_is_a_change starts it"]
     fn check_on_a_private_window_station() -> anyhow::Result<()> {
         if std::env::var_os(PRIVATE_STATION).is_none() {
             return Ok(());
         }
         enter_private_station()?;
+        copy_text(TEXT)?;
+        assert_private_text("the copied text")?;
         let mut insert = Insert;
         let lease = insert.acquire()?;
         insert.write(lease, TEXT)?;
@@ -221,16 +225,7 @@ mod tests {
             insert.holds(TEXT, &mark)?,
             "The clipboard lost the text just written"
         );
-        {
-            let _clipboard = open_clipboard()?;
-            for name in PRIVATE_FORMATS {
-                let format = clipboard_win::raw::register_format(name)
-                    .context("Cannot register a clipboard format")?;
-                let mut value = [u8::MAX; 4];
-                clipboard_win::raw::get(format.get(), &mut value)?;
-                assert_eq!(value, [0; 4], "{name} lets the pasted text into history");
-            }
-        }
+        assert_private_text("the pasted text")?;
         copy_without_text()?;
         assert!(
             !insert.holds(TEXT, &mark)?,
@@ -242,6 +237,27 @@ mod tests {
             !insert.holds(TEXT, &mark)?,
             "A copy with no text must read as a change even under its own mark"
         );
+        Ok(())
+    }
+
+    /// Asserts that the clipboard holds [`TEXT`] with Windows line endings, kept out of history and
+    /// cloud sync; `source` names the write that put it there.
+    fn assert_private_text(source: &str) -> anyhow::Result<()> {
+        let _clipboard = open_clipboard()?;
+        let mut text = Vec::new();
+        clipboard_win::raw::get_string(&mut text)?;
+        assert_eq!(
+            text, b"fixture\r\ntext",
+            "The clipboard lost {source} or its Windows line endings"
+        );
+        for name in PRIVATE_FORMATS {
+            let format = clipboard_win::raw::register_format(name)
+                .context("Cannot register a clipboard format")?;
+            let mut value = [u8::MAX; 4];
+            clipboard_win::raw::get(format.get(), &mut value)
+                .with_context(|| format!("{name} is missing from {source}"))?;
+            assert_eq!(value, [0; 4], "{name} lets {source} into history");
+        }
         Ok(())
     }
 
