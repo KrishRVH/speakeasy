@@ -302,7 +302,7 @@ async fn a_screen_that_stops_recording_explains_why_and_frees_the_microphone() -
     h.close().await
 }
 
-/// Footage whose screen stopped recording before the user finished the Show.
+/// Footage whose screen stopped recording before the Show was finished.
 fn stopped_footage() -> Footage {
     let mut footage = footage();
     footage.recording.ending = Ending::ScreenStopped;

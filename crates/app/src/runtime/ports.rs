@@ -78,7 +78,7 @@ pub(crate) enum ShowEvent {
 }
 
 /// What a Show's screen side recorded, up to the moment recording stopped, and whether that came
-/// before the user finished the Show; publishing adds the narration its recording still lacks.
+/// before the Show was finished; publishing adds the narration its recording still lacks.
 pub(crate) struct Footage {
     pub recording: Recording,
     pub journal: Journal,

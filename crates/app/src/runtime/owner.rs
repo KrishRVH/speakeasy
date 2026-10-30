@@ -28,8 +28,8 @@ use crate::{
 
 /// What a copied Show tells the user.
 const SHOW_COPIED: &str = "Show copied. Paste it into your coding agent.";
-/// What a copied Show whose screen stopped recording before the user finished it tells the user.
-const SHOW_COPIED_EARLY: &str = "Show copied, but the screen stopped recording early.";
+/// What a copied Show whose screen stopped recording early tells the user.
+const SHOW_SCREEN_STOPPED: &str = "Show copied, but the screen stopped recording early.";
 
 /// What the status shows while no session is active: the latest result or failure.
 enum Outcome {
@@ -716,7 +716,7 @@ impl<P: Ports> Owner<P> {
             Outcome::Failed(message) => message,
             Outcome::Copied(message) => message,
             Outcome::ShowCopied(Ending::Finished) => SHOW_COPIED,
-            Outcome::ShowCopied(Ending::ScreenStopped) => SHOW_COPIED_EARLY,
+            Outcome::ShowCopied(Ending::ScreenStopped) => SHOW_SCREEN_STOPPED,
             Outcome::Idle | Outcome::Done | Outcome::Empty | Outcome::Cancelled => {
                 self.notice.as_ref().map_or("", Notice::text)
             },

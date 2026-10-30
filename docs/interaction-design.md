@@ -41,7 +41,7 @@ non-activating and click-through.
 | Processing       | The lid partly closes; a lamp highlight sweeps the opening after 250 ms.                                           |
 | Submitted        | Closed lid with a lamp check for 350 ms, then collapse and fade.                                                   |
 | Show copied      | Closed lid with a lamp check and “Show copied” for 1.6 seconds, once the bundle is written and its summary copied. |
-| Show cut short   | A muted notice of up to two lines saying the Show was copied but its screen stopped early, for six seconds.        |
+| Screen stopped   | A muted notice of up to two lines saying the Show was copied but its screen stopped early, for six seconds.        |
 | Text copied      | A muted notice of up to two lines saying how to paste the copied text, for six seconds.                            |
 | No speech        | “No speech detected” on the closed lid for 1.2 seconds.                                                            |
 | Cancelled        | Quiet dismissal without a completion mark.                                                                         |
