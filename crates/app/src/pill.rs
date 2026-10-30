@@ -44,6 +44,8 @@ const NOTICE_FOR: Duration = Duration::from_secs(6);
 const EMPTY_FOR: Duration = Duration::from_millis(1200);
 const ERROR_FOR: Duration = Duration::from_secs(8);
 const TRAY_HINT_FOR: Duration = Duration::from_secs(3);
+/// The footer that points from a message the pill may clip to Settings, which shows all of it.
+const DETAILS: &str = "Details in Settings";
 /// How long a recording that turns into a Show says how to draw, in place of its clock.
 const DRAW_HINT_FOR: Duration = Duration::from_secs(3);
 
@@ -436,6 +438,12 @@ impl Scene {
         matches!(self.phase, Phase::Recording | Phase::Stopping)
     }
 
+    /// The line under a message: [`DETAILS`] under a failure, and under a Show that lost its
+    /// narration, whose remedy two lines may not hold beside how the Show ended.
+    fn footer(&self) -> Option<&'static str> {
+        (self.phase == Phase::Error || self.narration_lost.is_some()).then_some(DETAILS)
+    }
+
     fn content(&self) -> Content {
         if self.tray_hint.is_some() {
             return Content::TrayHint;
@@ -742,13 +750,21 @@ mod tests {
         let finished = copied(Ending::Finished, None);
         assert!(finished.content() == Content::Slot);
         assert_eq!(finished.feedback(), Some(COPIED_FOR));
-        for short in [
-            copied(Ending::ScreenStopped, None),
-            copied(Ending::Finished, Some(NarrationLoss::NotTranscribed)),
+        for (short, footer) in [
+            (copied(Ending::ScreenStopped, None), None),
+            (
+                copied(Ending::WindowClosed, Some(NarrationLoss::NotTranscribed)),
+                Some(DETAILS),
+            ),
         ] {
             assert!(
                 short.content() == Content::Notice,
                 "The message says what the Show lost"
+            );
+            assert_eq!(
+                short.footer(),
+                footer,
+                "Only a lost narration's remedy may need Settings"
             );
             assert_eq!(short.capsule_size(), MESSAGE_SIZE);
             assert_eq!(short.feedback(), Some(NOTICE_FOR), "Long enough to read");
