@@ -107,11 +107,10 @@ while setup runs. Linux opens Settings at startup to expose desktop permissions 
 
 On Windows, Start at login, off by default, belongs to the default settings file, which the sign-in
 entry opens. Each live launch with those settings registers the running executable to start at
-sign-in, or removes that entry, as the setting says; a save that changes it does so at once. Demos
-never touch the entry, a launch with `--config` neither shows the switch nor touches the entry, and
-settings that need repair leave it as it was, so sign-in still opens them. While Windows' Startup
-apps page holds the entry off, Settings says so beside the switch and tells the user to turn it on
-there.
+sign-in, or removes that entry, as the setting says, and so does each save. Demos never touch the
+entry, a launch with `--config` neither shows the switch nor touches the entry, and settings that
+need repair leave it as it was, so sign-in still opens them. While Windows' Startup apps page holds
+the entry off, Settings says so beside the switch and tells the user to turn it on there.
 
 Close hides the existing window, preserving edits; Windows minimize also hides it. macOS minimize
 retains normal Dock behavior. Relaunch and the tray's Settings action reveal the same window. The

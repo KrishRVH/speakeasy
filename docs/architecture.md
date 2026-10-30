@@ -115,9 +115,9 @@ module unless a test file is named.
 - **Start at login**: [windows/login.rs](../crates/platform/src/windows/login.rs) writes or deletes
   the Windows Run value and reads Windows' Startup apps approval of it;
   [main.rs](../crates/app/src/main.rs) decides which launches touch it, and
-  [services.rs](../crates/app/src/shell/services.rs) registers a saved change of the default
-  settings. Login.rs's tests quote the command and decode the approval on Windows, and an opt-in
-  test exercises both through a scratch key under `HKCU\Software\Speakeasy-tests`.
+  [services.rs](../crates/app/src/shell/services.rs) registers each save of the default settings.
+  Login.rs's tests quote the command and decode the approval on Windows, and an opt-in test
+  exercises both through a scratch key under `HKCU\Software\Speakeasy-tests`.
 - **Setup**: [setup.rs](../crates/app/src/setup.rs) and [setup/](../crates/app/src/setup) choose,
   download, verify, and unpack engines; a full install is opt-in.
 - **Tray and status**: [tray.rs](../crates/app/src/tray.rs), [tray/](../crates/app/src/tray),

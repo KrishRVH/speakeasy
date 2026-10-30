@@ -296,8 +296,9 @@ impl Services {
 
     /// Adopts settings that a save made durable, enabling dictation only as
     /// [`Lifecycle::save_may_enable`] allows; otherwise the settings persist and show while
-    /// dictation stays off. On Windows, a save of the default settings that turns Start at login on
-    /// or off registers that at once, and its failure is returned unless adopting failed first.
+    /// dictation stays off. On Windows, every save of the default settings also registers Start at
+    /// login as they say, so saving again retries a refused write, and its failure is returned
+    /// unless adopting failed first.
     pub(super) fn adopt_saved(
         &mut self,
         config: ValidConfig,
@@ -305,8 +306,7 @@ impl Services {
         cx: &App,
     ) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
-        let sign_in =
-            (config.start_at_login != self.config.start_at_login).then_some(config.start_at_login);
+        let start_at_login = config.start_at_login;
         let adopted = if self
             .lifecycle
             .save_may_enable(saved_at, |owners| owners.runtime.is_running())
@@ -317,10 +317,8 @@ impl Services {
             Ok(())
         };
         #[cfg(target_os = "windows")]
-        if let Some(on) = sign_in
-            && self.default_settings
-        {
-            let registered = speakeasy_platform::start_at_login(on);
+        if self.default_settings {
+            let registered = speakeasy_platform::start_at_login(start_at_login);
             return adopted.and(registered);
         }
         adopted
