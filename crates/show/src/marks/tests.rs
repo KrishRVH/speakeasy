@@ -302,6 +302,16 @@ fn a_loop_with_a_lead_in_a_tail_or_an_overshoot_circles_what_it_goes_round() {
             .concat(),
             flat_region,
         ),
+        // Short enough that the stroke's own ends meet as a loop's do.
+        (
+            "round loop with a short tail",
+            [
+                ellipse([0.4, 0.4], [0.1, 0.1], 0.0, TAU),
+                polyline(&[[0.5, 0.4], [0.56, 0.45]]),
+            ]
+            .concat(),
+            "① circled region x 0.30–0.50, y 0.30–0.50",
+        ),
         (
             "6:1 loop slanted 10° with a 50 px tail",
             tailed,

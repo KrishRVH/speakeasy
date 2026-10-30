@@ -73,7 +73,7 @@ pub struct Mark {
     /// From the first stroke's start to the last stroke's end, or the moment of a pin.
     pub span: Span,
     /// The smallest normalized rectangle holding what the ink marks, or a pin's point. A stroke
-    /// that goes round something after a lead-in or before a tail marks only its loop.
+    /// that closes on itself once, after a lead-in or before a tail, marks only that loop.
     pub bounds: Rect,
 }
 

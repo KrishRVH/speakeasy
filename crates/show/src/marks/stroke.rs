@@ -81,8 +81,8 @@ const HEAD_BALANCE: f32 = 0.3;
 /// What one stroke looks like, and the region it marks.
 pub(super) struct Ink {
     pub(super) shape: Shape,
-    /// Normalized: the box of a loop found inside a longer stroke, without its lead-in or tail, and
-    /// otherwise of the whole stroke.
+    /// Normalized: the box of the loop of a circle that closes on itself once, without its lead-in
+    /// or tail, and otherwise of the whole stroke.
     pub(super) region: Rect,
 }
 
@@ -96,10 +96,13 @@ pub(super) fn ink(stroke: &Stroke, surface: Size) -> Option<Ink> {
     let traced = trace(&path);
     let bounds = Rect::bounding(path.iter().copied())?;
     let whole = Stretch::between(*traced.first()?, *traced.last()?, bounds);
+    let inner = || inner_loop(&traced).and_then(|round| points.get(round));
     let (shape, marking) = if whole.width.hypot(whole.height) < TAP_PIXELS {
         (Shape::Tap, points)
     } else if whole.closes(LOOP_CLOSURE) && whole.fills(LOOP_FILL, whole.width * whole.height) {
-        (Shape::Circle, points)
+        // A short lead-in or tail leaves the stroke's ends close enough, but what it circles is the
+        // loop inside.
+        (Shape::Circle, inner().unwrap_or(points))
     } else if whole.gap > STRAIGHTNESS * whole.length {
         let straight = if whole.width > UNDERLINE_ASPECT * whole.height {
             Shape::Underline
@@ -110,7 +113,7 @@ pub(super) fn ink(stroke: &Stroke, surface: Size) -> Option<Ink> {
             }
         };
         (straight, points)
-    } else if let Some(round) = inner_loop(&traced).and_then(|round| points.get(round)) {
+    } else if let Some(round) = inner() {
         (Shape::Circle, round)
     } else if let Some(tip) =
         arrow_tip(&path, bounds.width().max(bounds.height())).and_then(|tip| points.get(tip))
