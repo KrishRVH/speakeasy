@@ -37,7 +37,8 @@ finished; Speakeasy's five-minute limit controls only its own recording.
   in that order. Check host microphone permissions as well.
 - **Level follows desktop sound:** separate playback from the microphone bus.
 - **Recording continues after disconnect:** a streaming disconnect may leave the host session
-  active. Reconnect and press Escape; the five-minute cap still bounds the recording.
+  active. Reconnect and press Escape, or choose **Cancel Show** in the tray to stop a Show; the
+  five-minute cap still bounds the recording.
 
 Speakeasy does not install audio drivers or configure remote audio routes. The complete
 client-to-host microphone path requires live acceptance with that setup; mock capture and
