@@ -214,9 +214,7 @@ impl Paster {
             ));
         }
         if !self.clipboard.owns(owner)? {
-            return Ok(Inserted::Unavailable(
-                "The clipboard changed before pasting. Dictate again.",
-            ));
+            return Ok(CLIPBOARD_CHANGED);
         }
         let external = self
             .clipboard
