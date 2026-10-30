@@ -6,7 +6,7 @@ use std::{convert::Infallible, ops::ControlFlow, sync::Arc, time::Instant};
 use async_channel::{Receiver, RecvError, Sender};
 use speakeasy_core::gesture::{Action, Gesture, State};
 use speakeasy_platform::{Input, InputSender, Inserted, Scope};
-use speakeasy_show::{Ending, Narration};
+use speakeasy_show::{Ending, Narration, NarrationLoss};
 use tokio::{
     sync::watch,
     task::{JoinError, JoinHandle},
@@ -34,6 +34,19 @@ const SHOW_SCREEN_STOPPED: &str = "Show copied, but the screen stopped recording
 const SHOW_WINDOW_CLOSED: &str = "Show copied, but the recorded window closed.";
 /// What a copied Show whose window went off screen while it recorded tells the user.
 const SHOW_WINDOW_OFF_SCREEN: &str = "Show copied, but the recorded window went off screen.";
+/// What a copied Show whose narration was lost tells the user; its summary tells the agent why.
+const SHOW_UNNARRATED: &str = "Show copied without narration.";
+/// What a copied Show that lost its narration and whose screen stopped early tells the user. Each
+/// loss leaves a different gap, so the message names both, and each such message fits the pill's
+/// two lines.
+const SHOW_UNNARRATED_SCREEN_STOPPED: &str =
+    "Show copied without narration, and the screen stopped recording early.";
+/// What a copied Show that lost its narration and whose window closed tells the user.
+const SHOW_UNNARRATED_WINDOW_CLOSED: &str =
+    "Show copied without narration, and the recorded window closed.";
+/// What a copied Show that lost its narration and whose window went off screen tells the user.
+const SHOW_UNNARRATED_WINDOW_OFF_SCREEN: &str =
+    "Show copied without narration, and the recorded window went off screen.";
 /// What a window Show tells the user when no window it can record is under the pointer.
 const NO_WINDOW: &str = "No window to record under the pointer, so the Show was cancelled.";
 /// What an area Show tells the user when it finished, or could not shade its display, before an
@@ -46,8 +59,12 @@ enum Outcome {
     Done,
     /// The dictation is on the clipboard; the message says how to paste it.
     Copied(&'static str),
-    /// The Show's summary is on the clipboard; how its screen recording ended decides the message.
-    ShowCopied(Ending),
+    /// The Show's summary is on the clipboard; how its screen recording ended and whether its
+    /// narration was lost decide the message.
+    ShowCopied {
+        ending: Ending,
+        lost: Option<NarrationLoss>,
+    },
     Empty,
     Cancelled,
     /// The Show was cancelled because its scope found nothing to record.
@@ -62,7 +79,7 @@ impl Outcome {
         match self {
             Self::Idle => Phase::Idle,
             Self::Done => Phase::Done,
-            Self::Copied(_) | Self::ShowCopied(_) => Phase::Copied,
+            Self::Copied(_) | Self::ShowCopied { .. } => Phase::Copied,
             Self::Empty => Phase::Empty,
             Self::Cancelled => Phase::Cancelled,
             Self::Unchosen(_) => Phase::Unchosen,
@@ -367,8 +384,16 @@ impl<P: Ports> Owner<P> {
                     self.end_session(Outcome::Empty);
                 }
             },
-            // Failing retires both devices; the screen is never asked to finish footage for nobody.
-            CaptureEvent::Finished(_, Err(error)) => self.fail(error.to_string()),
+            CaptureEvent::Finished(_, Err(error)) => {
+                // A Show whose microphone listened ends where it stopped, keeping its footage.
+                // Failing retires both devices, so the screen is never asked to finish footage for
+                // nobody.
+                if session.lose_narration(NarrationLoss::MicrophoneStopped) {
+                    self.conclude_capture();
+                } else {
+                    self.fail(error.to_string());
+                }
+            },
         }
     }
 
@@ -401,10 +426,17 @@ impl<P: Ports> Owner<P> {
                     self.notice = None;
                 }
             },
-            Completion::Loaded(Err(error)) if self.session_survives_warmup_failure() => {
-                self.notice = Some(Notice::WarmupFailed(error.to_string()));
+            Completion::Loaded(Err(error)) => {
+                // A Show waiting for the worker goes on without narration, so, like a session that
+                // is not waiting, it survives with the failure in view until it ends.
+                if self.session_survives_warmup_failure()
+                    || self.lose_narration(NarrationLoss::NotTranscribed)
+                {
+                    self.notice = Some(Notice::WarmupFailed(error.to_string()));
+                } else {
+                    self.fail(error.to_string());
+                }
             },
-            Completion::Loaded(Err(error)) => self.fail(error.to_string()),
             Completion::Transcribed(Ok((worker, transcript))) => {
                 self.worker = Worker::Ready(worker);
                 match transcript {
@@ -414,9 +446,11 @@ impl<P: Ports> Owner<P> {
             },
             Completion::Transcribed(Err(error)) => {
                 // The session still holds its speech, which `advance` resends once a fresh worker
-                // loads.
+                // loads. After that one retry, a Show goes on without narration.
                 if !self.session.as_mut().is_some_and(Session::retry) {
-                    self.fail(error.to_string());
+                    if !self.lose_narration(NarrationLoss::NotTranscribed) {
+                        self.fail(error.to_string());
+                    }
                     self.worker.revive(&self.ports, &self.config);
                 }
             },
@@ -429,6 +463,14 @@ impl<P: Ports> Owner<P> {
         self.session
             .as_ref()
             .is_some_and(|session| !session.awaits_worker())
+    }
+
+    /// Sends the session, when it is a Show whose microphone listened, on to its footage without
+    /// the narration `loss` cost it; returns whether it did.
+    fn lose_narration(&mut self, loss: NarrationLoss) -> bool {
+        self.session
+            .as_mut()
+            .is_some_and(|session| session.lose_narration(loss))
     }
 
     /// Only the current job's transcript arrives here: abandoning a session first moves its job out
@@ -513,7 +555,9 @@ impl<P: Ports> Owner<P> {
         let outcome = match result {
             Ok(Delivered::Inserted(Ok(Inserted::Sent))) => Outcome::Done,
             Ok(Delivered::Inserted(Ok(Inserted::Copied(message)))) => Outcome::Copied(message),
-            Ok(Delivered::Published(Ok(Published::Copied(ending)))) => Outcome::ShowCopied(ending),
+            Ok(Delivered::Published(Ok(Published::Copied { ending, lost }))) => {
+                Outcome::ShowCopied { ending, lost }
+            },
             Ok(
                 Delivered::Inserted(Ok(Inserted::Cancelled))
                 | Delivered::Published(Ok(Published::Cancelled)),
@@ -528,7 +572,7 @@ impl<P: Ports> Owner<P> {
                     .into(),
             ),
         };
-        if matches!(outcome, Outcome::Copied(_) | Outcome::ShowCopied(_)) {
+        if matches!(outcome, Outcome::Copied(_) | Outcome::ShowCopied { .. }) {
             self.cue(Cue::Copied);
         }
         // `wait` already joined this delivery, so the session holds no work left to retire.
@@ -721,8 +765,8 @@ impl<P: Ports> Owner<P> {
     /// Publishes a Show once its narration and screen recording are both in.
     fn start_publishing(&mut self) {
         if let Some(session) = &mut self.session {
-            session.publish(|footage, narration, permit| {
-                self.ports.publish(footage, narration, permit)
+            session.publish(|footage, narration, lost, permit| {
+                self.ports.publish(footage, narration, lost, permit)
             });
         }
     }
@@ -738,10 +782,16 @@ impl<P: Ports> Owner<P> {
         match &self.outcome {
             Outcome::Failed(message) => message,
             Outcome::Copied(message) => message,
-            Outcome::ShowCopied(Ending::Finished) => SHOW_COPIED,
-            Outcome::ShowCopied(Ending::ScreenStopped) => SHOW_SCREEN_STOPPED,
-            Outcome::ShowCopied(Ending::WindowClosed) => SHOW_WINDOW_CLOSED,
-            Outcome::ShowCopied(Ending::WindowOffScreen) => SHOW_WINDOW_OFF_SCREEN,
+            Outcome::ShowCopied { ending, lost } => match (ending, lost) {
+                (Ending::Finished, None) => SHOW_COPIED,
+                (Ending::ScreenStopped, None) => SHOW_SCREEN_STOPPED,
+                (Ending::WindowClosed, None) => SHOW_WINDOW_CLOSED,
+                (Ending::WindowOffScreen, None) => SHOW_WINDOW_OFF_SCREEN,
+                (Ending::Finished, Some(_)) => SHOW_UNNARRATED,
+                (Ending::ScreenStopped, Some(_)) => SHOW_UNNARRATED_SCREEN_STOPPED,
+                (Ending::WindowClosed, Some(_)) => SHOW_UNNARRATED_WINDOW_CLOSED,
+                (Ending::WindowOffScreen, Some(_)) => SHOW_UNNARRATED_WINDOW_OFF_SCREEN,
+            },
             Outcome::Unchosen(Unchosen::Window) => NO_WINDOW,
             Outcome::Unchosen(Unchosen::Area) => NO_AREA,
             Outcome::Idle | Outcome::Done | Outcome::Empty | Outcome::Cancelled => {
@@ -753,16 +803,18 @@ impl<P: Ports> Owner<P> {
     fn present(&self) {
         debug_assert_eq!(self.gesture.state() == State::Idle, self.session.is_none());
         let session = self.session.as_ref();
+        let (ending, narration_lost) = match self.outcome {
+            Outcome::ShowCopied { ending, lost } => (ending, lost),
+            _ => (Ending::Finished, None),
+        };
         let snapshot = Snapshot {
             epoch: self.epoch,
             session: self.latest.id.into(),
             phase: session.map_or_else(|| self.outcome.phase(), Session::phase),
             hands_free: self.gesture.state() == State::HandsFree,
             show: self.latest.show,
-            ending: match self.outcome {
-                Outcome::ShowCopied(ending) => ending,
-                _ => Ending::Finished,
-            },
+            ending,
+            narration_lost,
             started: self.latest.started,
             message: self.message().to_owned(),
             model: self.worker.model(),

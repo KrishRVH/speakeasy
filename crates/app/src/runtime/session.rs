@@ -10,7 +10,7 @@ use std::{
 
 use speakeasy_core::gesture::State;
 use speakeasy_platform::{InsertPermit, Inserted, Scope};
-use speakeasy_show::Narration;
+use speakeasy_show::{Narration, NarrationLoss};
 use tokio::task::{JoinError, JoinHandle};
 
 use super::{
@@ -57,8 +57,12 @@ enum Stage {
     AwaitingWorker(Speech),
     /// The worker transcribes a copy of the speech, which stays here until a transcript arrives.
     Transcribing(Speech),
-    /// A Show's narration, placed on its timeline, waits for its screen recording to finish.
-    AwaitingFootage(Narration),
+    /// A Show's narration, placed on its timeline, waits for its screen recording to finish; `lost`
+    /// says why it holds nothing the user said, when the microphone or transcription failed.
+    AwaitingFootage {
+        narration: Narration,
+        lost: Option<NarrationLoss>,
+    },
     /// Dictated text is being inserted, or a Show composed, written, and copied.
     Delivering(JoinHandle<Delivered>),
 }
@@ -97,7 +101,7 @@ impl Session {
             Stage::Stopping { .. } => Phase::Stopping,
             Stage::AwaitingWorker(_)
             | Stage::Transcribing(_)
-            | Stage::AwaitingFootage(_)
+            | Stage::AwaitingFootage { .. }
             | Stage::Delivering(_) => Phase::Processing,
         }
     }
@@ -179,7 +183,10 @@ impl Session {
                     retried: false,
                 })
             },
-            _ if self.is_show() => Stage::AwaitingFootage(Narration::default()),
+            _ if self.is_show() => Stage::AwaitingFootage {
+                narration: Narration::default(),
+                lost: None,
+            },
             _ => return false,
         };
         true
@@ -211,8 +218,33 @@ impl Session {
     /// timeline, then waits for the footage. Any other stage ignores it.
     pub(super) fn narrate(&mut self, narration: Narration) {
         if let Stage::Transcribing(Speech { start, .. }) = self.stage {
-            self.stage = Stage::AwaitingFootage(narration.delayed(start));
+            self.stage = Stage::AwaitingFootage {
+                narration: narration.delayed(start),
+                lost: None,
+            };
         }
+    }
+
+    /// Sends a Show whose narration was lost on to its footage without any, dropping the speech it
+    /// held; returns whether it did. Only a Show whose microphone listened has narration to lose:
+    /// one whose microphone fails while opening has recorded nothing yet, and fails with the
+    /// microphone's remedy, as dictation does whenever it loses its speech.
+    pub(super) fn lose_narration(&mut self, loss: NarrationLoss) -> bool {
+        let listened = matches!(
+            self.stage,
+            Stage::Recording { .. }
+                | Stage::Stopping { .. }
+                | Stage::AwaitingWorker(_)
+                | Stage::Transcribing(_)
+        );
+        let kept = listened && self.is_show();
+        if kept {
+            self.stage = Stage::AwaitingFootage {
+                narration: Narration::default(),
+                lost: Some(loss),
+            };
+        }
+        kept
     }
 
     /// Delivers transcribed dictation through `insert`, which receives the session's permit.
@@ -254,13 +286,15 @@ impl Session {
         }
     }
 
-    /// Publishes a Show through `publish` once its narration and footage are both in; its screen
-    /// is then spent.
-    pub(super) fn publish<F>(&mut self, publish: impl FnOnce(Footage, Narration, InsertPermit) -> F)
-    where
+    /// Publishes a Show through `publish` once its narration, or why it was lost, and its footage
+    /// are both in; its screen is then spent.
+    pub(super) fn publish<F>(
+        &mut self,
+        publish: impl FnOnce(Footage, Narration, Option<NarrationLoss>, InsertPermit) -> F,
+    ) where
         F: Future<Output = anyhow::Result<Published>> + Send + 'static,
     {
-        let (Stage::AwaitingFootage(narration), Some(screen @ Screen::Recorded(_))) =
+        let (Stage::AwaitingFootage { narration, lost }, Some(screen @ Screen::Recorded(_))) =
             (&mut self.stage, &mut self.show)
         else {
             return;
@@ -268,7 +302,7 @@ impl Session {
         let Screen::Recorded(footage) = mem::replace(screen, Screen::Spent) else {
             return;
         };
-        let publication = publish(*footage, mem::take(narration), self.permit.clone());
+        let publication = publish(*footage, mem::take(narration), *lost, self.permit.clone());
         self.deliver(async move { Delivered::Published(publication.await) });
     }
 
@@ -324,9 +358,45 @@ mod tests {
             text: "here".into(),
         };
         session.narrate(Narration::Words(vec![word(300)]));
-        let Stage::AwaitingFootage(narration) = session.stage else {
+        let Stage::AwaitingFootage { narration, .. } = session.stage else {
             panic!("Narration did not move the Show on to its footage");
         };
         assert_eq!(narration, Narration::Words(vec![word(2_000)]));
+    }
+
+    #[test]
+    fn only_a_show_whose_microphone_listened_goes_on_without_its_narration() {
+        const LOSS: NarrationLoss = NarrationLoss::MicrophoneStopped;
+        let (sender, _inputs) = async_channel::bounded(1);
+        let input = InputSender::new(sender);
+        let opened = |show| {
+            let mut session =
+                Session::new(SessionId::FIRST, input.begin().unwrap(), Instant::now());
+            if show {
+                assert!(session.turn_into_show(Scope::Screen));
+            }
+            session.opened();
+            session
+        };
+        let mut dictation = opened(false);
+        dictation.audio_ready(State::Held, Instant::now());
+        assert!(
+            !dictation.lose_narration(LOSS),
+            "Dictation has nothing left"
+        );
+        let mut show = opened(true);
+        assert!(
+            !show.lose_narration(LOSS),
+            "A microphone that never listened fails with its remedy"
+        );
+        show.audio_ready(State::Held, Instant::now());
+        assert!(show.lose_narration(LOSS));
+        assert!(matches!(
+            show.stage,
+            Stage::AwaitingFootage {
+                lost: Some(LOSS),
+                ..
+            }
+        ));
     }
 }

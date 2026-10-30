@@ -4,7 +4,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use speakeasy_platform::{Delivery, InsertPermit, Inserted, Taps};
-use speakeasy_show::Narration;
+use speakeasy_show::{Narration, NarrationLoss};
 use tokio::time::timeout;
 
 use super::{
@@ -64,6 +64,7 @@ impl Ports for Fixture {
         &self,
         _: Footage,
         _: Narration,
+        _: Option<NarrationLoss>,
         _: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
         std::future::ready(Err(anyhow::anyhow!(

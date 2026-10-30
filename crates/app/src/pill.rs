@@ -24,7 +24,7 @@ use gpui::{
 };
 use speakeasy_core::{gesture::RECORDING_LIMIT, motion::Spring};
 use speakeasy_platform::{PILL_HEIGHT, PILL_WIDTH};
-use speakeasy_show::Ending;
+use speakeasy_show::{Ending, NarrationLoss};
 use tokio::sync::watch;
 
 use crate::{
@@ -169,7 +169,8 @@ impl Pill {
             || new_message
             || snapshot.hands_free != previous.hands_free
             || snapshot.show != previous.show
-            || snapshot.ending != previous.ending;
+            || snapshot.ending != previous.ending
+            || snapshot.narration_lost != previous.narration_lost;
         if new_phase || (snapshot.phase == Phase::Error && new_message) {
             self.phase_at = now;
             self.wake = None;
@@ -225,6 +226,7 @@ impl Pill {
             hands_free: self.snapshot.hands_free,
             show: self.snapshot.show,
             ending: self.snapshot.ending,
+            narration_lost: self.snapshot.narration_lost,
             clock: Clock::new(now.duration_since(self.snapshot.started)),
         }
     }
@@ -410,6 +412,8 @@ struct Scene {
     show: bool,
     /// How a copied Show's screen recording ended.
     ending: Ending,
+    /// Why a copied Show's narration was lost, if it was.
+    narration_lost: Option<NarrationLoss>,
     clock: Clock,
 }
 
@@ -423,9 +427,10 @@ impl Scene {
         feedback_remaining(self.phase, self.labels_copy(), self.since_phase)
     }
 
-    /// Whether a copy shows the compact Show label rather than the snapshot's message.
+    /// Whether a copy shows the compact Show label rather than the snapshot's message, which says
+    /// what a Show lost.
     fn labels_copy(&self) -> bool {
-        self.show && self.ending == Ending::Finished
+        self.show && self.ending == Ending::Finished && self.narration_lost.is_none()
     }
 
     fn is_capturing(&self) -> bool {
@@ -515,8 +520,9 @@ enum Content {
     TrayHint,
     Error,
     /// Copied dictation, whose message says how to paste it; a Show copied after its recording
-    /// stopped early, as when its screen stopped or its window closed or went off screen; or a Show
-    /// cancelled with nothing to record. Any other copied Show keeps its compact slot.
+    /// stopped early, as when its screen stopped or its window closed or went off screen, or after
+    /// its narration was lost; or a Show cancelled with nothing to record. Any other copied Show
+    /// keeps its compact slot.
     Notice,
     Slot,
     Idle,
@@ -711,28 +717,34 @@ mod tests {
             hands_free: true,
             show: false,
             ending: Ending::Finished,
+            narration_lost: None,
             clock: Clock::new(elapsed),
         }
     }
 
     #[test]
-    fn a_copied_show_shows_its_label_unless_its_screen_stopped_early() {
-        let copied = |ending| Scene {
+    fn a_copied_show_shows_its_label_unless_it_lost_its_screen_or_narration() {
+        let copied = |ending, narration_lost| Scene {
             phase: Phase::Copied,
             show: true,
             ending,
+            narration_lost,
             ..recording(Duration::ZERO)
         };
-        let finished = copied(Ending::Finished);
+        let finished = copied(Ending::Finished, None);
         assert!(finished.content() == Content::Slot);
         assert_eq!(finished.feedback(), Some(COPIED_FOR));
-        let stopped = copied(Ending::ScreenStopped);
-        assert!(
-            stopped.content() == Content::Notice,
-            "The message says the screen stopped"
-        );
-        assert_eq!(stopped.capsule_size(), MESSAGE_SIZE);
-        assert_eq!(stopped.feedback(), Some(NOTICE_FOR), "Long enough to read");
+        for short in [
+            copied(Ending::ScreenStopped, None),
+            copied(Ending::Finished, Some(NarrationLoss::NotTranscribed)),
+        ] {
+            assert!(
+                short.content() == Content::Notice,
+                "The message says what the Show lost"
+            );
+            assert_eq!(short.capsule_size(), MESSAGE_SIZE);
+            assert_eq!(short.feedback(), Some(NOTICE_FOR), "Long enough to read");
+        }
     }
 
     #[test]

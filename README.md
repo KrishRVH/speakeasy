@@ -128,9 +128,12 @@ Full-size keyframes: `…\speakeasy\shows\20261020T143205Z\frames\frame-01.png` 
 ```
 
 A Show records only what you name. With no window to record under the pointer, or if you finish
-before dragging out an area, it is cancelled with its narration, and the pill says why. If screen
-capture stops before you finish, or the window closes or goes off screen, the Show ends there with
-what it recorded: the pill says why, and the summary's second line says why and when.
+before dragging out an area, it is cancelled, narration and all: nothing is pasted or saved, and the
+pill says why. If screen capture stops before you finish, or the window closes or goes off screen,
+the Show ends there with what it recorded: the pill says why, and the summary's second line says why
+and when. A Show whose microphone stops ends there too. When the microphone stops or your speech
+can't be transcribed, the Show is saved without narration rather than lost: the pill says **Show
+copied without narration**, the summary tells your agent why, and no audio is kept to try again.
 
 ## What's said here stays here
 

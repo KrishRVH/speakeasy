@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, ensure};
 use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope, Taps};
-use speakeasy_show::{Image, Journal, Moment, Narration, Recording, Size};
+use speakeasy_show::{Image, Journal, Moment, Narration, NarrationLoss, Recording, Size};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 use super::{
@@ -228,6 +228,7 @@ impl Ports for FakePorts {
         &self,
         footage: Footage,
         narration: Narration,
+        lost: Option<NarrationLoss>,
         permit: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
         let published = self.published.clone();
@@ -247,7 +248,7 @@ impl Ports for FakePorts {
             }
             let ending = footage.recording.ending;
             published.try_send((footage, narration))?;
-            Ok(Published::Copied(ending))
+            Ok(Published::Copied { ending, lost })
         }
     }
 

@@ -210,11 +210,14 @@ Capture starts on the first shortcut press, and the five-minute cap holds whatev
 [interaction design](interaction-design.md#interaction-contracts) owns the gestures. Each wake of
 `owner.rs` handles one message, advances ready work, and presents a snapshot. A `Session` holds its
 permit and one stage. A failure or a settings change ends it from any stage, and so does
-cancellation, except for a finished Show being saved:
+cancellation, except for a finished Show being saved. A Show whose microphone has listened outlives
+losing its narration: when the microphone stops, the model fails to load, or transcription fails its
+one retry, it goes on to its footage with no narration and the reason beside it, where dictation
+fails:
 
 ```mermaid
 stateDiagram-v2
-    state "AwaitingFootage(Narration)" as AwaitingFootage
+    state "AwaitingFootage(Narration, loss)" as AwaitingFootage
     [*] --> Queued
     Queued --> Opening: microphone free
     Opening --> Recording: first samples
@@ -227,6 +230,9 @@ stateDiagram-v2
     Transcribing --> [*]: no speech
     Stopping --> AwaitingFootage: silent Show; empty narration
     Transcribing --> AwaitingFootage: Show narration
+    Recording --> AwaitingFootage: Show microphone stops; narration lost
+    AwaitingWorker --> AwaitingFootage: Show model fails to load; narration lost
+    Transcribing --> AwaitingFootage: Show retry fails; narration lost
     AwaitingFootage --> Delivering: footage recorded; publish
     Delivering --> [*]: Done / Copied / Cancelled / Error
     Recording --> [*]: cancel; revoke permit and retire

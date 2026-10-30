@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use async_channel::Sender;
 use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope, Taps};
-use speakeasy_show::{Ending, Journal, Narration, Recording};
+use speakeasy_show::{Ending, Journal, Narration, NarrationLoss, Recording};
 use tokio::sync::watch;
 use zeroize::Zeroize;
 
@@ -107,8 +107,12 @@ pub(crate) struct Footage {
 
 /// What publishing a Show did.
 pub(crate) enum Published {
-    /// The bundle was written and its summary copied, with how its screen recording ended.
-    Copied(Ending),
+    /// The bundle was written and its summary copied, with how its screen recording ended and why
+    /// its narration was lost, if it was.
+    Copied {
+        ending: Ending,
+        lost: Option<NarrationLoss>,
+    },
     /// Cancellation came first; no bundle appeared and nothing was copied.
     Cancelled,
 }
@@ -189,12 +193,14 @@ pub(crate) trait Ports: Send + 'static {
         events: Sender<ShowEvent>,
     ) -> anyhow::Result<Self::Screen>;
 
-    /// Turns a finished Show's footage and its narration, already on the Show's timeline, into
-    /// a bundle, which appears with its summary copied only once `permit` commits.
+    /// Turns a finished Show's footage and its narration, already on the Show's timeline, with
+    /// why that narration was `lost` if it was, into a bundle, which appears with its summary
+    /// copied only once `permit` commits.
     fn publish(
         &self,
         footage: Footage,
         narration: Narration,
+        lost: Option<NarrationLoss>,
         permit: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static;
 

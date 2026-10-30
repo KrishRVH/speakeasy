@@ -43,6 +43,7 @@ non-activating and click-through.
 | Show copied      | Closed lid with a lamp check and “Show copied” for 1.6 seconds, once the bundle is written and its summary copied. |
 | Stopped early    | A muted notice of up to two lines saying the Show was copied but stopped early, and why, for six seconds.          |
 | Nothing chosen   | A muted notice of up to two lines saying why a W or A Show was cancelled, for six seconds.                         |
+| Narration lost   | The same notice saying the Show was copied without narration, and that it stopped early if it did.                 |
 | Text copied      | A muted notice of up to two lines saying how to paste the copied text, for six seconds.                            |
 | No speech        | “No speech detected” on the closed lid for 1.2 seconds.                                                            |
 | Cancelled        | Quiet dismissal without a completion mark.                                                                         |
@@ -75,9 +76,10 @@ wakes the pill for each second of its clock and countdown.
 ## Sounds
 
 Short notes from a CC0 kalimba recording confirm the moments a user may not be watching: a high note
-once the microphone listens, a lower note when a recording finishes, by gesture or at the
-five-minute limit, a muted low note when the user cancels or a Show has nothing to record, two
-rising notes when a Show starts, and a rising chord when text or a Show waits on the clipboard. Text
+once the microphone listens, a lower note when a recording finishes, by gesture, at the five-minute
+limit, or as a Show's screen, window, or microphone stops, a muted low note when the user cancels or
+a Show has nothing to record, two rising notes when a Show starts, and a rising chord when text or a
+Show waits on the clipboard. Text
 arriving in the editor, errors, hands-free locking, and a hold that another shortcut, a session
 change, or a macOS key-tap outage ends stay silent; the pill already says them. **Play sounds** in
 Settings turns every cue off.

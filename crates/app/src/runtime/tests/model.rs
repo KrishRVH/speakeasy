@@ -123,13 +123,14 @@ impl Ports for ModelPorts {
         &self,
         footage: Footage,
         _: Narration,
+        lost: Option<NarrationLoss>,
         permit: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
         let ending = footage.recording.ending;
         // Commits once the task runs, as publishing does, so a cancel can still come first.
         async move {
             Ok(if permit.commit() {
-                Published::Copied(ending)
+                Published::Copied { ending, lost }
             } else {
                 Published::Cancelled
             })

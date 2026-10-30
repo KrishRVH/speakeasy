@@ -184,8 +184,10 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let shows = root.path().join("shows");
     let (_input, permit) = permit();
-    let summary = write_bundle(footage, narration.clone(), &permit, || Ok(shows.clone()))?
-        .context("An active permit publishes")?;
+    let summary = write_bundle(footage, narration.clone(), None, &permit, || {
+        Ok(shows.clone())
+    })?
+    .context("An active permit publishes")?;
     assert!(!permit.active(), "Publishing spends the permit");
     let mut entries = fs::read_dir(&shows)?;
     let directory = entries
@@ -237,7 +239,7 @@ fn a_cancelled_show_never_reaches_the_disk() -> anyhow::Result<()> {
     input.cancel();
     let unprepared = || anyhow::bail!("A cancelled Show never prepares its folder");
     let (footage, narration) = rehearse(32, 20);
-    assert!(write_bundle(footage, narration, &permit, unprepared)?.is_none());
+    assert!(write_bundle(footage, narration, None, &permit, unprepared)?.is_none());
     Ok(())
 }
 
@@ -254,7 +256,27 @@ fn a_show_cancelled_before_staging_never_writes_its_files() -> anyhow::Result<()
         Ok(blocked.clone())
     };
     let (footage, narration) = rehearse(32, 20);
-    assert!(write_bundle(footage, narration, &permit, cancel_once_composed)?.is_none());
+    assert!(write_bundle(footage, narration, None, &permit, cancel_once_composed)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn a_show_that_lost_its_narration_says_why_in_its_files() -> anyhow::Result<()> {
+    let shows = tempfile::tempdir()?;
+    let (_input, permit) = permit();
+    let (footage, _) = rehearse(32, 20);
+    let lost = NarrationLoss::MicrophoneStopped;
+    let summary = write_bundle(footage, Narration::default(), Some(lost), &permit, || {
+        Ok(shows.path().to_owned())
+    })?
+    .context("An active permit publishes")?;
+    assert!(summary.contains("The microphone stopped during the Show"));
+    let directory = fs::read_dir(shows.path())?
+        .next()
+        .context("The bundle is in the Shows folder")??
+        .path();
+    let manifest: Manifest = serde_json::from_slice(&fs::read(directory.join("show.json"))?)?;
+    assert_eq!(manifest.recording.narration_lost, Some(lost));
     Ok(())
 }
 

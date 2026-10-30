@@ -1,5 +1,5 @@
-//! Show scenarios: S, W, or A during a hold, screen lanes, footage, and publication, against a fake
-//! screen and gated publication.
+//! Show scenarios: S, W, or A during a hold, screen lanes, footage, lost narration, and publication,
+//! against a fake screen and gated publication.
 
 use speakeasy_show::Ending;
 
@@ -17,6 +17,15 @@ async fn start_show(h: &mut Harness) -> anyhow::Result<OpenedShow> {
     h.observe(|snapshot| snapshot.show && snapshot.hands_free)
         .await?;
     receive(&h.shows).await
+}
+
+/// Applies settings that end a recording, as a Show being saved still must.
+fn change_settings(h: &Harness) {
+    let config = Config {
+        remove_fillers: !h.runtime.configuration.borrow().remove_fillers,
+        ..h.runtime.configuration.borrow().clone()
+    };
+    h.runtime.configure(ValidConfig::assume(config));
 }
 
 /// Lets go of the shortcut that started the Show, then presses and releases it to finish.
@@ -340,23 +349,161 @@ async fn s_while_the_last_microphone_retires_still_starts_a_show() -> anyhow::Re
     h.close().await
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_microphone_failure_ends_the_show_and_frees_the_screen() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
+/// What the pill and Settings say once a Show is copied without the narration it lost.
+const COPIED_WITHOUT_NARRATION: &str = "Show copied without narration.";
+
+/// Holds the shortcut and presses S once the microphone listens, returning the microphone's lane.
+async fn start_show_listening(h: &mut Harness) -> anyhow::Result<OpenedCapture> {
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
-    let (id, events) = receive(&h.captures).await?;
+    let microphone = receive(&h.captures).await?;
     h.input(Input::Show(Scope::Screen));
+    h.observe(|snapshot| snapshot.show).await?;
+    Ok(microphone)
+}
+
+fn disconnected(id: SessionId) -> CaptureEvent {
+    CaptureEvent::Finished(id, Err(anyhow!("Microphone disconnected")))
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_show_whose_microphone_stops_ends_there_and_is_copied_without_narration()
+-> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    let (id, events) = start_show_listening(&mut h).await?;
     receive(&h.shows).await?;
-    events
-        .send(CaptureEvent::Finished(
-            id,
-            Err(anyhow!("Microphone disconnected")),
-        ))
-        .await?;
-    h.phase(Phase::Error).await?;
+    events.send(disconnected(id)).await?;
+    let (_, narration) = receive(&h.published).await?;
+    assert_eq!(narration, Narration::default());
+    assert!(
+        h.jobs.try_recv().is_err(),
+        "No audio was kept to transcribe"
+    );
+    h.phase(Phase::Copied).await?;
+    let snapshot = h.snapshot();
+    assert_eq!(snapshot.message, COPIED_WITHOUT_NARRATION);
+    assert_eq!(
+        snapshot.narration_lost,
+        Some(NarrationLoss::MicrophoneStopped)
+    );
+    assert!(
+        h.take_sounds().contains(&Sound::Played(Cue::Stop)),
+        "The Show ended where the microphone stopped"
+    );
     h.input(Input::Release);
     start_show(&mut h).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_show_whose_speech_fails_its_retry_is_copied_without_narration() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    receive(&h.loads).await?;
+    start_show(&mut h).await?;
+    finish_show(&h);
+    let (_, reply) = receive(&h.jobs).await?;
+    assert!(reply.send(Err(anyhow!("Engine exited"))).is_ok());
+    receive(&h.loads).await?;
+    let (_, retry) = receive(&h.jobs).await?;
+    assert!(retry.send(Err(anyhow!("Engine exited again"))).is_ok());
+    let (_, narration) = receive(&h.published).await?;
+    assert_eq!(narration, Narration::default());
+    h.phase(Phase::Copied).await?;
+    let snapshot = h.snapshot();
+    assert_eq!(snapshot.message, COPIED_WITHOUT_NARRATION);
+    assert_eq!(snapshot.narration_lost, Some(NarrationLoss::NotTranscribed));
+    receive(&h.loads).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_model_that_fails_to_load_fails_dictation_but_copies_a_show_without_narration()
+-> anyhow::Result<()> {
+    let (results, loading) = async_channel::bounded(1);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.load_results = Some(loading);
+    })?;
+    receive(&h.loads).await?;
+    h.start().await?;
+    h.input(Input::Toggle);
+    h.phase(Phase::Processing).await?;
+    results.send(Err(anyhow!("Model failed to load"))).await?;
+    h.phase(Phase::Error).await?;
+    assert_eq!(h.snapshot().message, "Model failed to load");
+
+    start_show(&mut h).await?;
+    finish_show(&h);
+    receive(&h.loads).await?;
+    h.phase(Phase::Processing).await?;
+    results.send(Err(anyhow!("Model failed to load"))).await?;
+    let (_, narration) = receive(&h.published).await?;
+    assert_eq!(narration, Narration::default());
+    h.phase(Phase::Copied).await?;
+    let snapshot = h.snapshot();
+    assert_eq!(snapshot.message, COPIED_WITHOUT_NARRATION);
+    assert_eq!(snapshot.narration_lost, Some(NarrationLoss::NotTranscribed));
+    assert_eq!(
+        snapshot.model,
+        ModelState::Unavailable,
+        "Settings and the tray still say the model needs attention"
+    );
+    assert!(h.jobs.try_recv().is_err(), "Nothing was transcribed");
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_show_that_lost_its_screen_and_its_narration_says_both() -> anyhow::Result<()> {
+    let mut h = Harness::with_ports(Config::default(), |ports| ports.delayed_finish = true)?;
+    let (id, microphone) = start_show_listening(&mut h).await?;
+    let (_, _, screen) = receive(&h.shows).await?;
+    screen
+        .send(ShowEvent::Finished(id, Ok(stopped_footage())))
+        .await?;
+    h.phase(Phase::Stopping).await?;
+    microphone.send(disconnected(id)).await?;
+    h.phase(Phase::Copied).await?;
+    let snapshot = h.snapshot();
+    assert_eq!(
+        (snapshot.ending, snapshot.narration_lost),
+        (
+            Ending::ScreenStopped,
+            Some(NarrationLoss::MicrophoneStopped)
+        )
+    );
+    assert_eq!(
+        snapshot.message,
+        "Show copied without narration, and the screen stopped recording early."
+    );
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_show_that_lost_its_narration_and_is_discarded_leaves_no_trace() -> anyhow::Result<()> {
+    let (retirement, retiring) = gate(1);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.screen_retirement = Some(retirement);
+    })?;
+    start_show(&mut h).await?;
+    h.input(Input::Cancel);
+    h.phase(Phase::Cancelled).await?;
+    retiring.reached().await?;
+    h.input(Input::Release);
+    // The earlier Show's screen is still letting go, so this one's waits.
+    let (id, events) = start_show_listening(&mut h).await?;
+    events.send(disconnected(id)).await?;
+    h.phase(Phase::Processing).await?;
+    // Losing its narration ended the Show, so only new settings discard it while it is saved.
+    change_settings(&h);
+    h.phase(Phase::Cancelled).await?;
+    retiring.release().await?;
+    assert!(
+        still_pending(h.shows.recv()).await,
+        "A cancelled Show's screen opened"
+    );
+    assert!(
+        h.published.try_recv().is_err(),
+        "A cancelled Show was published"
+    );
     h.close().await
 }
 
@@ -498,11 +645,7 @@ async fn new_settings_discard_a_show_whose_screen_stopped_while_it_is_saved() ->
         .send(ShowEvent::Finished(id, Ok(stopped_footage())))
         .await?;
     let (_, mut reply) = receive(&h.jobs).await?;
-    let config = Config {
-        remove_fillers: !h.runtime.configuration.borrow().remove_fillers,
-        ..h.runtime.configuration.borrow().clone()
-    };
-    h.runtime.configure(ValidConfig::assume(config));
+    change_settings(&h);
     h.phase(Phase::Cancelled).await?;
     timeout(PATIENCE, reply.closed()).await?;
     assert!(
