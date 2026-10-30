@@ -99,6 +99,8 @@ const POLL: Duration = Duration::from_millis(10);
 const BUFFERS: i32 = 2;
 /// How long the request for border-free capture may hold back the first frame.
 const ACCESS_WAIT: Duration = Duration::from_millis(250);
+/// The frames' pixel format; `readback::texture_description` gives every copy of a frame the same
+/// one, since Direct3D copies only between matching formats.
 const POOL_FORMAT: DirectXPixelFormat = DirectXPixelFormat::B8G8R8A8UIntNormalized;
 /// Windows Runtime time spans count 100 ns ticks.
 const TICKS_PER_SECOND: i128 = 10_000_000;
