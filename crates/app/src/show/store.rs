@@ -5,6 +5,7 @@ use std::{
     fs,
     io::{self, ErrorKind, Write as _},
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 
@@ -85,12 +86,26 @@ pub(super) struct Staged {
 }
 
 impl Staged {
-    /// Moves the bundle into place and returns its summary.
-    pub(super) fn persist(mut self) -> anyhow::Result<String> {
+    /// Moves the bundle into place and returns the saved Show with the summary written in it.
+    pub(super) fn persist(mut self) -> anyhow::Result<(SavedShow, String)> {
         let parent = self.directory.parent().unwrap_or(&self.directory);
         fs::rename(self.staging.path(), &self.directory).map_err(cannot_save(parent))?;
         self.staging.disable_cleanup(true);
-        Ok(self.summary)
+        Ok((SavedShow(self.directory.into()), self.summary))
+    }
+}
+
+/// A Show whose bundle was persisted, known only by its folder: no transcript or summary text
+/// stays in memory, and what is read back is whatever the folder holds then. The path never
+/// changes, so every snapshot that presents the Show shares it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SavedShow(Arc<Path>);
+
+impl SavedShow {
+    /// Trusts `directory` as a saved Show's folder, for tests whose Shows are never written.
+    #[cfg(test)]
+    pub(crate) fn assume(directory: impl Into<PathBuf>) -> Self {
+        Self(directory.into().into())
     }
 }
 
@@ -319,5 +334,7 @@ fn civil_date(days: u64) -> (u64, u64, u64) {
     (year, month, day)
 }
 
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+mod recall;
 #[cfg(test)]
 mod tests;

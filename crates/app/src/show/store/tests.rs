@@ -1,8 +1,11 @@
-//! Naming, writing, and expiring Shows in temporary folders.
+//! Naming, writing, reading back, and expiring Shows in temporary folders.
 
 use speakeasy_show::{Image, Journal, Moment, Recording, Typeface, compose, select};
 
-use super::*;
+use super::{
+    recall::{GONE, SUMMARY_LIMIT},
+    *,
+};
 
 fn at(seconds: u64) -> SystemTime {
     SystemTime::UNIX_EPOCH
@@ -151,7 +154,12 @@ fn a_bundle_appears_whole_under_a_fresh_name() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let parent = root.path().join("shows");
     let first = fresh_directory(&parent, at(1_792_420_563))?;
-    let summary = stage(&first, bundle()?)?.persist()?;
+    let (saved, summary) = stage(&first, bundle()?)?.persist()?;
+    assert_eq!(
+        saved.folder()?,
+        first,
+        "The saved Show is the one persisted"
+    );
     assert_eq!(
         fs::read_to_string(first.join("summary.md"))?,
         summary,
@@ -177,6 +185,42 @@ fn a_bundle_appears_whole_under_a_fresh_name() -> anyhow::Result<()> {
         "a bundle dropped before it persists, as a Show cancelled at commit drops it, leaves \
          nothing behind"
     );
+    Ok(())
+}
+
+#[test]
+fn a_saved_show_reads_back_as_its_folder_holds_it_until_it_is_gone() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let parent = root.path().join("shows");
+    let (show, summary) =
+        stage(&fresh_directory(&parent, at(1_792_420_563))?, bundle()?)?.persist()?;
+    let (newer, _) = stage(&fresh_directory(&parent, at(1_792_420_564))?, bundle()?)?.persist()?;
+    let file = show.folder()?.join(Bundle::SUMMARY);
+    assert_eq!(show.summary()?, summary);
+
+    let edited = format!("{summary}\nThe agent should start with the save button.\n");
+    fs::write(&file, &edited)?;
+    assert_eq!(show.summary()?, edited, "The user's edit was lost");
+
+    let limit = usize::try_from(SUMMARY_LIMIT)?;
+    fs::write(&file, "a".repeat(limit))?;
+    assert_eq!(show.summary()?.len(), limit);
+    fs::write(&file, "a".repeat(limit.saturating_add(1)))?;
+    let message = show
+        .summary()
+        .err()
+        .context("An oversized summary was read")?
+        .to_string();
+    assert!(message.contains("too large to copy"), "{message}");
+
+    fs::remove_dir_all(show.folder()?)?;
+    for gone in [show.summary().map(drop), show.folder().map(drop)] {
+        assert_eq!(
+            gone.map_err(|error| error.to_string()),
+            Err(GONE.to_owned())
+        );
+    }
+    assert!(newer.summary().is_ok(), "Only the deleted Show has gone");
     Ok(())
 }
 

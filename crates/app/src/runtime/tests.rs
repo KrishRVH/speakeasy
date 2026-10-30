@@ -90,6 +90,9 @@ struct FakePorts {
     publication: Option<Gate<()>>,
     publish_error: Option<&'static str>,
     publish_panics: bool,
+    /// Holds a publication once its Show is saved, before it reports.
+    saved: Option<Gate<()>>,
+    copy_error: Option<&'static str>,
     captures: Sender<OpenedCapture>,
     shows: Sender<OpenedShow>,
     pins: Sender<(SessionId, Taps)>,
@@ -138,6 +141,8 @@ impl FakePorts {
             publication: None,
             publish_error: None,
             publish_panics: false,
+            saved: None,
+            copy_error: None,
             captures,
             shows,
             pins,
@@ -166,6 +171,7 @@ impl FakePorts {
             &self.screen_retirement,
             &self.stop,
             &self.publication,
+            &self.saved,
         ]
         .into_iter()
         .flatten()
@@ -235,6 +241,8 @@ impl Ports for FakePorts {
         let publication = self.publication.clone();
         let publish_error = self.publish_error;
         let publish_panics = self.publish_panics;
+        let saved = self.saved.clone();
+        let copy_error = self.copy_error;
         async move {
             if let Some(gate) = publication {
                 gate.pass(()).await?;
@@ -246,9 +254,18 @@ impl Ports for FakePorts {
             if !permit.commit() {
                 return Ok(Published::Cancelled);
             }
+            let show = saved_show(&narration);
             let ending = footage.recording.ending;
             published.try_send((footage, narration))?;
-            Ok(Published::Copied { ending, lost })
+            if let Some(gate) = saved {
+                gate.pass(()).await?;
+            }
+            Ok(Published::Saved {
+                show,
+                ending,
+                lost,
+                copied: copy_error.map_or(Ok(()), |error| Err(anyhow!(error))),
+            })
         }
     }
 
@@ -409,6 +426,15 @@ fn footage() -> Box<Footage> {
             ..Recording::default()
         },
         journal,
+    })
+}
+
+/// The folder a fake publication saves a Show in, named for what it said so a test can tell Shows
+/// apart; nothing is written there.
+fn saved_show(narration: &Narration) -> SavedShow {
+    SavedShow::assume(match narration {
+        Narration::Text(text) => format!("shows/{text}"),
+        Narration::Words(_) => "shows/silent".to_owned(),
     })
 }
 
@@ -595,6 +621,14 @@ impl<Host: Sync> Harness<Host> {
         self.runtime.input.deliver(input);
     }
 
+    fn report(&self, report: Report) -> anyhow::Result<()> {
+        ensure!(
+            self.runtime.report(report).is_ok(),
+            "The owner stopped before the report"
+        );
+        Ok(())
+    }
+
     async fn observe(&mut self, predicate: impl FnMut(&Snapshot) -> bool) -> anyhow::Result<()> {
         timeout(PATIENCE, self.updates.wait_for(predicate)).await??;
         Ok(())
@@ -693,5 +727,6 @@ fn answer(reply: Reply, text: &str) -> anyhow::Result<()> {
 
 mod cues;
 mod dictation;
+mod last_show;
 mod model;
 mod shows;

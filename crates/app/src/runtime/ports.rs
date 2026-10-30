@@ -11,7 +11,7 @@ use speakeasy_show::{Ending, Journal, Narration, NarrationLoss, Recording};
 use tokio::sync::watch;
 use zeroize::Zeroize;
 
-use crate::{config::Config, sounds::Cue};
+use crate::{config::Config, show::SavedShow, sounds::Cue};
 
 /// The error a speech startup reports once cancelled.
 pub(crate) const STARTUP_CANCELLED: &str = "Local model startup cancelled";
@@ -105,13 +105,16 @@ pub(crate) struct Footage {
     pub journal: Journal,
 }
 
-/// What publishing a Show did.
+/// What publishing a Show did. A publication that fails before its bundle persists reports an
+/// error instead, and nothing of it stays on disk.
 pub(crate) enum Published {
-    /// The bundle was written and its summary copied, with how its screen recording ended and why
-    /// its narration was lost, if it was.
-    Copied {
+    /// The bundle persisted as `show`, with how its screen recording ended and why its narration
+    /// was lost, if it was; `copied` is whether its summary then reached the clipboard.
+    Saved {
+        show: SavedShow,
         ending: Ending,
         lost: Option<NarrationLoss>,
+        copied: anyhow::Result<()>,
     },
     /// Cancellation came first; no bundle appeared and nothing was copied.
     Cancelled,
@@ -194,8 +197,8 @@ pub(crate) trait Ports: Send + 'static {
     ) -> anyhow::Result<Self::Screen>;
 
     /// Turns a finished Show's footage and its narration, already on the Show's timeline, with
-    /// why that narration was `lost` if it was, into a bundle, which appears with its summary
-    /// copied only once `permit` commits.
+    /// why that narration was `lost` if it was, into a bundle, which appears only once `permit`
+    /// commits, and then copies its summary.
     fn publish(
         &self,
         footage: Footage,

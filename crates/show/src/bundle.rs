@@ -15,7 +15,6 @@ use crate::{
 };
 
 const CONTACT_SHEET: &str = "contact-sheet.png";
-const SUMMARY: &str = "summary.md";
 const MANIFEST: &str = "show.json";
 
 /// The file for the contact sheet numbered `number` from zero: `contact-sheet.png`, then
@@ -289,6 +288,9 @@ impl<T: fmt::Display> fmt::Display for Code<T> {
 }
 
 impl Bundle {
+    /// The summary's file name in a bundle's directory.
+    pub const SUMMARY: &str = "summary.md";
+
     /// Every file of the bundle, to be written under `directory`: its encoded images,
     /// `summary.md`, and `show.json`. The summary names files under `directory` and also comes
     /// back on its own, since an agent reads it first.
@@ -303,7 +305,7 @@ impl Bundle {
         .to_string();
         let mut files = self.images;
         files.push(File {
-            name: SUMMARY.to_owned(),
+            name: Self::SUMMARY.to_owned(),
             contents: summary.clone().into_bytes(),
         });
         files.push(File {

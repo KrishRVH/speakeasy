@@ -22,12 +22,14 @@ use crate::{
     audio::Capture,
     config::{Change, Config, ValidConfig},
     local_speech::LocalSpeech,
-    show::{self, Canvas, ScreenRecorder},
+    show::{self, Canvas, SavedShow, ScreenRecorder},
     sounds::{Cue, Sounds},
 };
 
 /// The status while a speech worker loads, shared by the owner, Settings, and the tray.
 pub(crate) const LOADING: &str = "Loading local model…";
+/// What a copied Show tells the user, whether it was just published or copied again from the menu.
+const SHOW_COPIED: &str = "Show copied. Paste it into your coding agent.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Phase {
@@ -91,6 +93,10 @@ pub(crate) struct Snapshot {
     pub narration_lost: Option<NarrationLoss>,
     /// When the latest session started; the pill's recording clock counts from it.
     pub started: Instant,
+    /// The latest Show saved since Speakeasy started, which the menu can copy or open again. It
+    /// outlives each owner: the shell's announcements keep it and a new owner starts from it, so
+    /// only quitting forgets it.
+    pub last_show: Option<SavedShow>,
     pub message: String,
     pub model: ModelState,
     /// Whether native input can start capture; false while desktop startup is pending.
@@ -110,12 +116,45 @@ impl Default for Snapshot {
             ending: Ending::Finished,
             narration_lost: None,
             started: now(),
+            last_show: None,
             message: String::new(),
             model: ModelState::Unavailable,
             desktop_ready: true,
             shortcut: speakeasy_platform::SHORTCUT.into(),
             cancel_shortcut: speakeasy_platform::CANCEL_SHORTCUT.into(),
         }
+    }
+}
+
+/// A result from outside any session, which is shown only while no session is under way.
+pub(crate) enum Report {
+    /// A failure, such as a retention sweep's, shown as its message.
+    Failed(String),
+    /// The last Show's summary went on the clipboard again.
+    #[cfg_attr(
+        all(target_os = "linux", not(test)),
+        expect(
+            dead_code,
+            reason = "Linux records no Shows, so its menu never copies one"
+        )
+    )]
+    ShowCopied,
+}
+
+impl Report {
+    /// Shows this report on `snapshot`, for when no owner presents one.
+    pub(crate) fn present(self, snapshot: &mut Snapshot) {
+        (snapshot.phase, snapshot.message) = match self {
+            Self::Failed(message) => (Phase::Error, message),
+            Self::ShowCopied => (Phase::Copied, SHOW_COPIED.to_owned()),
+        };
+    }
+}
+
+impl From<&anyhow::Error> for Report {
+    /// Keeps only the outermost message, which says what failed and what to do.
+    fn from(error: &anyhow::Error) -> Self {
+        Self::Failed(error.to_string())
     }
 }
 
@@ -135,7 +174,7 @@ pub(crate) struct Runtime<Host = OwnedThread> {
     host: Host,
     pub input: InputSender,
     configuration: watch::Sender<Config>,
-    reports: Sender<String>,
+    reports: Sender<Report>,
     stop: Sender<Infallible>,
 }
 
@@ -206,7 +245,10 @@ impl<Host> Runtime<Host> {
         inputs: Receiver<Input>,
         run: impl FnOnce(Wiring<P>) -> io::Result<Host>,
     ) -> anyhow::Result<Self> {
-        let epoch = snapshots.borrow().epoch;
+        let (epoch, last_show) = {
+            let presented = snapshots.borrow();
+            (presented.epoch, presented.last_show.clone())
+        };
         let (configuration, changes) = watch::channel(config);
         // One report waits for the owner's next wake, and one arriving meanwhile is dropped. The
         // retention sweep repeats its own; a Settings or overlay failure is not repeated.
@@ -222,6 +264,7 @@ impl<Host> Runtime<Host> {
             stopping,
             ports,
             epoch,
+            last_show,
         })?;
         Ok(Self {
             host,
@@ -232,12 +275,12 @@ impl<Host> Runtime<Host> {
         })
     }
 
-    /// Shows `message` as a failure unless a session is under way, which it must not interrupt.
-    /// A report already waiting absorbs this one; a stopped owner hands `message` back.
-    pub(crate) fn report(&self, message: String) -> Result<(), String> {
-        match self.reports.try_send(message) {
+    /// Shows `report` unless a session is under way, which it must not interrupt. A report already
+    /// waiting absorbs this one; a stopped owner hands `report` back.
+    pub(crate) fn report(&self, report: Report) -> Result<(), Report> {
+        match self.reports.try_send(report) {
             Ok(()) | Err(TrySendError::Full(_)) => Ok(()),
-            Err(TrySendError::Closed(message)) => Err(message),
+            Err(TrySendError::Closed(report)) => Err(report),
         }
     }
 
@@ -338,17 +381,19 @@ impl Ports for Desktop {
     }
 }
 
-/// The owner's ends of its lanes, with its ports and the snapshot epoch it presents under.
+/// The owner's ends of its lanes, with its ports, the snapshot epoch it presents under, and the
+/// latest saved Show it starts from.
 struct Wiring<P> {
     changes: watch::Receiver<Config>,
     inputs: Receiver<Input>,
-    reports: Receiver<String>,
+    reports: Receiver<Report>,
     snapshots: watch::Sender<Snapshot>,
     meter: watch::Sender<Meter>,
     permits: InputSender,
     stopping: Receiver<Infallible>,
     ports: P,
     epoch: SnapshotEpoch,
+    last_show: Option<SavedShow>,
 }
 
 impl<P: Ports> Wiring<P> {

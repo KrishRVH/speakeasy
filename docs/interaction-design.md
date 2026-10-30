@@ -40,7 +40,7 @@ non-activating and click-through.
 | Stopping         | The lid stays open until capture stops; the grille settles.                                                        |
 | Processing       | The lid partly closes; a lamp highlight sweeps the opening after 250 ms.                                           |
 | Submitted        | Closed lid with a lamp check for 350 ms, then collapse and fade.                                                   |
-| Show copied      | Closed lid with a lamp check and “Show copied” for 1.6 seconds, once the bundle is written and its summary copied. |
+| Show copied      | Closed lid with a lamp check and “Show copied” for 1.6 seconds, each time the summary of a saved bundle is copied. |
 | Stopped early    | A muted notice of up to two lines saying the Show was copied but stopped early, and why, for six seconds.          |
 | Nothing chosen   | A muted notice of up to two lines saying why a W or A Show was cancelled, for six seconds.                         |
 | Narration lost   | The same notice saying the Show was copied without narration and why, and that it stopped early if it did.         |
@@ -116,9 +116,11 @@ template icon, so recording also adds a diamond badge and every state differs by
 and Linux a faint keyline keeps the lamp color legible on light taskbars. The menu shows current
 status and engine, Pause/Resume, Start/Finish, Cancel, Settings, and Quit; Finish and Cancel name a
 Show while it records and are disabled while it is saved. Before any engine is set up, the menu says
-so and Resume waits for setup. It never animates while idle. Errors remain accessible in Settings
-after the pill's notice expires, including while there are unsaved edits: its commands and status
-line stay in view below the scrolling controls.
+so and Resume waits for setup. It never animates while idle. On Windows and macOS, Copy last Show
+and Open last Show sit between Cancel and Settings; they act once a Show is saved and between
+recordings, paused included, until Quit begins. Errors remain accessible in Settings after the
+pill's notice expires, including while there are unsaved edits: its commands and status line stay
+in view below the scrolling controls.
 
 ## Interaction contracts
 

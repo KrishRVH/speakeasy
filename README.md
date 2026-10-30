@@ -136,6 +136,12 @@ your speech can't be transcribed, the Show is saved without narration rather tha
 says **Show copied without narration** and what went wrong, the summary tells your agent why, and no
 audio is kept to try again.
 
+On Windows and Mac, the menu's **Copy last Show** copies the latest Show's `summary.md` again as it
+reads now, edits included, and **Open last Show** opens its folder. Speakeasy remembers only that
+one Show, and only until it quits. Once that Show expires or is deleted, both say so and never reach
+for an older one. If a finished Show cannot be copied, it stays saved and the pill points you to
+Copy last Show.
+
 ## What's said here stays here
 
 - Speech runs in a local NeMo-Speech.cpp or whisper.cpp process that Speakeasy owns and stops. Setup

@@ -12,7 +12,11 @@ use super::{
     TrayChanges, TrayCommand, TrayState,
     icon::{self, IconStyle},
 };
-use crate::{shell::Services, status::Indicator, theme::Theme};
+use crate::{
+    shell::{LastShow, Services},
+    status::Indicator,
+    theme::Theme,
+};
 
 const ICON_STYLE: IconStyle = if cfg!(target_os = "macos") {
     IconStyle::Template
@@ -35,6 +39,8 @@ struct Presenter {
     pause: MenuItem,
     toggle: MenuItem,
     cancel: MenuItem,
+    copy_last_show: MenuItem,
+    open_last_show: MenuItem,
     drawn: Option<(Indicator, Theme)>,
 }
 
@@ -60,6 +66,8 @@ impl Presenter {
             entry.set_text(label);
             entry.set_enabled(enabled);
         }
+        self.copy_last_show.set_enabled(state.last_show);
+        self.open_last_show.set_enabled(state.last_show);
     }
 
     fn redraw_icon(&mut self, indicator: Indicator, theme: Theme) -> anyhow::Result<()> {
@@ -82,6 +90,8 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
     let pause = MenuItem::new("Pause dictation", true, None);
     let toggle = MenuItem::new("Start dictation", false, None);
     let cancel = MenuItem::new("Cancel dictation", false, None);
+    let copy_last_show = MenuItem::new("Copy last Show", false, None);
+    let open_last_show = MenuItem::new("Open last Show", false, None);
     let settings = MenuItem::new("Settings…", true, None);
     let quit = MenuItem::new("Quit Speakeasy", true, None);
     menu.append_items(&[
@@ -90,6 +100,9 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
         &pause,
         &toggle,
         &cancel,
+        &PredefinedMenuItem::separator(),
+        &copy_last_show,
+        &open_last_show,
         &PredefinedMenuItem::separator(),
         &settings,
         &quit,
@@ -100,6 +113,14 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
         (pause.id().clone(), TrayCommand::Pause),
         (toggle.id().clone(), TrayCommand::Toggle),
         (cancel.id().clone(), TrayCommand::Cancel),
+        (
+            copy_last_show.id().clone(),
+            TrayCommand::LastShow(LastShow::Copy),
+        ),
+        (
+            open_last_show.id().clone(),
+            TrayCommand::LastShow(LastShow::Open),
+        ),
         (quit.id().clone(), TrayCommand::Quit),
     ]);
     let events = cx.spawn(async move |cx| {
@@ -115,6 +136,8 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
         pause,
         toggle,
         cancel,
+        copy_last_show,
+        open_last_show,
         drawn: None,
     };
     let mut changes = TrayChanges::new(cx);

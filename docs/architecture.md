@@ -114,7 +114,9 @@ module unless a test file is named.
   download, verify, and unpack engines; a full install is opt-in.
 - **Tray and status**: [tray.rs](../crates/app/src/tray.rs), [tray/](../crates/app/src/tray),
   [status.rs](../crates/app/src/status.rs), and
-  [platform/src/linux/tray.rs](../crates/platform/src/linux/tray.rs) mirror service state.
+  [platform/src/linux/tray.rs](../crates/platform/src/linux/tray.rs) mirror service state;
+  [shell/recovery.rs](../crates/app/src/shell/recovery.rs) copies or opens the last Show off the UI
+  thread.
 - **Instance and relaunch**: [instance.rs](../crates/app/src/instance.rs) owns the lock and the
   secret-gated loopback commands.
 - **Command line**: [main.rs](../crates/app/src/main.rs) parses options and routes what they ask
@@ -124,10 +126,12 @@ module unless a test file is named.
   [show/recorder.rs](../crates/app/src/show/recorder.rs),
   [show/publish.rs](../crates/app/src/show/publish.rs), and the session owner.
   [runtime/tests/shows.rs](../crates/app/src/runtime/tests/shows.rs) drives Shows with a fake
-  screen; [show/recorder/tests.rs](../crates/app/src/show/recorder/tests.rs) drives the area choice
-  and a take on synthetic frames and pointer samples;
-  [show/publish/tests.rs](../crates/app/src/show/publish/tests.rs) checks every published file and
-  the cancel path.
+  screen, and [runtime/tests/last_show.rs](../crates/app/src/runtime/tests/last_show.rs) checks
+  which saved Show the owner remembers;
+  [show/recorder/tests.rs](../crates/app/src/show/recorder/tests.rs) drives the area choice and a
+  take on synthetic frames and pointer samples;
+  [show/publish/tests.rs](../crates/app/src/show/publish/tests.rs) checks every published file, a
+  refused copy, and the cancel path.
 - **Show composition**: [crates/show/src](../crates/show/src), notably
   [select.rs](../crates/show/src/select.rs) and [select/](../crates/show/src/select),
   [journal.rs](../crates/show/src/journal.rs), [tracker.rs](../crates/show/src/tracker.rs),
@@ -144,7 +148,8 @@ module unless a test file is named.
   [bundle/tests.rs](../crates/show/src/bundle/tests.rs) checks paginated sheets and pins
   `show.json`; the demo's summary in demo.rs pins what agents read.
 - **Show store**: [show/store.rs](../crates/app/src/show/store.rs) names, writes, and expires
-  bundles.
+  bundles, and [store/recall.rs](../crates/app/src/show/store/recall.rs) reads a saved one back;
+  [store/tests.rs](../crates/app/src/show/store/tests.rs) checks both.
 - **Screen capture and overlay**: [platform/src/screen.rs](../crates/platform/src/screen.rs),
   [screen/geometry.rs](../crates/platform/src/screen/geometry.rs),
   [windows/screen.rs](../crates/platform/src/windows/screen.rs) with
@@ -191,12 +196,16 @@ No single module owns these rules; a change to any party keeps them.
 - **Quit drains without a timeout.** Every application-owned Quit route awaits audio teardown, a
   microphone scan, process reaping, insertion, setup, and requested saves while rendering continues.
   The instance lock is released after the last Settings writer.
-- **Reports go through the owner.** Background failures, such as a failed retention sweep, reach a
-  running owner's report lane and never interrupt a recording; without an owner, Services shows them
-  while idle.
+- **Reports go through the owner.** Background failures, such as a failed retention sweep, and the
+  menu's Show copied notice reach a running owner's report lane and never interrupt a recording;
+  without an owner, Services shows them while idle.
 - **A Show appears only after commit.** Publishing composes and stages the bundle off the owner's
   thread in a private `.partial-*` directory. The bundle appears and its summary is copied only once
-  the permit commits; a Show cancelled first leaves no bundle and no clipboard change.
+  the permit commits; a Show cancelled first leaves no bundle and no clipboard change. A saved Show
+  stays saved when the clipboard refuses its summary.
+- **The last Show outlives each owner.** Only a saved Show replaces the one the owner remembers, and
+  every snapshot presents it. The shell's announcements keep it and a new owner starts from the one
+  presented, so Pause and reconfiguration keep it and Quit forgets it.
 - **Insertion is never repeated.** Validation precedes the single commit. After it, a native failure
   reports a partial, unavailable, or manual-paste outcome. Submission cannot prove that an editor
   accepted the text, and Escape cannot retract input already submitted.

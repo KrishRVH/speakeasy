@@ -1,8 +1,10 @@
-//! Publishes a rehearsed Show into a temporary folder and checks every file and the cancel path;
-//! the opt-in `profile_show_pipeline` times recording and publishing at 2560 × 1440.
+//! Publishes a rehearsed Show into a temporary folder and checks every file, a refused copy, and
+//! the cancel path; the opt-in `profile_show_pipeline` times recording and publishing at
+//! 2560 × 1440.
 
 use std::{fs, io, path::Path, time::Instant};
 
+use anyhow::bail;
 use speakeasy_platform::{InputSender, InsertPermit};
 use speakeasy_show::{Image, Journal, Manifest, Moment, Point, Size, Span, Tracker, Word};
 
@@ -184,10 +186,27 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let shows = root.path().join("shows");
     let (_input, permit) = permit();
-    let summary = write_bundle(footage, narration.clone(), None, &permit, || {
-        Ok(shows.clone())
-    })?
-    .context("An active permit publishes")?;
+    let mut clipboard = None;
+    let published = publish_with(
+        footage,
+        narration.clone(),
+        None,
+        &permit,
+        || Ok(shows.clone()),
+        |summary| {
+            clipboard = Some(summary.to_owned());
+            Ok(())
+        },
+    )?;
+    let Published::Saved {
+        show,
+        copied: Ok(()),
+        ..
+    } = published
+    else {
+        bail!("An active permit saves and copies the Show");
+    };
+    let summary = clipboard.context("The summary was copied")?;
     assert!(!permit.active(), "Publishing spends the permit");
     let mut entries = fs::read_dir(&shows)?;
     let directory = entries
@@ -198,6 +217,7 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
         entries.next().is_none(),
         "The Shows folder holds only the bundle"
     );
+    assert_eq!(show.folder()?, directory, "The Show saved is the bundle");
 
     assert_eq!(
         fs::read_to_string(directory.join("summary.md"))?,
@@ -234,12 +254,47 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
 }
 
 #[test]
+fn a_show_that_cannot_be_copied_stays_saved() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let shows = root.path().join("shows");
+    let (_input, permit) = permit();
+    let (footage, narration) = rehearse(32, 20);
+    let published = publish_with(
+        footage,
+        narration,
+        None,
+        &permit,
+        || Ok(shows.clone()),
+        |_| bail!("Another app holds the clipboard"),
+    )?;
+    let Published::Saved {
+        show,
+        copied: Err(error),
+        ..
+    } = published
+    else {
+        bail!("A Show saved but not copied was reported otherwise");
+    };
+    assert_eq!(error.to_string(), "Another app holds the clipboard");
+    let folder = show.folder()?;
+    assert_eq!(folder.parent(), Some(shows.as_path()));
+    assert!(show.summary()?.contains(&folder.display().to_string()));
+    Ok(())
+}
+
+/// A clipboard that a cancelled Show must never reach.
+fn uncopied(_: &str) -> anyhow::Result<()> {
+    bail!("A cancelled Show is never copied")
+}
+
+#[test]
 fn a_cancelled_show_never_reaches_the_disk() -> anyhow::Result<()> {
     let (input, permit) = permit();
     input.cancel();
-    let unprepared = || anyhow::bail!("A cancelled Show never prepares its folder");
+    let unprepared = || bail!("A cancelled Show never prepares its folder");
     let (footage, narration) = rehearse(32, 20);
-    assert!(write_bundle(footage, narration, None, &permit, unprepared)?.is_none());
+    let published = publish_with(footage, narration, None, &permit, unprepared, uncopied)?;
+    assert!(matches!(published, Published::Cancelled));
     Ok(())
 }
 
@@ -256,7 +311,15 @@ fn a_show_cancelled_before_staging_never_writes_its_files() -> anyhow::Result<()
         Ok(blocked.clone())
     };
     let (footage, narration) = rehearse(32, 20);
-    assert!(write_bundle(footage, narration, None, &permit, cancel_once_composed)?.is_none());
+    let published = publish_with(
+        footage,
+        narration,
+        None,
+        &permit,
+        cancel_once_composed,
+        uncopied,
+    )?;
+    assert!(matches!(published, Published::Cancelled));
     Ok(())
 }
 
@@ -266,10 +329,20 @@ fn a_show_that_lost_its_narration_says_why_in_its_files() -> anyhow::Result<()> 
     let (_input, permit) = permit();
     let (footage, _) = rehearse(32, 20);
     let lost = NarrationLoss::AudioStopped;
-    let summary = write_bundle(footage, Narration::default(), Some(lost), &permit, || {
-        Ok(shows.path().to_owned())
-    })?
-    .context("An active permit publishes")?;
+    let mut clipboard = None;
+    let published = publish_with(
+        footage,
+        Narration::default(),
+        Some(lost),
+        &permit,
+        || Ok(shows.path().to_owned()),
+        |summary| {
+            clipboard = Some(summary.to_owned());
+            Ok(())
+        },
+    )?;
+    assert!(matches!(published, Published::Saved { lost: Some(_), .. }));
+    let summary = clipboard.context("The summary was copied")?;
     assert!(summary.contains("Audio capture stopped at 0:10 and the Show ended there"));
     let directory = fs::read_dir(shows.path())?
         .next()

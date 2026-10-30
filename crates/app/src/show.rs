@@ -20,7 +20,7 @@ pub(crate) use self::{
     overlay::{Canvas, attend as attend_overlay},
     publish::publish,
     recorder::ScreenRecorder,
-    store::attend as attend_retention,
+    store::{SavedShow, attend as attend_retention},
 };
 
 /// The demo's keyframes render as a Show records a 2880 × 1800 display, halved to fit
@@ -73,7 +73,7 @@ impl Command {
             Some(out) => out,
             None => store::fresh_directory(&store::private_directory()?, SystemTime::now())?,
         };
-        let summary = store::stage(&directory, bundle)?.persist()?;
+        let (_, summary) = store::stage(&directory, bundle)?.persist()?;
         write!(io::stdout().lock(), "{summary}")?;
         Ok(())
     }

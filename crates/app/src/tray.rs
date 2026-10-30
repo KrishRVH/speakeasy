@@ -1,6 +1,7 @@
 //! The tray mirrors service state into a native icon and menu and routes menu commands to the
-//! shell. The dictation entries' labels and enable rules are decided here once; both backends show
-//! them as given and present only states that differ from the last one shown.
+//! shell. The dictation entries' labels and enable rules, and on Windows and macOS the last Show's,
+//! are decided here once; each backend shows them as given and presents only states that differ
+//! from the last one shown.
 
 mod icon;
 #[cfg(target_os = "linux")]
@@ -29,21 +30,46 @@ struct TrayState {
     status: Status,
     theme: Theme,
     menu: TrayMenu,
+    /// Whether Copy last Show and Open last Show act; Linux records no Shows, so has neither.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    last_show: bool,
 }
 
 impl TrayState {
     fn new(services: &Services, snapshot: &Snapshot) -> Self {
+        let service = services.service_state();
+        let interactive = !services.mode.is_demo();
         Self {
             status: services.status(snapshot),
             theme: services.config.theme,
             menu: dictation_menu(
-                services.service_state(),
+                service,
                 activity(snapshot),
                 snapshot.desktop_ready,
-                !services.mode.is_demo(),
+                interactive,
+            ),
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            last_show: last_show_acts(
+                snapshot.last_show.is_some(),
+                service,
+                activity(snapshot),
+                interactive,
             ),
         }
     }
+}
+
+/// Whether the last Show's entries act: a Show is remembered and no recording is under way, which
+/// a copy could race to the clipboard and which would swallow the notice. They need no dictation,
+/// so they act while paused, but not once Quit begins.
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+fn last_show_acts(
+    remembered: bool,
+    service: ServiceState,
+    activity: Activity,
+    interactive: bool,
+) -> bool {
+    interactive && remembered && activity == Activity::Idle && service != ServiceState::Quitting
 }
 
 /// The dictation entries, each enabled only while its command can act; a demo is not
@@ -139,6 +165,8 @@ enum TrayCommand {
     Pause,
     Toggle,
     Cancel,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    LastShow(shell::LastShow),
     Quit,
 }
 
@@ -149,6 +177,8 @@ impl TrayCommand {
             Self::Pause => shell::toggle_enabled(cx),
             Self::Toggle => shell::send(Input::Toggle, cx),
             Self::Cancel => shell::send(Input::Cancel, cx),
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            Self::LastShow(action) => action.run(cx),
             Self::Quit => shell::request_quit(cx),
         }
     }
@@ -269,6 +299,32 @@ mod tests {
                 ],
                 expected,
                 "{phase:?}, Show {show}, hands-free {hands_free}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_last_shows_entries_act_only_on_a_remembered_show_while_idle() {
+        use Activity::{Dictating, Finishing, Idle, Saving, Showing};
+        use ServiceState::{Paused, Pausing, Quitting, Running};
+        // Remembered, service, activity, interactive: whether Copy and Open last Show act.
+        let table = [
+            (true, Running, Idle, true, true),
+            (false, Running, Idle, true, false),
+            (true, Running, Dictating, true, false),
+            (true, Running, Finishing, true, false),
+            (true, Running, Showing, true, false),
+            (true, Running, Saving, true, false),
+            (true, Pausing, Idle, true, true),
+            (true, Paused, Idle, true, true),
+            (true, Quitting, Idle, true, false),
+            (true, Running, Idle, false, false),
+        ];
+        for (remembered, service, activity, interactive, expected) in table {
+            assert_eq!(
+                last_show_acts(remembered, service, activity, interactive),
+                expected,
+                "remembered {remembered}, {service:?}, {activity:?}, interactive {interactive}"
             );
         }
     }

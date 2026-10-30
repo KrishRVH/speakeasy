@@ -19,7 +19,7 @@ use crate::{
     gpui_ext::AppUpdate,
     instance::{Instance, Request},
     pill::Pill,
-    runtime::{self, Meter, ModelState, Phase, Runtime, Snapshot, SnapshotEpoch},
+    runtime::{self, Meter, ModelState, Phase, Report, Runtime, Snapshot},
     show::Canvas,
     status::{PAUSED, PAUSING, QUITTING, ServiceState, Status},
 };
@@ -99,6 +99,9 @@ pub(crate) struct Services {
     pub(super) settings: Option<WindowHandle<Settings>>,
     pub mode: LaunchMode,
     pub(super) visibility: Option<Task<()>>,
+    /// The menu's latest copy or opening of the last Show; a newer one replaces it.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub(super) recovery: Option<Task<()>>,
     pub(super) tray_hint_seen: bool,
     requests: Option<Task<()>>,
     /// The latest microphone scan, which every Settings view shares and Quit waits for.
@@ -137,6 +140,8 @@ impl Services {
             settings: None,
             mode,
             visibility: None,
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            recovery: None,
             tray_hint_seen: false,
             requests: None,
             microphone_scan: None,
@@ -201,23 +206,22 @@ impl Services {
         }));
     }
 
-    /// Shows `error` unless a recording is under way, which it must not interrupt. A running owner
-    /// keeps it until the next recording or settings change; otherwise the check and the write
-    /// are one step, and no owner remains to publish over it.
-    pub(crate) fn report(&self, error: &anyhow::Error) {
-        let message = error.to_string();
+    /// Shows `report`, such as a failure, unless a recording is under way, which it must not
+    /// interrupt. A running owner keeps it until the next recording or settings change; otherwise
+    /// the check and the write are one step, and no owner remains to publish over it.
+    pub(crate) fn report(&self, report: impl Into<Report>) {
+        let report = report.into();
         let unsent = match self.runtime().filter(|runtime| runtime.is_running()) {
-            Some(runtime) => runtime.report(message),
-            None => Err(message),
+            Some(runtime) => runtime.report(report),
+            None => Err(report),
         };
-        let Err(message) = unsent else {
+        let Err(report) = unsent else {
             return;
         };
         self.output.send_if_modified(|snapshot| {
             let idle = !snapshot.phase.is_active();
             if idle {
-                snapshot.phase = Phase::Error;
-                snapshot.message = message;
+                report.present(snapshot);
             }
             idle
         });
@@ -440,14 +444,16 @@ pub(crate) fn send(input: Input, cx: &App) {
 
 /// Publishes a status of the shell's own that replaces the last owner's report.
 fn announce(output: &watch::Sender<Snapshot>, message: &str) {
-    output.send_modify(|snapshot| *snapshot = announcement(snapshot.epoch, message));
+    output.send_modify(|snapshot| *snapshot = announcement(snapshot, message));
 }
 
-/// The snapshot after one from `epoch` that says the shell's `message`. No owner has reported a
-/// model under it yet, so the model reads as loading rather than unavailable.
-fn announcement(epoch: SnapshotEpoch, message: &str) -> Snapshot {
+/// The snapshot after `previous` that says the shell's `message`, keeping only the last saved Show.
+/// No owner has reported a model under it yet, so the model reads as loading rather than
+/// unavailable.
+fn announcement(previous: &Snapshot, message: &str) -> Snapshot {
     Snapshot {
-        epoch: epoch.next(),
+        epoch: previous.epoch.next(),
+        last_show: previous.last_show.clone(),
         message: message.into(),
         model: ModelState::Loading,
         ..Snapshot::default()
@@ -473,17 +479,35 @@ fn handle_request(request: Request, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::Engine, status::Indicator};
+    use crate::{config::Engine, show::SavedShow, status::Indicator};
 
     #[test]
     fn a_resume_check_and_a_start_read_as_busy_until_the_owner_reports() {
         for message in [CHECKING, runtime::LOADING] {
             let status = Status::new(
-                &announcement(SnapshotEpoch::default(), message),
+                &announcement(&Snapshot::default(), message),
                 ServiceState::Running,
                 Engine::Whisper,
             );
             assert_eq!(status.indicator, Indicator::Busy, "{}", status.description);
         }
+    }
+
+    #[test]
+    fn an_announcement_replaces_the_status_but_keeps_the_last_show() {
+        let show = SavedShow::assume("shows/20261029T120000Z");
+        let previous = Snapshot {
+            phase: Phase::Error,
+            message: "Disk full".into(),
+            last_show: Some(show.clone()),
+            ..Snapshot::default()
+        };
+        let paused = announcement(&previous, PAUSED);
+        assert_eq!(paused.epoch, previous.epoch.next());
+        assert_eq!(
+            (paused.phase, paused.message.as_str()),
+            (Phase::Idle, PAUSED)
+        );
+        assert_eq!(paused.last_show, Some(show), "Pausing forgot the last Show");
     }
 }

@@ -737,9 +737,7 @@ async fn an_idle_report_survives_model_load_and_desktop_readiness() -> anyhow::R
         ports.desktop_pending = true;
     })?;
     receive(&h.loads).await?;
-    h.runtime
-        .report(REPORT.into())
-        .map_err(anyhow::Error::msg)?;
+    h.report(Report::Failed(REPORT.into()))?;
     h.phase(Phase::Error).await?;
     results.send(Ok(())).await?;
     h.observe(|snapshot| snapshot.model == ModelState::Ready)
@@ -761,9 +759,7 @@ async fn a_report_during_a_held_recording_is_dropped_and_the_text_still_pastes()
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     let (id, events) = receive(&h.captures).await?;
-    h.runtime
-        .report(REPORT.into())
-        .map_err(anyhow::Error::msg)?;
+    h.report(Report::Failed(REPORT.into()))?;
     // The report lane outranks capture, so the level arrives only after the report is handled.
     events.send(CaptureEvent::Level(id, 0.25)).await?;
     h.observe_level(0.25).await?;

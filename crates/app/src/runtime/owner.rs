@@ -13,7 +13,7 @@ use tokio::{
 };
 
 use super::{
-    LOADING, Meter, Phase, Snapshot, SnapshotEpoch, Wiring,
+    LOADING, Meter, Phase, Report, SHOW_COPIED, Snapshot, SnapshotEpoch, Wiring,
     device::Device,
     now,
     ports::{CaptureEvent, PUBLISH_STOPPED, Ports, Published, SessionId, ShowEvent, Unchosen},
@@ -23,11 +23,10 @@ use super::{
 };
 use crate::{
     config::{Change, Config},
+    show::SavedShow,
     sounds::Cue,
 };
 
-/// What a copied Show tells the user.
-const SHOW_COPIED: &str = "Show copied. Paste it into your coding agent.";
 /// What a copied Show whose screen stopped recording early tells the user.
 const SHOW_SCREEN_STOPPED: &str = "Show copied, but the screen stopped recording early.";
 /// What a copied Show whose window closed while it recorded tells the user.
@@ -121,7 +120,7 @@ impl Notice {
 enum Wake<W> {
     Stop,
     Input(Result<Input, RecvError>),
-    Report(String),
+    Report(Report),
     Configuration,
     Capture(CaptureEvent),
     Show(ShowEvent),
@@ -145,7 +144,7 @@ struct Owner<P: Ports> {
 
     changes: watch::Receiver<Config>,
     inputs: Receiver<Input>,
-    reports: Receiver<String>,
+    reports: Receiver<Report>,
     stopping: Receiver<Infallible>,
     capture_events: Sender<CaptureEvent>,
     captures: Receiver<CaptureEvent>,
@@ -156,6 +155,9 @@ struct Owner<P: Ports> {
     gesture: Gesture,
     session: Option<Session>,
     latest: Latest,
+    /// The latest Show saved, which only a later saved Show replaces; an abandoned publication's
+    /// result is never awaited, so it cannot.
+    last_show: Option<SavedShow>,
 
     worker: Worker<P::Speech>,
     microphone: Device<P::Microphone>,
@@ -187,6 +189,7 @@ impl<P: Ports> Owner<P> {
             stopping,
             ports,
             epoch,
+            last_show,
         } = wiring;
         let config = changes.borrow_and_update().clone();
         let (capture_events, captures) = async_channel::bounded(64);
@@ -212,6 +215,7 @@ impl<P: Ports> Owner<P> {
                 started: now(),
                 show: false,
             },
+            last_show,
             worker,
             microphone: Device::Free,
             screen: Device::Free,
@@ -258,11 +262,17 @@ impl<P: Ports> Owner<P> {
         let action = match wake {
             Wake::Stop => return ControlFlow::Break(()),
             Wake::Input(input) => self.handle_input(input)?,
-            Wake::Report(message) => {
+            Wake::Report(report) => {
                 // The owner's own state, not a presented copy, decides idleness, so a session that
                 // started meanwhile is never overwritten.
                 if self.session.is_none() {
-                    self.outcome = Outcome::Failed(message);
+                    self.outcome = match report {
+                        Report::Failed(message) => Outcome::Failed(message),
+                        Report::ShowCopied => Outcome::ShowCopied {
+                            ending: Ending::Finished,
+                            lost: None,
+                        },
+                    };
                 }
                 None
             },
@@ -563,8 +573,20 @@ impl<P: Ports> Owner<P> {
         let outcome = match result {
             Ok(Delivered::Inserted(Ok(Inserted::Sent))) => Outcome::Done,
             Ok(Delivered::Inserted(Ok(Inserted::Copied(message)))) => Outcome::Copied(message),
-            Ok(Delivered::Published(Ok(Published::Copied { ending, lost }))) => {
-                Outcome::ShowCopied { ending, lost }
+            Ok(Delivered::Published(Ok(Published::Saved {
+                show: saved,
+                ending,
+                lost,
+                copied,
+            }))) => {
+                self.last_show = Some(saved);
+                match copied {
+                    Ok(()) => Outcome::ShowCopied { ending, lost },
+                    Err(error) => Outcome::Failed(format!(
+                        "The Show was saved but not copied ({error:#}). Choose Copy last Show in \
+                         Speakeasy's menu."
+                    )),
+                }
             },
             Ok(
                 Delivered::Inserted(Ok(Inserted::Cancelled))
@@ -836,6 +858,7 @@ impl<P: Ports> Owner<P> {
             ending,
             narration_lost,
             started: self.latest.started,
+            last_show: self.last_show.clone(),
             message: self.message().into_owned(),
             model: self.worker.model(),
             desktop_ready: self.desktop_ready,

@@ -130,7 +130,12 @@ impl Ports for ModelPorts {
         // Commits once the task runs, as publishing does, so a cancel can still come first.
         async move {
             Ok(if permit.commit() {
-                Published::Copied { ending, lost }
+                Published::Saved {
+                    show: SavedShow::assume("shows/model"),
+                    ending,
+                    lost,
+                    copied: Ok(()),
+                }
             } else {
                 Published::Cancelled
             })
