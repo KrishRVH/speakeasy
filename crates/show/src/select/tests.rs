@@ -311,26 +311,45 @@ fn a_click_waits_only_for_a_change_it_could_have_started() {
     assert_eq!(times(&shown), [1_200, 2_400]);
     assert_eq!(reported(&shown), [Some(click(1_000)), Some(click(2_000))]);
 
+    // A change a second after a click is something a Show does not record, such as a scroll,
+    // whether the click changed nothing or only a little, as ticking a checkbox does.
+    let clicked = recording(Vec::new(), vec![click(1_000)], Narration::default());
+    for answer in [signature(40), with_patch(640, 360, [0.0, 0.0, 240.0, 60.0])] {
+        let scrolled: Vec<Sample> = (0..=4_000)
+            .step_by(200)
+            .map(|at| Sample {
+                at: Moment::from_millis(at),
+                signature: match at {
+                    ..1_200 => signature(40),
+                    1_200..2_200 => answer.clone(),
+                    _ => signature(200),
+                },
+            })
+            .collect();
+        let shown = select(&clicked, &scrolled).unwrap();
+        assert_eq!(times(&shown), [1_200, 2_200]);
+        assert_eq!(reported(&shown), [Some(click(1_000)), None]);
+    }
+
     // A click as a video starts shows the screen just after it, not where the video stops.
     let playing = samples(200, 10_000, |at| match at {
         1_200..8_000 if at / 200 % 2 == 1 => 200,
         ..8_000 => 40,
         _ => 120,
     });
-    let clicked = recording(Vec::new(), vec![click(1_000)], Narration::default());
     let shown = select(&clicked, &playing).unwrap();
     assert_eq!(times(&shown), [1_200, 8_000]);
     assert_eq!(reported(&shown), [Some(click(1_000)), None]);
 
     // A change already under way before the click is not its result; the pane it opens next is.
     let animated = samples(200, 4_000, |at| match at {
-        ..1_400 if at / 200 % 2 == 1 => 200,
-        ..1_400 => 40,
-        1_400..1_800 => 120,
+        ..1_200 if at / 200 % 2 == 1 => 200,
+        ..1_200 => 40,
+        1_200..1_600 => 120,
         _ => 250,
     });
     let shown = select(&clicked, &animated).unwrap();
-    assert_eq!(times(&shown), [1_800]);
+    assert_eq!(times(&shown), [1_600]);
     assert_eq!(reported(&shown), [Some(click(1_000))]);
 }
 

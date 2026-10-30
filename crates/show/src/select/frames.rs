@@ -17,10 +17,14 @@ const SETTLE: Duration = Duration::from_millis(250);
 /// Scene changes and spoken cues must differ at least this much from every chosen keyframe, and
 /// any keyframe during or near a mark from the mark's.
 const NOVELTY: f32 = 0.03;
-/// A click or spoken cue points at a transition that starts from just before it to a little after
-/// and settles within [`SETTLE_LIMIT`].
+/// A transition that a click started or a spoken cue points at starts at most this long before
+/// it, since a transition starts on the last frame captured before the screen changed.
 const LEAD: Duration = Duration::from_millis(300);
-const REACH: Duration = Duration::from_millis(1_200);
+/// An app starts answering a click or drag within this long of its release. A change that starts
+/// later is something a Show does not record, such as a scroll or a key press.
+const CLICK_REACH: Duration = Duration::from_millis(500);
+/// A spoken cue points at a transition starting up to this long after the word.
+const CUE_REACH: Duration = Duration::from_millis(1_200);
 /// A screen still changing this long after a click or cue is playing, as a video or a long scroll
 /// does, so where it settles shows something later than what was pointed at.
 const SETTLE_LIMIT: Duration = Duration::from_secs(2);
@@ -129,9 +133,9 @@ impl<'a> Frames<'a> {
     /// What each of `actions`, in time order, led to.
     ///
     /// An action's result is where the first transition it could have started settled: one that
-    /// starts from [`LEAD`] before the action to [`REACH`] after its release, and settles after
-    /// the release, within [`SETTLE_LIMIT`] of it, and before the next action begins. Without
-    /// one, it is the screen [`SETTLE`] after the release.
+    /// starts from [`LEAD`] before the action to [`CLICK_REACH`] after its release, and settles
+    /// after the release, within [`SETTLE_LIMIT`] of it, and before the next action begins.
+    /// Without one, it is the screen [`SETTLE`] after the release.
     pub(super) fn responses(
         &self,
         actions: &[Action],
@@ -151,7 +155,7 @@ impl<'a> Frames<'a> {
                 let started = transitions.iter().copied().find(|transition| {
                     let (start, settled) = (transition.span.start(), transition.span.end());
                     start.saturating_add(LEAD) >= span.start()
-                        && start <= released.saturating_add(REACH)
+                        && start <= released.saturating_add(CLICK_REACH)
                         && settled > released
                         && settled <= released.saturating_add(SETTLE_LIMIT)
                         && next_start.is_none_or(|next| settled < next)
@@ -203,7 +207,7 @@ impl<'a> Frames<'a> {
             .filter(|transition| {
                 let start = transition.span.start();
                 start.saturating_add(LEAD) >= said
-                    && start <= said.saturating_add(REACH)
+                    && start <= said.saturating_add(CUE_REACH)
                     && transition.span.end() <= said.saturating_add(SETTLE_LIMIT)
             })
             .min_by_key(|transition| transition.span.start().distance(said));
