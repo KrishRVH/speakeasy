@@ -1,6 +1,5 @@
 //! Speakeasy's entry point: parses the command line, then launches the native dictation and Show
-//! app around its single-owner recording runtime, or runs a command in the terminal. A command line
-//! it cannot follow gets its reason on that terminal and status 2, and a dialog only without one.
+//! app around its single-owner recording runtime, or runs a command in the terminal.
 
 #![forbid(unsafe_code)]
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
@@ -115,15 +114,21 @@ impl Invocation {
 }
 
 fn main() -> ExitCode {
-    match Invocation::parse(std::env::args_os().skip(1)) {
-        Ok(Invocation::Help) => in_terminal(|| Ok(print_help()?)),
-        Ok(Invocation::Version) => in_terminal(|| Ok(print_version()?)),
-        Ok(Invocation::Launch { mode, settings }) => in_dialog(run(mode, settings)),
-        Ok(Invocation::Send { request, settings }) => {
+    let invocation = match Invocation::parse(std::env::args_os().skip(1)) {
+        Ok(invocation) => invocation,
+        Err(error) => return Stop::Usage(error).report(terminal()),
+    };
+    match invocation {
+        Invocation::Help => in_terminal(|| Ok(print_help()?)),
+        Invocation::Version => in_terminal(|| Ok(print_version()?)),
+        Invocation::Launch { mode, settings } => match run(mode, settings) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => Stop::Launch(error).report(terminal()),
+        },
+        Invocation::Send { request, settings } => {
             in_terminal(|| Instance::send(&settings_file(settings)?, request))
         },
-        Ok(Invocation::Show(command)) => in_terminal(|| command.run()),
-        Err(error) => reject(&error, speakeasy_platform::attach_stdio().then(io::stderr)),
+        Invocation::Show(command) => in_terminal(|| command.run()),
     }
 }
 
@@ -233,9 +238,7 @@ fn abandon(error: anyhow::Error, cx: &App) {
     .detach();
 }
 
-/// Runs a command in the terminal that launched it and reports its failure there. Only commands and
-/// rejected command lines attach a console on Windows: an app sharing the launching console would
-/// also receive its Ctrl+C.
+/// Runs a command in the terminal that launched it and reports its failure there.
 fn in_terminal(command: impl FnOnce() -> anyhow::Result<()>) -> ExitCode {
     speakeasy_platform::attach_stdio();
     match command() {
@@ -251,35 +254,41 @@ fn in_terminal(command: impl FnOnce() -> anyhow::Result<()>) -> ExitCode {
     }
 }
 
-/// Rejects a command line Speakeasy cannot follow with the usage-error status 2, explaining why on
-/// the `terminal` that launched it, so a script or agent reads the reason instead of waiting on a
-/// dialog no one sees. Only a launch without one, as from a Windows shortcut, gets the dialog.
-fn reject(error: &anyhow::Error, terminal: Option<impl io::Write>) -> ExitCode {
-    match terminal {
-        Some(mut terminal) => {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "stderr is the last channel left to report a rejected command line"
-            )]
-            let _ = writeln!(
-                terminal,
-                "speakeasy: {error:#}\nspeakeasy --help lists what it accepts."
-            );
-        },
-        None => speakeasy_platform::show_startup_error(&format!("{error:#}")),
-    }
-    ExitCode::from(2)
+/// Why Speakeasy ends before the app opens.
+enum Stop {
+    /// The command line asks for something Speakeasy does not offer.
+    Usage(anyhow::Error),
+    /// The app cannot start, as when it cannot lock its settings directory.
+    Launch(anyhow::Error),
 }
 
-/// Reports a failed launch in a dialog, since the app has no terminal to report to.
-fn in_dialog(launched: anyhow::Result<()>) -> ExitCode {
-    match launched {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            speakeasy_platform::show_startup_error(&format!("{error:#}"));
-            ExitCode::FAILURE
-        },
+impl Stop {
+    /// Explains the stop on the `terminal` that launched Speakeasy, so a script or agent reads the
+    /// reason instead of waiting on a dialog no one sees, and in a dialog only when there is none,
+    /// as after a launch from the desktop. A command line exits with the usage-error status 2, and
+    /// a failed launch with 1.
+    fn report(self, terminal: Option<impl io::Write>) -> ExitCode {
+        let (error, hint, status) = match self {
+            Self::Usage(error) => (error, "\nspeakeasy --help lists what it accepts.", 2),
+            Self::Launch(error) => (error, "", 1),
+        };
+        match terminal {
+            Some(mut terminal) => {
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "stderr is the last channel left to report why Speakeasy stops"
+                )]
+                let _ = writeln!(terminal, "speakeasy: {error:#}{hint}");
+            },
+            None => speakeasy_platform::show_startup_error(&format!("{error:#}")),
+        }
+        ExitCode::from(status)
     }
+}
+
+/// The standard error of the terminal that launched Speakeasy, if one did.
+fn terminal() -> Option<io::Stderr> {
+    speakeasy_platform::attach_stdio().then(io::stderr)
 }
 
 fn print_help() -> io::Result<()> {
@@ -423,13 +432,27 @@ mod tests {
     }
 
     #[test]
-    fn a_rejected_command_line_is_a_usage_error_on_its_terminal() -> anyhow::Result<()> {
-        let error = parse(&["--verbose"]).err().context("--verbose parsed")?;
-        let mut terminal = Vec::new();
-        assert_eq!(reject(&error, Some(&mut terminal)), ExitCode::from(2));
+    fn a_stop_is_explained_on_its_terminal_with_its_status() -> anyhow::Result<()> {
+        let report = |stop: Stop| {
+            let mut terminal = Vec::new();
+            let status = stop.report(Some(&mut terminal));
+            anyhow::Ok((status, String::from_utf8(terminal)?))
+        };
+        let usage = parse(&["--verbose"]).err().context("--verbose parsed")?;
         assert_eq!(
-            String::from_utf8(terminal)?,
-            "speakeasy: Unknown option: --verbose\nspeakeasy --help lists what it accepts.\n"
+            report(Stop::Usage(usage))?,
+            (
+                ExitCode::from(2),
+                "speakeasy: Unknown option: --verbose\nspeakeasy --help lists what it accepts.\n"
+                    .into()
+            )
+        );
+        assert_eq!(
+            report(Stop::Launch(anyhow::anyhow!("Cannot lock settings")))?,
+            (
+                ExitCode::FAILURE,
+                "speakeasy: Cannot lock settings\n".into()
+            )
         );
         Ok(())
     }
