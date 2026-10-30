@@ -311,7 +311,7 @@ pub(crate) fn show_startup_error(message: &str) {
         clippy::let_underscore_must_use,
         reason = "stderr is the last channel left to report a failed launch"
     )]
-    let _ = writeln!(io::stderr().lock(), "Speakeasy: {message}");
+    let _ = writeln!(io::stderr().lock(), "speakeasy: {message}");
 }
 
 #[cfg(test)]
