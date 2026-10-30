@@ -200,6 +200,10 @@ impl fmt::Display for Summary<'_> {
             )?;
         }
         match recording.narration_lost {
+            Some(NarrationLoss::Incomplete) => writeln!(
+                f,
+                "Narration is incomplete: only the audio that reached the checkpoint was recovered."
+            )?,
             // The screen's ending, said above, is what ended the Show.
             Some(NarrationLoss::AudioStopped) if stopped.is_some() => writeln!(
                 f,

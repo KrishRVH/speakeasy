@@ -30,6 +30,8 @@ use crate::{
     sounds::Cue,
 };
 
+const INSERT_FAILED: &str =
+    "Cannot submit the text. Check desktop permissions and clipboard access, then try again.";
 /// What a copied Show whose screen stopped recording early tells the user.
 const SHOW_SCREEN_STOPPED: &str = "Show copied, but the screen stopped recording early.";
 /// What a copied Show whose window closed while it recorded tells the user.
@@ -67,11 +69,15 @@ enum Outcome {
         ending: Ending,
         lost: Option<NarrationLoss>,
         source_lost: bool,
+        audio_kept: bool,
     },
     /// The menu found the last Show gone.
     ShowGone,
     Recovered {
         source_lost: bool,
+        lost: Option<NarrationLoss>,
+        audio_kept: bool,
+        narrated_copy: bool,
     },
     Empty,
     Cancelled,
@@ -402,6 +408,7 @@ impl<P: Ports> Owner<P> {
         self.outcome = match report {
             Report::Failed(message) | Report::Recurring(message) => Outcome::Failed(message),
             Report::ShowCopied => Outcome::ShowCopied {
+                audio_kept: false,
                 ending: Ending::Finished,
                 lost: None,
                 source_lost: false,
@@ -441,6 +448,9 @@ impl<P: Ports> Owner<P> {
             return;
         };
         match event {
+            CaptureEvent::CheckpointLost(_) => {
+                self.checkpoint_lost();
+            },
             CaptureEvent::Ready(_) => {
                 session.audio_ready(gesture, now());
                 // The pill opens to listening here, so the cue sounds with it, never before the
@@ -593,9 +603,24 @@ impl<P: Ports> Owner<P> {
         if !held || !session.turn_into_show(scope) {
             return;
         }
+        let recorded = std::time::SystemTime::now()
+            .checked_sub(now().saturating_duration_since(session.started))
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let lost = match self.ports.keep(recorded) {
+            Ok(Some(kept)) => {
+                session.keep(kept);
+                false
+            },
+            Ok(None) => false,
+            Err(_) => true,
+        };
+        let recording = session.is_recording();
+        if lost {
+            self.checkpoint_lost();
+        }
         self.latest.show = true;
         // A microphone still opening sounds the Show cue once it listens.
-        if session.is_recording() {
+        if recording {
             self.cue_heard(Cue::Show);
         }
         self.gesture.show();
@@ -610,9 +635,6 @@ impl<P: Ports> Owner<P> {
             .as_ref()
             .is_some_and(|session| session.id == event.session() && session.is_show())
         {
-            if let ShowEvent::Finished(id, Ok(footage)) = event {
-                self.abandon_footage(id, *footage);
-            }
             return None;
         }
         let session = self
@@ -621,17 +643,12 @@ impl<P: Ports> Owner<P> {
             .filter(|session| session.id == event.session() && session.is_show())?;
         let footage = match event {
             ShowEvent::CheckpointLost(_) => {
-                if self
-                    .notice
-                    .as_ref()
-                    .is_none_or(|notice| notice.failure().is_none())
-                {
-                    self.notice = Some(Notice::CheckpointLost);
-                }
+                self.checkpoint_lost();
                 return None;
             },
             ShowEvent::Finished(_, footage) => footage,
             ShowEvent::Unchosen(_, unchosen) => {
+                session.forfeit();
                 self.gesture.abandon();
                 self.discard();
                 self.cue(Cue::Cancel);
@@ -646,6 +663,9 @@ impl<P: Ports> Owner<P> {
                 self.gesture.finish()
             },
             Err(error) => {
+                if !error.is::<crate::show::Unwound>() {
+                    session.forfeit();
+                }
                 self.fail(format!("{error:#}"));
                 None
             },
@@ -656,6 +676,12 @@ impl<P: Ports> Owner<P> {
         // Only a Show publishes, and a session cannot become one once transcription starts.
         let show = self.session.as_ref().is_some_and(Session::is_show);
         let outcome = match result {
+            Ok(Delivered::Reopened(Ok(reopened))) => {
+                if let Some(session) = &mut self.session {
+                    session.reopened(*reopened);
+                }
+                return;
+            },
             Ok(Delivered::Inserted(Ok(Inserted::Sent))) => Outcome::Done,
             Ok(Delivered::Inserted(Ok(Inserted::Copied(message)))) => Outcome::Copied(message),
             Ok(Delivered::Published(Ok(Published::Saved {
@@ -663,11 +689,17 @@ impl<P: Ports> Owner<P> {
                 ending,
                 lost,
                 source_lost,
+                audio_kept,
                 copied,
             }))) => {
                 self.remember(saved, self.latest.id);
                 match copied {
-                    Ok(()) => Outcome::ShowCopied { ending, lost, source_lost },
+                    Ok(()) => Outcome::ShowCopied {
+                        ending,
+                        lost,
+                        source_lost,
+                        audio_kept,
+                    },
                     Err(error) => {
                         // What the Show lost still shows; its summary says how it ended.
                         let show = if ending == Ending::Finished {
@@ -698,19 +730,34 @@ impl<P: Ports> Owner<P> {
             Ok(Delivered::Inserted(Ok(Inserted::Unavailable(message)))) => {
                 Outcome::Failed(message.into())
             },
-            Ok(Delivered::Published(Ok(Published::Recovered { show: saved, source_lost }))) => {
+            Ok(Delivered::Published(Ok(Published::Recovered {
+                show: saved,
+                source_lost,
+                lost,
+                audio_kept,
+                narrated_copy,
+            }))) => {
                 self.remember(saved, self.latest.id);
-                Outcome::Recovered { source_lost }
+                Outcome::Recovered {
+                    source_lost,
+                    lost,
+                    audio_kept,
+                    narrated_copy,
+                }
             },
-            Ok(Delivered::Abandoned(Err(error)) | Delivered::Published(Err(error))) => {
-                Outcome::Failed(format!("{error:#}"))
-            },
+            Ok(
+                Delivered::Abandoned(Err(error))
+                | Delivered::Published(Err(error))
+                | Delivered::Reopened(Err(error)),
+            ) => Outcome::Failed(format!("{error:#}")),
             Err(_) if show => Outcome::Failed(PUBLISH_STOPPED.into()),
-            Ok(Delivered::Inserted(Err(_))) | Err(_) => Outcome::Failed(
-                "Cannot submit the text. Check desktop permissions and clipboard access, then try again."
-                    .into(),
-            ),
+            Ok(Delivered::Inserted(Err(_))) | Err(_) => Outcome::Failed(INSERT_FAILED.into()),
         };
+        if let Outcome::Failed(message) = &outcome
+            && let Some(session) = &mut self.session
+        {
+            session.recovery_failed(message);
+        }
         if matches!(outcome, Outcome::Copied(_) | Outcome::ShowCopied { .. }) {
             self.cue(Cue::Copied);
         }
@@ -791,29 +838,13 @@ impl<P: Ports> Owner<P> {
         };
         self.outcome = Outcome::Idle;
         self.notice = None;
-        let work = self.ports.recover(recovery.interrupted, permit.clone());
+        let work = self.ports.reopen(recovery.interrupted);
         self.session = Some(Session::recovering(
             id,
             permit,
             self.latest.started,
-            async move {
-                let result = work.await;
-                let completed = match &result {
-                    Ok(Published::Recovered { show, .. } | Published::Saved { show, .. }) => {
-                        Ok(show.clone())
-                    },
-                    Ok(Published::Cancelled) => {
-                        Err("Recovery cancelled. The interrupted Show is still available.".into())
-                    },
-                    Err(error) => Err(format!("Cannot recover this Show: {error:#}")),
-                };
-                #[expect(
-                    clippy::let_underscore_must_use,
-                    reason = "Closing the library abandons its receipt, not the owner's recovery"
-                )]
-                let _ = recovery.completed.try_send(completed);
-                result
-            },
+            recovery.completed,
+            work,
         ));
         ControlFlow::Continue(())
     }
@@ -884,17 +915,9 @@ impl<P: Ports> Owner<P> {
             self.worker.recover(&self.ports, &self.config);
         }
         let id = session.id;
-        if let Some(task) = session.into_cleanup(|footage| self.ports.abandon_footage(footage)) {
+        if let Some(task) = session.into_cleanup() {
             self.retiring.push((id, task));
         }
-    }
-
-    fn abandon_footage(&mut self, id: SessionId, footage: super::ports::Footage) {
-        let work = self.ports.abandon_footage(footage);
-        self.retiring.push((
-            id,
-            tokio::spawn(async move { Delivered::Abandoned(work.await) }),
-        ));
     }
 
     fn fail(&mut self, message: String) {
@@ -905,9 +928,28 @@ impl<P: Ports> Owner<P> {
 
     fn advance(&mut self) {
         self.open_queued_capture();
+        self.attach_audio();
         self.open_queued_screen();
         self.start_transcription();
         self.start_publishing();
+    }
+
+    fn checkpoint_lost(&mut self) {
+        if self
+            .notice
+            .as_ref()
+            .is_none_or(|notice| notice.failure().is_none())
+        {
+            self.notice = Some(Notice::CheckpointLost);
+        }
+    }
+
+    fn attach_audio(&mut self) {
+        if let Some((log, start)) = self.session.as_mut().and_then(Session::audio)
+            && !self.microphone.keep(log, start, &self.config.language)
+        {
+            self.checkpoint_lost();
+        }
     }
 
     fn open_queued_capture(&mut self) {
@@ -942,15 +984,22 @@ impl<P: Ports> Owner<P> {
         let Some(scope) = session.queued_screen() else {
             return;
         };
-        match self
-            .ports
-            .record_screen(session.id, session.started, scope, self.show_events.clone())
-        {
+        let log = session.frames();
+        match self.ports.record_screen(
+            session.id,
+            session.started,
+            scope,
+            log,
+            self.show_events.clone(),
+        ) {
             Ok(recorder) => {
                 self.screen.open(recorder, self.gesture.state());
                 session.screen_opened();
             },
-            Err(error) => self.fail(format!("Cannot record the screen: {error}")),
+            Err(error) => {
+                session.forfeit();
+                self.fail(format!("Cannot record the screen: {error}"));
+            },
         }
     }
 
@@ -970,15 +1019,15 @@ impl<P: Ports> Owner<P> {
         if self.worker.revive(&self.ports, &self.config) {
             self.notice = Some(Notice::LoadingModel);
         }
-        session.transcribe(|wav| self.worker.transcribe(wav, detail, &self.config));
+        session.transcribe(|wav, language| {
+            self.worker.transcribe(wav, detail, &self.config, language)
+        });
     }
 
     /// Publishes a Show once its narration and screen recording are both in.
     fn start_publishing(&mut self) {
         if let Some(session) = &mut self.session {
-            session.publish(|footage, narration, lost, permit| {
-                self.ports.publish(footage, narration, lost, permit)
-            });
+            session.publish(|publication, permit| self.ports.publish(publication, permit));
         }
     }
 
@@ -989,7 +1038,7 @@ impl<P: Ports> Owner<P> {
             Ok(Delivered::Abandoned(Err(error))) => {
                 if self.session.is_none() && self.latest.id == session {
                     self.outcome =
-                        Outcome::Failed(format!("Cannot discard the interrupted Show: {error:#}"));
+                        Outcome::Failed(format!("Show recovery storage failed: {error:#}"));
                 }
             },
             result => {
@@ -1032,19 +1081,46 @@ impl<P: Ports> Owner<P> {
             Outcome::Unchosen(Unchosen::Window) => NO_WINDOW.into(),
             Outcome::Unchosen(Unchosen::Area) => NO_AREA.into(),
             Outcome::ShowGone => SHOW_GONE.into(),
-            Outcome::Recovered { .. } => {
-                "Show recovered without narration. Find it in Shows.".into()
-            },
+            Outcome::Recovered {
+                narrated_copy: true,
+                ..
+            } => "Narrated copy saved. The original Show is unchanged.".into(),
+            Outcome::Recovered {
+                lost: Some(NarrationLoss::NotTranscribed | NarrationLoss::AudioStopped),
+                ..
+            } => "Show recovered without narration. Find it in Shows.".into(),
+            Outcome::Recovered {
+                lost: Some(NarrationLoss::Incomplete),
+                ..
+            } => "Show recovered with incomplete narration. Find it in Shows.".into(),
+            Outcome::Recovered { lost: None, .. } => "Show recovered. Find it in Shows.".into(),
             Outcome::Idle | Outcome::Done | Outcome::Empty | Outcome::Cancelled => {
                 self.notice.as_ref().map_or("", Notice::text).into()
             },
+        };
+        let message = if matches!(
+            self.outcome,
+            Outcome::ShowCopied {
+                audio_kept: true,
+                ..
+            } | Outcome::Recovered {
+                audio_kept: true,
+                ..
+            }
+        ) {
+            format!("{message} Audio is kept privately for retry in Shows until its original seven-day expiry.").into()
+        } else {
+            message
         };
         if matches!(
             self.outcome,
             Outcome::ShowCopied {
                 source_lost: true,
                 ..
-            } | Outcome::Recovered { source_lost: true }
+            } | Outcome::Recovered {
+                source_lost: true,
+                ..
+            }
         ) {
             format!(
                 "{message} Retained source frames could not be saved; \
@@ -1096,11 +1172,7 @@ impl<P: Ports> Owner<P> {
         // with a blocking send even when cancelled, so a full lane would stall its teardown.
         self.captures.close();
         self.shows.close();
-        while let Ok(event) = self.shows.try_recv() {
-            if let ShowEvent::Finished(id, Ok(footage)) = event {
-                self.abandon_footage(id, *footage);
-            }
-        }
+        while self.shows.try_recv().is_ok() {}
         self.abandon();
         // Abandoned work is never aborted: each task finishes its own cleanup.
         let retiring = mem::take(&mut self.retiring);
@@ -1214,6 +1286,7 @@ mod tests {
             ending: Ending::Finished,
             lost: None,
             source_lost: false,
+            audio_kept: false,
             copied: Ok(()),
         }))
     }

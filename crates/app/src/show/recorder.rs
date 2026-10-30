@@ -6,7 +6,7 @@
 use std::{
     mem,
     sync::Arc,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 
 use anyhow::anyhow;
@@ -18,13 +18,7 @@ use speakeasy_platform::{
 use speakeasy_show::{Ending, Image, Mark, Moment, Point, SAMPLE_INTERVAL, Size, Span, TakeEvent};
 use tokio::sync::watch;
 
-use super::{
-    overlay::Canvas,
-    store::{
-        self,
-        checkpoint::{Checkpoint, Writer},
-    },
-};
+use super::{FrameLog, overlay::Canvas};
 use crate::runtime::{
     self,
     ports::{Capturing, Footage, Pinning, SessionId, ShowEvent, Unchosen},
@@ -48,6 +42,18 @@ const CAPTURE_STOPPED: &str = "Screen capture stopped unexpectedly. Start the Sh
 /// The failure a Show reports when not one frame of the screen was recorded.
 pub(super) const NOTHING_RECORDED: &str = "The Show recorded no frames. Start the Show again.";
 
+/// The recorder unwound before reporting; its checkpoint may still contain usable frames.
+#[derive(Debug)]
+pub(crate) struct Unwound;
+
+impl std::fmt::Display for Unwound {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str(CAPTURE_STOPPED)
+    }
+}
+
+impl std::error::Error for Unwound {}
+
 /// A Show's screen recording; the session owner finishes or retires it like a microphone. Fields
 /// drop in declaration order, so a recorder dropped without retiring cancels before its thread
 /// joins.
@@ -67,6 +73,7 @@ impl ScreenRecorder {
         id: SessionId,
         started: Instant,
         scope: Scope,
+        log: Option<FrameLog>,
         events: Sender<ShowEvent>,
         canvas: watch::Sender<Canvas>,
     ) -> anyhow::Result<Self> {
@@ -79,7 +86,7 @@ impl ScreenRecorder {
                 canvas: &canvas,
             };
             let mut report = Report::new(id, events.clone(), &lanes);
-            report.outcome = record(started, scope, &lanes, id, events);
+            report.outcome = record(started, scope, &lanes, id, events, log);
         })?;
         Ok(Self {
             finish,
@@ -131,7 +138,7 @@ struct Report<'a> {
     id: SessionId,
     events: Sender<ShowEvent>,
     lanes: &'a Lanes<'a>,
-    /// How recording ended: [`CAPTURE_STOPPED`] until it returns, so a recording that unwinds
+    /// How recording ended: [`Unwound`] until it returns, so a recording that unwinds
     /// reports a fixed failure rather than a panic's message, which could carry private text.
     outcome: anyhow::Result<Ended>,
 }
@@ -142,7 +149,7 @@ impl<'a> Report<'a> {
             id,
             events,
             lanes,
-            outcome: Err(anyhow!(CAPTURE_STOPPED)),
+            outcome: Err(anyhow!(Unwound)),
         }
     }
 }
@@ -159,22 +166,13 @@ impl Drop for Report<'_> {
         // A recording can end without seeing the cancel, as one looking for a window does, but the
         // owner that cancelled it waits for no report.
         if self.lanes.finishing.is_closed() {
-            abandon_unreceived(event);
             return;
         }
-        if let Err(async_channel::SendError(event)) = self.events.send_blocking(event) {
-            abandon_unreceived(event);
-        }
-    }
-}
-
-fn abandon_unreceived(event: ShowEvent) {
-    if let ShowEvent::Finished(_, Ok(footage)) = event {
         #[expect(
             clippy::let_underscore_must_use,
-            reason = "The owner has left; retirement waits for this cleanup attempt, and filesystem failures leave the checkpoint available for explicit cleanup"
+            reason = "A departed session owns checkpoint cleanup; this report contains only in-memory footage"
         )]
-        let _ = footage.abandon();
+        let _ = self.events.send_blocking(event);
     }
 }
 
@@ -193,6 +191,7 @@ fn record(
     lanes: &Lanes<'_>,
     id: SessionId,
     events: Sender<ShowEvent>,
+    mut log: Option<FrameLog>,
 ) -> anyhow::Result<Ended> {
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
@@ -217,22 +216,12 @@ fn record(
             };
             let mut take = Take::new(started, display.size, part, lanes.canvas);
             take.checkpoint_notice = Some((id, events));
-            match store::private_directory().and_then(|parent| {
-                Checkpoint::begin(
-                    &parent,
-                    SystemTime::now()
-                        .checked_sub(started.elapsed())
-                        .unwrap_or(SystemTime::UNIX_EPOCH),
-                    JOURNAL_BUDGET,
-                    surface(display.size, part),
-                )
-            }) {
-                Ok((checkpoint, writer)) => {
-                    take.log = Some(writer);
-                    take.checkpoint = Some(checkpoint);
-                },
-                Err(_checkpoint_unavailable) => take.warn_checkpoint(),
+            if let Some(writer) = &mut log
+                && !writer.begin(JOURNAL_BUDGET, surface(display.size, part))
+            {
+                take.warn_checkpoint();
             }
+            take.log = log;
             let footage = take.run(lanes, sources).await?;
             Ok(footage.map_or(Ended::Cancelled, |footage| {
                 Ended::Recorded(Box::new(footage))
@@ -313,9 +302,7 @@ struct Take<'a> {
     /// The part of the display the latest frame showed, which the pointer is placed in.
     part: Part,
     state: speakeasy_show::Take,
-    // The writer joins before the checkpoint unlocks, including during unwinding.
-    log: Option<Writer>,
-    checkpoint: Option<Checkpoint>,
+    log: Option<FrameLog>,
     checkpoint_notice: Option<(SessionId, Sender<ShowEvent>)>,
 }
 
@@ -335,7 +322,6 @@ impl<'a> Take<'a> {
             part,
             state: speakeasy_show::Take::new(JOURNAL_BUDGET, surface(size, part)),
             log: None,
-            checkpoint: None,
             checkpoint_notice: None,
         }
     }
@@ -430,9 +416,6 @@ impl<'a> Take<'a> {
             other => {
                 if let Some(log) = self.log.take() {
                     let _complete = log.close().await;
-                }
-                if let Some(checkpoint) = self.checkpoint.take() {
-                    checkpoint.discard()?;
                 }
                 other.transpose().map(|_| None)
             },
@@ -547,17 +530,10 @@ impl<'a> Take<'a> {
             self.warn_checkpoint();
         }
         if self.state.journal().is_empty() {
-            if let Some(checkpoint) = self.checkpoint.take() {
-                checkpoint.discard()?;
-            }
-            anyhow::bail!(NOTHING_RECORDED);
+            return Err(anyhow!(NOTHING_RECORDED));
         }
         let (recording, journal) = self.state.finish();
-        Ok(Footage {
-            recording,
-            journal,
-            checkpoint: self.checkpoint,
-        })
+        Ok(Footage { recording, journal })
     }
 }
 
@@ -609,8 +585,14 @@ mod native_tests {
         let (events, finished) = async_channel::bounded(1);
         let (canvas, ink) = watch::channel(Canvas::default());
         let started = Instant::now();
-        let recorder =
-            ScreenRecorder::start(SessionId::FIRST, started, Scope::Screen, events, canvas)?;
+        let recorder = ScreenRecorder::start(
+            SessionId::FIRST,
+            started,
+            Scope::Screen,
+            None,
+            events,
+            canvas,
+        )?;
         tokio::time::sleep(Duration::from_millis(1_300)).await;
         let display = ink
             .borrow()
@@ -675,6 +657,7 @@ mod native_tests {
             SessionId::FIRST,
             Instant::now(),
             Scope::Screen,
+            None,
             events,
             canvas,
         )?;

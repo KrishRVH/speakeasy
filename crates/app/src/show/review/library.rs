@@ -16,6 +16,9 @@ use crate::show::store::{
     source,
 };
 
+const INCOMPLETE_NARRATION: &str =
+    "Narration is incomplete: only audio that reached the checkpoint was recovered.";
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum Mode {
     #[default]
@@ -39,7 +42,7 @@ pub(super) struct Row {
     pub marks: usize,
     pub pinned: Option<bool>,
     pub early: bool,
-    pub silent: bool,
+    pub narration_lost: Option<NarrationLoss>,
 }
 
 impl Row {
@@ -54,7 +57,7 @@ impl Row {
             marks: show.map_or(0, |show| show.manifest.marks().len()),
             pinned: pinned(&entry.directory).ok(),
             early: show.is_some_and(|show| show.manifest.recording().ending != Ending::Finished),
-            silent: show.is_some_and(|show| show.manifest.recording().narration_lost.is_some()),
+            narration_lost: show.and_then(|show| show.manifest.recording().narration_lost),
         }
     }
 
@@ -101,7 +104,8 @@ pub(super) fn list(directory: &Path) -> io::Result<(Vec<Row>, Option<String>)> {
     let found = checkpoint::list(directory, SystemTime::now());
     let notice = (!found.problems.is_empty()).then(|| {
         format!(
-            "Cannot read {} interrupted Show entries. Check folder access and refresh. Damaged entries expire after seven days. {}",
+            "Cannot read {} interrupted Show entries. Check folder access and refresh. Damaged \
+entries expire after seven days. {}",
             found.problems.len(),
             found
                 .problems
@@ -121,7 +125,7 @@ pub(super) fn list(directory: &Path) -> io::Result<(Vec<Row>, Option<String>)> {
             marks: 0,
             pinned: None,
             early: true,
-            silent: true,
+            narration_lost: None,
         })
         .collect();
     rows.extend(
@@ -186,6 +190,7 @@ impl Detail {
                     )),
                 }
                 match recording.narration_lost {
+                    Some(NarrationLoss::Incomplete) => warnings.push(INCOMPLETE_NARRATION.into()),
                     None => {},
                     Some(NarrationLoss::AudioStopped) => warnings
                         .push("The microphone stopped, so this Show has no narration.".into()),

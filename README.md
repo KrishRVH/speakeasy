@@ -168,11 +168,18 @@ already overdue Show the button says **Allow cleanup**, and cleanup can remove i
 Keeping a Show changes only its `.pinned` marker, including when the manifest or a frame is damaged.
 Keep and Discard finish even if you close the window; Quit waits for accepted writes.
 
-An **Interrupted Show** offers **Recover Show** and **Discard**. Recovery restores complete
-checkpointed frames, ink, and marks into a new bundle and leaves the clipboard untouched. It waits
-for any active recording to finish; resume Speakeasy first if it is paused. Recovery preserves the
-original seven-day expiry date. Narration cannot be recovered. Discard requires confirmation and
-permanently removes the checkpoint.
+An **Interrupted Show** offers **Recover Show** and **Discard**. Recovery restores checkpointed
+frames, ink, marks, and narration into a new bundle, using your configured local speech engine and
+the original language. It waits for any active recording to finish, opens no microphone, and leaves
+the clipboard untouched; resume Speakeasy first if it is paused. Missing or damaged audio leaves a
+Show without narration; a recovered audio prefix is marked incomplete. Recovery preserves the
+original seven-day expiry date.
+
+If transcription fails, the frames are saved and the entry becomes **Narration pending**.
+**Transcribe narration** retries with the current local engine and text corrections, saving a
+narrated copy without changing your earlier Show or edits. A failed retry keeps the audio without
+creating another copy. **Discard audio** removes its recovery checkpoint and leaves the saved Show
+alone. Discard always requires confirmation.
 
 An agent on the same machine can inspect a Show without launching the app or opening the microphone:
 
@@ -210,15 +217,21 @@ that every image decodes. Missing files remain visible beside the frames that su
 no saved frame is reported without substituting another image.
 
 `list` and `inspect` offer readable text without `--json`. JSON reports `ok`, `damaged`, or
-`unsupported` status; `list` also reports `interrupted`, plus `id` and `expiresAt`. An ID is
-non-null only when the directory is confirmed to be a managed Show. `expiresAt` is the UTC time the
-Show becomes eligible for cleanup, or null when kept, unmanaged, or unavailable; deletion occurs
-during a later cleanup pass. The `pinned` field describes retention, not numbered pin marks. If the
-manifest cannot be read, duration, counts, and pin status are null, and inspection omits its detail
-fields and frame tables. Inspection exits with status 1 for damage or an unsupported format, after
-printing its findings. A listing succeeds even when individual Shows are damaged. An unreadable
-Shows folder fails the command; a missing one is an empty listing. Manifests are limited to 16 MiB
-and summaries to 1 MiB. Only format 2 is read; unknown fields are ignored.
+`unsupported` status; `list` also reports `interrupted` or `narrationPending`, plus `id` and
+`expiresAt`. An ID is non-null only when the directory is confirmed to be a managed Show.
+`expiresAt` is the UTC time the Show becomes eligible for cleanup, or null when kept, unmanaged, or
+unavailable; deletion occurs during a later cleanup pass. The `pinned` field describes retention,
+not numbered pin marks. If the manifest cannot be read, duration, counts, and pin status are null,
+and inspection omits its detail fields and frame tables. Inspection exits with status 1 for damage
+or an unsupported format, after printing its findings. A listing succeeds even when individual Shows
+are damaged. An unreadable Shows folder fails the command; a missing one is an empty listing. The
+recording's `narrationLost` field is absent for complete narration, or `audioStopped`,
+`notTranscribed`, or `incomplete`. `incomplete` means recovery transcribed the surviving audio
+prefix; its text and timings cover only that prefix. Builds predating narration recovery do not read
+that new value.
+
+Manifests are limited to 16 MiB and summaries to 1 MiB. Only format 2 is read; unknown fields are
+ignored.
 
 `show skill` prints the [agent reading guide](skills/speakeasy-show/SKILL.md) embedded in the
 installed binary. Save it as `SKILL.md` in a skill folder your agent loads. It explains the reading
@@ -234,16 +247,18 @@ it does not replay their logs. `speakeasy show discard "interrupted:ID" --json` 
 that explicit checkpoint; an exact checkpoint path from `list` also works. A saved Show ID cannot
 select an interrupted Show with the same timestamp. Recover through the native Shows window.
 
-During an explicit Show, a private checkpoint records frames and pointer events off the capture
-thread. Recovery uses the last complete event; a crash, storage failure, or a full bounded write
-queue can leave a shorter recording. Recording continues in memory if checkpointing stops, with a
-local notice. No audio is written to disk. A save failure leaves the checkpoint available for
-recovery; a copy failure leaves the saved bundle available in the library. Cancelling, quitting,
-pausing, changing settings, or losing desktop input during an unfinished recording discards its
-checkpoint. Once you finish a Show, those interruptions leave its checkpoint recoverable, including
-while capture stops, the checkpoint flushes, narration transcribes, or publication saves the bundle.
-Hidden incomplete saves are removed once they are at least an hour old. Cleanup hides expired Shows
-before deleting their files and retries interrupted deletions on its next pass.
+During an explicit Show, a private checkpoint records frames, pointer events, and audio on one
+background writer. Promotion to a Show includes the narration already buffered since the press.
+Recovery uses the last complete event; a crash, storage failure, or a full bounded write queue can
+leave a shorter recording. Recording continues in memory if checkpointing stops, with a local
+notice. Recognized narration is saved durably before its audio is deleted. A save failure leaves the
+checkpoint available for recovery; a copy failure leaves the saved bundle available in the library.
+Cancelling, quitting, pausing, changing settings, or losing desktop input during an unfinished
+recording discards its checkpoint. Once you finish a Show, those interruptions leave its checkpoint
+recoverable, including while capture stops, the checkpoint flushes, narration transcribes, or
+publication saves the bundle. Hidden incomplete saves are removed once they are at least an hour
+old. Cleanup hides expired Shows before deleting their files and retries interrupted deletions on
+its next pass.
 
 ## What's said here stays here
 
@@ -254,9 +269,11 @@ before deleting their files and retries interrupted deletions on its next pass.
 - The screen is recorded only during a Show you start, and Speakeasy's own windows stay out of it. A
   Show is written to the `shows` folder beside the engine and model, readable only by you. Speakeasy
   deletes Shows and interrupted checkpoints over seven days old when it starts and hourly while it
-  runs; a file named `.pinned` in a saved Show's folder keeps it. Checkpoints contain frames and
-  pointer events, never audio, and cap at 1 GiB. A saved Show can include up to 512 MiB of retained
-  source frames in addition to its selected images.
+  runs; a file named `.pinned` in a saved Show's folder keeps it. A checkpoint holds up to 1 GiB of
+  frames and pointer events plus 128 MiB of audio. Show audio stays private until transcription
+  succeeds, you cancel or discard it, or its original seven-day expiry; keeping a saved Show does
+  not extend audio retention. Ordinary dictation stays in memory. Saved bundles contain no audio and
+  can include up to 512 MiB of retained source frames in addition to their selected images.
 - Windows clipboard history and cloud clipboard skip what Speakeasy puts on the clipboard, pasted
   dictation and Show summaries alike, as do Universal Clipboard and Mac clipboard managers that
   honor transient data.

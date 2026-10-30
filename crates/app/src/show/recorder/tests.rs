@@ -387,6 +387,7 @@ fn a_recording_that_unwinds_hides_the_overlay_and_reports_a_fixed_failure() -> a
         anyhow::bail!("An unwound recording reports a failure");
     };
     assert_eq!(id, SessionId::FIRST);
+    assert!(outcome.as_ref().is_err_and(anyhow::Error::is::<Unwound>));
     assert_eq!(failure(outcome).as_deref(), Some(CAPTURE_STOPPED));
     Ok(())
 }

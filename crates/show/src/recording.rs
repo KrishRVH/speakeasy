@@ -60,10 +60,12 @@ impl Ending {
     }
 }
 
-/// Why a Show's narration was lost. Speakeasy keeps no audio to try again.
+/// Why a Show's narration is missing or incomplete. Recovery can create a separate narrated copy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NarrationLoss {
+    /// Recovery transcribed only the valid prefix of an interrupted audio checkpoint.
+    Incomplete,
     /// Audio capture stopped. Unless the screen recording stopped early as well, as the [`Ending`]
     /// says, the Show ended there, at [`Recording::duration`], so any later steps are missing too.
     AudioStopped,

@@ -248,7 +248,7 @@ async fn interrupted_listing_has_distinct_identity_and_original_expiry_without_r
 -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let now = SystemTime::now();
-    let (checkpoint, writer) = store::checkpoint::Checkpoint::begin(
+    let (checkpoint, writer) = store::checkpoint::Keeper::fixture(
         root.path(),
         now,
         1_000,
@@ -258,6 +258,7 @@ async fn interrupted_listing_has_distinct_identity_and_original_expiry_without_r
         },
     )?;
     assert!(writer.close().await);
+    let checkpoint = checkpoint.close().await?;
     let interrupted = checkpoint.interrupted()?;
     // A header alone cannot be recovered, but metadata discovery must not read frames.
     let mut bytes = Vec::new();
@@ -279,6 +280,34 @@ async fn interrupted_listing_has_distinct_identity_and_original_expiry_without_r
             json: true
         }
     );
+    // Metadata discovery must identify published audio without reading its private contents.
+    let saved = store::fresh_directory(root.path(), now)?;
+    fs::create_dir(&saved)?;
+    let checkpoint_id = interrupted
+        .directory()
+        .file_name()
+        .unwrap()
+        .as_encoded_bytes();
+    fs::write(saved.join(".checkpoint"), checkpoint_id)?;
+    fs::write(
+        interrupted.directory().join("published"),
+        saved.file_name().unwrap().as_encoded_bytes(),
+    )?;
+    fs::write(
+        interrupted.directory().join("audio.log"),
+        b"private synthetic audio fixture",
+    )?;
+    bytes.clear();
+    output::list(std::iter::empty(), Some(root.path()), true, &mut bytes)?;
+    let listing: serde_json::Value = serde_json::from_slice(&bytes)?;
+    assert_eq!(listing[0]["status"], "narrationPending");
+    assert_eq!(listing[0]["id"], interrupted.id());
+    assert!(!String::from_utf8(bytes)?.contains("private synthetic"));
+    interrupted.lock()?.discard()?;
+    assert!(
+        saved.exists(),
+        "Discarding pending audio removed its saved Show"
+    );
     Ok(())
 }
 
@@ -287,7 +316,7 @@ async fn checkpoint_damage_is_reported_beside_readable_saved_shows() -> anyhow::
     let root = tempfile::tempdir()?;
     let saved = root.path().join("20261030T010203Z");
     demo(Some(saved.clone()), &mut Vec::new())?;
-    let (checkpoint, writer) = store::checkpoint::Checkpoint::begin(
+    let (checkpoint, writer) = store::checkpoint::Keeper::fixture(
         root.path(),
         SystemTime::now(),
         1_000,
@@ -297,6 +326,7 @@ async fn checkpoint_damage_is_reported_beside_readable_saved_shows() -> anyhow::
         },
     )?;
     assert!(writer.close().await);
+    let checkpoint = checkpoint.close().await?;
     let interrupted = checkpoint.interrupted()?;
     fs::write(interrupted.directory().join("published"), b"invalid marker")?;
     let mut bytes = Vec::new();

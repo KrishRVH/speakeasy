@@ -37,7 +37,8 @@ SHOW is an exact folder-name ID in Speakeasy's Shows folder, or an explicit path
 Use ./ID to address a relative path. No command chooses the latest Show.
 keep prevents expiry; --off restores the original seven-day expiry date.
 An overdue Show then expires at the next cleanup. Only managed Shows can be kept.
-discard permanently removes an explicit interrupted:ID or checkpoint path from list.
+discard permanently removes an explicit interrupted:ID or checkpoint path from list,
+including pending audio. Saved Show bundles are unchanged.
 Recover interrupted Shows in the Shows window; recovery leaves the clipboard untouched.
 skill prints the agent reading guide for this installed version.
 demo writes a simulated Show and prints its summary.

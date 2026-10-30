@@ -14,6 +14,15 @@ use crate::{
     theme::{Palette, alpha, mix},
 };
 
+const RETRY_NARRATION: &str = "Transcribe the kept audio with your configured local engine and the original \
+    language. This saves a narrated copy; your existing Show and edits stay unchanged.";
+const RECOVER_SHOW: &str = "Recover the frames, ink, marks, and audio that reached the checkpoint. Narration \
+    uses your configured local engine and the original language.";
+const RECOVERY_AUDIO: &str = "Recovery leaves your clipboard alone. Audio is deleted after successful \
+    transcription and is never added to a saved Show bundle.";
+const RECOVERY_PREFIX: &str = "A crash or a slow or full disk can leave a shorter recording. Recovery preserves \
+    the original expiry date.";
+
 impl Render for Review {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let palette = self.theme.palette();
@@ -58,11 +67,31 @@ impl Render for Review {
                     .when(row.pinned == Some(true), |row| {
                         row.child(tag("Kept", palette.lamp))
                     })
-                    .when(matches!(row.kind, Kind::Interrupted(_)), |row| {
-                        row.child(tag("Interrupted", palette.warn))
-                    })
-                    .when(row.silent && matches!(row.kind, Kind::Saved), |row| {
-                        row.child(tag("No narration", palette.warn))
+                    .when_some(
+                        match &row.kind {
+                            Kind::Interrupted(show) => Some(show.narration_pending()),
+                            Kind::Saved => None,
+                        },
+                        |row, pending| {
+                            row.child(tag(
+                                if pending {
+                                    "Narration pending"
+                                } else {
+                                    "Interrupted"
+                                },
+                                palette.warn,
+                            ))
+                        },
+                    )
+                    .when_some(row.narration_lost, |row, lost| {
+                        row.child(tag(
+                            if lost == speakeasy_show::NarrationLoss::Incomplete {
+                                "Narration incomplete"
+                            } else {
+                                "No narration"
+                            },
+                            palette.warn,
+                        ))
                     })
                     .when(row.early && matches!(row.kind, Kind::Saved), |row| {
                         row.child(tag("Ended early", palette.warn))
@@ -183,7 +212,8 @@ impl Review {
             .rows
             .iter()
             .find(|row| row.directory == key.directory);
-        if row.is_some_and(|row| matches!(row.kind, Kind::Interrupted(_))) {
+        if let Some(Kind::Interrupted(interrupted)) = row.map(|row| &row.kind) {
+            let pending = interrupted.narration_pending();
             let busy =
                 self.recovering.is_some() || self.discarding.is_some() || self.keeping.is_some();
             return div()
@@ -192,23 +222,45 @@ impl Review {
                 .flex()
                 .flex_col()
                 .gap(px(16.0))
-                .child(div().text_size(px(20.0)).child("Interrupted Show"))
+                .child(div().text_size(px(20.0)).child(if pending {
+                    "Narration pending"
+                } else {
+                    "Interrupted Show"
+                }))
                 .child(row.map_or_else(String::new, |row| {
                     format!("{} · {}", row.recorded(now), row.retention(now))
                 }))
-                .child("Recover the frames, ink, and marks that reached the checkpoint. Narration is unavailable; recovery leaves your clipboard alone.")
-                .child("A crash or a slow or full disk can leave a shorter recording. Recovery preserves the original expiry date.")
+                .child(if pending {
+                    RETRY_NARRATION
+                } else {
+                    RECOVER_SHOW
+                })
+                .child(RECOVERY_AUDIO)
+                .child(RECOVERY_PREFIX)
                 .child(
                     div()
                         .flex()
                         .gap(px(10.0))
+                        .child(button(Action::Recover, palette, !busy, false, cx).child(
+                            if pending {
+                                "Transcribe narration"
+                            } else {
+                                "Recover Show"
+                            },
+                        ))
                         .child(
-                            button(Action::Recover, palette, !busy, false, cx)
-                                .child("Recover Show"),
-                        )
-                        .child(
-                            button(Action::Discard, palette, !busy && !self.confirm_discard, false, cx)
-                                .child("Discard"),
+                            button(
+                                Action::Discard,
+                                palette,
+                                !busy && !self.confirm_discard,
+                                false,
+                                cx,
+                            )
+                            .child(if pending {
+                                "Discard audio"
+                            } else {
+                                "Discard"
+                            }),
                         ),
                 )
                 .when(self.confirm_discard, |pane| {
@@ -217,14 +269,18 @@ impl Review {
                             .flex()
                             .flex_col()
                             .gap(px(10.0))
-                            .child("This permanently removes the interrupted Show.")
+                            .child(if pending {
+                                super::DISCARD_AUDIO
+                            } else {
+                                super::DISCARD_SHOW
+                            })
                             .child(
                                 div()
                                     .flex()
                                     .gap(px(10.0))
                                     .child(
                                         button(Action::CancelDiscard, palette, !busy, false, cx)
-                                            .child("Keep interrupted Show"),
+                                            .child("Cancel"),
                                     )
                                     .child(
                                         button(Action::ConfirmDiscard, palette, !busy, false, cx)

@@ -8,13 +8,20 @@ mod publish;
 mod recorder;
 pub(crate) mod review;
 mod store;
-
-pub(crate) use store::checkpoint::{Checkpoint, Interrupted};
+pub(crate) use store::{
+    checkpoint,
+    checkpoint::{AudioLog, Checkpoint, Checkpointing, FrameLog, Interrupted, Keeper, Kept},
+};
 
 pub(crate) use self::{
     command::Command,
     overlay::{Canvas, attend as attend_overlay},
-    publish::{publish, recover},
-    recorder::ScreenRecorder,
+    publish::{Origin, Publication, Reopened, publish, reopen},
+    recorder::{ScreenRecorder, Unwound},
     store::{SavedShow, attend as attend_retention},
 };
+
+/// Begins private checkpointing only for an explicitly requested Show.
+pub(crate) fn keep(recorded: std::time::SystemTime) -> anyhow::Result<Kept> {
+    Keeper::start(store::private_directory, recorded)
+}

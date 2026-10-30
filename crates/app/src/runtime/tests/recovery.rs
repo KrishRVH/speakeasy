@@ -1,20 +1,48 @@
-//! Recovery shares publication authority, waits for the active session, and requests no input or speech.
+//! Recovery shares session authority and the local speech worker, without capture or clipboard access.
 
 use super::*;
 
 async fn interrupted() -> anyhow::Result<(tempfile::TempDir, crate::show::Interrupted)> {
+    interrupted_with_audio(false).await
+}
+
+async fn interrupted_with_audio(
+    keep_audio: bool,
+) -> anyhow::Result<(tempfile::TempDir, crate::show::Interrupted)> {
     let root = tempfile::tempdir()?;
     let now = std::time::SystemTime::now();
-    let (checkpoint, writer) = crate::show::Checkpoint::begin(
-        root.path(),
-        now,
+    let parent = root.path().to_owned();
+    let crate::show::Kept {
+        keeper,
+        mut frames,
+        mut audio,
+    } = crate::show::Keeper::start(move || Ok(parent), now)?;
+    assert!(frames.begin(
+        1_000,
+        Size {
+            width: 80.0,
+            height: 60.0
+        }
+    ));
+    if keep_audio {
+        assert!(audio.begin(8_000, Duration::ZERO, "fr".into()));
+        assert!(audio.finish(&[0xB8, 0x0B].repeat(8_000), &[]));
+    } else {
+        drop(audio);
+    }
+    let mut take = speakeasy_show::Take::new(
         1_000,
         Size {
             width: 80.0,
             height: 60.0,
         },
-    )?;
-    assert!(writer.close().await);
+    );
+    let event = take.arrive(speakeasy_show::Moment::from_millis(100), || {
+        Some(speakeasy_show::Image::from_bgra(2, 2, [3, 2, 1, 255].repeat(4)).unwrap())
+    })?;
+    assert!(frames.send(event));
+    assert!(frames.close().await);
+    let checkpoint = keeper.close().await?;
     let interrupted = checkpoint.interrupted()?;
     Ok((root, interrupted))
 }
@@ -76,75 +104,31 @@ async fn quit_revokes_recovery_and_awaits_its_owned_cleanup() -> anyhow::Result<
     Ok(())
 }
 
-async fn checkpointed_footage()
--> anyhow::Result<(tempfile::TempDir, crate::show::Interrupted, Box<Footage>)> {
-    let (root, interrupted) = interrupted().await?;
-    let mut footage = footage();
-    footage.checkpoint = Some(interrupted.lock()?);
-    Ok((root, interrupted, footage))
-}
-
-#[tokio::test(start_paused = true)]
-async fn stale_finished_reports_and_shutdown_drain_discard_their_real_checkpoints()
--> anyhow::Result<()> {
-    for shutdown in [false, true] {
-        let (_root, interrupted, mut footage) = checkpointed_footage().await?;
-        footage.recording.ending = speakeasy_show::Ending::ScreenStopped;
-        let mut h = Harness::new()?;
-        let (old, _, events) = start_show(&mut h).await?;
-        h.input(Input::Cancel);
-        h.phase(Phase::Cancelled).await?;
-        h.input(Input::Release);
-        if shutdown {
-            events.try_send(ShowEvent::Finished(old, Ok(footage)))?;
-            h.runtime.request_stop();
-        } else {
-            let (current, _, current_events) = start_show(&mut h).await?;
-            events.send(ShowEvent::Finished(old, Ok(footage))).await?;
-            current_events
-                .send(ShowEvent::CheckpointLost(current))
-                .await?;
-            h.observe(|snapshot| snapshot.message.contains("Recovery stopped"))
-                .await?;
-            assert!(h.snapshot().show);
+// This keeper uses an OS thread; virtual time can expire while its real file I/O is pending.
+#[tokio::test]
+async fn session_owns_checkpoint_cleanup_even_when_finish_reports_are_stale() -> anyhow::Result<()>
+{
+    for finished in [false, true] {
+        let root = tempfile::tempdir()?;
+        let mut h = Harness::with_ports(Config::default(), |ports| {
+            ports.checkpoint_root = Some(root.path().to_owned());
+        })?;
+        let (id, _, events) = start_show(&mut h).await?;
+        if finished {
+            finish_show(&h);
+            h.phase(Phase::Processing).await?;
         }
+        events.try_send(ShowEvent::Finished(id, Ok(footage())))?;
+        h.runtime.request_stop();
         h.close().await?;
-        assert!(
-            !interrupted.directory().exists(),
-            "Discard cleanup did not finish"
+        let listing = crate::show::checkpoint::list(root.path(), std::time::SystemTime::now());
+        assert!(listing.problems.is_empty());
+        assert_eq!(listing.shows.len(), usize::from(finished));
+        assert_eq!(
+            std::fs::read_dir(root.path().join(".checkpoints"))?.count(),
+            usize::from(finished)
         );
     }
-    Ok(())
-}
-
-#[tokio::test(start_paused = true)]
-async fn quit_preserves_finished_footage_waiting_in_the_report_lane() -> anyhow::Result<()> {
-    let (_root, interrupted, footage) = checkpointed_footage().await?;
-    let mut h = Harness::new()?;
-    let (id, _, events) = start_show(&mut h).await?;
-    finish_show(&h);
-    // No await between report and stop: shutdown wins the biased select and drains the report.
-    events.try_send(ShowEvent::Finished(id, Ok(footage)))?;
-    h.runtime.request_stop();
-    h.close().await?;
-    assert!(
-        interrupted.lock().is_ok(),
-        "Shutdown discarded a requested finish"
-    );
-    Ok(())
-}
-
-#[tokio::test(start_paused = true)]
-async fn quit_during_finished_show_transcription_preserves_its_checkpoint() -> anyhow::Result<()> {
-    let (_root, interrupted, footage) = checkpointed_footage().await?;
-    let mut h = Harness::new()?;
-    let (id, _, events) = start_show(&mut h).await?;
-    events.send(ShowEvent::Finished(id, Ok(footage))).await?;
-    let (_, reply) = receive(&h.jobs).await?;
-    h.runtime.request_stop();
-    answer(reply, "synthetic narration")?;
-    h.close().await?;
-    assert!(interrupted.lock().is_ok(), "Quit discarded a finished Show");
     Ok(())
 }
 
@@ -183,3 +167,5 @@ async fn checkpoint_notice_clears_on_cancel_and_never_hides_lost_narration() -> 
     assert!(h.snapshot().message.contains("Reconnect the microphone."));
     h.close().await
 }
+
+mod audio;

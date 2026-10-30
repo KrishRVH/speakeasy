@@ -203,14 +203,23 @@ module unless a test file is named.
   [tests](../crates/app/src/show/store/retention/tests.rs) exercise ordering, original expiry dates,
   interrupted deletion, moved bundles, links, and preserved edits.
   [checkpoint.rs](../crates/app/src/show/store/checkpoint.rs) owns private live logs and exclusive
-  cross-process locks. The recorder's bounded writer acknowledges cleanup before its lock releases;
-  dropped checkpoints remain recoverable, while unfinished-take cancellation records discard before
-  removal. Discard deletes the log before releasing its lock, so blocked deletion remains visible to
-  cleanup. Publication binds durable checkpoint and bundle markers before rename, preventing
-  duplicate recovery after a crash. Logs cap at 1 GiB/200,000 events; the writer queues at most 512
-  events/64 MiB and stops at a complete prefix on pressure or failure. No audio is persisted.
-  Discovery isolates damaged checkpoints so healthy entries remain visible and saved bundles still
-  expire. [checkpoint/tests.rs](../crates/app/src/show/store/checkpoint/tests.rs) exercises damaged
+  cross-process locks. The session owns a
+  [keeper](../crates/app/src/show/store/checkpoint/keeper.rs) from explicit Show promotion. One
+  writer drains independent bounded frame and audio lanes; a stream failure leaves the other usable.
+  Frame close acknowledges its flush without waiting for audio; the checkpoint lock releases only
+  after both producers close. The frame lane queues at most 512 events/64 MiB and its log caps at 1
+  GiB/200,000 events. The audio lane queues at most 64 events/8 MiB and its checksummed PCM log caps
+  at 128 MiB; a backlog stays in capture's existing PCM buffer.
+  [Audio checkpointing](../crates/app/src/audio/checkpoint.rs) preserves cue boundaries before and
+  after promotion, so recovery seals through the same speech gate and trimming. Narration is
+  atomically written and synced before audio deletion. Publication binds durable checkpoint and
+  bundle markers before rename; untranscribed audio keeps a published checkpoint visible as
+  Narration pending. A retry creates a new bundle. Unfinished cancellation records discard before
+  deletion; private audio, narration, and frame files are removed before the lock, so blocked
+  deletion remains available to cleanup. Audio retains the original seven-day expiry regardless of a
+  saved bundle's Keep marker. Discovery isolates damaged checkpoints so healthy entries remain
+  visible and saved bundles still expire.
+  [checkpoint/tests.rs](../crates/app/src/show/store/checkpoint/tests.rs) exercises damaged
   siblings, expiry, lock ownership, and durable discard/publication markers.
   [journal/log.rs](../crates/show/src/journal/log.rs) shares live/replay admission, thinning, and
   pointer folding; checksums and bounded records stop replay at its first damaged event. Property
@@ -284,13 +293,16 @@ No single module owns these rules; a change to any party keeps them.
   stays saved when the clipboard refuses its summary.
 - **Finished Shows remain recoverable.** Quit, Pause, and reconfiguration revoke unfinished
   publication without deleting its checkpoint. The same holds while finished footage awaits
-  transcription. Cancelling an unfinished recording discards its checkpoint; stale recorder reports
-  and shutdown's pending-report drain preserve requested finishes and clean up unfinished takes.
-  Recovery waits for an idle session, then uses its shielded delivery stage without microphone,
-  speech, or clipboard access.
+  transcription. The session decides checkpoint disposition; stale reports hold only in-memory
+  footage. Cancelling unfinished capture, choosing no target, or a screen failure before the first
+  frame discards its checkpoint. A recorder unwind preserves a finished session's checkpoint because
+  it may contain surviving frames. Recovery waits for an idle session, reopens files off the owner
+  thread, and uses the existing local worker with the original language and current text
+  corrections. It opens no capture devices and has no clipboard action. Quit or reconfiguration
+  retains a recovery checkpoint.
   [runtime/tests/recovery.rs](../crates/app/src/runtime/tests/recovery.rs) tests ownership and
   revocation; [recorder/tests/checkpoint.rs](../crates/app/src/show/recorder/tests/checkpoint.rs)
-  tests durable finish, cancel, unreceived reports, and invalid-event prefix preservation.
+  tests durable frame handoff, independent storage failure, and invalid-event prefix preservation.
 - **The last Show outlives each owner.** Only a saved Show replaces the one the owner remembers,
   only a report that finds that same Show gone forgets it, and every snapshot presents it. The
   shell's announcements keep it and a new owner starts from the one presented, so Pause and
@@ -319,7 +331,9 @@ fails:
 stateDiagram-v2
     state "AwaitingFootage(Narration, loss)" as AwaitingFootage
     [*] --> Queued
-    [*] --> Delivering: idle owner accepts recovery; no audio or clipboard
+    [*] --> Reopening: idle owner accepts recovery
+    Reopening --> AwaitingWorker: recovered audio
+    Reopening --> AwaitingFootage: stored narration or no recoverable audio
     Queued --> Opening: microphone free
     Opening --> Recording: first samples
     Opening --> Stopping: first samples after finish

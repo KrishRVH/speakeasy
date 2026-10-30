@@ -108,42 +108,36 @@ impl Ports for ModelPorts {
         Ok(self.device(Source::Microphone, id))
     }
 
+    fn keep(&self, _: std::time::SystemTime) -> anyhow::Result<Option<crate::show::Kept>> {
+        Ok(None)
+    }
+
     fn record_screen(
         &self,
         id: SessionId,
         _: Instant,
         _: Scope,
+        _: Option<crate::show::FrameLog>,
         events: Sender<ShowEvent>,
     ) -> anyhow::Result<ModelDevice> {
         self.log.try_send(Log::ScreenOpened(id, events))?;
         Ok(self.device(Source::Screen, id))
     }
 
-    fn abandon_footage(
+    fn reopen(
         &self,
-        footage: Footage,
-    ) -> impl Future<Output = anyhow::Result<()>> + Send + 'static {
-        std::future::ready(footage.abandon())
-    }
-
-    fn recover(
-        &self,
-        _: crate::show::Interrupted,
-        _: InsertPermit,
-    ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
-        std::future::ready(Err(anyhow::anyhow!(
-            "Recovery is not configured for this fixture"
-        )))
+        interrupted: crate::show::Interrupted,
+    ) -> impl Future<Output = anyhow::Result<crate::show::Reopened>> + Send + 'static {
+        crate::show::reopen(interrupted)
     }
 
     fn publish(
         &self,
-        footage: Footage,
-        _: Narration,
-        lost: Option<NarrationLoss>,
+        publication: crate::show::Publication,
         permit: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
-        let ending = footage.recording.ending;
+        let ending = publication.footage.recording.ending;
+        let lost = publication.footage.recording.narration_lost;
         // Commits once the task runs, as publishing does, so a cancel can still come first.
         async move {
             Ok(if permit.commit() {
@@ -152,6 +146,7 @@ impl Ports for ModelPorts {
                     ending,
                     lost,
                     source_lost: false,
+                    audio_kept: false,
                     copied: Ok(()),
                 }
             } else {
@@ -233,6 +228,10 @@ impl Capturing for ModelDevice {
 }
 
 impl Listening for ModelDevice {
+    fn keep(&self, _: crate::show::AudioLog, _: Duration, _: &str) -> bool {
+        true
+    }
+
     fn expect_cue(&self) {}
 }
 

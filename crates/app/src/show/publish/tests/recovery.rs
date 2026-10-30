@@ -1,5 +1,7 @@
 //! Real private checkpoint files and publication, with no microphone, speech engine, or clipboard.
 
+use std::time::Duration;
+
 use speakeasy_show::{Ending, Take, TakeEvent};
 
 use super::*;
@@ -9,7 +11,8 @@ async fn checkpoint(parent: &Path) -> anyhow::Result<Checkpoint> {
         width: 80.0,
         height: 60.0,
     };
-    let (checkpoint, mut writer) = Checkpoint::begin(parent, SystemTime::now(), 1 << 20, surface)?;
+    let (checkpoint, mut writer) =
+        crate::show::Keeper::fixture(parent, SystemTime::now(), 1 << 20, surface)?;
     let mut take = Take::new(1 << 20, surface);
     assert!(
         writer.send(take.arrive(Moment::from_millis(100), || Some(desktop(
@@ -21,16 +24,12 @@ async fn checkpoint(parent: &Path) -> anyhow::Result<Checkpoint> {
         ending: Ending::Finished
     }));
     assert!(writer.close().await);
-    Ok(checkpoint)
+    checkpoint.close().await
 }
 
-fn footage(checkpoint: Checkpoint) -> anyhow::Result<Footage> {
+fn footage(checkpoint: &Checkpoint) -> anyhow::Result<Footage> {
     let (recording, journal) = checkpoint.replay()?.finish();
-    Ok(Footage {
-        recording,
-        journal,
-        checkpoint: Some(checkpoint),
-    })
+    Ok(Footage { recording, journal })
 }
 
 #[tokio::test]
@@ -92,12 +91,13 @@ async fn revoking_finished_publication_or_recovery_keeps_its_checkpoint() -> any
         .is_err()
     );
     assert!(interrupted.lock()?.replay()?.ended());
-    let captured = footage(interrupted.lock()?)?;
+    let checkpoint = interrupted.lock()?;
+    let captured = footage(&checkpoint)?;
     assert!(matches!(
         publish_with(
             captured,
-            Narration::default(),
-            None,
+            Some(checkpoint),
+            Origin::Live,
             &revoked,
             || bail!("Cancelled publication prepared storage"),
             |_| bail!("Cancelled publication copied")
@@ -114,11 +114,12 @@ async fn revoking_finished_publication_or_recovery_keeps_its_checkpoint() -> any
 async fn failed_publication_keeps_recoverable_frames_and_success_cleans_up() -> anyhow::Result<()> {
     let parent = tempfile::tempdir()?;
     let (_input, active) = permit();
+    let checkpoint = checkpoint(parent.path()).await?;
     assert!(
         publish_with(
-            footage(checkpoint(parent.path()).await?)?,
-            Narration::default(),
-            None,
+            footage(&checkpoint)?,
+            Some(checkpoint),
+            Origin::Live,
             &active,
             || bail!("Synthetic disk failure"),
             |_| bail!("Failed publication copied")
@@ -128,13 +129,14 @@ async fn failed_publication_keeps_recoverable_frames_and_success_cleans_up() -> 
     let interrupted = store::checkpoint::list(parent.path(), SystemTime::now())
         .shows
         .remove(0);
-    let captured = footage(interrupted.lock()?)?;
+    let checkpoint = interrupted.lock()?;
+    let captured = footage(&checkpoint)?;
     let (_input, active) = permit();
     assert!(matches!(
         publish_with(
             captured,
-            Narration::default(),
-            None,
+            Some(checkpoint),
+            Origin::Live,
             &active,
             || Ok(parent.path().to_owned()),
             |_| Ok(())
@@ -158,9 +160,9 @@ fn optional_source_failure_still_saves_selected_keyframes_and_reports_the_loss()
     footage.recording.duration = Moment::from_millis(360_001);
     let (_input, permit) = permit();
     let result = publish_with(
-        footage,
-        narration,
+        narrated(footage, narration, None),
         None,
+        Origin::Live,
         &permit,
         || Ok(root.path().to_owned()),
         |_| Ok(()),
@@ -186,3 +188,24 @@ fn optional_source_failure_still_saves_selected_keyframes_and_reports_the_loss()
     }));
     Ok(())
 }
+
+fn recover_with(
+    interrupted: Interrupted,
+    permit: &InsertPermit,
+    parent: impl FnOnce() -> anyhow::Result<PathBuf>,
+) -> anyhow::Result<Published> {
+    let reopened = reopen_with(interrupted)?;
+    assert!(reopened.speech.is_none());
+    publish_with(
+        reopened.footage,
+        Some(reopened.checkpoint),
+        Origin::Recovered {
+            pending: reopened.pending,
+        },
+        permit,
+        parent,
+        |_| anyhow::bail!("Recovery copied a summary"),
+    )
+}
+
+mod audio;

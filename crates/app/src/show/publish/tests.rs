@@ -6,7 +6,9 @@ use std::{fs, io, path::Path, time::Instant};
 
 use anyhow::bail;
 use speakeasy_platform::{InputSender, InsertPermit};
-use speakeasy_show::{Image, Journal, Manifest, Moment, Point, Size, Span, Tracker, Word};
+use speakeasy_show::{
+    Image, Journal, Manifest, Moment, Narration, Point, Size, Span, Tracker, Word,
+};
 
 use super::*;
 
@@ -129,7 +131,6 @@ impl Rehearsal {
 
     fn finish(self, ended: u64) -> Footage {
         Footage {
-            checkpoint: None,
             recording: self.tracker.finish(Moment::from_millis(ended)),
             journal: self.journal,
         }
@@ -189,9 +190,9 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
     let (_input, permit) = permit();
     let mut clipboard = None;
     let published = publish_with(
-        footage,
-        narration.clone(),
+        narrated(footage, narration.clone(), None),
         None,
+        Origin::Live,
         &permit,
         || Ok(shows.clone()),
         |summary| {
@@ -271,9 +272,9 @@ fn a_show_that_cannot_be_copied_stays_saved() -> anyhow::Result<()> {
     let (_input, permit) = permit();
     let (footage, narration) = rehearse(32, 20);
     let published = publish_with(
-        footage,
-        narration,
+        narrated(footage, narration, None),
         None,
+        Origin::Live,
         &permit,
         || Ok(shows.clone()),
         |_| bail!("Another app holds the clipboard"),
@@ -305,7 +306,14 @@ fn a_cancelled_show_never_reaches_the_disk() -> anyhow::Result<()> {
     input.cancel();
     let unprepared = || bail!("A cancelled Show never prepares its folder");
     let (footage, narration) = rehearse(32, 20);
-    let published = publish_with(footage, narration, None, &permit, unprepared, uncopied)?;
+    let published = publish_with(
+        narrated(footage, narration, None),
+        None,
+        Origin::Live,
+        &permit,
+        unprepared,
+        uncopied,
+    )?;
     assert!(matches!(published, Published::Cancelled));
     Ok(())
 }
@@ -324,9 +332,9 @@ fn a_show_cancelled_before_staging_never_writes_its_files() -> anyhow::Result<()
     };
     let (footage, narration) = rehearse(32, 20);
     let published = publish_with(
-        footage,
-        narration,
+        narrated(footage, narration, None),
         None,
+        Origin::Live,
         &permit,
         cancel_once_composed,
         uncopied,
@@ -343,9 +351,9 @@ fn a_show_that_lost_its_narration_says_why_in_its_files() -> anyhow::Result<()> 
     let lost = NarrationLoss::AudioStopped;
     let mut clipboard = None;
     let published = publish_with(
-        footage,
-        Narration::default(),
-        Some(lost),
+        narrated(footage, Narration::default(), Some(lost)),
+        None,
+        Origin::Live,
         &permit,
         || Ok(shows.path().to_owned()),
         |summary| {
@@ -411,7 +419,7 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
             width: width as f32,
             height: height as f32,
         };
-        let (checkpoint, mut writer) = Checkpoint::begin(
+        let (checkpoint, mut writer) = crate::show::Keeper::fixture(
             root.path(),
             SystemTime::now(),
             speakeasy_show::Log::MAX_BUDGET,
@@ -431,6 +439,7 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
         }
         let started = Instant::now();
         assert!(runtime.block_on(writer.close()));
+        let checkpoint = runtime.block_on(checkpoint.close())?;
         let flushed_ms = started.elapsed().as_secs_f64() * 1000.0;
         let started = Instant::now();
         let replayed = checkpoint.replay()?;
@@ -471,7 +480,6 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     );
     let started = Instant::now();
     let Footage {
-        checkpoint: _,
         mut recording,
         journal,
     } = footage;
@@ -506,3 +514,9 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
 }
 
 mod recovery;
+
+fn narrated(mut footage: Footage, narration: Narration, lost: Option<NarrationLoss>) -> Footage {
+    footage.recording.narration = narration;
+    footage.recording.narration_lost = lost;
+    footage
+}

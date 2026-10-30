@@ -26,6 +26,21 @@ pub(super) struct Pcm16 {
 }
 
 impl Pcm16 {
+    pub(super) fn from_kept(mut audio: zeroize::Zeroizing<Vec<u8>>) -> Self {
+        let samples = audio.len() / SAMPLE_BYTES;
+        let mut bytes = mem::take(&mut *audio);
+        let length = bytes.len();
+        bytes.resize(length.saturating_add(WAV_HEADER_BYTES), 0);
+        bytes.copy_within(..length, WAV_HEADER_BYTES);
+        if let Some(header) = bytes.get_mut(..WAV_HEADER_BYTES) {
+            header.fill(0);
+        }
+        Self {
+            bytes,
+            limit: samples,
+        }
+    }
+
     pub(super) fn with_reservation(reserved: usize, limit: usize) -> Self {
         let mut bytes = Vec::with_capacity(WAV_HEADER_BYTES.saturating_add(bytes_in(reserved)));
         bytes.resize(WAV_HEADER_BYTES, 0);

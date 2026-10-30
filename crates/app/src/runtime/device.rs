@@ -68,6 +68,18 @@ impl<R: Capturing> Device<R> {
 }
 
 impl<R: Listening> Device<R> {
+    pub(super) fn keep(
+        &self,
+        log: crate::show::AudioLog,
+        start: std::time::Duration,
+        language: &str,
+    ) -> bool {
+        match self {
+            Self::Open(recording) => recording.keep(log, start, language),
+            Self::Free | Self::Retiring(_) => false,
+        }
+    }
+
     pub(super) fn expect_cue(&self) {
         if let Self::Open(recording) = self {
             recording.expect_cue();

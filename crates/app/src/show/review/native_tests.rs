@@ -326,7 +326,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         cx,
     )
     .await?;
-    let (checkpoint, writer) = super::super::Checkpoint::begin(
+    let (checkpoint, writer) = super::super::Keeper::fixture(
         &root,
         SystemTime::now(),
         1_000,
@@ -336,6 +336,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         },
     )?;
     ensure!(writer.close().await, "Synthetic checkpoint did not close");
+    let checkpoint = checkpoint.close().await?;
     let interrupted = checkpoint.interrupted()?;
     window.update(cx, |view, _, cx| view.refresh(cx))?;
     wait_for(window, |view| view.listing.is_none(), cx).await?;

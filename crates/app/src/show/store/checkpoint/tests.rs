@@ -1,6 +1,6 @@
 //! Interrupted Shows use private synthetic logs; locking, torn tails, expiry, and discard are real.
 
-use speakeasy_show::{Image, Moment, TakeEvent};
+use speakeasy_show::{Image, Moment, Size, TakeEvent};
 
 use super::*;
 
@@ -12,7 +12,7 @@ fn surface() -> Size {
 }
 
 async fn capture(parent: &Path, at: SystemTime) -> anyhow::Result<Checkpoint> {
-    let (checkpoint, mut writer) = Checkpoint::begin(parent, at, 1_000, surface())?;
+    let (checkpoint, mut writer) = Keeper::fixture(parent, at, 1_000, surface())?;
     let mut take = Take::new(1_000, surface());
     let event = take.arrive(Moment::from_millis(100), || {
         Some(Image::from_bgra(2, 2, [3, 2, 1, 255].repeat(4)).unwrap())
@@ -23,6 +23,7 @@ async fn capture(parent: &Path, at: SystemTime) -> anyhow::Result<Checkpoint> {
         ending: speakeasy_show::Ending::Finished
     }));
     assert!(writer.close().await);
+    let checkpoint = checkpoint.close().await?;
     Ok(checkpoint)
 }
 
@@ -181,5 +182,21 @@ async fn a_windows_reader_that_denies_delete_sharing_cannot_orphan_private_frame
     drop(reader);
     sweep(root.path(), now)?;
     assert!(!path.exists());
+    Ok(())
+}
+
+mod audio;
+
+#[tokio::test]
+async fn ownership_release_unlocks_even_if_an_inherited_descriptor_remains_open()
+-> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let checkpoint = capture(root.path(), SystemTime::now()).await?;
+    // A duplicated descriptor shares the OS open-file description, as a concurrent fork does.
+    let inherited = checkpoint.lock.0.try_clone()?;
+    let interrupted = checkpoint.interrupted()?;
+    let reacquired = interrupted.lock()?;
+    drop(inherited);
+    reacquired.discard()?;
     Ok(())
 }

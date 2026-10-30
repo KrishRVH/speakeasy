@@ -17,6 +17,7 @@ speakeasy-show = { path = "../show" }
 anyhow.workspace = true
 async-channel.workspace = true
 cpal.workspace = true
+crc32fast.workspace = true
 getrandom.workspace = true
 gpui = { workspace = true, features = ["font-kit"] }
 raw-window-handle.workspace = true

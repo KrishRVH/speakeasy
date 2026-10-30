@@ -1,7 +1,9 @@
 //! Private Show checkpoints. A value owns the cross-process lock; drop only unlocks, leaving an
 //! interrupted take. Explicit discard is durable before deletion and runs off the session owner.
 
-mod writer;
+mod audio;
+mod keeper;
+
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read as _, Write as _},
@@ -10,8 +12,9 @@ use std::{
 };
 
 use anyhow::Context as _;
-use speakeasy_show::{Log, Size, Take};
-pub(crate) use writer::Writer;
+pub(crate) use audio::{KeptAudio, MAX_CUES};
+pub(crate) use keeper::{AudioLog, FrameLog, Keeper, Kept};
+use speakeasy_show::{Log, Narration, Take};
 
 use super::{Staged, age, recall};
 
@@ -21,24 +24,46 @@ const LOCK: &str = "owner.lock";
 const DISCARDED: &str = "discarded";
 const PUBLISHED: &str = "published";
 const PROVENANCE: &str = ".checkpoint";
+const NARRATION: &str = "narration.json";
+const NARRATION_LIMIT: u64 = 4 << 20;
 const GONE: &str = "This interrupted Show expired, was discarded, or was already recovered. \
                    Refresh Shows.";
+const NO_FRAMES: &str = "No complete frame survived. Discard this interrupted Show.";
 /// Counts all bytes, including metadata and obsolete versions that thinning no longer retains.
 const FILE_LIMIT: u64 = 1 << 30;
 const EVENT_LIMIT: usize = 200_000;
 
 pub(crate) struct Checkpoint {
     directory: PathBuf,
-    lock: File,
+    lock: OwnerLock,
+}
+
+/// Closing our descriptor alone can leave an inherited descriptor holding the same OS lock while
+/// another thread spawns a process. Explicit unlock makes checkpoint ownership end with this value.
+struct OwnerLock(File);
+
+impl Drop for OwnerLock {
+    fn drop(&mut self) {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "Drop cannot report an unlock failure; closing the owned descriptor remains the fallback"
+        )]
+        let _ = self.0.unlock();
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Interrupted {
     directory: PathBuf,
     recorded: SystemTime,
+    pending: bool,
 }
 
 impl Interrupted {
+    pub(crate) const fn narration_pending(&self) -> bool {
+        self.pending
+    }
+
     pub(crate) fn id(&self) -> String {
         format!(
             "interrupted:{}",
@@ -84,14 +109,7 @@ impl Interrupted {
 }
 
 impl Checkpoint {
-    /// Called only by the recording thread after an explicit Show acquired its capture target.
-    pub(crate) fn begin(
-        parent: &Path,
-        recorded: SystemTime,
-        budget: usize,
-        surface: Size,
-    ) -> anyhow::Result<(Self, Writer)> {
-        let header = Log::header(budget, surface)?;
+    fn create(parent: &Path, recorded: SystemTime) -> anyhow::Result<Self> {
         let root = parent.join(ROOT);
         #[cfg(unix)]
         super::make_private(&root)?;
@@ -102,28 +120,29 @@ impl Checkpoint {
             metadata.is_dir() && !metadata.file_type().is_symlink(),
             "Show checkpoints must be a directory, not a link"
         );
-        let directory = super::fresh_directory(&root, recorded)?;
-        fs::create_dir(&directory)?;
-        let file = File::create_new(directory.join(LOCK))?;
-        file.lock()?;
-        let checkpoint = Self {
-            directory,
-            lock: file,
+        let directory = loop {
+            let candidate = super::fresh_directory(&root, recorded)?;
+            match fs::create_dir(&candidate) {
+                Ok(()) => break candidate,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {},
+                Err(error) => return Err(error.into()),
+            }
         };
         let result = (|| {
-            let mut log = File::create_new(checkpoint.directory.join(LOG))?;
-            log.write_all(&header)?;
-            log.sync_all()?;
-            sync_directory(&checkpoint.directory)?;
+            let lock = File::create_new(directory.join(LOCK))?;
+            lock.lock()?;
+            sync_directory(&directory)?;
             sync_directory(&root)?;
-            Writer::start(log)
+            anyhow::Ok(lock)
         })();
         match result {
-            Ok(writer) => Ok((checkpoint, writer)),
+            Ok(lock) => Ok(Self {
+                directory,
+                lock: OwnerLock(lock),
+            }),
             Err(error) => {
-                checkpoint
-                    .discard()
-                    .context("Could not remove a checkpoint that failed to start")?;
+                fs::remove_dir_all(directory)
+                    .context("Cannot remove an unopened Show checkpoint")?;
                 Err(error)
             },
         }
@@ -141,6 +160,7 @@ impl Checkpoint {
     pub(crate) fn interrupted(self) -> anyhow::Result<Interrupted> {
         Ok(Interrupted {
             recorded: self.recorded()?,
+            pending: self.pending()?,
             directory: self.directory,
         })
     }
@@ -170,9 +190,95 @@ impl Checkpoint {
         Ok(())
     }
 
+    /// Stores recognized narration before erasing its audio. A crash between these steps retries
+    /// deletion after reading the durable narration; it never needs a second transcription.
+    pub(crate) fn narrate(&self, narration: &Narration, incomplete: bool) -> anyhow::Result<()> {
+        let bytes = zeroize::Zeroizing::new(
+            serde_json::to_vec(&StoredNarration {
+                version: 1,
+                narration: narration.clone(),
+                incomplete,
+            })
+            .map_err(|_private_content| anyhow::anyhow!("Cannot encode recovered narration"))?,
+        );
+        anyhow::ensure!(
+            u64::try_from(bytes.len())? <= NARRATION_LIMIT,
+            "Show narration exceeds its storage limit"
+        );
+        let mut staged = tempfile::NamedTempFile::new_in(&self.directory)?;
+        staged.write_all(&bytes)?;
+        staged.as_file().sync_all()?;
+        staged
+            .persist(self.directory.join(NARRATION))
+            .map_err(|error| error.error)?;
+        sync_directory(&self.directory)?;
+        // An older frame-only bundle cannot prove that it contains this new narration.
+        // Retire its publication marker before erasing audio, so a crash or failed copy remains
+        // recoverable from narration.json until a new bundle commits.
+        remove(&self.directory.join(PUBLISHED))?;
+        sync_directory(&self.directory)?;
+        remove(&self.directory.join(audio::FILE))?;
+        sync_directory(&self.directory)?;
+        Ok(())
+    }
+
+    pub(crate) fn narration(&self) -> anyhow::Result<Option<(Narration, bool)>> {
+        let bytes = match recall::read_file(&self.directory, NARRATION, NARRATION_LIMIT) {
+            Ok(bytes) => zeroize::Zeroizing::new(bytes),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let saved: StoredNarration =
+            serde_json::from_slice(&bytes).map_err(|_private_content| {
+                anyhow::anyhow!("The saved Show narration is damaged or unsupported")
+            })?;
+        anyhow::ensure!(
+            saved.version == 1,
+            "The saved Show narration is unsupported"
+        );
+        Ok(Some((saved.narration, saved.incomplete)))
+    }
+
+    pub(crate) fn audio(&self) -> anyhow::Result<Option<KeptAudio>> {
+        if !self.has_audio()? {
+            return Ok(None);
+        }
+        recall::regular_file(&self.directory, audio::FILE, audio::FILE_LIMIT)?;
+        audio::read(File::open(self.directory.join(audio::FILE))?).map(Some)
+    }
+
+    pub(crate) fn has_audio(&self) -> anyhow::Result<bool> {
+        match fs::symlink_metadata(self.directory.join(audio::FILE)) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub(in crate::show) fn pending(&self) -> anyhow::Result<bool> {
+        let parent = self
+            .directory
+            .parent()
+            .and_then(Path::parent)
+            .context("Checkpoint has no parent")?;
+        let id = self
+            .directory
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("Checkpoint has no ID")?;
+        Ok(published(parent, &self.directory, id)? && self.has_audio()?)
+    }
+
     pub(crate) fn replay(&self) -> anyhow::Result<Take> {
-        recall::regular_file(&self.directory, LOG, FILE_LIMIT)?;
-        let mut log = File::open(self.directory.join(LOG))?;
+        let mut log = recall::regular_file(&self.directory, LOG, FILE_LIMIT)
+            .and_then(|()| File::open(self.directory.join(LOG)))
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::NotFound {
+                    anyhow::anyhow!(NO_FRAMES)
+                } else {
+                    error.into()
+                }
+            })?;
         let mut header = [0; Log::HEADER_BYTES];
         log.read_exact(&mut header)
             .context("The Show checkpoint header is incomplete")?;
@@ -208,10 +314,7 @@ impl Checkpoint {
                 break;
             }
         }
-        anyhow::ensure!(
-            !take.journal().is_empty(),
-            "No complete frame survived. Discard this interrupted Show."
-        );
+        anyhow::ensure!(!take.journal().is_empty(), NO_FRAMES);
         Ok(take)
     }
 
@@ -230,16 +333,10 @@ impl Checkpoint {
             Err(error) => return Err(error.into()),
         }
         sync_directory(&self.directory)?;
-        // Remove private frames before the lock. If a file is held open, the durable discard
-        // marker and lock survive so the next sweep can retry instead of orphaning the log.
-        match fs::remove_file(self.directory.join(LOG)) {
-            Ok(()) => {},
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {},
-            Err(error) => {
-                return Err(error).context(
-                    "Cannot remove recorded frames; close files open in the Show's folder",
-                );
-            },
+        // Private content goes before the lock, so a blocked deletion remains retryable.
+        for name in [audio::FILE, NARRATION, LOG] {
+            remove(&self.directory.join(name))
+                .context("Cannot remove Show content; close files open in the Show's folder")?;
         }
         sync_directory(&self.directory)?;
         let Self { directory, lock } = self;
@@ -376,7 +473,7 @@ fn retired(parent: &Path, checkpoint: &Checkpoint, now: SystemTime) -> anyhow::R
     };
     Ok(discarded
         || age::expires_at(name).is_none_or(|expiry| expiry <= now)
-        || published(parent, directory, name)?)
+        || (published(parent, directory, name)? && !checkpoint.has_audio()?))
 }
 
 fn published(parent: &Path, directory: &Path, id: &str) -> anyhow::Result<bool> {
@@ -426,10 +523,63 @@ fn lock(directory: &Path) -> io::Result<Option<Checkpoint>> {
     match file.try_lock() {
         Ok(()) => Ok(Some(Checkpoint {
             directory: directory.to_owned(),
-            lock: file,
+            lock: OwnerLock(file),
         })),
         Err(fs::TryLockError::WouldBlock) => Ok(None),
         Err(fs::TryLockError::Error(error)) => Err(error),
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StoredNarration {
+    version: u32,
+    narration: Narration,
+    incomplete: bool,
+}
+
+fn remove(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+/// The session owns a live writer until both capture producers finish, then owns its files.
+pub(crate) enum Checkpointing {
+    Writing(Keeper),
+    Held(Checkpoint),
+}
+
+impl Checkpointing {
+    pub(crate) async fn close(self) -> anyhow::Result<Checkpoint> {
+        match self {
+            Self::Writing(keeper) => keeper.close().await,
+            Self::Held(checkpoint) => Ok(checkpoint),
+        }
+    }
+
+    pub(crate) async fn release(
+        self,
+        keep: bool,
+        narration: Option<(Narration, bool)>,
+    ) -> anyhow::Result<()> {
+        let checkpoint = self.close().await?;
+        tokio::task::spawn_blocking(move || {
+            if !keep {
+                return checkpoint.discard();
+            }
+            if let Some((narration, incomplete)) = narration {
+                checkpoint.narrate(&narration, incomplete)?;
+            }
+            anyhow::Ok(())
+        })
+        .await
+        .unwrap_or_else(|_private_panic| {
+            Err(anyhow::anyhow!(
+                "Show cleanup stopped. Check interrupted Shows."
+            ))
+        })
     }
 }
 

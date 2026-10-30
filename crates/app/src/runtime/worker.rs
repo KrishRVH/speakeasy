@@ -120,7 +120,13 @@ impl<W: Speech> Worker<W> {
     }
 
     /// Starts transcribing a copy of `wav` on a ready worker; returns whether one took it.
-    pub(super) fn transcribe(&mut self, wav: &[u8], detail: Detail, config: &Config) -> bool {
+    pub(super) fn transcribe(
+        &mut self,
+        wav: &[u8],
+        detail: Detail,
+        config: &Config,
+        language: Option<&str>,
+    ) -> bool {
         let mut worker = match mem::take(self) {
             Self::Ready(worker) => worker,
             other => {
@@ -129,7 +135,7 @@ impl<W: Speech> Worker<W> {
             },
         };
         let wav = wav.to_vec();
-        let language = config.language.clone();
+        let language = language.unwrap_or(&config.language).to_owned();
         let fillers = config.fillers();
         let corrections = config.vocabulary.clone();
         *self = Self::Transcribing(Job::spawn(|mut cancelled| async move {

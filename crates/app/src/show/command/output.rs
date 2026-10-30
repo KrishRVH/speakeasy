@@ -19,6 +19,7 @@ enum Status {
     Damaged,
     Unsupported,
     Interrupted,
+    NarrationPending,
 }
 
 impl From<Health> for Status {
@@ -38,6 +39,7 @@ impl Status {
             Self::Damaged => "damaged",
             Self::Unsupported => "unsupported",
             Self::Interrupted => "interrupted",
+            Self::NarrationPending => "narration pending",
         }
     }
 }
@@ -241,7 +243,11 @@ pub(super) fn list(
             .map(|show| Overview {
                 id: Some(show.id()),
                 directory: show.directory().to_owned(),
-                status: Status::Interrupted,
+                status: if show.narration_pending() {
+                    Status::NarrationPending
+                } else {
+                    Status::Interrupted
+                },
                 expires_at: show.expires_at(),
                 pinned: Some(false),
                 duration_ms: None,
@@ -343,6 +349,7 @@ pub(super) fn inspect(
                 out,
                 "Narration missing: {}",
                 match lost {
+                    NarrationLoss::Incomplete => "only checkpointed audio recovered",
                     NarrationLoss::AudioStopped => "audio stopped",
                     NarrationLoss::NotTranscribed => "transcription failed",
                 }

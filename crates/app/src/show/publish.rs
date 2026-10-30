@@ -5,58 +5,111 @@ use std::{path::PathBuf, time::SystemTime};
 
 use anyhow::{Context as _, anyhow};
 use speakeasy_platform::InsertPermit;
-use speakeasy_show::{Journal, Narration, NarrationLoss, Recording, Typeface, compose, select};
+use speakeasy_show::{Journal, NarrationLoss, Recording, Typeface, compose, select};
 
 use super::{Checkpoint, Interrupted, SavedShow, recorder::NOTHING_RECORDED, store};
 use crate::runtime::ports::{Footage, PUBLISH_STOPPED, Published};
 
-/// Composes and writes a Show from its `footage` and `narration`, with why that narration was
-/// `lost` if it was, off the caller's thread, then copies its summary. The bundle appears only once
-/// `permit` commits; a publication cancelled before then stops at its next check and deletes
-/// anything it staged.
+/// Everything that publication owns. Captures have released their producer lanes before this
+/// waits for the checkpoint; recovery holds the same files directly.
+pub(crate) struct Publication {
+    pub footage: Footage,
+    pub checkpoint: Option<super::Checkpointing>,
+    pub origin: Origin,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) enum Origin {
+    #[default]
+    Live,
+    Recovered {
+        pending: bool,
+    },
+}
+
+pub(crate) struct Reopened {
+    pub footage: Footage,
+    pub checkpoint: Checkpoint,
+    pub speech: Option<RecoveredSpeech>,
+    pub pending: bool,
+}
+
+pub(crate) struct RecoveredSpeech {
+    pub sealed: crate::runtime::ports::Sealed,
+    pub start: std::time::Duration,
+    pub language: Box<str>,
+    pub incomplete: bool,
+}
+
+/// Composes and writes off the caller's thread, after the single checkpoint writer has drained.
 pub(crate) async fn publish(
-    footage: Footage,
-    narration: Narration,
-    lost: Option<NarrationLoss>,
+    publication: Publication,
     permit: InsertPermit,
 ) -> anyhow::Result<Published> {
+    let Publication {
+        footage,
+        checkpoint,
+        origin,
+    } = publication;
+    // A checkpoint failure must not cost the live in-memory Show. Its producers already report
+    // failure during capture; the bundle remains useful even when recovery storage is unavailable.
+    let checkpoint = match checkpoint {
+        Some(checkpoint) => checkpoint.close().await.ok(),
+        None => None,
+    };
     tokio::task::spawn_blocking(move || {
         publish_with(
             footage,
-            narration,
-            lost,
+            checkpoint,
+            origin,
             &permit,
             store::private_directory,
             speakeasy_platform::copy_text,
         )
     })
     .await
-    // A failed join reports a fixed message, since a panic payload could carry private text.
-    .unwrap_or_else(|_| Err(anyhow!(PUBLISH_STOPPED)))
+    .unwrap_or_else(|_private_panic| Err(anyhow!(PUBLISH_STOPPED)))
 }
 
-/// Writes a Show, with its narration and why that was `lost` if it was, as a new bundle in the
-/// folder `parent` prepares, then hands the summary that names its files to `copy`. A Show
-/// cancelled before or while it is composed loads no further frames and never runs `parent`, one
-/// cancelled before its files are staged never writes them, and one cancelled while they are staged
-/// stops at commit and deletes them. Once persisted, the Show stays saved whether or not `copy`
-/// succeeds.
 fn publish_with(
     footage: Footage,
-    narration: Narration,
-    lost: Option<NarrationLoss>,
+    checkpoint: Option<Checkpoint>,
+    origin: Origin,
     permit: &InsertPermit,
     parent: impl FnOnce() -> anyhow::Result<PathBuf>,
     copy: impl FnOnce(&str) -> anyhow::Result<()>,
 ) -> anyhow::Result<Published> {
-    let Footage {
-        mut recording,
-        journal,
-        checkpoint,
-    } = footage;
+    let Footage { recording, journal } = footage;
     let ending = recording.ending;
-    recording.narration = narration;
-    recording.narration_lost = lost;
+    let lost = recording.narration_lost;
+    let transcribed = !matches!(
+        lost,
+        Some(NarrationLoss::AudioStopped | NarrationLoss::NotTranscribed)
+    );
+    if transcribed && let Some(checkpoint) = &checkpoint {
+        // A failed save still has its audio or durable narration. Once a narrated bundle
+        // commits, discard retires the checkpoint even when cleanup must retry a blocked file.
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "A successful narrated bundle is durable; discard marks its checkpoint for cleanup even if a file remains blocked"
+        )]
+        let _ = checkpoint.narrate(
+            &recording.narration,
+            lost == Some(NarrationLoss::Incomplete),
+        );
+    }
+    if !permit.active() {
+        return Ok(Published::Cancelled);
+    }
+    if matches!(origin, Origin::Recovered { pending: true }) && !transcribed {
+        anyhow::bail!(
+            "Narration could not be transcribed. The saved Show is unchanged; its audio remains available in Shows until its original expiry."
+        );
+    }
+    let audio_kept = !transcribed
+        && checkpoint
+            .as_ref()
+            .is_some_and(|checkpoint| checkpoint.has_audio().unwrap_or(true));
     let result = persist(recording, journal, checkpoint.as_ref(), permit, parent);
     match result {
         Ok(Some(Persisted {
@@ -64,67 +117,90 @@ fn publish_with(
             summary,
             source_lost,
         })) => {
-            remove_published(checkpoint);
-            Ok(Published::Saved {
-                show,
-                ending,
-                lost,
-                source_lost,
-                copied: copy(&summary),
-            })
+            if !audio_kept {
+                remove_published(checkpoint);
+            }
+            match origin {
+                Origin::Live => Ok(Published::Saved {
+                    show,
+                    ending,
+                    lost,
+                    source_lost,
+                    audio_kept,
+                    copied: copy(&summary),
+                }),
+                Origin::Recovered { pending } => Ok(Published::Recovered {
+                    show,
+                    source_lost,
+                    lost,
+                    audio_kept,
+                    narrated_copy: pending,
+                }),
+            }
         },
-        // Once capture finished, revocation is Pause, Quit, settings, or a desktop failure.
-        // Unlock its checkpoint for recovery; only cancelling unfinished capture discards it.
         Ok(None) => Ok(Published::Cancelled),
         Err(error) if checkpoint.is_some() => {
-            Err(error
-                .context("The Show could not be saved. Recover its recorded frames from Shows."))
+            Err(error.context("The Show could not be saved. Recover it from Shows."))
         },
         Err(error) => Err(error),
     }
 }
 
-/// Frame-only recovery enters the owner's publication stage. It never opens a microphone or a
-/// speech worker and has no clipboard callback. Cancellation leaves the original checkpoint.
-pub(crate) async fn recover(
-    interrupted: Interrupted,
-    permit: InsertPermit,
-) -> anyhow::Result<Published> {
-    tokio::task::spawn_blocking(move || {
-        recover_with(interrupted, &permit, store::private_directory)
-    })
-    .await
-    .unwrap_or_else(|_private_panic| {
-        Err(anyhow!(
-            "Recovery stopped. The interrupted Show is still available in Shows."
-        ))
-    })
+/// Reads private files and prepares speech without opening a device, loading an engine, or
+/// touching the clipboard. The session supplies the existing local worker after this returns.
+pub(crate) async fn reopen(interrupted: Interrupted) -> anyhow::Result<Reopened> {
+    tokio::task::spawn_blocking(move || reopen_with(interrupted))
+        .await
+        .unwrap_or_else(|_private_panic| {
+            Err(anyhow!(
+                "Recovery stopped. The interrupted Show is still available in Shows."
+            ))
+        })
 }
 
-fn recover_with(
-    interrupted: Interrupted,
-    permit: &InsertPermit,
-    parent: impl FnOnce() -> anyhow::Result<PathBuf>,
-) -> anyhow::Result<Published> {
+fn reopen_with(interrupted: Interrupted) -> anyhow::Result<Reopened> {
     let checkpoint = interrupted.lock()?;
+    let pending = checkpoint.pending()?;
     let (mut recording, journal) = checkpoint.replay()?.finish();
-    recording.narration_lost = Some(NarrationLoss::NotTranscribed);
-    match persist(recording, journal, Some(&checkpoint), permit, parent)? {
-        Some(Persisted {
-            show, source_lost, ..
-        }) => {
-            remove_published(Some(checkpoint));
-            Ok(Published::Recovered { show, source_lost })
+    let mut speech = None;
+    // A corrupt transcript never suppresses surviving audio. Neither parser exposes private
+    // content in an error; unreadable audio still permits an initial frame-only recovery.
+    match checkpoint.narration() {
+        Ok(Some((narration, incomplete))) => {
+            recording.narration = narration;
+            recording.narration_lost = incomplete.then_some(NarrationLoss::Incomplete);
         },
-        None => Ok(Published::Cancelled),
+        Ok(None) | Err(_) => match checkpoint.audio() {
+            Ok(Some(audio)) => {
+                let incomplete = !audio.complete;
+                let (sealed, start, language) = crate::audio::seal_kept(audio)?;
+                if let Some(sealed) = sealed {
+                    speech = Some(RecoveredSpeech {
+                        start: start.saturating_add(sealed.trimmed),
+                        sealed,
+                        language,
+                        incomplete,
+                    });
+                } else if incomplete {
+                    recording.narration_lost = Some(NarrationLoss::Incomplete);
+                }
+            },
+            Ok(None) | Err(_) => recording.narration_lost = Some(NarrationLoss::NotTranscribed),
+        },
     }
+    Ok(Reopened {
+        footage: Footage { recording, journal },
+        checkpoint,
+        speech,
+        pending,
+    })
 }
 
 fn remove_published(checkpoint: Option<Checkpoint>) {
     if let Some(checkpoint) = checkpoint {
         #[expect(
             clippy::let_underscore_must_use,
-            reason = "The published marker and bundle provenance are durable; expiry cleanup retries removal without offering duplicate recovery"
+            reason = "Durable publication markers let expiry cleanup retry without offering duplicate recovery"
         )]
         let _ = checkpoint.discard();
     }

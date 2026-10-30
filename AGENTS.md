@@ -68,9 +68,12 @@ uses an explicit reserved cancel chord or desktop command binding.
 Keep errors actionable and local. Never add dictation history, accounts, telemetry, automatic
 upload, or silent provider switching. A Show is the one record Speakeasy keeps: the screen is
 captured only after the user asks, frames leave out Speakeasy's windows, and bundles stay private to
-the user and expire after seven days unless kept. Preserve user settings and edits. Keep secrets in
-ignored local `.env` files; never print keys, recorded audio, screen pixels, transcript text, or
-engine output, including through `Debug`. Models and generated artifacts stay out of Git.
+the user and expire after seven days unless kept. Ordinary dictation stays in memory. Show audio
+stays private until transcription succeeds, cancellation or discard, or its original seven-day
+expiry; keeping a bundle never extends audio retention. Save narration durably before erasing its
+audio, and recover to a new bundle without overwriting edits. Preserve user settings and edits. Keep
+secrets in ignored local `.env` files; never print keys, recorded audio, screen pixels, transcript
+text, or engine output, including through `Debug`. Models and generated artifacts stay out of Git.
 
 ## Tests and review
 

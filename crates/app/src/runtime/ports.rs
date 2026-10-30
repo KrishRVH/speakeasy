@@ -3,7 +3,7 @@
 //! replace the side effects at this boundary; gesture, cancellation, and delivery ordering stay
 //! real.
 
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use async_channel::Sender;
 use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope, Taps};
@@ -13,7 +13,7 @@ use zeroize::Zeroize;
 
 use crate::{
     config::Config,
-    show::{Checkpoint, SavedShow},
+    show::{AudioLog, FrameLog, Kept, Publication, Reopened, SavedShow},
     sounds::Cue,
 };
 
@@ -48,6 +48,8 @@ impl From<SessionId> for u64 {
 pub(crate) enum CaptureEvent {
     /// The first samples arrived; a capture reports it before any audio it seals.
     Ready(SessionId),
+    /// The Show audio checkpoint stopped; live transcription remains available.
+    CheckpointLost(SessionId),
     /// The latest microphone level, for the pill's meter.
     Level(SessionId, f32),
     /// Capture ended; `None` when the recording was too short or held too little speech to seal.
@@ -57,7 +59,10 @@ pub(crate) enum CaptureEvent {
 impl CaptureEvent {
     pub(super) const fn session(&self) -> SessionId {
         match self {
-            Self::Ready(session) | Self::Level(session, _) | Self::Finished(session, _) => *session,
+            Self::Ready(session)
+            | Self::CheckpointLost(session)
+            | Self::Level(session, _)
+            | Self::Finished(session, _) => *session,
         }
     }
 }
@@ -113,28 +118,19 @@ pub(crate) enum Unchosen {
 pub(crate) struct Footage {
     pub recording: Recording,
     pub journal: Journal,
-    pub checkpoint: Option<Checkpoint>,
-}
-
-impl Footage {
-    /// Releases footage whose owner has left. A requested finish is shielded against user cancel,
-    /// so finished takes remain recoverable even when Quit races their final flush or report.
-    /// Unfinished takes are discarded. Call on a recorder or blocking worker, never the owner.
-    pub(crate) fn abandon(self) -> anyhow::Result<()> {
-        if self.recording.ending != Ending::Finished
-            && let Some(checkpoint) = self.checkpoint
-        {
-            checkpoint.discard()?;
-        }
-        Ok(())
-    }
 }
 
 /// What publishing a Show did. A publication that fails before its bundle persists reports an
 /// error instead; a checkpoint can remain available for recovery.
 pub(crate) enum Published {
     /// An interrupted Show was recovered, without copying or inventing narration.
-    Recovered { show: SavedShow, source_lost: bool },
+    Recovered {
+        show: SavedShow,
+        source_lost: bool,
+        lost: Option<NarrationLoss>,
+        audio_kept: bool,
+        narrated_copy: bool,
+    },
     /// The bundle persisted as `show`, with how its screen recording ended and why its narration
     /// was lost, if it was; `copied` is whether its summary then reached the clipboard.
     Saved {
@@ -142,6 +138,7 @@ pub(crate) enum Published {
         ending: Ending,
         lost: Option<NarrationLoss>,
         source_lost: bool,
+        audio_kept: bool,
         copied: anyhow::Result<()>,
     },
     /// Cancellation came first; no bundle appeared and nothing was copied.
@@ -164,6 +161,9 @@ pub(crate) trait Listening: Capturing {
     /// A cue is about to sound: until it has passed, only a voice beneath it counts as speech, so
     /// a recording of nothing but the cue stays silent.
     fn expect_cue(&self);
+
+    /// Attaches the sole Show audio producer. False means capture already sealed or stopped.
+    fn keep(&self, log: AudioLog, start: Duration, language: &str) -> bool;
 }
 
 /// A Show's screen recorder, which takes numbered pins.
@@ -214,6 +214,9 @@ pub(crate) trait Ports: Send + 'static {
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<Self::Microphone>;
 
+    /// Starts private checkpointing after explicit Show promotion. Simulated ports return None.
+    fn keep(&self, recorded: SystemTime) -> anyhow::Result<Option<Kept>>;
+
     /// Starts recording what `scope` names, near the pointer, for session `id`, whose timeline
     /// began at `started`, reporting to `events`.
     fn record_screen(
@@ -221,33 +224,22 @@ pub(crate) trait Ports: Send + 'static {
         id: SessionId,
         started: Instant,
         scope: Scope,
+        log: Option<FrameLog>,
         events: Sender<ShowEvent>,
     ) -> anyhow::Result<Self::Screen>;
 
-    /// Turns a finished Show's footage and its narration, already on the Show's timeline, with
-    /// why that narration was `lost` if it was, into a bundle, which appears only once `permit`
-    /// commits, and then copies its summary.
+    /// Publishes a finished Show under the session's authority; recovery never copies a summary.
     fn publish(
         &self,
-        footage: Footage,
-        narration: Narration,
-        lost: Option<NarrationLoss>,
+        publication: Publication,
         permit: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static;
 
-    /// Releases abandoned footage off the owner's thread, retaining finished takes for recovery.
-    /// Retirement waits for unfinished-take discard cleanup.
-    fn abandon_footage(
-        &self,
-        footage: Footage,
-    ) -> impl Future<Output = anyhow::Result<()>> + Send + 'static;
-
-    /// Recovers one interrupted Show without capture, a speech request, or a clipboard action.
-    fn recover(
+    /// Reopens a checkpoint off the owner thread, including audio prepared for its speech worker.
+    fn reopen(
         &self,
         interrupted: crate::show::Interrupted,
-        permit: InsertPermit,
-    ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static;
+    ) -> impl Future<Output = anyhow::Result<Reopened>> + Send + 'static;
 
     /// Starts a speech worker; `cancelled` becoming true abandons startup. Nothing starts until the
     /// future is first polled, because a replacement is built before its predecessor has exited.

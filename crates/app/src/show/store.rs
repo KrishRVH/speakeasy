@@ -230,7 +230,7 @@ pub(crate) fn attend(report: impl Fn(&anyhow::Error, &mut App) + 'static, cx: &A
 /// Deletes the Shows under `parent` that expired by `now`, and staging left by publications that
 /// never finished. Only directories named the way Speakeasy names them are touched. An entry that
 /// cannot be inspected is kept and fails the sweep, which goes on to expire the rest.
-fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
+pub(super) fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
     let entries = match fs::read_dir(parent) {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
         entries => entries.with_context(|| format!("Cannot read {}", parent.display()))?,

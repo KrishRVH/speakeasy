@@ -10,7 +10,7 @@ use speakeasy_show::{Image, Journal, Moment, Narration, NarrationLoss, Recording
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 use super::{
-    ports::{Capturing, Listening, Pinning, Sealed, Speech, Unchosen},
+    ports::{Capturing, Footage, Listening, Pinning, Sealed, Speech, Unchosen},
     *,
 };
 use crate::testing::{PATIENCE, still_pending};
@@ -89,6 +89,7 @@ struct FakePorts {
     screen_retirement: Option<Gate<()>>,
     publication: Option<Gate<()>>,
     show_recovery: Option<Gate<InsertPermit>>,
+    checkpoint_root: Option<std::path::PathBuf>,
     publish_error: Option<&'static str>,
     publish_panics: bool,
     /// Holds a publication once its Show is saved, before it reports.
@@ -141,6 +142,7 @@ impl FakePorts {
             screen_retirement: None,
             publication: None,
             show_recovery: None,
+            checkpoint_root: None,
             publish_error: None,
             publish_panics: false,
             saved: None,
@@ -217,11 +219,19 @@ impl Ports for FakePorts {
         })
     }
 
+    fn keep(&self, recorded: std::time::SystemTime) -> anyhow::Result<Option<crate::show::Kept>> {
+        self.checkpoint_root
+            .clone()
+            .map(|parent| crate::show::Keeper::start(move || Ok(parent), recorded))
+            .transpose()
+    }
+
     fn record_screen(
         &self,
         id: SessionId,
         _: Instant,
         scope: Scope,
+        _: Option<crate::show::FrameLog>,
         events: Sender<ShowEvent>,
     ) -> anyhow::Result<FakeScreen> {
         if let Some(error) = self.screen_error {
@@ -237,41 +247,26 @@ impl Ports for FakePorts {
         })
     }
 
-    fn abandon_footage(
+    fn reopen(
         &self,
-        footage: Footage,
-    ) -> impl Future<Output = anyhow::Result<()>> + Send + 'static {
-        std::future::ready(footage.abandon())
-    }
-
-    fn recover(
-        &self,
-        _: crate::show::Interrupted,
-        permit: InsertPermit,
-    ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
-        let gate = self.show_recovery.clone();
-        async move {
-            if let Some(gate) = gate {
-                gate.pass(permit.clone()).await?;
-            }
-            Ok(if permit.commit() {
-                Published::Recovered {
-                    show: saved_show(&Narration::default()),
-                    source_lost: false,
-                }
-            } else {
-                Published::Cancelled
-            })
-        }
+        interrupted: crate::show::Interrupted,
+    ) -> impl Future<Output = anyhow::Result<crate::show::Reopened>> + Send + 'static {
+        crate::show::reopen(interrupted)
     }
 
     fn publish(
         &self,
-        footage: Footage,
-        narration: Narration,
-        lost: Option<NarrationLoss>,
+        publication: crate::show::Publication,
         permit: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
+        let crate::show::Publication {
+            footage,
+            checkpoint,
+            origin,
+        } = publication;
+        let narration = footage.recording.narration.clone();
+        let lost = footage.recording.narration_lost;
+        let recovery = self.show_recovery.clone();
         let published = self.published.clone();
         let publication = self.publication.clone();
         let publish_error = self.publish_error;
@@ -279,6 +274,25 @@ impl Ports for FakePorts {
         let saved = self.saved.clone();
         let copy_error = self.copy_error;
         async move {
+            if let Some(checkpoint) = checkpoint {
+                checkpoint.release(true, None).await?;
+            }
+            if matches!(origin, crate::show::Origin::Recovered { .. }) {
+                if let Some(gate) = recovery {
+                    gate.pass(permit.clone()).await?;
+                }
+                return Ok(if permit.commit() {
+                    Published::Recovered {
+                        show: saved_show(&narration),
+                        source_lost: false,
+                        lost,
+                        audio_kept: false,
+                        narrated_copy: false,
+                    }
+                } else {
+                    Published::Cancelled
+                });
+            }
             if let Some(gate) = publication {
                 gate.pass(()).await?;
             }
@@ -300,6 +314,7 @@ impl Ports for FakePorts {
                 ending,
                 lost,
                 source_lost: false,
+                audio_kept: false,
                 copied: copy_error.map_or(Ok(()), |error| Err(anyhow!(error))),
             })
         }
@@ -395,6 +410,10 @@ impl Capturing for FakeMicrophone {
 }
 
 impl Listening for FakeMicrophone {
+    fn keep(&self, _: crate::show::AudioLog, _: Duration, _: &str) -> bool {
+        true
+    }
+
     fn expect_cue(&self) {
         self.sounds
             .try_send(Sound::Expected(self.id))
@@ -453,7 +472,6 @@ fn footage() -> Box<Footage> {
         .expect("An empty journal admits a frame")
         .record(Moment::START, frame);
     Box::new(Footage {
-        checkpoint: None,
         recording: Recording {
             duration: Moment::from_millis(1_000),
             surface: Size {

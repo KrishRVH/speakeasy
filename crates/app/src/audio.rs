@@ -3,6 +3,7 @@
 //! buffer in `pcm`, the speech gate, which hears a voice beneath Speakeasy's own cues, in `speech`,
 //! and the input devices Settings offers in `microphones`.
 
+mod checkpoint;
 mod control;
 mod microphones;
 mod pcm;
@@ -23,15 +24,17 @@ use rtrb::{Consumer, RingBuffer};
 use speakeasy_core::gesture::RECORDING_LIMIT;
 use speakeasy_platform::OwnedThread;
 
+pub(crate) use self::{
+    checkpoint::seal_kept,
+    microphones::{InputDevice, MicrophoneScan},
+    pcm::{silent_wav, wav_sample_rate},
+    stream::MAX_SAMPLE_RATE,
+};
 use self::{
     control::{Control, Mode},
     pcm::{Pcm16, samples_in},
     speech::Audibility,
     stream::{CallbackState, build_stream, capture_failure, microphone_error, rate_and_channels},
-};
-pub(crate) use self::{
-    microphones::{InputDevice, MicrophoneScan},
-    pcm::{silent_wav, wav_sample_rate},
 };
 use crate::runtime::ports::{CaptureEvent, Capturing, Listening, Sealed, SessionId};
 
@@ -51,6 +54,7 @@ pub(crate) struct Capture {
     signal: Signal,
     /// Each message says a cue is starting, so the speech gate listens beneath it.
     cues: Sender<()>,
+    keep: Sender<checkpoint::Keep>,
     /// Exits once it has reported `Finished` and torn down its stream.
     thread: OwnedThread,
 }
@@ -62,8 +66,8 @@ impl Capture {
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<Self> {
         let microphone = microphone.map(str::to_owned);
-        Self::spawn(id, events, move |events, control, cues| {
-            record(id, microphone.as_deref(), events, control, cues)
+        Self::spawn(id, events, move |events, control, cues, keep| {
+            record(id, microphone.as_deref(), events, control, cues, keep)
         })
     }
 
@@ -74,17 +78,23 @@ impl Capture {
             &Sender<CaptureEvent>,
             &Arc<Control>,
             &Receiver<()>,
+            &Receiver<checkpoint::Keep>,
         ) -> anyhow::Result<Captured<D>>
         + Send
         + 'static,
     ) -> anyhow::Result<Self> {
         let control = Arc::new(Control::default());
         let (cues, heard) = async_channel::unbounded();
+        let (keep, kept) = async_channel::bounded(1);
         let thread = OwnedThread::spawn("audio-capture", {
             let control = Arc::clone(&control);
             move || {
                 // A panicked capture's state is discarded; only its event lane is used afterwards.
-                let ran = panic::catch_unwind(AssertUnwindSafe(|| work(&events, &control, &heard)));
+                let ran = panic::catch_unwind(AssertUnwindSafe(|| {
+                    work(&events, &control, &heard, &kept)
+                }));
+                kept.close();
+                drop(kept);
                 let (outcome, device) = match ran {
                     Ok(Ok(Captured { outcome, device })) => (outcome, Some(device)),
                     Ok(Err(error)) => (Err(error), None),
@@ -107,6 +117,7 @@ impl Capture {
         Ok(Self {
             signal,
             cues,
+            keep,
             thread,
         })
     }
@@ -125,6 +136,19 @@ impl Capturing for Capture {
 }
 
 impl Listening for Capture {
+    fn keep(&self, log: crate::show::AudioLog, start: Duration, language: &str) -> bool {
+        let accepted = self
+            .keep
+            .try_send(checkpoint::Keep {
+                log,
+                start,
+                language: language.into(),
+            })
+            .is_ok();
+        self.signal.thread.unpark();
+        accepted
+    }
+
     fn expect_cue(&self) {
         #[expect(
             clippy::let_underscore_must_use,
@@ -253,8 +277,14 @@ impl Recorder {
         events: &Sender<CaptureEvent>,
         control: &Control,
         cues: &Receiver<()>,
+        keep: &Receiver<checkpoint::Keep>,
     ) -> Captured<LiveStream> {
-        let drained = self.drain(id, events, control, cues);
+        let mut keeping = checkpoint::Keeping::new(keep);
+        let drained = self.drain(id, events, control, cues, &mut keeping);
+        if !abandoned(control, events) && !keeping.finish(self.pcm.audio(), self.rate) {
+            keeping.warn(id, events);
+        }
+        drop(keeping);
         control.finish();
         control.quiesce();
         let Self {
@@ -284,6 +314,7 @@ impl Recorder {
         events: &Sender<CaptureEvent>,
         control: &Control,
         cues: &Receiver<()>,
+        keeping: &mut checkpoint::Keeping<'_>,
     ) -> anyhow::Result<()> {
         let mut meter = LevelMeter::new();
         let mut ready = false;
@@ -306,7 +337,10 @@ impl Recorder {
                 ready = true;
                 events.send_blocking(CaptureEvent::Ready(id))?;
             }
-            classify(&mut self.speech, self.pcm.audio(), cues);
+            keeping.classify(&mut self.speech, self.pcm.audio(), cues);
+            if !keeping.offer(self.pcm.audio(), self.rate) {
+                keeping.warn(id, events);
+            }
             if let Some(level) = meter.take_level() {
                 #[expect(
                     clippy::let_underscore_must_use,
@@ -365,10 +399,11 @@ fn record(
     events: &Sender<CaptureEvent>,
     control: &Arc<Control>,
     cues: &Receiver<()>,
+    keep: &Receiver<checkpoint::Keep>,
 ) -> anyhow::Result<Captured<Option<LiveStream>>> {
     match Recorder::open(microphone, events, control) {
         Ok(recorder) => {
-            let Captured { outcome, device } = recorder.record(id, events, control, cues);
+            let Captured { outcome, device } = recorder.record(id, events, control, cues, keep);
             Ok(Captured {
                 outcome,
                 device: Some(device),
@@ -426,15 +461,6 @@ fn consume_pcm(ring: &mut Consumer<f32>, pcm: &mut Pcm16, meter: &mut LevelMeter
         pcm.push(encoded);
     }
     chunk.commit_all();
-}
-
-/// Classifies the recording so far beneath every cue noticed since the last call, including the
-/// cue's first samples, which may arrive before its notice.
-fn classify(speech: &mut Audibility, audio: &[u8], cues: &Receiver<()>) {
-    while cues.try_recv().is_ok() {
-        speech.expect_cue(audio);
-    }
-    speech.extend(audio);
 }
 
 /// Whether nobody wants the recording any more: it was cancelled, or its owner has gone.

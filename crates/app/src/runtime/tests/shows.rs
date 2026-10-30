@@ -815,7 +815,9 @@ async fn footage_from_an_earlier_show_never_reaches_a_later_one() -> anyhow::Res
     finish_show(&h);
     h.transcribe_next_as("this one").await?;
     let (published, _) = receive(&h.published).await?;
-    assert_eq!(published.recording, footage().recording);
+    let mut expected = footage().recording;
+    expected.narration = Narration::Text("this one".into());
+    assert_eq!(published.recording, expected);
     h.close().await
 }
 

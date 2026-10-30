@@ -1,6 +1,11 @@
 //! A native Show library with explicit retention controls. Selection owns its reads and one decoded
 //! frame; private content stays out of the global asset cache, CLI output, and owner's last Show.
 
+const DISCARD_AUDIO: &str = "This permanently removes the kept audio and its recovery checkpoint. \
+                            Your saved Show stays.";
+const DISCARD_SHOW: &str = "This permanently removes the interrupted Show's recovery data, \
+                           including kept audio. Any saved copies stay.";
+
 mod frame;
 mod library;
 mod render;
@@ -656,7 +661,15 @@ impl Review {
             Action::Recover => self.recover(cx),
             Action::Discard => {
                 self.confirm_discard = true;
-                self.notice = Some("Discard permanently removes this interrupted Show.".into());
+                let message = if self
+                    .interrupted()
+                    .is_some_and(|show| show.narration_pending())
+                {
+                    DISCARD_AUDIO
+                } else {
+                    DISCARD_SHOW
+                };
+                self.notice = Some(message.into());
             },
             Action::ConfirmDiscard => self.discard(cx),
             Action::CancelDiscard => {

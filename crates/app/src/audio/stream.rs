@@ -11,7 +11,7 @@ use speakeasy_core::gesture::RECORDING_LIMIT;
 
 use super::control::{Control, Mode};
 
-pub(super) const MAX_SAMPLE_RATE: u32 = 192_000;
+pub(crate) const MAX_SAMPLE_RATE: u32 = 192_000;
 const MAX_CHANNELS: usize = 32;
 const UNSUPPORTED_FORMAT: &str = "Microphone format is unsupported. Change it in your system's sound settings, or choose another microphone in Settings.";
 

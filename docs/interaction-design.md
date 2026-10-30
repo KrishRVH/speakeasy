@@ -153,6 +153,13 @@ changes the session's last Show. A missing frame keeps its numbered position and
 manifest can still show a readable summary. The summary pane displays at most 64 KiB; Copy summary
 includes the complete file within the reader's limit.
 
+Interrupted Shows offer Recover Show and confirmed Discard. Recovery uses the current local engine
+and original language, saves a new bundle, and leaves the clipboard alone. Narration pending offers
+Transcribe narration and Discard audio. Retry saves a narrated copy; its earlier bundle and edits
+stay unchanged. The confirmation explains that discarding pending audio leaves the saved Show.
+Recovery displays incomplete narration when only an audio prefix survives. Audio expires on its
+original seven-day schedule even when the saved bundle is kept.
+
 ## Interaction contracts
 
 - Hold Ctrl+Win on Windows or Fn on macOS to dictate; release to finish. Adding Space during the

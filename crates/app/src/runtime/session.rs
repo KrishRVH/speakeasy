@@ -17,6 +17,9 @@ use super::{
     Phase,
     ports::{Footage, Published, Sealed, SessionId},
 };
+use crate::show::{
+    AudioLog, Checkpointing, FrameLog, Kept, Origin, Publication, Reopened, SavedShow,
+};
 
 pub(super) struct Session {
     pub id: SessionId,
@@ -25,7 +28,34 @@ pub(super) struct Session {
     pub started: Instant,
     stage: Stage,
     /// The screen side of a Show; `None` while the session is plain dictation.
-    show: Option<Screen>,
+    show: Option<Show>,
+    receipt: Option<async_channel::Sender<Result<SavedShow, String>>>,
+}
+
+struct Show {
+    screen: Screen,
+    audio: Option<AudioLog>,
+    frames: Option<FrameLog>,
+    checkpoint: Option<Checkpointing>,
+    finished: bool,
+    forfeited: bool,
+    origin: Origin,
+    incomplete: bool,
+}
+
+impl Show {
+    const fn new(screen: Screen) -> Self {
+        Self {
+            screen,
+            audio: None,
+            frames: None,
+            checkpoint: None,
+            finished: false,
+            forfeited: false,
+            origin: Origin::Live,
+            incomplete: false,
+        }
+    }
 }
 
 /// A Show's screen recorder, which opens only after the previous one has retired.
@@ -45,6 +75,7 @@ enum Stage {
     /// Waits until any previous capture has released the microphone.
     Queued,
     Opening,
+    Reopening(JoinHandle<Delivered>),
     /// `audio` is where the first samples fall.
     Recording {
         audio: Duration,
@@ -74,6 +105,7 @@ struct Speech {
     start: Duration,
     /// Whether a failed transcription already sent it back for a fresh worker.
     retried: bool,
+    language: Option<Box<str>>,
 }
 
 /// What a session's last task returns: how its dictated text was inserted, or its Show
@@ -82,6 +114,7 @@ pub(super) enum Delivered {
     Inserted(anyhow::Result<Inserted>),
     Published(anyhow::Result<Published>),
     Abandoned(anyhow::Result<()>),
+    Reopened(anyhow::Result<Box<Reopened>>),
 }
 
 impl Session {
@@ -92,6 +125,7 @@ impl Session {
             started,
             stage: Stage::Queued,
             show: None,
+            receipt: None,
         }
     }
 
@@ -99,12 +133,81 @@ impl Session {
         id: SessionId,
         permit: InsertPermit,
         started: Instant,
-        work: impl Future<Output = anyhow::Result<Published>> + Send + 'static,
+        receipt: async_channel::Sender<Result<SavedShow, String>>,
+        work: impl Future<Output = anyhow::Result<Reopened>> + Send + 'static,
     ) -> Self {
         let mut session = Self::new(id, permit, started);
-        session.show = Some(Screen::Spent);
-        session.deliver(async move { Delivered::Published(work.await) });
+        session.show = Some(Show::new(Screen::Spent));
+        session.receipt = Some(receipt);
+        session.stage = Stage::Reopening(tokio::spawn(async move {
+            Delivered::Reopened(work.await.map(Box::new))
+        }));
         session
+    }
+
+    pub(super) fn recovery_failed(&mut self, message: &str) {
+        if let Some(receipt) = self.receipt.take() {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A closed library no longer waits for its failure notice"
+            )]
+            let _ = receipt.try_send(Err(format!("Cannot recover this Show: {message}")));
+        }
+    }
+
+    pub(super) fn reopened(&mut self, reopened: Reopened) {
+        let Reopened {
+            mut footage,
+            checkpoint,
+            speech,
+            pending,
+        } = reopened;
+        let mut show = Show::new(Screen::Spent);
+        show.checkpoint = Some(Checkpointing::Held(checkpoint));
+        show.finished = true;
+        show.origin = Origin::Recovered { pending };
+        self.stage = match speech {
+            Some(speech) => {
+                show.incomplete = speech.incomplete;
+                Stage::AwaitingWorker(Speech {
+                    sealed: speech.sealed,
+                    start: speech.start,
+                    retried: false,
+                    language: Some(speech.language),
+                })
+            },
+            None => Stage::AwaitingFootage {
+                narration: mem::take(&mut footage.recording.narration),
+                lost: footage.recording.narration_lost,
+            },
+        };
+        show.screen = Screen::Recorded(Box::new(footage));
+        self.show = Some(show);
+    }
+
+    pub(super) fn keep(&mut self, kept: Kept) {
+        if let Some(show) = &mut self.show {
+            show.checkpoint = Some(Checkpointing::Writing(kept.keeper));
+            show.audio = Some(kept.audio);
+            show.frames = Some(kept.frames);
+        }
+    }
+
+    pub(super) fn frames(&mut self) -> Option<FrameLog> {
+        self.show.as_mut()?.frames.take()
+    }
+
+    pub(super) fn audio(&mut self) -> Option<(AudioLog, Duration)> {
+        let (Stage::Recording { audio } | Stage::Stopping { audio }) = self.stage else {
+            return None;
+        };
+        self.show.as_mut()?.audio.take().map(|log| (log, audio))
+    }
+
+    pub(super) fn forfeit(&mut self) {
+        if let Some(show) = &mut self.show {
+            show.forfeited = true;
+        }
     }
 
     pub(super) const fn phase(&self) -> Phase {
@@ -112,7 +215,8 @@ impl Session {
             Stage::Queued | Stage::Opening => Phase::Starting,
             Stage::Recording { .. } => Phase::Recording,
             Stage::Stopping { .. } => Phase::Stopping,
-            Stage::AwaitingWorker(_)
+            Stage::Reopening(_)
+            | Stage::AwaitingWorker(_)
             | Stage::Transcribing(_)
             | Stage::AwaitingFootage { .. }
             | Stage::Delivering(_) => Phase::Processing,
@@ -150,8 +254,11 @@ impl Session {
 
     /// What the Show's screen recorder, queued behind the previous one, is to record.
     pub(super) const fn queued_screen(&self) -> Option<Scope> {
-        match self.show {
-            Some(Screen::Queued(scope)) => Some(scope),
+        match &self.show {
+            Some(Show {
+                screen: Screen::Queued(scope),
+                ..
+            }) => Some(*scope),
             _ => None,
         }
     }
@@ -166,6 +273,11 @@ impl Session {
     /// Notes where the first samples fall and starts recording, or stops at once when the gesture
     /// already finished.
     pub(super) fn audio_ready(&mut self, gesture: State, at: Instant) {
+        if gesture == State::Processing
+            && let Some(show) = &mut self.show
+        {
+            show.finished = true;
+        }
         if matches!(self.stage, Stage::Opening) {
             let audio = at.saturating_duration_since(self.started);
             self.stage = if gesture == State::Processing {
@@ -177,6 +289,9 @@ impl Session {
     }
 
     pub(super) fn finish(&mut self) {
+        if let Some(show) = &mut self.show {
+            show.finished = true;
+        }
         if let Stage::Recording { audio } = self.stage {
             self.stage = Stage::Stopping { audio };
         }
@@ -194,6 +309,7 @@ impl Session {
                     sealed,
                     start,
                     retried: false,
+                    language: None,
                 })
             },
             _ if self.is_show() => Stage::AwaitingFootage {
@@ -206,9 +322,9 @@ impl Session {
     }
 
     /// Offers the sealed WAV to `transcribe`, which reports whether a worker took a copy.
-    pub(super) fn transcribe(&mut self, transcribe: impl FnOnce(&[u8]) -> bool) {
+    pub(super) fn transcribe(&mut self, transcribe: impl FnOnce(&[u8], Option<&str>) -> bool) {
         if let Stage::AwaitingWorker(speech) = &mut self.stage
-            && transcribe(&speech.sealed.wav)
+            && transcribe(&speech.sealed.wav, speech.language.as_deref())
         {
             self.stage = Stage::Transcribing(mem::take(speech));
         }
@@ -233,7 +349,11 @@ impl Session {
         if let Stage::Transcribing(Speech { start, .. }) = self.stage {
             self.stage = Stage::AwaitingFootage {
                 narration: narration.delayed(start),
-                lost: None,
+                lost: self
+                    .show
+                    .as_ref()
+                    .filter(|show| show.incomplete)
+                    .map(|_| NarrationLoss::Incomplete),
             };
         }
     }
@@ -293,43 +413,81 @@ impl Session {
         let turns =
             !self.is_show() && (self.is_queued() || self.is_capturing()) && self.permit.shield();
         if turns {
-            self.show = Some(Screen::Queued(scope));
+            self.show = Some(Show::new(Screen::Queued(scope)));
         }
         turns
     }
 
     /// The Show's queued screen recorder opened.
     pub(super) fn screen_opened(&mut self) {
-        if let Some(screen @ Screen::Queued(_)) = &mut self.show {
+        if let Some(Show {
+            screen: screen @ Screen::Queued(_),
+            ..
+        }) = &mut self.show
+        {
             *screen = Screen::Recording;
         }
     }
 
     /// Keeps a Show's footage until its narration is in.
     pub(super) fn screen_recorded(&mut self, footage: Box<Footage>) {
-        if let Some(screen) = &mut self.show {
-            *screen = Screen::Recorded(footage);
+        if let Some(show) = &mut self.show {
+            show.screen = Screen::Recorded(footage);
         }
     }
 
     /// Publishes a Show through `publish` once its narration, or why it was lost, and its footage
     /// are both in; its screen is then spent.
-    pub(super) fn publish<F>(
-        &mut self,
-        publish: impl FnOnce(Footage, Narration, Option<NarrationLoss>, InsertPermit) -> F,
-    ) where
+    pub(super) fn publish<F>(&mut self, publish: impl FnOnce(Publication, InsertPermit) -> F)
+    where
         F: Future<Output = anyhow::Result<Published>> + Send + 'static,
     {
-        let (Stage::AwaitingFootage { narration, lost }, Some(screen @ Screen::Recorded(_))) =
+        let (Stage::AwaitingFootage { narration, lost }, Some(show)) =
             (&mut self.stage, &mut self.show)
         else {
             return;
         };
-        let Screen::Recorded(footage) = mem::replace(screen, Screen::Spent) else {
+        if !matches!(show.screen, Screen::Recorded(_)) {
+            return;
+        }
+        let Screen::Recorded(mut footage) = mem::replace(&mut show.screen, Screen::Spent) else {
             return;
         };
-        let publication = publish(*footage, mem::take(narration), *lost, self.permit.clone());
-        self.deliver(async move { Delivered::Published(publication.await) });
+        footage.recording.narration = mem::take(narration);
+        footage.recording.narration_lost = *lost;
+        // A capture may seal before its Ready event reaches the owner. Unhanded producers must
+        // close before publication waits for the writer.
+        show.audio = None;
+        show.frames = None;
+        let publication = publish(
+            Publication {
+                footage: *footage,
+                checkpoint: show.checkpoint.take(),
+                origin: show.origin,
+            },
+            self.permit.clone(),
+        );
+        let receipt = self.receipt.take();
+        self.deliver(async move {
+            let result = publication.await;
+            if let Some(receipt) = receipt {
+                let completed = match &result {
+                    Ok(Published::Recovered { show, .. } | Published::Saved { show, .. }) => {
+                        Ok(show.clone())
+                    },
+                    Ok(Published::Cancelled) => {
+                        Err("Recovery cancelled. The interrupted Show is still available.".into())
+                    },
+                    Err(error) => Err(format!("Cannot recover this Show: {error:#}")),
+                };
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "Closing the library abandons its receipt, not the owner's recovery"
+                )]
+                let _ = receipt.try_send(completed);
+            }
+            Delivered::Published(result)
+        });
     }
 
     fn deliver(&mut self, delivery: impl Future<Output = Delivered> + Send + 'static) {
@@ -340,35 +498,40 @@ impl Session {
     /// Cancel-safe: dropped early, it leaves the task running.
     pub(super) async fn delivered(&mut self) -> Result<Delivered, JoinError> {
         match &mut self.stage {
-            Stage::Delivering(task) => task.await,
+            Stage::Delivering(task) | Stage::Reopening(task) => task.await,
             _ => pending().await,
         }
     }
 
     /// The insertion or publication still under way, which an abandoned session leaves to finish
     /// its own cleanup.
-    pub(super) fn into_cleanup<F>(
-        self,
-        abandon: impl FnOnce(Footage) -> F,
-    ) -> Option<JoinHandle<Delivered>>
-    where
-        F: Future<Output = anyhow::Result<()>> + Send + 'static,
-    {
-        if let Stage::Delivering(task) = self.stage {
+    pub(super) fn into_cleanup(self) -> Option<JoinHandle<Delivered>> {
+        if let Stage::Delivering(task) | Stage::Reopening(task) = self.stage {
             return Some(task);
         }
-        if let Some(Screen::Recorded(footage)) = self.show
-            && matches!(
-                self.stage,
-                Stage::Queued | Stage::Opening | Stage::Recording { .. }
-            )
-        {
-            let work = abandon(*footage);
-            return Some(tokio::spawn(
-                async move { Delivered::Abandoned(work.await) },
-            ));
-        }
-        None
+        let show = self.show?;
+        let keep = !show.forfeited
+            && (show.finished
+                || !matches!(
+                    self.stage,
+                    Stage::Queued
+                        | Stage::Opening
+                        | Stage::Recording { .. }
+                        | Stage::Stopping { .. }
+                ));
+        let narration = match self.stage {
+            Stage::AwaitingFootage {
+                narration,
+                lost: lost @ (None | Some(NarrationLoss::Incomplete)),
+            } => Some((narration, lost.is_some())),
+            _ => None,
+        };
+        drop(show.audio);
+        drop(show.frames);
+        let checkpoint = show.checkpoint?;
+        Some(tokio::spawn(async move {
+            Delivered::Abandoned(checkpoint.release(keep, narration).await)
+        }))
     }
 }
 
@@ -395,7 +558,7 @@ mod tests {
             trimmed: Duration::from_millis(500),
         };
         assert!(session.captured(Some(sealed)));
-        session.transcribe(|_| true);
+        session.transcribe(|_, _| true);
         let word = |at| Word {
             span: Span::new(Moment::from_millis(at), Moment::from_millis(at + 200)),
             text: "here".into(),
@@ -450,10 +613,10 @@ mod tests {
         show.finish();
         assert!(show.captured(Some(Sealed::default())));
         assert!(!show.audio_stopped(), "Sealed audio can no longer stop");
-        show.transcribe(|_| true);
+        show.transcribe(|_, _| true);
         assert!(!show.not_transcribed(), "Speech keeps its one retry");
         assert!(show.retry());
-        show.transcribe(|_| true);
+        show.transcribe(|_, _| true);
         assert!(show.not_transcribed());
         assert_eq!(lost(&show), Some(NarrationLoss::NotTranscribed));
     }

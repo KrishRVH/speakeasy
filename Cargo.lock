@@ -4957,6 +4957,7 @@ dependencies = [
  "anyhow",
  "async-channel 2.5.0",
  "cpal",
+ "crc32fast",
  "embed-resource",
  "getrandom 0.4.3",
  "gpui",

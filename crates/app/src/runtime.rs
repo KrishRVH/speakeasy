@@ -14,10 +14,10 @@ use speakeasy_platform::{
     Delivery, Input, InputMonitor, InputSender, InsertPermit, Inserted, Inserter, OwnedThread,
     Scope,
 };
-use speakeasy_show::{Ending, Narration, NarrationLoss};
+use speakeasy_show::{Ending, NarrationLoss};
 use tokio::{sync::watch, task::JoinError};
 
-use self::ports::{CaptureEvent, Footage, Ports, Published, SessionId, ShowEvent};
+use self::ports::{CaptureEvent, Ports, Published, SessionId, ShowEvent};
 use crate::{
     audio::Capture,
     config::{Change, Config, ValidConfig},
@@ -413,46 +413,34 @@ impl Ports for Desktop {
         Capture::start(id, microphone, events)
     }
 
+    fn keep(&self, recorded: std::time::SystemTime) -> anyhow::Result<Option<show::Kept>> {
+        show::keep(recorded).map(Some)
+    }
+
     fn record_screen(
         &self,
         id: SessionId,
         started: Instant,
         scope: Scope,
+        log: Option<show::FrameLog>,
         events: Sender<ShowEvent>,
     ) -> anyhow::Result<ScreenRecorder> {
-        ScreenRecorder::start(id, started, scope, events, self.canvas.clone())
+        ScreenRecorder::start(id, started, scope, log, events, self.canvas.clone())
     }
 
     fn publish(
         &self,
-        footage: Footage,
-        narration: Narration,
-        lost: Option<NarrationLoss>,
+        publication: show::Publication,
         permit: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
-        show::publish(footage, narration, lost, permit)
+        show::publish(publication, permit)
     }
 
-    fn abandon_footage(
-        &self,
-        footage: Footage,
-    ) -> impl Future<Output = anyhow::Result<()>> + Send + 'static {
-        let work = tokio::task::spawn_blocking(move || footage.abandon());
-        async move {
-            work.await.unwrap_or_else(|_private_panic| {
-                Err(anyhow::anyhow!(
-                    "Show cleanup stopped. Check interrupted Shows."
-                ))
-            })
-        }
-    }
-
-    fn recover(
+    fn reopen(
         &self,
         interrupted: Interrupted,
-        permit: InsertPermit,
-    ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
-        show::recover(interrupted, permit)
+    ) -> impl Future<Output = anyhow::Result<show::Reopened>> + Send + 'static {
+        show::reopen(interrupted)
     }
 
     fn load(

@@ -53,9 +53,14 @@ change only retention, preserve edits, and refuse missing or unmanaged Shows.
 
 An interrupted entry has an `interrupted:ID`, an original expiry date, and no known duration or
 frame count until recovery. Ask the user to use **Recover Show** in the Shows window, then inspect
-the resulting explicit bundle. Recovery restores complete checkpointed frames and annotations,
-without narration or clipboard changes. When the user explicitly asks to discard it, run
+the resulting explicit bundle. Recovery restores checkpointed frames, annotations, and narration
+through the configured local engine, without clipboard changes. `narrationLost: "incomplete"` means
+only the surviving audio prefix was recovered; treat its narration as partial. A `narrationPending`
+entry offers **Transcribe narration**, which saves a new narrated copy and preserves earlier edits.
+Audio expires seven days after recording even if the saved Show is kept; successful transcription
+erases it. When the user explicitly asks to discard it, run
 `speakeasy show discard "interrupted:ID" --json`; an exact checkpoint path from `list` also works.
-Discard is permanent. A saved Show ID never selects a checkpoint with the same timestamp.
+Discard is permanent; discarding pending audio leaves its saved Show. A saved Show ID never selects
+a checkpoint with the same timestamp.
 
 `speakeasy show --help` describes the installed commands. `speakeasy show skill` prints this guide.

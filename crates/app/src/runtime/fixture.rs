@@ -4,7 +4,6 @@
 use std::{path::PathBuf, time::Duration};
 
 use speakeasy_platform::{Delivery, InsertPermit, Inserted, Taps};
-use speakeasy_show::{Narration, NarrationLoss};
 use tokio::time::timeout;
 
 use super::{
@@ -50,38 +49,31 @@ impl Ports for Fixture {
         })
     }
 
+    fn keep(&self, _: std::time::SystemTime) -> anyhow::Result<Option<crate::show::Kept>> {
+        Ok(None)
+    }
+
     fn record_screen(
         &self,
         _: SessionId,
         _: Instant,
         _: Scope,
+        _: Option<crate::show::FrameLog>,
         _: Sender<ShowEvent>,
     ) -> anyhow::Result<FixtureDevice> {
         anyhow::bail!("The dictation fixture records no Shows")
     }
 
-    fn abandon_footage(
+    fn reopen(
         &self,
-        footage: Footage,
-    ) -> impl Future<Output = anyhow::Result<()>> + Send + 'static {
-        std::future::ready(footage.abandon())
-    }
-
-    fn recover(
-        &self,
-        _: crate::show::Interrupted,
-        _: InsertPermit,
-    ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
-        std::future::ready(Err(anyhow::anyhow!(
-            "Recovery is not configured for this fixture"
-        )))
+        interrupted: crate::show::Interrupted,
+    ) -> impl Future<Output = anyhow::Result<crate::show::Reopened>> + Send + 'static {
+        crate::show::reopen(interrupted)
     }
 
     fn publish(
         &self,
-        _: Footage,
-        _: Narration,
-        _: Option<NarrationLoss>,
+        _: crate::show::Publication,
         _: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
         std::future::ready(Err(anyhow::anyhow!(
@@ -155,6 +147,10 @@ impl Capturing for FixtureDevice {
 }
 
 impl Listening for FixtureDevice {
+    fn keep(&self, _: crate::show::AudioLog, _: Duration, _: &str) -> bool {
+        true
+    }
+
     fn expect_cue(&self) {}
 }
 

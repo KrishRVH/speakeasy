@@ -1,10 +1,14 @@
-//! Real private checkpoint lifetime around the recorder's synthetic capture and report paths.
+//! Durable frame handoff uses synthetic capture; the session owns checkpoint disposition.
+use std::time::SystemTime;
 
 use super::*;
+use crate::show::{Keeper, Kept};
 
-async fn captured(root: &std::path::Path, cancel: bool) -> anyhow::Result<Option<Footage>> {
-    let (checkpoint, writer) = Checkpoint::begin(
-        root,
+#[tokio::test(start_paused = true)]
+async fn capture_finish_flushes_end_before_handoff() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let (keeper, log) = Keeper::fixture(
+        root.path(),
         SystemTime::now(),
         JOURNAL_BUDGET,
         Size {
@@ -12,94 +16,19 @@ async fn captured(root: &std::path::Path, cancel: bool) -> anyhow::Result<Option
             height: 500.0,
         },
     )?;
-    record_with(
-        |take| {
-            take.checkpoint = Some(checkpoint);
-            take.log = Some(writer);
-        },
+    let (footage, _) = record_with(
+        |take| take.log = Some(log),
         async |feed| {
             feed.frame(0).await;
             wait(10).await;
-            if cancel {
-                feed.finish.close();
-            } else {
-                feed.finish().await;
-            }
+            feed.finish().await;
         },
     )
-    .await
-    .0
-}
-
-#[tokio::test(start_paused = true)]
-async fn capture_finish_flushes_end_before_handoff_and_cancel_removes_checkpoint()
--> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let footage = captured(root.path(), false)
-        .await?
-        .context("The Show finished")?;
-    let checkpoint = footage
-        .checkpoint
-        .as_ref()
-        .context("The take checkpointed")?;
-    assert!(
-        checkpoint.replay()?.ended(),
-        "End was not durable before footage handoff"
-    );
-    assert_eq!(
-        store::checkpoint::list(root.path(), SystemTime::now()).shows,
-        []
-    );
-    footage
-        .checkpoint
-        .context("The take checkpointed")?
-        .discard()?;
-    assert!(captured(root.path(), true).await?.is_none());
-    assert_eq!(
-        std::fs::read_dir(root.path().join(".checkpoints"))?.count(),
-        0
-    );
-    Ok(())
-}
-
-#[tokio::test(start_paused = true)]
-async fn unreceived_reports_preserve_finished_takes_and_discard_unfinished_takes()
--> anyhow::Result<()> {
-    for (ending, closed_lane) in [
-        (Ending::Finished, false),
-        (Ending::Finished, true),
-        (Ending::ScreenStopped, false),
-        (Ending::ScreenStopped, true),
-    ] {
-        let root = tempfile::tempdir()?;
-        let mut footage = captured(root.path(), false)
-            .await?
-            .context("The Show finished")?;
-        footage.recording.ending = ending;
-        let (canvas, _) = watch::channel(Canvas::default());
-        let (finish, _pins, lanes) = lanes(&canvas);
-        if closed_lane {
-            finish.close();
-        }
-        let (events, receiver) = async_channel::bounded(1);
-        receiver.close();
-        let mut report = Report::new(SessionId::FIRST, events, &lanes);
-        report.outcome = Ok(Ended::Recorded(Box::new(footage)));
-        drop(report);
-        let found = store::checkpoint::list(root.path(), SystemTime::now());
-        assert!(found.problems.is_empty());
-        assert_eq!(found.shows.len(), usize::from(ending == Ending::Finished));
-        if let Some(interrupted) = found.shows.first() {
-            assert!(
-                interrupted.lock().is_ok(),
-                "The unreceived report retained its lock"
-            );
-        }
-        assert_eq!(
-            std::fs::read_dir(root.path().join(".checkpoints"))?.count(),
-            found.shows.len()
-        );
-    }
+    .await;
+    assert!(footage?.is_some());
+    let checkpoint = keeper.close().await?;
+    assert!(checkpoint.replay()?.ended());
+    checkpoint.discard()?;
     Ok(())
 }
 
@@ -107,7 +36,7 @@ async fn unreceived_reports_preserve_finished_takes_and_discard_unfinished_takes
 async fn invalid_late_events_keep_the_frames_and_checkpoint_already_recorded() -> anyhow::Result<()>
 {
     let root = tempfile::tempdir()?;
-    let (checkpoint, writer) = Checkpoint::begin(
+    let (checkpoint, writer) = Keeper::fixture(
         root.path(),
         SystemTime::now(),
         JOURNAL_BUDGET,
@@ -118,7 +47,6 @@ async fn invalid_late_events_keep_the_frames_and_checkpoint_already_recorded() -
     )?;
     let (recorded, _) = record_with(
         |take| {
-            take.checkpoint = Some(checkpoint);
             take.log = Some(writer);
         },
         async |feed| {
@@ -131,10 +59,9 @@ async fn invalid_late_events_keep_the_frames_and_checkpoint_already_recorded() -
     assert_eq!(footage.recording.ending, Ending::ScreenStopped);
     assert_eq!(footage.journal.samples().len(), 1);
     assert_eq!(
-        footage
-            .checkpoint
-            .as_ref()
-            .unwrap()
+        checkpoint
+            .close()
+            .await?
             .replay()?
             .journal()
             .samples()
@@ -146,24 +73,18 @@ async fn invalid_late_events_keep_the_frames_and_checkpoint_already_recorded() -
 
 #[tokio::test]
 async fn a_failed_writer_warns_once_and_keeps_recording_in_memory() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let (checkpoint, writer) = Checkpoint::begin(
-        root.path(),
+    let Kept {
+        keeper,
+        frames: writer,
+        audio,
+    } = crate::show::Keeper::start(
+        || anyhow::bail!("Synthetic checkpoint failure"),
         SystemTime::now(),
-        JOURNAL_BUDGET,
-        Size {
-            width: 1_000.0,
-            height: 500.0,
-        },
     )?;
-    assert!(writer.close().await);
-    // A read-only file makes the first checkpoint write fail independently of the live take.
-    let file = tempfile::NamedTempFile::new_in(root.path())?;
-    let writer = store::checkpoint::Writer::start(std::fs::File::open(file.path())?)?;
+    drop(audio);
     let (events, notices) = async_channel::bounded(4);
     let (recorded, _) = record_with(
         |take| {
-            take.checkpoint = Some(checkpoint);
             take.log = Some(writer);
             take.checkpoint_notice = Some((SessionId::FIRST, events));
         },
@@ -187,6 +108,7 @@ async fn a_failed_writer_warns_once_and_keeps_recording_in_memory() -> anyhow::R
         },
     )
     .await;
+    assert!(keeper.close().await.is_err());
     let footage = recorded?.context("Recording survives checkpoint failure")?;
     assert!(footage.journal.samples().len() >= 2);
     assert_eq!(footage.recording.ending, Ending::Finished);

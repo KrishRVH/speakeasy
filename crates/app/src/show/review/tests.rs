@@ -18,7 +18,7 @@ fn row(name: &str) -> Row {
         marks: 0,
         pinned: Some(false),
         early: false,
-        silent: false,
+        narration_lost: None,
     }
 }
 
@@ -62,7 +62,7 @@ fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> anyhow
     let (rows, _) = list(&root.directory)?;
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0].pinned, Some(true));
-    assert!(rows[1].early && rows[1].silent);
+    assert!(rows[1].early && rows[1].narration_lost.is_some());
     assert_eq!(rows[2].health, Health::Damaged);
     let detail = Detail::open(&rows[2].directory, library::Mode::Keyframes)?;
     assert_eq!(detail.frames.len(), 4);
