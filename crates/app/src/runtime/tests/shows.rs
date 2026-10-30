@@ -341,9 +341,14 @@ async fn cancelling_a_show_whose_screen_stopped_publishes_nothing() -> anyhow::R
     events
         .send(ShowEvent::Finished(id, Ok(stopped_footage())))
         .await?;
-    let _transcription = receive(&h.jobs).await?;
+    let (_, mut reply) = receive(&h.jobs).await?;
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
+    timeout(PATIENCE, reply.closed()).await?;
+    assert!(
+        answer(reply, "too late").is_err(),
+        "The cancelled Show's transcription stayed alive"
+    );
     assert!(
         still_pending(h.published.recv()).await,
         "A cancelled Show was published"
