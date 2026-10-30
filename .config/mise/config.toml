@@ -30,7 +30,7 @@ typos = "1.51.1"
 actionlint = "1.7.12"
 
 # A dependency change is when a crate can bring a license packaging cannot cite, so the check runs
-# here rather than in every gate; the preview lists all three packaged targets together.
+# here rather than in every gate; its notices cover all three packaged targets at once.
 [tasks."rust:lock"]
 description = "Refresh workspace dependency requirements and check packaging can cite their licenses"
 run = [

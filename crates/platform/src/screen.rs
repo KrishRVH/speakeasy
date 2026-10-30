@@ -381,7 +381,7 @@ impl NativeWindow {
     }
 }
 
-/// Linux records no Shows yet: finding a display and configuring an overlay fail, and the other
+/// Linux records no Shows: finding a display and configuring an overlay fail, and the other
 /// entry points do nothing.
 #[cfg(target_os = "linux")]
 mod unsupported {
