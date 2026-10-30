@@ -354,26 +354,51 @@ fn save_refuses_to_replace_a_file_that_needs_repair() -> anyhow::Result<()> {
 }
 
 #[test]
-fn a_repair_notice_names_the_key_at_fault_but_not_its_value() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    let path = directory.path().join("settings.json");
-    let notice = format!("Invalid settings in {}: ", path.display());
-    for (contents, key, value) in [
-        (r#"{"threads":"four"}"#, "threads", "four"),
-        (r#"{"remove_fillers":true,"theme":"Jet"}"#, "theme", "Jet"),
-        (r#"{"linux":{"cancel":false}}"#, "linux.cancel", "false"),
+fn a_repair_notice_names_the_key_before_serdes_account() -> anyhow::Result<()> {
+    for (contents, reason) in [
+        // A fault in a value names its key, an unknown key's included.
+        (
+            r#"{"theme":"Jet"}"#,
+            "theme: unknown variant `Jet`, expected one of `jet`, `emerald`, `iris`, `chrome` at line 1 column 14",
+        ),
+        (
+            r#"{"linux":{"cancel":false}}"#,
+            "linux.cancel: invalid type: boolean `false`, expected a string at line 1 column 24",
+        ),
+        (
+            r#"{"theme":jet}"#,
+            "theme: expected value at line 1 column 10",
+        ),
+        (
+            r#"{"retired":1e400}"#,
+            "retired: number out of range at line 1 column 16",
+        ),
+        // A fault between a block's keys names the block.
+        (
+            r#"{"linux":{"cancel":"a","cancel":"b"}}"#,
+            "linux: duplicate field `cancel` at line 1 column 31",
+        ),
+        (
+            r#"{"linux":{"cancel":"a",}}"#,
+            "linux: trailing comma at line 1 column 24",
+        ),
+        // A fault outside every key names none.
+        (
+            r#"{"theme":"jet","theme":"iris"}"#,
+            "duplicate field `theme` at line 1 column 22",
+        ),
+        (
+            r#"{"threads":4 "theme":"jet"}"#,
+            "expected `,` or `}` at line 1 column 14",
+        ),
+        ("{} x", "trailing characters at line 1 column 4"),
     ] {
-        fs::write(&path, contents)?;
-        let error = Config::read(&path)
+        let error = parse(contents.as_bytes(), Path::new("settings.json"))
             .err()
-            .with_context(|| format!("{key} of the wrong kind was read"))?;
-        let error = format!("{error:#}");
-        let reason = error
-            .strip_prefix(&notice)
-            .with_context(|| format!("The notice does not name the file: {error}"))?;
-        assert!(
-            reason.contains(key) && !reason.contains(value),
-            "{key}: {reason}"
+            .with_context(|| format!("{contents} was read"))?;
+        assert_eq!(
+            format!("{error:#}"),
+            format!("Invalid settings in settings.json: {reason}")
         );
     }
     Ok(())

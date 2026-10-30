@@ -21,7 +21,8 @@ use std::{
 
 use anyhow::{Context as _, anyhow, ensure};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, error::Category};
+use serde_json::{Map, Value};
+use serde_path_to_error::Segment;
 use speakeasy_platform::{Delivery, DesktopOptions, LinuxPaste};
 
 use crate::{theme::Theme, transcript::Fillers};
@@ -504,37 +505,42 @@ impl Deref for ValidConfig {
 /// Parses `contents` as settings and as the map a save patches, so a file that reads is always one a
 /// save can patch: skipping an unknown key accepts values that holding it does not, such as `1e400`
 /// or a lone surrogate, and serde reads `linux` from an array that a save cannot patch key by key.
-/// Settings parse first, because only their failure can name the key at fault; see [`unreadable`].
+/// Settings parse first, so the notice names a setting at fault before such a value.
 fn parse(contents: &[u8], path: &Path) -> anyhow::Result<(Config, Map<String, Value>)> {
     let invalid = || format!("Invalid settings in {}", path.display());
-    let mut json = serde_json::Deserializer::from_slice(contents);
-    let config: Config = serde_path_to_error::deserialize(&mut json)
-        .map_err(unreadable)
-        .with_context(invalid)?;
-    json.end().with_context(invalid)?;
-    let file: Map<String, Value> = serde_json::from_slice(contents).with_context(invalid)?;
+    let config: Config = from_json(contents).with_context(invalid)?;
+    let file: Map<String, Value> = from_json(contents).with_context(invalid)?;
     if file.get("linux").is_some_and(|linux| !linux.is_object()) {
         return Err(anyhow!("The linux settings must be an object").context(invalid()));
     }
     Ok((config, file))
 }
 
-/// What the user is told when settings do not read. JSON that does not parse keeps serde's account,
-/// which gives the line and column. Serde's account of a value of the wrong kind quotes the value,
-/// so a fault in a key, such as that value or a Linux key that does not exist, is told by the key's
-/// path, such as `linux.cancel`, and position instead. Any other fault, such as a top-level key
-/// written twice or a file that holds no object, is told by position alone.
-fn unreadable(error: serde_path_to_error::Error<serde_json::Error>) -> anyhow::Error {
-    let fault = error.inner();
-    if fault.classify() != Category::Data {
-        return error.into_inner().into();
-    }
-    let (line, column) = (fault.line(), fault.column());
-    let key = error.path();
-    if key.iter().len() == 0 {
-        return anyhow!("Cannot read the settings at line {line} column {column}.");
-    }
-    anyhow!("Cannot read {key} at line {line} column {column}. Correct or remove it.")
+/// Reads `contents` as one JSON `T`. A failure is serde's account, with the values a key accepts
+/// where serde lists them, after the key it lies under: `linux.cancel` for a fault in that value, or
+/// `linux` for one between the block's keys, such as a key written twice. A fault outside every key,
+/// such as a top-level key written twice, is serde's account alone.
+fn from_json<'de, T: Deserialize<'de>>(contents: &'de [u8]) -> anyhow::Result<T> {
+    let mut json = serde_json::Deserializer::from_slice(contents);
+    let value = serde_path_to_error::deserialize(&mut json).map_err(|error| {
+        let key = error
+            .path()
+            .iter()
+            .map_while(|segment| match segment {
+                Segment::Map { key: name } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(".");
+        let account = anyhow::Error::new(error.into_inner());
+        if key.is_empty() {
+            account
+        } else {
+            account.context(key)
+        }
+    })?;
+    json.end()?;
+    Ok(value)
 }
 
 /// Linux's own limit on following a chain of links, which also ends a loop of them.
