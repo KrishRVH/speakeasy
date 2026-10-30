@@ -20,7 +20,7 @@ const SHIFT_TAP_GAP: Duration = Duration::from_millis(400);
 /// Hold state for the modifier-only shortcut.
 ///
 /// Space during a hold locks hands-free, and S, W, or A turns the recording into a Show; any other
-/// key belongs to a different shortcut, so it interrupts dictation and waits for the chord's
+/// key belongs to a different shortcut, so it interrupts the recording and waits for the chord's
 /// release.
 #[derive(Default)]
 struct Chord {
