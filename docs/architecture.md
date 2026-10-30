@@ -231,6 +231,7 @@ stateDiagram-v2
     Stopping --> AwaitingFootage: silent Show; empty narration
     Transcribing --> AwaitingFootage: Show narration
     Recording --> AwaitingFootage: Show audio stops; narration lost
+    Stopping --> AwaitingFootage: Show audio stops; narration lost
     AwaitingWorker --> AwaitingFootage: Show model fails to load; narration lost
     Transcribing --> AwaitingFootage: Show retry fails; narration lost
     AwaitingFootage --> Delivering: footage recorded; publish

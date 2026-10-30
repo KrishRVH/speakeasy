@@ -225,26 +225,39 @@ impl Session {
         }
     }
 
-    /// Sends a Show whose narration was lost on to its footage without any, dropping the speech it
-    /// held; returns whether it did. Only a Show whose microphone listened has narration to lose:
-    /// one whose microphone fails while opening has recorded nothing yet, and fails with the
-    /// microphone's remedy, as dictation does whenever it loses its speech.
-    pub(super) fn lose_narration(&mut self, loss: NarrationLoss) -> bool {
-        let listened = matches!(
-            self.stage,
-            Stage::Recording { .. }
-                | Stage::Stopping { .. }
-                | Stage::AwaitingWorker(_)
-                | Stage::Transcribing(_)
-        );
-        let kept = listened && self.is_show();
-        if kept {
-            self.stage = Stage::AwaitingFootage {
-                narration: Narration::default(),
-                lost: Some(loss),
-            };
+    /// Sends a Show whose audio capture stopped after it began listening on to its footage without
+    /// narration; returns whether it did. A microphone that fails while opening has recorded
+    /// nothing worth keeping, so that Show fails with the microphone's remedy, as dictation always
+    /// does.
+    pub(super) fn audio_stopped(&mut self) -> bool {
+        let listened = self.is_show()
+            && matches!(self.stage, Stage::Recording { .. } | Stage::Stopping { .. });
+        if listened {
+            self.go_on_without_narration(NarrationLoss::AudioStopped);
         }
-        kept
+        listened
+    }
+
+    /// Sends a Show whose sealed speech could not be transcribed, still waiting for a worker or
+    /// failed again on its one retry, on to its footage without narration, dropping the speech;
+    /// returns whether it did.
+    pub(super) fn not_transcribed(&mut self) -> bool {
+        let given_up = self.is_show()
+            && matches!(
+                self.stage,
+                Stage::AwaitingWorker(_) | Stage::Transcribing(Speech { retried: true, .. })
+            );
+        if given_up {
+            self.go_on_without_narration(NarrationLoss::NotTranscribed);
+        }
+        given_up
+    }
+
+    fn go_on_without_narration(&mut self, lost: NarrationLoss) {
+        self.stage = Stage::AwaitingFootage {
+            narration: Narration::default(),
+            lost: Some(lost),
+        };
     }
 
     /// Delivers transcribed dictation through `insert`, which receives the session's permit.
@@ -365,8 +378,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_show_whose_microphone_listened_goes_on_without_its_narration() {
-        const LOSS: NarrationLoss = NarrationLoss::AudioStopped;
+    fn a_show_goes_on_without_narration_only_from_the_stages_its_loss_can_reach() {
         let (sender, _inputs) = async_channel::bounded(1);
         let input = InputSender::new(sender);
         let opened = |show| {
@@ -378,25 +390,41 @@ mod tests {
             session.opened();
             session
         };
+        let lost = |session: &Session| match session.stage {
+            Stage::AwaitingFootage { lost, .. } => lost,
+            _ => None,
+        };
         let mut dictation = opened(false);
         dictation.audio_ready(State::Held, Instant::now());
-        assert!(
-            !dictation.lose_narration(LOSS),
-            "Dictation has nothing left"
-        );
+        assert!(!dictation.audio_stopped(), "Dictation has nothing left");
+
         let mut show = opened(true);
         assert!(
-            !show.lose_narration(LOSS),
+            !show.audio_stopped(),
             "A microphone that never listened fails with its remedy"
         );
         show.audio_ready(State::Held, Instant::now());
-        assert!(show.lose_narration(LOSS));
-        assert!(matches!(
-            show.stage,
-            Stage::AwaitingFootage {
-                lost: Some(LOSS),
-                ..
-            }
-        ));
+        assert!(
+            !show.not_transcribed(),
+            "A Show still recording has no speech to transcribe"
+        );
+        show.finish();
+        assert!(
+            show.audio_stopped(),
+            "Audio can still stop while the capture seals it"
+        );
+        assert_eq!(lost(&show), Some(NarrationLoss::AudioStopped));
+
+        let mut show = opened(true);
+        show.audio_ready(State::Held, Instant::now());
+        show.finish();
+        assert!(show.captured(Some(Sealed::default())));
+        assert!(!show.audio_stopped(), "Sealed audio can no longer stop");
+        show.transcribe(|_| true);
+        assert!(!show.not_transcribed(), "Speech keeps its one retry");
+        assert!(show.retry());
+        show.transcribe(|_| true);
+        assert!(show.not_transcribed());
+        assert_eq!(lost(&show), Some(NarrationLoss::NotTranscribed));
     }
 }

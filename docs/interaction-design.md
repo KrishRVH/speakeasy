@@ -43,7 +43,7 @@ non-activating and click-through.
 | Show copied      | Closed lid with a lamp check and “Show copied” for 1.6 seconds, once the bundle is written and its summary copied. |
 | Stopped early    | A muted notice of up to two lines saying the Show was copied but stopped early, and why, for six seconds.          |
 | Nothing chosen   | A muted notice of up to two lines saying why a W or A Show was cancelled, for six seconds.                         |
-| Narration lost   | The same notice saying the Show was copied without narration, and that it stopped early if it did.                 |
+| Narration lost   | The same notice saying the Show was copied without narration and why, and that it stopped early if it did.         |
 | Text copied      | A muted notice of up to two lines saying how to paste the copied text, for six seconds.                            |
 | No speech        | “No speech detected” on the closed lid for 1.2 seconds.                                                            |
 | Cancelled        | Quiet dismissal without a completion mark.                                                                         |

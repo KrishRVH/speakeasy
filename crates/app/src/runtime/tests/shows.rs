@@ -1,5 +1,5 @@
-//! Show scenarios: S, W, or A during a hold, screen lanes, footage, lost narration, and publication,
-//! against a fake screen and gated publication.
+//! Show scenarios: S, W, or A during a hold, screen lanes, footage, lost narration, and
+//! publication, against a fake screen and gated publication.
 
 use speakeasy_show::Ending;
 
@@ -349,8 +349,11 @@ async fn s_while_the_last_microphone_retires_still_starts_a_show() -> anyhow::Re
     h.close().await
 }
 
-/// What the pill and Settings say once a Show is copied without the narration it lost.
+/// What the pill and Settings say once a Show is copied without the narration it lost, before the
+/// failure that cost it.
 const COPIED_WITHOUT_NARRATION: &str = "Show copied without narration.";
+/// A capture failure whose message carries its remedy.
+const DISCONNECTED: &str = "The microphone was disconnected. Reconnect it.";
 
 /// Holds the shortcut and presses S once the microphone listens, returning the microphone's lane.
 async fn start_show_listening(h: &mut Harness) -> anyhow::Result<OpenedCapture> {
@@ -363,13 +366,16 @@ async fn start_show_listening(h: &mut Harness) -> anyhow::Result<OpenedCapture> 
 }
 
 fn disconnected(id: SessionId) -> CaptureEvent {
-    CaptureEvent::Finished(id, Err(anyhow!("Microphone disconnected")))
+    CaptureEvent::Finished(id, Err(anyhow!(DISCONNECTED)))
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_show_whose_microphone_stops_ends_there_and_is_copied_without_narration()
--> anyhow::Result<()> {
-    let mut h = Harness::new()?;
+async fn a_show_whose_audio_stops_ends_there_and_is_copied_with_the_remedy() -> anyhow::Result<()> {
+    let (results, loading) = async_channel::bounded(1);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.load_results = Some(loading);
+    })?;
+    receive(&h.loads).await?;
     let (id, events) = start_show_listening(&mut h).await?;
     receive(&h.shows).await?;
     events.send(disconnected(id)).await?;
@@ -381,11 +387,20 @@ async fn a_show_whose_microphone_stops_ends_there_and_is_copied_without_narratio
     );
     h.phase(Phase::Copied).await?;
     let snapshot = h.snapshot();
-    assert_eq!(snapshot.message, COPIED_WITHOUT_NARRATION);
+    let copied = format!("{COPIED_WITHOUT_NARRATION} {DISCONNECTED}");
+    assert_eq!(snapshot.message, copied);
     assert_eq!(snapshot.narration_lost, Some(NarrationLoss::AudioStopped));
     assert!(
         h.take_sounds().contains(&Sound::Played(Cue::Stop)),
-        "The Show ended where the microphone stopped"
+        "The Show ended where its audio stopped"
+    );
+    results.send(Ok(())).await?;
+    h.observe(|snapshot| snapshot.model == ModelState::Ready)
+        .await?;
+    assert_eq!(
+        h.snapshot().message,
+        copied,
+        "A model that loads fixes nothing the microphone needs"
     );
     h.input(Input::Release);
     start_show(&mut h).await?;
@@ -407,7 +422,10 @@ async fn a_show_whose_speech_fails_its_retry_is_copied_without_narration() -> an
     assert_eq!(narration, Narration::default());
     h.phase(Phase::Copied).await?;
     let snapshot = h.snapshot();
-    assert_eq!(snapshot.message, COPIED_WITHOUT_NARRATION);
+    assert_eq!(
+        snapshot.message,
+        format!("{COPIED_WITHOUT_NARRATION} Engine exited again")
+    );
     assert_eq!(snapshot.narration_lost, Some(NarrationLoss::NotTranscribed));
     receive(&h.loads).await?;
     h.close().await
@@ -437,7 +455,10 @@ async fn a_model_that_fails_to_load_fails_dictation_but_copies_a_show_without_na
     assert_eq!(narration, Narration::default());
     h.phase(Phase::Copied).await?;
     let snapshot = h.snapshot();
-    assert_eq!(snapshot.message, COPIED_WITHOUT_NARRATION);
+    assert_eq!(
+        snapshot.message,
+        format!("{COPIED_WITHOUT_NARRATION} Model failed to load")
+    );
     assert_eq!(snapshot.narration_lost, Some(NarrationLoss::NotTranscribed));
     assert_eq!(
         snapshot.model,
@@ -466,7 +487,9 @@ async fn a_show_that_lost_its_screen_and_its_narration_says_both() -> anyhow::Re
     );
     assert_eq!(
         snapshot.message,
-        "Show copied without narration, and the screen stopped recording early."
+        format!(
+            "Show copied without narration, and the screen stopped recording early. {DISCONNECTED}"
+        )
     );
     h.close().await
 }

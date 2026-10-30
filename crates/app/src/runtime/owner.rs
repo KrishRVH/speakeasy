@@ -1,7 +1,7 @@
 //! The single session authority. Each wake handles one message, advances work whose prerequisites
 //! are satisfied, then presents a projection of owned state.
 
-use std::{convert::Infallible, ops::ControlFlow, sync::Arc, time::Instant};
+use std::{borrow::Cow, convert::Infallible, ops::ControlFlow, sync::Arc, time::Instant};
 
 use async_channel::{Receiver, RecvError, Sender};
 use speakeasy_core::gesture::{Action, Gesture, State};
@@ -34,11 +34,11 @@ const SHOW_SCREEN_STOPPED: &str = "Show copied, but the screen stopped recording
 const SHOW_WINDOW_CLOSED: &str = "Show copied, but the recorded window closed.";
 /// What a copied Show whose window went off screen while it recorded tells the user.
 const SHOW_WINDOW_OFF_SCREEN: &str = "Show copied, but the recorded window went off screen.";
-/// What a copied Show whose narration was lost tells the user; its summary tells the agent why.
+/// What a copied Show whose narration was lost tells the user, before the failure that cost it;
+/// its summary tells the agent why.
 const SHOW_UNNARRATED: &str = "Show copied without narration.";
 /// What a copied Show that lost its narration and whose screen stopped early tells the user. Each
-/// loss leaves a different gap, so the message names both, and each such message fits the pill's
-/// two lines.
+/// loss leaves a different gap, so the message names both, ahead of the failure.
 const SHOW_UNNARRATED_SCREEN_STOPPED: &str =
     "Show copied without narration, and the screen stopped recording early.";
 /// What a copied Show that lost its narration and whose window closed tells the user.
@@ -89,10 +89,15 @@ impl Outcome {
 }
 
 /// Status text shown unless the outcome carries its own message: a failure or a copied delivery.
+/// A Show copied without narration still shows the failure it outlived, after its own message.
 enum Notice {
     LoadingModel,
     SettingsApplied,
+    /// The model failed to load; a later load clears it.
     WarmupFailed(String),
+    /// Why audio capture or transcription cost a Show its narration, with the remedy. A later load
+    /// leaves it, since the cause may lie outside the model.
+    NarrationLost(String),
 }
 
 impl Notice {
@@ -100,7 +105,15 @@ impl Notice {
         match self {
             Self::LoadingModel => LOADING,
             Self::SettingsApplied => "Settings applied",
-            Self::WarmupFailed(message) => message,
+            Self::WarmupFailed(failure) | Self::NarrationLost(failure) => failure,
+        }
+    }
+
+    /// The failure a session outlived, if this notice is one.
+    fn failure(&self) -> Option<&str> {
+        match self {
+            Self::WarmupFailed(failure) | Self::NarrationLost(failure) => Some(failure),
+            Self::LoadingModel | Self::SettingsApplied => None,
         }
     }
 }
@@ -385,12 +398,14 @@ impl<P: Ports> Owner<P> {
                 }
             },
             CaptureEvent::Finished(_, Err(error)) => {
-                // A Show whose microphone listened ends where its audio stopped, keeping its
-                // footage. Failing retires both devices, so the screen is never asked to finish
-                // footage for nobody.
-                if session.lose_narration(NarrationLoss::AudioStopped) {
+                if session.audio_stopped() {
+                    // A Show whose microphone listened ends where its audio stopped, keeping its
+                    // footage and the failure's remedy.
+                    self.notice = Some(Notice::NarrationLost(error.to_string()));
                     self.conclude_capture();
                 } else {
+                    // Failing retires both devices, so the screen is never asked to finish footage
+                    // for nobody.
                     self.fail(error.to_string());
                 }
             },
@@ -427,11 +442,10 @@ impl<P: Ports> Owner<P> {
                 }
             },
             Completion::Loaded(Err(error)) => {
-                // A Show waiting for the worker goes on without narration, so, like a session that
-                // is not waiting, it survives with the failure in view until it ends.
-                if self.session_survives_warmup_failure()
-                    || self.lose_narration(NarrationLoss::NotTranscribed)
-                {
+                if self.session_survives_warmup_failure() {
+                    self.notice = Some(Notice::WarmupFailed(error.to_string()));
+                } else if self.session.as_mut().is_some_and(Session::not_transcribed) {
+                    // A Show waiting for the worker goes on without narration, the failure in view.
                     self.notice = Some(Notice::WarmupFailed(error.to_string()));
                 } else {
                     self.fail(error.to_string());
@@ -448,7 +462,9 @@ impl<P: Ports> Owner<P> {
                 // The session still holds its speech, which `advance` resends once a fresh worker
                 // loads. After that one retry, a Show goes on without narration.
                 if !self.session.as_mut().is_some_and(Session::retry) {
-                    if !self.lose_narration(NarrationLoss::NotTranscribed) {
+                    if self.session.as_mut().is_some_and(Session::not_transcribed) {
+                        self.notice = Some(Notice::NarrationLost(error.to_string()));
+                    } else {
                         self.fail(error.to_string());
                     }
                     self.worker.revive(&self.ports, &self.config);
@@ -463,14 +479,6 @@ impl<P: Ports> Owner<P> {
         self.session
             .as_ref()
             .is_some_and(|session| !session.awaits_worker())
-    }
-
-    /// Sends the session, when it is a Show whose microphone listened, on to its footage without
-    /// the narration `loss` cost it; returns whether it did.
-    fn lose_narration(&mut self, loss: NarrationLoss) -> bool {
-        self.session
-            .as_mut()
-            .is_some_and(|session| session.lose_narration(loss))
     }
 
     /// Only the current job's transcript arrives here: abandoning a session first moves its job out
@@ -778,24 +786,36 @@ impl<P: Ports> Owner<P> {
         self.retiring.retain(|task| !task.is_finished());
     }
 
-    fn message(&self) -> &str {
+    fn message(&self) -> Cow<'_, str> {
         match &self.outcome {
-            Outcome::Failed(message) => message,
-            Outcome::Copied(message) => message,
-            Outcome::ShowCopied { ending, lost } => match (ending, lost) {
-                (Ending::Finished, None) => SHOW_COPIED,
-                (Ending::ScreenStopped, None) => SHOW_SCREEN_STOPPED,
-                (Ending::WindowClosed, None) => SHOW_WINDOW_CLOSED,
-                (Ending::WindowOffScreen, None) => SHOW_WINDOW_OFF_SCREEN,
-                (Ending::Finished, Some(_)) => SHOW_UNNARRATED,
-                (Ending::ScreenStopped, Some(_)) => SHOW_UNNARRATED_SCREEN_STOPPED,
-                (Ending::WindowClosed, Some(_)) => SHOW_UNNARRATED_WINDOW_CLOSED,
-                (Ending::WindowOffScreen, Some(_)) => SHOW_UNNARRATED_WINDOW_OFF_SCREEN,
+            Outcome::Failed(message) => message.into(),
+            Outcome::Copied(message) => Cow::Borrowed(message),
+            Outcome::ShowCopied { ending, lost: None } => match ending {
+                Ending::Finished => SHOW_COPIED,
+                Ending::ScreenStopped => SHOW_SCREEN_STOPPED,
+                Ending::WindowClosed => SHOW_WINDOW_CLOSED,
+                Ending::WindowOffScreen => SHOW_WINDOW_OFF_SCREEN,
+            }
+            .into(),
+            Outcome::ShowCopied {
+                ending,
+                lost: Some(_),
+            } => {
+                let copied = match ending {
+                    Ending::Finished => SHOW_UNNARRATED,
+                    Ending::ScreenStopped => SHOW_UNNARRATED_SCREEN_STOPPED,
+                    Ending::WindowClosed => SHOW_UNNARRATED_WINDOW_CLOSED,
+                    Ending::WindowOffScreen => SHOW_UNNARRATED_WINDOW_OFF_SCREEN,
+                };
+                match self.notice.as_ref().and_then(Notice::failure) {
+                    Some(failure) => format!("{copied} {failure}").into(),
+                    None => copied.into(),
+                }
             },
-            Outcome::Unchosen(Unchosen::Window) => NO_WINDOW,
-            Outcome::Unchosen(Unchosen::Area) => NO_AREA,
+            Outcome::Unchosen(Unchosen::Window) => NO_WINDOW.into(),
+            Outcome::Unchosen(Unchosen::Area) => NO_AREA.into(),
             Outcome::Idle | Outcome::Done | Outcome::Empty | Outcome::Cancelled => {
-                self.notice.as_ref().map_or("", Notice::text)
+                self.notice.as_ref().map_or("", Notice::text).into()
             },
         }
     }
@@ -816,7 +836,7 @@ impl<P: Ports> Owner<P> {
             ending,
             narration_lost,
             started: self.latest.started,
-            message: self.message().to_owned(),
+            message: self.message().into_owned(),
             model: self.worker.model(),
             desktop_ready: self.desktop_ready,
             shortcut: Arc::clone(&self.shortcut),
