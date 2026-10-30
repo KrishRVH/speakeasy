@@ -56,6 +56,16 @@ pub struct Gesture {
 }
 
 impl Gesture {
+    /// Starts an explicit saved-Show recovery while idle. Like publication, it ignores passive
+    /// Escape and cancel gestures; settings changes and shutdown still abandon it.
+    pub fn save(&mut self) -> bool {
+        if self.phase != Phase::Idle {
+            return false;
+        }
+        self.phase = Phase::Saving;
+        true
+    }
+
     /// The current mode; only gesture transitions change it.
     #[must_use]
     pub fn state(&self) -> State {

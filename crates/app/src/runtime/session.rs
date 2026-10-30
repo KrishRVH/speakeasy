@@ -81,6 +81,7 @@ struct Speech {
 pub(super) enum Delivered {
     Inserted(anyhow::Result<Inserted>),
     Published(anyhow::Result<Published>),
+    Abandoned(anyhow::Result<()>),
 }
 
 impl Session {
@@ -92,6 +93,18 @@ impl Session {
             stage: Stage::Queued,
             show: None,
         }
+    }
+
+    pub(super) fn recovering(
+        id: SessionId,
+        permit: InsertPermit,
+        started: Instant,
+        work: impl Future<Output = anyhow::Result<Published>> + Send + 'static,
+    ) -> Self {
+        let mut session = Self::new(id, permit, started);
+        session.show = Some(Screen::Spent);
+        session.deliver(async move { Delivered::Published(work.await) });
+        session
     }
 
     pub(super) const fn phase(&self) -> Phase {
@@ -334,11 +347,28 @@ impl Session {
 
     /// The insertion or publication still under way, which an abandoned session leaves to finish
     /// its own cleanup.
-    pub(super) fn into_delivery(self) -> Option<JoinHandle<Delivered>> {
-        match self.stage {
-            Stage::Delivering(task) => Some(task),
-            _ => None,
+    pub(super) fn into_cleanup<F>(
+        self,
+        abandon: impl FnOnce(Footage) -> F,
+    ) -> Option<JoinHandle<Delivered>>
+    where
+        F: Future<Output = anyhow::Result<()>> + Send + 'static,
+    {
+        if let Stage::Delivering(task) = self.stage {
+            return Some(task);
         }
+        if let Some(Screen::Recorded(footage)) = self.show
+            && matches!(
+                self.stage,
+                Stage::Queued | Stage::Opening | Stage::Recording { .. }
+            )
+        {
+            let work = abandon(*footage);
+            return Some(tokio::spawn(
+                async move { Delivered::Abandoned(work.await) },
+            ));
+        }
+        None
     }
 }
 

@@ -242,3 +242,79 @@ fn closing_the_output_pipe_preserves_the_io_error_kind() {
         assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
     }
 }
+
+#[tokio::test]
+async fn interrupted_listing_has_distinct_identity_and_original_expiry_without_replaying()
+-> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let now = SystemTime::now();
+    let (checkpoint, writer) = store::checkpoint::Checkpoint::begin(
+        root.path(),
+        now,
+        1_000,
+        speakeasy_show::Size {
+            width: 80.0,
+            height: 60.0,
+        },
+    )?;
+    assert!(writer.close().await);
+    let interrupted = checkpoint.interrupted()?;
+    // A header alone cannot be recovered, but metadata discovery must not read frames.
+    let mut bytes = Vec::new();
+    output::list(std::iter::empty(), Some(root.path()), true, &mut bytes)?;
+    let listing: serde_json::Value = serde_json::from_slice(&bytes)?;
+    assert_eq!(listing[0]["status"], "interrupted");
+    assert_eq!(listing[0]["id"], interrupted.id());
+    assert!(listing[0]["durationMs"].is_null());
+    let expires = listing[0]["expiresAt"].as_str().unwrap();
+    assert!(expires.contains(':') && expires.ends_with('Z'));
+    assert_eq!(
+        Command::parse(
+            ["discard", interrupted.id().as_str(), "--json"]
+                .map(OsString::from)
+                .into_iter()
+        )?,
+        Command::Discard {
+            directory: interrupted.id().into(),
+            json: true
+        }
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn checkpoint_damage_is_reported_beside_readable_saved_shows() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let saved = root.path().join("20261030T010203Z");
+    demo(Some(saved.clone()), &mut Vec::new())?;
+    let (checkpoint, writer) = store::checkpoint::Checkpoint::begin(
+        root.path(),
+        SystemTime::now(),
+        1_000,
+        speakeasy_show::Size {
+            width: 80.0,
+            height: 60.0,
+        },
+    )?;
+    assert!(writer.close().await);
+    let interrupted = checkpoint.interrupted()?;
+    fs::write(interrupted.directory().join("published"), b"invalid marker")?;
+    let mut bytes = Vec::new();
+    output::list(
+        recall::list(root.path())?,
+        Some(root.path()),
+        true,
+        &mut bytes,
+    )?;
+    let listing: Vec<Value> = serde_json::from_slice(&bytes)?;
+    assert_eq!(listing.len(), 2);
+    assert!(
+        listing.iter().any(|entry| entry["status"] == "damaged"
+            && entry["problems"].as_array().unwrap().len() == 1)
+    );
+    assert!(
+        listing.iter().any(|entry| entry["status"] == "ok"
+            && entry["directory"] == saved.to_string_lossy().as_ref())
+    );
+    Ok(())
+}

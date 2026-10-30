@@ -9,8 +9,27 @@ use std::{
 use serde::Serialize;
 use speakeasy_show::{Bundle, Ending, Manifest, Moment, NarrationLoss, Reason, Unreadable};
 
-use super::recall::{Entry, Health as Status, ReadError, ReadShow};
+use super::recall::{Entry, Health, ReadError, ReadShow};
 use crate::show::store::{address, retention::Retention};
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum Status {
+    Ok,
+    Damaged,
+    Unsupported,
+    Interrupted,
+}
+
+impl From<Health> for Status {
+    fn from(health: Health) -> Self {
+        match health {
+            Health::Ok => Self::Ok,
+            Health::Damaged => Self::Damaged,
+            Health::Unsupported => Self::Unsupported,
+        }
+    }
+}
 
 impl Status {
     const fn text(self) -> &'static str {
@@ -18,6 +37,7 @@ impl Status {
             Self::Ok => "ok",
             Self::Damaged => "damaged",
             Self::Unsupported => "unsupported",
+            Self::Interrupted => "interrupted",
         }
     }
 }
@@ -46,7 +66,7 @@ impl Overview {
     fn of(entry: &Entry, parent: Option<&Path>) -> Self {
         let (status, problems) = match &entry.show {
             Ok(show) => (
-                entry.health(),
+                entry.health().into(),
                 show.problems
                     .iter()
                     .map(|problem| Problem {
@@ -210,9 +230,43 @@ pub(super) fn list(
     as_json: bool,
     out: &mut impl io::Write,
 ) -> io::Result<()> {
-    let entries: Vec<_> = entries
+    let mut entries: Vec<_> = entries
         .map(|entry| entry.map(|entry| Overview::of(&entry, parent)))
         .collect::<io::Result<_>>()?;
+    if let Some(parent) = parent {
+        let found = crate::show::store::checkpoint::list(parent, SystemTime::now());
+        let mut interrupted: Vec<_> = found
+            .shows
+            .into_iter()
+            .map(|show| Overview {
+                id: Some(show.id()),
+                directory: show.directory().to_owned(),
+                status: Status::Interrupted,
+                expires_at: show.expires_at(),
+                pinned: Some(false),
+                duration_ms: None,
+                keyframes: None,
+                marks: None,
+                problems: Vec::new(),
+            })
+            .collect();
+        interrupted.extend(found.problems.into_iter().map(|problem| Overview {
+            id: None,
+            directory: problem.directory.clone(),
+            status: Status::Damaged,
+            expires_at: None,
+            pinned: None,
+            duration_ms: None,
+            keyframes: None,
+            marks: None,
+            problems: vec![Problem {
+                file: problem.directory,
+                reason: problem.message,
+            }],
+        }));
+        interrupted.append(&mut entries);
+        entries = interrupted;
+    }
     if as_json {
         return json(&entries, out);
     }

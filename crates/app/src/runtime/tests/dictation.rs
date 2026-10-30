@@ -878,3 +878,37 @@ async fn profile_ready_text_latency() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+#[tokio::test(start_paused = true)]
+async fn phrase_corrections_follow_filler_cleanup_for_dictation_and_shows_without_reloading()
+-> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    receive(&h.loads).await?;
+    h.start().await?;
+    h.finish_as("Ready.").await?;
+    assert_eq!(receive(&h.pasted).await?, "Ready.");
+    h.phase(Phase::Done).await?;
+    let config = Config {
+        vocabulary: vec![crate::transcript::vocabulary::Correction {
+            heard: "cube control".into(),
+            written: "kubectl".into(),
+        }],
+        ..Config::default()
+    };
+    h.runtime.configure(ValidConfig::assume(config));
+    h.phase(Phase::Idle).await?;
+    h.start().await?;
+    h.finish_as("Use cube um control.").await?;
+    assert_eq!(receive(&h.pasted).await?, "Use kubectl.");
+    h.phase(Phase::Done).await?;
+    start_show(&mut h).await?;
+    finish_show(&h);
+    h.transcribe_next_as("Cube uh control!").await?;
+    let (_, narration) = receive(&h.published).await?;
+    assert_eq!(narration, Narration::Text("kubectl!".into()));
+    assert!(
+        h.loads.try_recv().is_err(),
+        "Phrase corrections reloaded the speech model"
+    );
+    h.close().await
+}

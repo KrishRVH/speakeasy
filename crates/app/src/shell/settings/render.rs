@@ -30,6 +30,7 @@ const EDGE: Pixels = px(32.0);
 
 impl Render for Settings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        self.vocabulary.theme(self.config.theme, cx);
         let palette = self.config.theme.palette();
         let ui = Ui { palette, cx };
         let unconfigured = !is_demo(cx) && self.config.needs_engine();
@@ -58,6 +59,7 @@ impl Render for Settings {
             })
             .child(self.microphone_section(&ui))
             .child(self.preferences_section(&ui))
+            .child(self.vocabulary_section(cx))
             .child(footer(palette, cx));
         // The commands and the status stay in view however far the body scrolls, since the status
         // line is where every failure and unsaved change is told once the pill has faded.

@@ -4976,6 +4976,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tray-icon",
+ "unicode-segmentation",
  "x11rb",
  "zeroize",
 ]
@@ -5025,6 +5026,7 @@ dependencies = [
 name = "speakeasy-show"
 version = "0.7.0"
 dependencies = [
+ "crc32fast",
  "fdeflate",
  "png 0.18.1",
  "proptest",

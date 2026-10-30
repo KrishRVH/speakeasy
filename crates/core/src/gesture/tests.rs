@@ -335,3 +335,28 @@ fn escape_cancel_and_interruptions_discard_dictation_recording_or_processing() {
         assert_eq!(discard(&mut gesture), Some(Action::Cancel), "Processing");
     }
 }
+
+#[test]
+fn recovery_owns_saving_until_completion_or_explicit_abandonment() {
+    let mut gesture = Gesture::default();
+    let now = Instant::now();
+    assert!(gesture.save());
+    assert!(!gesture.save());
+    assert_eq!(gesture.state(), State::Processing);
+    for action in [
+        gesture.press(now),
+        gesture.escape(),
+        gesture.cancel(),
+        gesture.interrupt(),
+        gesture.release(now),
+    ] {
+        assert_eq!(action, None);
+    }
+    assert_eq!(gesture.state(), State::Processing);
+    gesture.abandon();
+    assert_eq!(gesture.state(), State::Idle);
+    assert!(gesture.save());
+    gesture.complete();
+    assert_eq!(gesture.press(now), Some(Action::Start));
+    assert!(!gesture.save(), "Recovery cannot take over a recording");
+}

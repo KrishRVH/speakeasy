@@ -11,7 +11,11 @@ use speakeasy_show::{Ending, Journal, Narration, NarrationLoss, Recording};
 use tokio::sync::watch;
 use zeroize::Zeroize;
 
-use crate::{config::Config, show::SavedShow, sounds::Cue};
+use crate::{
+    config::Config,
+    show::{Checkpoint, SavedShow},
+    sounds::Cue,
+};
 
 /// The error a speech startup reports once cancelled.
 pub(crate) const STARTUP_CANCELLED: &str = "Local model startup cancelled";
@@ -75,6 +79,8 @@ impl Drop for Sealed {
 
 /// A Show recorder's report about the session that opened it.
 pub(crate) enum ShowEvent {
+    /// Checkpointing stopped; the live recording still proceeds in memory.
+    CheckpointLost(SessionId),
     /// Recording ended with its footage, boxed since it is far larger than the other reports, or
     /// failed.
     Finished(SessionId, anyhow::Result<Box<Footage>>),
@@ -85,7 +91,9 @@ pub(crate) enum ShowEvent {
 impl ShowEvent {
     pub(super) const fn session(&self) -> SessionId {
         match self {
-            Self::Finished(session, _) | Self::Unchosen(session, _) => *session,
+            Self::Finished(session, _)
+            | Self::Unchosen(session, _)
+            | Self::CheckpointLost(session) => *session,
         }
     }
 }
@@ -105,17 +113,35 @@ pub(crate) enum Unchosen {
 pub(crate) struct Footage {
     pub recording: Recording,
     pub journal: Journal,
+    pub checkpoint: Option<Checkpoint>,
+}
+
+impl Footage {
+    /// Releases footage whose owner has left. A requested finish is shielded against user cancel,
+    /// so finished takes remain recoverable even when Quit races their final flush or report.
+    /// Unfinished takes are discarded. Call on a recorder or blocking worker, never the owner.
+    pub(crate) fn abandon(self) -> anyhow::Result<()> {
+        if self.recording.ending != Ending::Finished
+            && let Some(checkpoint) = self.checkpoint
+        {
+            checkpoint.discard()?;
+        }
+        Ok(())
+    }
 }
 
 /// What publishing a Show did. A publication that fails before its bundle persists reports an
-/// error instead, and nothing of it stays on disk.
+/// error instead; a checkpoint can remain available for recovery.
 pub(crate) enum Published {
+    /// An interrupted Show was recovered, without copying or inventing narration.
+    Recovered { show: SavedShow, source_lost: bool },
     /// The bundle persisted as `show`, with how its screen recording ended and why its narration
     /// was lost, if it was; `copied` is whether its summary then reached the clipboard.
     Saved {
         show: SavedShow,
         ending: Ending,
         lost: Option<NarrationLoss>,
+        source_lost: bool,
         copied: anyhow::Result<()>,
     },
     /// Cancellation came first; no bundle appeared and nothing was copied.
@@ -206,6 +232,20 @@ pub(crate) trait Ports: Send + 'static {
         footage: Footage,
         narration: Narration,
         lost: Option<NarrationLoss>,
+        permit: InsertPermit,
+    ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static;
+
+    /// Releases abandoned footage off the owner's thread, retaining finished takes for recovery.
+    /// Retirement waits for unfinished-take discard cleanup.
+    fn abandon_footage(
+        &self,
+        footage: Footage,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send + 'static;
+
+    /// Recovers one interrupted Show without capture, a speech request, or a clipboard action.
+    fn recover(
+        &self,
+        interrupted: crate::show::Interrupted,
         permit: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static;
 

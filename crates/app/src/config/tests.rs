@@ -504,3 +504,38 @@ fn startup_classifies_saved_settings() -> anyhow::Result<()> {
     assert_eq!(config, *valid);
     Ok(())
 }
+
+#[test]
+fn vocabulary_saves_preserve_other_hand_edits_and_require_session_reconfiguration()
+-> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    let base = valid_config(directory.path())?;
+    save(&base, &base, &path)?;
+    let mut file = saved(&path)?;
+    file["threads"] = 8.into();
+    file["unknown"] = true.into();
+    fs::write(&path, serde_json::to_vec(&file)?)?;
+    let mut draft = base.clone();
+    draft.vocabulary.push(Correction {
+        heard: "PRIVATE_PHRASE".into(),
+        written: "private_name".into(),
+    });
+    assert_eq!(base.change_to(&draft), Change::Session);
+    assert!(!format!("{draft:?}").contains("PRIVATE_PHRASE"));
+    Config::save_changes(&[&base], &draft, &draft.validated(&path)?, &path)?;
+    let stored = saved(&path)?;
+    assert_eq!(stored["threads"], 8);
+    assert_eq!(stored["unknown"], true);
+    assert_eq!(Config::read(&path)?.vocabulary, draft.vocabulary);
+    let mut external = stored;
+    external["vocabulary"][0]["written"] = "Hand edited".into();
+    fs::write(&path, serde_json::to_vec(&external)?)?;
+    let next = Config {
+        theme: Theme::Iris,
+        ..draft.clone()
+    };
+    Config::save_changes(&[&draft], &next, &next.validated(&path)?, &path)?;
+    assert_eq!(saved(&path)?["vocabulary"][0]["written"], "Hand edited");
+    Ok(())
+}

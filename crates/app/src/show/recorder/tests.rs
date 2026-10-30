@@ -72,6 +72,13 @@ impl Feed {
 /// Records all of a 1000 × 500 display as `drive` feeds it from sources that take [`TEARDOWN`] to
 /// stop. Returns what the take returned and how long it ran on tokio's paused clock.
 async fn record(drive: impl AsyncFnOnce(&Feed)) -> (anyhow::Result<Option<Footage>>, Duration) {
+    record_with(|_| {}, drive).await
+}
+
+async fn record_with(
+    prepare: impl FnOnce(&mut Take<'_>),
+    drive: impl AsyncFnOnce(&Feed),
+) -> (anyhow::Result<Option<Footage>>, Duration) {
     let (frame_lane, frames) = async_channel::bounded(FRAME_LANE);
     let (sample_lane, samples) = async_channel::bounded(POINTER_LANE);
     let (canvas, _) = watch::channel(Canvas::default());
@@ -89,7 +96,8 @@ async fn record(drive: impl AsyncFnOnce(&Feed)) -> (anyhow::Result<Option<Footag
         samples,
         stop: async { tokio::time::sleep(TEARDOWN).await },
     };
-    let take = Take::new(start.into_std(), [1_000.0, 500.0], Part::WHOLE, &canvas);
+    let mut take = Take::new(start.into_std(), [1_000.0, 500.0], Part::WHOLE, &canvas);
+    prepare(&mut take);
     let run = async {
         let recorded = take.run(&lanes, sources).await;
         (recorded, start.elapsed())
@@ -409,3 +417,5 @@ fn a_recording_that_found_nothing_to_record_says_so_unless_the_owner_cancelled_i
     );
     Ok(())
 }
+
+mod checkpoint;

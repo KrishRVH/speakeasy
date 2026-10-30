@@ -88,6 +88,7 @@ struct FakePorts {
     screen_unchosen: Option<Unchosen>,
     screen_retirement: Option<Gate<()>>,
     publication: Option<Gate<()>>,
+    show_recovery: Option<Gate<InsertPermit>>,
     publish_error: Option<&'static str>,
     publish_panics: bool,
     /// Holds a publication once its Show is saved, before it reports.
@@ -139,6 +140,7 @@ impl FakePorts {
             screen_unchosen: None,
             screen_retirement: None,
             publication: None,
+            show_recovery: None,
             publish_error: None,
             publish_panics: false,
             saved: None,
@@ -177,7 +179,12 @@ impl FakePorts {
         .flatten()
         .map(|gate| gate.release.clone());
         let insertion = self.insertion.iter().map(|gate| gate.release.clone());
-        CleanupGates(releases.chain(insertion).collect())
+        CleanupGates(
+            releases
+                .chain(insertion)
+                .chain(self.show_recovery.iter().map(|gate| gate.release.clone()))
+                .collect(),
+        )
     }
 }
 
@@ -230,6 +237,34 @@ impl Ports for FakePorts {
         })
     }
 
+    fn abandon_footage(
+        &self,
+        footage: Footage,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send + 'static {
+        std::future::ready(footage.abandon())
+    }
+
+    fn recover(
+        &self,
+        _: crate::show::Interrupted,
+        permit: InsertPermit,
+    ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
+        let gate = self.show_recovery.clone();
+        async move {
+            if let Some(gate) = gate {
+                gate.pass(permit.clone()).await?;
+            }
+            Ok(if permit.commit() {
+                Published::Recovered {
+                    show: saved_show(&Narration::default()),
+                    source_lost: false,
+                }
+            } else {
+                Published::Cancelled
+            })
+        }
+    }
+
     fn publish(
         &self,
         footage: Footage,
@@ -264,6 +299,7 @@ impl Ports for FakePorts {
                 show,
                 ending,
                 lost,
+                source_lost: false,
                 copied: copy_error.map_or(Ok(()), |error| Err(anyhow!(error))),
             })
         }
@@ -417,6 +453,7 @@ fn footage() -> Box<Footage> {
         .expect("An empty journal admits a frame")
         .record(Moment::START, frame);
     Box::new(Footage {
+        checkpoint: None,
         recording: Recording {
             duration: Moment::from_millis(1_000),
             surface: Size {
@@ -768,3 +805,5 @@ mod dictation;
 mod last_show;
 mod model;
 mod shows;
+
+mod recovery;

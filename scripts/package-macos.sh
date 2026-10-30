@@ -9,6 +9,14 @@ if [[ "$(uname -s)" != Darwin ]]; then
   echo "Run this on macOS with the Xcode command line tools installed." >&2
   exit 1
 fi
+signing_identity=${SPEAKEASY_MAC_SIGN_IDENTITY:-}
+notary_profile=${SPEAKEASY_MAC_NOTARY_PROFILE:-}
+if [[ -n "$signing_identity" || -n "$notary_profile" ]]; then
+  if [[ -z "$signing_identity" || "$signing_identity" == - || -z "$notary_profile" ]]; then
+    echo "Distribution needs both SPEAKEASY_MAC_SIGN_IDENTITY and SPEAKEASY_MAC_NOTARY_PROFILE. Use a Developer ID Application identity and a stored notarytool keychain profile." >&2
+    exit 1
+  fi
+fi
 MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release --locked -p speakeasy
 bundle="artifacts/Speakeasy.app"
 rm -rf "$bundle" artifacts/speakeasy-macos.zip
@@ -36,6 +44,32 @@ cp crates/show/NOTICE.md "$bundle/Contents/Resources/"
 # Accessibility and Screen Recording grants. A stable bundle identifier is necessary but not
 # sufficient: only a persistent signing identity keeps grants, and its requirement includes the
 # identifier, so never rename CFBundleIdentifier. Gatekeeper also wants notarization.
-codesign --force --sign - "$bundle"
+if [[ -n "$signing_identity" ]]; then
+  codesign --force --sign "$signing_identity" --options runtime --timestamp \
+    --entitlements packaging/macos/Entitlements.plist "$bundle"
+  codesign --verify --strict "$bundle"
+  # Notarize a temporary upload; the distribution ZIP appears only after acceptance and stapling.
+  notary_directory=$(mktemp -d artifacts/.macos-notary.XXXXXX)
+  trap 'rm -rf -- "$notary_directory"' EXIT
+  ditto -c -k --keepParent "$bundle" "$notary_directory/upload.zip"
+  xcrun notarytool submit "$notary_directory/upload.zip" --keychain-profile "$notary_profile" \
+    --wait --output-format json > "$notary_directory/result.json"
+  if ! python3 -c '
+import json, sys
+result = json.load(sys.stdin)
+if result.get("status") != "Accepted":
+    print("Notarization submission:", result.get("id", "unavailable"), file=sys.stderr)
+    sys.exit(1)
+' < "$notary_directory/result.json"; then
+    echo "Apple did not accept notarization. Check this submission with notarytool before distributing." >&2
+    exit 1
+  fi
+  xcrun stapler staple "$bundle"
+  xcrun stapler validate "$bundle"
+  spctl --assess --type execute "$bundle"
+else
+  codesign --force --sign - "$bundle"
+  codesign --verify --strict "$bundle"
+fi
 ditto -c -k --keepParent "$bundle" artifacts/speakeasy-macos.zip
 echo "Built $bundle"

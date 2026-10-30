@@ -1,18 +1,35 @@
 //! Bounded PNG loading without GPUI's persistent asset cache or decoder error logging.
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use gpui::{Image, ImageFormat};
 
-use crate::show::store::recall;
+use crate::show::store::{recall, source};
+
+#[derive(Clone, Debug)]
+pub(super) enum Content {
+    Png(String),
+    Source {
+        index: Arc<speakeasy_show::Source>,
+        at: speakeasy_show::Moment,
+    },
+}
 
 const FILE_LIMIT: u64 = 32 << 20;
 const LONGEST_EDGE: u32 = 4_096;
 
-pub(super) fn read(directory: &Path, name: &str) -> Result<Image, String> {
-    let bytes = recall::read_file(directory, name, FILE_LIMIT)
-        .map_err(|error| format!("Cannot open {name}: {error}"))?;
-    check_header(&bytes).map_err(str::to_owned)?;
+pub(super) fn read(directory: &Path, content: &Content) -> Result<Image, String> {
+    let bytes = match content {
+        Content::Png(name) => {
+            let bytes = recall::read_file(directory, name, FILE_LIMIT)
+                .map_err(|error| format!("Cannot open {name}: {error}"))?;
+            check_header(&bytes).map_err(str::to_owned)?;
+            bytes
+        },
+        Content::Source { index, at } => source::frame(directory, index, *at)
+            .and_then(|frame| frame.image.encode_png().map_err(anyhow::Error::from))
+            .map_err(|error| format!("Cannot read source frame: {error:#}"))?,
+    };
     Ok(Image::from_bytes(ImageFormat::Png, bytes))
 }
 

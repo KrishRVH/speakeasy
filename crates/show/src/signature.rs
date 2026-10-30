@@ -47,6 +47,16 @@ impl fmt::Debug for Signature {
 }
 
 impl Signature {
+    pub(crate) fn bytes(&self) -> &[u8] {
+        self.cells.as_slice()
+    }
+
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        Some(Self {
+            cells: Box::new(bytes.try_into().ok()?),
+        })
+    }
+
     /// Fingerprints `image`; cost is bounded by the grid, not by the image's resolution.
     #[must_use]
     pub(crate) fn of(image: &Image) -> Self {

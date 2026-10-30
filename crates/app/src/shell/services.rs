@@ -113,6 +113,7 @@ pub(crate) struct Services {
     /// The latest microphone scan, which every Settings view shares and Quit waits for.
     pub(super) microphone_scan: Option<MicrophoneScan>,
     instance: Option<Instance>,
+    pub(super) show_edits: crate::show::edits::Edits,
 }
 
 impl Global for Services {}
@@ -155,6 +156,7 @@ impl Services {
             requests: None,
             microphone_scan: None,
             instance,
+            show_edits: crate::show::edits::Edits::default(),
         }
     }
 
@@ -222,6 +224,19 @@ impl Services {
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub(crate) fn recallable_show<'a>(&self, snapshot: &'a Snapshot) -> Option<&'a SavedShow> {
         recallable(snapshot, self.service_state(), self.mode)
+    }
+
+    pub(super) fn recover_show(
+        &self,
+        interrupted: crate::show::Interrupted,
+    ) -> Result<crate::runtime::RecoveryReceipt, &'static str> {
+        if self.mode.is_demo() || self.is_quitting() {
+            return Err("Recovery is unavailable in this preview or while quitting.");
+        }
+        self.runtime()
+            .filter(|runtime| runtime.is_running())
+            .ok_or("Resume Speakeasy to recover this Show.")?
+            .recover(interrupted)
     }
 
     pub(super) fn can_copy_show(&self) -> bool {
@@ -438,7 +453,9 @@ impl Services {
         announce(&self.output, QUITTING);
         let stopped = self.lifecycle.retiring().map(Owners::retire);
         let scanned = self.microphone_scan.as_ref().map(MicrophoneScan::exited);
+        let edited = self.show_edits.drained();
         Some(async move {
+            edited.await;
             if let Some(stopped) = stopped {
                 stopped.await;
             }

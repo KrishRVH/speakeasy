@@ -41,7 +41,10 @@ pub use crate::{
     error::Error,
     geometry::{Point, Rect},
     image::Image,
-    journal::{Admission, Journal},
+    journal::{
+        Admission, Entry, Journal, Log, MAX_FRAME_EDGE, Source, SourceError, SourceFrame, Take,
+        TakeEvent,
+    },
     marks::{Mark, Shape},
     moment::{Moment, Span},
     recording::{

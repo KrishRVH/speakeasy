@@ -52,9 +52,21 @@ pub(crate) fn reveal_shows(cx: &mut App) {
         source,
         services.config.theme,
         services.output.subscribe(),
-        |cx| {
-            cx.try_global::<Services>()
-                .is_some_and(Services::can_copy_show)
+        review::Actions {
+            edit: |edit, fixture, cx| {
+                let services = cx.global_mut::<Services>();
+                anyhow::ensure!(!services.is_quitting(), "Speakeasy is quitting.");
+                services.show_edits.submit(edit, fixture)
+            },
+            can_copy: |cx| {
+                cx.try_global::<Services>()
+                    .is_some_and(Services::can_copy_show)
+            },
+            recover: |show, cx| {
+                cx.try_global::<Services>()
+                    .ok_or("Resume Speakeasy to recover this Show.")?
+                    .recover_show(show)
+            },
         },
         cx,
     );

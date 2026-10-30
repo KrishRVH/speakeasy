@@ -5,16 +5,24 @@
 //! A journal over its budget thins evenly, and each frame's [`Sample`] is dropped with its tiles,
 //! so selection only picks frames the journal holds.
 
-use std::{fmt, iter, mem, ops::Range, time::Duration};
+use std::{fmt, iter, mem, ops::Range, sync::Arc, time::Duration};
 
 use crate::{
     Image, Moment, convert,
     signature::{Sample, Signature},
 };
 
+mod log;
+mod record;
+mod source;
+pub use log::{Log, Take, TakeEvent};
+pub use source::{Source, SourceError, SourceFrame};
+
 /// Tile edge in pixels: small enough that a blinking caret stores little, large enough that the
 /// index stays small.
 const TILE: usize = 64;
+/// Maximum pixel edge accepted by Show source and checkpoint formats; capture downscales to it.
+pub const MAX_FRAME_EDGE: u32 = 2_560;
 const PIXEL: usize = 4;
 
 /// Recorded frames and their signatures, in time order.
@@ -50,7 +58,7 @@ struct Segment {
 struct Version {
     /// The index of the first frame that shows this version.
     first: usize,
-    data: Box<[u8]>,
+    data: Arc<[u8]>,
 }
 
 /// One tile's place in its frame, in pixels.
@@ -63,6 +71,17 @@ struct Tile {
 }
 
 impl Tile {
+    // fdeflate uses up to 12 bits per input byte; noisy tiles can grow by half. Leave room for
+    // its fixed zlib/block headers and the source/log record framing as well.
+    fn encoded_limit(self) -> usize {
+        self.width
+            .saturating_mul(self.height)
+            .saturating_mul(PIXEL)
+            .saturating_mul(3)
+            .div_ceil(2)
+            .saturating_add(128)
+    }
+
     /// The bytes the tile covers in each row of its frame.
     fn columns(self) -> Range<usize> {
         self.left.saturating_mul(PIXEL)..self.left.saturating_add(self.width).saturating_mul(PIXEL)
@@ -192,57 +211,135 @@ impl Journal {
 pub struct Admission<'a>(&'a mut Journal);
 
 impl Admission<'_> {
-    /// Records `frame` and its signature as on screen at `at`, then thins the journal while it is
-    /// over budget. A moment no later than the last recorded one moves just past it, so every
-    /// frame keeps a moment of its own and [`frame_at`](Journal::frame_at) rebuilds the frame
-    /// each sample fingerprints.
-    pub fn record(self, at: Moment, frame: Image) {
+    /// Records a sampled image, then thins to budget. The returned entry shares its immutable
+    /// compressed tiles with the journal and can be sent to a checkpoint writer without another
+    /// compression pass. Callers that need no checkpoint can discard it.
+    #[expect(
+        clippy::must_use_candidate,
+        reason = "Recording mutates the admitted journal; only checkpoint callers need the returned entry"
+    )]
+    pub fn record(self, at: Moment, frame: Image) -> Entry {
         let Self(journal) = self;
-        let at = journal.samples.last().map_or(at, |last| {
+        let (width, height) = (
+            convert::count(frame.width()),
+            convert::count(frame.height()),
+        );
+        let before = journal
+            .latest
+            .as_ref()
+            .filter(|before| before.width() == frame.width() && before.height() == frame.height());
+        let entry = Entry {
+            width,
+            height,
+            reset: before.is_none(),
+            signature: Signature::of(&frame),
+            tiles: tiles(width, height)
+                .enumerate()
+                .filter(|(_, tile)| before.is_none_or(|before| changed(before, &frame, *tile)))
+                .map(|(index, tile)| (index, Version::of(0, &frame, tile).data))
+                .collect(),
+        };
+        journal.push(at, &entry);
+        journal.latest = Some(frame);
+        entry
+    }
+
+    /// Restores an admitted checkpoint entry through the same sampling and thinning fold.
+    ///
+    /// # Errors
+    /// Rejects a delta whose geometry does not follow the journal. Log decoding checks entry
+    /// structure before constructing it; damaged compressed pixels fail when a frame is read.
+    pub fn restore(self, at: Moment, entry: &Entry) -> Result<(), SourceError> {
+        let Self(journal) = self;
+        if !entry.reset
+            && !journal.segments.last().is_some_and(|segment| {
+                segment.width == entry.width && segment.height == entry.height
+            })
+        {
+            return Err(SourceError("checkpoint delta has no preceding frame"));
+        }
+        journal.push(at, entry);
+        Ok(())
+    }
+}
+
+/// One admitted frame's signature and changed tiles. Private pixels never appear in diagnostics.
+#[derive(Clone)]
+pub struct Entry {
+    width: usize,
+    height: usize,
+    reset: bool,
+    signature: Signature,
+    tiles: Vec<(usize, Arc<[u8]>)>,
+}
+
+impl fmt::Debug for Entry {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.debug_struct("Entry")
+            .field("size", &(self.width, self.height))
+            .field("changed_tiles", &self.tiles.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Entry {
+    /// Bytes a queued entry can retain independently of the journal, including its signature and
+    /// tile references. This is deliberately conservative rather than an allocator measurement.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        self.tiles.iter().fold(
+            9_280_usize.saturating_add(self.tiles.len().saturating_mul(32)),
+            |bytes, (_, tile)| bytes.saturating_add(tile.len()),
+        )
+    }
+}
+
+impl Journal {
+    fn push(&mut self, at: Moment, entry: &Entry) {
+        let at = self.samples.last().map_or(at, |last| {
             at.max(last.at.saturating_add(Duration::from_millis(1)))
         });
-        let index = journal.samples.len();
-        journal.samples.push(Sample {
+        let index = self.samples.len();
+        self.samples.push(Sample {
             at,
-            signature: Signature::of(&frame),
+            signature: entry.signature.clone(),
         });
-        let added = if let (Some(before), Some(segment)) =
-            (&journal.latest, journal.segments.last_mut())
-            && before.width() == frame.width()
-            && before.height() == frame.height()
-        {
-            segment.record(index, before, &frame)
-        } else {
-            let segment = Segment::new(index, &frame);
-            let bytes = segment.bytes();
-            journal.segments.push(segment);
-            bytes
-        };
-        journal.bytes = journal.bytes.saturating_add(added);
-        journal.latest = Some(frame);
-        while journal.bytes > journal.budget && journal.samples.len() > 2 {
-            journal.thin();
+        if entry.reset {
+            self.segments.push(Segment {
+                first: index,
+                width: entry.width,
+                height: entry.height,
+                tiles: entry
+                    .tiles
+                    .iter()
+                    .map(|(_, data)| {
+                        vec![Version {
+                            first: index,
+                            data: Arc::clone(data),
+                        }]
+                    })
+                    .collect(),
+            });
+        } else if let Some(segment) = self.segments.last_mut() {
+            for (tile, data) in &entry.tiles {
+                if let Some(versions) = segment.tiles.get_mut(*tile) {
+                    versions.push(Version {
+                        first: index,
+                        data: Arc::clone(data),
+                    });
+                }
+            }
+        }
+        self.bytes = entry.tiles.iter().fold(self.bytes, |bytes, (_, tile)| {
+            bytes.saturating_add(tile.len())
+        });
+        while self.bytes > self.budget && self.samples.len() > 2 {
+            self.thin();
         }
     }
 }
 
 impl Segment {
-    fn new(first: usize, frame: &Image) -> Self {
-        let (width, height) = (
-            convert::count(frame.width()),
-            convert::count(frame.height()),
-        );
-        let tiles = tiles(width, height)
-            .map(|tile| vec![Version::of(first, frame, tile)])
-            .collect();
-        Self {
-            first,
-            width,
-            height,
-            tiles,
-        }
-    }
-
     fn bytes(&self) -> usize {
         self.tiles
             .iter()
@@ -278,20 +375,6 @@ impl Segment {
             tiles,
             ..self
         })
-    }
-
-    /// Stores the tiles of `frame` that differ from `before`, the frame recorded just before it;
-    /// returns the bytes added.
-    fn record(&mut self, index: usize, before: &Image, frame: &Image) -> usize {
-        let mut added = 0_usize;
-        for (tile, versions) in tiles(self.width, self.height).zip(&mut self.tiles) {
-            if changed(before, frame, tile) {
-                let version = Version::of(index, frame, tile);
-                added = added.saturating_add(version.data.len());
-                versions.push(version);
-            }
-        }
-        added
     }
 
     fn frame(&self, index: usize) -> Option<Image> {
@@ -330,7 +413,7 @@ impl Version {
         }
         Self {
             first,
-            data: fdeflate::compress_to_vec(&filtered).into_boxed_slice(),
+            data: fdeflate::compress_to_vec(&filtered).into(),
         }
     }
 
@@ -341,6 +424,9 @@ impl Version {
         let filtered =
             fdeflate::decompress_to_vec_bounded(&self.data, row_bytes.saturating_mul(tile.height))
                 .ok()?;
+        if filtered.len() != row_bytes.checked_mul(tile.height)? {
+            return None;
+        }
         let rows = rgba.chunks_exact_mut(stride.max(1)).skip(tile.top);
         for (row, filtered_row) in rows.zip(filtered.chunks_exact(row_bytes.max(1))) {
             let mut left = [0_u8; PIXEL];

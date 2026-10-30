@@ -13,6 +13,10 @@ use super::*;
 #[test]
 #[ignore = "Opt-in owned windows; Linux requires a private X11 display. No microphone, input, or clipboard"]
 fn native_show_review_navigates_damage_and_releases_private_images() -> anyhow::Result<()> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let _entered = runtime.enter();
     let (completed, outcome) = std::sync::mpsc::channel();
     Application::new()
         .with_assets(crate::icons::Icons)
@@ -29,6 +33,9 @@ fn native_show_review_navigates_damage_and_releases_private_images() -> anyhow::
         .context("Review acceptance did not complete")?
 }
 
+struct TestEdits(super::super::edits::Edits);
+impl gpui::Global for TestEdits {}
+
 struct Keeper;
 impl Render for Keeper {
     fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
@@ -41,6 +48,7 @@ impl Render for Keeper {
     reason = "Native review acceptance uses GPUI's UI-thread context"
 )]
 async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
+    cx.update(|cx| cx.set_global(TestEdits(super::super::edits::Edits::default())))?;
     let keeper = cx.open_window(
         WindowOptions {
             show: false,
@@ -69,7 +77,20 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                     Source::Demo,
                     Theme::default(),
                     snapshots,
-                    |_| false,
+                    Actions {
+                        edit: |edit, fixture, cx| {
+                            cx.global_mut::<TestEdits>().0.submit(edit, fixture)
+                        },
+                        can_copy: |_| false,
+                        recover: |_, _| {
+                            let (done, receipt) = async_channel::bounded(1);
+                            done.try_send(Err(
+                                "Synthetic recovery failed; the checkpoint remains.".into(),
+                            ))
+                            .map_err(|_closed| "Synthetic receipt closed")?;
+                            Ok(receipt)
+                        },
+                    },
                     window,
                     cx,
                 )
@@ -107,6 +128,71 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         .read_with(cx, |view, _| view.library.selected.clone())?
         .context("The loaded preview selected a Show")?
         .directory;
+    let mut journal = speakeasy_show::Journal::new();
+    for at in [100, 700, 1_500, 30_000] {
+        journal
+            .admit()
+            .context("Synthetic frame was not admitted")?
+            .record(
+                speakeasy_show::Moment::from_millis(at),
+                speakeasy_show::Image::from_bgra(3, 2, [90, 40, 10, 255].repeat(6))?,
+            );
+    }
+    let mut encoded = Vec::new();
+    journal.write_source::<speakeasy_show::SourceError>(
+        speakeasy_show::Moment::from_millis(31_000),
+        |bytes| {
+            encoded.extend_from_slice(bytes);
+            Ok(())
+        },
+    )?;
+    fs::write(first.join("source.frames"), encoded)?;
+    window.update(cx, |view, window, cx| {
+        view.act(Action::Mode(Mode::Source), window, cx);
+    })?;
+    wait_for(
+        window,
+        |view| view.opening.is_none() && matches!(view.image, ImageState::Ready(_)),
+        cx,
+    )
+    .await?;
+    window.read_with(cx, |view, _| {
+        let detail = view.detail.as_ref();
+        assert_eq!(detail.map(|detail| detail.frames.len()), Some(4));
+        assert_eq!(
+            detail
+                .and_then(|detail| detail.frames.first())
+                .map(|frame| frame.at.as_millis()),
+            Some(100)
+        );
+        assert!(detail.is_some_and(|detail| detail.coverage.contains("28500 ms")));
+    })?;
+    window.update(cx, |view, window, cx| {
+        view.act(Action::Frame(2), window, cx);
+        view.act(Action::Jump(true), window, cx);
+        assert_eq!(view.library.selected.as_ref().map(|key| key.frame), Some(3));
+        view.act(Action::Jump(false), window, cx);
+        assert_eq!(view.library.selected.as_ref().map(|key| key.frame), Some(2));
+        view.act(Action::Mode(Mode::Keyframes), window, cx);
+    })?;
+    wait_for(
+        window,
+        |view| view.opening.is_none() && matches!(view.image, ImageState::Ready(_)),
+        cx,
+    )
+    .await?;
+    window.read_with(cx, |view, _| {
+        assert_eq!(
+            view.detail.as_ref().map(|detail| detail.frames.len()),
+            Some(4)
+        );
+        assert_eq!(
+            view.library.selected.as_ref().map(|key| key.frame),
+            view.detail
+                .as_ref()
+                .map(|detail| detail.frame_at(speakeasy_show::Moment::from_millis(1_500)))
+        );
+    })?;
     window.update(cx, |view, window, cx| {
         view.act(Action::Keep, window, cx);
         view.act(Action::Show(1), window, cx);
@@ -233,6 +319,61 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         assert!(view.library.gone && view.library.selected.is_none());
         assert!(view.detail.is_none() && matches!(view.image, ImageState::Empty));
     })?;
+    window.update(cx, |view, window, cx| view.act(Action::Show(0), window, cx))?;
+    wait_for(
+        window,
+        |view| matches!(view.image, ImageState::Ready(_)),
+        cx,
+    )
+    .await?;
+    let (checkpoint, writer) = super::super::Checkpoint::begin(
+        &root,
+        SystemTime::now(),
+        1_000,
+        speakeasy_show::Size {
+            width: 80.0,
+            height: 60.0,
+        },
+    )?;
+    ensure!(writer.close().await, "Synthetic checkpoint did not close");
+    let interrupted = checkpoint.interrupted()?;
+    window.update(cx, |view, _, cx| view.refresh(cx))?;
+    wait_for(window, |view| view.listing.is_none(), cx).await?;
+    window.update(cx, |view, window, cx| view.act(Action::Show(0), window, cx))?;
+    window.read_with(cx, |view, _| {
+        assert!(view.interrupted().is_some());
+        assert!(view.detail.is_none());
+        assert!(matches!(view.image, ImageState::Empty));
+    })?;
+    window.update(cx, |view, window, cx| view.act(Action::Recover, window, cx))?;
+    wait_for(window, |view| view.recovering.is_none(), cx).await?;
+    ensure!(
+        interrupted.directory().exists(),
+        "Failed recovery discarded its checkpoint"
+    );
+    window.update(cx, |view, window, cx| view.act(Action::Discard, window, cx))?;
+    ensure!(
+        interrupted.directory().exists(),
+        "Discard ran before confirmation"
+    );
+    window.update(cx, |view, window, cx| view.act(Action::Discard, window, cx))?;
+    ensure!(
+        interrupted.directory().exists(),
+        "A double activation bypassed confirmation"
+    );
+    window.update(cx, |view, window, cx| {
+        view.act(Action::ConfirmDiscard, window, cx);
+    })?;
+    wait_for(
+        window,
+        |view| view.discarding.is_none() && view.listing.is_none(),
+        cx,
+    )
+    .await?;
+    ensure!(
+        !interrupted.directory().exists(),
+        "Confirmed discard left its checkpoint"
+    );
     window.update(cx, |view, window, cx| view.act(Action::Show(0), window, cx))?;
     wait_for(
         window,

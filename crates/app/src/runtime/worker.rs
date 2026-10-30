@@ -18,7 +18,10 @@ use super::{
 };
 use crate::{
     config::Config,
-    transcript::{self, Fillers},
+    transcript::{
+        self, Fillers,
+        vocabulary::{Correction, Vocabulary},
+    },
 };
 
 /// How long a recovering worker may take to answer a silent request.
@@ -128,11 +131,12 @@ impl<W: Speech> Worker<W> {
         let wav = wav.to_vec();
         let language = config.language.clone();
         let fillers = config.fillers();
+        let corrections = config.vocabulary.clone();
         *self = Self::Transcribing(Job::spawn(|mut cancelled| async move {
             let transcription = tokio::select! {
                 biased;
                 _ = cancelled.changed() => Ok(Transcription::Cancelled),
-                result = transcript_of(&mut worker, wav, &language, detail, fillers) => {
+                result = transcript_of(&mut worker, wav, &language, detail, fillers, &corrections) => {
                     result.map(Transcription::Heard)
                 },
             };
@@ -258,15 +262,17 @@ async fn transcript_of<W: Speech>(
     language: &str,
     detail: Detail,
     fillers: Fillers,
+    corrections: &[Correction],
 ) -> anyhow::Result<Transcript> {
+    let vocabulary = Vocabulary::new(corrections);
     Ok(match detail {
         Detail::Text => {
             let text = worker.transcribe(wav, language).await?;
-            Transcript::Text(transcript::for_insertion(&text, fillers))
+            Transcript::Text(vocabulary.text(&transcript::for_insertion(&text, fillers)))
         },
         Detail::Words => {
             let narration = worker.transcribe_words(wav, language).await?;
-            Transcript::Words(transcript::for_show(narration, fillers))
+            Transcript::Words(vocabulary.narration(transcript::for_show(narration, fillers)))
         },
     })
 }

@@ -129,6 +129,7 @@ impl Rehearsal {
 
     fn finish(self, ended: u64) -> Footage {
         Footage {
+            checkpoint: None,
             recording: self.tracker.finish(Moment::from_millis(ended)),
             journal: self.journal,
         }
@@ -229,6 +230,12 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
         "The summary copied is the one written"
     );
     let manifest: Manifest = Manifest::parse(&fs::read(directory.join("show.json"))?)?;
+    let source = store::source::inspect(&directory)?;
+    assert_eq!(source.moments(), moments);
+    assert_eq!(source.duration(), manifest.recording().duration);
+    let held = store::source::frame(&directory, &source, Moment::from_millis(3_150))?;
+    assert_eq!(held.at.as_millis(), 3_000);
+    assert_eq!(held.image, desktop(width, height, 0, 0, false));
     assert_eq!(manifest.recording().narration, narration);
     assert_eq!(manifest.recording().strokes.len(), 1, "The circle");
     assert_eq!(manifest.recording().actions.len(), 1, "The click");
@@ -381,6 +388,9 @@ fn median_ms(mut timings: Vec<f64>) -> f64 {
 fn profile_show_pipeline() -> anyhow::Result<()> {
     use std::hint::black_box;
     let (width, height) = (2_560, 1_440);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
     // What the recorder does with each kept frame, for screens that change in different ways.
     let scenes: [(&str, &dyn Fn(u32) -> Image); 5] = [
         ("still", &|_| desktop(width, height, 0, 0, false)),
@@ -396,16 +406,41 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     for (scene, paint) in scenes {
         let images: Vec<Image> = (0..30).map(paint).collect();
         let frames = images.len();
-        let mut journal = Journal::new();
+        let root = tempfile::tempdir()?;
+        let surface = Size {
+            width: width as f32,
+            height: height as f32,
+        };
+        let (checkpoint, mut writer) = Checkpoint::begin(
+            root.path(),
+            SystemTime::now(),
+            speakeasy_show::Log::MAX_BUDGET,
+            surface,
+        )?;
+        let mut take = speakeasy_show::Take::new(speakeasy_show::Log::MAX_BUDGET, surface);
         let mut timings = Vec::new();
         for (index, image) in images.into_iter().enumerate() {
             let at = Moment::from_millis(u64::try_from(index)? * 200);
             let started = Instant::now();
-            if let Some(admission) = journal.admit() {
-                admission.record(at, image);
-                timings.push(started.elapsed().as_secs_f64() * 1000.0);
-            }
+            let event = take.arrive(at, || Some(image))?;
+            assert!(
+                writer.send(event),
+                "Synthetic checkpoint writer fell behind"
+            );
+            timings.push(started.elapsed().as_secs_f64() * 1000.0);
         }
+        let started = Instant::now();
+        assert!(runtime.block_on(writer.close()));
+        let flushed_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let started = Instant::now();
+        let replayed = checkpoint.replay()?;
+        let replay_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let (_, journal) = take.finish();
+        assert_eq!(journal.samples().len(), replayed.journal().samples().len());
+        let checkpoint_mb = bytes_under(root.path())? as f64 / 1e6;
+        eprintln!(
+            "show_checkpoint: scene={scene} flush_ms={flushed_ms:.2} replay_ms={replay_ms:.2} mb={checkpoint_mb:.1}"
+        );
         black_box(journal.samples());
         let journal_mb = journal.bytes() as f64 / 1e6;
         eprintln!(
@@ -436,6 +471,7 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     );
     let started = Instant::now();
     let Footage {
+        checkpoint: _,
         mut recording,
         journal,
     } = footage;
@@ -452,7 +488,9 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     let composed = started.elapsed();
     let root = tempfile::tempdir()?;
     let directory = root.path().join("show");
-    store::stage(&directory, bundle)?.persist()?;
+    let staged = store::stage(&directory, bundle)?;
+    staged.write_source(&journal, Moment::from_millis(60_000))?;
+    staged.persist()?;
     let written = started.elapsed();
     let bytes = bytes_under(&directory)?;
     let keyframes = fs::read_dir(directory.join("frames"))?.count();
@@ -466,3 +504,5 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+mod recovery;

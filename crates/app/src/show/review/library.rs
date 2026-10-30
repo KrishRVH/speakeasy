@@ -3,19 +3,35 @@
 use std::{
     io,
     path::{Path, PathBuf},
+    sync::Arc,
     time::SystemTime,
 };
 
 use speakeasy_show::{Ending, Moment, NarrationLoss, Unreadable};
 
 use crate::show::store::{
-    age, pinned,
+    age, checkpoint, pinned,
     recall::{self, Entry, Health, ReadError},
     retention::{Retention, interval},
+    source,
 };
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Mode {
+    #[default]
+    Keyframes,
+    Source,
+}
+
+#[derive(Debug)]
+pub(super) enum Kind {
+    Saved,
+    Interrupted(crate::show::Interrupted),
+}
 
 #[derive(Debug)]
 pub(super) struct Row {
+    pub kind: Kind,
     pub directory: PathBuf,
     pub health: Health,
     pub duration: Option<Moment>,
@@ -30,6 +46,7 @@ impl Row {
     fn from_entry(entry: &Entry) -> Self {
         let show = entry.show.as_ref().ok();
         Self {
+            kind: Kind::Saved,
             directory: entry.directory.clone(),
             health: entry.health(),
             duration: show.map(|show| show.manifest.recording().duration),
@@ -49,7 +66,11 @@ impl Row {
     }
 
     pub(super) fn recorded(&self, now: SystemTime) -> String {
-        age::recorded_at(self.name()).map_or_else(
+        let recorded = match &self.kind {
+            Kind::Interrupted(show) => Some(show.recorded()),
+            Kind::Saved => age::recorded_at(self.name()),
+        };
+        recorded.map_or_else(
             || self.name().to_owned(),
             |recorded| {
                 now.duration_since(recorded).map_or_else(
@@ -67,18 +88,48 @@ impl Row {
     }
 
     pub(super) fn retention(&self, now: SystemTime) -> String {
-        let retention = match self.pinned {
-            Some(kept) => Retention::of(self.name(), kept),
-            None => Retention::Unknown,
+        let retention = match (&self.kind, self.pinned) {
+            (Kind::Interrupted(_), _) => Retention::of(self.name(), false),
+            (Kind::Saved, Some(kept)) => Retention::of(self.name(), kept),
+            (Kind::Saved, None) => Retention::Unknown,
         };
         retention.label(now)
     }
 }
 
-pub(super) fn list(directory: &Path) -> io::Result<Vec<Row>> {
-    recall::list(directory)?
-        .map(|entry| entry.map(|entry| Row::from_entry(&entry)))
-        .collect()
+pub(super) fn list(directory: &Path) -> io::Result<(Vec<Row>, Option<String>)> {
+    let found = checkpoint::list(directory, SystemTime::now());
+    let notice = (!found.problems.is_empty()).then(|| {
+        format!(
+            "Cannot read {} interrupted Show entries. Check folder access and refresh. Damaged entries expire after seven days. {}",
+            found.problems.len(),
+            found
+                .problems
+                .first()
+                .map_or("", |problem| problem.message.as_str())
+        )
+    });
+    let mut rows: Vec<_> = found
+        .shows
+        .into_iter()
+        .map(|interrupted| Row {
+            directory: interrupted.directory().to_owned(),
+            kind: Kind::Interrupted(interrupted),
+            health: Health::Ok,
+            duration: None,
+            frames: 0,
+            marks: 0,
+            pinned: None,
+            early: true,
+            silent: true,
+        })
+        .collect();
+    rows.extend(
+        recall::list(directory)?
+            .map(|entry| entry.map(|entry| Row::from_entry(&entry)))
+            .collect::<io::Result<Vec<_>>>()?,
+    );
+    Ok((rows, notice))
 }
 
 #[derive(Debug)]
@@ -86,7 +137,7 @@ pub(super) struct Frame {
     pub number: usize,
     pub at: Moment,
     pub marker: String,
-    pub file: String,
+    pub file: super::frame::Content,
 }
 
 /// The only private text retained is the user's current summary. Never derive Debug for it.
@@ -94,10 +145,18 @@ pub(super) struct Detail {
     pub frames: Vec<Frame>,
     pub warnings: Vec<String>,
     pub summary: Result<String, String>,
+    pub source_available: bool,
+    pub coverage: String,
 }
 
 impl Detail {
-    pub(super) fn open(directory: &Path) -> io::Result<Self> {
+    pub(super) fn frame_at(&self, at: Moment) -> usize {
+        self.frames
+            .partition_point(|frame| frame.at <= at)
+            .saturating_sub(1)
+    }
+
+    pub(super) fn open(directory: &Path, mode: Mode) -> io::Result<Self> {
         let entry = Entry::open(directory)?;
         let summary =
             recall::summary(directory).map_err(|error| format!("Cannot read summary.md: {error}"));
@@ -156,15 +215,55 @@ impl Detail {
                         number: frame.index,
                         at: frame.at,
                         marker: frame.marker(manifest.marks()),
-                        file: frame.file(),
+                        file: super::frame::Content::Png(frame.file()),
                     })
                     .collect();
             },
+        }
+        let mut source_available = false;
+        let mut coverage = "This Show has no retained source frames.".to_owned();
+        match source::size(directory) {
+            Ok(None) => {},
+            Err(error) => warnings.push(format!("Source frames are unavailable: {error}")),
+            Ok(Some(_)) => match source::inspect(directory) {
+                Err(error) => warnings.push(format!("Source frames are unavailable: {error:#}")),
+                Ok(source) => {
+                    source_available = true;
+                    coverage = format!(
+                        "{} retained samples from {} arrivals · longest gap {} ms · source images have no annotations",
+                        source.moments().len(),
+                        source.arrivals(),
+                        source::longest_gap(&source)
+                    );
+                    if mode == Mode::Source {
+                        let source = Arc::new(source);
+                        frames = source
+                            .moments()
+                            .iter()
+                            .enumerate()
+                            .map(|(index, &at)| Frame {
+                                number: index.saturating_add(1),
+                                at,
+                                marker: String::new(),
+                                file: super::frame::Content::Source {
+                                    index: Arc::clone(&source),
+                                    at,
+                                },
+                            })
+                            .collect();
+                    }
+                },
+            },
+        }
+        if mode == Mode::Source && !source_available {
+            frames.clear();
         }
         Ok(Self {
             frames,
             warnings,
             summary,
+            source_available,
+            coverage,
         })
     }
 }

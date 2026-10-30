@@ -105,11 +105,12 @@ impl Image {
         Self::from_rgba(info.width, info.height, data).unwrap()
     }
 
-    /// Encodes the image as an RGBA PNG; fails only if the encoder rejects the stream, which a
-    /// valid image never causes.
-    ///
+    /// Encodes the image as an RGBA PNG.
     /// Fast compression favors latency; screen content still compresses well.
-    pub(crate) fn encode_png(&self) -> Result<Vec<u8>, Error> {
+    ///
+    /// # Errors
+    /// Fails if the encoder rejects the stream; errors do not contain pixels.
+    pub fn encode_png(&self) -> Result<Vec<u8>, Error> {
         let rgba = self.straight_rgba();
         let mut png = Vec::new();
         let mut encoder = png::Encoder::new(&mut png, self.width(), self.height());

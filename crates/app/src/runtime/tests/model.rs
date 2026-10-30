@@ -119,6 +119,23 @@ impl Ports for ModelPorts {
         Ok(self.device(Source::Screen, id))
     }
 
+    fn abandon_footage(
+        &self,
+        footage: Footage,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send + 'static {
+        std::future::ready(footage.abandon())
+    }
+
+    fn recover(
+        &self,
+        _: crate::show::Interrupted,
+        _: InsertPermit,
+    ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
+        std::future::ready(Err(anyhow::anyhow!(
+            "Recovery is not configured for this fixture"
+        )))
+    }
+
     fn publish(
         &self,
         footage: Footage,
@@ -134,6 +151,7 @@ impl Ports for ModelPorts {
                     show: SavedShow::assume("shows/model"),
                     ending,
                     lost,
+                    source_lost: false,
                     copied: Ok(()),
                 }
             } else {

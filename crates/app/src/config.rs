@@ -25,7 +25,13 @@ use serde_json::{Map, Value};
 use serde_path_to_error::Segment;
 use speakeasy_platform::{Delivery, DesktopOptions, LinuxPaste};
 
-use crate::{theme::Theme, transcript::Fillers};
+use crate::{
+    theme::Theme,
+    transcript::{
+        Fillers,
+        vocabulary::{self, Correction},
+    },
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -67,6 +73,7 @@ pub(crate) struct Config {
     pub model: PathBuf,
     pub language: String,
     pub remove_fillers: bool,
+    pub vocabulary: Vec<Correction>,
     pub threads: u16,
     pub use_gpu: bool,
     pub reduced_motion: bool,
@@ -87,6 +94,7 @@ impl Default for Config {
             model: PathBuf::new(),
             language: "en".into(),
             remove_fillers: true,
+            vocabulary: Vec::new(),
             threads: 4,
             use_gpu: true,
             reduced_motion: false,
@@ -331,6 +339,7 @@ impl Config {
             model,
             language,
             remove_fillers,
+            vocabulary,
             threads,
             use_gpu,
             reduced_motion,
@@ -358,6 +367,7 @@ impl Config {
             (
                 self.microphone != *microphone
                     || self.remove_fillers != *remove_fillers
+                    || self.vocabulary != *vocabulary
                     || self.preserve_clipboard != *preserve_clipboard,
                 Change::Session,
             ),
@@ -380,6 +390,7 @@ impl Config {
     /// them, then checks that they exist and that the remaining values are in range. The draft
     /// stays as the user wrote it.
     pub(crate) fn validated(&self, path: &Path) -> anyhow::Result<ValidConfig> {
+        vocabulary::validate(&self.vocabulary)?;
         let mut config = self.clone();
         let directory = path.parent().unwrap_or_else(|| Path::new("."));
         for file in [&mut config.engine_executable, &mut config.model] {

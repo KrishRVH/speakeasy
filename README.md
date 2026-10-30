@@ -149,9 +149,15 @@ copied, it stays saved and the pill points you to Copy last Show.
 
 Open **Shows** in Settings, or **Shows…** in the Windows/Mac tray, to review saved Shows across
 restarts. Choose a Show to see its keyframes, numbered marks, current summary, and retention status.
-Use Up/Down to choose a Show, Left/Right to step through frames, Home/End to jump to the first/last
-frame, and Escape to close. Missing frames, early endings, and lost narration stay visible; the
-viewer never substitutes another Show when the selected one expires or is deleted.
+Use Up/Down to choose a Show, Left/Right to step through frames, Page Up/Down to jump ten seconds,
+Home/End to jump to the first/last frame, and Escape to close. Missing frames, early endings, and
+lost narration stay visible; the viewer never substitutes another Show when the selected one expires
+or is deleted. Choose **All retained frames** to inspect moments outside the selected keyframes.
+Coverage shows the sample count and longest gap; the journal thins frames under memory pressure, so
+this is sampled evidence rather than video. Switching modes keeps the nearest frame at or before the
+current time. Source images have no annotations. Older Shows still offer their selected keyframes.
+If retained frames cannot be saved, the selected keyframes still save and Speakeasy reports the
+loss.
 
 **Refresh** rereads the library; returning to the window rereads the selected summary and retention.
 **Open folder** reveals its files, and **Copy summary** on Windows/Mac copies the current file,
@@ -160,7 +166,13 @@ viewer does not change which Show the tray remembers. **Keep Show** prevents the
 expiring. **Allow expiry** restores its original expiry date, seven days after recording; for an
 already overdue Show the button says **Allow cleanup**, and cleanup can remove it on its next pass.
 Keeping a Show changes only its `.pinned` marker, including when the manifest or a frame is damaged.
-Linux can review saved Shows, although it cannot record them yet.
+Keep and Discard finish even if you close the window; Quit waits for accepted writes.
+
+An **Interrupted Show** offers **Recover Show** and **Discard**. Recovery restores complete
+checkpointed frames, ink, and marks into a new bundle and leaves the clipboard untouched. It waits
+for any active recording to finish; resume Speakeasy first if it is paused. Recovery preserves the
+original seven-day expiry date. Narration cannot be recovered. Discard requires confirmation and
+permanently removes the checkpoint.
 
 An agent on the same machine can inspect a Show without launching the app or opening the microphone:
 
@@ -168,18 +180,20 @@ An agent on the same machine can inspect a Show without launching the app or ope
 speakeasy show list --json
 speakeasy show inspect "PATH_TO_SHOW" --json
 speakeasy show inspect 20261020T143205Z --json
+speakeasy show frames 20261020T143205Z --json
+speakeasy show frame 20261020T143205Z --at 0:12.500 --out /path/to/new-frame.png --json
 speakeasy show keep 20261020T143205Z
 speakeasy show keep 20261020T143205Z --off --json
 speakeasy show skill
 ```
 
-`list` finds saved Shows across app restarts, newest first, including damaged or unsupported ones.
-It lists the timestamp-named folders in Speakeasy's Shows folder; use `inspect` with an explicit
-path for a moved or exported Show. A bare timestamp name, including a same-second suffix such as
-`-2`, is an exact Show ID in Speakeasy's Shows folder. IDs never fall back to another folder or a
-partial name; use `./ID` to force a relative path. These commands also work on Linux, where
-recording Shows is unavailable. `list` and `inspect` leave files, edits, permissions, and retention
-unchanged. There is no implicit latest Show.
+`list` finds interrupted Shows first, then saved Shows newest first, including damaged or
+unsupported ones. It lists the timestamp-named folders in Speakeasy's Shows folder; use `inspect`
+with an explicit path for a moved or exported Show. A bare timestamp name, including a same-second
+suffix such as `-2`, is an exact Show ID in Speakeasy's Shows folder. IDs never fall back to another
+folder or a partial name; use `./ID` to force a relative path. These commands also work without a
+desktop on Linux. `list` and `inspect` leave files, edits, permissions, and retention unchanged.
+There is no implicit latest Show.
 
 `keep` accepts an ID or an explicit path directly inside Speakeasy's Shows folder. `--off` allows
 expiry at the original date; it does not grant another seven days. These actions never recreate a
@@ -196,27 +210,40 @@ that every image decodes. Missing files remain visible beside the frames that su
 no saved frame is reported without substituting another image.
 
 `list` and `inspect` offer readable text without `--json`. JSON reports `ok`, `damaged`, or
-`unsupported` status, plus `id` and `expiresAt`. An ID is non-null only when the directory is
-confirmed to be a managed Show. `expiresAt` is the UTC time the Show becomes eligible for cleanup,
-or null when kept, unmanaged, or unavailable; deletion occurs during a later cleanup pass. The
-`pinned` field describes retention, not numbered pin marks. If the manifest cannot be read,
-duration, counts, and pin status are null, and inspection omits its detail fields and frame tables.
-Inspection exits with status 1 for damage or an unsupported format, after printing its findings. A
-listing succeeds even when individual Shows are damaged. An unreadable Shows folder fails the
-command; a missing one is an empty listing. Manifests are limited to 16 MiB and summaries to 1 MiB.
-Only format 2 is read; unknown fields are ignored.
+`unsupported` status; `list` also reports `interrupted`, plus `id` and `expiresAt`. An ID is
+non-null only when the directory is confirmed to be a managed Show. `expiresAt` is the UTC time the
+Show becomes eligible for cleanup, or null when kept, unmanaged, or unavailable; deletion occurs
+during a later cleanup pass. The `pinned` field describes retention, not numbered pin marks. If the
+manifest cannot be read, duration, counts, and pin status are null, and inspection omits its detail
+fields and frame tables. Inspection exits with status 1 for damage or an unsupported format, after
+printing its findings. A listing succeeds even when individual Shows are damaged. An unreadable
+Shows folder fails the command; a missing one is an empty listing. Manifests are limited to 16 MiB
+and summaries to 1 MiB. Only format 2 is read; unknown fields are ignored.
 
 `show skill` prints the [agent reading guide](skills/speakeasy-show/SKILL.md) embedded in the
 installed binary. Save it as `SKILL.md` in a skill folder your agent loads. It explains the reading
-order, numbered references, private-file handling, and the limits of selected keyframes. These
-commands cannot retrieve discarded frames or retry lost narration. `speakeasy show --help` lists
-their options.
+order, numbered references, private-file handling, and source-frame retrieval. `frames` reports
+retained timestamps, sampling stride, and the longest gap. `frame` requires an explicit time and a
+new PNG path; it exports the image at or before that time, or the first image when the request
+precedes capture. Its metadata reports both requested and actual times. It refuses times after the
+Show ends and never overwrites a file. These commands cannot retrieve discarded frames or retry lost
+narration. `speakeasy show --help` lists their options.
 
-Recording-crash recovery is not available: frames stay in memory during capture and transcription,
-and only selected keyframes survive a successful save. A crash before saving loses the Show and its
-narration. A save failure reports a local error; a copy failure leaves the saved Show available in
-the library. Hidden incomplete saves are removed once they are at least an hour old. Cleanup hides
-expired Shows before deleting their files and retries interrupted deletions on its next pass.
+`list` gives interrupted Shows distinct `interrupted:ID` identifiers and null duration/frame counts;
+it does not replay their logs. `speakeasy show discard "interrupted:ID" --json` permanently removes
+that explicit checkpoint; an exact checkpoint path from `list` also works. A saved Show ID cannot
+select an interrupted Show with the same timestamp. Recover through the native Shows window.
+
+During an explicit Show, a private checkpoint records frames and pointer events off the capture
+thread. Recovery uses the last complete event; a crash, storage failure, or a full bounded write
+queue can leave a shorter recording. Recording continues in memory if checkpointing stops, with a
+local notice. No audio is written to disk. A save failure leaves the checkpoint available for
+recovery; a copy failure leaves the saved bundle available in the library. Cancelling, quitting,
+pausing, changing settings, or losing desktop input during an unfinished recording discards its
+checkpoint. Once you finish a Show, those interruptions leave its checkpoint recoverable, including
+while capture stops, the checkpoint flushes, narration transcribes, or publication saves the bundle.
+Hidden incomplete saves are removed once they are at least an hour old. Cleanup hides expired Shows
+before deleting their files and retries interrupted deletions on its next pass.
 
 ## What's said here stays here
 
@@ -226,8 +253,10 @@ expired Shows before deleting their files and retries interrupted deletions on i
   logged.
 - The screen is recorded only during a Show you start, and Speakeasy's own windows stay out of it. A
   Show is written to the `shows` folder beside the engine and model, readable only by you. Speakeasy
-  deletes Shows over seven days old when it starts and hourly while it runs; a file named `.pinned`
-  in a Show's folder keeps it. Cancelling leaves nothing behind.
+  deletes Shows and interrupted checkpoints over seven days old when it starts and hourly while it
+  runs; a file named `.pinned` in a saved Show's folder keeps it. Checkpoints contain frames and
+  pointer events, never audio, and cap at 1 GiB. A saved Show can include up to 512 MiB of retained
+  source frames in addition to its selected images.
 - Windows clipboard history and cloud clipboard skip what Speakeasy puts on the clipboard, pasted
   dictation and Show summaries alike, as do Universal Clipboard and Mac clipboard managers that
   honor transient data.
@@ -385,15 +414,23 @@ file.
 
 Settings shows the shortcuts and the engine and model in use, and lets you choose the microphone,
 Whisper's language, GPU use, filler removal, how text is delivered, reduced motion, sounds, theme,
-and on Windows whether Speakeasy starts at login. The buttons and the status line stay at the bottom
-while the rest scrolls. The status says whether dictation is ready, or shows the latest error or
-notice; problems show in the attention color.
+phrase corrections, and on Windows whether Speakeasy starts at login. The buttons and the status
+line stay at the bottom while the rest scrolls. The status says whether dictation is ready, or shows
+the latest error or notice; problems show in the attention color.
+
+**Phrase corrections** replaces recurring recognition mistakes in dictation and Show narration.
+Enter what the engine hears and the spelling you want, then save. Matching is case-insensitive, uses
+whole words, and prefers the longest phrase; replacements do not trigger other rules. Timed
+narration retains the original word span. This changes recognized text, not the speech model, and
+does not provide live transcription. Up to 200 rules are stored locally in `vocabulary`, for example
+`[{"heard": "speak easy", "written": "Speakeasy"}]`. Each side allows up to six words and 64
+characters.
 
 Changes apply when you save. Theme, reduced-motion, and Start at login changes keep a recording
-running; microphone, language, filler removal, delivery, and sound changes end it but keep the model
-loaded. On Linux, Shortcuts changes and most Insert changes restart dictation, which reloads the
-model. Saving stays responsive and preserves edits made while the save is running. Pausing during a
-save keeps dictation paused; Quit finishes requested saves.
+running; microphone, language, filler removal, phrase correction, delivery, and sound changes end it
+but keep the model loaded. On Linux, Shortcuts changes and most Insert changes restart dictation,
+which reloads the model. Saving stays responsive and preserves edits made while the save is running.
+Pausing during a save keeps dictation paused; Quit finishes requested saves.
 
 <p align="center">
   <img src="docs/assets/themes.png"
@@ -466,8 +503,15 @@ paused clock exercises gesture deadlines and the five-minute cap.
   unbundled Linux archive for the current machine. Each script generates the package's third-party
   notices with the `cargo about` that `mise install` provides. Packages carry no engine or model;
   setup downloads them on first launch. The Mac bundle carries its microphone usage declaration and
-  a local signature; grant its permissions as [Get started](#get-started) describes. Distribution
-  needs Developer ID signing and notarization.
+  a local signature by default; grant its permissions as [Get started](#get-started) describes. For
+  distribution, set both `SPEAKEASY_MAC_SIGN_IDENTITY` to a Developer ID Application identity
+  already in the keychain and `SPEAKEASY_MAC_NOTARY_PROFILE` to a stored `notarytool` keychain
+  profile. Packaging then signs with hardened runtime and the microphone entitlement, submits to
+  Apple, staples the accepted ticket, and checks Gatekeeper before emitting the ZIP. Incomplete
+  settings or rejected notarization fail the build. CI remains locally signed until those
+  credentials are configured; no credentials belong in the repository. Moving from a local signature
+  to Developer ID can require granting microphone, Accessibility, and screen recording permissions
+  again; check them after replacing the app.
 - `bash scripts/check-package.sh <package>` unpacks a package and checks, with no display or model,
   that it prints its version and help, answers a mistyped option on stderr with status 2, and that
   `show demo` writes a bundle with its summary and contact sheet. It inspects the bundle, prints the

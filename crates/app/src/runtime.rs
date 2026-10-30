@@ -22,7 +22,7 @@ use crate::{
     audio::Capture,
     config::{Change, Config, ValidConfig},
     local_speech::LocalSpeech,
-    show::{self, Canvas, SavedShow, ScreenRecorder},
+    show::{self, Canvas, Interrupted, SavedShow, ScreenRecorder},
     sounds::{Cue, Sounds},
 };
 
@@ -231,6 +231,7 @@ pub(crate) struct Runtime<Host = OwnedThread> {
     pub input: InputSender,
     configuration: watch::Sender<Config>,
     reports: Sender<Report>,
+    recoveries: Sender<Recovery>,
     stop: Sender<Infallible>,
 }
 
@@ -310,10 +311,12 @@ impl<Host> Runtime<Host> {
         // retention sweep repeats its own; a Settings or overlay failure is not repeated.
         let (reports, reported) = async_channel::bounded(1);
         let (stop, stopping) = async_channel::bounded(1);
+        let (recoveries, recovering) = async_channel::bounded(1);
         let host = run(Wiring {
             changes,
             inputs,
             reports: reported,
+            recoveries: recovering,
             snapshots,
             meter,
             permits: input.clone(),
@@ -327,6 +330,7 @@ impl<Host> Runtime<Host> {
             input,
             configuration,
             reports,
+            recoveries,
             stop,
         })
     }
@@ -339,6 +343,24 @@ impl<Host> Runtime<Host> {
             Ok(()) | Err(TrySendError::Full(_)) => Ok(()),
             Err(TrySendError::Closed(report)) => Err(report),
         }
+    }
+
+    /// Queues one explicit recovery. The owner waits for its current session and owns the result.
+    pub(crate) fn recover(
+        &self,
+        interrupted: Interrupted,
+    ) -> Result<RecoveryReceipt, &'static str> {
+        let (completed, result) = async_channel::bounded(1);
+        self.recoveries
+            .try_send(Recovery {
+                interrupted,
+                completed,
+            })
+            .map_err(|error| match error {
+                TrySendError::Full(_) => "A Show recovery is already waiting.",
+                TrySendError::Closed(_) => "Resume Speakeasy to recover this Show.",
+            })?;
+        Ok(result)
     }
 
     pub(crate) fn configure(&self, config: ValidConfig) {
@@ -411,6 +433,28 @@ impl Ports for Desktop {
         show::publish(footage, narration, lost, permit)
     }
 
+    fn abandon_footage(
+        &self,
+        footage: Footage,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send + 'static {
+        let work = tokio::task::spawn_blocking(move || footage.abandon());
+        async move {
+            work.await.unwrap_or_else(|_private_panic| {
+                Err(anyhow::anyhow!(
+                    "Show cleanup stopped. Check interrupted Shows."
+                ))
+            })
+        }
+    }
+
+    fn recover(
+        &self,
+        interrupted: Interrupted,
+        permit: InsertPermit,
+    ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
+        show::recover(interrupted, permit)
+    }
+
     fn load(
         &self,
         config: Config,
@@ -438,12 +482,20 @@ impl Ports for Desktop {
     }
 }
 
-/// The owner's ends of its lanes, with its ports, the snapshot epoch it presents under, and the
-/// latest saved Show it starts from.
+/// Completion of an accepted recovery; dropping the receipt does not cancel owned publication.
+pub(crate) type RecoveryReceipt = Receiver<Result<SavedShow, String>>;
+
+struct Recovery {
+    interrupted: Interrupted,
+    completed: Sender<Result<SavedShow, String>>,
+}
+
+/// The owner's lane ends, ports, presentation epoch, and latest saved Show.
 struct Wiring<P> {
     changes: watch::Receiver<Config>,
     inputs: Receiver<Input>,
     reports: Receiver<Report>,
+    recoveries: Receiver<Recovery>,
     snapshots: watch::Sender<Snapshot>,
     meter: watch::Sender<Meter>,
     permits: InputSender,

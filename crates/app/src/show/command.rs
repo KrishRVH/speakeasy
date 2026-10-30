@@ -1,6 +1,7 @@
 //! Headless Show commands. Inspection reports paths and metadata; private text stays in files.
 
 mod output;
+mod source;
 
 use std::{ffi::OsString, io, path::PathBuf, time::SystemTime};
 
@@ -16,19 +17,28 @@ const DEMO_SIZE: (u32, u32) = (1_440, 900);
 
 const HELP: &str = "speakeasy show list [--json]
 speakeasy show inspect SHOW [--json]
+speakeasy show frames SHOW [--json]
+speakeasy show frame SHOW --at M:SS.mmm --out NEW.png [--json]
 speakeasy show keep SHOW [--off] [--json]
+speakeasy show discard INTERRUPTED_SHOW [--json]
 speakeasy show skill
 speakeasy show demo [--out NEW_DIR]
 
-list discovers saved Shows, newest first, including damaged bundles.
+list discovers interrupted and saved Shows, including damaged bundles.
 inspect checks an explicit bundle and maps its sheets, keyframes and marks.
 Both print metadata and current absolute paths, never narration or screen content.
 Images are checked as files, not decoded. Missing files are reported, not repaired.
+frames lists retained source times and sampling coverage, without reading pixels.
+frame exports the retained image at or before a time, or the first image before capture began.
+It reports the actual sample time, excludes annotations, and never overwrites a file.
+Source frames are available only in Shows saved by versions that retain them.
 inspect exits with status 1 for a damaged or unsupported Show.
 SHOW is an exact folder-name ID in Speakeasy's Shows folder, or an explicit path.
 Use ./ID to address a relative path. No command chooses the latest Show.
 keep prevents expiry; --off restores the original seven-day expiry date.
 An overdue Show then expires at the next cleanup. Only managed Shows can be kept.
+discard permanently removes an explicit interrupted:ID or checkpoint path from list.
+Recover interrupted Shows in the Shows window; recovery leaves the clipboard untouched.
 skill prints the agent reading guide for this installed version.
 demo writes a simulated Show and prints its summary.
 All commands work without a display, microphone, speech engine or running app.";
@@ -44,9 +54,14 @@ pub(crate) enum Command {
         directory: PathBuf,
         json: bool,
     },
+    Source(source::Command),
     Keep {
         directory: PathBuf,
         kept: bool,
+        json: bool,
+    },
+    Discard {
+        directory: PathBuf,
         json: bool,
     },
     Skill,
@@ -63,6 +78,9 @@ impl Command {
         if verb == "--help" || verb == "-h" {
             return Ok(Self::Help);
         }
+        if verb == "frames" || verb == "frame" {
+            return source::Command::parse(verb == "frame", args).map(Self::Source);
+        }
         let mut json = false;
         let mut off = false;
         let mut path = None;
@@ -70,7 +88,11 @@ impl Command {
             match arg.to_str() {
                 Some("--help" | "-h") => return Ok(Self::Help),
                 Some("--json")
-                    if (verb == "list" || verb == "inspect" || verb == "keep") && !json =>
+                    if (verb == "list"
+                        || verb == "inspect"
+                        || verb == "keep"
+                        || verb == "discard")
+                        && !json =>
                 {
                     json = true;
                 },
@@ -82,7 +104,7 @@ impl Command {
                             .context("--out needs a new directory")?,
                     ));
                 },
-                _ if (verb == "inspect" || verb == "keep")
+                _ if (verb == "inspect" || verb == "keep" || verb == "discard")
                     && path.is_none()
                     && !arg.is_empty()
                     && !arg.to_string_lossy().starts_with('-') =>
@@ -103,6 +125,11 @@ impl Command {
             Some("keep") => Ok(Self::Keep {
                 directory: path.context("show keep needs an exact Show ID or path")?,
                 kept: !off,
+                json,
+            }),
+            Some("discard") => Ok(Self::Discard {
+                directory: path
+                    .context("show discard needs an explicit interrupted Show ID or path")?,
                 json,
             }),
             Some("skill") => Ok(Self::Skill),
@@ -128,6 +155,7 @@ impl Command {
         match self {
             Self::Help => writeln!(out, "{HELP}")?,
             Self::Skill => write!(out, "{SKILL}")?,
+            Self::Source(command) => command.write(out)?,
             Self::List { json } => {
                 let directory = store::directory()?;
                 let entries = recall::list(&directory)
@@ -161,6 +189,19 @@ impl Command {
                         format!("Cannot change retention for {}", directory.display())
                     })?;
                 output::kept(&directory, retention, json, out)?;
+            },
+            Self::Discard { directory, json } => {
+                let interrupted = store::checkpoint::resolve(&store::directory()?, &directory)?;
+                interrupted.lock()?.discard()?;
+                if json {
+                    serde_json::to_writer(
+                        &mut *out,
+                        &serde_json::json!({"id": interrupted.id(), "discarded": true}),
+                    )?;
+                    writeln!(out)?;
+                } else {
+                    writeln!(out, "Discarded {}", interrupted.id())?;
+                }
             },
             Self::Demo { out: directory } => demo(directory, out)?,
         }

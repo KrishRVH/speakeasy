@@ -6,7 +6,7 @@
 use std::{
     mem,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use anyhow::anyhow;
@@ -15,21 +15,25 @@ use speakeasy_platform::{
     Display, Frame, OwnedThread, Part, PointerMonitor, PointerSample, Scope, ScreenCapture,
     ScreenEvent, Taps, Target, WindowGone,
 };
-use speakeasy_show::{
-    Ending, Image, Journal, Mark, Moment, Point, Recording, SAMPLE_INTERVAL, Size, Span, Tracker,
-};
+use speakeasy_show::{Ending, Image, Mark, Moment, Point, SAMPLE_INTERVAL, Size, Span, TakeEvent};
 use tokio::sync::watch;
 
-use super::overlay::Canvas;
+use super::{
+    overlay::Canvas,
+    store::{
+        self,
+        checkpoint::{Checkpoint, Writer},
+    },
+};
 use crate::runtime::{
     self,
     ports::{Capturing, Footage, Pinning, SessionId, ShowEvent, Unchosen},
 };
 
 /// Frames larger than this on the long edge are halved; a reading model gains nothing from more.
-pub(super) const LONGEST_EDGE: u32 = 2_560;
-/// The most compressed bytes a Show's journal holds; see [`Journal::with_budget`].
-const JOURNAL_BUDGET: usize = 384 << 20;
+pub(super) const LONGEST_EDGE: u32 = speakeasy_show::MAX_FRAME_EDGE;
+/// The most compressed bytes a Show's journal holds; see [`speakeasy_show::Journal::with_budget`].
+const JOURNAL_BUDGET: usize = speakeasy_show::Log::MAX_BUDGET;
 /// How long a Show finished before its first frame waits for one; a Show needs the screen.
 const FIRST_FRAME_WAIT: Duration = Duration::from_secs(3);
 /// How many frames wait for the recorder; [`ScreenCapture::start`] says what capture does with a
@@ -74,8 +78,8 @@ impl ScreenRecorder {
                 pinned,
                 canvas: &canvas,
             };
-            let mut report = Report::new(id, events, &lanes);
-            report.outcome = record(started, scope, &lanes);
+            let mut report = Report::new(id, events.clone(), &lanes);
+            report.outcome = record(started, scope, &lanes, id, events);
         })?;
         Ok(Self {
             finish,
@@ -155,13 +159,22 @@ impl Drop for Report<'_> {
         // A recording can end without seeing the cancel, as one looking for a window does, but the
         // owner that cancelled it waits for no report.
         if self.lanes.finishing.is_closed() {
+            abandon_unreceived(event);
             return;
         }
+        if let Err(async_channel::SendError(event)) = self.events.send_blocking(event) {
+            abandon_unreceived(event);
+        }
+    }
+}
+
+fn abandon_unreceived(event: ShowEvent) {
+    if let ShowEvent::Finished(_, Ok(footage)) = event {
         #[expect(
             clippy::let_underscore_must_use,
-            reason = "A closed event lane belongs to a departed owner; retirement still observes this thread's exit"
+            reason = "The owner has left; retirement waits for this cleanup attempt, and filesystem failures leave the checkpoint available for explicit cleanup"
         )]
-        let _ = self.events.send_blocking(event);
+        let _ = footage.abandon();
     }
 }
 
@@ -174,7 +187,13 @@ struct Lanes<'a> {
 }
 
 /// Records until finished or cancelled, returning how recording ended.
-fn record(started: Instant, scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<Ended> {
+fn record(
+    started: Instant,
+    scope: Scope,
+    lanes: &Lanes<'_>,
+    id: SessionId,
+    events: Sender<ShowEvent>,
+) -> anyhow::Result<Ended> {
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()?
@@ -196,9 +215,25 @@ fn record(started: Instant, scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<E
                 samples,
                 stop: stop(&capture, &pointer),
             };
-            let footage = Take::new(started, display.size, part, lanes.canvas)
-                .run(lanes, sources)
-                .await?;
+            let mut take = Take::new(started, display.size, part, lanes.canvas);
+            take.checkpoint_notice = Some((id, events));
+            match store::private_directory().and_then(|parent| {
+                Checkpoint::begin(
+                    &parent,
+                    SystemTime::now()
+                        .checked_sub(started.elapsed())
+                        .unwrap_or(SystemTime::UNIX_EPOCH),
+                    JOURNAL_BUDGET,
+                    surface(display.size, part),
+                )
+            }) {
+                Ok((checkpoint, writer)) => {
+                    take.log = Some(writer);
+                    take.checkpoint = Some(checkpoint);
+                },
+                Err(_checkpoint_unavailable) => take.warn_checkpoint(),
+            }
+            let footage = take.run(lanes, sources).await?;
             Ok(footage.map_or(Ended::Cancelled, |footage| {
                 Ended::Recorded(Box::new(footage))
             }))
@@ -277,8 +312,11 @@ struct Take<'a> {
     display: [f32; 2],
     /// The part of the display the latest frame showed, which the pointer is placed in.
     part: Part,
-    tracker: Tracker,
-    journal: Journal,
+    state: speakeasy_show::Take,
+    // The writer joins before the checkpoint unlocks, including during unwinding.
+    log: Option<Writer>,
+    checkpoint: Option<Checkpoint>,
+    checkpoint_notice: Option<(SessionId, Sender<ShowEvent>)>,
 }
 
 impl<'a> Take<'a> {
@@ -295,8 +333,10 @@ impl<'a> Take<'a> {
             canvas,
             display: size,
             part,
-            tracker: Tracker::new(surface(size, part)),
-            journal: Journal::with_budget(JOURNAL_BUDGET),
+            state: speakeasy_show::Take::new(JOURNAL_BUDGET, surface(size, part)),
+            log: None,
+            checkpoint: None,
+            checkpoint_notice: None,
         }
     }
 
@@ -326,7 +366,7 @@ impl<'a> Take<'a> {
                     if finished.is_err() {
                         break None;
                     }
-                    if !self.journal.is_empty() {
+                    if !self.state.journal().is_empty() {
                         break Some(Ok((runtime::now(), Ending::Finished)));
                     }
                     finished_by.get_or_insert_with(first_frame_deadline);
@@ -336,8 +376,10 @@ impl<'a> Take<'a> {
                 event = frames.recv() => {
                     let (ending, failure) = match event {
                         Ok(ScreenEvent::Frame(frame)) => {
-                            self.frame(frame);
-                            if finished_by.is_some() && !self.journal.is_empty() {
+                            if let Err(error) = self.frame(frame) {
+                                break Some(Err(error));
+                            }
+                            if finished_by.is_some() && !self.state.journal().is_empty() {
                                 break Some(Ok((runtime::now(), Ending::Finished)));
                             }
                             continue;
@@ -353,7 +395,7 @@ impl<'a> Take<'a> {
                     // Frames already journaled stay sound, so capture stopping partway ends the
                     // take with them. The footage notes only why: a failure's native text never
                     // reaches a saved file.
-                    break Some(if self.journal.is_empty() {
+                    break Some(if self.state.journal().is_empty() {
                         Err(failure)
                     } else {
                         Ok((runtime::now(), ending))
@@ -361,28 +403,74 @@ impl<'a> Take<'a> {
                 },
                 // Samples first, so a pin lands where the pointer is and sees the taps that asked
                 // for it.
-                Ok(sample) = samples.recv() => self.pointer(sample),
-                Ok(taps) = lanes.pinned.recv() => self.pin(taps),
+                Ok(sample) = samples.recv() => {
+                    if let Err(error) = self.pointer(sample) {
+                        break Some(Err(error));
+                    }
+                },
+                Ok(taps) = lanes.pinned.recv() => {
+                    if let Err(error) = self.pin(taps) {
+                        break Some(Err(error));
+                    }
+                },
             }
         };
         stop.await;
         match ended {
-            None => Ok(None),
-            Some(ended) => {
-                let (at, ending) = ended?;
-                self.into_footage(at, ending).map(Some)
+            Some(Ok((at, ending))) => self.into_footage(at, ending).await.map(Some),
+            Some(Err(_invalid_event)) if !self.state.journal().is_empty() => {
+                if let Some(log) = self.log.take() {
+                    let _complete = log.close().await;
+                }
+                self.warn_checkpoint();
+                self.into_footage(runtime::now(), Ending::ScreenStopped)
+                    .await
+                    .map(Some)
+            },
+            other => {
+                if let Some(log) = self.log.take() {
+                    let _complete = log.close().await;
+                }
+                if let Some(checkpoint) = self.checkpoint.take() {
+                    checkpoint.discard()?;
+                }
+                other.transpose().map(|_| None)
             },
         }
+    }
+
+    fn warn_checkpoint(&mut self) {
+        if let Some((id, events)) = self.checkpoint_notice.take() {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A departed owner cannot receive notices; a full lane must not stall screen capture"
+            )]
+            let _ = events.try_send(ShowEvent::CheckpointLost(id));
+        }
+    }
+
+    fn log(&mut self, event: TakeEvent) {
+        if let Some(log) = &mut self.log
+            && !log.send(event)
+        {
+            self.warn_checkpoint();
+        }
+    }
+
+    fn apply(&mut self, event: TakeEvent) -> anyhow::Result<()> {
+        self.state.apply(&event)?;
+        self.log(event);
+        Ok(())
     }
 
     fn moment(&self, at: Instant) -> Moment {
         Moment::from(at.saturating_duration_since(self.started))
     }
 
-    fn frame(&mut self, frame: Frame) {
+    fn frame(&mut self, frame: Frame) -> anyhow::Result<()> {
         if frame.part != self.part {
             self.part = frame.part;
-            self.tracker.resize(surface(self.display, frame.part));
+            self.apply(TakeEvent::Surface(surface(self.display, frame.part)))?;
             self.canvas.send_if_modified(|canvas| {
                 canvas
                     .sheet_mut()
@@ -390,42 +478,56 @@ impl<'a> Take<'a> {
             });
         }
         let at = self.moment(frame.at);
-        let Some(admission) = self.journal.admit() else {
-            return;
-        };
-        if let Ok(image) = Image::from_bgra(frame.width, frame.height, frame.bgra) {
-            admission.record(at, image);
-        }
+        let event = self.state.arrive(at, || {
+            Image::from_bgra(frame.width, frame.height, frame.bgra).ok()
+        })?;
+        self.log(event);
+        Ok(())
     }
 
-    fn pointer(&mut self, sample: PointerSample) {
+    fn pointer(&mut self, sample: PointerSample) -> anyhow::Result<()> {
         let at = self.moment(sample.at);
-        let earlier = self.tracker.strokes().len();
+        let earlier = self.state.tracker().strokes().len();
         let point = Point::from(self.part.within(sample.position));
-        self.tracker
-            .observe(at, point, sample.drawing, sample.pressed);
+        self.apply(TakeEvent::Pointer {
+            at,
+            point,
+            drawing: sample.drawing,
+            pressed: sample.pressed,
+        })?;
         let finished: Vec<Arc<[Point]>> = self
-            .tracker
+            .state
+            .tracker()
             .strokes()
             .iter()
             .skip(earlier)
             .map(|stroke| stroke.path().collect())
             .collect();
-        let marks = (!finished.is_empty()).then(|| self.tracker.marks().into());
+        let marks = (!finished.is_empty()).then(|| self.state.tracker().marks().into());
         self.publish_ink(finished, marks);
+        Ok(())
     }
 
-    fn pin(&mut self, taps: Taps) {
+    fn pin(&mut self, taps: Taps) -> anyhow::Result<()> {
         let taps = Span::new(self.moment(taps.pressed), self.moment(taps.released));
-        if self.tracker.pin(taps) {
-            self.publish_ink(Vec::new(), Some(self.tracker.marks().into()));
+        let before = self.state.tracker().marks().len();
+        self.apply(TakeEvent::Pin(taps))?;
+        if self.state.tracker().marks().len() != before {
+            self.publish_ink(Vec::new(), Some(self.state.tracker().marks().into()));
         }
+        Ok(())
     }
 
     /// Publishes the stroke being drawn to the overlay, with the strokes just `finished` and the
     /// `marks` when they changed.
     fn publish_ink(&self, finished: Vec<Arc<[Point]>>, marks: Option<Arc<[Mark]>>) {
-        let drawing: Vec<Point> = self.tracker.drawing().iter().map(|ink| ink.point).collect();
+        let drawing: Vec<Point> = self
+            .state
+            .tracker()
+            .drawing()
+            .iter()
+            .map(|ink| ink.point)
+            .collect();
         let now = Instant::now();
         self.canvas.send_if_modified(|canvas| {
             canvas
@@ -435,15 +537,26 @@ impl<'a> Take<'a> {
     }
 
     /// What the take recorded, lasting until `ended`, and how it ended.
-    fn into_footage(self, ended: Instant, ending: Ending) -> anyhow::Result<Footage> {
+    async fn into_footage(mut self, ended: Instant, ending: Ending) -> anyhow::Result<Footage> {
         let ended = self.moment(ended);
-        anyhow::ensure!(!self.journal.is_empty(), NOTHING_RECORDED);
+        let event = self.state.end(ended, ending);
+        self.log(event);
+        if let Some(log) = self.log.take()
+            && !log.close().await
+        {
+            self.warn_checkpoint();
+        }
+        if self.state.journal().is_empty() {
+            if let Some(checkpoint) = self.checkpoint.take() {
+                checkpoint.discard()?;
+            }
+            anyhow::bail!(NOTHING_RECORDED);
+        }
+        let (recording, journal) = self.state.finish();
         Ok(Footage {
-            recording: Recording {
-                ending,
-                ..self.tracker.finish(ended)
-            },
-            journal: self.journal.sealed(),
+            recording,
+            journal,
+            checkpoint: self.checkpoint,
         })
     }
 }

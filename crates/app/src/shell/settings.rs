@@ -3,6 +3,8 @@
 //! and saves it starts, and waits on the microphone scan that Services holds.
 
 mod render;
+mod text_field;
+mod vocabulary;
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -41,6 +43,7 @@ pub(super) struct Settings {
     retiring_setups: Vec<(Setup, Task<()>)>,
     saving: Option<Task<()>>,
     saves: SaveQueue,
+    vocabulary: vocabulary::Editor,
     _updates: Task<()>,
     /// Whether Windows' Startup apps page has turned off the sign-in launch, as last read when
     /// Settings came to the front; only a live Windows launch of the default settings reads it.
@@ -64,6 +67,7 @@ impl Settings {
         let saves = SaveQueue::new(services.path.clone(), config.clone());
         #[cfg(target_os = "linux")]
         let desktop_command = desktop_command(&services.path, services.default_settings).into();
+        let vocabulary = vocabulary::Editor::new(config.theme, cx);
         let mut view = Self {
             config,
             presentation,
@@ -76,6 +80,7 @@ impl Settings {
             retiring_setups: Vec::new(),
             saving: None,
             saves,
+            vocabulary,
             _updates: follow(updates, cx, Snapshot::clone, |view, snapshot, cx| {
                 view.apply_snapshot(&snapshot, cx);
             }),
@@ -155,7 +160,7 @@ impl Settings {
 
     /// Whether the draft has edits the file does not hold. A demo never saves, so it has none.
     fn unsaved(&self, cx: &App) -> bool {
-        !is_demo(cx) && self.saves.needs_save(&self.config)
+        !is_demo(cx) && (self.saves.needs_save(&self.config) || self.vocabulary.pending(cx))
     }
 
     fn cycle_microphone(&mut self) {
@@ -373,6 +378,9 @@ impl Settings {
     }
 
     fn save(&mut self, cx: &mut Context<'_, Self>) {
+        if self.vocabulary.pending(cx) && !self.add_correction(cx) {
+            return;
+        }
         let services = cx.global::<Services>();
         // A demo is simulated yet keeps the real settings path, so it must never write there.
         if services.is_quitting() || services.mode.is_demo() {
@@ -651,7 +659,6 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::config::valid_config;
 
     fn microphones(ids: &[&str]) -> Vec<InputDevice> {
         ids.iter()
@@ -683,47 +690,7 @@ mod tests {
             r"speakeasy --config '/home/user/it'\''s mine.json'"
         );
     }
-
-    #[test]
-    fn dropping_settings_writes_the_latest_queued_save() -> anyhow::Result<()> {
-        let directory = tempfile::tempdir()?;
-        let path = directory.path().join("settings.json");
-        let config = valid_config(directory.path())?;
-        let mut saves = SaveQueue::new(path.clone(), config.clone());
-        let mut submit = |threads| {
-            let draft = Config {
-                threads,
-                ..config.clone()
-            };
-            saves.submit(draft, ConfigEpoch::default())
-        };
-        assert!(submit(4).is_some(), "The first save did not start");
-        assert!(submit(8).is_none(), "The latest save did not queue");
-        drop(Settings {
-            config,
-            presentation: Presentation {
-                indicator: Indicator::Paused,
-                shortcut: Arc::from(""),
-                cancel_shortcut: Arc::from(""),
-                message: String::new(),
-            },
-            notice: None,
-            microphones: Vec::new(),
-            file_picker: None,
-            microphone_listing: None,
-            preview: None,
-            setup: None,
-            retiring_setups: Vec::new(),
-            saving: None,
-            saves,
-            _updates: Task::ready(()),
-            startup_apps_off: false,
-            #[cfg(target_os = "linux")]
-            desktop_command: SharedString::default(),
-            #[cfg(target_os = "windows")]
-            minimize_to_tray: None,
-        });
-        assert_eq!(Config::read(&path)?.threads, 8);
-        Ok(())
-    }
 }
+
+#[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
+mod native_tests;

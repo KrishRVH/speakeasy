@@ -4,6 +4,7 @@
   "model": "",
   "language": "en",
   "remove_fillers": true,
+  "vocabulary": [],
   "microphone": null,
   "threads": 4,
   "use_gpu": true,

@@ -7,7 +7,7 @@ use gpui::{
     px, rgb,
 };
 
-use super::{Action, ImageState, Review, Source};
+use super::{Action, ImageState, Kind, Mode, Review, Source};
 use crate::{
     BRAND_FONT,
     show::store::{recall::Health, retention::Retention},
@@ -58,10 +58,15 @@ impl Render for Review {
                     .when(row.pinned == Some(true), |row| {
                         row.child(tag("Kept", palette.lamp))
                     })
-                    .when(row.silent, |row| {
+                    .when(matches!(row.kind, Kind::Interrupted(_)), |row| {
+                        row.child(tag("Interrupted", palette.warn))
+                    })
+                    .when(row.silent && matches!(row.kind, Kind::Saved), |row| {
                         row.child(tag("No narration", palette.warn))
                     })
-                    .when(row.early, |row| row.child(tag("Ended early", palette.warn)))
+                    .when(row.early && matches!(row.kind, Kind::Saved), |row| {
+                        row.child(tag("Ended early", palette.warn))
+                    })
                     .when(row.health != Health::Ok, |button| {
                         button.child(tag(
                             if row.health == Health::Unsupported {
@@ -129,7 +134,7 @@ impl Render for Review {
                                 if self.source == Source::Demo {
                                     "Preview · synthetic recordings".into()
                                 } else {
-                                    format!("{} saved", self.library.rows.len())
+                                    format!("{} Shows", self.library.rows.len())
                                 },
                             )),
                     )
@@ -178,6 +183,58 @@ impl Review {
             .rows
             .iter()
             .find(|row| row.directory == key.directory);
+        if row.is_some_and(|row| matches!(row.kind, Kind::Interrupted(_))) {
+            let busy =
+                self.recovering.is_some() || self.discarding.is_some() || self.keeping.is_some();
+            return div()
+                .flex_1()
+                .p(px(24.0))
+                .flex()
+                .flex_col()
+                .gap(px(16.0))
+                .child(div().text_size(px(20.0)).child("Interrupted Show"))
+                .child(row.map_or_else(String::new, |row| {
+                    format!("{} · {}", row.recorded(now), row.retention(now))
+                }))
+                .child("Recover the frames, ink, and marks that reached the checkpoint. Narration is unavailable; recovery leaves your clipboard alone.")
+                .child("A crash or a slow or full disk can leave a shorter recording. Recovery preserves the original expiry date.")
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(10.0))
+                        .child(
+                            button(Action::Recover, palette, !busy, false, cx)
+                                .child("Recover Show"),
+                        )
+                        .child(
+                            button(Action::Discard, palette, !busy && !self.confirm_discard, false, cx)
+                                .child("Discard"),
+                        ),
+                )
+                .when(self.confirm_discard, |pane| {
+                    pane.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(10.0))
+                            .child("This permanently removes the interrupted Show.")
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap(px(10.0))
+                                    .child(
+                                        button(Action::CancelDiscard, palette, !busy, false, cx)
+                                            .child("Keep interrupted Show"),
+                                    )
+                                    .child(
+                                        button(Action::ConfirmDiscard, palette, !busy, false, cx)
+                                            .child("Discard permanently"),
+                                    ),
+                            ),
+                    )
+                })
+                .into_any_element();
+        }
         let heading = row.map_or_else(
             || "Show".into(),
             |row| {
@@ -232,8 +289,47 @@ impl Review {
                     )
                 },
             )
+            .when_some(self.detail.as_ref(), |body, detail| {
+                body.child(
+                    div()
+                        .flex()
+                        .gap(px(8.0))
+                        .child(
+                            button(
+                                Action::Mode(Mode::Keyframes),
+                                palette,
+                                true,
+                                self.mode == Mode::Keyframes,
+                                cx,
+                            )
+                            .child("Keyframes"),
+                        )
+                        .child(
+                            button(
+                                Action::Mode(Mode::Source),
+                                palette,
+                                detail.source_available,
+                                self.mode == Mode::Source,
+                                cx,
+                            )
+                            .child("All retained frames"),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(palette.muted))
+                        .child(detail.coverage.clone()),
+                )
+            })
             .child(self.canvas(palette))
             .child(self.navigation(key.frame, palette, cx))
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(rgb(palette.muted))
+                    .child("Page Up / Page Down: jump 10 seconds · Home / End: first / last frame"),
+            )
             .child(
                 div()
                     .text_size(px(11.0))
@@ -243,6 +339,7 @@ impl Review {
             )
             .child(self.summary(palette))
             .child(self.commands(palette, now, cx))
+            .into_any_element()
     }
 
     fn canvas(&self, palette: &Palette) -> impl IntoElement {
@@ -336,17 +433,24 @@ impl Review {
                     .flex()
                     .gap(px(5.0))
                     .flex_none()
-                    .children(frames.iter().enumerate().map(|(position, frame)| {
-                        button(
-                            Action::Frame(position),
-                            palette,
-                            true,
-                            index == position,
-                            cx,
-                        )
-                        .flex_none()
-                        .child(format!("#{} {}", frame.number, frame.at))
-                    })),
+                    .children(
+                        frames
+                            .iter()
+                            .enumerate()
+                            .skip(index.saturating_sub(10))
+                            .take(21)
+                            .map(|(position, frame)| {
+                                button(
+                                    Action::Frame(position),
+                                    palette,
+                                    true,
+                                    index == position,
+                                    cx,
+                                )
+                                .flex_none()
+                                .child(format!("#{} {}", frame.number, frame.at))
+                            }),
+                    ),
             )
     }
 
@@ -387,7 +491,8 @@ impl Review {
         now: SystemTime,
         cx: &Context<'_, Self>,
     ) -> impl IntoElement {
-        let can_copy = self.source != Source::Demo && (self.can_copy)(cx) && self.copying.is_none();
+        let can_copy =
+            self.source != Source::Demo && (self.actions.can_copy)(cx) && self.copying.is_none();
         let row = self.library.selected.as_ref().and_then(|key| {
             self.library
                 .rows
@@ -466,6 +571,14 @@ fn button(
     cx: &Context<'_, Review>,
 ) -> gpui::Stateful<Div> {
     let id: ElementId = match action {
+        Action::Recover => "recover-show".into(),
+        Action::Discard => "discard-show".into(),
+        Action::ConfirmDiscard => "confirm-discard-show".into(),
+        Action::CancelDiscard => "cancel-discard-show".into(),
+        Action::Jump(true) => "forward-show".into(),
+        Action::Jump(false) => "rewind-show".into(),
+        Action::Mode(Mode::Keyframes) => "show-keyframes".into(),
+        Action::Mode(Mode::Source) => "show-source-frames".into(),
         Action::Keep => "keep-show".into(),
         Action::Previous => "previous-frame".into(),
         Action::Next => "next-frame".into(),
@@ -538,6 +651,8 @@ impl Review {
             "down" => Some(Action::Show(row.map_or(0, |row| row.saturating_add(1)))),
             "left" => Some(Action::Frame(frame.saturating_sub(1))),
             "right" => Some(Action::Frame(frame.saturating_add(1))),
+            "pageup" => Some(Action::Jump(false)),
+            "pagedown" => Some(Action::Jump(true)),
             "home" => Some(Action::Frame(0)),
             "end" => Some(Action::Frame(last)),
             _ => None,

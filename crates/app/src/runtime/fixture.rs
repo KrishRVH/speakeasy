@@ -60,6 +60,23 @@ impl Ports for Fixture {
         anyhow::bail!("The dictation fixture records no Shows")
     }
 
+    fn abandon_footage(
+        &self,
+        footage: Footage,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send + 'static {
+        std::future::ready(footage.abandon())
+    }
+
+    fn recover(
+        &self,
+        _: crate::show::Interrupted,
+        _: InsertPermit,
+    ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
+        std::future::ready(Err(anyhow::anyhow!(
+            "Recovery is not configured for this fixture"
+        )))
+    }
+
     fn publish(
         &self,
         _: Footage,

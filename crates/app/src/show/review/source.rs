@@ -3,6 +3,7 @@
 use std::{
     fs,
     path::PathBuf,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 
@@ -19,7 +20,7 @@ pub(crate) enum Source {
 
 pub(super) struct Root {
     pub directory: PathBuf,
-    pub fixture: Option<tempfile::TempDir>,
+    pub fixture: Option<Arc<tempfile::TempDir>>,
 }
 
 impl Source {
@@ -68,6 +69,6 @@ fn fixture() -> anyhow::Result<Root> {
     }
     Ok(Root {
         directory,
-        fixture: Some(fixture),
+        fixture: Some(Arc::new(fixture)),
     })
 }

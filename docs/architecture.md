@@ -72,6 +72,9 @@ module unless a test file is named.
   owner and worker on public audio, opt-in.
 - **Transcript cleanup**: [transcript.rs](../crates/app/src/transcript.rs), with the filler policy
   in `Config::fillers` ([config.rs](../crates/app/src/config.rs)).
+  [vocabulary.rs](../crates/app/src/transcript/vocabulary.rs) validates and compiles per-request
+  phrase corrections after filler removal, preserving timed-word spans. Its tests cover word
+  boundaries, non-chaining replacements, duplicate validation, and timing.
 - **Insertion**: [platform/src/insertion.rs](../crates/platform/src/insertion.rs) with the Windows
   and macOS commit protocol in [insertion/commit.rs](../crates/platform/src/insertion/commit.rs),
   [input.rs](../crates/platform/src/input.rs),
@@ -103,7 +106,10 @@ module unless a test file is named.
 - **Settings and the settings file**: [shell/settings.rs](../crates/app/src/shell/settings.rs) and
   [settings/render.rs](../crates/app/src/shell/settings/render.rs) edit a draft;
   [config.rs](../crates/app/src/config.rs) and [paths.rs](../crates/app/src/paths.rs) own the file
-  contract and where it lives. [config/tests.rs](../crates/app/src/config/tests.rs) pins that
+  contract and where it lives. [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns
+  native selection and IME composition; its pure edit state tests Unicode boundaries, and
+  [native_tests.rs](../crates/app/src/shell/settings/native_tests.rs) checks owned-window
+  composition and save draining. [config/tests.rs](../crates/app/src/config/tests.rs) pins that
   contract.
 - **Pause, reconfigure, quit, and saves**: [shell.rs](../crates/app/src/shell.rs),
   [services.rs](../crates/app/src/shell/services.rs),
@@ -150,16 +156,18 @@ module unless a test file is named.
   [library.rs](../crates/app/src/show/review/library.rs) projects content-free rows through the
   shared store reader, without CLI output types; only the selected summary remains in memory.
   Selection revisions reject stale Show and frame results. Closing cancels reads and releases the
-  image directly, bypassing GPUI's asset cache; an accepted retention write finishes on the executor
-  with only a weak reference to the closed view. [frame.rs](../crates/app/src/show/review/frame.rs)
-  caps PNG files at 32 MiB and dimensions at 4096 pixels per side before decoding off the UI thread.
-  Decoder errors never include content. [review/tests.rs](../crates/app/src/show/review/tests.rs)
-  checks navigation, damage, and private text boundaries. Opt-in
-  [native_tests.rs](../crates/app/src/show/review/native_tests.rs) exercises the real view with
-  synthetic files, including rendering on a private Linux display, retention actions, stale
-  completion notices, and cleanup on close. Retention writes run off the UI thread and stay bound to
-  their original Show; activation rereads the summary and pin. The shell supplies copy availability
-  and owns only a window handle.
+  image directly, bypassing GPUI's asset cache. Services owns accepted Keep/Discard writes through
+  [edits.rs](../crates/app/src/show/edits.rs); Quit awaits them, and an immutable fixture lease
+  keeps preview storage alive until completion. Recovery enters the session owner's shielded
+  publication stage through a bounded request lane, without microphone, inference, or clipboard
+  work. [frame.rs](../crates/app/src/show/review/frame.rs) caps PNG files at 32 MiB and dimensions
+  at 4096 pixels per side before decoding off the UI thread. Decoder errors never include content.
+  [review/tests.rs](../crates/app/src/show/review/tests.rs) checks navigation, damage, and private
+  text boundaries. Opt-in [native_tests.rs](../crates/app/src/show/review/native_tests.rs) exercises
+  the real view with synthetic files, including rendering on a private Linux display, retention
+  actions, stale completion notices, and cleanup on close. Retention writes run off the UI thread
+  and stay bound to their original Show; activation rereads the summary and pin. The shell supplies
+  copy availability and routes accepted writes and recovery while the view owns result receipts.
 - **Show composition**: [crates/show/src](../crates/show/src), notably
   [select.rs](../crates/show/src/select.rs) and [select/](../crates/show/src/select),
   [journal.rs](../crates/show/src/journal.rs), [tracker.rs](../crates/show/src/tracker.rs),
@@ -193,8 +201,28 @@ module unless a test file is named.
   through renaming an expired Show out of the visible library, then removes files without the lock.
   Hidden expired directories survive interrupted deletion for the next cleanup pass. Its
   [tests](../crates/app/src/show/store/retention/tests.rs) exercise ordering, original expiry dates,
-  interrupted deletion, moved bundles, links, and preserved edits. Recording remains in memory;
-  these operations do not recover unsaved Shows or discarded source frames.
+  interrupted deletion, moved bundles, links, and preserved edits.
+  [checkpoint.rs](../crates/app/src/show/store/checkpoint.rs) owns private live logs and exclusive
+  cross-process locks. The recorder's bounded writer acknowledges cleanup before its lock releases;
+  dropped checkpoints remain recoverable, while unfinished-take cancellation records discard before
+  removal. Discard deletes the log before releasing its lock, so blocked deletion remains visible to
+  cleanup. Publication binds durable checkpoint and bundle markers before rename, preventing
+  duplicate recovery after a crash. Logs cap at 1 GiB/200,000 events; the writer queues at most 512
+  events/64 MiB and stops at a complete prefix on pressure or failure. No audio is persisted.
+  Discovery isolates damaged checkpoints so healthy entries remain visible and saved bundles still
+  expire. [checkpoint/tests.rs](../crates/app/src/show/store/checkpoint/tests.rs) exercises damaged
+  siblings, expiry, lock ownership, and durable discard/publication markers.
+  [journal/log.rs](../crates/show/src/journal/log.rs) shares live/replay admission, thinning, and
+  pointer folding; checksums and bounded records stop replay at its first damaged event. Property
+  tests compare replayed frames, timing, and annotations with live state.
+  [journal/source.rs](../crates/show/src/journal/source.rs) streams optional retained frames into
+  `source.frames` (512 MiB maximum), with checksummed tiles and an index capped at 64 MiB/4096
+  frames. [store/source.rs](../crates/app/src/show/store/source.rs) performs bounded range reads;
+  the viewer and CLI decode only the requested frame. Source exports require explicit time/path and
+  never overwrite. Older bundles remain readable without this optional file. Source writes use a
+  temporary file; failure saves selected keyframes with a nonfatal notice.
+  [publish/tests/recovery.rs](../crates/app/src/show/publish/tests/recovery.rs) covers this
+  fallback, publication failure, revocation, original expiry, and duplicate recovery prevention.
 - **Screen capture and overlay**: [platform/src/screen.rs](../crates/platform/src/screen.rs),
   [screen/geometry.rs](../crates/platform/src/screen/geometry.rs),
   [windows/screen.rs](../crates/platform/src/windows/screen.rs) with
@@ -242,8 +270,9 @@ No single module owns these rules; a change to any party keeps them.
   a retiring owner cannot replace a newer pause or quit notice; it can only add the last Show,
   below.
 - **Quit drains without a timeout.** Every application-owned Quit route awaits audio teardown, a
-  microphone scan, process reaping, insertion, setup, and requested saves while rendering continues.
-  The instance lock is released after the last Settings writer.
+  microphone scan, process reaping, insertion, setup, recovery, checkpoint cleanup, and accepted
+  Settings/Show edits while rendering continues. The instance lock is released after the last
+  Settings writer.
 - **Reports go through the owner.** Background failures, such as a failed retention sweep, and the
   menu's notices about the last Show reach a running owner's report lane and never interrupt a
   recording; without an owner, Services shows them while idle. Each report shown advances the
@@ -253,6 +282,15 @@ No single module owns these rules; a change to any party keeps them.
   thread in a private `.partial-*` directory. The bundle appears and its summary is copied only once
   the permit commits; a Show cancelled first leaves no bundle and no clipboard change. A saved Show
   stays saved when the clipboard refuses its summary.
+- **Finished Shows remain recoverable.** Quit, Pause, and reconfiguration revoke unfinished
+  publication without deleting its checkpoint. The same holds while finished footage awaits
+  transcription. Cancelling an unfinished recording discards its checkpoint; stale recorder reports
+  and shutdown's pending-report drain preserve requested finishes and clean up unfinished takes.
+  Recovery waits for an idle session, then uses its shielded delivery stage without microphone,
+  speech, or clipboard access.
+  [runtime/tests/recovery.rs](../crates/app/src/runtime/tests/recovery.rs) tests ownership and
+  revocation; [recorder/tests/checkpoint.rs](../crates/app/src/show/recorder/tests/checkpoint.rs)
+  tests durable finish, cancel, unreceived reports, and invalid-event prefix preservation.
 - **The last Show outlives each owner.** Only a saved Show replaces the one the owner remembers,
   only a report that finds that same Show gone forgets it, and every snapshot presents it. The
   shell's announcements keep it and a new owner starts from the one presented, so Pause and
@@ -281,6 +319,7 @@ fails:
 stateDiagram-v2
     state "AwaitingFootage(Narration, loss)" as AwaitingFootage
     [*] --> Queued
+    [*] --> Delivering: idle owner accepts recovery; no audio or clipboard
     Queued --> Opening: microphone free
     Opening --> Recording: first samples
     Opening --> Stopping: first samples after finish

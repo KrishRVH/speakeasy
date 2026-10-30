@@ -1,5 +1,7 @@
 //! Deterministic transcript cleanup before native insertion or a Show.
 
+pub(crate) mod vocabulary;
+
 use speakeasy_show::{Narration, Word};
 
 const PAUSES: [char; 4] = [',', ';', ':', '…'];

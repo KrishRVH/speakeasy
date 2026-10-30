@@ -16,7 +16,8 @@ use tokio::{
 };
 
 use super::{
-    LOADING, Meter, Phase, Report, SHOW_COPIED, SHOW_GONE, Snapshot, SnapshotEpoch, Wiring,
+    LOADING, Meter, Phase, Recovery, Report, SHOW_COPIED, SHOW_GONE, Snapshot, SnapshotEpoch,
+    Wiring,
     device::Device,
     now,
     ports::{CaptureEvent, PUBLISH_STOPPED, Ports, Published, SessionId, ShowEvent, Unchosen},
@@ -65,9 +66,13 @@ enum Outcome {
     ShowCopied {
         ending: Ending,
         lost: Option<NarrationLoss>,
+        source_lost: bool,
     },
     /// The menu found the last Show gone.
     ShowGone,
+    Recovered {
+        source_lost: bool,
+    },
     Empty,
     Cancelled,
     /// The Show was cancelled because its scope found nothing to record.
@@ -83,7 +88,7 @@ impl Outcome {
             Self::Idle => Phase::Idle,
             Self::Done => Phase::Done,
             Self::Copied(_) | Self::ShowCopied { .. } => Phase::Copied,
-            Self::ShowGone => Phase::Notice,
+            Self::ShowGone | Self::Recovered { .. } => Phase::Notice,
             Self::Empty => Phase::Empty,
             Self::Cancelled => Phase::Cancelled,
             Self::Unchosen(_) => Phase::Unchosen,
@@ -95,6 +100,7 @@ impl Outcome {
 /// Status text shown unless the outcome carries its own message: a failure or a copied delivery.
 /// A Show copied without narration still shows the failure it outlived, after its own message.
 enum Notice {
+    CheckpointLost,
     LoadingModel,
     SettingsApplied,
     /// The model failed to load; a later load clears it.
@@ -107,6 +113,9 @@ enum Notice {
 impl Notice {
     fn text(&self) -> &str {
         match self {
+            Self::CheckpointLost => {
+                "Recovery stopped for this Show. Recording continues; finish it to save the full Show."
+            },
             Self::LoadingModel => LOADING,
             Self::SettingsApplied => "Settings applied",
             Self::WarmupFailed(failure) | Self::NarrationLost(failure) => failure,
@@ -117,7 +126,7 @@ impl Notice {
     fn failure(&self) -> Option<&str> {
         match self {
             Self::WarmupFailed(failure) | Self::NarrationLost(failure) => Some(failure),
-            Self::LoadingModel | Self::SettingsApplied => None,
+            Self::LoadingModel | Self::SettingsApplied | Self::CheckpointLost => None,
         }
     }
 }
@@ -134,6 +143,7 @@ enum Wake<W> {
     /// An abandoned session's insertion or publication finished.
     Abandoned(SessionId, Result<Delivered, JoinError>),
     Retired,
+    Recover(Recovery),
     Timer,
 }
 
@@ -152,6 +162,7 @@ struct Owner<P: Ports> {
     changes: watch::Receiver<Config>,
     inputs: Receiver<Input>,
     reports: Receiver<Report>,
+    recoveries: Receiver<Recovery>,
     stopping: Receiver<Infallible>,
     capture_events: Sender<CaptureEvent>,
     captures: Receiver<CaptureEvent>,
@@ -197,6 +208,7 @@ impl<P: Ports> Owner<P> {
             mut changes,
             inputs,
             reports,
+            recoveries,
             snapshots,
             meter,
             permits,
@@ -216,6 +228,7 @@ impl<P: Ports> Owner<P> {
             changes,
             inputs,
             reports,
+            recoveries,
             stopping,
             capture_events,
             captures,
@@ -254,6 +267,7 @@ impl<P: Ports> Owner<P> {
                 .deadline()
                 .map(|at| tokio::time::sleep_until(at.into())),
         );
+        let idle = self.session.is_none();
         let delivered = or_pending(self.session.as_mut().map(Session::delivered));
         // Biased: stop outranks the input lane that `request_stop` closes beside it, so a pause
         // never reads as a shortcut failure.
@@ -266,6 +280,7 @@ impl<P: Ports> Owner<P> {
             change = self.changes.changed() => change.map_or(Wake::Stop, |()| Wake::Configuration),
             Ok(event) = self.captures.recv() => Wake::Capture(event),
             Ok(event) = self.shows.recv() => Wake::Show(event),
+            Ok(recovery) = self.recoveries.recv(), if idle => Wake::Recover(recovery),
             () = self.microphone.retired() => Wake::Retired,
             () = self.screen.retired() => Wake::Retired,
             completion = self.worker.completed() => Wake::Worker(completion),
@@ -295,6 +310,7 @@ impl<P: Ports> Owner<P> {
             },
             Wake::Show(event) => self.handle_show(event),
             Wake::Retired => None,
+            Wake::Recover(recovery) => return self.start_recovery(recovery),
             Wake::Worker(completion) => {
                 self.handle_worker(completion);
                 None
@@ -388,6 +404,7 @@ impl<P: Ports> Owner<P> {
             Report::ShowCopied => Outcome::ShowCopied {
                 ending: Ending::Finished,
                 lost: None,
+                source_lost: false,
             },
             Report::ShowGone(_) => Outcome::ShowGone,
         };
@@ -588,11 +605,31 @@ impl<P: Ports> Owner<P> {
     /// failing partway does, finishes the Show with it. A Show whose scope found nothing to record
     /// is cancelled with its narration, since a Show never records more than its scope names.
     fn handle_show(&mut self, event: ShowEvent) -> Option<Action> {
+        if !self
+            .session
+            .as_ref()
+            .is_some_and(|session| session.id == event.session() && session.is_show())
+        {
+            if let ShowEvent::Finished(id, Ok(footage)) = event {
+                self.abandon_footage(id, *footage);
+            }
+            return None;
+        }
         let session = self
             .session
             .as_mut()
             .filter(|session| session.id == event.session() && session.is_show())?;
         let footage = match event {
+            ShowEvent::CheckpointLost(_) => {
+                if self
+                    .notice
+                    .as_ref()
+                    .is_none_or(|notice| notice.failure().is_none())
+                {
+                    self.notice = Some(Notice::CheckpointLost);
+                }
+                return None;
+            },
             ShowEvent::Finished(_, footage) => footage,
             ShowEvent::Unchosen(_, unchosen) => {
                 self.gesture.abandon();
@@ -625,11 +662,12 @@ impl<P: Ports> Owner<P> {
                 show: saved,
                 ending,
                 lost,
+                source_lost,
                 copied,
             }))) => {
                 self.remember(saved, self.latest.id);
                 match copied {
-                    Ok(()) => Outcome::ShowCopied { ending, lost },
+                    Ok(()) => Outcome::ShowCopied { ending, lost, source_lost },
                     Err(error) => {
                         // What the Show lost still shows; its summary says how it ended.
                         let show = if ending == Ending::Finished {
@@ -654,12 +692,19 @@ impl<P: Ports> Owner<P> {
             },
             Ok(
                 Delivered::Inserted(Ok(Inserted::Cancelled))
-                | Delivered::Published(Ok(Published::Cancelled)),
+                | Delivered::Published(Ok(Published::Cancelled))
+                | Delivered::Abandoned(Ok(())),
             ) => Outcome::Cancelled,
             Ok(Delivered::Inserted(Ok(Inserted::Unavailable(message)))) => {
                 Outcome::Failed(message.into())
             },
-            Ok(Delivered::Published(Err(error))) => Outcome::Failed(format!("{error:#}")),
+            Ok(Delivered::Published(Ok(Published::Recovered { show: saved, source_lost }))) => {
+                self.remember(saved, self.latest.id);
+                Outcome::Recovered { source_lost }
+            },
+            Ok(Delivered::Abandoned(Err(error)) | Delivered::Published(Err(error))) => {
+                Outcome::Failed(format!("{error:#}"))
+            },
             Err(_) if show => Outcome::Failed(PUBLISH_STOPPED.into()),
             Ok(Delivered::Inserted(Err(_))) | Err(_) => Outcome::Failed(
                 "Cannot submit the text. Check desktop permissions and clipboard access, then try again."
@@ -724,6 +769,55 @@ impl<P: Ports> Owner<P> {
         ControlFlow::Continue(())
     }
 
+    fn start_recovery(&mut self, recovery: Recovery) -> ControlFlow<()> {
+        if !self.gesture.save() {
+            return ControlFlow::Continue(());
+        }
+        let Some(permit) = self.permits.begin() else {
+            self.gesture.abandon();
+            return ControlFlow::Continue(());
+        };
+        let Some(id) = self.latest.id.next() else {
+            return ControlFlow::Break(());
+        };
+        if !permit.shield() {
+            self.gesture.abandon();
+            return ControlFlow::Continue(());
+        }
+        self.latest = Latest {
+            id,
+            started: now(),
+            show: true,
+        };
+        self.outcome = Outcome::Idle;
+        self.notice = None;
+        let work = self.ports.recover(recovery.interrupted, permit.clone());
+        self.session = Some(Session::recovering(
+            id,
+            permit,
+            self.latest.started,
+            async move {
+                let result = work.await;
+                let completed = match &result {
+                    Ok(Published::Recovered { show, .. } | Published::Saved { show, .. }) => {
+                        Ok(show.clone())
+                    },
+                    Ok(Published::Cancelled) => {
+                        Err("Recovery cancelled. The interrupted Show is still available.".into())
+                    },
+                    Err(error) => Err(format!("Cannot recover this Show: {error:#}")),
+                };
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "Closing the library abandons its receipt, not the owner's recovery"
+                )]
+                let _ = recovery.completed.try_send(completed);
+                result
+            },
+        ));
+        ControlFlow::Continue(())
+    }
+
     /// Holds the cue output open from the moment a session begins, so its first cue never waits
     /// for a device to open, and releases it as Speakeasy goes idle or sounds turn off, however the
     /// session ended.
@@ -758,6 +852,9 @@ impl<P: Ports> Owner<P> {
             session.permit.revoke();
         }
         self.gesture.complete();
+        if matches!(self.notice, Some(Notice::CheckpointLost)) {
+            self.notice = None;
+        }
         self.outcome = outcome;
     }
 
@@ -770,6 +867,9 @@ impl<P: Ports> Owner<P> {
 
     /// Revokes the session and hands its native work to cleanup without awaiting any OS call.
     fn abandon(&mut self) {
+        if matches!(self.notice, Some(Notice::CheckpointLost)) {
+            self.notice = None;
+        }
         let Some(session) = self.session.take() else {
             return;
         };
@@ -784,9 +884,17 @@ impl<P: Ports> Owner<P> {
             self.worker.recover(&self.ports, &self.config);
         }
         let id = session.id;
-        if let Some(task) = session.into_delivery() {
+        if let Some(task) = session.into_cleanup(|footage| self.ports.abandon_footage(footage)) {
             self.retiring.push((id, task));
         }
+    }
+
+    fn abandon_footage(&mut self, id: SessionId, footage: super::ports::Footage) {
+        let work = self.ports.abandon_footage(footage);
+        self.retiring.push((
+            id,
+            tokio::spawn(async move { Delivered::Abandoned(work.await) }),
+        ));
     }
 
     fn fail(&mut self, message: String) {
@@ -877,16 +985,28 @@ impl<P: Ports> Owner<P> {
     /// Remembers what an abandoned session's publication saved anyway, as [`saved_anyway`]
     /// describes; the session's presented outcome stands.
     fn handle_abandoned(&mut self, session: SessionId, result: Result<Delivered, JoinError>) {
-        if let Some(show) = saved_anyway(self.remembered, session, result) {
-            self.remember(show, session);
+        match result {
+            Ok(Delivered::Abandoned(Err(error))) => {
+                if self.session.is_none() && self.latest.id == session {
+                    self.outcome =
+                        Outcome::Failed(format!("Cannot discard the interrupted Show: {error:#}"));
+                }
+            },
+            result => {
+                if let Some(show) = saved_anyway(self.remembered, session, result) {
+                    self.remember(show, session);
+                }
+            },
         }
     }
 
     fn message(&self) -> Cow<'_, str> {
-        match &self.outcome {
+        let message: Cow<'_, str> = match &self.outcome {
             Outcome::Failed(message) => message.into(),
             Outcome::Copied(message) => Cow::Borrowed(message),
-            Outcome::ShowCopied { ending, lost: None } => match ending {
+            Outcome::ShowCopied {
+                ending, lost: None, ..
+            } => match ending {
                 Ending::Finished => SHOW_COPIED,
                 Ending::ScreenStopped => SHOW_SCREEN_STOPPED,
                 Ending::WindowClosed => SHOW_WINDOW_CLOSED,
@@ -896,6 +1016,7 @@ impl<P: Ports> Owner<P> {
             Outcome::ShowCopied {
                 ending,
                 lost: Some(_),
+                ..
             } => {
                 let copied = match ending {
                     Ending::Finished => SHOW_UNNARRATED,
@@ -911,9 +1032,27 @@ impl<P: Ports> Owner<P> {
             Outcome::Unchosen(Unchosen::Window) => NO_WINDOW.into(),
             Outcome::Unchosen(Unchosen::Area) => NO_AREA.into(),
             Outcome::ShowGone => SHOW_GONE.into(),
+            Outcome::Recovered { .. } => {
+                "Show recovered without narration. Find it in Shows.".into()
+            },
             Outcome::Idle | Outcome::Done | Outcome::Empty | Outcome::Cancelled => {
                 self.notice.as_ref().map_or("", Notice::text).into()
             },
+        };
+        if matches!(
+            self.outcome,
+            Outcome::ShowCopied {
+                source_lost: true,
+                ..
+            } | Outcome::Recovered { source_lost: true }
+        ) {
+            format!(
+                "{message} Retained source frames could not be saved; \
+                 the selected keyframes are available."
+            )
+            .into()
+        } else {
+            message
         }
     }
 
@@ -921,7 +1060,7 @@ impl<P: Ports> Owner<P> {
         debug_assert_eq!(self.gesture.state() == State::Idle, self.session.is_none());
         let session = self.session.as_ref();
         let (ending, narration_lost) = match self.outcome {
-            Outcome::ShowCopied { ending, lost } => (ending, lost),
+            Outcome::ShowCopied { ending, lost, .. } => (ending, lost),
             _ => (Ending::Finished, None),
         };
         let snapshot = Snapshot {
@@ -956,6 +1095,12 @@ impl<P: Ports> Owner<P> {
         // Nothing reads the capture lane from here on, and a capture thread reports `Finished`
         // with a blocking send even when cancelled, so a full lane would stall its teardown.
         self.captures.close();
+        self.shows.close();
+        while let Ok(event) = self.shows.try_recv() {
+            if let ShowEvent::Finished(id, Ok(footage)) = event {
+                self.abandon_footage(id, *footage);
+            }
+        }
         self.abandon();
         // Abandoned work is never aborted: each task finishes its own cleanup.
         let retiring = mem::take(&mut self.retiring);
@@ -1006,7 +1151,10 @@ fn saved_anyway(
     session: SessionId,
     result: Result<Delivered, JoinError>,
 ) -> Option<SavedShow> {
-    let Ok(Delivered::Published(Ok(Published::Saved { show, .. }))) = result else {
+    let Ok(Delivered::Published(Ok(
+        Published::Saved { show, .. } | Published::Recovered { show, .. },
+    ))) = result
+    else {
         return None;
     };
     remembered
@@ -1065,6 +1213,7 @@ mod tests {
             show: SavedShow::assume(folder.to_owned()),
             ending: Ending::Finished,
             lost: None,
+            source_lost: false,
             copied: Ok(()),
         }))
     }

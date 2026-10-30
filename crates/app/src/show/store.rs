@@ -88,11 +88,30 @@ pub(super) struct Staged {
 }
 
 impl Staged {
+    /// Adds the retained source to this private staging directory. A failed source write leaves
+    /// the staging owner responsible for cleanup; the visible bundle is never partial.
+    pub(super) fn write_source(
+        &self,
+        journal: &speakeasy_show::Journal,
+        duration: speakeasy_show::Moment,
+    ) -> anyhow::Result<()> {
+        source::write(self.staging.path(), journal, duration)
+            .context("Cannot save the Show's source frames")
+    }
+
     /// Moves the bundle into place and returns the saved Show with the summary written in it.
     pub(super) fn persist(mut self) -> anyhow::Result<(SavedShow, String)> {
         let parent = self.directory.parent().unwrap_or(&self.directory);
         fs::rename(self.staging.path(), &self.directory).map_err(cannot_save(parent))?;
         self.staging.disable_cleanup(true);
+        #[cfg(unix)]
+        {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Rename already made the complete bundle visible; a failed directory sync cannot turn that saved Show into a failed publication"
+            )]
+            let _ = fs::File::open(parent).and_then(|file| file.sync_all());
+        }
         Ok((SavedShow(self.directory.into()), self.summary))
     }
 }
@@ -104,6 +123,11 @@ impl Staged {
 pub(crate) struct SavedShow(Arc<Path>);
 
 impl SavedShow {
+    /// Stable identity only; callers perform any existence check off the UI thread.
+    pub(crate) fn directory(&self) -> &Path {
+        &self.0
+    }
+
     /// Trusts `directory` as a saved Show's folder, for tests whose Shows are never written.
     #[cfg(test)]
     pub(crate) fn assume(directory: impl Into<PathBuf>) -> Self {
@@ -211,6 +235,7 @@ fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
         entries => entries.with_context(|| format!("Cannot read {}", parent.display()))?,
     };
+    let checkpoint_error = checkpoint::sweep(parent, now).err();
     let cutoff = utc_stamp(now.checked_sub(KEPT_FOR).unwrap_or(SystemTime::UNIX_EPOCH));
     let mut unchecked = None;
     let mut stuck = false;
@@ -244,6 +269,9 @@ fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
             parent.display(),
             crate::paths::remedy(&error)
         );
+    }
+    if let Some(error) = checkpoint_error {
+        return Err(error);
     }
     Ok(())
 }
@@ -389,7 +417,9 @@ fn civil_date(days: u64) -> (u64, u64, u64) {
 
 pub(super) mod address;
 pub(super) mod age;
+pub(crate) mod checkpoint;
 pub(super) mod recall;
 pub(super) mod retention;
+pub(super) mod source;
 #[cfg(test)]
 mod tests;

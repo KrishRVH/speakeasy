@@ -184,7 +184,7 @@ fn read(directory: &Path) -> Result<ReadShow, ReadError> {
 
 /// All names come from the format. Check intermediate directories too, so a linked `frames`
 /// directory cannot direct an agent outside the Show. Files replaced concurrently may disappear.
-fn regular_file(directory: &Path, name: &str, limit: u64) -> io::Result<()> {
+pub(super) fn regular_file(directory: &Path, name: &str, limit: u64) -> io::Result<()> {
     let mut path = directory.to_owned();
     let mut parts = name.split('/').peekable();
     while let Some(part) = parts.next() {

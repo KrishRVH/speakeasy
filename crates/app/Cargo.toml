@@ -29,6 +29,7 @@ serde_path_to_error.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }
+unicode-segmentation.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]

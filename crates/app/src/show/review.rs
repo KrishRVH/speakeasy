@@ -18,7 +18,7 @@ use gpui::{
     App, AppContext, Bounds, Context, FocusHandle, RenderImage, Subscription, Task,
     TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, px, size,
 };
-use library::{Detail, Key, Library};
+use library::{Detail, Key, Kind, Library, Mode};
 use source::Root;
 pub(crate) use source::Source;
 use tokio::sync::watch;
@@ -29,6 +29,17 @@ use crate::{
     runtime::Snapshot,
     theme::Theme,
 };
+
+pub(crate) struct Actions {
+    pub edit: fn(
+        super::edits::Edit,
+        Option<Arc<tempfile::TempDir>>,
+        &mut App,
+    ) -> anyhow::Result<super::edits::Receipt>,
+    pub can_copy: fn(&App) -> bool,
+    pub recover:
+        fn(crate::show::Interrupted, &App) -> Result<crate::runtime::RecoveryReceipt, &'static str>,
+}
 
 enum ImageState {
     Empty,
@@ -42,10 +53,11 @@ pub(crate) struct Review {
     focus: FocusHandle,
     source: Source,
     theme: Theme,
-    can_copy: fn(&App) -> bool,
+    actions: Actions,
     library: Library,
     directory: Option<PathBuf>,
     detail: Option<Detail>,
+    mode: Mode,
     image: ImageState,
     notice: Option<String>,
     listing: Option<Task<()>>,
@@ -54,28 +66,21 @@ pub(crate) struct Review {
     copying: Option<Task<()>>,
     checking: Option<Task<()>>,
     keeping: Option<(PathBuf, Task<()>)>,
+    recovering: Option<Task<()>>,
+    discarding: Option<Task<()>>,
+    confirm_discard: bool,
     visibility: Option<Task<()>>,
     _updates: Task<()>,
     _activation: Subscription,
-    // Pending tasks drop before the synthetic folder; already-running reads may finish later.
-    fixture: Option<tempfile::TempDir>,
-}
-
-impl Drop for Review {
-    fn drop(&mut self) {
-        // Keep is an accepted filesystem action. Closing the view removes its notice, but the
-        // executor finishes the write; its callback holds only a weak reference to this view.
-        if let Some((_, task)) = self.keeping.take() {
-            task.detach();
-        }
-    }
+    // Immutable leases keep the synthetic folder alive during accepted writes.
+    fixture: Option<Arc<tempfile::TempDir>>,
 }
 
 pub(crate) fn open(
     source: Source,
     theme: Theme,
     snapshots: watch::Receiver<Snapshot>,
-    can_copy: fn(&App) -> bool,
+    actions: Actions,
     cx: &mut App,
 ) -> anyhow::Result<WindowHandle<Review>> {
     let available = cx.primary_display().map(|display| display.bounds().size);
@@ -101,7 +106,7 @@ pub(crate) fn open(
             show: false,
             ..Default::default()
         },
-        |window, cx| cx.new(|cx| Review::new(source, theme, snapshots, can_copy, window, cx)),
+        |window, cx| cx.new(|cx| Review::new(source, theme, snapshots, actions, window, cx)),
     )?;
     handle.update(cx, |view, window, cx| view.reveal(window, cx))?;
     Ok(handle)
@@ -112,7 +117,7 @@ impl Review {
         source: Source,
         theme: Theme,
         snapshots: watch::Receiver<Snapshot>,
-        can_copy: fn(&App) -> bool,
+        actions: Actions,
         window: &mut Window,
         cx: &Context<'_, Self>,
     ) -> Self {
@@ -122,10 +127,11 @@ impl Review {
             focus,
             source,
             theme,
-            can_copy,
+            actions,
             library: Library::default(),
             directory: None,
             detail: None,
+            mode: Mode::Keyframes,
             image: ImageState::Empty,
             notice: None,
             listing: None,
@@ -134,6 +140,9 @@ impl Review {
             copying: None,
             checking: None,
             keeping: None,
+            recovering: None,
+            discarding: None,
+            confirm_discard: false,
             visibility: None,
             _updates: follow(
                 snapshots,
@@ -192,13 +201,14 @@ impl Review {
             view.update_if_alive(cx, |view, cx| {
                 view.listing = None;
                 match result {
-                    Ok((root, rows)) => {
+                    Ok((root, (rows, notice))) => {
                         view.directory = Some(root.directory);
                         view.fixture = root.fixture.or_else(|| view.fixture.take());
                         match view.library.replace(rows) {
-                            Some(key) => view.open_selected(key, None, cx),
+                            Some(key) => view.open_selected(key, None, None, cx),
                             None => view.clear_selection(None, cx),
                         }
+                        view.notice = notice;
                     },
                     Err(error) => {
                         const REMEDY: &str = "Check that the folder is readable, then refresh.";
@@ -211,12 +221,23 @@ impl Review {
         cx.notify();
     }
 
-    fn open_selected(&mut self, key: Key, window: Option<&mut Window>, cx: &mut Context<'_, Self>) {
+    fn open_selected(
+        &mut self,
+        key: Key,
+        seek: Option<speakeasy_show::Moment>,
+        window: Option<&mut Window>,
+        cx: &mut Context<'_, Self>,
+    ) {
         self.clear_selection(window, cx);
+        if self.interrupted().is_some() {
+            cx.notify();
+            return;
+        }
         let directory = key.directory.clone();
+        let mode = self.mode;
         let work = cx
             .background_executor()
-            .spawn(async move { Detail::open(&directory) });
+            .spawn(async move { Detail::open(&directory, mode) });
         self.opening = Some(cx.spawn(async move |view, cx| {
             let result = work.await;
             view.update_if_alive(cx, |view, cx| {
@@ -224,13 +245,20 @@ impl Review {
                     return;
                 }
                 view.opening = None;
-                match result {
-                    Ok(detail) => {
-                        view.detail = Some(detail);
-                        view.load_frame(key, None, cx);
+                let detail = match result {
+                    Ok(detail) => detail,
+                    Err(error) => {
+                        view.read_failed(error, cx);
+                        cx.notify();
+                        return;
                     },
-                    Err(error) => view.read_failed(error, cx),
-                }
+                };
+                let key = match seek {
+                    Some(at) => view.library.select(key.directory, detail.frame_at(at)),
+                    None => key,
+                };
+                view.detail = Some(detail);
+                view.load_frame(key, None, cx);
                 cx.notify();
             });
         }));
@@ -283,6 +311,7 @@ impl Review {
         self.copying = None;
         self.checking = None;
         self.detail = None;
+        self.confirm_discard = false;
         self.notice = None;
         self.replace_image(ImageState::Empty, window, cx);
     }
@@ -345,7 +374,11 @@ impl Review {
     }
 
     fn keep(&mut self, cx: &mut Context<'_, Self>) {
-        if self.keeping.is_some() || self.listing.is_some() {
+        if self.keeping.is_some()
+            || self.listing.is_some()
+            || self.recovering.is_some()
+            || self.discarding.is_some()
+        {
             return;
         }
         let Some((parent, key)) = self.directory.clone().zip(self.library.selected.clone()) else {
@@ -363,11 +396,33 @@ impl Review {
         // A read begun before this write must not restore the previous retention afterward.
         self.checking = None;
         let directory = key.directory.clone();
-        let work = async move { retention::set_kept(&parent, &directory, !kept) };
+        let work = match (self.actions.edit)(
+            super::edits::Edit::Keep {
+                parent,
+                directory,
+                kept: !kept,
+            },
+            self.fixture.clone(),
+            cx,
+        ) {
+            Ok(work) => work,
+            Err(error) => {
+                self.notice = Some(format!("Cannot change retention: {error:#}"));
+                return;
+            },
+        };
         self.keeping = Some((
             key.directory.clone(),
             cx.spawn(async move |view, cx| {
-                let result = cx.background_executor().spawn(work).await;
+                let result = work
+                    .recv()
+                    .await
+                    .map_err(io::Error::other)
+                    .and_then(|result| result.map_err(io::Error::other))
+                    .and_then(|retention| {
+                        retention
+                            .ok_or_else(|| io::Error::other("Retention write returned no result"))
+                    });
                 view.update_if_alive(cx, |view, cx| {
                     view.keeping = None;
                     view.kept(&key.directory, result, cx);
@@ -407,7 +462,7 @@ impl Review {
     }
 
     fn copy(&mut self, cx: &mut Context<'_, Self>) {
-        if self.source == Source::Demo || !(self.can_copy)(cx) || self.copying.is_some() {
+        if self.source == Source::Demo || !(self.actions.can_copy)(cx) || self.copying.is_some() {
             return;
         }
         let Some(key) = self.library.selected.clone() else {
@@ -424,7 +479,7 @@ impl Review {
             // invalidate an explicit copy or leave its progress notice stuck.
             let allowed = view
                 .update(cx, |view, cx| {
-                    view.library.is_selected(&key.directory) && (view.can_copy)(cx)
+                    view.library.is_selected(&key.directory) && (view.actions.can_copy)(cx)
                 })
                 .unwrap_or(false);
             let result = if allowed {
@@ -452,6 +507,104 @@ impl Review {
         }
     }
 
+    fn interrupted(&self) -> Option<crate::show::Interrupted> {
+        let key = self.library.selected.as_ref()?;
+        match &self
+            .library
+            .rows
+            .iter()
+            .find(|row| row.directory == key.directory)?
+            .kind
+        {
+            Kind::Interrupted(show) => Some(show.clone()),
+            Kind::Saved => None,
+        }
+    }
+
+    fn recover(&mut self, cx: &Context<'_, Self>) {
+        if self.recovering.is_some() || self.discarding.is_some() || self.keeping.is_some() {
+            return;
+        }
+        let Some(interrupted) = self.interrupted() else {
+            return;
+        };
+        let key = self.library.selected.clone();
+        let result = match (self.actions.recover)(interrupted, cx) {
+            Ok(result) => result,
+            Err(error) => {
+                self.notice = Some(error.into());
+                return;
+            },
+        };
+        self.confirm_discard = false;
+        self.notice =
+            Some("Recovery queued. It starts after the current recording finishes.".into());
+        self.recovering = Some(cx.spawn(async move |view, cx| {
+            let result = result.recv().await.unwrap_or_else(|_closed| {
+                Err("Recovery stopped. The interrupted Show remains available.".into())
+            });
+            view.update_if_alive(cx, |view, cx| {
+                view.recovering = None;
+                match result {
+                    Ok(show) if view.library.selected == key => {
+                        view.library.select(show.directory().to_owned(), 0);
+                        view.mode = Mode::Keyframes;
+                        view.refresh(cx);
+                    },
+                    Ok(_) => view.refresh(cx),
+                    Err(error) if view.library.selected == key => {
+                        view.notice = Some(error);
+                        cx.notify();
+                    },
+                    Err(_) => cx.notify(),
+                }
+            });
+        }));
+    }
+
+    fn discard(&mut self, cx: &mut Context<'_, Self>) {
+        if self.recovering.is_some() || self.discarding.is_some() || self.keeping.is_some() {
+            return;
+        }
+        let Some(interrupted) = self.interrupted() else {
+            return;
+        };
+        if !self.confirm_discard {
+            return;
+        }
+        let key = self.library.selected.clone();
+        let work = match (self.actions.edit)(
+            super::edits::Edit::Discard(interrupted),
+            self.fixture.clone(),
+            cx,
+        ) {
+            Ok(work) => work,
+            Err(error) => {
+                self.notice = Some(format!("Cannot discard this Show: {error:#}"));
+                return;
+            },
+        };
+        self.discarding = Some(cx.spawn(async move |view, cx| {
+            let result = work
+                .recv()
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(|result| result);
+            view.update_if_alive(cx, |view, cx| {
+                view.discarding = None;
+                view.confirm_discard = false;
+                match result {
+                    Ok(_) => view.refresh(cx),
+                    Err(error) if view.library.selected == key => {
+                        view.notice = Some(format!("Cannot discard this Show: {error:#}"));
+                        cx.notify();
+                    },
+                    Err(_) => cx.notify(),
+                }
+            });
+        }));
+    }
+
     fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<'_, Self>) {
         match action {
             Action::Previous | Action::Next => {
@@ -465,12 +618,27 @@ impl Review {
                 }
             },
             Action::Refresh => self.refresh(cx),
+            Action::Mode(mode) => {
+                if self.mode != mode
+                    && let Some(current) = self.library.selected.clone()
+                {
+                    let at = self
+                        .detail
+                        .as_ref()
+                        .and_then(|detail| detail.frames.get(current.frame))
+                        .map(|frame| frame.at);
+                    self.mode = mode;
+                    let key = self.library.select(current.directory, 0);
+                    self.open_selected(key, at, Some(window), cx);
+                }
+            },
             Action::Show(index) => {
                 if let Some(row) = self.library.rows.get(index)
                     && !self.library.is_selected(&row.directory)
                 {
+                    self.mode = Mode::Keyframes;
                     let key = self.library.select(row.directory.clone(), 0);
-                    self.open_selected(key, Some(window), cx);
+                    self.open_selected(key, None, Some(window), cx);
                 }
             },
             Action::Frame(index) => {
@@ -483,6 +651,36 @@ impl Review {
                 {
                     let key = self.library.select(current.directory, index);
                     self.load_frame(key, Some(window), cx);
+                }
+            },
+            Action::Recover => self.recover(cx),
+            Action::Discard => {
+                self.confirm_discard = true;
+                self.notice = Some("Discard permanently removes this interrupted Show.".into());
+            },
+            Action::ConfirmDiscard => self.discard(cx),
+            Action::CancelDiscard => {
+                self.confirm_discard = false;
+                self.notice = None;
+            },
+            Action::Jump(forward) => {
+                if let Some((detail, current)) =
+                    self.detail.as_ref().zip(self.library.selected.as_ref())
+                    && let Some(frame) = detail.frames.get(current.frame)
+                {
+                    let ms = if forward {
+                        frame.at.as_millis().saturating_add(10_000)
+                    } else {
+                        frame.at.as_millis().saturating_sub(10_000)
+                    };
+                    let target = detail.frame_at(speakeasy_show::Moment::from_millis(ms));
+                    let index = if forward {
+                        target.max(current.frame.saturating_add(1))
+                    } else {
+                        target.min(current.frame.saturating_sub(1))
+                    }
+                    .min(detail.frames.len().saturating_sub(1));
+                    self.act(Action::Frame(index), window, cx);
                 }
             },
             Action::Copy => self.copy(cx),
@@ -506,6 +704,12 @@ fn copy_summary(summary: io::Result<String>) -> Result<(), String> {
 
 #[derive(Clone, Copy)]
 enum Action {
+    Recover,
+    Discard,
+    ConfirmDiscard,
+    CancelDiscard,
+    Jump(bool),
+    Mode(Mode),
     Previous,
     Next,
     Refresh,

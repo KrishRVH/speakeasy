@@ -10,6 +10,7 @@ use crate::show::store::recall::Health;
 
 fn row(name: &str) -> Row {
     Row {
+        kind: library::Kind::Saved,
         directory: name.into(),
         health: Health::Ok,
         duration: None,
@@ -58,12 +59,12 @@ fn refresh_preserves_the_explicit_path_but_never_substitutes_for_a_deleted_show(
 fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> anyhow::Result<()> {
     let root = Source::Demo.load()?;
     assert!(root.fixture.is_some());
-    let rows = list(&root.directory)?;
+    let (rows, _) = list(&root.directory)?;
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0].pinned, Some(true));
     assert!(rows[1].early && rows[1].silent);
     assert_eq!(rows[2].health, Health::Damaged);
-    let detail = Detail::open(&rows[2].directory)?;
+    let detail = Detail::open(&rows[2].directory, library::Mode::Keyframes)?;
     assert_eq!(detail.frames.len(), 4);
     assert!(frame::read(&rows[2].directory, &detail.frames[2].file).is_err());
     assert!(frame::read(&rows[2].directory, &detail.frames[1].file).is_ok());
@@ -75,7 +76,7 @@ fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> anyhow
     manifest["keyframes"][1]["marks"] = serde_json::json!([0, 0]);
     fs::write(&manifest_path, serde_json::to_vec(&manifest)?)?;
     fs::write(path.join("summary.md"), "SECRET_USER_EDIT")?;
-    let detail = Detail::open(path)?;
+    let detail = Detail::open(path, library::Mode::Keyframes)?;
     assert!(
         detail
             .warnings
@@ -85,13 +86,13 @@ fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> anyhow
     assert_eq!(detail.summary.as_ref().unwrap(), "SECRET_USER_EDIT");
     assert!(!format!("{:?} {:?}", list(&root.directory)?, detail.frames).contains("SECRET"));
     fs::write(&manifest_path, br#"{"version":99}"#)?;
-    let detail = Detail::open(path)?;
+    let detail = Detail::open(path, library::Mode::Keyframes)?;
     assert!(detail.frames.is_empty());
-    let rows = list(&root.directory)?;
+    let (rows, _) = list(&root.directory)?;
     assert_eq!(rows[0].pinned, Some(true));
     assert_eq!(rows[0].retention(std::time::SystemTime::now()), "Kept");
     fs::remove_file(path.join(".pinned"))?;
-    let rows = list(&root.directory)?;
+    let (rows, _) = list(&root.directory)?;
     assert_eq!(rows[0].pinned, Some(false));
     assert!(
         rows[0]
@@ -101,7 +102,7 @@ fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> anyhow
     assert!(detail.warnings[0].contains("99"));
     assert_eq!(detail.summary.unwrap(), "SECRET_USER_EDIT");
     fs::write(&manifest_path, b"malformed SECRET_SPEECH")?;
-    let detail = Detail::open(path)?;
+    let detail = Detail::open(path, library::Mode::Keyframes)?;
     assert!(!detail.warnings.join(" ").contains("SECRET"));
     assert_eq!(detail.summary.unwrap(), "SECRET_USER_EDIT");
     assert_eq!(
