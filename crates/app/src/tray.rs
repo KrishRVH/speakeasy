@@ -172,9 +172,12 @@ enum Activity {
 fn activity(snapshot: &Snapshot) -> Activity {
     match (snapshot.phase, snapshot.show) {
         (Phase::Starting | Phase::Recording, false) => Activity::Dictating,
-        (Phase::Starting | Phase::Recording, true) => Activity::Showing,
         (Phase::Stopping | Phase::Processing, false) => Activity::Finishing,
-        (Phase::Stopping | Phase::Processing, true) => Activity::Saving,
+        // A Show records hands-free until it finishes, which can come before its microphone opens.
+        (Phase::Starting | Phase::Recording, true) if snapshot.hands_free => Activity::Showing,
+        (Phase::Starting | Phase::Recording | Phase::Stopping | Phase::Processing, true) => {
+            Activity::Saving
+        },
         (
             Phase::Idle
             | Phase::Done
@@ -225,41 +228,46 @@ mod tests {
     }
 
     #[test]
-    fn a_show_names_itself_in_the_finish_and_cancel_entries() {
-        let snapshot = |phase, show| Snapshot {
+    fn finish_and_cancel_name_a_recording_show_and_disable_once_it_finishes() {
+        use Phase::{Copied, Processing, Recording, Starting, Stopping};
+        let snapshot = |phase, show, hands_free| Snapshot {
             phase,
+            hands_free,
             show,
             ..Snapshot::default()
         };
-        // Phase, whether the latest session is a Show: the Toggle and Cancel labels.
+        let dictating = [("Finish dictation", true), ("Cancel dictation", true)];
+        let finishing = [("Start dictation", false), ("Cancel dictation", true)];
+        let showing = [("Finish Show", true), ("Cancel Show", true)];
+        let saving = [("Start dictation", false), ("Cancel Show", false)];
+        let idle = [("Start dictation", true), ("Cancel dictation", false)];
+        // Phase, whether the latest session is a Show, whether it records hands-free: the Toggle
+        // and Cancel entries' labels and whether each acts.
         let table = [
-            (
-                Phase::Recording,
-                false,
-                ["Finish dictation", "Cancel dictation"],
-            ),
-            (
-                Phase::Processing,
-                false,
-                ["Start dictation", "Cancel dictation"],
-            ),
-            (Phase::Starting, true, ["Finish Show", "Cancel Show"]),
-            (Phase::Recording, true, ["Finish Show", "Cancel Show"]),
-            (Phase::Stopping, true, ["Start dictation", "Cancel Show"]),
-            (Phase::Processing, true, ["Start dictation", "Cancel Show"]),
-            (Phase::Copied, true, ["Start dictation", "Cancel dictation"]),
+            (Recording, false, false, dictating),
+            (Processing, false, false, finishing),
+            (Starting, true, true, showing),
+            (Recording, true, true, showing),
+            (Starting, true, false, saving),
+            (Recording, true, false, saving),
+            (Stopping, true, false, saving),
+            (Processing, true, false, saving),
+            (Copied, true, false, idle),
         ];
-        for (phase, show, expected) in table {
+        for (phase, show, hands_free, expected) in table {
             let TrayMenu { toggle, cancel, .. } = dictation_menu(
                 ServiceState::Running,
-                activity(&snapshot(phase, show)),
+                activity(&snapshot(phase, show, hands_free)),
                 true,
                 true,
             );
             assert_eq!(
-                [toggle.label, cancel.label],
+                [
+                    (toggle.label, toggle.enabled),
+                    (cancel.label, cancel.enabled)
+                ],
                 expected,
-                "{phase:?}, Show {show}"
+                "{phase:?}, Show {show}, hands-free {hands_free}"
             );
         }
     }
