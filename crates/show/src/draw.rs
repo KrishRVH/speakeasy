@@ -22,6 +22,16 @@ const _: () = assert!(
 );
 /// A keyframe without a click or drag of its own ripples at a click this close to its moment.
 const RIPPLE_REACH: Duration = Duration::from_millis(600);
+/// A click's ring radius and line width, its dot's radius, and the width of the white edge
+/// outside each, in pixels at [`ink::detail`] 1. The edge is about a pixel's diagonal wide, so
+/// even where it runs diagonally it covers whole pixels instead of fading into the screen under
+/// antialiasing.
+const CLICK_RING: f32 = 10.0;
+const CLICK_LINE: f32 = 1.6;
+const CLICK_DOT: f32 = 1.6;
+const CLICK_EDGE: f32 = 1.4;
+const CLICK_BLUE: [u8; 4] = [0, 96, 214, 230];
+const CLICK_WHITE: [u8; 4] = [255, 255, 255, 230];
 /// The top band where a badge sits, and the share of the width at each side that decides which
 /// corner it takes.
 const BADGE_BAND: f32 = 0.18;
@@ -117,29 +127,31 @@ fn nearest_click(actions: &[Action], moment: Moment) -> Option<Point> {
         .map(|(_, point)| point)
 }
 
-/// A thin blue ring and a small dot at its center, marking where the pointer acted. Both are
-/// translucent and the ring is unfilled, so what was clicked stays legible; their white edges keep
-/// them visible on dark and blue screens.
+/// Marks where the pointer acted: a blue ring around a blue dot, each edged in white just outside.
+///
+/// The blue stands out on light screens and the white on blue and dark ones, so the mark shows on
+/// an accent-blue button as on a page. The ring is unfilled and each stroke lets about a tenth of
+/// the screen through, so what was clicked stays legible.
 fn ripple(canvas: &mut PixmapMut<'_>, center: Point, scale: f32) {
+    let edge_outside = |boundary: f32| (boundary + CLICK_EDGE / 2.0, CLICK_EDGE, CLICK_WHITE);
     for (radius, width, color) in [
-        (10.1, 0.9, [255, 255, 255, 102]),
-        (9.0, 1.3, [0, 136, 255, 204]),
+        (CLICK_RING, CLICK_LINE, CLICK_BLUE),
+        edge_outside(CLICK_RING + CLICK_LINE / 2.0),
+        edge_outside(CLICK_DOT),
     ] {
         let style = tiny_skia::Stroke {
             width: width * scale,
             ..tiny_skia::Stroke::default()
         };
-        if let Some(ring) = PathBuilder::from_circle(center.x, center.y, radius * scale) {
-            canvas.stroke_path(&ring, &paint(color), &style, Transform::identity(), None);
+        if let Some(circle) = PathBuilder::from_circle(center.x, center.y, radius * scale) {
+            canvas.stroke_path(&circle, &paint(color), &style, Transform::identity(), None);
         }
     }
-    for (radius, color) in [(2.0, [255, 255, 255, 128]), (1.3, [0, 136, 255, 230])] {
-        fill(
-            canvas,
-            PathBuilder::from_circle(center.x, center.y, radius * scale),
-            color,
-        );
-    }
+    fill(
+        canvas,
+        PathBuilder::from_circle(center.x, center.y, CLICK_DOT * scale),
+        CLICK_BLUE,
+    );
 }
 
 /// Draws `mark`'s number in white on a red disc ringed in white, centered at `center` in pixels,
@@ -415,8 +427,9 @@ mod tests {
         assert_eq!(inked(3_000, 0..0), [false, false], "Long after");
     }
 
-    #[test]
-    fn a_click_mark_leaves_what_was_clicked_legible() {
+    /// A frame filled with `screen` and marked with a click at its center, returned with each
+    /// pixel's offset from the click.
+    fn clicked(screen: [u8; 3]) -> Vec<(Point, [u8; 4])> {
         let (width, height) = (160_u32, 100_u32);
         let point = Point::new(0.5, 0.5);
         let keyframe = Keyframe {
@@ -431,40 +444,101 @@ mod tests {
                 point,
             }),
         };
-        let marked = |shade: u8| {
-            let mut image = Image::filled(width, height, [shade; 3]).unwrap();
-            annotate(
-                &mut image,
-                &keyframe,
-                &Recording::default(),
-                &[],
-                &typeface(),
-            );
-            image
-        };
-        // A pixel the mark hides comes out the same over a black screen and a white one.
-        let (over_black, over_white) = (marked(0), marked(255));
+        let mut image = Image::filled(width, height, screen).unwrap();
+        annotate(
+            &mut image,
+            &keyframe,
+            &Recording::default(),
+            &[],
+            &typeface(),
+        );
         let click = point.scaled(width as f32, height as f32);
-        let mut painted = 0;
-        for (index, (dark, light)) in over_black
-            .as_ref()
-            .data()
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .zip(over_white.as_ref().data().as_chunks::<4>().0)
+        image
+            .rows()
             .enumerate()
-        {
-            let (x, y) = (index % width as usize, index / width as usize);
+            .flat_map(|(y, row)| {
+                row.as_chunks::<4>()
+                    .0
+                    .iter()
+                    .enumerate()
+                    .map(move |(x, &pixel)| {
+                        (Point::new(x as f32 + 0.5, y as f32 + 0.5) - click, pixel)
+                    })
+            })
+            .collect()
+    }
+
+    /// WCAG's contrast ratio between two colors, from 1 for the same luminance to 21 for black on
+    /// white.
+    fn contrast(one: [u8; 3], other: [u8; 3]) -> f32 {
+        let luminance = |color: [u8; 3]| {
+            let [red, green, blue] = color.map(|channel| {
+                let value = f32::from(channel) / 255.0;
+                if value <= 0.040_45 {
+                    value / 12.92
+                } else {
+                    ((value + 0.055) / 1.055).powf(2.4)
+                }
+            });
+            0.2126 * red + 0.7152 * green + 0.0722 * blue + 0.05
+        };
+        let (one, other) = (luminance(one), luminance(other));
+        one.max(other) / one.min(other)
+    }
+
+    #[test]
+    fn a_click_mark_leaves_what_was_clicked_legible() {
+        // A pixel the mark hides comes out the same over a black screen and a white one.
+        let mut painted = 0;
+        for ((offset, dark), (_, light)) in clicked([0; 3]).into_iter().zip(clicked([255; 3])) {
             let touched = dark[..3] != [0; 3] || light[..3] != [255; 3];
             painted += usize::from(touched);
-            assert_ne!(dark, light, "({x}, {y}) hides the screen");
-            let distance = Point::new(x as f32 + 0.5, y as f32 + 0.5).distance(click);
+            assert_ne!(dark, light, "{offset:?} from the click hides the screen");
             assert!(
-                !(touched && (4.0..7.0).contains(&distance)),
-                "({x}, {y}), between the dot and the ring, is covered"
+                !(touched && (4.0..7.0).contains(&offset.length())),
+                "{offset:?} from the click, between the dot and the ring, is covered"
             );
         }
         assert!(painted > 0, "The click is marked");
+    }
+
+    #[test]
+    fn a_click_mark_stands_out_on_blue_light_dark_and_gray_screens() {
+        use std::f32::consts::TAU;
+        // macOS's accent blue in dark mode, as the demo uses, and in light mode; Windows 10's
+        // default accent; white, black, and mid-gray.
+        for screen in [
+            [10, 132, 255],
+            [0, 122, 255],
+            [0, 120, 215],
+            [255; 3],
+            [0; 3],
+            [128; 3],
+        ] {
+            // The angles at which the ring, beyond the dot, has the 3:1 contrast WCAG asks of
+            // graphics that carry meaning; no gap between them may span a twenty-fourth of a turn.
+            let mut standing_out: Vec<f32> = clicked(screen)
+                .into_iter()
+                .filter(|&(offset, [red, green, blue, _])| {
+                    offset.length() >= 7.0 && contrast([red, green, blue], screen) >= 3.0
+                })
+                .map(|(offset, _)| offset.y.atan2(offset.x))
+                .collect();
+            standing_out.sort_by(f32::total_cmp);
+            let across_the_seam = standing_out
+                .first()
+                .zip(standing_out.last())
+                .map_or(TAU, |(first, last)| first + TAU - last);
+            let widest_gap = standing_out
+                .iter()
+                .zip(standing_out.iter().skip(1))
+                .map(|(one, next)| next - one)
+                .fold(across_the_seam, f32::max);
+            assert!(
+                widest_gap < TAU / 24.0,
+                "On {screen:?}, the ring fades into the screen over {}°",
+                widest_gap.to_degrees()
+            );
+        }
     }
 }
