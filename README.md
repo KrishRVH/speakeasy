@@ -138,9 +138,9 @@ audio is kept to try again.
 
 On Windows and Mac, the menu's **Copy last Show** copies the latest Show's `summary.md` again as it
 reads now, edits included, and **Open last Show** opens its folder. Speakeasy remembers only that
-one Show, and only until it quits. Once that Show expires or is deleted, both say so and never reach
-for an older one. If a finished Show cannot be copied, it stays saved and the pill points you to
-Copy last Show.
+one Show, and only until it quits. Once that Show expires or is deleted, either entry says so and
+both turn off until your next Show; neither reaches for an older one. If a finished Show cannot be
+copied, it stays saved and the pill points you to Copy last Show.
 
 ## What's said here stays here
 

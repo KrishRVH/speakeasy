@@ -552,7 +552,16 @@ impl Harness {
     }
 
     fn with_ports(config: Config, customize: impl FnOnce(&mut FakePorts)) -> anyhow::Result<Self> {
-        Self::host(config, customize, Runtime::on_task)
+        Self::host(config, None, customize, Runtime::on_task)
+    }
+
+    /// Starts the owner as one starts after a pause, from a snapshot that presents `show` as the
+    /// last Show.
+    fn remembering(
+        show: SavedShow,
+        customize: impl FnOnce(&mut FakePorts),
+    ) -> anyhow::Result<Self> {
+        Self::host(Config::default(), Some(show), customize, Runtime::on_task)
     }
 
     /// Resolves once the owner has finished its cleanup and exited.
@@ -574,7 +583,7 @@ impl Harness<OwnedThread> {
         config: Config,
         customize: impl FnOnce(&mut FakePorts),
     ) -> anyhow::Result<Self> {
-        Self::host(config, customize, Runtime::start_with)
+        Self::host(config, None, customize, Runtime::start_with)
     }
 }
 
@@ -582,6 +591,7 @@ impl Harness<OwnedThread> {
 impl<Host: Sync> Harness<Host> {
     fn host(
         config: Config,
+        last_show: Option<SavedShow>,
         customize: impl FnOnce(&mut FakePorts),
         start: impl FnOnce(
             Config,
@@ -596,6 +606,7 @@ impl<Host: Sync> Harness<Host> {
         // A restarted shell's epoch, so a level tagged with the default epoch fails `observe_level`.
         let (output, updates) = watch::channel(Snapshot {
             epoch: SnapshotEpoch::default().next(),
+            last_show,
             ..Snapshot::default()
         });
         let (meter, levels) = watch::channel(Meter::default());

@@ -89,6 +89,7 @@ impl Status {
                 Phase::Idle
                 | Phase::Done
                 | Phase::Copied
+                | Phase::Notice
                 | Phase::Empty
                 | Phase::Cancelled
                 | Phase::Unchosen,
@@ -166,19 +167,29 @@ mod tests {
     }
 
     #[test]
-    fn copied_deliveries_follow_the_model_instead_of_needing_attention() {
-        let mut snapshot = Snapshot {
-            phase: Phase::Copied,
-            model: ModelState::Ready,
-            message: "Text copied. Paste manually.".into(),
-            ..Snapshot::default()
-        };
-        assert_eq!(
-            indicator(&snapshot, ServiceState::Running),
-            Indicator::Ready
-        );
-        snapshot.model = ModelState::Loading;
-        assert_eq!(indicator(&snapshot, ServiceState::Running), Indicator::Busy);
+    fn copies_and_notices_follow_the_model_instead_of_needing_attention() {
+        for (phase, message) in [
+            (Phase::Copied, "Text copied. Paste manually."),
+            (Phase::Notice, "The last Show has expired or was deleted."),
+        ] {
+            let mut snapshot = Snapshot {
+                phase,
+                model: ModelState::Ready,
+                message: message.into(),
+                ..Snapshot::default()
+            };
+            assert_eq!(
+                indicator(&snapshot, ServiceState::Running),
+                Indicator::Ready,
+                "{phase:?}"
+            );
+            snapshot.model = ModelState::Loading;
+            assert_eq!(
+                indicator(&snapshot, ServiceState::Running),
+                Indicator::Busy,
+                "{phase:?}"
+            );
+        }
     }
 
     #[test]

@@ -13,7 +13,7 @@ use tokio::{
 };
 
 use super::{
-    LOADING, Meter, Phase, Report, SHOW_COPIED, Snapshot, SnapshotEpoch, Wiring,
+    LOADING, Meter, Phase, Report, SHOW_COPIED, SHOW_GONE, Snapshot, SnapshotEpoch, Wiring,
     device::Device,
     now,
     ports::{CaptureEvent, PUBLISH_STOPPED, Ports, Published, SessionId, ShowEvent, Unchosen},
@@ -64,6 +64,8 @@ enum Outcome {
         ending: Ending,
         lost: Option<NarrationLoss>,
     },
+    /// The menu found the last Show gone.
+    ShowGone,
     Empty,
     Cancelled,
     /// The Show was cancelled because its scope found nothing to record.
@@ -79,6 +81,7 @@ impl Outcome {
             Self::Idle => Phase::Idle,
             Self::Done => Phase::Done,
             Self::Copied(_) | Self::ShowCopied { .. } => Phase::Copied,
+            Self::ShowGone => Phase::Notice,
             Self::Empty => Phase::Empty,
             Self::Cancelled => Phase::Cancelled,
             Self::Unchosen(_) => Phase::Unchosen,
@@ -155,9 +158,11 @@ struct Owner<P: Ports> {
     gesture: Gesture,
     session: Option<Session>,
     latest: Latest,
-    /// The latest Show saved, which only a later saved Show replaces; an abandoned publication's
-    /// result is never awaited, so it cannot.
+    /// The latest Show saved, which only a later saved Show replaces and only a report that finds
+    /// it gone forgets; an abandoned publication's result is never awaited, so it cannot.
     last_show: Option<SavedShow>,
+    /// How many reports have shown since this owner started.
+    reported: u64,
 
     worker: Worker<P::Speech>,
     microphone: Device<P::Microphone>,
@@ -216,6 +221,7 @@ impl<P: Ports> Owner<P> {
                 show: false,
             },
             last_show,
+            reported: 0,
             worker,
             microphone: Device::Free,
             screen: Device::Free,
@@ -263,17 +269,7 @@ impl<P: Ports> Owner<P> {
             Wake::Stop => return ControlFlow::Break(()),
             Wake::Input(input) => self.handle_input(input)?,
             Wake::Report(report) => {
-                // The owner's own state, not a presented copy, decides idleness, so a session that
-                // started meanwhile is never overwritten.
-                if self.session.is_none() {
-                    self.outcome = match report {
-                        Report::Failed(message) => Outcome::Failed(message),
-                        Report::ShowCopied => Outcome::ShowCopied {
-                            ending: Ending::Finished,
-                            lost: None,
-                        },
-                    };
-                }
+                self.report(report);
                 None
             },
             Wake::Configuration => {
@@ -347,6 +343,25 @@ impl<P: Ports> Owner<P> {
         self.fail(message);
         self.present();
         ControlFlow::Break(())
+    }
+
+    /// Shows `report` as [`Report::present`] describes, counting it so that a repeat presents anew.
+    fn report(&mut self, report: Report) {
+        report.forget_gone(&mut self.last_show);
+        // The owner's own state, not a presented copy, decides idleness, so a session that started
+        // meanwhile is never overwritten.
+        if self.session.is_some() {
+            return;
+        }
+        self.reported = self.reported.wrapping_add(1);
+        self.outcome = match report {
+            Report::Failed(message) => Outcome::Failed(message),
+            Report::ShowCopied => Outcome::ShowCopied {
+                ending: Ending::Finished,
+                lost: None,
+            },
+            Report::ShowGone(_) => Outcome::ShowGone,
+        };
     }
 
     /// Applies changed settings, which end any session in progress: it shows cancelled, with its
@@ -579,7 +594,7 @@ impl<P: Ports> Owner<P> {
                 lost,
                 copied,
             }))) => {
-                self.last_show = Some(saved);
+                self.remember(saved);
                 match copied {
                     Ok(()) => Outcome::ShowCopied { ending, lost },
                     Err(error) => Outcome::Failed(format!(
@@ -607,6 +622,20 @@ impl<P: Ports> Owner<P> {
         }
         // `wait` already joined this delivery, so the session holds no work left to retire.
         self.end_session(outcome);
+    }
+
+    /// Remembers `show` as the last Show. A pause may already have announced over this owner,
+    /// whose presentations the epoch then drops, yet the Show outlives it: the announced snapshot
+    /// takes it too, so the next owner starts from it.
+    fn remember(&mut self, show: SavedShow) {
+        self.snapshots.send_if_modified(|presented| {
+            let stale = presented.epoch != self.epoch;
+            if stale {
+                presented.last_show = Some(show.clone());
+            }
+            stale
+        });
+        self.last_show = Some(show);
     }
 
     fn handle_action(&mut self, action: Option<Action>) -> ControlFlow<()> {
@@ -836,6 +865,7 @@ impl<P: Ports> Owner<P> {
             },
             Outcome::Unchosen(Unchosen::Window) => NO_WINDOW.into(),
             Outcome::Unchosen(Unchosen::Area) => NO_AREA.into(),
+            Outcome::ShowGone => SHOW_GONE.into(),
             Outcome::Idle | Outcome::Done | Outcome::Empty | Outcome::Cancelled => {
                 self.notice.as_ref().map_or("", Notice::text).into()
             },
@@ -852,9 +882,11 @@ impl<P: Ports> Owner<P> {
         let snapshot = Snapshot {
             epoch: self.epoch,
             session: self.latest.id.into(),
+            reported: self.reported,
             phase: session.map_or_else(|| self.outcome.phase(), Session::phase),
             hands_free: self.gesture.state() == State::HandsFree,
-            show: self.latest.show,
+            // A Show copied again reads as one just copied, whatever the latest session was.
+            show: self.latest.show || matches!(self.outcome, Outcome::ShowCopied { .. }),
             ending,
             narration_lost,
             started: self.latest.started,

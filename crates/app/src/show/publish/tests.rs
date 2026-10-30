@@ -217,7 +217,11 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
         entries.next().is_none(),
         "The Shows folder holds only the bundle"
     );
-    assert_eq!(show.folder()?, directory, "The Show saved is the bundle");
+    assert_eq!(
+        show.folder()?,
+        Some(directory.as_path()),
+        "The Show saved is the bundle"
+    );
 
     assert_eq!(
         fs::read_to_string(directory.join("summary.md"))?,
@@ -276,9 +280,10 @@ fn a_show_that_cannot_be_copied_stays_saved() -> anyhow::Result<()> {
         bail!("A Show saved but not copied was reported otherwise");
     };
     assert_eq!(error.to_string(), "Another app holds the clipboard");
-    let folder = show.folder()?;
+    let folder = show.folder()?.context("The Show stayed saved")?;
     assert_eq!(folder.parent(), Some(shows.as_path()));
-    assert!(show.summary()?.contains(&folder.display().to_string()));
+    let summary = show.summary()?.context("The Show kept its summary")?;
+    assert!(summary.contains(&folder.display().to_string()));
     Ok(())
 }
 

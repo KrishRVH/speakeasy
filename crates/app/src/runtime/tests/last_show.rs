@@ -1,5 +1,6 @@
-//! The last saved Show: which publications the owner remembers, which it never does, and that the
-//! memory survives a failed copy, a failed or abandoned Show, a later dictation, and a new owner.
+//! The last saved Show: which publications the owner remembers, which it never does, that the
+//! memory survives a failed copy, a failed, cancelled, or abandoned Show, a later dictation, a
+//! pause, and a new owner, and how the menu's reports about it show and forget it.
 
 use super::*;
 
@@ -54,18 +55,10 @@ async fn a_show_saved_but_not_copied_is_remembered_and_says_how_to_copy_it() -> 
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_show_that_fails_or_is_abandoned_before_it_is_saved_leaves_the_last_one()
--> anyhow::Result<()> {
-    let (publication, publishing) = gate(2);
-    let mut h = Harness::with_ports(Config::default(), |ports| {
-        ports.publication = Some(publication);
+async fn a_show_that_fails_before_it_is_saved_leaves_the_last_one() -> anyhow::Result<()> {
+    let mut h = Harness::remembering(saved("first"), |ports| {
+        ports.publish_error = Some("Disk full");
     })?;
-    record_show(&mut h, "first").await?;
-    publishing.reached().await?;
-    publishing.release().await?;
-    receive(&h.published).await?;
-    h.phase(Phase::Copied).await?;
-
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     receive(&h.captures).await?;
@@ -81,24 +74,35 @@ async fn a_show_that_fails_or_is_abandoned_before_it_is_saved_leaves_the_last_on
     assert_eq!(
         h.snapshot().last_show,
         Some(saved("first")),
-        "A failure forgot it"
+        "A failed recording forgot it"
     );
     h.input(Input::Release);
 
-    record_show(&mut h, "abandoned").await?;
-    publishing.reached().await?;
-    change_settings(&h);
-    h.phase(Phase::Cancelled).await?;
-    publishing.release().await?;
-    assert!(
-        still_pending(h.published.recv()).await,
-        "An abandoned Show was saved"
-    );
+    record_show(&mut h, "unsaved").await?;
+    h.observe(|snapshot| snapshot.message.contains("Disk full"))
+        .await?;
     assert_eq!(
         h.snapshot().last_show,
         Some(saved("first")),
-        "Abandoning forgot it"
+        "A publication that failed before its commit forgot it"
     );
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_show_cancelled_before_it_is_saved_leaves_the_last_one() -> anyhow::Result<()> {
+    let (publication, publishing) = gate(1);
+    let mut h = Harness::remembering(saved("first"), |ports| {
+        ports.publication = Some(publication);
+    })?;
+    record_show(&mut h, "cancelled").await?;
+    publishing.reached().await?;
+    // Pausing revokes even a saving Show's permit before the owner hears of it, so the
+    // publication itself reports the cancellation.
+    h.runtime.input.cancel();
+    publishing.release().await?;
+    h.phase(Phase::Cancelled).await?;
+    assert_eq!(h.snapshot().last_show, Some(saved("first")));
     h.close().await
 }
 
@@ -146,23 +150,30 @@ async fn a_show_abandoned_after_it_is_saved_changes_neither_the_last_show_nor_th
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_show_saved_after_a_pause_announces_still_outlives_its_owner() -> anyhow::Result<()> {
+    let (saving, persisted) = gate(1);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.saved = Some(saving);
+    })?;
+    save_show(&mut h, "newer").await?;
+    persisted.reached().await?;
+    // A pause announces before it stops the owner, which is still finishing this Show.
+    h.output
+        .send_modify(|snapshot| snapshot.epoch = snapshot.epoch.next());
+    persisted.release().await?;
+    h.observe(|snapshot| snapshot.last_show == Some(saved("newer")))
+        .await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_new_owner_starts_from_the_last_show_presented() -> anyhow::Result<()> {
-    let (output, mut updates) = watch::channel(Snapshot {
-        epoch: SnapshotEpoch::default().next(),
-        last_show: Some(saved("before a pause")),
-        ..Snapshot::default()
-    });
-    let (meter, _) = watch::channel(Meter::default());
-    let (ports, reports) = FakePorts::new();
-    let mut runtime = Runtime::on_task(Config::default(), output, meter, ports)?;
-    receive(&reports.loads).await?;
-    timeout(
-        PATIENCE,
-        updates.wait_for(|snapshot| snapshot.model == ModelState::Ready),
-    )
-    .await??;
-    assert_eq!(updates.borrow().last_show, Some(saved("before a pause")));
-    runtime.close().await
+    let mut h = Harness::remembering(saved("before a pause"), |_| {})?;
+    receive(&h.loads).await?;
+    h.observe(|snapshot| snapshot.model == ModelState::Ready)
+        .await?;
+    assert_eq!(h.snapshot().last_show, Some(saved("before a pause")));
+    h.close().await
 }
 
 #[tokio::test(start_paused = true)]
@@ -175,11 +186,101 @@ async fn the_last_show_copied_again_reads_as_a_copied_show_only_while_idle() -> 
     // The report lane outranks capture, so the level arrives only after the report is handled.
     events.send(CaptureEvent::Level(id, 0.5)).await?;
     h.observe_level(0.5).await?;
-    assert_eq!(h.snapshot().phase, Phase::Recording);
+    let recording = h.snapshot();
+    assert_eq!((recording.phase, recording.reported), (Phase::Recording, 0));
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
     h.report(Report::ShowCopied)?;
     h.phase(Phase::Copied).await?;
-    assert_eq!(h.snapshot().message, SHOW_COPIED);
+    let copied = h.snapshot();
+    assert_eq!(copied.message, SHOW_COPIED);
+    assert!(
+        copied.show && copied.ending == Ending::Finished,
+        "A copy after dictation lacks the label a Show just copied has"
+    );
     h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn each_copy_of_the_last_show_presents_anew() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    save_show(&mut h, "look").await?;
+    h.phase(Phase::Copied).await?;
+    for reported in [1, 2] {
+        h.report(Report::ShowCopied)?;
+        h.observe(|snapshot| snapshot.reported == reported).await?;
+        let snapshot = h.snapshot();
+        assert_eq!(
+            (snapshot.phase, snapshot.message.as_str()),
+            (Phase::Copied, SHOW_COPIED)
+        );
+    }
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_show_found_gone_is_a_notice_that_forgets_only_that_show() -> anyhow::Result<()> {
+    let mut h = Harness::remembering(saved("first"), |_| {})?;
+    h.report(Report::ShowGone(saved("older")))?;
+    h.phase(Phase::Notice).await?;
+    let snapshot = h.snapshot();
+    assert_eq!(snapshot.message, SHOW_GONE);
+    assert_eq!(
+        snapshot.last_show,
+        Some(saved("first")),
+        "The Show that replaced the one gone was forgotten"
+    );
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    receive(&h.captures).await?;
+    h.report(Report::ShowGone(saved("first")))?;
+    h.observe(|snapshot| snapshot.last_show.is_none()).await?;
+    assert_eq!(
+        h.snapshot().phase,
+        Phase::Recording,
+        "The notice interrupted a recording"
+    );
+    h.close().await
+}
+
+#[test]
+fn without_an_owner_a_report_shows_while_idle_and_forgets_only_the_show_found_gone() {
+    let mut paused = Snapshot {
+        message: "Dictation paused".into(),
+        last_show: Some(saved("first")),
+        ..Snapshot::default()
+    };
+    for reported in [1, 2] {
+        assert!(Report::ShowCopied.present(&mut paused));
+        assert_eq!(
+            (paused.reported, paused.phase, paused.show, paused.ending),
+            (reported, Phase::Copied, true, Ending::Finished),
+            "Each copy shows anew as a Show just copied"
+        );
+    }
+    assert!(Report::ShowGone(saved("older")).present(&mut paused));
+    assert_eq!(
+        (paused.phase, paused.last_show),
+        (Phase::Notice, Some(saved("first")))
+    );
+
+    let mut recording = Snapshot {
+        phase: Phase::Recording,
+        last_show: Some(saved("first")),
+        ..Snapshot::default()
+    };
+    assert!(Report::ShowGone(saved("first")).present(&mut recording));
+    assert_eq!(
+        (
+            recording.phase,
+            recording.last_show.as_ref(),
+            recording.reported
+        ),
+        (Phase::Recording, None, 0),
+        "A gone Show is forgotten without interrupting the recording"
+    );
+    assert!(
+        !Report::ShowCopied.present(&mut recording),
+        "A report interrupted a recording"
+    );
 }

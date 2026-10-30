@@ -13,6 +13,8 @@ use super::{
     settings::Settings,
     window::{self, reveal},
 };
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+use crate::show::SavedShow;
 use crate::{
     audio::MicrophoneScan,
     config::{Change, Config, ValidConfig},
@@ -206,6 +208,15 @@ impl Services {
         }));
     }
 
+    /// The Show that Copy last Show and Open last Show act on in `snapshot`, if they act: the one
+    /// it remembers, while no session is under way, since a copy could race the session to the
+    /// clipboard and its notice would not show. They need no dictation, so they act while paused,
+    /// but neither in a demo nor once Quit begins.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub(crate) fn recallable_show<'a>(&self, snapshot: &'a Snapshot) -> Option<&'a SavedShow> {
+        recallable(snapshot, self.service_state(), self.mode)
+    }
+
     /// Shows `report`, such as a failure, unless a recording is under way, which it must not
     /// interrupt. A running owner keeps it until the next recording or settings change; otherwise
     /// the check and the write are one step, and no owner remains to publish over it.
@@ -215,16 +226,10 @@ impl Services {
             Some(runtime) => runtime.report(report),
             None => Err(report),
         };
-        let Err(report) = unsent else {
-            return;
-        };
-        self.output.send_if_modified(|snapshot| {
-            let idle = !snapshot.phase.is_active();
-            if idle {
-                report.present(snapshot);
-            }
-            idle
-        });
+        if let Err(report) = unsent {
+            self.output
+                .send_if_modified(|snapshot| report.present(snapshot));
+        }
     }
 
     pub(crate) fn publish_error(&self, error: &anyhow::Error) {
@@ -404,6 +409,11 @@ impl Services {
         self.validation = None;
         self.requests = None;
         self.visibility = None;
+        // A copy or opening of the last Show still under way would report over the quit.
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        {
+            self.recovery = None;
+        }
         announce(&self.output, QUITTING);
         let stopped = self.lifecycle.retiring().map(Owners::retire);
         let scanned = self.microphone_scan.as_ref().map(MicrophoneScan::exited);
@@ -460,6 +470,14 @@ fn announcement(previous: &Snapshot, message: &str) -> Snapshot {
     }
 }
 
+/// The rule [`Services::recallable_show`] applies to `snapshot` under `service` and `mode`.
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+fn recallable(snapshot: &Snapshot, service: ServiceState, mode: LaunchMode) -> Option<&SavedShow> {
+    snapshot.last_show.as_ref().filter(|_| {
+        !snapshot.phase.is_active() && service != ServiceState::Quitting && !mode.is_demo()
+    })
+}
+
 fn handle_request(request: Request, cx: &mut App) {
     let input = match request {
         Request::Reveal => {
@@ -479,7 +497,7 @@ fn handle_request(request: Request, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::Engine, show::SavedShow, status::Indicator};
+    use crate::{config::Engine, status::Indicator};
 
     #[test]
     fn a_resume_check_and_a_start_read_as_busy_until_the_owner_reports() {
@@ -509,5 +527,36 @@ mod tests {
             (Phase::Idle, PAUSED)
         );
         assert_eq!(paused.last_show, Some(show), "Pausing forgot the last Show");
+    }
+
+    #[test]
+    fn the_last_show_is_recallable_only_between_sessions_outside_a_demo_and_quit() {
+        use LaunchMode::{Demo, Live};
+        use Phase::{Copied, Error, Idle, Processing, Recording};
+        use ServiceState::{Paused, Pausing, Quitting, Running};
+        let show = SavedShow::assume("shows/20261029T120000Z");
+        // Remembered, service, phase, mode: whether Copy and Open last Show act.
+        let table = [
+            (true, Running, Copied, Live, true),
+            (false, Running, Idle, Live, false),
+            (true, Running, Recording, Live, false),
+            (true, Running, Processing, Live, false),
+            (true, Pausing, Idle, Live, true),
+            (true, Paused, Error, Live, true),
+            (true, Quitting, Idle, Live, false),
+            (true, Running, Idle, Demo, false),
+        ];
+        for (remembered, service, phase, mode, expected) in table {
+            let snapshot = Snapshot {
+                phase,
+                last_show: remembered.then(|| show.clone()),
+                ..Snapshot::default()
+            };
+            assert_eq!(
+                recallable(&snapshot, service, mode).is_some(),
+                expected,
+                "remembered {remembered}, {service:?}, {phase:?}, {mode:?}"
+            );
+        }
     }
 }

@@ -40,11 +40,12 @@ non-activating and click-through.
 | Stopping         | The lid stays open until capture stops; the grille settles.                                                        |
 | Processing       | The lid partly closes; a lamp highlight sweeps the opening after 250 ms.                                           |
 | Submitted        | Closed lid with a lamp check for 350 ms, then collapse and fade.                                                   |
-| Show copied      | Closed lid with a lamp check and “Show copied” for 1.6 seconds, each time the summary of a saved bundle is copied. |
+| Show copied      | Closed lid with a lamp check and “Show copied” for 1.6 seconds, each time a Show is copied, by Copy last Show too. |
 | Stopped early    | A muted notice of up to two lines saying the Show was copied but stopped early, and why, for six seconds.          |
 | Nothing chosen   | A muted notice of up to two lines saying why a W or A Show was cancelled, for six seconds.                         |
 | Narration lost   | The same notice saying the Show was copied without narration and why, and that it stopped early if it did.         |
 | Text copied      | A muted notice of up to two lines saying how to paste the copied text, for six seconds.                            |
+| Show gone        | A muted notice saying the last Show has expired or was deleted, for six seconds.                                   |
 | No speech        | “No speech detected” on the closed lid for 1.2 seconds.                                                            |
 | Cancelled        | Quiet dismissal without a completion mark.                                                                         |
 | Error            | Up to two message lines and a Settings reminder, visible for eight seconds.                                        |
@@ -118,9 +119,9 @@ status and engine, Pause/Resume, Start/Finish, Cancel, Settings, and Quit; Finis
 Show while it records and are disabled while it is saved. Before any engine is set up, the menu says
 so and Resume waits for setup. It never animates while idle. On Windows and macOS, Copy last Show
 and Open last Show sit between Cancel and Settings; they act once a Show is saved and between
-recordings, paused included, until Quit begins. Errors remain accessible in Settings after the
-pill's notice expires, including while there are unsaved edits: its commands and status line stay
-in view below the scrolling controls.
+recordings, paused included, until Quit begins or either finds that Show gone. Errors remain
+accessible in Settings after the pill's notice expires, including while there are unsaved edits: its
+commands and status line stay in view below the scrolling controls.
 
 ## Interaction contracts
 

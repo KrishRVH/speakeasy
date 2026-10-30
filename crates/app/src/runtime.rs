@@ -30,6 +30,8 @@ use crate::{
 pub(crate) const LOADING: &str = "Loading local model…";
 /// What a copied Show tells the user, whether it was just published or copied again from the menu.
 const SHOW_COPIED: &str = "Show copied. Paste it into your coding agent.";
+/// What the menu reports once the last Show's folder has gone.
+const SHOW_GONE: &str = "The last Show has expired or was deleted.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Phase {
@@ -41,6 +43,9 @@ pub(crate) enum Phase {
     Done,
     /// Text or a Show summary is on the clipboard for the user to paste; `message` says how.
     Copied,
+    /// Something the user should know that needs no action, such as the last Show having gone;
+    /// `message` says it.
+    Notice,
     Empty,
     Cancelled,
     /// A Show was cancelled because its scope found nothing to record; `message` says what.
@@ -81,9 +86,13 @@ pub(crate) struct Snapshot {
     pub epoch: SnapshotEpoch,
     /// The latest session, so a new session differs even when its phase repeats.
     pub session: u64,
+    /// How many reports from outside a session have shown, so one that repeats the last still
+    /// reads as new.
+    pub reported: u64,
     pub phase: Phase,
     pub hands_free: bool,
-    /// Whether the latest session became a Show, recording the screen as well as the microphone.
+    /// Whether the latest session became a Show, recording the screen as well as the microphone,
+    /// or the result shown is the last Show copied again.
     pub show: bool,
     /// How the latest Show's screen recording ended once the Show is copied, as its message says;
     /// `Finished` before then and for dictation.
@@ -110,6 +119,7 @@ impl Default for Snapshot {
         Self {
             epoch: SnapshotEpoch::default(),
             session: 0,
+            reported: 0,
             phase: Phase::Idle,
             hands_free: false,
             show: false,
@@ -139,15 +149,46 @@ pub(crate) enum Report {
         )
     )]
     ShowCopied,
+    /// The menu found this Show's folder gone, expired or deleted.
+    #[cfg_attr(
+        all(target_os = "linux", not(test)),
+        expect(
+            dead_code,
+            reason = "Linux records no Shows, so its menu never looks for one"
+        )
+    )]
+    ShowGone(SavedShow),
 }
 
 impl Report {
-    /// Shows this report on `snapshot`, for when no owner presents one.
-    pub(crate) fn present(self, snapshot: &mut Snapshot) {
+    /// Applies this report to `snapshot` for when no owner presents one, returning whether it
+    /// changed. It shows unless a session is under way, which it must not interrupt, and a Show it
+    /// found gone is forgotten either way.
+    pub(crate) fn present(self, snapshot: &mut Snapshot) -> bool {
+        let forgot = self.forget_gone(&mut snapshot.last_show);
+        if snapshot.phase.is_active() {
+            return forgot;
+        }
+        snapshot.reported = snapshot.reported.wrapping_add(1);
         (snapshot.phase, snapshot.message) = match self {
             Self::Failed(message) => (Phase::Error, message),
-            Self::ShowCopied => (Phase::Copied, SHOW_COPIED.to_owned()),
+            Self::ShowCopied => {
+                // A Show copied again reads as one just copied, whatever the latest session was.
+                (snapshot.show, snapshot.ending) = (true, Ending::Finished);
+                (Phase::Copied, SHOW_COPIED.to_owned())
+            },
+            Self::ShowGone(_) => (Phase::Notice, SHOW_GONE.to_owned()),
         };
+        true
+    }
+
+    /// Forgets `last_show` if this report found that same Show gone, returning whether it did; a
+    /// newer Show saved meanwhile stays.
+    fn forget_gone(&self, last_show: &mut Option<SavedShow>) -> bool {
+        let Self::ShowGone(gone) = self else {
+            return false;
+        };
+        last_show.take_if(|last| *last == *gone).is_some()
     }
 }
 
@@ -275,8 +316,9 @@ impl<Host> Runtime<Host> {
         })
     }
 
-    /// Shows `report` unless a session is under way, which it must not interrupt. A report already
-    /// waiting absorbs this one; a stopped owner hands `report` back.
+    /// Shows `report` unless a session is under way, which it must not interrupt, as
+    /// [`Report::present`] describes. A report already waiting absorbs this one; a stopped owner
+    /// hands `report` back.
     pub(crate) fn report(&self, report: Report) -> Result<(), Report> {
         match self.reports.try_send(report) {
             Ok(()) | Err(TrySendError::Full(_)) => Ok(()),

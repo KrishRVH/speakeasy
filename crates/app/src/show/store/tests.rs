@@ -2,10 +2,7 @@
 
 use speakeasy_show::{Image, Journal, Moment, Recording, Typeface, compose, select};
 
-use super::{
-    recall::{GONE, SUMMARY_LIMIT},
-    *,
-};
+use super::{recall::SUMMARY_LIMIT, *};
 
 fn at(seconds: u64) -> SystemTime {
     SystemTime::UNIX_EPOCH
@@ -157,7 +154,7 @@ fn a_bundle_appears_whole_under_a_fresh_name() -> anyhow::Result<()> {
     let (saved, summary) = stage(&first, bundle()?)?.persist()?;
     assert_eq!(
         saved.folder()?,
-        first,
+        Some(first.as_path()),
         "The saved Show is the one persisted"
     );
     assert_eq!(
@@ -192,19 +189,20 @@ fn a_bundle_appears_whole_under_a_fresh_name() -> anyhow::Result<()> {
 fn a_saved_show_reads_back_as_its_folder_holds_it_until_it_is_gone() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let parent = root.path().join("shows");
-    let (show, summary) =
-        stage(&fresh_directory(&parent, at(1_792_420_563))?, bundle()?)?.persist()?;
+    let folder = fresh_directory(&parent, at(1_792_420_563))?;
+    let (show, summary) = stage(&folder, bundle()?)?.persist()?;
     let (newer, _) = stage(&fresh_directory(&parent, at(1_792_420_564))?, bundle()?)?.persist()?;
-    let file = show.folder()?.join(Bundle::SUMMARY);
-    assert_eq!(show.summary()?, summary);
+    let file = folder.join(Bundle::SUMMARY);
+    assert_eq!(show.folder()?, Some(folder.as_path()));
+    assert_eq!(show.summary()?, Some(summary.clone()));
 
     let edited = format!("{summary}\nThe agent should start with the save button.\n");
     fs::write(&file, &edited)?;
-    assert_eq!(show.summary()?, edited, "The user's edit was lost");
+    assert_eq!(show.summary()?, Some(edited), "The user's edit was lost");
 
     let limit = usize::try_from(SUMMARY_LIMIT)?;
     fs::write(&file, "a".repeat(limit))?;
-    assert_eq!(show.summary()?.len(), limit);
+    assert_eq!(show.summary()?.map(|summary| summary.len()), Some(limit));
     fs::write(&file, "a".repeat(limit.saturating_add(1)))?;
     let message = show
         .summary()
@@ -213,14 +211,10 @@ fn a_saved_show_reads_back_as_its_folder_holds_it_until_it_is_gone() -> anyhow::
         .to_string();
     assert!(message.contains("too large to copy"), "{message}");
 
-    fs::remove_dir_all(show.folder()?)?;
-    for gone in [show.summary().map(drop), show.folder().map(drop)] {
-        assert_eq!(
-            gone.map_err(|error| error.to_string()),
-            Err(GONE.to_owned())
-        );
-    }
-    assert!(newer.summary().is_ok(), "Only the deleted Show has gone");
+    fs::remove_dir_all(&folder)?;
+    assert_eq!(show.folder()?, None, "A deleted Show's folder was found");
+    assert_eq!(show.summary()?, None, "A deleted Show's summary was read");
+    assert!(newer.summary()?.is_some(), "Only the deleted Show has gone");
     Ok(())
 }
 

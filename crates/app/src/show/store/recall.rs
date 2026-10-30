@@ -15,27 +15,23 @@ use super::SavedShow;
 /// over them, is a few kilobytes.
 pub(super) const SUMMARY_LIMIT: u64 = 1 << 20;
 
-/// What reading a Show back reports once its folder has gone.
-pub(super) const GONE: &str = "The last Show has expired or was deleted.";
-
 impl SavedShow {
-    /// The Show's folder while it still exists, or [`GONE`] once it has expired or been deleted.
-    pub(crate) fn folder(&self) -> anyhow::Result<&Path> {
+    /// The Show's folder while it still exists, or `None` once it has expired or been deleted.
+    pub(crate) fn folder(&self) -> anyhow::Result<Option<&Path>> {
         match fs::metadata(&self.0) {
-            Ok(metadata) if metadata.is_dir() => Ok(&self.0),
-            Ok(_) => anyhow::bail!(GONE),
-            Err(error) if error.kind() == ErrorKind::NotFound => anyhow::bail!(GONE),
+            Ok(metadata) => Ok(metadata.is_dir().then_some(&*self.0)),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(error) => Err(cannot_read(&self.0)(error)),
         }
     }
 
-    /// The summary as the Show's folder holds it now, so the user's edits survive, or [`GONE`]
-    /// once it has expired or been deleted. At most [`SUMMARY_LIMIT`] bytes are read, whatever has
-    /// taken the file's place.
-    pub(crate) fn summary(&self) -> anyhow::Result<String> {
+    /// The summary as the Show's folder holds it now, so the user's edits survive, or `None` once
+    /// it has expired or been deleted. At most [`SUMMARY_LIMIT`] bytes are read, whatever has taken
+    /// the file's place.
+    pub(crate) fn summary(&self) -> anyhow::Result<Option<String>> {
         let path = self.0.join(Bundle::SUMMARY);
         let file = match fs::File::open(&path) {
-            Err(error) if error.kind() == ErrorKind::NotFound => anyhow::bail!(GONE),
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
             file => file.map_err(cannot_read(&path))?,
         };
         let mut summary = String::new();
@@ -47,7 +43,7 @@ impl SavedShow {
             "{} is too large to copy; a Show's summary is a few kilobytes.",
             path.display()
         );
-        Ok(summary)
+        Ok(Some(summary))
     }
 }
 

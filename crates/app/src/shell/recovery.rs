@@ -1,8 +1,9 @@
 //! Copy last Show and Open last Show in Speakeasy's menu. Each acts on exactly the Show the latest
-//! snapshot names and never looks for another once that one has gone.
+//! snapshot names, and once that one has gone it says so, forgets it, and never looks for another.
 
 use std::path::Path;
 
+use anyhow::anyhow;
 use gpui::{App, BorrowAppContext as _};
 
 use super::Services;
@@ -21,12 +22,12 @@ impl LastShow {
     pub(crate) fn run(self, cx: &mut App) {
         match self {
             Self::Copy => recover(
-                |show| speakeasy_platform::copy_text(&show.summary()?),
+                |show| show.summary()?.map(|summary| copy(&summary)).transpose(),
                 |(), cx| cx.global::<Services>().report(Report::ShowCopied),
                 cx,
             ),
             Self::Open => recover(
-                |show| show.folder().map(Path::to_owned),
+                |show| Ok(show.folder()?.map(Path::to_owned)),
                 |folder, cx| cx.open_with_system(&folder),
                 cx,
             ),
@@ -34,22 +35,37 @@ impl LastShow {
     }
 }
 
-/// Runs `work` on the last Show off the UI thread, replacing any recovery still under way, then
-/// hands its result to `done`, or reports its failure as Services reports any other.
+/// Puts the last Show's `summary` on the clipboard, saying what to do when another app holds it.
+fn copy(summary: &str) -> anyhow::Result<()> {
+    speakeasy_platform::copy_text(summary).map_err(|error| {
+        anyhow!(
+            "Cannot copy the last Show ({error:#}). Close any app holding the clipboard, then try \
+             again."
+        )
+    })
+}
+
+/// Runs `work` off the UI thread on the Show the menu acts on, if it acts, replacing any recovery
+/// still under way, then hands what `work` found to `done`. A Show found gone is reported as such,
+/// and a failure as Services reports any other.
 fn recover<T: Send + 'static>(
-    work: impl FnOnce(SavedShow) -> anyhow::Result<T> + Send + 'static,
+    work: impl FnOnce(&SavedShow) -> anyhow::Result<Option<T>> + Send + 'static,
     done: impl FnOnce(T, &mut App) + 'static,
     cx: &mut App,
 ) {
     cx.update_global::<Services, _>(|services, cx| {
-        let Some(show) = services.output.borrow().last_show.clone() else {
+        let Some(show) = services.recallable_show(&services.output.borrow()).cloned() else {
             return;
         };
-        let work = cx.background_executor().spawn(async move { work(show) });
+        let found = cx.background_executor().spawn({
+            let show = show.clone();
+            async move { work(&show) }
+        });
         services.recovery = Some(cx.spawn(async move |cx| {
-            let result = work.await;
-            cx.update_if_running(|cx| match result {
-                Ok(value) => done(value, cx),
+            let found = found.await;
+            cx.update_if_running(|cx| match found {
+                Ok(Some(value)) => done(value, cx),
+                Ok(None) => cx.global::<Services>().report(Report::ShowGone(show)),
                 Err(error) => cx.global::<Services>().report(&error),
             });
         }));

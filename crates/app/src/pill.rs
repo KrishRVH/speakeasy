@@ -163,15 +163,14 @@ impl Pill {
         let now = Instant::now();
         let previous = &self.snapshot;
         let new_session = snapshot.session != previous.session;
-        let new_phase = new_session || snapshot.phase != previous.phase;
-        let new_message = snapshot.message != previous.message;
-        let state_changed = new_phase
-            || new_message
+        let new_feedback = begins_feedback(previous, &snapshot);
+        let state_changed = new_feedback
+            || snapshot.message != previous.message
             || snapshot.hands_free != previous.hands_free
             || snapshot.show != previous.show
             || snapshot.ending != previous.ending
             || snapshot.narration_lost != previous.narration_lost;
-        if new_phase || (snapshot.phase == Phase::Error && new_message) {
+        if new_feedback {
             self.phase_at = now;
             self.wake = None;
             self.tray_hint_until = None;
@@ -408,7 +407,7 @@ struct Scene {
     /// Time left on a new Show's drawing hint.
     draw_hint: Option<Duration>,
     hands_free: bool,
-    /// Whether the session records the screen as a Show.
+    /// Whether the session records the screen as a Show, or the result is a Show copied again.
     show: bool,
     /// How a copied Show's screen recording ended.
     ending: Ending,
@@ -443,6 +442,7 @@ impl Scene {
         }
         match self.phase {
             Phase::Error => Content::Error,
+            Phase::Notice => Content::Notice,
             Phase::Copied if !self.labels_copy() => Content::Notice,
             Phase::Unchosen => Content::Notice,
             Phase::Starting
@@ -482,7 +482,7 @@ impl Scene {
             Phase::Done => size(76.0, 34.0),
             Phase::Copied if self.labels_copy() => size(150.0, 34.0),
             Phase::Empty => size(182.0, 36.0),
-            Phase::Copied | Phase::Unchosen | Phase::Error => MESSAGE_SIZE,
+            Phase::Copied | Phase::Notice | Phase::Unchosen | Phase::Error => MESSAGE_SIZE,
             Phase::Idle | Phase::Cancelled => RESTING_SIZE,
         }
     }
@@ -521,8 +521,8 @@ enum Content {
     Error,
     /// Copied dictation, whose message says how to paste it; a Show copied after its recording
     /// stopped early, as when its screen stopped or its window closed or went off screen, or after
-    /// its narration was lost; or a Show cancelled with nothing to record. Any other copied Show
-    /// keeps its compact slot.
+    /// its narration was lost; a Show cancelled with nothing to record; or a notice. Any other
+    /// copied Show keeps its compact slot.
     Notice,
     Slot,
     Idle,
@@ -618,7 +618,7 @@ fn feedback_remaining(phase: Phase, labeled: bool, since_phase: Duration) -> Opt
     let duration = match phase {
         Phase::Done => SUBMITTED_FOR,
         Phase::Copied if labeled => COPIED_FOR,
-        Phase::Copied | Phase::Unchosen => NOTICE_FOR,
+        Phase::Copied | Phase::Notice | Phase::Unchosen => NOTICE_FOR,
         Phase::Empty => EMPTY_FOR,
         Phase::Error => ERROR_FOR,
         _ => return None,
@@ -626,6 +626,15 @@ fn feedback_remaining(phase: Phase, labeled: bool, since_phase: Duration) -> Opt
     duration
         .checked_sub(since_phase)
         .filter(|left| !left.is_zero())
+}
+
+/// Whether `snapshot` begins new feedback after `previous`, restarting its time on screen: a new
+/// session, phase, or report, or a failure that says something new.
+fn begins_feedback(previous: &Snapshot, snapshot: &Snapshot) -> bool {
+    snapshot.session != previous.session
+        || snapshot.reported != previous.reported
+        || snapshot.phase != previous.phase
+        || (snapshot.phase == Phase::Error && snapshot.message != previous.message)
 }
 
 /// When the drawing hint ends, given the snapshot that replaces `previous` and the deadline `until`
@@ -758,6 +767,42 @@ mod tests {
         assert!(unchosen.content() == Content::Notice);
         assert_eq!(unchosen.capsule_size(), MESSAGE_SIZE);
         assert_eq!(unchosen.feedback(), Some(NOTICE_FOR));
+    }
+
+    #[test]
+    fn a_notice_reads_as_a_muted_message_rather_than_a_failure() {
+        let notice = Scene {
+            phase: Phase::Notice,
+            ..recording(Duration::ZERO)
+        };
+        assert!(
+            notice.content() == Content::Notice,
+            "A notice needs no action"
+        );
+        assert_eq!(notice.capsule_size(), MESSAGE_SIZE);
+        assert_eq!(notice.feedback(), Some(NOTICE_FOR), "Long enough to read");
+    }
+
+    #[test]
+    fn a_report_that_repeats_the_last_begins_new_feedback() {
+        let copied = Snapshot {
+            phase: Phase::Copied,
+            show: true,
+            message: "Show copied. Paste it into your coding agent.".into(),
+            ..Snapshot::default()
+        };
+        assert!(
+            !begins_feedback(&copied, &copied.clone()),
+            "A snapshot presented again keeps its time on screen"
+        );
+        let copied_again = Snapshot {
+            reported: 1,
+            ..copied.clone()
+        };
+        assert!(
+            begins_feedback(&copied, &copied_again),
+            "Copying the last Show again went unseen"
+        );
     }
 
     #[test]
