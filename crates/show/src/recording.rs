@@ -64,8 +64,8 @@ impl Ending {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NarrationLoss {
-    /// Audio capture stopped at [`Recording::duration`], and the Show ended there, so any later
-    /// steps are missing as well.
+    /// Audio capture stopped. Unless the screen recording stopped early as well, as the [`Ending`]
+    /// says, the Show ended there, at [`Recording::duration`], so any later steps are missing too.
     AudioStopped,
     /// The speech recorded could not be transcribed.
     NotTranscribed,

@@ -344,6 +344,16 @@ fn a_show_whose_narration_was_lost_says_why_in_both_files() {
         )
     );
     assert_eq!(manifest["narrationLost"], "audioStopped");
+    let (summary, _) =
+        summary_and_manifest(lost(Ending::ScreenStopped, NarrationLoss::AudioStopped));
+    assert_eq!(
+        summary.lines().skip(1).take(2).collect::<Vec<_>>(),
+        [
+            SCREEN_STOPPED,
+            "Audio capture stopped as well; what the user said is missing."
+        ],
+        "Only the screen's ending ended the Show"
+    );
     let (summary, manifest) =
         summary_and_manifest(lost(Ending::ScreenStopped, NarrationLoss::NotTranscribed));
     assert_eq!(

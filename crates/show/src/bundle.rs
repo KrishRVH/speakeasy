@@ -196,6 +196,11 @@ impl fmt::Display for Summary<'_> {
             )?;
         }
         match recording.narration_lost {
+            // The screen's ending, said above, is what ended the Show.
+            Some(NarrationLoss::AudioStopped) if stopped.is_some() => writeln!(
+                f,
+                "Audio capture stopped as well; what the user said is missing."
+            )?,
             Some(NarrationLoss::AudioStopped) => writeln!(
                 f,
                 "Audio capture stopped at {} and the Show ended there; what the user said and any \
