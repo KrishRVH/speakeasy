@@ -635,12 +635,11 @@ impl<P: Ports> Owner<P> {
     /// whose presentations the epoch then drops, yet the Show outlives it: the announced snapshot
     /// takes it too, so the next owner starts from it.
     fn remember(&mut self, show: SavedShow) {
+        // Written straight into the presented copy, so a pause announced before this owner next
+        // presents still keeps it; only a stale copy, which nothing else updates, notifies.
         self.snapshots.send_if_modified(|presented| {
-            let stale = presented.epoch != self.epoch;
-            if stale {
-                presented.last_show = Some(show.clone());
-            }
-            stale
+            presented.last_show = Some(show.clone());
+            presented.epoch != self.epoch
         });
         self.last_show = Some(show);
     }
