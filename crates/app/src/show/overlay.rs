@@ -1008,7 +1008,7 @@ mod tests {
     }
 
     #[test]
-    fn a_drag_chooses_the_area_it_covers_and_a_stray_click_chooses_nothing() {
+    fn a_drag_chooses_the_area_it_covers_and_a_click_chooses_nothing() {
         let size = gpui::size(px(1_000.0), px(500.0));
         let at = |x, y| point(px(x), px(y));
         let part = |left, top, right, bottom| Part {
