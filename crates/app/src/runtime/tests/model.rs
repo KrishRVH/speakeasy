@@ -805,6 +805,10 @@ fn the_sequences_that_once_stranded_the_owner_come_to_rest() -> anyhow::Result<(
     let screen_failure = || Step::Footage(Seen::Failure);
     let cases = [
         (vec![keys(&[Key::Toggle]), microphone_failure()], at_once),
+        (
+            vec![show(), speech(), Step::Footage(Seen::Unchosen)],
+            at_once,
+        ),
         (vec![show(), microphone_failure()], at_once),
         (
             vec![
