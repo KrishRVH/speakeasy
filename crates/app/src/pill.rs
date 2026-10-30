@@ -514,8 +514,9 @@ impl Scene {
 enum Content {
     TrayHint,
     Error,
-    /// Copied dictation, whose message says how to paste it, or a copied Show whose screen stopped
-    /// early; any other copied Show keeps its compact slot.
+    /// Copied dictation, whose message says how to paste it; a Show copied after its recording
+    /// stopped early, as when its screen stopped or its window closed or went off screen; or a Show
+    /// cancelled with nothing to record. Any other copied Show keeps its compact slot.
     Notice,
     Slot,
     Idle,
