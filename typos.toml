@@ -6,6 +6,6 @@ locale = "en-us"
 EIS = "EIS"
 
 [files]
-# Dotfiles hold the release workflow and the task and tool config.
+# Dotfiles hold the CI workflows and the task and tool config.
 ignore-hidden = false
 extend-exclude = [".git", "vendor", "Cargo.lock", "bun.lock", "uv.lock", ".config/mise/mise.lock"]
