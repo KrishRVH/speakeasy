@@ -78,10 +78,10 @@ wakes the pill for each second of its clock and countdown.
 
 Short notes from a CC0 kalimba recording confirm the moments a user may not be watching: a high note
 once the microphone listens, a lower note when a recording finishes, by gesture, at the five-minute
-limit, or as a Show's screen, window, or audio capture stops, a muted low note when the user cancels
-or a Show has nothing to record, two rising notes when a Show starts, and a rising chord when text
-or a Show waits on the clipboard. Text arriving in the editor, errors, hands-free locking, and a
-hold that another shortcut, a session change, or a macOS key-tap outage ends stay silent; the pill
+limit, as a Show's screen, window, or audio capture stops, or as an interruption finishes a Show, a
+muted low note when the user cancels or a Show has nothing to record, two rising notes when a Show
+starts, and a rising chord when text or a Show waits on the clipboard. Text arriving in the editor,
+errors, hands-free locking, and dictation that an interruption discards stay silent; the pill
 already says them. **Play sounds** in Settings turns every cue off.
 
 Each cue echoes the pill. The high note sounds as the pill opens to listening rather than at the
@@ -132,8 +132,9 @@ commands and status line stay in view below the scrolling controls.
 - On Windows/macOS, the shortcut's modifiers are observed, never swallowed. Only the Space that
   locks hands-free and the S, W, or A that starts a Show are withheld from the focused app. Shift
   stays passive so a Show can draw and pin with it, and another app's double Shift still works; any
-  other key during a hold belongs to a different shortcut: dictation cancels and waits for release.
-  On Windows, an unassigned mask key keeps the released Win key from opening Start.
+  other key during a hold belongs to a different shortcut, so it interrupts the recording, and the
+  shortcut waits for release. On Windows, an unassigned mask key keeps the released Win key from
+  opening Start.
 - During a Windows/macOS hold, S, W, or A turns the recording into a Show, hands-free and keeping
   the narration since the press; pressing the shortcut again finishes it on release. The pill table
   shows what the pill presents. S records the display under the pointer and W the window under it,
@@ -155,11 +156,13 @@ commands and status line stay in view below the scrolling controls.
 - Windows/macOS Escape continues to the focused app. It cancels dictation immediately at any stage,
   but a Show, area choice included, only while the shortcut is held: during the hold that started it
   or the press that would finish it. Otherwise a recording Show ignores Escape, and the tray's
-  Cancel Show discards it. Once a Show finishes, neither Escape, the tray, nor an interruption
-  discards it while it is saved; Pause, Quit, and a settings change that ends a recording still do,
-  though a Show already committed to disk stays saved, its summary copied if the clipboard allows.
-  Linux uses a reserved Ctrl+Super+Escape chord or an explicit command binding; bare Escape is not
-  globally captured. Animation never delays cancellation or owns the microphone lifetime.
+  Cancel Show discards it. An interruption, which is another shortcut, a session change such as
+  locking the screen, or a macOS key-tap outage, discards dictation but finishes a recording Show as
+  the shortcut would. Once a Show finishes, neither Escape, the tray, nor an interruption discards
+  it while it is saved; Pause, Quit, and a settings change that ends a recording still do, though a
+  Show already committed to disk stays saved, its summary copied if the clipboard allows. Linux uses
+  a reserved Ctrl+Super+Escape chord or an explicit command binding; bare Escape is not globally
+  captured. Animation never delays cancellation or owns the microphone lifetime.
 - Readiness follows the first captured buffer. Startup feedback does not imply that speech before
   that buffer can be recovered.
 - Insertion does not steal focus. OS submission is the observable result; success in every editor

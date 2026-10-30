@@ -1,5 +1,6 @@
-//! Drives the gesture with explicit instants: tap and hands-free timing, Shows, cancellation, and
-//! generated event sequences that must keep every capture within the recording limit.
+//! Drives the gesture with explicit instants: tap and hands-free timing, Shows, cancellation,
+//! interruptions, and generated event sequences that must keep every capture within the recording
+//! limit.
 
 use proptest::prelude::*;
 
@@ -13,6 +14,7 @@ enum Event {
     Show,
     Toggle,
     Escape,
+    Interrupt,
     Cancel,
     Abandon,
     Complete,
@@ -27,6 +29,7 @@ impl Event {
         Self::Show,
         Self::Toggle,
         Self::Escape,
+        Self::Interrupt,
         Self::Cancel,
         Self::Abandon,
         Self::Complete,
@@ -48,6 +51,9 @@ impl Event {
             },
             Self::Escape => {
                 gesture.escape();
+            },
+            Self::Interrupt => {
+                gesture.interrupt();
             },
             Self::Cancel => {
                 gesture.cancel();
@@ -280,6 +286,7 @@ fn only_abandoning_discards_a_show_being_saved() {
     gesture.show();
     assert_eq!(gesture.toggle(start), Some(Action::Finish));
     assert_eq!(gesture.escape(), None);
+    assert_eq!(gesture.interrupt(), None);
     assert_eq!(gesture.cancel(), None);
     assert_eq!(gesture.state(), State::Processing);
     assert_eq!(gesture.abandon(), Some(Action::Cancel));
@@ -287,10 +294,39 @@ fn only_abandoning_discards_a_show_being_saved() {
 }
 
 #[test]
-fn escape_and_cancel_discard_dictation_recording_or_processing() {
+fn an_interruption_finishes_a_recording_show_however_the_shortcut_stands() {
+    let start = Instant::now();
+    let finishes = |gesture: &mut Gesture, stance: &str| {
+        assert_eq!(gesture.interrupt(), Some(Action::Finish), "{stance}");
+        assert_eq!(gesture.phase, Phase::Saving, "{stance}");
+        assert_eq!(
+            gesture.release(start),
+            None,
+            "{stance}: the release finished the Show again"
+        );
+        gesture.complete();
+    };
+    let mut gesture = Gesture::default();
+    gesture.press(start);
+    gesture.show();
+    finishes(&mut gesture, "During the opening hold");
+    gesture.press(start);
+    gesture.show();
+    gesture.release(start);
+    finishes(&mut gesture, "Hands-free");
+    gesture.press(start);
+    gesture.show();
+    gesture.release(start);
+    gesture.press(start);
+    finishes(&mut gesture, "During the finishing press");
+}
+
+#[test]
+fn escape_cancel_and_interruptions_discard_dictation_recording_or_processing() {
     let start = Instant::now();
     let mut gesture = Gesture::default();
-    let discards: [fn(&mut Gesture) -> Option<Action>; 2] = [Gesture::escape, Gesture::cancel];
+    let discards: [fn(&mut Gesture) -> Option<Action>; 3] =
+        [Gesture::escape, Gesture::cancel, Gesture::interrupt];
     for discard in discards {
         assert_eq!(gesture.toggle(start), Some(Action::Start));
         assert_eq!(discard(&mut gesture), Some(Action::Cancel), "Hands-free");

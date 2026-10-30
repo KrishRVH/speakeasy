@@ -32,8 +32,9 @@ pub enum Input {
     /// The user asks to discard the active session, from the tray, a desktop command, or Linux's
     /// reserved cancel chord; the owner decides what it discards.
     Cancel,
-    /// Another shortcut, a session change, or a macOS key-tap outage interrupted dictation. The
-    /// owner treats it as [`Cancel`](Self::Cancel), though the user never asked to cancel.
+    /// Another shortcut, a session change, or a macOS key-tap outage interrupted the recording.
+    /// The user never asked to cancel, so the owner discards dictation without a cue and finishes
+    /// a recording Show.
     Interrupt,
     /// Starts or finishes hands-free capture.
     Toggle,

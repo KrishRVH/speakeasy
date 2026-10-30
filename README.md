@@ -81,8 +81,9 @@ the elapsed time. Release the shortcut and keep talking. To draw circles and arr
 where the pointer is. Each mark and pin is numbered ① ② ③ beside it, on screen and in the bundle, so
 you and the agent can refer to it by number. The ink fades as you go. Click through your app as
 usual, then press and release the shortcut to finish. Escape alone stays with your app: to cancel,
-hold the shortcut and press <kbd>Escape</kbd>, or choose **Cancel Show** in the tray. Once you
-finish, the Show is saved even if you press Escape.
+hold the shortcut and press <kbd>Escape</kbd>, or choose **Cancel Show** in the tray. Pressing
+another shortcut while you hold Speakeasy's, locking the screen, or sleeping finishes the Show
+rather than discarding it. Once you finish, the Show is saved even if you press Escape.
 
 In this example, a Show reports bugs in a made-up settings app, and `speakeasy show demo` writes the
 same bundle.

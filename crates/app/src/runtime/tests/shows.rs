@@ -1,5 +1,5 @@
-//! Show scenarios: S, W, or A during a hold, screen lanes, footage, lost narration, and
-//! publication, against a fake screen and gated publication.
+//! Show scenarios: S, W, or A during a hold, interruptions, screen lanes, footage, lost narration,
+//! and publication, against a fake screen and gated publication.
 
 use speakeasy_show::Ending;
 
@@ -210,6 +210,36 @@ async fn a_show_being_saved_survives_escape_the_tray_and_interruptions() -> anyh
     let (_, narration) = receive(&h.published).await?;
     assert_eq!(narration, Narration::Text("this broke".into()));
     h.phase(Phase::Copied).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_interruption_finishes_a_recording_show_held_or_hands_free() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    for hands_free in [false, true] {
+        start_show(&mut h).await?;
+        if hands_free {
+            h.input(Input::Release);
+        }
+        h.take_sounds();
+        // The keyboard follows an interruption with the shortcut's release.
+        for input in [Input::Interrupt, Input::Release] {
+            h.input(input);
+        }
+        h.transcribe_next_as("interrupted").await?;
+        let (_, narration) = receive(&h.published).await?;
+        assert_eq!(narration, Narration::Text("interrupted".into()));
+        h.phase(Phase::Copied).await?;
+        assert_eq!(
+            h.take_sounds(),
+            [
+                Sound::Played(Cue::Stop),
+                Sound::Played(Cue::Copied),
+                Sound::Held(false)
+            ],
+            "Hands-free {hands_free}"
+        );
+    }
     h.close().await
 }
 

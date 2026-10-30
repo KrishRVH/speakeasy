@@ -43,8 +43,9 @@ pub enum Action {
 /// Hold-to-talk, double-tap hands-free, Space locking, and Shows for one shortcut.
 ///
 /// Hands-free dictation finishes on the next press, a Show on that press's release, so Escape can
-/// cancel a Show while the shortcut is held; Escape alone leaves a Show recording. No request to
-/// cancel discards a Show once it is being saved: only [`abandon`](Self::abandon) does.
+/// cancel a Show while the shortcut is held; Escape alone leaves a Show recording, and an
+/// interruption finishes it. No request to cancel discards a Show once it is being saved: only
+/// [`abandon`](Self::abandon) does.
 ///
 /// Physical key state survives completion and cancellation, preventing autorepeat from starting a
 /// new session before the user releases the shortcut.
@@ -196,7 +197,17 @@ impl Gesture {
         }
     }
 
-    /// Cancels at the user's request or for an interruption: anything but a Show being saved.
+    /// Observes an interruption the user never asked for, such as another shortcut or a session
+    /// change: it discards dictation at any stage but finishes a recording Show, and leaves a Show
+    /// being saved alone.
+    pub fn interrupt(&mut self) -> Option<Action> {
+        match self.phase {
+            Phase::Show { .. } | Phase::ShowArmed { .. } => self.finish(),
+            _ => self.cancel(),
+        }
+    }
+
+    /// Cancels at the user's request: anything but a Show being saved.
     pub fn cancel(&mut self) -> Option<Action> {
         if self.phase == Phase::Saving {
             return None;

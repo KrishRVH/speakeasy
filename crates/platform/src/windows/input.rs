@@ -1,5 +1,6 @@
 //! Windows keyboard observation: the Ctrl+Win low-level hook and the lifecycle window that
-//! cancels dictation when the session locks, ends, or sleeps, started beside the insertion thread.
+//! interrupts the recording when the session locks, ends, or sleeps, started beside the insertion
+//! thread.
 //!
 //! The hook thread creates and removes every native resource its callbacks reach.
 

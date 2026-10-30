@@ -338,12 +338,13 @@ impl<P: Ports> Owner<P> {
             },
             Input::Escape => self.gesture.escape(),
             Input::Cancel => self.gesture.cancel(),
-            // Unlike `Cancel`, no cue: the user never asked to cancel.
-            Input::Interrupt => {
-                if self.gesture.cancel().is_some() {
+            Input::Interrupt => match self.gesture.interrupt() {
+                // Unlike `Cancel`, no cue: the user never asked to cancel.
+                Some(Action::Cancel) => {
                     self.discard();
-                }
-                None
+                    None
+                },
+                finish => finish,
             },
             Input::Unavailable(message) => return self.stop_with_failure(message),
             Input::DesktopReady { shortcut, cancel } => {

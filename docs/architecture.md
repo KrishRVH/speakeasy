@@ -33,8 +33,8 @@ crates. Find the area you are changing, read its owners, and run their tests, wh
 module unless a test file is named.
 
 - **Gestures and deadlines**: [core/src/gesture.rs](../crates/core/src/gesture.rs) turns timestamped
-  shortcut transitions into actions and deadlines, and decides which cancels reach a Show.
-  [runtime/tests/dictation.rs](../crates/app/src/runtime/tests/dictation.rs) and
+  shortcut transitions into actions and deadlines, and decides what each cancel or interruption does
+  to a Show. [runtime/tests/dictation.rs](../crates/app/src/runtime/tests/dictation.rs) and
   [shows.rs](../crates/app/src/runtime/tests/shows.rs) drive the owner on paused Tokio time with
   production deadlines.
 - **Session owner**: [runtime.rs](../crates/app/src/runtime.rs),
