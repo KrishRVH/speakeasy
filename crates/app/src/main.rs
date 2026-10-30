@@ -221,15 +221,17 @@ fn launch(
                 cx,
             );
         }
-        if let Some(valid) = valid
-            && let Err(error) =
-                cx.update_global::<Services, _>(|services, cx| services.apply(valid, cx))
-        {
-            cx.global::<Services>().publish_error(&error);
+        let applied = valid.map_or(Ok(()), |valid| {
+            cx.update_global::<Services, _>(|services, cx| services.apply(valid, cx))
+        });
+        if let Err(error) = &applied {
+            cx.global::<Services>().publish_error(error);
         }
+        // A failure to dictate outranks one to start at login, which the next launch retries.
         #[cfg(target_os = "windows")]
         if let Some(on) = sign_in
             && let Err(error) = speakeasy_platform::start_at_login(on)
+            && applied.is_ok()
         {
             cx.global::<Services>().report(&error);
         }
