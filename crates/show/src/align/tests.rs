@@ -160,6 +160,19 @@ fn ink_drawn_in_a_pause_mid_sentence_takes_the_sentence() {
 }
 
 #[test]
+fn ink_begun_as_speech_resumes_takes_the_sentence_it_carries_on() {
+    // "some" resumes "Um, There's" at 11.7 s; the ink began a moment later.
+    let recorded = Recorded::parse(include_str!("hex-motion.json"));
+    assert_eq!(
+        texts(&[5_964, 11_800], &recorded.narration),
+        [
+            "Oh, that's nice. It's faster.",
+            "Um, There's some jumps, though, in the animation."
+        ]
+    );
+}
+
+#[test]
 fn ink_drawn_just_before_speaking_takes_what_is_said_next() {
     // The underline was drawn during "Um,". Speakeasy removes fillers by default, which leaves
     // the underline in the silence before the clause the filler opened, and the next mark inside
@@ -209,18 +222,26 @@ fn a_click_just_before_speaking_leaves_the_words_to_ink_drawn_nearer_their_start
 
 #[test]
 fn a_sentence_left_hanging_is_over_once_the_silence_runs_long() {
-    let said = words(&[
+    // The recognizer stretched "the" across the silence, so the bound counts from its start. Ink
+    // in the silence past the bound, or in the words that end it, leaves "So the" behind.
+    let mut said = words(&[
         (0, "That's"),
         (200, "done."),
         (1_000, "So"),
         (1_200, "the"),
         (9_000, "Next"),
         (9_200, "thing."),
-    ]);
-    assert_eq!(
-        texts(&[0, 6_000], &said),
-        ["That's done. So the", "Next thing."]
-    );
+    ])
+    .words()
+    .to_vec();
+    said[3].span = Span::new(Moment::from_millis(1_200), Moment::from_millis(9_000));
+    let said = Narration::Words(said);
+    for anchor in [6_000, 9_100] {
+        assert_eq!(
+            texts(&[0, anchor], &said),
+            ["That's done. So the", "Next thing."]
+        );
+    }
 }
 
 #[test]
