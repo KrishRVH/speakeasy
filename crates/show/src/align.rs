@@ -58,7 +58,7 @@ pub(crate) fn align(anchors: &[Moment], narration: &Narration) -> Vec<Option<Str
             let mut owner = 0;
             for word in words {
                 let text = word.text.trim();
-                if word.is_spoken() || !attaches(text) {
+                if !attaches(text) {
                     let onset = word.span.start().saturating_add(ONSET_TOLERANCE);
                     owner = starts
                         .iter()
@@ -185,9 +185,11 @@ fn ends_clause(text: &str, clause_words: usize) -> bool {
         || (clause_words >= COMMA_CLAUSE_WORDS && text.ends_with(','))
 }
 
-/// Whether `word` belongs to the word before it, as punctuation and closing marks do.
+/// Whether `word` belongs to the word before it, as punctuation and closing marks do. A spoken word
+/// never does, even one that opens with an apostrophe, such as "'cause".
 fn attaches(word: &str) -> bool {
     word.starts_with([',', '.', '!', '?', ';', ':', '’', '\'', ')', ']', '”'])
+        && !word.chars().any(char::is_alphanumeric)
 }
 
 /// Joins a word to running text the way it was written: what [`attaches`] joins the word before,

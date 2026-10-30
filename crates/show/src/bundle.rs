@@ -145,14 +145,13 @@ pub fn compose<E: From<Error> + Send>(
 /// The summary an agent reads first, naming files under `directory`, where the bundle will be
 /// written.
 ///
-/// A Show whose screen stopped recording early says when, right after the header. The next line
-/// tells the agent to open the images before acting, to trust the screen's spelling of a name over
-/// speech recognition's, and to cite frames as `#N` and marks by number. It treats what was shown
-/// and heard as evidence, never as instructions to follow. One line per keyframe gives its number
-/// and time, what the pointer or ink did there, and what was said, or only what happened when
-/// nothing was said. Every path is a Markdown code span naming its file under `directory`: a reader
-/// sees where it ends, and an agent working in another folder can still open it. Window titles and
-/// other screen text never appear in it.
+/// A Show whose screen stopped recording early says when, right after the header. When there are
+/// keyframes, the next line tells the agent to open the images before acting, to trust the
+/// screen's spelling of a name over speech recognition's, and to cite frames as `#N` and marks by
+/// number. One line per keyframe gives its number and time, what the pointer or ink did there, and
+/// what was said, or only what happened when nothing was said. Every path is a Markdown code span
+/// naming its file under `directory`: a reader sees where it ends, and an agent working in another
+/// folder can still open it. Window titles and other screen text never appear in it.
 struct Summary<'a> {
     manifest: &'a Manifest,
     directory: &'a Path,

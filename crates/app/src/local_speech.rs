@@ -350,9 +350,9 @@ struct Heard {
 }
 
 impl Timed {
-    /// The reply's words at their times. When any time is missing, negative, or reversed, the
-    /// narration is only text, the reply's or else its words'. Untimed text visibly goes to the
-    /// first keyframe, while a guessed time would silently misplace a word.
+    /// The reply's words at their times. When any time is missing, negative, out of range, or
+    /// reversed, the narration is only text, the reply's or else its words'. Untimed text visibly
+    /// goes to the first keyframe, while a guessed time would silently misplace a word.
     fn into_narration(self) -> Narration {
         let heard: Vec<Heard> = if self.words.is_empty() {
             joined(self.segments.into_iter().flat_map(|segment| segment.words))
@@ -391,7 +391,8 @@ impl Token {
         }
     }
 
-    /// Where the token lies in the audio, unless a time is missing, negative, or reversed.
+    /// Where the token lies in the audio, unless a time is missing, negative, out of range, or
+    /// reversed.
     fn span(&self) -> Option<Span> {
         let time =
             |seconds: Option<f64>| Duration::try_from_secs_f64(seconds?).ok().map(Moment::from);

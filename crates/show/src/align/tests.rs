@@ -82,6 +82,10 @@ fn punctuation_split_from_its_word_closes_that_words_text() {
     ]);
     assert_eq!(texts(&[1_000, 5_000], &said), ["Lots of glitches.", "Yeah"]);
     // A spoken word that opens with an apostrophe is a word of its own, not punctuation.
+    assert_eq!(
+        texts(&[0], &words(&[(0, "I"), (200, "said"), (400, "'cause")])),
+        ["I said 'cause"]
+    );
     let said = words(&[
         (0, "Done."),
         (2_000, "'Cause"),
