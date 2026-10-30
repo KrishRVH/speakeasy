@@ -6,7 +6,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::{fmt, net::TcpListener, path::Path, process::ExitStatus, time::Duration};
 
 use anyhow::{Context as _, anyhow, bail, ensure};
-use reqwest::{Client, Response, multipart};
+use reqwest::{Client, RequestBuilder, multipart};
 use serde::{Deserialize, de::DeserializeOwned};
 use speakeasy_platform::ProcessGroup;
 use speakeasy_show::{Moment, Narration, Span, Word};
@@ -200,23 +200,10 @@ impl LocalSpeech {
                 self.client.post(self.url("inference")).multipart(form)
             },
         };
-        let exchange = async {
-            let response = request
-                .timeout(INFERENCE_TIMEOUT)
-                .send()
-                .await
-                .map_err(transport_error)?;
-            ensure!(
-                response.status().is_success(),
-                "The speech engine returned HTTP {}. Check the selected model and engine, then try again.",
-                response.status().as_u16()
-            );
-            read_bounded(response).await
-        };
-        match exchange.await {
+        match exchange(request).await {
             Ok(body) => reply(&body),
-            Err(error) if error.is::<Disconnected>() => Err(self.kill_and_reap_with_cause().await),
-            Err(error) => Err(error),
+            Err(Unanswered::Disconnected) => Err(self.kill_and_reap_with_cause().await),
+            Err(Unanswered::Failed(error)) => Err(error),
         }
     }
 
@@ -539,37 +526,47 @@ fn recording_form(wav: Vec<u8>, format: &'static str) -> reqwest::Result<multipa
         .text("response_format", format))
 }
 
-/// A failed exchange with the engine as a fixed message. The request URL carries the private route,
-/// so the transport error never reaches users.
-fn transport_error(error: reqwest::Error) -> anyhow::Error {
-    if error.is_timeout() {
-        anyhow!("Transcription timed out. Try a smaller model, or turn on Prefer GPU in Settings.")
-    } else {
-        anyhow!(Disconnected)
+/// Sends `request` and reads the engine's whole reply.
+async fn exchange(request: RequestBuilder) -> Result<Vec<u8>, Unanswered> {
+    let mut response = request.timeout(INFERENCE_TIMEOUT).send().await?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(Unanswered::Failed(anyhow!(
+            "The speech engine returned HTTP {}. Check the selected model and engine, then try again.",
+            status.as_u16()
+        )));
     }
-}
-
-/// The engine's connection broke before its reply was complete. The engine may have crashed, so a
-/// request reports the engine's exit status in place of this when that names a remedy.
-#[derive(Debug)]
-struct Disconnected;
-
-impl fmt::Display for Disconnected {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(STOPPED)
-    }
-}
-
-async fn read_bounded(mut response: Response) -> anyhow::Result<Vec<u8>> {
     let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(transport_error)? {
-        ensure!(
-            chunk.len() <= MAX_RESPONSE_BYTES.saturating_sub(body.len()),
-            "The speech engine sent a reply too large to read. Check the selected model and engine, then try again."
-        );
+    while let Some(chunk) = response.chunk().await? {
+        if chunk.len() > MAX_RESPONSE_BYTES.saturating_sub(body.len()) {
+            return Err(Unanswered::Failed(anyhow!(
+                "The speech engine sent a reply too large to read. Check the selected model and engine, then try again."
+            )));
+        }
         body.extend_from_slice(&chunk);
     }
     Ok(body)
+}
+
+/// Why the engine sent no complete reply.
+enum Unanswered {
+    /// The connection failed or broke before the reply was complete, as a crashed engine's does.
+    Disconnected,
+    /// What went wrong, as a fixed message.
+    Failed(anyhow::Error),
+}
+
+/// The request URL carries the private route, so a transport error never reaches users.
+impl From<reqwest::Error> for Unanswered {
+    fn from(error: reqwest::Error) -> Self {
+        if error.is_timeout() {
+            Self::Failed(anyhow!(
+                "Transcription timed out. Try a smaller model, or turn on Prefer GPU in Settings."
+            ))
+        } else {
+            Self::Disconnected
+        }
+    }
 }
 
 fn startup_exit(status: ExitStatus) -> String {

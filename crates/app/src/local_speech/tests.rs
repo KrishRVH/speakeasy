@@ -198,15 +198,11 @@ fn engine_secrets_are_unrelated_128_bit_tokens() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn a_truncated_reply_reports_only_a_stopped_engine() -> anyhow::Result<()> {
+async fn a_truncated_reply_is_a_broken_connection() -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     let listener = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
-    let url = format!(
-        "http://{}/{}/inference",
-        listener.local_addr()?,
-        random_token()?
-    );
+    let url = format!("http://{}/inference", listener.local_addr()?);
     let engine = tokio::spawn(async move {
         let mut stream = BufReader::new(listener.accept().await?.0);
         let mut line = String::new();
@@ -219,13 +215,12 @@ async fn a_truncated_reply_reports_only_a_stopped_engine() -> anyhow::Result<()>
             .await?;
         anyhow::Ok(())
     });
-    let response = engine_client()?.get(&url).send().await?;
+    let exchanged = exchange(engine_client()?.get(&url)).await;
     engine.await??;
-    let error = read_bounded(response)
-        .await
-        .err()
-        .context("A truncated reply was accepted")?;
-    assert_eq!(format!("{error:#}"), STOPPED);
+    assert!(
+        matches!(exchanged, Err(Unanswered::Disconnected)),
+        "A truncated reply was not taken for a broken connection"
+    );
     Ok(())
 }
 
