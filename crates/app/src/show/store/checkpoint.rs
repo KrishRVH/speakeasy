@@ -452,11 +452,17 @@ fn read_complete(file: &mut File, bytes: &mut [u8]) -> io::Result<bool> {
     }
 }
 
+#[cfg(unix)]
 fn sync_directory(directory: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    File::open(directory)?.sync_all()?;
-    #[cfg(not(unix))]
-    let _directory = directory;
+    File::open(directory)?.sync_all()
+}
+
+#[cfg(not(unix))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "Callers share Unix's fallible contract; portable Rust cannot sync a Windows directory handle"
+)]
+const fn sync_directory(_: &Path) -> io::Result<()> {
     Ok(())
 }
 

@@ -50,7 +50,7 @@ impl LaunchMode {
 /// What starts the service again once retiring owners acknowledge.
 enum Restart {
     /// Settings a save made durable.
-    Apply(ValidConfig),
+    Apply(Box<ValidConfig>),
     /// A resume, which validates the saved settings first.
     Validate,
 }
@@ -280,7 +280,10 @@ impl Services {
             self.pause(cx);
         }
         self.config = Config::clone(&config);
-        if self.lifecycle.queue(Restart::Apply(config.clone())) {
+        if self
+            .lifecycle
+            .queue(Restart::Apply(Box::new(config.clone())))
+        {
             return Ok(());
         }
         match self.runtime() {
@@ -429,7 +432,7 @@ impl Services {
         }
         match pending {
             Some(Restart::Apply(config)) => {
-                if let Err(error) = self.apply(config, cx) {
+                if let Err(error) = self.apply(*config, cx) {
                     self.publish_error(&error);
                 }
             },
