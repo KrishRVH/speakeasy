@@ -37,7 +37,8 @@ pub struct Recording {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Ending {
-    /// The Show ran until it was finished, by the user or the recording limit.
+    /// The Show ran until it was finished: by the user, by the recording limit, or where its audio
+    /// capture stopped, as [`NarrationLoss::AudioStopped`] says.
     #[default]
     Finished,
     /// Screen capture stopped on its own.
@@ -63,8 +64,9 @@ impl Ending {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NarrationLoss {
-    /// The microphone stopped during the Show.
-    MicrophoneStopped,
+    /// Audio capture stopped at [`Recording::duration`], and the Show ended there, so any later
+    /// steps are missing as well.
+    AudioStopped,
     /// The speech recorded could not be transcribed.
     NotTranscribed,
 }

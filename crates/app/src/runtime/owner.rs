@@ -385,10 +385,10 @@ impl<P: Ports> Owner<P> {
                 }
             },
             CaptureEvent::Finished(_, Err(error)) => {
-                // A Show whose microphone listened ends where it stopped, keeping its footage.
-                // Failing retires both devices, so the screen is never asked to finish footage for
-                // nobody.
-                if session.lose_narration(NarrationLoss::MicrophoneStopped) {
+                // A Show whose microphone listened ends where its audio stopped, keeping its
+                // footage. Failing retires both devices, so the screen is never asked to finish
+                // footage for nobody.
+                if session.lose_narration(NarrationLoss::AudioStopped) {
                     self.conclude_capture();
                 } else {
                     self.fail(error.to_string());

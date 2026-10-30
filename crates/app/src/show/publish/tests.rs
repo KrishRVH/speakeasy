@@ -265,12 +265,12 @@ fn a_show_that_lost_its_narration_says_why_in_its_files() -> anyhow::Result<()> 
     let shows = tempfile::tempdir()?;
     let (_input, permit) = permit();
     let (footage, _) = rehearse(32, 20);
-    let lost = NarrationLoss::MicrophoneStopped;
+    let lost = NarrationLoss::AudioStopped;
     let summary = write_bundle(footage, Narration::default(), Some(lost), &permit, || {
         Ok(shows.path().to_owned())
     })?
     .context("An active permit publishes")?;
-    assert!(summary.contains("The microphone stopped during the Show"));
+    assert!(summary.contains("Audio capture stopped at 0:10 and the Show ended there"));
     let directory = fs::read_dir(shows.path())?
         .next()
         .context("The bundle is in the Shows folder")??

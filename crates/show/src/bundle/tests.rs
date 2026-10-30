@@ -290,8 +290,9 @@ fn ended(ending: Ending) -> Recording {
     }
 }
 
-const SCREEN_STOPPED: &str = "The screen stopped recording at 0:42, before the user finished the Show; later steps are \
-     missing.";
+/// The line a 42-second Show whose screen stopped adds after the header.
+const SCREEN_STOPPED: &str = "The screen stopped recording at 0:42, before the user finished the \
+                              Show; later steps are missing.";
 
 #[test]
 fn a_show_whose_recording_stopped_early_says_why_and_when_in_both_files() {
@@ -333,11 +334,16 @@ fn a_show_whose_narration_was_lost_says_why_in_both_files() {
         narration_lost: Some(loss),
         ..ended(ending)
     };
-    let microphone = "The microphone stopped during the Show; what the user said is missing.";
     let (summary, manifest) =
-        summary_and_manifest(lost(Ending::Finished, NarrationLoss::MicrophoneStopped));
-    assert_eq!(summary.lines().nth(1), Some(microphone));
-    assert_eq!(manifest["narrationLost"], "microphoneStopped");
+        summary_and_manifest(lost(Ending::Finished, NarrationLoss::AudioStopped));
+    assert_eq!(
+        summary.lines().nth(1),
+        Some(
+            "Audio capture stopped at 0:42 and the Show ended there; what the user said and any \
+             later steps are missing."
+        )
+    );
+    assert_eq!(manifest["narrationLost"], "audioStopped");
     let (summary, manifest) =
         summary_and_manifest(lost(Ending::ScreenStopped, NarrationLoss::NotTranscribed));
     assert_eq!(

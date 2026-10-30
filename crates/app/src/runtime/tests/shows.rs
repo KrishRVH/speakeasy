@@ -382,10 +382,7 @@ async fn a_show_whose_microphone_stops_ends_there_and_is_copied_without_narratio
     h.phase(Phase::Copied).await?;
     let snapshot = h.snapshot();
     assert_eq!(snapshot.message, COPIED_WITHOUT_NARRATION);
-    assert_eq!(
-        snapshot.narration_lost,
-        Some(NarrationLoss::MicrophoneStopped)
-    );
+    assert_eq!(snapshot.narration_lost, Some(NarrationLoss::AudioStopped));
     assert!(
         h.take_sounds().contains(&Sound::Played(Cue::Stop)),
         "The Show ended where the microphone stopped"
@@ -465,10 +462,7 @@ async fn a_show_that_lost_its_screen_and_its_narration_says_both() -> anyhow::Re
     let snapshot = h.snapshot();
     assert_eq!(
         (snapshot.ending, snapshot.narration_lost),
-        (
-            Ending::ScreenStopped,
-            Some(NarrationLoss::MicrophoneStopped)
-        )
+        (Ending::ScreenStopped, Some(NarrationLoss::AudioStopped))
     );
     assert_eq!(
         snapshot.message,

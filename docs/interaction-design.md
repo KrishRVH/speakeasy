@@ -77,9 +77,9 @@ wakes the pill for each second of its clock and countdown.
 
 Short notes from a CC0 kalimba recording confirm the moments a user may not be watching: a high note
 once the microphone listens, a lower note when a recording finishes, by gesture, at the five-minute
-limit, or as a Show's screen, window, or microphone stops, a muted low note when the user cancels or
-a Show has nothing to record, two rising notes when a Show starts, and a rising chord when text or a
-Show waits on the clipboard. Text
+limit, or as a Show's screen, window, or audio capture stops, a muted low note when the user cancels
+or a Show has nothing to record, two rising notes when a Show starts, and a rising chord when text or
+a Show waits on the clipboard. Text
 arriving in the editor, errors, hands-free locking, and a hold that another shortcut, a session
 change, or a macOS key-tap outage ends stay silent; the pill already says them. **Play sounds** in
 Settings turns every cue off.

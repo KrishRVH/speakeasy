@@ -58,7 +58,7 @@ enum Stage {
     /// The worker transcribes a copy of the speech, which stays here until a transcript arrives.
     Transcribing(Speech),
     /// A Show's narration, placed on its timeline, waits for its screen recording to finish; `lost`
-    /// says why it holds nothing the user said, when the microphone or transcription failed.
+    /// says why it holds nothing the user said, when audio capture or transcription failed.
     AwaitingFootage {
         narration: Narration,
         lost: Option<NarrationLoss>,
@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn only_a_show_whose_microphone_listened_goes_on_without_its_narration() {
-        const LOSS: NarrationLoss = NarrationLoss::MicrophoneStopped;
+        const LOSS: NarrationLoss = NarrationLoss::AudioStopped;
         let (sender, _inputs) = async_channel::bounded(1);
         let input = InputSender::new(sender);
         let opened = |show| {

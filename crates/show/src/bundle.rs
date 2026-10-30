@@ -145,11 +145,11 @@ pub fn compose<E: From<Error> + Send>(
 /// The summary an agent reads first, naming files under `directory`, where the bundle will be
 /// written.
 ///
-/// A Show whose recording stopped early says why and when, right after the header, and one whose
-/// narration was lost says why, so the agent never reads lost speech as silence. When there are
-/// keyframes, the next line tells the agent to open the images before acting, to trust the
-/// screen's spelling of a name over speech recognition's, and to cite frames as `#N` and marks by
-/// number. One line per keyframe gives its number and time, what the pointer or ink did there, and
+/// A Show whose recording or audio capture stopped early says why and when, right after the
+/// header, and one whose narration was lost says why, so the agent never reads lost speech as
+/// silence. When there are keyframes, the next line tells the agent to open the images before
+/// acting, to trust the screen's spelling of a name over speech recognition's, and to cite frames
+/// as `#N` and marks by number. One line per keyframe gives its number and time, what the pointer or ink did there, and
 /// what was said, or only what happened when nothing was said. Every path is a Markdown code span
 /// naming its file under `directory`: a reader sees where it ends, and an agent working in another
 /// folder can still open it. Window titles and other screen text never appear in it.
@@ -195,12 +195,18 @@ impl fmt::Display for Summary<'_> {
                 recording.duration
             )?;
         }
-        if let Some(lost) = recording.narration_lost {
-            let why = match lost {
-                NarrationLoss::MicrophoneStopped => "The microphone stopped during the Show",
-                NarrationLoss::NotTranscribed => "The user's speech could not be transcribed",
-            };
-            writeln!(f, "{why}; what the user said is missing.")?;
+        match recording.narration_lost {
+            Some(NarrationLoss::AudioStopped) => writeln!(
+                f,
+                "Audio capture stopped at {} and the Show ended there; what the user said and any \
+                 later steps are missing.",
+                recording.duration
+            )?,
+            Some(NarrationLoss::NotTranscribed) => writeln!(
+                f,
+                "The user's speech could not be transcribed; what the user said is missing."
+            )?,
+            None => {},
         }
         let pages: Vec<&[Keyframe]> = sheet::pages(keyframes).collect();
         if !pages.is_empty() {
