@@ -410,7 +410,7 @@ fn sampling_a_long_stroke_smooths_no_zigzag_away() {
 
 /// Strokes that look a little like an arrow or a loop.
 #[test]
-fn look_alikes_are_neither_arrows_nor_circles() {
+fn strokes_that_resemble_arrows_or_circles_read_as_neither() {
     let figure_eight = (0..=240_u8)
         .map(|step| {
             let angle = TAU * (f32::from(step) / 240.0 - 0.25);
