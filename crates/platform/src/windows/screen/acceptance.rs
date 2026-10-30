@@ -240,7 +240,9 @@ fn a_window_capture_stops_once_its_window_closes_or_goes_off_screen() -> anyhow:
         window.show();
         dispatch_messages_for(COMPOSED);
         let followed = Window(window.0 as isize);
-        let part = window_part(display.native, followed).map_err(|gone| anyhow!(gone))?;
+        let part = window_part(display.native, followed)
+            .map_err(|gone| anyhow!(gone))?
+            .context("Cannot read the owned window's frame")?;
         let target = Target {
             display,
             region: Region::Window(followed, part),

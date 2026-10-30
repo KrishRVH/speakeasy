@@ -23,7 +23,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context as _, ensure};
+use anyhow::{Context as _, bail, ensure};
 use async_channel::{Receiver, Sender};
 use windows::{
     Foundation::{TimeSpan, TypedEventHandler},
@@ -173,7 +173,7 @@ impl Window {
 
 /// The top-level window under the pointer and the part of `display` it covers, unless it is the
 /// desktop, a taskbar, or Speakeasy's own, or capture could not follow it. Fails when the pointer
-/// cannot be found.
+/// cannot be found or the window's frame cannot be read.
 pub(crate) fn window_under_pointer(display: Display) -> anyhow::Result<Option<(Window, Part)>> {
     let Some(window) = top_level_at(pointer_location().context(NO_POINTER)?) else {
         return Ok(None);
@@ -182,7 +182,11 @@ pub(crate) fn window_under_pointer(display: Display) -> anyhow::Result<Option<(W
         return Ok(None);
     }
     let window = Window(window as isize);
-    Ok(window_part(display, window).ok().map(|part| (window, part)))
+    match window_part(display, window) {
+        Ok(Some(part)) => Ok(Some((window, part))),
+        Ok(None) => bail!("Cannot measure the window under the pointer. Try again."),
+        Err(_) => Ok(None),
+    }
 }
 
 /// The top-level window at `point` on the desktop, if any.
@@ -208,8 +212,8 @@ fn class_name(window: HWND) -> String {
 }
 
 /// The part of `display` that `window` covers now, by its visible frame without the resize
-/// border, or why it covers none.
-fn window_part(display: Display, window: Window) -> Result<Part, WindowGone> {
+/// border; why it covers none; or `None` when its frame cannot be read.
+fn window_part(display: Display, window: Window) -> Result<Option<Part>, WindowGone> {
     let window = window.handle();
     // SAFETY: each call takes the handle by value and tolerates a stale one.
     let (exists, shown) = unsafe {
@@ -224,10 +228,13 @@ fn window_part(display: Display, window: Window) -> Result<Part, WindowGone> {
     if !shown || is_cloaked(window) {
         return Err(WindowGone::OffScreen);
     }
-    let frame = frame_bounds(window).ok_or(WindowGone::Closed)?;
+    let Some(frame) = frame_bounds(window) else {
+        return Ok(None);
+    };
     display
         .bounds()
         .part_covered_by(Bounds::from(frame))
+        .map(Some)
         .ok_or(WindowGone::OffScreen)
 }
 
@@ -586,7 +593,9 @@ impl Capture {
     /// frame would show.
     fn follow(&mut self) -> Result<Part, WindowGone> {
         if let Some(window) = self.followed {
-            self.part = window_part(self.display, window)?;
+            // An unreadable frame ends the Show as closed rather than read a place the window may
+            // have left.
+            self.part = window_part(self.display, window)?.ok_or(WindowGone::Closed)?;
         }
         Ok(self.part)
     }
