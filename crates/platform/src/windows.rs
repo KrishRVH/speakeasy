@@ -1,6 +1,6 @@
-//! Windows adapter: the Ctrl+Win keyboard hook and session-change cancellation, clipboard or direct
-//! text insertion, GPUI window presentation, the file dialog, Show screen capture, and the sign-in
-//! launch.
+//! Windows adapter: the Ctrl+Win keyboard hook and the session changes that interrupt a recording,
+//! clipboard or direct text insertion, GPUI window presentation, the file dialog, Show screen
+//! capture, and the sign-in launch.
 //!
 //! This module serves `desktop`'s reduced-motion query, launching-console attachment, and startup
 //! error dialog, and keeps what the Windows code shares: held modifiers, synthetic input tagged so

@@ -1,6 +1,6 @@
 //! Windows keyboard observation: the Ctrl+Win low-level hook and the lifecycle window that
-//! interrupts the recording when the session locks, ends, or sleeps, started beside the insertion
-//! thread.
+//! interrupts the recording when the session locks, disconnects, ends, or sleeps, started beside
+//! the insertion thread.
 //!
 //! The hook thread creates and removes every native resource its callbacks reach.
 
@@ -63,7 +63,7 @@ const UNASSIGNED_KEY: VIRTUAL_KEY = 0xE8;
 thread_local! {
     #[expect(
         clippy::disallowed_types,
-        reason = "The context-free keyboard hook and the lifecycle window, which interrupts the same policy, mutate state confined to their native thread; callbacks never share the UI owner"
+        reason = "The context-free keyboard hook and the lifecycle window, which interrupts the recording through the same policy, mutate state confined to their native thread; callbacks never share the UI owner"
     )]
     static HOOK: RefCell<Option<HookState>> = const { RefCell::new(None) };
 }
