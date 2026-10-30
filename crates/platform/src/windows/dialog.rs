@@ -49,7 +49,7 @@ impl NativeWindow {
                 .spawn(move || {
                     #[expect(
                         clippy::let_underscore_must_use,
-                        reason = "A closed completion lane means the settings owner no longer needs the dialog result"
+                        reason = "A closed lane means the caller dropped the future and no longer wants the path"
                     )]
                     let _ = reply.send_blocking(open_file(owner as HWND, &title, &filter));
                 })?;
