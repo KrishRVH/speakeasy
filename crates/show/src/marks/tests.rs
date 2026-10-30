@@ -58,6 +58,18 @@ fn ellipse(center: [f32; 2], radii: [f32; 2], from: f32, to: f32) -> Vec<[f32; 2
         .collect()
 }
 
+/// `points` turned `degrees` clockwise on [`SURFACE`] about `center`.
+fn slanted(points: &[[f32; 2]], center: [f32; 2], degrees: f32) -> Vec<[f32; 2]> {
+    points
+        .iter()
+        .map(|&point| {
+            Point::from(point)
+                .rotated(center.into(), degrees.to_radians())
+                .into()
+        })
+        .collect()
+}
+
 /// `samples` points back and forth over a line of text, drifting up and down.
 fn scribble(samples: u16) -> Vec<[f32; 2]> {
     (0..samples)
@@ -258,16 +270,29 @@ fn arrows_drawn_one_after_another_are_not_one_arrow() {
 }
 
 /// A loop that runs on into a tail or past where it began, or starts with a lead-in, still
-/// circles something: what the loop goes round.
+/// circles something, however it is slanted: what the loop goes round.
 #[test]
 fn a_loop_with_a_lead_in_a_tail_or_an_overshoot_circles_what_it_goes_round() {
     let flat = |from: f32, to: f32| ellipse([0.3, 0.3], [0.1, 0.05], from, to);
+    let flat_region = "① circled region x 0.20–0.40, y 0.25–0.35";
+    // Flat loops round a line of text, slanted until they fill about as much of their box along
+    // the surface's axes as an X's triangle fills of its own.
+    let slanted_loop = |center: [f32; 2], radii: [f32; 2], degrees: f32| {
+        slanted(&ellipse(center, radii, 0.0, TAU), center, degrees)
+    };
+    let six_to_one = slanted_loop([0.4, 0.4], [0.15, 0.025], 10.0);
+    let &[x, y] = six_to_one.last().unwrap();
+    let tailed = [six_to_one, polyline(&[[x, y], [x - 0.05, y]])].concat();
+    let five_to_one = slanted_loop([0.405, 0.4], [0.15, 0.03], 15.0);
+    let &[x, y] = five_to_one.first().unwrap();
+    let led_in = [polyline(&[[x + 0.08, y], [x, y]]), five_to_one].concat();
     let cases = [
         (
             "tail",
             [flat(0.0, TAU), polyline(&[[0.4, 0.3], [0.52, 0.38]])].concat(),
+            flat_region,
         ),
-        ("overshoot", flat(0.0, 1.3 * TAU)),
+        ("overshoot", flat(0.0, 1.3 * TAU), flat_region),
         (
             "lead-in",
             [
@@ -275,15 +300,39 @@ fn a_loop_with_a_lead_in_a_tail_or_an_overshoot_circles_what_it_goes_round() {
                 flat(-0.25 * TAU, 0.8 * TAU),
             ]
             .concat(),
+            flat_region,
+        ),
+        (
+            "6:1 loop slanted 10° with a 50 px tail",
+            tailed,
+            "① circled region x 0.25–0.55, y 0.36–0.44",
+        ),
+        (
+            "5:1 loop slanted 15° with an 80 px lead-in",
+            led_in,
+            "① circled region x 0.26–0.55, y 0.35–0.45",
+        ),
+        // Its lead-in and tail cross where the loop closes.
+        (
+            "α",
+            polyline(&[
+                [0.1, 0.1],
+                [0.3, 0.25],
+                [0.35, 0.18],
+                [0.3, 0.1],
+                [0.1, 0.25],
+            ]),
+            "① circled region x 0.20–0.35, y 0.10–0.25",
         ),
     ];
-    for (name, points) in cases {
-        assert_eq!(
-            group(&[stroke(&points, 0)], &[], SURFACE)[0].to_string(),
-            "① circled region x 0.20–0.40, y 0.25–0.35",
-            "{name}"
-        );
-    }
+    let misread: Vec<String> = cases
+        .into_iter()
+        .filter_map(|(name, points, region)| {
+            let read = group(&[stroke(&points, 0)], &[], SURFACE)[0].to_string();
+            (read != region).then(|| format!("{name} read {read}"))
+        })
+        .collect();
+    assert!(misread.is_empty(), "{misread:#?}");
     let tail = [
         3450, 3260, 1190, 3380, 3330, 1200, 3300, 3420, 1210, 3220, 3500, 1220,
     ];
@@ -333,7 +382,7 @@ fn a_flat_loop_counts_up_to_three_turns() {
 }
 
 /// The loop search tries only some points of a long stroke as a loop's ends, but measures each
-/// stretch over every point along it, so sampling smooths no zigzag away.
+/// stretch's length and area over every point along it, so sampling smooths no zigzag away.
 #[test]
 fn sampling_a_long_stroke_smooths_no_zigzag_away() {
     // The search tries every third point of these 1,534, each on a smooth flat ellipse; the
@@ -403,16 +452,6 @@ fn look_alikes_are_neither_arrows_nor_circles() {
         (
             "tall X",
             polyline(&[[0.1, 0.1], [0.26, 0.3], [0.26, 0.1], [0.1, 0.3]]),
-        ),
-        (
-            "α",
-            polyline(&[
-                [0.1, 0.1],
-                [0.3, 0.25],
-                [0.35, 0.18],
-                [0.3, 0.1],
-                [0.1, 0.25],
-            ]),
         ),
         ("figure 8", figure_eight),
         (

@@ -1,7 +1,7 @@
 //! What one stroke looks like in pixels of the surface: a tap, a loop round something, a straight
 //! line or underline, an arrow drawn in one go, or a scribble.
 
-use std::{f64::consts::PI, ops::RangeInclusive};
+use std::{array, f32::consts::FRAC_PI_2, f64::consts::PI, ops::RangeInclusive};
 
 use super::Shape;
 use crate::{
@@ -36,16 +36,21 @@ const FLAT_LOOP_CLOSURE: f64 = 0.6;
 const FLAT_LOOP_TURNS: f64 = 3.5;
 /// A loop inside a stroke with a lead-in, a tail, or an overshoot runs at least this share of the
 /// stroke, its ends meet within [`INNER_LOOP_CLOSURE`] of its long side, it encloses
-/// [`INNER_LOOP_FILL`] of its box, and it goes round at most [`INNER_LOOP_TURNS`] times.
+/// [`INNER_LOOP_FILL`] of the tightest of its [`Boxes`], and it goes round at most
+/// [`INNER_LOOP_TURNS`] times.
 const INNER_LOOP_SHARE: f64 = 0.6;
 const INNER_LOOP_CLOSURE: f64 = 0.15;
-/// More than a triangle can, since an X drawn in one go closes a triangle where it crosses itself: a
-/// triangle fills at most half its box, a little more once the closing slack trims a corner, where
-/// an ellipse fills π/4 of it.
+/// More than a triangle can, since an X drawn in one go closes a triangle where it crosses itself:
+/// no triangle fills more than half of any box round it, or a little more once the closing slack
+/// trims a corner. An ellipse fills π/4 of the box along its axes, and one no flatter than
+/// [`CIRCLE_FLATNESS`] allows fills over 0.7 of a box turned up to 3.75° from them.
 const INNER_LOOP_FILL: f64 = 0.6;
 const INNER_LOOP_TURNS: f64 = 1.5;
 /// The most points the search for an inner loop tries as its ends, which bounds its quadratic cost.
 const INNER_LOOP_ENDS: usize = 512;
+/// The search boxes a stretch at this many slants spread evenly through a right angle from the
+/// surface's axes, so that one box lies within 3.75° of any loop's own axes.
+const SLANTS: usize = 12;
 
 /// An arrow drawn in one go turns back at its tip only once this share of the stroke's long side
 /// from its start.
@@ -93,7 +98,7 @@ pub(super) fn ink(stroke: &Stroke, surface: Size) -> Option<Ink> {
     let whole = Stretch::between(*traced.first()?, *traced.last()?, bounds);
     let (shape, marking) = if whole.width.hypot(whole.height) < TAP_PIXELS {
         (Shape::Tap, points)
-    } else if whole.encloses(LOOP_CLOSURE, LOOP_FILL) {
+    } else if whole.closes(LOOP_CLOSURE) && whole.fills(LOOP_FILL, whole.width * whole.height) {
         (Shape::Circle, points)
     } else if whole.gap > STRAIGHTNESS * whole.length {
         let straight = if whole.width > UNDERLINE_ASPECT * whole.height {
@@ -162,6 +167,7 @@ fn cross(one: Point, other: Point) -> f64 {
 
 /// What a stretch of a path measures, in pixels.
 struct Stretch {
+    /// Its box along the surface's axes.
     width: f64,
     height: f64,
     length: f64,
@@ -183,19 +189,23 @@ impl Stretch {
         }
     }
 
-    /// Whether the stretch goes round something: its ends meet within `closure` of its long side,
-    /// it runs [`LOOP_LENGTH`] times that side, encloses `fill` of its box, spans
-    /// [`CIRCLE_PIXELS`] both ways, and is round or a flat loop as [`CIRCLE_FLATNESS`] describes.
-    fn encloses(&self, closure: f64, fill: f64) -> bool {
+    /// Whether the stretch closes as a loop does: its ends meet within `closure` of its long side,
+    /// it runs [`LOOP_LENGTH`] times that side, spans [`CIRCLE_PIXELS`] both ways, and is round or
+    /// a flat loop as [`CIRCLE_FLATNESS`] describes.
+    fn closes(&self, closure: f64) -> bool {
         let (long, short) = self.sides();
         self.gap < closure * long
             && self.length > LOOP_LENGTH * long
             && short >= CIRCLE_PIXELS
-            && self.area > fill * self.width * self.height
             && (short > ROUND * long
                 || (short > CIRCLE_FLATNESS * long
                     && self.gap < FLAT_LOOP_CLOSURE * short
                     && self.turns() <= FLAT_LOOP_TURNS))
+    }
+
+    /// Whether the stretch encloses more than `share` of a box `boxed` square pixels in area.
+    fn fills(&self, share: f64, boxed: f64) -> bool {
+        self.area > share * boxed
     }
 
     /// Its long side and its short side.
@@ -219,39 +229,90 @@ impl Stretch {
     }
 }
 
+/// A point's coordinates in the frame of each of [`SLANTS`] slants: along the slant and across it.
+type Slanted = [Point; SLANTS];
+
+/// The boxes round a stretch at each of [`SLANTS`] slants, each in its slant's frame, so that one
+/// fits a slanted loop nearly as closely as the box along the loop's own axes.
+struct Boxes([Rect; SLANTS]);
+
+impl Boxes {
+    /// The boxes round a lone point.
+    fn at(point: &Slanted) -> Self {
+        Self(point.map(Rect::at))
+    }
+
+    /// Grows each box to hold `point`.
+    fn hold(&mut self, point: &Slanted) {
+        for (bounds, &point) in self.0.iter_mut().zip(point) {
+            *bounds = bounds.union(Rect::at(point));
+        }
+    }
+
+    /// The area of the tightest box, in square pixels.
+    fn tightest(&self) -> f64 {
+        self.0
+            .iter()
+            .map(|bounds| f64::from(bounds.width()) * f64::from(bounds.height()))
+            .fold(f64::INFINITY, f64::min)
+    }
+}
+
 /// The points of `path` that go round something once inside a longer stroke, after a lead-in or
 /// before a tail or an overshoot, as [`INNER_LOOP_SHARE`] describes; of several such stretches, the
 /// one whose ends meet closest for its size.
 ///
 /// Trying every pair of points as a loop's ends would cost the square of the points, so at most
 /// [`INNER_LOOP_ENDS`] are tried, spread evenly from the first point to the last, and a stretch's
-/// box holds the tried points along it. Its length and area still count every point along it, so
+/// boxes hold the tried points along it. Its length and area still count every point along it, so
 /// sampling smooths no zigzag away.
 fn inner_loop(path: &[Traced]) -> Option<RangeInclusive<usize>> {
     let last = path.len().checked_sub(1)?;
     let total = path.get(last)?.length;
     let steps = last.min(INNER_LOOP_ENDS.saturating_sub(1));
-    let ends: Vec<(usize, Traced)> = (0..=steps)
+    let slants: [Point; SLANTS] = array::from_fn(|slant| {
+        let (sin, cos) = (FRAC_PI_2 * slant as f32 / SLANTS as f32).sin_cos();
+        Point::new(cos, sin)
+    });
+    let ends: Vec<(usize, Traced, Slanted)> = (0..=steps)
         .filter_map(|step| {
             let index = step.checked_mul(last)?.checked_div(steps)?;
-            Some((index, *path.get(index)?))
+            let end = *path.get(index)?;
+            let slanted = slants.map(|along| {
+                Point::new(end.point.dot(along), end.point.dot(along.perpendicular()))
+            });
+            Some((index, end, slanted))
         })
         .collect();
     // No stretch from a later start runs the loop's share of the stroke.
     let latest = (1.0 - INNER_LOOP_SHARE) * total;
     ends.iter()
         .enumerate()
-        .take_while(|&(_, &(_, start))| start.length <= latest)
-        .flat_map(|(tried, &(from, start))| {
+        .take_while(|&(_, &(_, start, _))| start.length <= latest)
+        .flat_map(|(tried, &(from, start, ref slanted))| {
             let mut bounds = Rect::at(start.point);
-            ends.iter().skip(tried).filter_map(move |&(to, end)| {
-                bounds = bounds.union(Rect::at(end.point));
-                let stretch = Stretch::between(start, end, bounds);
-                let goes_round = stretch.length >= INNER_LOOP_SHARE * total
-                    && stretch.turns() <= INNER_LOOP_TURNS
-                    && stretch.encloses(INNER_LOOP_CLOSURE, INNER_LOOP_FILL);
-                goes_round.then(|| (stretch.opening(), from..=to))
-            })
+            // Slanted boxes cost more to grow, so they hold the points up to an end only once the
+            // stretch to it may go round.
+            let mut boxes = Boxes::at(slanted);
+            let mut unheld = ends.iter().enumerate().skip(tried).peekable();
+            ends.iter()
+                .enumerate()
+                .skip(tried)
+                .filter_map(move |(at, &(to, end, _))| {
+                    bounds = bounds.union(Rect::at(end.point));
+                    let stretch = Stretch::between(start, end, bounds);
+                    let may_go_round = stretch.length >= INNER_LOOP_SHARE * total
+                        && stretch.turns() <= INNER_LOOP_TURNS
+                        && stretch.closes(INNER_LOOP_CLOSURE);
+                    if !may_go_round {
+                        return None;
+                    }
+                    while let Some((_, (_, _, slanted))) = unheld.next_if(|&(held, _)| held <= at) {
+                        boxes.hold(slanted);
+                    }
+                    let goes_round = stretch.fills(INNER_LOOP_FILL, boxes.tightest());
+                    goes_round.then(|| (stretch.opening(), from..=to))
+                })
         })
         .min_by(|(one, _), (other, _)| one.total_cmp(other))
         .map(|(_, round)| round)
