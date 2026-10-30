@@ -7,8 +7,8 @@ use anyhow::anyhow;
 use windows_sys::Win32::{
     Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, WIN32_ERROR},
     System::Registry::{
-        HKEY_CURRENT_USER, REG_ROUTINE_FLAGS, REG_SZ, REG_VALUE_TYPE, RRF_RT_REG_BINARY,
-        RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
+        HKEY_CURRENT_USER, REG_ROUTINE_FLAGS, REG_SZ, REG_VALUE_TYPE, RRF_RT_ANY,
+        RRF_RT_REG_BINARY, RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
     },
 };
 
@@ -30,22 +30,21 @@ const VALUE: &str = "Speakeasy";
 /// Fails, with a remedy, when this executable's path is unavailable or the registry refuses the
 /// change, as a security policy may.
 pub fn start_at_login(on: bool) -> anyhow::Result<()> {
-    let result = if on {
-        env::current_exe().and_then(|exe| set_run(RUN, Some(&exe)))
+    if on {
+        env::current_exe()
+            .and_then(|exe| write(RUN, REG_SZ, &command(&exe)))
+            .map_err(|error| {
+                anyhow!(
+                    "Cannot turn on Start at login: {error}. Allow Speakeasy in your security software, or turn off Start at login in Settings."
+                )
+            })
     } else {
-        set_run(RUN, None)
-    };
-    result.map_err(|error| {
-        if on {
-            anyhow!(
-                "Cannot turn on Start at login: {error}. Allow Speakeasy in your security software, or turn off Start at login in Settings."
-            )
-        } else {
+        delete(RUN).map_err(|error| {
             anyhow!(
                 "Cannot turn off Start at login: {error}. Turn Speakeasy off in Windows' Startup apps."
             )
-        }
-    })
+        })
+    }
 }
 
 /// Whether Windows' Startup apps page lets the sign-in launch start. An entry the page never
@@ -53,15 +52,6 @@ pub fn start_at_login(on: bool) -> anyhow::Result<()> {
 #[must_use]
 pub fn startup_approved() -> bool {
     approved(APPROVED)
-}
-
-/// Writes the command that starts `exe` as [`VALUE`] under the Run `key`, or deletes the value
-/// when there is no `exe` to start.
-fn set_run(key: &str, exe: Option<&Path>) -> io::Result<()> {
-    match exe {
-        Some(exe) => write(key, REG_SZ, &command(exe)),
-        None => delete(key),
-    }
 }
 
 /// Whether the `StartupApproved` value under `key` lets the Run value start, as [`approves`]
@@ -111,13 +101,40 @@ fn write(key: &str, kind: REG_VALUE_TYPE, data: &[u8]) -> io::Result<()> {
     })
 }
 
-/// Deletes [`VALUE`] under `key`; a value or key that is already gone counts as deleted.
+/// Deletes [`VALUE`] under `key`; a value or key that is already gone counts as deleted. It looks
+/// first, since deleting opens the key for writing, which security software guarding the Run key
+/// may refuse or question even when there is nothing to delete.
 fn delete(key: &str) -> io::Result<()> {
+    if !present(key)? {
+        return Ok(());
+    }
     let (key, value) = (to_wide(key), to_wide(VALUE));
     // SAFETY: both names are NUL-terminated and outlive the call.
     match unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), value.as_ptr()) } {
         ERROR_FILE_NOT_FOUND => Ok(()),
         status => checked(status),
+    }
+}
+
+/// Whether [`VALUE`] exists under `key`, of any type.
+fn present(key: &str) -> io::Result<bool> {
+    let (key, value) = (to_wide(key), to_wide(VALUE));
+    // SAFETY: both names are NUL-terminated and outlive the call; null type, data, and size
+    // pointers ask only whether the value exists.
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_ANY,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+        )
+    };
+    match status {
+        ERROR_FILE_NOT_FOUND => Ok(false),
+        status => checked(status).map(|()| true),
     }
 }
 
@@ -233,19 +250,20 @@ mod tests {
         let exe = Path::new(r"C:\Program Files\Speakeasy\speakeasy.exe");
         let mut data = [0; 512];
 
-        set_run(&run, Some(exe))?;
+        delete(&run)?;
+        write(&run, REG_SZ, &command(exe))?;
         assert_eq!(
             read(&run, RRF_RT_REG_SZ, &mut data)?,
             Some(&command(exe)[..]),
             "Turning on did not write the quoted path as a string"
         );
-        set_run(&run, None)?;
+        delete(&run)?;
         assert_eq!(
             read(&run, RRF_RT_REG_SZ, &mut data)?,
             None,
             "Turning off left the value"
         );
-        set_run(&run, None)?;
+        delete(&run)?;
 
         assert!(approved(&approval), "A missing approval read as off");
         for (flags, on) in [(2, true), (3, false), (6, true)] {
