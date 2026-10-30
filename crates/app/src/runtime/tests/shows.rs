@@ -539,6 +539,37 @@ async fn footage_from_an_earlier_show_never_reaches_a_later_one() -> anyhow::Res
 }
 
 #[tokio::test(start_paused = true)]
+async fn an_earlier_show_with_nothing_to_record_never_cancels_a_later_one() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    receive(&h.captures).await?;
+    h.input(Input::Show(Scope::Window));
+    let (earlier, _, stale) = receive(&h.shows).await?;
+    h.input(Input::Cancel);
+    h.phase(Phase::Cancelled).await?;
+    h.input(Input::Release);
+    start_show(&mut h).await?;
+    h.take_sounds();
+    stale
+        .send(ShowEvent::Unchosen(earlier, Unchosen::Window))
+        .await?;
+    assert!(
+        still_pending(h.observe(|snapshot| snapshot.phase != Phase::Recording)).await,
+        "The later Show stopped recording"
+    );
+    assert!(
+        !h.take_sounds().contains(&Sound::Played(Cue::Cancel)),
+        "The later Show sounded cancelled"
+    );
+    h.input(Input::Release);
+    h.input(Input::Press);
+    h.transcribe_next_as("this one").await?;
+    receive(&h.published).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_show_queued_behind_a_retiring_screen_still_records_it() -> anyhow::Result<()> {
     let (retirement, retiring) = gate(2);
     let mut h = Harness::with_ports(Config::default(), |ports| {
