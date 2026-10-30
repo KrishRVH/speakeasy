@@ -365,40 +365,15 @@ async fn an_engine_that_died_while_idle_names_the_remedy_its_exit_proves() -> an
     Ok(())
 }
 
-/// A crash settles the engine's exit status before its connections close, and can leave other
-/// processes of its group running.
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn a_request_the_engine_crashes_during_names_its_remedy_and_ends_its_group()
 -> anyhow::Result<()> {
-    use tokio::io::AsyncWriteExt as _;
-
     use crate::testing::PATIENCE;
 
-    let held = std::net::TcpListener::bind((LOOPBACK, 0))?;
-    let listener = held.try_clone()?;
-    listener.set_nonblocking(true)?;
-    let listener = tokio::net::TcpListener::from_std(listener)?;
-    let (directory, mut speech) = shell_engine(
-        "sleep 60 & printf '%s' \"$!\" > member.pid; read -r _ && kill -s ILL $$",
-        held,
-    )
-    .await?;
-    let leader = speech.child.id().context("The engine exited at once")?;
-    let mut crash = speech
-        .child
-        .stdin
-        .take()
-        .context("The engine has no input")?;
+    let (directory, mut speech, engine) =
+        crashing_engine("sleep 60 & printf '%s' \"$!\" > member.pid; ").await?;
     let wav = audio::silent_wav(16_000, Duration::from_secs(1))?;
-    let engine = async {
-        // The request has reached the engine once its connection is accepted.
-        let connection = listener.accept().await?;
-        crash.write_all(b"\n").await?;
-        until(|| process_state(leader) == Some('Z')).await;
-        drop(connection);
-        anyhow::Ok(())
-    };
     let (transcribed, crashed) = timeout(PATIENCE, async {
         tokio::join!(speech.transcribe(wav, "en"), engine)
     })
@@ -425,6 +400,77 @@ async fn a_request_the_engine_crashes_during_names_its_remedy_and_ends_its_group
         "A process of the crashed engine's group kept running"
     );
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_warmup_the_engine_crashes_during_names_its_remedy() -> anyhow::Result<()> {
+    use crate::testing::PATIENCE;
+
+    let (_directory, mut speech, engine) = crashing_engine("").await?;
+    let config = Config {
+        use_gpu: false,
+        ..Config::default()
+    };
+    let (_cancel, mut cancelled) = watch::channel(false);
+    let (ready, crashed) = timeout(PATIENCE, async {
+        tokio::join!(speech.become_ready(&config, &mut cancelled), engine)
+    })
+    .await?;
+    crashed?;
+    speech.stop().await;
+    let error = ready.err().context("The crashed engine became ready")?;
+    assert!(error.to_string().contains("CPU instructions"), "{error}");
+    Ok(())
+}
+
+/// A `shell_engine` that runs `script`, then crashes by an illegal instruction during its first
+/// transcription, and a future that plays its network side. That future answers health checks,
+/// then crashes the engine once a transcription arrives, and hangs up only once the crash has
+/// fixed the engine's exit status, as a real crash's connections close.
+#[cfg(target_os = "linux")]
+async fn crashing_engine(
+    script: &str,
+) -> anyhow::Result<(
+    tempfile::TempDir,
+    LocalSpeech,
+    impl Future<Output = anyhow::Result<()>> + use<>,
+)> {
+    use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+
+    let held = std::net::TcpListener::bind((LOOPBACK, 0))?;
+    let listener = held.try_clone()?;
+    listener.set_nonblocking(true)?;
+    let listener = tokio::net::TcpListener::from_std(listener)?;
+    let (directory, mut speech) =
+        shell_engine(&format!("{script}read -r _ && kill -s ILL $$"), held).await?;
+    let leader = speech.child.id().context("The engine exited at once")?;
+    let mut crash = speech
+        .child
+        .stdin
+        .take()
+        .context("The engine has no input")?;
+    let network = async move {
+        loop {
+            let mut stream = BufReader::new(listener.accept().await?.0);
+            let mut request = String::new();
+            stream.read_line(&mut request).await?;
+            if !request.starts_with("GET ") {
+                crash.write_all(b"\n").await?;
+                until(|| process_state(leader) == Some('Z')).await;
+                drop(stream);
+                return Ok(());
+            }
+            let mut header = String::new();
+            while stream.read_line(&mut header).await? > 0 && !header.trim().is_empty() {
+                header.clear();
+            }
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await?;
+        }
+    };
+    Ok((directory, speech, network))
 }
 
 /// A ready engine running `script` in `sh`, without core dumps, in a fresh working directory. It

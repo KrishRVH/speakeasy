@@ -35,8 +35,7 @@ pub(crate) const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 const INFERENCE_TIMEOUT: Duration = Duration::from_mins(30);
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const STOPPED: &str = "Transcription stopped. Check the selected model and engine, then try again.";
-/// How long an engine that stopped answering may take to exit: one that crashed can close its
-/// connections before its exit status is readable.
+/// How long an engine's exit status may take to become reapable once its connections close.
 const EXIT_GRACE: Duration = Duration::from_millis(500);
 const SIGILL: i32 = 4;
 const USAGE_ERROR: i32 = 2;
@@ -111,7 +110,7 @@ impl LocalSpeech {
                 timeout(STARTUP_TIMEOUT, self.probe_with_silence())
                     .await
                     .context(warmup.timed_out)?
-                    .context(warmup.failed)
+                    .map_err(|error| warmup.failure(error))
             })
             .await?;
         }
@@ -173,7 +172,7 @@ impl LocalSpeech {
         // The engine may have exited and lost its port since readiness. Each request connects
         // afresh, leaving only the moment between these checks and that connection.
         if !matches!(self.child.try_wait(), Ok(None)) {
-            return Err(self.stopped().await);
+            return Err(self.kill_and_reap_with_cause().await);
         }
         #[cfg(not(target_os = "macos"))]
         ensure!(
@@ -216,20 +215,23 @@ impl LocalSpeech {
         };
         match exchange.await {
             Ok(body) => reply(&body),
-            Err(error) if error.is::<Disconnected>() => Err(self.stopped().await),
+            Err(error) if error.is::<Disconnected>() => Err(self.kill_and_reap_with_cause().await),
             Err(error) => Err(error),
         }
     }
 
-    /// Ends an engine that stopped answering, and says why it stopped: its exit status, when that
-    /// names a remedy. A crash settles the status before the engine's connections close, so ending
-    /// the group first keeps it, and signals the group before its leader is reaped.
-    async fn stopped(&mut self) -> anyhow::Error {
+    /// Kills the engine's group, reaps its leader within `EXIT_GRACE`, and says why the engine
+    /// stopped: [`Incompatible`] when its exit status proves it cannot run on this machine.
+    ///
+    /// On Unix the group can be signaled only while its leader is unreaped, so the kill comes
+    /// first. That loses no cause: a crash fixes its exit status before its connections close, and
+    /// a later kill cannot change it.
+    async fn kill_and_reap_with_cause(&mut self) -> anyhow::Error {
         self.group.terminate();
         if let Ok(Ok(status)) = timeout(EXIT_GRACE, self.child.wait()).await
             && let Some(remedy) = exit_remedy(status)
         {
-            return anyhow!("The speech engine exited ({status}). {remedy}");
+            return Incompatible { status, remedy }.into();
         }
         anyhow!(STOPPED)
     }
@@ -284,6 +286,16 @@ impl Warmup {
             })
         } else {
             None
+        }
+    }
+
+    /// The failed warmup's message, unless an exit status proving that the engine cannot run here
+    /// names a more exact remedy.
+    fn failure(&self, error: anyhow::Error) -> anyhow::Error {
+        if error.is::<Incompatible>() {
+            error
+        } else {
+            error.context(self.failed)
         }
     }
 }
@@ -571,6 +583,23 @@ fn startup_exit(status: ExitStatus) -> String {
     };
     format!("The speech engine exited before it was ready ({status}). {remedy}")
 }
+
+/// An engine that exited with a status proving it cannot run on this machine, and what to do
+/// instead.
+#[derive(Debug)]
+struct Incompatible {
+    status: ExitStatus,
+    remedy: &'static str,
+}
+
+impl fmt::Display for Incompatible {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { status, remedy } = self;
+        write!(f, "The speech engine exited ({status}). {remedy}")
+    }
+}
+
+impl std::error::Error for Incompatible {}
 
 /// The remedy an engine's exit status names whenever the engine exits: the engine cannot run on
 /// this machine. Any other status names none.
