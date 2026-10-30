@@ -309,11 +309,11 @@ file.
     width="500">
 </p>
 
-Settings show the shortcuts and the engine and model in use, and choose the microphone, Whisper's
-language, GPU use, filler removal, how text is delivered, reduced motion, sounds, theme, and on
-Windows whether Speakeasy starts at login. The buttons and the status line stay at the bottom while
-the rest scrolls. The status says whether dictation is ready, or shows the latest error or notice;
-problems show in the attention color.
+Settings shows the shortcuts and the engine and model in use, and lets you choose the microphone,
+Whisper's language, GPU use, filler removal, how text is delivered, reduced motion, sounds, theme,
+and on Windows whether Speakeasy starts at login. The buttons and the status line stay at the bottom
+while the rest scrolls. The status says whether dictation is ready, or shows the latest error or
+notice; problems show in the attention color.
 
 Changes apply when you save. Theme, reduced-motion, and Start at login changes keep a recording
 running; microphone, language, filler removal, delivery, and sound changes end it but keep the model
