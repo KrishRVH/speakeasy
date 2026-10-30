@@ -432,6 +432,33 @@ async fn a_show_whose_speech_fails_its_retry_is_copied_without_narration() -> an
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_failed_load_leaves_the_failure_that_cost_a_show_its_narration_in_view()
+-> anyhow::Result<()> {
+    let (results, loading) = async_channel::bounded(1);
+    let (publication, publishing) = gate(1);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.load_results = Some(loading);
+        ports.publication = Some(publication);
+    })?;
+    receive(&h.loads).await?;
+    let (id, microphone) = start_show_listening(&mut h).await?;
+    receive(&h.shows).await?;
+    microphone.send(disconnected(id)).await?;
+    publishing.reached().await?;
+    results.send(Err(anyhow!("Model failed to load"))).await?;
+    h.observe(|snapshot| snapshot.model == ModelState::Unavailable)
+        .await?;
+    publishing.release().await?;
+    h.phase(Phase::Copied).await?;
+    assert_eq!(
+        h.snapshot().message,
+        format!("{COPIED_WITHOUT_NARRATION} {DISCONNECTED}"),
+        "The failed load replaced what cost the Show its narration"
+    );
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_model_that_fails_to_load_fails_dictation_but_copies_a_show_without_narration()
 -> anyhow::Result<()> {
     let (results, loading) = async_channel::bounded(1);

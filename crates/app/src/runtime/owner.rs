@@ -468,7 +468,11 @@ impl<P: Ports> Owner<P> {
             },
             Completion::Loaded(Err(error)) => {
                 if self.session_survives_warmup_failure() {
-                    self.notice = Some(Notice::WarmupFailed(error.to_string()));
+                    // A Show that already lost its narration keeps that failure in view; the
+                    // snapshot's model state shows the load failed.
+                    if !matches!(self.notice, Some(Notice::NarrationLost(_))) {
+                        self.notice = Some(Notice::WarmupFailed(error.to_string()));
+                    }
                 } else if self.session.as_mut().is_some_and(Session::not_transcribed) {
                     // A Show waiting for the worker goes on without narration, the failure in view.
                     self.notice = Some(Notice::WarmupFailed(error.to_string()));
