@@ -184,6 +184,7 @@ fn activity(snapshot: &Snapshot) -> Activity {
             | Phase::Copied
             | Phase::Empty
             | Phase::Cancelled
+            | Phase::Unchosen
             | Phase::Error,
             _,
         ) => Activity::Idle,

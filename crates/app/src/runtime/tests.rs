@@ -10,7 +10,7 @@ use speakeasy_show::{Image, Journal, Moment, Narration, Recording, Size};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 use super::{
-    ports::{Capturing, Listening, Pinning, Sealed, Speech},
+    ports::{Capturing, Listening, Pinning, Sealed, Speech, Unchosen},
     *,
 };
 use crate::testing::{PATIENCE, still_pending};
@@ -83,6 +83,9 @@ struct FakePorts {
     /// Each insertion takes the next queued result once it commits, or reports `Sent`.
     insert_results: Option<Receiver<Inserted>>,
     screen_error: Option<&'static str>,
+    /// What the screen reports in place of footage when finished, as an area Show finished before
+    /// its area was chosen does.
+    screen_unchosen: Option<Unchosen>,
     screen_retirement: Option<Gate<()>>,
     publication: Option<Gate<()>>,
     publish_error: Option<&'static str>,
@@ -130,6 +133,7 @@ impl FakePorts {
             insertion: None,
             insert_results: None,
             screen_error: None,
+            screen_unchosen: None,
             screen_retirement: None,
             publication: None,
             publish_error: None,
@@ -214,6 +218,7 @@ impl Ports for FakePorts {
         Ok(FakeScreen {
             id,
             events,
+            unchosen: self.screen_unchosen,
             pins: self.pins.clone(),
             retirement: self.screen_retirement.clone(),
         })
@@ -343,19 +348,25 @@ impl Listening for FakeMicrophone {
     }
 }
 
-/// Reports one gray frame as its footage when finished, and each pin it takes.
+/// Reports one gray frame as its footage when finished, or that nothing was chosen when
+/// `unchosen` says so, and each pin it takes.
 struct FakeScreen {
     id: SessionId,
     events: Sender<ShowEvent>,
+    unchosen: Option<Unchosen>,
     pins: Sender<(SessionId, Taps)>,
     retirement: Option<Gate<()>>,
 }
 
 impl Capturing for FakeScreen {
     fn finish(&self) {
+        let report = match self.unchosen {
+            Some(unchosen) => ShowEvent::Unchosen(self.id, unchosen),
+            None => ShowEvent::Finished(self.id, Ok(footage())),
+        };
         self.events
-            .try_send(ShowEvent::Finished(self.id, Ok(footage())))
-            .expect("Show lane has room for fake footage");
+            .try_send(report)
+            .expect("Show lane has room for the fake's report");
     }
 
     async fn retire(self) {
@@ -380,14 +391,14 @@ fn sealed() -> Sealed {
     }
 }
 
-fn footage() -> Footage {
+fn footage() -> Box<Footage> {
     let frame = Image::from_bgra(2, 2, vec![128; 16]).expect("A 2×2 frame");
     let mut journal = Journal::new();
     journal
         .admit()
         .expect("An empty journal admits a frame")
         .record(Moment::START, frame);
-    Footage {
+    Box::new(Footage {
         recording: Recording {
             duration: Moment::from_millis(1_000),
             surface: Size {
@@ -397,7 +408,7 @@ fn footage() -> Footage {
             ..Recording::default()
         },
         journal,
-    }
+    })
 }
 
 struct FakeSpeech {

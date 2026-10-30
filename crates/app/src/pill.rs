@@ -439,6 +439,7 @@ impl Scene {
         match self.phase {
             Phase::Error => Content::Error,
             Phase::Copied if !self.labels_copy() => Content::Notice,
+            Phase::Unchosen => Content::Notice,
             Phase::Starting
             | Phase::Recording
             | Phase::Stopping
@@ -476,7 +477,7 @@ impl Scene {
             Phase::Done => size(76.0, 34.0),
             Phase::Copied if self.labels_copy() => size(150.0, 34.0),
             Phase::Empty => size(182.0, 36.0),
-            Phase::Copied | Phase::Error => MESSAGE_SIZE,
+            Phase::Copied | Phase::Unchosen | Phase::Error => MESSAGE_SIZE,
             Phase::Idle | Phase::Cancelled => RESTING_SIZE,
         }
     }
@@ -610,7 +611,7 @@ fn feedback_remaining(phase: Phase, labeled: bool, since_phase: Duration) -> Opt
     let duration = match phase {
         Phase::Done => SUBMITTED_FOR,
         Phase::Copied if labeled => COPIED_FOR,
-        Phase::Copied => NOTICE_FOR,
+        Phase::Copied | Phase::Unchosen => NOTICE_FOR,
         Phase::Empty => EMPTY_FOR,
         Phase::Error => ERROR_FOR,
         _ => return None,
@@ -731,6 +732,19 @@ mod tests {
         );
         assert_eq!(stopped.capsule_size(), MESSAGE_SIZE);
         assert_eq!(stopped.feedback(), Some(NOTICE_FOR), "Long enough to read");
+    }
+
+    #[test]
+    fn a_show_with_nothing_to_record_says_so_long_enough_to_read() {
+        let unchosen = Scene {
+            phase: Phase::Unchosen,
+            show: true,
+            ..recording(Duration::ZERO)
+        };
+        assert!(unchosen.is_shown(), "Unlike a cancel, it is explained");
+        assert!(unchosen.content() == Content::Notice);
+        assert_eq!(unchosen.capsule_size(), MESSAGE_SIZE);
+        assert_eq!(unchosen.feedback(), Some(NOTICE_FOR));
     }
 
     #[test]

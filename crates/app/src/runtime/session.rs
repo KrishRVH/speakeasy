@@ -248,9 +248,9 @@ impl Session {
     }
 
     /// Keeps a Show's footage until its narration is in.
-    pub(super) fn screen_recorded(&mut self, footage: Footage) {
+    pub(super) fn screen_recorded(&mut self, footage: Box<Footage>) {
         if let Some(screen) = &mut self.show {
-            *screen = Screen::Recorded(Box::new(footage));
+            *screen = Screen::Recorded(footage);
         }
     }
 

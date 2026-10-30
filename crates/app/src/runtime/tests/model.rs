@@ -325,6 +325,8 @@ enum Said {
 enum Seen {
     Complete,
     Failure,
+    /// Its scope found nothing to record, as a W over no window or an A without an area does.
+    Unchosen,
 }
 
 /// Which setting a change flips.
@@ -345,7 +347,8 @@ enum Step {
     Advance(Duration),
     /// The latest microphone's capture ends, whether or not it was asked to finish.
     Audio(Heard),
-    /// The latest screen's recording ends: complete once asked to finish, failed at any time.
+    /// The latest screen's recording ends: complete once asked to finish, failed or with nothing
+    /// to record at any time.
     Footage(Seen),
     Answer(Said),
     Configure(Setting),
@@ -377,7 +380,11 @@ fn step() -> impl Strategy<Value = Step> {
         Just(Heard::Failure)
     ];
     let said = prop_oneof![Just(Said::Words), Just(Said::Nothing), Just(Said::Failure)];
-    let seen = prop_oneof![Just(Seen::Complete), Just(Seen::Failure)];
+    let seen = prop_oneof![
+        Just(Seen::Complete),
+        Just(Seen::Failure),
+        Just(Seen::Unchosen)
+    ];
     let setting = prop_oneof![Just(Setting::Fillers), Just(Setting::Gpu)];
     prop_oneof![
         4 => inputs.prop_map(Step::Inputs),
@@ -515,14 +522,18 @@ impl Model {
             },
             Step::Footage(seen) => {
                 if let Some((id, events)) = &self.screen {
-                    let outcome = match seen {
-                        Seen::Complete => {
-                            self.finishing(Source::Screen, *id).then(|| Ok(footage()))
-                        },
-                        Seen::Failure => Some(Err(anyhow!("Model screen failed"))),
+                    let event = match seen {
+                        Seen::Complete => self
+                            .finishing(Source::Screen, *id)
+                            .then(|| ShowEvent::Finished(*id, Ok(footage()))),
+                        Seen::Failure => Some(ShowEvent::Finished(
+                            *id,
+                            Err(anyhow!("Model screen failed")),
+                        )),
+                        Seen::Unchosen => Some(ShowEvent::Unchosen(*id, ports::Unchosen::Area)),
                     };
-                    if let Some(outcome) = outcome {
-                        events.try_send(ShowEvent::Finished(*id, outcome))?;
+                    if let Some(event) = event {
+                        events.try_send(event)?;
                         self.answered(Source::Screen, *id);
                     }
                 }

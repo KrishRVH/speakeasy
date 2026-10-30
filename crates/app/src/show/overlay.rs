@@ -296,7 +296,7 @@ impl Overlay {
     }
 
     /// Moves onto the display and shows, taking input while an area is chosen, or hides when there
-    /// is no display, then redraws. An area that cannot be chosen here is the whole display.
+    /// is no display, then redraws. A display it cannot cover leaves an area unchosen.
     fn cover(&mut self, cover: Option<Cover>, cx: &mut Context<'_, Self>) {
         if cover != self.cover {
             self.cover = cover;
@@ -645,8 +645,9 @@ fn paint(sheet: &Sheet, bounds: Bounds<Pixels>, opacity: f32, window: &mut Windo
 /// that records no Shows never opens one.
 ///
 /// The first overlay that cannot open or cover its display goes to `report` once its Show is
-/// copied, which the failure would otherwise leave looking complete. A Show that fails or is
-/// cancelled says so itself, so a later Show reports instead.
+/// copied, which the failure would otherwise leave looking complete, or cancelled for want of an
+/// area, which only the failure explains. A Show that fails or that the user cancels says so
+/// itself, so a later Show reports instead.
 pub(crate) fn attend(
     mut canvas: watch::Receiver<Canvas>,
     mut snapshots: watch::Receiver<Snapshot>,
@@ -671,8 +672,7 @@ pub(crate) fn attend(
             if opened.is_err()
                 && let Some(chosen) = canvas.borrow().chosen()
             {
-                // No area can be dragged out without the overlay: the Show records the whole
-                // display instead.
+                // No area can be dragged out without the overlay, so none is chosen.
                 chosen.close();
             }
             let released = canvas
@@ -698,20 +698,25 @@ pub(crate) fn attend(
             // The next session cannot start until this one leaves the active phases, so waiting
             // here never delays the next Show's overlay. Another session means pause, quit or a
             // newer session took the snapshot first.
-            let Ok(copied) = snapshots
+            let Ok(ended) = snapshots
                 .wait_for(|snapshot| snapshot.session != show || !snapshot.phase.is_active())
                 .await
-                .map(|snapshot| snapshot.session == show && snapshot.phase == Phase::Copied)
+                .map(|snapshot| (snapshot.session == show).then_some(snapshot.phase))
             else {
                 return;
             };
-            if copied {
-                reported = true;
-                let error =
-                    anyhow!("Show copied, but its ink could not appear on screen: {error:#}");
-                if cx.update(|cx| report(&error, cx)).is_err() {
-                    return;
-                }
+            let error = match ended {
+                Some(Phase::Copied) => {
+                    anyhow!("Show copied, but its ink could not appear on screen: {error:#}")
+                },
+                Some(Phase::Unchosen) => anyhow!(
+                    "The Show was cancelled because its area shade could not appear: {error:#}"
+                ),
+                _ => continue,
+            };
+            reported = true;
+            if cx.update(|cx| report(&error, cx)).is_err() {
+                return;
             }
         }
     })

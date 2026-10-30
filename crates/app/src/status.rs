@@ -86,7 +86,12 @@ impl Status {
             ),
             (
                 ServiceState::Running,
-                Phase::Idle | Phase::Done | Phase::Copied | Phase::Empty | Phase::Cancelled,
+                Phase::Idle
+                | Phase::Done
+                | Phase::Copied
+                | Phase::Empty
+                | Phase::Cancelled
+                | Phase::Unchosen,
                 true,
             ) => match snapshot.model {
                 ModelState::Loading => (Indicator::Busy, LOADING.into()),

@@ -41,6 +41,8 @@ pub(crate) enum Phase {
     Copied,
     Empty,
     Cancelled,
+    /// A Show was cancelled because its scope found nothing to record; `message` says what.
+    Unchosen,
     Error,
 }
 

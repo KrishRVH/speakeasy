@@ -3,7 +3,10 @@
 
 use speakeasy_show::Ending;
 
-use super::{ports::PUBLISH_STOPPED, *};
+use super::{
+    ports::{PUBLISH_STOPPED, Unchosen},
+    *,
+};
 
 /// Holds the shortcut and presses S, returning the screen recorder's lane.
 async fn start_show(h: &mut Harness) -> anyhow::Result<OpenedShow> {
@@ -377,7 +380,7 @@ async fn a_screen_that_stops_recording_explains_why_and_frees_the_microphone() -
 }
 
 /// Footage whose screen stopped recording before the Show was finished.
-fn stopped_footage() -> Footage {
+fn stopped_footage() -> Box<Footage> {
     let mut footage = footage();
     footage.recording.ending = Ending::ScreenStopped;
     footage
@@ -415,6 +418,75 @@ async fn a_screen_that_stops_partway_finishes_the_show_and_says_why() -> anyhow:
         h.close().await?;
     }
     Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn w_with_no_window_to_record_cancels_the_show_and_says_why() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    receive(&h.captures).await?;
+    h.input(Input::Show(Scope::Window));
+    let (id, _, events) = receive(&h.shows).await?;
+    h.take_sounds();
+    events
+        .send(ShowEvent::Unchosen(id, Unchosen::Window))
+        .await?;
+    h.phase(Phase::Unchosen).await?;
+    assert_eq!(
+        h.snapshot().message,
+        "No window to record under the pointer, so the Show was cancelled."
+    );
+    assert_eq!(
+        h.take_sounds(),
+        [Sound::Played(Cue::Cancel), Sound::Held(false)]
+    );
+    h.input(Input::Release);
+    assert!(
+        still_pending(h.jobs.recv()).await,
+        "The cancelled Show's narration was transcribed"
+    );
+    assert!(
+        h.published.try_recv().is_err(),
+        "A cancelled Show was saved"
+    );
+    assert!(h.pasted.try_recv().is_err(), "Its narration was pasted");
+    h.input(Input::Press);
+    receive(&h.captures).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_area_show_finished_before_its_area_was_chosen_saves_and_pastes_nothing()
+-> anyhow::Result<()> {
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.delayed_finish = true;
+        ports.screen_unchosen = Some(Unchosen::Area);
+    })?;
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    let (id, audio) = receive(&h.captures).await?;
+    h.input(Input::Show(Scope::Area));
+    receive(&h.shows).await?;
+    finish_show(&h);
+    h.phase(Phase::Unchosen).await?;
+    assert_eq!(
+        h.snapshot().message,
+        "No area was chosen, so the Show was cancelled."
+    );
+    audio
+        .send(CaptureEvent::Finished(id, Ok(Some(sealed()))))
+        .await?;
+    assert!(
+        still_pending(h.jobs.recv()).await,
+        "The cancelled Show's narration was transcribed"
+    );
+    assert!(
+        h.published.try_recv().is_err(),
+        "A cancelled Show was saved"
+    );
+    assert!(h.pasted.try_recv().is_err(), "Its narration was pasted");
+    h.close().await
 }
 
 #[tokio::test(start_paused = true)]

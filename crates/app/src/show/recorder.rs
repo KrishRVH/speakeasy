@@ -1,6 +1,7 @@
 //! A Show's screen recorder, on an owned thread. It journals frames with their signatures and
 //! records the pointer's ink, pins, and actions, publishing live ink and numbered marks to the
-//! overlay as they are made. An area Show first has the user drag out its area on the overlay.
+//! overlay as they are made. An area Show first has the user drag out its area on the overlay. A
+//! Show records only what its scope names: with no window or area to record, it records nothing.
 
 use std::{
     mem,
@@ -22,7 +23,7 @@ use tokio::sync::watch;
 use super::overlay::Canvas;
 use crate::runtime::{
     self,
-    ports::{Capturing, Footage, Pinning, SessionId, ShowEvent},
+    ports::{Capturing, Footage, Pinning, SessionId, ShowEvent, Unchosen},
 };
 
 /// Frames larger than this on the long edge are halved; a reading model gains nothing from more.
@@ -110,6 +111,12 @@ impl Pinning for ScreenRecorder {
     }
 }
 
+/// How a recording that was not cancelled ended.
+enum Ended {
+    Recorded(Box<Footage>),
+    Unchosen(Unchosen),
+}
+
 /// Reports a recording however its thread leaves it: when dropped, it hides the overlay and sends
 /// `outcome` to the owner. A cancelled recording reports nothing.
 struct Report<'a> {
@@ -118,7 +125,7 @@ struct Report<'a> {
     canvas: &'a watch::Sender<Canvas>,
     /// How recording ended: [`CAPTURE_STOPPED`] until it returns, so a recording that unwinds
     /// reports a fixed failure rather than a panic's message, which could carry private text.
-    outcome: anyhow::Result<Option<Footage>>,
+    outcome: anyhow::Result<Option<Ended>>,
 }
 
 impl<'a> Report<'a> {
@@ -135,15 +142,17 @@ impl<'a> Report<'a> {
 impl Drop for Report<'_> {
     fn drop(&mut self) {
         self.canvas.send_replace(Canvas::Hidden);
-        if let Some(outcome) = mem::replace(&mut self.outcome, Ok(None)).transpose() {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "A closed event lane belongs to a departed owner; retirement still observes this thread's exit"
-            )]
-            let _ = self
-                .events
-                .send_blocking(ShowEvent::Finished(self.id, outcome));
-        }
+        let event = match mem::replace(&mut self.outcome, Ok(None)) {
+            Ok(None) => return,
+            Ok(Some(Ended::Recorded(footage))) => ShowEvent::Finished(self.id, Ok(footage)),
+            Ok(Some(Ended::Unchosen(unchosen))) => ShowEvent::Unchosen(self.id, unchosen),
+            Err(error) => ShowEvent::Finished(self.id, Err(error)),
+        };
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "A closed event lane belongs to a departed owner; retirement still observes this thread's exit"
+        )]
+        let _ = self.events.send_blocking(event);
     }
 }
 
@@ -155,14 +164,16 @@ struct Lanes<'a> {
     canvas: &'a watch::Sender<Canvas>,
 }
 
-/// Records until finished, returning the footage, or `None` once cancelled.
-fn record(started: Instant, scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<Option<Footage>> {
+/// Records until finished, returning how recording ended, or `None` once cancelled.
+fn record(started: Instant, scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<Option<Ended>> {
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()?
         .block_on(async {
-            let Some((target, finished)) = choose(scope, lanes).await? else {
-                return Ok(None);
+            let target = match choose(scope, lanes).await? {
+                Some(Ok(target)) => target,
+                Some(Err(unchosen)) => return Ok(Some(Ended::Unchosen(unchosen))),
+                None => return Ok(None),
             };
             let (frame_lane, frames) = async_channel::bounded(FRAME_LANE);
             let capture = ScreenCapture::start(target, SAMPLE_INTERVAL, LONGEST_EDGE, frame_lane)?;
@@ -176,19 +187,27 @@ fn record(started: Instant, scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<O
                 samples,
                 stop: stop(&capture, &pointer),
             };
-            Take::new(started, display.size, part, lanes.canvas)
-                .run(finished, lanes, sources)
-                .await
+            let footage = Take::new(started, display.size, part, lanes.canvas)
+                .run(lanes, sources)
+                .await?;
+            Ok(footage.map(|footage| Ended::Recorded(Box::new(footage))))
         })
 }
 
-/// Resolves what `scope` names into a target, and whether the Show was finished meanwhile; `None`
-/// once cancelled. An area is dragged out on the overlay over the display under the pointer; a
-/// Show finished before then, or whose overlay cannot appear, records all of that display.
-async fn choose(scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<Option<(Target, bool)>> {
+/// Resolves what `scope` names into a target, or what found nothing to record; `None` once
+/// cancelled. W takes the window under the pointer, and A the area dragged out on the overlay over
+/// the display under the pointer.
+async fn choose(
+    scope: Scope,
+    lanes: &Lanes<'_>,
+) -> anyhow::Result<Option<Result<Target, Unchosen>>> {
     let display = match scope {
-        Scope::Screen => return Target::screen_under_pointer().map(|target| Some((target, false))),
-        Scope::Window => return Target::window_under_pointer().map(|target| Some((target, false))),
+        Scope::Screen => return Ok(Some(Ok(Target::screen_under_pointer()?))),
+        Scope::Window => {
+            return Ok(Some(
+                Target::window_under_pointer()?.ok_or(Unchosen::Window),
+            ));
+        },
         Scope::Area => Display::under_pointer()?,
     };
     let (chosen, choice) = async_channel::bounded(1);
@@ -197,17 +216,17 @@ async fn choose(scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<Option<(Targe
         .send_replace(Canvas::Picking { display, chosen });
     Ok(pick(&choice, lanes)
         .await
-        .map(|(part, finished)| (Target::area(display, part), finished)))
+        .map(|picked| picked.map(|part| Target::area(display, part))))
 }
 
-/// Waits for the part of the display dragged out on `choice`, or all of it when the overlay closes
-/// `choice` because it cannot appear, or all of it, finished, when the Show finishes first; `None`
-/// once cancelled. Pins asked for before it returns mark nothing.
-async fn pick(choice: &Receiver<Part>, lanes: &Lanes<'_>) -> Option<(Part, bool)> {
+/// Waits for the part of the display dragged out on `choice`. None is chosen when the Show
+/// finishes first, or when the overlay closes `choice` because it cannot appear; `None` once
+/// cancelled. Pins asked for before it returns mark nothing.
+async fn pick(choice: &Receiver<Part>, lanes: &Lanes<'_>) -> Option<Result<Part, Unchosen>> {
     let picked = tokio::select! {
         biased;
-        finished = lanes.finishing.recv() => finished.ok().map(|()| (Part::WHOLE, true)),
-        part = choice.recv() => Some((part.unwrap_or(Part::WHOLE), false)),
+        finished = lanes.finishing.recv() => finished.ok().map(|()| Err(Unchosen::Area)),
+        part = choice.recv() => Some(part.map_err(|_closed| Unchosen::Area)),
     };
     while lanes.pinned.try_recv().is_ok() {}
     picked
@@ -253,14 +272,13 @@ impl<'a> Take<'a> {
         }
     }
 
-    /// Records what `sources` send until finished, or from the start when `finished`, then stops
-    /// them before returning the footage; `None` once cancelled. A Show finished before its first
-    /// frame waits up to [`FIRST_FRAME_WAIT`] for one. The footage lasts until finishing was asked
-    /// for, the first frame such a wait received, or capture stopped on its own; stopping the
-    /// sources adds nothing.
+    /// Records what `sources` send until finished, then stops them before returning the footage;
+    /// `None` once cancelled. A Show finished before its first frame waits up to
+    /// [`FIRST_FRAME_WAIT`] for one. The footage lasts until finishing was asked for, the first
+    /// frame such a wait received, or capture stopped on its own; stopping the sources adds
+    /// nothing.
     async fn run(
         mut self,
-        finished: bool,
         lanes: &Lanes<'_>,
         sources: Sources<impl Future<Output = ()>>,
     ) -> anyhow::Result<Option<Footage>> {
@@ -270,7 +288,7 @@ impl<'a> Take<'a> {
             stop,
         } = sources;
         // Set once finished: the latest moment to keep waiting for a first frame.
-        let mut finished_by = finished.then(first_frame_deadline);
+        let mut finished_by = None;
         // When and how the take ended, or `None` once the owner retired this recording, which
         // reports nothing.
         let ended = loop {
@@ -459,7 +477,10 @@ mod native_tests {
             .context("The overlay was given a display")?;
         recorder.finish();
         let ShowEvent::Finished(id, footage) =
-            timeout(Duration::from_secs(10), finished.recv()).await??;
+            timeout(Duration::from_secs(10), finished.recv()).await??
+        else {
+            anyhow::bail!("The whole display was recorded, so something was chosen");
+        };
         assert_eq!(id, SessionId::FIRST);
         let footage = footage?;
         timeout(Duration::from_secs(5), recorder.retire()).await?;
@@ -519,7 +540,10 @@ mod native_tests {
         tokio::time::sleep(Duration::from_secs(10)).await;
         recorder.finish();
         let ShowEvent::Finished(_, footage) =
-            timeout(Duration::from_secs(10), finished.recv()).await??;
+            timeout(Duration::from_secs(10), finished.recv()).await??
+        else {
+            anyhow::bail!("The whole display was recorded, so something was chosen");
+        };
         let footage = footage?;
         timeout(Duration::from_secs(5), recorder.retire()).await?;
         eprintln!(

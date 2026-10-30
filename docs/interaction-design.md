@@ -42,6 +42,7 @@ non-activating and click-through.
 | Submitted        | Closed lid with a lamp check for 350 ms, then collapse and fade.                                                   |
 | Show copied      | Closed lid with a lamp check and “Show copied” for 1.6 seconds, once the bundle is written and its summary copied. |
 | Stopped early    | A muted notice of up to two lines saying the Show was copied but stopped early, and why, for six seconds.          |
+| Nothing chosen   | A muted notice of up to two lines saying why a W or A Show was cancelled, for six seconds.                         |
 | Text copied      | A muted notice of up to two lines saying how to paste the copied text, for six seconds.                            |
 | No speech        | “No speech detected” on the closed lid for 1.2 seconds.                                                            |
 | Cancelled        | Quiet dismissal without a completion mark.                                                                         |
@@ -75,10 +76,11 @@ wakes the pill for each second of its clock and countdown.
 
 Short notes from a CC0 kalimba recording confirm the moments a user may not be watching: a high note
 once the microphone listens, a lower note when a recording finishes, by gesture or at the
-five-minute limit, a muted low note when the user cancels, two rising notes when a Show starts, and
-a rising chord when text or a Show waits on the clipboard. Text arriving in the editor, errors,
-hands-free locking, and a hold that another shortcut, a session change, or a macOS key-tap outage
-ends stay silent; the pill already says them. **Play sounds** in Settings turns every cue off.
+five-minute limit, a muted low note when the user cancels or a Show has nothing to record, two
+rising notes when a Show starts, and a rising chord when text or a Show waits on the clipboard. Text
+arriving in the editor, errors, hands-free locking, and a hold that another shortcut, a session
+change, or a macOS key-tap outage ends stay silent; the pill already says them. **Play sounds** in
+Settings turns every cue off.
 
 Each cue echoes the pill. The high note sounds as the pill opens to listening rather than at the
 press, so it never promises a microphone still opening, and a desktop shortcut that takes the keys
@@ -131,12 +133,14 @@ line stay in view below the scrolling controls.
 - During a Windows/macOS hold, S, W, or A turns the recording into a Show, hands-free and keeping
   the narration since the press; pressing the shortcut again finishes it on release. The pill table
   shows what the pill presents. S records the display under the pointer and W the window under it,
-  cropped from the display and followed as it moves until it closes, is minimized or hidden, moves
-  to another desktop, or moves wholly off its display, which ends the Show with what it recorded
-  until then, and the pill and summary say why; over the desktop, the taskbar, or a Speakeasy
-  window, W records the display. A shades that display until the user drags out an area of at least
-  24 px each way; finishing first, or a shade that cannot appear, records the whole display. A thin
-  red line outside a window or area marks it while it records, and no frame shows it.
+  cropped from the display and followed as it moves. A shades that display until the user drags out
+  an area of at least 24 px each way. A thin red line outside a window or area marks it while it
+  records, and no frame shows it.
+- A Show never records more than it names. W over no window it can record, such as the desktop, the
+  taskbar, or a Speakeasy window, and A finished before an area is dragged out, or whose shade
+  cannot appear, cancel the Show, narration and all, and say why; nothing is pasted or saved. A
+  recorded window that closes, is minimized or hidden, moves to another desktop, or moves wholly off
+  its display ends the Show with what it recorded until then, and the pill and summary say why.
 - Shift draws ink, alone or while the shortcut is still held; the ink holds briefly after the pen
   lifts, then fades, and clicks pass through to the apps underneath. Two taps of Shift alone, each
   released within 300 ms and the second pressed within 400 ms of the first's release, drop a pin at

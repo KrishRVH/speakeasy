@@ -130,17 +130,20 @@ impl Target {
         })
     }
 
-    /// The top app window under the pointer, on the display under the pointer; all of that
-    /// display when no app window is there, such as over the desktop or the taskbar, or when the
-    /// top one is Speakeasy's.
+    /// The top app window under the pointer, on the display under the pointer; `None` when no app
+    /// window shows there, such as over the desktop or the taskbar, or when the top one is
+    /// Speakeasy's. A Show never records the display in its place.
     ///
     /// # Errors
     /// Fails as [`screen_under_pointer`](Self::screen_under_pointer) does.
-    pub fn window_under_pointer() -> anyhow::Result<Self> {
+    pub fn window_under_pointer() -> anyhow::Result<Option<Self>> {
         let display = Display::under_pointer()?;
-        let region = native::window_under_pointer(display.native)
-            .map_or(Region::Whole, |(window, part)| Region::Window(window, part));
-        Ok(Self { display, region })
+        Ok(
+            native::window_under_pointer(display.native).map(|(window, part)| Self {
+                display,
+                region: Region::Window(window, part),
+            }),
+        )
     }
 
     /// The `part` of `display`.

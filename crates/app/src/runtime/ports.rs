@@ -74,7 +74,28 @@ impl Drop for Sealed {
 
 /// A Show recorder's report about the session that opened it.
 pub(crate) enum ShowEvent {
-    Finished(SessionId, anyhow::Result<Footage>),
+    /// Recording ended with its footage, boxed since it is far larger than the other reports, or
+    /// failed.
+    Finished(SessionId, anyhow::Result<Box<Footage>>),
+    /// The Show's scope found nothing to record, so it recorded nothing.
+    Unchosen(SessionId, Unchosen),
+}
+
+impl ShowEvent {
+    pub(super) const fn session(&self) -> SessionId {
+        match self {
+            Self::Finished(session, _) | Self::Unchosen(session, _) => *session,
+        }
+    }
+}
+
+/// What a Show's scope found nothing to record in; a Show never records more than it names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Unchosen {
+    /// W found no window it can record under the pointer.
+    Window,
+    /// A finished, or its shade could not appear, before an area was dragged out.
+    Area,
 }
 
 /// What a Show's screen side recorded, up to the moment recording stopped, and whether that came

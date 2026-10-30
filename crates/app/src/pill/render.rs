@@ -88,7 +88,8 @@ impl Pill {
             Content::Error => self
                 .render_message(palette.warn, Some("Details in Settings"), palette)
                 .into_any_element(),
-            // Neither a success nor a warning: the text reached the clipboard, not the focused app.
+            // Neither a success nor a warning: text that reached the clipboard rather than the
+            // focused app, a Show copied short, or one with nothing to record.
             Content::Notice => self
                 .render_message(palette.muted, None, palette)
                 .into_any_element(),

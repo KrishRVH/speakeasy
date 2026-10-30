@@ -16,7 +16,7 @@ use super::{
     LOADING, Meter, Phase, Snapshot, SnapshotEpoch, Wiring,
     device::Device,
     now,
-    ports::{CaptureEvent, PUBLISH_STOPPED, Ports, Published, SessionId, ShowEvent},
+    ports::{CaptureEvent, PUBLISH_STOPPED, Ports, Published, SessionId, ShowEvent, Unchosen},
     reap,
     session::{Delivered, Session},
     worker::{Completion, Detail, Transcript, Worker},
@@ -34,6 +34,11 @@ const SHOW_SCREEN_STOPPED: &str = "Show copied, but the screen stopped recording
 const SHOW_WINDOW_CLOSED: &str = "Show copied, but the recorded window closed.";
 /// What a copied Show whose window went off screen while it recorded tells the user.
 const SHOW_WINDOW_OFF_SCREEN: &str = "Show copied, but the recorded window went off screen.";
+/// What a window Show tells the user when no window it can record is under the pointer.
+const NO_WINDOW: &str = "No window to record under the pointer, so the Show was cancelled.";
+/// What an area Show tells the user when it finished, or could not shade its display, before an
+/// area was dragged out.
+const NO_AREA: &str = "No area was chosen, so the Show was cancelled.";
 
 /// What the status shows while no session is active: the latest result or failure.
 enum Outcome {
@@ -45,6 +50,8 @@ enum Outcome {
     ShowCopied(Ending),
     Empty,
     Cancelled,
+    /// The Show was cancelled because its scope found nothing to record.
+    Unchosen(Unchosen),
     /// The pill and Settings show this message as is, so it never includes an error source that
     /// could carry private text, such as a panic payload or engine output.
     Failed(String),
@@ -58,6 +65,7 @@ impl Outcome {
             Self::Copied(_) | Self::ShowCopied(_) => Phase::Copied,
             Self::Empty => Phase::Empty,
             Self::Cancelled => Phase::Cancelled,
+            Self::Unchosen(_) => Phase::Unchosen,
             Self::Failed(_) => Phase::Error,
         }
     }
@@ -469,13 +477,23 @@ impl<P: Ports> Owner<P> {
     }
 
     /// Keeps a Show's footage. A screen that stopped before the gesture finished, as a capture
-    /// failing partway does, finishes the Show with it.
+    /// failing partway does, finishes the Show with it. A Show whose scope found nothing to record
+    /// is cancelled with its narration, since a Show never records more than its scope names.
     fn handle_show(&mut self, event: ShowEvent) -> Option<Action> {
-        let ShowEvent::Finished(id, footage) = event;
         let session = self
             .session
             .as_mut()
-            .filter(|session| session.id == id && session.is_show())?;
+            .filter(|session| session.id == event.session() && session.is_show())?;
+        let footage = match event {
+            ShowEvent::Finished(_, footage) => footage,
+            ShowEvent::Unchosen(_, unchosen) => {
+                self.gesture.cancel();
+                self.discard();
+                self.cue(Cue::Cancel);
+                self.outcome = Outcome::Unchosen(unchosen);
+                return None;
+            },
+        };
         match footage {
             Ok(footage) => {
                 session.screen_recorded(footage);
@@ -724,6 +742,8 @@ impl<P: Ports> Owner<P> {
             Outcome::ShowCopied(Ending::ScreenStopped) => SHOW_SCREEN_STOPPED,
             Outcome::ShowCopied(Ending::WindowClosed) => SHOW_WINDOW_CLOSED,
             Outcome::ShowCopied(Ending::WindowOffScreen) => SHOW_WINDOW_OFF_SCREEN,
+            Outcome::Unchosen(Unchosen::Window) => NO_WINDOW,
+            Outcome::Unchosen(Unchosen::Area) => NO_AREA,
             Outcome::Idle | Outcome::Done | Outcome::Empty | Outcome::Cancelled => {
                 self.notice.as_ref().map_or("", Notice::text)
             },
