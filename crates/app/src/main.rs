@@ -36,7 +36,7 @@ use std::{
     process::ExitCode,
 };
 
-use anyhow::{Context as _, bail, ensure};
+use anyhow::{Context as _, bail};
 use gpui::{App, Application, BorrowAppContext};
 use speakeasy_platform::{CANCEL_SHORTCUT, SHORTCUT};
 use tokio::sync::watch;
@@ -53,63 +53,60 @@ use crate::{
 const BRAND_FONT: &str = "Josefin Sans";
 const BRAND_FONT_FILE: &[u8] = include_bytes!("../assets/JosefinSans-SemiBold.ttf");
 
-struct Cli {
-    mode: LaunchMode,
-    command: Option<Request>,
-    /// The settings file `--config` names; otherwise the default, found only when the app runs.
-    path: Option<PathBuf>,
-}
-
 /// What the command line asks for.
 enum Invocation {
     Help,
     Version,
-    App(Cli),
+    /// Opens the app, from the settings file `--config` names or else the default, which is found
+    /// only when the app runs.
+    Launch {
+        mode: LaunchMode,
+        settings: Option<PathBuf>,
+    },
+    /// Sends a desktop command, offered only on Linux, to the live app holding `settings`.
+    Send {
+        request: Request,
+        settings: Option<PathBuf>,
+    },
     Show(show::Command),
 }
 
 impl Invocation {
-    /// Reads the arguments after the program name, refusing any Speakeasy does not offer, such as
-    /// desktop commands outside Linux or in a demo.
+    /// Reads the arguments after the program name, refusing any Speakeasy does not offer.
     fn parse(args: impl Iterator<Item = OsString>) -> anyhow::Result<Self> {
         let mut args = args.peekable();
         if args.next_if(|arg| arg == "show").is_some() {
             return show::Command::parse(args).map(Self::Show);
         }
-        let mut cli = Cli {
-            mode: LaunchMode::Live,
-            command: None,
-            path: None,
-        };
+        let (mut mode, mut request, mut settings) = (LaunchMode::Live, None, None);
         while let Some(arg) = args.next() {
             match arg.to_str() {
                 Some("--demo") => {
-                    if cli.mode == LaunchMode::Live {
-                        cli.mode = LaunchMode::Demo;
+                    if mode == LaunchMode::Live {
+                        mode = LaunchMode::Demo;
                     }
                 },
-                Some("--demo-tray") => cli.mode = LaunchMode::DemoTray,
+                Some("--demo-tray") => mode = LaunchMode::DemoTray,
                 Some("--config") => {
-                    cli.path = Some(args.next().context("--config needs a path")?.into());
+                    settings = Some(args.next().context("--config needs a path")?.into());
                 },
-                Some("--toggle") => cli.command = Some(Request::Toggle),
-                Some("--cancel") => cli.command = Some(Request::Cancel),
+                Some("--toggle") => request = Some(Request::Toggle),
+                Some("--cancel") => request = Some(Request::Cancel),
                 Some("--help" | "-h") => return Ok(Self::Help),
                 Some("--version") => return Ok(Self::Version),
                 _ => bail!("Unknown option: {}", arg.display()),
             }
         }
-        if cli.command.is_some() {
-            ensure!(
-                !cli.mode.is_demo(),
-                "Desktop commands cannot be combined with a demo"
-            );
-            ensure!(
-                cfg!(target_os = "linux"),
-                "Desktop commands are available on Linux"
-            );
+        match (request, mode) {
+            (None, mode) => Ok(Self::Launch { mode, settings }),
+            (Some(request), LaunchMode::Live) if cfg!(target_os = "linux") => {
+                Ok(Self::Send { request, settings })
+            },
+            (Some(_), LaunchMode::Live) => bail!("Desktop commands are available on Linux"),
+            (Some(_), LaunchMode::Demo | LaunchMode::DemoTray) => {
+                bail!("Desktop commands cannot be combined with a demo")
+            },
         }
-        Ok(Self::App(cli))
     }
 }
 
@@ -117,23 +114,23 @@ fn main() -> ExitCode {
     match Invocation::parse(std::env::args_os().skip(1)) {
         Ok(Invocation::Help) => in_terminal(|| Ok(print_help()?)),
         Ok(Invocation::Version) => in_terminal(|| Ok(print_version()?)),
+        Ok(Invocation::Launch { mode, settings }) => in_dialog(run(mode, settings)),
+        Ok(Invocation::Send { request, settings }) => {
+            in_terminal(|| Instance::send(&settings_file(settings)?, request))
+        },
         Ok(Invocation::Show(command)) => in_terminal(|| command.run()),
-        Ok(Invocation::App(cli)) => in_dialog(run(cli)),
         Err(error) => reject(&error, speakeasy_platform::attach_stdio().then(io::stderr)),
     }
 }
 
-fn run(
-    Cli {
-        mode,
-        command,
-        path,
-    }: Cli,
-) -> anyhow::Result<()> {
-    let path = std::path::absolute(path.map_or_else(paths::settings_file, Ok)?)?;
-    if let Some(command) = command {
-        return Instance::send(&path, command);
-    }
+/// The settings file `settings` names, or else the default, as an absolute path.
+fn settings_file(settings: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+    let file = settings.map_or_else(paths::settings_file, Ok)?;
+    Ok(std::path::absolute(file)?)
+}
+
+fn run(mode: LaunchMode, settings: Option<PathBuf>) -> anyhow::Result<()> {
+    let path = settings_file(settings)?;
     let acquired = if mode.is_resident() {
         let Some(acquired) = Instance::acquire(&path)? else {
             return Ok(());
@@ -373,10 +370,10 @@ mod tests {
     }
 
     fn launch_mode(args: &[&str]) -> anyhow::Result<LaunchMode> {
-        let Invocation::App(cli) = parse(args)? else {
+        let Invocation::Launch { mode, .. } = parse(args)? else {
             bail!("{args:?} did not launch the app");
         };
-        Ok(cli.mode)
+        Ok(mode)
     }
 
     #[test]
@@ -411,7 +408,10 @@ mod tests {
 
     #[test]
     fn desktop_commands_need_linux_and_the_live_app() {
-        assert_eq!(parse(&["--toggle"]).is_ok(), cfg!(target_os = "linux"));
+        assert_eq!(
+            matches!(parse(&["--toggle"]), Ok(Invocation::Send { .. })),
+            cfg!(target_os = "linux")
+        );
         assert!(parse(&["--cancel", "--demo"]).is_err());
         assert!(parse(&["--demo-tray", "--toggle"]).is_err());
     }
@@ -434,10 +434,10 @@ mod tests {
         use std::os::unix::ffi::OsStringExt as _;
         let path = OsString::from_vec(b"settings-\xff.json".to_vec());
         let config = [OsString::from("--config"), path.clone()];
-        let Invocation::App(cli) = Invocation::parse(config.into_iter())? else {
+        let Invocation::Launch { settings, .. } = Invocation::parse(config.into_iter())? else {
             bail!("--config did not launch the app");
         };
-        assert_eq!(cli.path, Some(path.into()));
+        assert_eq!(settings, Some(path.into()));
         assert!(Invocation::parse([OsString::from_vec(vec![0xFF])].into_iter()).is_err());
         Ok(())
     }
