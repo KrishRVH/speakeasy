@@ -12,14 +12,8 @@ fn saved(said: &str) -> SavedShow {
 
 /// Records a Show that says `said` and finishes it, up to its publication.
 async fn record_show(h: &mut Harness, said: &str) -> anyhow::Result<()> {
-    h.input(Input::Press);
-    h.phase(Phase::Recording).await?;
-    receive(&h.captures).await?;
-    h.input(Input::Show(Scope::Screen));
-    receive(&h.shows).await?;
-    for input in [Input::Release, Input::Press, Input::Release] {
-        h.input(input);
-    }
+    start_show(h).await?;
+    finish_show(h);
     h.transcribe_next_as(said).await
 }
 
@@ -28,14 +22,6 @@ async fn save_show(h: &mut Harness, said: &str) -> anyhow::Result<()> {
     record_show(h, said).await?;
     receive(&h.published).await?;
     Ok(())
-}
-
-/// A settings change, which abandons whatever session is under way.
-fn change_settings(h: &Harness) {
-    h.runtime.configure(ValidConfig::assume(Config {
-        remove_fillers: false,
-        ..Config::default()
-    }));
 }
 
 #[tokio::test(start_paused = true)]
@@ -60,11 +46,7 @@ async fn a_show_that_fails_before_it_is_saved_leaves_the_last_one() -> anyhow::R
     let mut h = Harness::remembering(saved("first"), |ports| {
         ports.publish_error = Some("Disk full");
     })?;
-    h.input(Input::Press);
-    h.phase(Phase::Recording).await?;
-    receive(&h.captures).await?;
-    h.input(Input::Show(Scope::Screen));
-    let (id, _, events) = receive(&h.shows).await?;
+    let (id, _, events) = start_show(&mut h).await?;
     events
         .send(ShowEvent::Finished(
             id,

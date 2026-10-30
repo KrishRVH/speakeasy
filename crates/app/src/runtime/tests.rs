@@ -736,6 +736,33 @@ fn answer(reply: Reply, text: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Holds the shortcut and presses S, returning the screen recorder's lane.
+async fn start_show(h: &mut Harness) -> anyhow::Result<OpenedShow> {
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    receive(&h.captures).await?;
+    h.input(Input::Show(Scope::Screen));
+    h.observe(|snapshot| snapshot.show && snapshot.hands_free)
+        .await?;
+    receive(&h.shows).await
+}
+
+/// Lets go of the shortcut that started the Show, then presses and releases it to finish.
+fn finish_show(h: &Harness) {
+    for input in [Input::Release, Input::Press, Input::Release] {
+        h.input(input);
+    }
+}
+
+/// Applies settings that end any session under way, even a Show being saved.
+fn change_settings(h: &Harness) {
+    let config = Config {
+        remove_fillers: !h.runtime.configuration.borrow().remove_fillers,
+        ..h.runtime.configuration.borrow().clone()
+    };
+    h.runtime.configure(ValidConfig::assume(config));
+}
+
 mod cues;
 mod dictation;
 mod last_show;

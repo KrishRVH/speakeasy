@@ -5,16 +5,10 @@
 use super::*;
 
 /// Holds the shortcut, presses S, then finishes the Show by pressing and releasing the shortcut
-/// again and lets it publish, returning the microphone's session.
+/// again and lets it publish, returning its session.
 async fn record_a_show(h: &mut Harness) -> anyhow::Result<SessionId> {
-    h.input(Input::Press);
-    h.phase(Phase::Recording).await?;
-    let (id, _) = receive(&h.captures).await?;
-    h.input(Input::Show(Scope::Screen));
-    receive(&h.shows).await?;
-    for input in [Input::Release, Input::Press, Input::Release] {
-        h.input(input);
-    }
+    let (id, ..) = start_show(h).await?;
+    finish_show(h);
     h.transcribe_next_as("look here").await?;
     h.phase(Phase::Copied).await?;
     Ok(id)
@@ -119,11 +113,7 @@ async fn saving_settings_during_a_recording_sounds_its_cancel() -> anyhow::Resul
     let mut h = Harness::new()?;
     h.start().await?;
     h.take_sounds();
-    let current = h.runtime.configuration.borrow().clone();
-    h.runtime.configure(ValidConfig::assume(Config {
-        remove_fillers: !current.remove_fillers,
-        ..current
-    }));
+    change_settings(&h);
     h.phase(Phase::Cancelled).await?;
     assert_eq!(
         h.take_sounds(),
