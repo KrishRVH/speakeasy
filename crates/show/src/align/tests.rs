@@ -170,6 +170,26 @@ fn ink_begun_as_speech_resumes_takes_the_sentence_it_carries_on() {
             "Um, There's some jumps, though, in the animation."
         ]
     );
+    // After hesitating twice, ink begun with "big" or a moment later takes the whole sentence, or
+    // all of it that ink drawn in the first hesitation leaves.
+    let said = words(&[
+        (0, "Done."),
+        (1_000, "So"),
+        (1_200, "the"),
+        (4_000, "next"),
+        (7_000, "big"),
+        (7_200, "thing."),
+    ]);
+    for anchor in [7_000, 7_100] {
+        assert_eq!(
+            texts(&[0, anchor], &said),
+            ["Done.", "So the next big thing."]
+        );
+        assert_eq!(
+            texts(&[0, 2_000, anchor], &said),
+            ["Done.", "So the", "next big thing."]
+        );
+    }
 }
 
 #[test]

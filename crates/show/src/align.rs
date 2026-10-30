@@ -1,6 +1,6 @@
 //! Dividing the narration among keyframes.
 
-use std::time::Duration;
+use std::{slice, time::Duration};
 
 use crate::{
     Moment, Span,
@@ -32,10 +32,10 @@ const COMMA_CLAUSE_WORDS: usize = 3;
 ///
 /// A keyframe's clause is the one in progress at its anchor or, for an anchor in the silence just
 /// before speech, the clause about to begin, unless the next anchor lies nearer that clause's
-/// start: a click just before speaking leaves the words to ink drawn as they begin. A clause that
-/// resumes one left hanging opens where that one opens. A keyframe's text starts where its clause
-/// opens or, once an earlier keyframe's text holds that, where its clause began, or else at its
-/// anchor, and always after the previous keyframe's text starts. Each text runs until the next
+/// start. A clause that resumes one left hanging carries it on, along with whatever that one
+/// carries on. A keyframe's text starts at the first of these that follows the previous keyframe's
+/// text start, or just after that start if none does: where each clause its clause carries on
+/// began, earliest first, where its clause began, and its anchor. Each text runs until the next
 /// keyframe's text starts, so the narration is partitioned in order with nothing repeated or
 /// dropped; punctuation the recognizer split from a word stays with that word. Narration before
 /// the first keyframe belongs to it. Each text is trimmed, and a keyframe with nothing said gets
@@ -80,9 +80,8 @@ pub(crate) fn align(anchors: &[Moment], narration: &Narration) -> Vec<Option<Str
 struct Clause {
     /// From the clause's first word until it is over.
     span: Span,
-    /// Where the clause opens: its first word or, when it resumes a clause left hanging, where
-    /// that one opens.
-    opening: Moment,
+    /// Whether the clause resumes the one before it, which was left hanging.
+    resumes: bool,
 }
 
 /// The clauses of `words`, in order.
@@ -97,7 +96,7 @@ fn clauses(words: &[&Word]) -> Vec<Clause> {
             .filter(|previous| !ends_clause(&previous.text, clause_words))
             .map(|previous| previous.span.start());
         let reach = Span::new(start, word.span.end().min(start.saturating_add(WORD_REACH)));
-        let opening = match (clauses.last_mut(), hanging_since) {
+        let resumes = match (clauses.last_mut(), hanging_since) {
             (Some(clause), Some(last)) if start.since(last) < PAUSE => {
                 clause.span = clause.span.union(reach);
                 clause_words = clause_words.saturating_add(usize::from(word.is_spoken()));
@@ -105,19 +104,19 @@ fn clauses(words: &[&Word]) -> Vec<Clause> {
             },
             (Some(hanging), Some(last)) if start.since(last) <= HESITATION => {
                 hanging.span = hanging.span.union(Span::at(start));
-                hanging.opening
+                true
             },
             (Some(hanging), Some(last)) => {
                 hanging.span = hanging
                     .span
                     .union(Span::at(last.saturating_add(HESITATION)));
-                start
+                false
             },
-            _ => start,
+            _ => false,
         };
         clauses.push(Clause {
             span: reach,
-            opening,
+            resumes,
         });
         clause_words = usize::from(word.is_spoken());
     }
@@ -129,22 +128,35 @@ fn text_starts(anchors: &[Moment], clauses: &[Clause]) -> Vec<Moment> {
     let mut starts: Vec<Moment> = Vec::with_capacity(anchors.len());
     let mut anchors = anchors.iter().copied().peekable();
     while let Some(anchor) = anchors.next() {
-        let clause = clauses
-            .iter()
-            .find(|clause| clause.span.contains(anchor))
-            .or_else(|| about_to_begin(clauses, anchor, anchors.peek().copied()));
+        // A clause about to begin carries on none, since a clause left hanging lasts until the
+        // one resuming it begins.
+        let carried = in_progress(clauses, anchor)
+            .or_else(|| {
+                about_to_begin(clauses, anchor, anchors.peek().copied()).map(slice::from_ref)
+            })
+            .unwrap_or_default();
         let earliest = starts.last().map_or(Moment::START, |previous| {
             previous.saturating_add(Duration::from_millis(1))
         });
-        let start = clause
-            .into_iter()
-            .flat_map(|clause| [clause.opening, clause.span.start()])
+        let start = carried
+            .iter()
+            .map(|clause| clause.span.start())
             .chain([anchor])
             .find(|start| *start >= earliest)
             .unwrap_or(earliest);
         starts.push(start);
     }
     starts
+}
+
+/// The clause in progress at `moment`, after each clause it carries on, earliest first.
+fn in_progress(clauses: &[Clause], moment: Moment) -> Option<&[Clause]> {
+    clauses
+        .chunk_by(|_, clause| clause.resumes)
+        .find_map(|run| {
+            let current = run.iter().position(|clause| clause.span.contains(moment))?;
+            run.get(..=current)
+        })
 }
 
 /// The clause beginning up to [`SPEECH_LAG`] after `anchor`, which lies in silence, unless the
