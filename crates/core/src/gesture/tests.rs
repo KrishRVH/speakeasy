@@ -194,7 +194,12 @@ fn a_show_finishes_on_the_release_after_a_fresh_press() {
     let mut gesture = Gesture::default();
     assert_eq!(gesture.press(start), Some(Action::Start));
     gesture.show();
-    assert_eq!(gesture.press(at(1)), None, "Autorepeat armed the Show");
+    gesture.press(at(1));
+    assert_eq!(
+        gesture.phase,
+        Phase::Show { started: start },
+        "Autorepeat armed the Show"
+    );
     assert_eq!(
         gesture.release(at(2)),
         None,
