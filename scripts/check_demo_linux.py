@@ -248,7 +248,7 @@ def verify(
     def windows() -> dict[str, str]:
         tree = command("xwininfo", "-root", "-tree", env=env)
         found: dict[str, str] = {}
-        for window in re.finditer(r'(0x[0-9a-fA-F]+) "(Speakeasy(?: pill)?)"', tree):
+        for window in re.finditer(r'(0x[0-9a-fA-F]+) "(Speakeasy(?: pill| Shows)?)"', tree):
             handle, title = window.group(1, 2)
             owner = command("xprop", "-id", handle, "_NET_WM_PID", env=env)
             match = re.search(r"= (\d+)$", owner.strip())
@@ -261,32 +261,29 @@ def verify(
     while now() < deadline:
         alive()
         owned = windows()
-        if set(owned) == {"Speakeasy", "Speakeasy pill"}:
+        if set(owned) == {"Speakeasy", "Speakeasy pill", "Speakeasy Shows"}:
             break
         sleep(0.05)
     else:
-        raise RuntimeError("Demo did not create both owned GUI windows")
+        raise RuntimeError("Demo did not create Settings, Shows, and the pill")
     pill = owned["Speakeasy pill"]
     with Display(env["DISPLAY"]) as display:
-        # Actual pixels catch a live process whose renderer never presents.
-        deadline = now() + 5
-        while now() < deadline:
-            alive()
-            # Window metadata can arrive before mapping; XGetImage requires a
-            # viewable window, otherwise Xlib terminates this checker on BadMatch.
-            if "Map State: IsViewable" not in command(
-                "xwininfo", "-id", owned["Speakeasy"], env=env
-            ):
+        # Inspect only owned windows. Metadata can arrive before mapping; XGetImage needs
+        # a viewable window, otherwise Xlib terminates this checker on BadMatch.
+        for title in ("Speakeasy", "Speakeasy Shows"):
+            deadline = now() + 10
+            while now() < deadline:
+                alive()
+                if "Map State: IsViewable" in command(
+                    "xwininfo", "-id", owned[title], env=env
+                ) and display.rendered(owned[title]):
+                    break
                 sleep(0.05)
-                continue
-            if display.rendered(owned["Speakeasy"]):
-                break
-            sleep(0.05)
-        else:
-            raise RuntimeError("Settings never presented rendered content")
+            else:
+                raise RuntimeError(f"{title} never presented rendered content")
     if startup_only:
         alive()
-        print("PASS: real GUI startup and Settings rendering.")
+        print("PASS: real GUI startup, Settings, and Shows rendering.")
         return owned
     # The automatic preview exercises repeated show/hide and ends with an
     # eight-second error hint. It must then leave the pill natively unmapped.

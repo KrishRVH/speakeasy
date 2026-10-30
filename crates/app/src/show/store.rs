@@ -262,7 +262,7 @@ fn expired(entry: &fs::DirEntry, cutoff: &str, now: SystemTime) -> io::Result<bo
 
 /// Whether the Show at `path` holds a pin. Only a pin known to be absent lets it expire, and a
 /// pin that is itself a link still counts.
-fn pinned(path: &Path) -> io::Result<bool> {
+pub(super) fn pinned(path: &Path) -> io::Result<bool> {
     match fs::symlink_metadata(path.join(PIN)) {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
@@ -334,6 +334,7 @@ fn civil_date(days: u64) -> (u64, u64, u64) {
     (year, month, day)
 }
 
+pub(super) mod age;
 pub(super) mod recall;
 #[cfg(test)]
 mod tests;

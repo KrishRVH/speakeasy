@@ -5,6 +5,7 @@ mod command;
 mod overlay;
 mod publish;
 mod recorder;
+pub(crate) mod review;
 mod store;
 
 pub(crate) use self::{

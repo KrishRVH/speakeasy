@@ -135,6 +135,7 @@ impl Settings {
                 self.notice = None;
             },
             Action::Preview => self.play(cx),
+            Action::Shows => super::reveal_shows(cx),
             Action::Quit => request_quit(cx),
         }
         cx.notify();
@@ -512,6 +513,7 @@ impl Presentation {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
+    Shows,
     Setup,
     Engine,
     Choose(EngineFile),
@@ -533,6 +535,7 @@ impl Action {
     /// resuming share the primary button, which keeps focus as it turns from one to the other.
     const fn element_id(self) -> &'static str {
         match self {
+            Self::Shows => "shows",
             Self::Setup => "setup",
             Self::Engine => "engine",
             Self::Choose(EngineFile::Executable) => "choose-executable",
@@ -629,6 +632,9 @@ fn show_theme(cx: &mut App) {
     let services = cx.global::<Services>();
     let (pill, theme) = (services.pill, services.config.theme);
     pill.update_if_open(cx, |view, _, cx| view.set_theme(theme, cx));
+    if let Some(shows) = cx.global::<Services>().shows {
+        shows.update_if_open(cx, |view, _, cx| view.set_theme(theme, cx));
+    }
     // Republishing the current snapshot makes the tray redraw its icon.
     cx.global::<Services>().output.send_modify(|_| ());
 }

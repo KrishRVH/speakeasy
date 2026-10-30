@@ -22,7 +22,7 @@ use crate::{
     instance::{Instance, Request},
     pill::Pill,
     runtime::{self, Meter, ModelState, Phase, Report, Runtime, Snapshot},
-    show::Canvas,
+    show::{Canvas, review::Review},
     status::{PAUSED, PAUSING, QUITTING, ServiceState, Status},
 };
 
@@ -102,6 +102,7 @@ pub(crate) struct Services {
     pub(super) canvas: watch::Sender<Canvas>,
     pub(super) pill: WindowHandle<Pill>,
     pub(super) settings: Option<WindowHandle<Settings>>,
+    pub(super) shows: Option<WindowHandle<Review>>,
     pub mode: LaunchMode,
     pub(super) visibility: Option<Task<()>>,
     /// The menu's latest copy or opening of the last Show; a newer one replaces it.
@@ -145,6 +146,7 @@ impl Services {
             canvas,
             pill,
             settings: None,
+            shows: None,
             mode,
             visibility: None,
             #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -220,6 +222,10 @@ impl Services {
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub(crate) fn recallable_show<'a>(&self, snapshot: &'a Snapshot) -> Option<&'a SavedShow> {
         recallable(snapshot, self.service_state(), self.mode)
+    }
+
+    pub(super) fn can_copy_show(&self) -> bool {
+        clipboard_free(&self.output.borrow(), self.service_state(), self.mode)
     }
 
     /// Shows `report`, such as a failure, unless a recording is under way, which it must not
@@ -488,9 +494,14 @@ fn announcement(previous: &Snapshot, message: &str) -> Snapshot {
 /// The rule [`Services::recallable_show`] applies to `snapshot` under `service` and `mode`.
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 fn recallable(snapshot: &Snapshot, service: ServiceState, mode: LaunchMode) -> Option<&SavedShow> {
-    snapshot.last_show.as_ref().filter(|_| {
-        !snapshot.phase.is_active() && service != ServiceState::Quitting && !mode.is_demo()
-    })
+    snapshot
+        .last_show
+        .as_ref()
+        .filter(|_| clipboard_free(snapshot, service, mode))
+}
+
+fn clipboard_free(snapshot: &Snapshot, service: ServiceState, mode: LaunchMode) -> bool {
+    !snapshot.phase.is_active() && service != ServiceState::Quitting && !mode.is_demo()
 }
 
 fn handle_request(request: Request, cx: &mut App) {

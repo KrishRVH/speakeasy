@@ -147,6 +147,18 @@ copied, it stays saved and the pill points you to Copy last Show.
 
 ### Read saved Shows
 
+Open **Shows** in Settings, or **Shows…** in the Windows/Mac tray, to review saved Shows across
+restarts. Choose a Show to see its keyframes, numbered marks, current summary, and retention status.
+Use Up/Down to choose a Show, Left/Right to step through frames, Home/End to jump to the first/last
+frame, and Escape to close. Missing frames, early endings, and lost narration stay visible; the
+viewer never substitutes another Show when the selected one expires or is deleted.
+
+**Refresh** rereads the library; returning to the window rereads the selected summary. **Open
+folder** reveals its files, and **Copy summary** on Windows/Mac copies the current file, including
+your edits, between recordings. Summary text is plain text; its links do not execute. The viewer
+leaves files and retention unchanged, and does not change which Show the tray remembers. Linux can
+review saved Shows, although it cannot record them yet.
+
 An agent on the same machine can inspect a Show without launching the app or opening the microphone:
 
 ```sh
@@ -253,10 +265,11 @@ cargo run --locked -p speakeasy -- show demo  # a scripted Show bundle
 `--demo` uses simulated audio without the microphone, global shortcut, model, or clipboard. It
 previews hands-free, the countdown, submission, a Show with its ink on Windows and Mac, interrupted
 dismissal, cancellation, silence, copied text, and an error. `--demo-tray` adds the tray and the
-Settings hide-and-reopen behavior with dictation disabled. `show demo` writes a scripted Show bundle
-and prints its summary. Linux has experimental desktop support; see the Linux instructions below.
-Linux builds need `pkg-config` and the ALSA, fontconfig, FreeType, X11/XCB, xkbcommon, and Vulkan
-development packages. On Ubuntu:
+Settings hide-and-reopen behavior with dictation disabled. Both modes use a temporary synthetic Show
+library and leave saved Shows alone. `--demo` opens that library automatically; `--demo-tray` opens
+it through Shows. `show demo` writes a scripted Show bundle and prints its summary. Linux has
+experimental desktop support; see the Linux instructions below. Linux builds need `pkg-config` and
+the ALSA, fontconfig, FreeType, X11/XCB, xkbcommon, and Vulkan development packages. On Ubuntu:
 
 ```sh
 sudo apt-get install libasound2-dev libfontconfig1-dev libfreetype6-dev libx11-dev libxcb1-dev \
@@ -394,8 +407,8 @@ The tray icon shows whether Speakeasy is ready, recording, working (for example 
 transcribing), paused, or needs attention. The Mac menu bar icon is monochrome, so it marks
 recording with a badge instead of red. The menu pauses or resumes dictation, starts or finishes a
 recording, cancels, opens Settings, and quits; on Windows and Mac it also starts a Show of the
-screen or of an area. **Pause dictation**, or **Pause** in Settings, releases the shortcut and the
-model until you resume.
+screen or of an area and opens the Shows library. **Pause dictation**, or **Pause** in Settings,
+releases the shortcut and the model until you resume.
 
 ### Text delivery
 
@@ -437,23 +450,27 @@ paused clock exercises gesture deadlines and the five-minute cap.
   embedded agent skill, and checks that a missing frame produces findings and a failure status. The
   release workflow runs it on every package before upload.
 - `scripts/check-demo-windows.ps1 -Executable <speakeasy.exe>` checks that the demo pill stays
-  non-activating and passes clicks through.
+  non-activating and passes clicks through, and that closing Shows keeps Settings open.
   `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks minimize, close, relaunch, and
   configuration preservation with owned `--demo-tray` windows. `mise run ps:syntax` parses the
   Windows scripts on a native PowerShell host.
 - On Linux, `mise exec -- python scripts/check_demo_linux.py target/release/speakeasy` opens a
-  private Xvfb display, checks rendered Settings, and checks that the preview shows and then hides
-  the pill. It needs Xvfb, x11-utils, and a Vulkan driver. `bash scripts/check-rendering-linux.sh`
-  runs, in an Ubuntu 24.04 Docker container with stock Mesa, the opt-in `idle_native_pill_` tests of
-  the pill's window hints, input shape, and visibility, the native rendering example, and that demo
-  check on a release binary it builds; `--packages` checks the AppImage and tar launchers that
-  `package-linux.sh` builds instead.
+  private Xvfb display, checks rendered Settings and Shows, and checks that the preview shows and
+  then hides the pill. It needs Xvfb, x11-utils, and a Vulkan driver.
+  `bash scripts/check-rendering-linux.sh` runs, in an Ubuntu 26.04 Docker container with stock Mesa,
+  the opt-in `idle_native_pill_` tests of the pill's window hints, input shape, and visibility, the
+  Show review acceptance, the native rendering example, and that demo check on a release binary it
+  builds; `--packages` checks the AppImage and tar launchers that `package-linux.sh` builds instead.
   [Linux implementation](docs/linux-implementation.md#setup-and-distribution) explains the Mesa
   requirement.
 - `cargo run --locked -p speakeasy --example check_native_rendering -- --native-gui` opens an owned
   non-activating window, renders an embedded SVG and paths, resizes, and repeats show/hide. It runs
   on the process main thread for AppKit. Linux needs a private display, such as `xvfb-run -a`;
   Windows and Mac use their native desktop. It accesses no microphone, global hook, or clipboard.
+- `cargo test --locked -p speakeasy native_show_review_ -- --ignored --test-threads=1` on Windows,
+  or with `xvfb-run -a` on Linux, checks synthetic Show navigation, damage, edited summaries,
+  expiry, and image cleanup on close. Linux also checks the owned window's rendered frame pixels. It
+  uses no microphone, global input, screen capture, or clipboard.
 
 Live microphone, editor, and screen acceptance is tracked under
 [verification](docs/architecture.md#verification).

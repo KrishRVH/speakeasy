@@ -7,6 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use serde::Serialize;
 use speakeasy_show::{Bundle, Manifest, Unreadable};
 
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
@@ -61,7 +62,24 @@ pub(crate) struct Entry {
     pub show: Result<ReadShow, ReadError>,
 }
 
+/// Structural health shared by the command line and the review window; pixels are not decoded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Health {
+    Ok,
+    Damaged,
+    Unsupported,
+}
+
 impl Entry {
+    pub(crate) fn health(&self) -> Health {
+        match &self.show {
+            Ok(show) if show.problems.is_empty() => Health::Ok,
+            Err(ReadError::Manifest(Unreadable::Unsupported(_))) => Health::Unsupported,
+            _ => Health::Damaged,
+        }
+    }
+
     /// Opens an explicitly named Show. Its absolute directory anchors every returned path;
     /// paths in an edited summary never control what inspection opens.
     pub(crate) fn open(directory: &Path) -> io::Result<Self> {
@@ -137,7 +155,7 @@ fn read(directory: &Path) -> Result<ReadShow, ReadError> {
             reason: error.to_string(),
         })
     };
-    let bytes = read_limited(directory, Manifest::FILE, MANIFEST_LIMIT)
+    let bytes = read_file(directory, Manifest::FILE, MANIFEST_LIMIT)
         .map_err(|error| file_error(Manifest::FILE, error))?;
     let manifest = Manifest::parse(&bytes).map_err(ReadError::Manifest)?;
     let pinned = pinned(directory).map_err(|error| file_error(PIN, error))?;
@@ -183,7 +201,7 @@ fn regular_file(directory: &Path, name: &str, limit: u64) -> io::Result<()> {
             if metadata.len() > limit {
                 return Err(io::Error::other("file is too large"));
             }
-            if metadata.len() == 0 {
+            if metadata.len() == 0 && name != Bundle::SUMMARY {
                 return Err(io::Error::other("file is empty"));
             }
             return Ok(());
@@ -192,16 +210,25 @@ fn regular_file(directory: &Path, name: &str, limit: u64) -> io::Result<()> {
     Err(io::Error::other("missing file name"))
 }
 
-fn read_limited(directory: &Path, name: &str, limit: u64) -> io::Result<Vec<u8>> {
+/// Reads a format-generated relative name with a byte cap, refusing linked files or parents.
+/// Callers choose limits before opening private content; decoder failures must not quote it.
+pub(crate) fn read_file(directory: &Path, name: &str, limit: u64) -> io::Result<Vec<u8>> {
     regular_file(directory, name, limit)?;
     let mut bytes = Vec::new();
-    fs::File::open(directory.join(name))?
+    fs::File::open(directory.join(name.split('/').collect::<PathBuf>()))?
         .take(limit.saturating_add(1))
         .read_to_end(&mut bytes)?;
     if !u64::try_from(bytes.len()).is_ok_and(|length| length <= limit) {
         return Err(io::Error::other("file is too large"));
     }
     Ok(bytes)
+}
+
+/// Reads the current summary as plain text without retaining UTF-8 decoder errors or contents.
+pub(crate) fn summary(directory: &Path) -> io::Result<String> {
+    let bytes = read_file(directory, Bundle::SUMMARY, SUMMARY_LIMIT)?;
+    String::from_utf8(bytes)
+        .map_err(|_private_error| io::Error::other("summary.md is not valid UTF-8 text"))
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos", test))]

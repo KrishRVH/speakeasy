@@ -35,6 +35,7 @@ try {
     $script:demoProcess = $process.Id
     $script:pill = [IntPtr]::Zero
     $script:settings = [IntPtr]::Zero
+    $script:shows = [IntPtr]::Zero
     $callback = [DemoWindows+Callback]{ param($window, $unused)
         [uint32]$owner = 0
         $null = [DemoWindows]::GetWindowThreadProcessId($window, [ref]$owner)
@@ -42,6 +43,7 @@ try {
             $title = New-Object Text.StringBuilder 256
             $null = [DemoWindows]::GetWindowText($window, $title, 256)
             if ($title.ToString() -eq 'Speakeasy pill') { $script:pill = $window }
+            if ($title.ToString() -eq 'Speakeasy Shows') { $script:shows = $window }
             if ($title.ToString() -eq 'Speakeasy') { $script:settings = $window }
         }
         return $true
@@ -64,7 +66,18 @@ try {
     $hit = [DemoWindows]::WindowFromPhysicalPoint($point)
     if ($hit -eq $script:pill) { throw 'Pill intercepted hit testing instead of passing through' }
     if ($hit -eq [IntPtr]::Zero) { throw 'No desktop window beneath the pill; run on an available Windows desktop.' }
-    Write-Host 'PASS: native demo starts; visible pill stays nonactivating and passes hit testing to the desktop below.'
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    while (($script:shows -eq [IntPtr]::Zero -or ![DemoWindows]::IsWindowVisible($script:shows)) -and [DateTime]::UtcNow -lt $deadline) {
+        $null = [DemoWindows]::EnumWindows($callback, [IntPtr]::Zero)
+        Start-Sleep -Milliseconds 100
+    }
+    if ($script:shows -eq [IntPtr]::Zero -or ![DemoWindows]::IsWindowVisible($script:shows)) { throw 'Shows window did not appear' }
+    $null = [DemoWindows]::PostMessage($script:shows, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    while ([DemoWindows]::IsWindowVisible($script:shows) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
+    if ([DemoWindows]::IsWindowVisible($script:shows)) { throw 'Shows did not close' }
+    if ($process.HasExited -or ![DemoWindows]::IsWindowVisible($script:settings)) { throw 'Closing Shows also closed Settings' }
+    Write-Host 'PASS: demo pill stays passive; Shows opens and closes without quitting Settings.'
 } finally {
     if ($started -and !$process.HasExited) {
         # A user ends the demo by closing Settings; the pill refuses to close on its own. Settings

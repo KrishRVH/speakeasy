@@ -212,7 +212,7 @@ fn launch(
             });
         }
         cx.on_app_quit(release_services).detach();
-        if mode.is_resident() {
+        if mode == LaunchMode::Live {
             show::attend_retention(
                 |error, cx| {
                     cx.global::<Services>()
@@ -247,6 +247,9 @@ fn launch(
         }
         if !mode.is_resident() {
             cx.on_window_closed(shell::quit_after_settings).detach();
+        }
+        if mode == LaunchMode::Demo {
+            shell::reveal_shows(cx);
         }
     });
 }

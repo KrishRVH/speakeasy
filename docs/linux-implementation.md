@@ -115,13 +115,14 @@ portable engine or establishing broad CPU coverage. GPU builds also require comp
 `package-linux.sh` builds AppImage and bundled tar packages with a glibc 2.35 check for the app and
 bundled libraries. `--native-tar` produces an unbundled development archive for the builder's ABI.
 The release workflow builds Linux on Ubuntu 22.04. Local native graphics checks run the built
-binaries and both packaged launchers in an Ubuntu 24.04 container with stock Mesa and a private
-virtual display. They cover rendered Settings, simulated pill show/hide, and hidden-window display
-disconnect; the tar launcher checks startup and Settings rendering only. The software driver needs
-the X11 presentation-depth fix included in
-[Mesa 24.1](https://docs.mesa3d.org/relnotes/24.1.0.html); Ubuntu 22.04's Mesa 23 can present black
-windows under Xvfb without DRI3. This fixture limitation does not establish compatibility of
-hardware drivers or desktop compositors. Models and engines remain separate downloads.
+binaries and both packaged launchers in an Ubuntu 26.04 container with stock Mesa and a private
+virtual display. They cover rendered Settings and Shows, synthetic Show navigation and image
+cleanup, simulated pill show/hide, and hidden-window display disconnect; the tar launcher checks
+startup and rendering of Settings and Shows only. The software driver needs the X11
+presentation-depth fix included in [Mesa 24.1](https://docs.mesa3d.org/relnotes/24.1.0.html); Ubuntu
+22.04's Mesa 23 can present black windows under Xvfb without DRI3. This fixture limitation does not
+establish compatibility of hardware drivers or desktop compositors. Models and engines remain
+separate downloads.
 
 ## Native interface contracts
 

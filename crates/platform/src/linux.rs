@@ -288,8 +288,8 @@ impl NativeWindow {
         x11::set_visible(self.native.id, visible);
     }
 
-    /// Shows or hides the Settings window.
-    pub fn set_settings_visible(&self, visible: bool) {
+    /// Shows or hides an ordinary app window.
+    pub fn set_window_visible(&self, visible: bool) {
         x11::set_visible(self.native.id, visible);
     }
 }

@@ -84,6 +84,13 @@ pub struct Keyframe {
 }
 
 impl Keyframe {
+    /// The numbered marks and click or drag shown on this frame, in the summary's notation.
+    /// This label contains only recorded gestures, never narration or a spoken cue.
+    #[must_use]
+    pub fn marker(&self, marks: &[Mark]) -> String {
+        crate::describe::Marker(self, self.marks_in(marks)).to_string()
+    }
+
     /// The marks drawn on the keyframe, among the selection's `marks`.
     pub(crate) fn marks_in<'a>(&self, marks: &'a [Mark]) -> &'a [Mark] {
         marks.get(self.marks.clone()).unwrap_or_default()

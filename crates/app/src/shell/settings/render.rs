@@ -341,6 +341,7 @@ impl Settings {
                 row.child(ui.button(label, action))
             })
             .when(running, |row| row.child(ui.button("Pause", Action::Pause)))
+            .child(ui.button("Shows…", Action::Shows))
             .child(ui.button("Quit", Action::Quit))
     }
 
@@ -391,15 +392,6 @@ impl Ui<'_> {
             .on_click(
                 self.cx
                     .listener(move |view, _, window, cx| view.act(action, window, cx)),
-            )
-            .on_key_down(
-                self.cx
-                    .listener(move |view, event: &KeyDownEvent, window, cx| {
-                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                            view.act(action, window, cx);
-                            cx.stop_propagation();
-                        }
-                    }),
             )
             .child(label)
     }

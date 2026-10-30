@@ -17,5 +17,5 @@ pub(crate) use self::recovery::LastShow;
 pub(crate) use self::{
     services::{LaunchMode, Services, send, toggle_enabled},
     shutdown::request_quit,
-    window::{quit_after_settings, reveal},
+    window::{quit_after_settings, reveal, reveal_shows},
 };

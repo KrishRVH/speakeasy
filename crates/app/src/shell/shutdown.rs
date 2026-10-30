@@ -23,7 +23,11 @@ pub(crate) fn request_quit(cx: &mut App) {
         return;
     };
     let settings = services.settings;
+    let shows = services.shows;
     let task = cx.spawn(async move |cx| {
+        if let Some(shows) = shows {
+            shows.update_if_open(cx, |_, window, _| window.remove_window());
+        }
         // The action that requested Quit may still hold the view; touch it only from here.
         if let Some(settings) = settings {
             settings.update_if_open(cx, |view, _, _| view.cancel_background_work());

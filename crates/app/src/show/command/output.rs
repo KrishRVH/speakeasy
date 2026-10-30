@@ -5,15 +5,7 @@ use std::{io, path::PathBuf};
 use serde::Serialize;
 use speakeasy_show::{Bundle, Ending, Manifest, Moment, NarrationLoss, Reason, Unreadable};
 
-use super::recall::{Entry, ReadError, ReadShow};
-
-#[derive(Clone, Copy, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum Status {
-    Ok,
-    Damaged,
-    Unsupported,
-}
+use super::recall::{Entry, Health as Status, ReadError, ReadShow};
 
 impl Status {
     const fn text(self) -> &'static str {
@@ -47,11 +39,7 @@ impl Overview {
     fn of(entry: &Entry) -> Self {
         let (status, problems) = match &entry.show {
             Ok(show) => (
-                if show.problems.is_empty() {
-                    Status::Ok
-                } else {
-                    Status::Damaged
-                },
+                entry.health(),
                 show.problems
                     .iter()
                     .map(|problem| Problem {

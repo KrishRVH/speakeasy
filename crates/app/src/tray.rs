@@ -153,6 +153,8 @@ impl TrayChanges {
 #[derive(Clone, Copy)]
 enum TrayCommand {
     Settings,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    Shows,
     Pause,
     Toggle,
     Cancel,
@@ -167,6 +169,8 @@ impl TrayCommand {
     fn run(self, cx: &mut App) {
         match self {
             Self::Settings => shell::reveal(cx),
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            Self::Shows => shell::reveal_shows(cx),
             Self::Pause => shell::toggle_enabled(cx),
             Self::Toggle => shell::send(Input::Toggle, cx),
             Self::Cancel => shell::send(Input::Cancel, cx),

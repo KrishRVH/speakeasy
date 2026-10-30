@@ -206,8 +206,8 @@ impl NativeWindow {
         Ok(())
     }
 
-    /// Shows the Settings window in front, or hides it.
-    pub fn set_settings_visible(&self, visible: bool) {
+    /// Shows an ordinary app window in front, or hides it.
+    pub fn set_window_visible(&self, visible: bool) {
         let hwnd = self.native.hwnd;
         // SAFETY: this thread owns the window.
         unsafe {

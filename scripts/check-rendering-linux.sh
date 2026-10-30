@@ -26,7 +26,7 @@ fi
 
 # Keep the builder ABI while using a stock driver with Mesa's X11 PutImage fix.
 # The read-only mount runs the builder's exact binaries, with no host display.
-docker run --rm --volume "$PWD:$PWD:ro" --workdir "$PWD" ubuntu:24.04 \
+docker run --rm --volume "$PWD:$PWD:ro" --workdir "$PWD" ubuntu:26.04 \
   bash -euo pipefail -c '
         apt-get update -qq
         apt-get install -y -qq --no-install-recommends \
@@ -41,6 +41,8 @@ docker run --rm --volume "$PWD:$PWD:ro" --workdir "$PWD" ubuntu:24.04 \
             GPUI_X11_SCALE_FACTOR="$scale" xvfb-run -a -s "-screen 0 1280x720x24" \
                 "$1" idle_native_pill_ --ignored --test-threads=1
         done
+        GPUI_X11_SCALE_FACTOR=1 xvfb-run -a -s "-screen 0 1280x900x24" \
+            "$1" native_show_review_ --ignored --test-threads=1
         for scale in 1 1.25 1.5 2; do
             GPUI_X11_SCALE_FACTOR="$scale" xvfb-run -a -s "-screen 0 1280x720x24" \
                 target/debug/examples/check_native_rendering --native-gui

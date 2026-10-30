@@ -430,8 +430,8 @@ impl NativeWindow {
         Ok(())
     }
 
-    /// Shows the Settings window in front, or hides it.
-    pub fn set_settings_visible(&self, visible: bool) {
+    /// Shows an ordinary app window in front, or hides it.
+    pub fn set_window_visible(&self, visible: bool) {
         let window = &self.native.ns_window;
         if visible {
             window.deminiaturize(None);

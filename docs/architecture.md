@@ -1,11 +1,11 @@
 # Architecture
 
-Speakeasy is a Rust desktop app for Windows, macOS, and Linux. GPUI renders Settings, one
-non-activating dictation pill, and a Show's click-through ink overlay. A session owner coordinates
-native input, CPAL capture, a local speech worker, and insertion into the focused application; a
-Show adds a screen recorder and publishes a bundle instead of inserting. Linux support is
-experimental; [Linux implementation](linux-implementation.md) records its limits and remaining
-checks.
+Speakeasy is a Rust desktop app for Windows, macOS, and Linux. GPUI renders Settings, the Show
+library, one non-activating dictation pill, and a Show's click-through ink overlay. A session owner
+coordinates native input, CPAL capture, a local speech worker, and insertion into the focused
+application; a Show adds a screen recorder and publishes a bundle instead of inserting. Linux
+support is experimental; [Linux implementation](linux-implementation.md) records its limits and
+remaining checks.
 
 ```mermaid
 flowchart LR
@@ -143,6 +143,18 @@ module unless a test file is named.
   take on synthetic frames and pointer samples;
   [show/publish/tests.rs](../crates/app/src/show/publish/tests.rs) checks every published file, a
   refused copy, and the cancel path.
+- **Show review**: [show/review.rs](../crates/app/src/show/review.rs) owns the native library view,
+  selection, background reads, and one decoded frame. Its
+  [library.rs](../crates/app/src/show/review/library.rs) projects content-free rows through the
+  shared store reader, without CLI output types; only the selected summary remains in memory.
+  Selection revisions reject stale Show and frame results, and closing cancels owned tasks and
+  releases the image directly, bypassing GPUI's asset cache.
+  [frame.rs](../crates/app/src/show/review/frame.rs) caps PNG files at 32 MiB and dimensions at 4096
+  pixels per side before decoding off the UI thread. Decoder errors never include content.
+  [review/tests.rs](../crates/app/src/show/review/tests.rs) checks navigation, damage, and private
+  text boundaries. Opt-in [native_tests.rs](../crates/app/src/show/review/native_tests.rs) exercises
+  the real view with synthetic files, including rendering on a private Linux display and cleanup on
+  close. The shell supplies copy availability and owns only a window handle.
 - **Show composition**: [crates/show/src](../crates/show/src), notably
   [select.rs](../crates/show/src/select.rs) and [select/](../crates/show/src/select),
   [journal.rs](../crates/show/src/journal.rs), [tracker.rs](../crates/show/src/tracker.rs),
@@ -167,7 +179,8 @@ module unless a test file is named.
   also discovers and inspects saved Shows without changing them.
   [store/tests.rs](../crates/app/src/show/store/tests.rs) checks publication, expiry, and edited
   summaries; [recall/tests.rs](../crates/app/src/show/store/recall/tests.rs) checks discovery, read
-  limits, damage, links, and moved bundles.
+  limits, damage, links, and moved bundles. [age.rs](../crates/app/src/show/store/age.rs) parses the
+  folder timestamp for review and property-checks it against naming and expiry boundaries.
 - **Screen capture and overlay**: [platform/src/screen.rs](../crates/platform/src/screen.rs),
   [screen/geometry.rs](../crates/platform/src/screen/geometry.rs),
   [windows/screen.rs](../crates/platform/src/windows/screen.rs) with

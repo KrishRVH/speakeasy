@@ -100,6 +100,7 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
     let show_area = MenuItem::new("Show area…", false, None);
     let copy_last_show = MenuItem::new("Copy last Show", false, None);
     let open_last_show = MenuItem::new("Open last Show", false, None);
+    let shows = MenuItem::new("Shows…", true, None);
     let settings = MenuItem::new("Settings…", true, None);
     let quit = MenuItem::new("Quit Speakeasy", true, None);
     menu.append_items(&[
@@ -113,6 +114,7 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
         &show_area,
         &copy_last_show,
         &open_last_show,
+        &shows,
         &PredefinedMenuItem::separator(),
         &settings,
         &quit,
@@ -120,6 +122,7 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
     let icon = build_icon(menu, cx.global::<Services>().config.theme)?;
     let commands = queue_commands([
         (settings.id().clone(), TrayCommand::Settings),
+        (shows.id().clone(), TrayCommand::Shows),
         (pause.id().clone(), TrayCommand::Pause),
         (toggle.id().clone(), TrayCommand::Toggle),
         (cancel.id().clone(), TrayCommand::Cancel),

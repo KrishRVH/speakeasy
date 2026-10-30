@@ -14,7 +14,10 @@ use speakeasy_platform::FileFilter;
 use super::{LaunchMode, Services, settings::Settings};
 #[cfg(target_os = "windows")]
 use crate::gpui_ext::native_window;
-use crate::gpui_ext::{AppUpdate, WindowUpdate, defer_native};
+use crate::{
+    gpui_ext::{AppUpdate, WindowUpdate, defer_native},
+    show::review::{self, Source},
+};
 
 /// Names the Settings window in errors about its native handle.
 const WINDOW_NAME: &str = "Settings";
@@ -26,6 +29,40 @@ pub(crate) fn reveal(cx: &mut App) {
     if let Err(error) = open(cx) {
         cx.global::<Services>()
             .report(&anyhow!("Cannot open Settings: {error:#}"));
+    }
+}
+
+pub(crate) fn reveal_shows(cx: &mut App) {
+    let Some(services) = cx.try_global::<Services>() else {
+        return;
+    };
+    if services.is_quitting() {
+        return;
+    }
+    if let Some(shows) = services.shows.filter(|shows| shows.read(cx).is_ok()) {
+        shows.update_if_open(cx, |view, window, cx| view.reveal(window, cx));
+        return;
+    }
+    let source = if services.mode.is_demo() {
+        Source::Demo
+    } else {
+        Source::Saved
+    };
+    let result = review::open(
+        source,
+        services.config.theme,
+        services.output.subscribe(),
+        |cx| {
+            cx.try_global::<Services>()
+                .is_some_and(Services::can_copy_show)
+        },
+        cx,
+    );
+    match result {
+        Ok(shows) => cx.global_mut::<Services>().shows = Some(shows),
+        Err(error) => cx
+            .global::<Services>()
+            .report(&anyhow!("Cannot open Shows: {error:#}")),
     }
 }
 
@@ -119,7 +156,7 @@ fn window_options(cx: &App) -> WindowOptions {
 
 fn set_visible(settings: WindowHandle<Settings>, visible: bool, cx: &mut App) {
     let task = defer_native(settings.into(), WINDOW_NAME, cx, move |native, cx| {
-        native.set_settings_visible(visible);
+        native.set_window_visible(visible);
         if visible {
             cx.update_if_running(|cx| cx.activate(true));
         } else {

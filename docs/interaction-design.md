@@ -132,6 +132,27 @@ included, until Quit begins or either finds that Show gone. Errors remain access
 after the pill's notice expires, including while there are unsaved edits: its commands and status
 line stay in view below the scrolling controls.
 
+## Reviewing Shows
+
+Shows… follows Open last Show in the Windows/macOS tray. Settings offers Shows on every platform. It
+opens one review window, bringing it forward and refreshing if already open. Recording never opens
+it automatically. The newest Show is selected on first load; refresh preserves the user's choice.
+Deletion or expiry clears the selection and its pixels, with no fallback to another Show.
+
+The left list shows age, duration, frame count, and kept, damaged, early-ending, or lost-narration
+status. The right pane shows retention, warnings, one keyframe with its time and numbered marks,
+frame buttons, and the current summary as inert plain text. Up/Down selects Shows, Left/Right steps
+frames, Home/End selects the first/last frame, and Escape closes. Tab and Shift+Tab move through
+controls; Enter or Space activates them. Closing releases the view and its images.
+
+Refresh rereads the library. Regaining focus checks that the selected folder still exists and
+rereads its summary; external edits are never overwritten. Copy summary reads the file again on
+click and reports the result in the window. It is available on Windows/macOS only, between
+recordings and outside previews or Quit. Open folder opens the selected Show's files. Neither action
+changes the session's last Show. A missing frame keeps its numbered position and an error; a damaged
+manifest can still show a readable summary. The summary pane displays at most 64 KiB; Copy summary
+includes the complete file within the reader's limit.
+
 ## Interaction contracts
 
 - Hold Ctrl+Win on Windows or Fn on macOS to dictate; release to finish. Adding Space during the
@@ -188,6 +209,12 @@ Run `--demo` to inspect the same Settings and pill views without live devices or
 Both modes bypass engine/model configuration. Public-audio tests cover transcription with fake
 capture and insertion. None of these establish physical microphone onset, target-editor behavior,
 screen-reader usability, display removal, or mixed-DPI presentation.
+
+Shows in either preview uses a private temporary library: an intact kept Show, one that ended early
+without narration, and one missing a frame. Plain `--demo` opens it automatically. Previewing never
+reads or expires the real library, and Copy summary is disabled. Owned-window review acceptance
+checks actual rendering on Linux, navigation, missing frames, external summary edits, deletion, and
+image and fixture cleanup on close without OS input or clipboard access.
 
 For visual acceptance, inspect interrupted transitions, quick completion, long processing,
 hands-free silence, and cancellation over light and dark content, in every theme. Use reduced motion
