@@ -81,6 +81,14 @@ fn punctuation_split_from_its_word_closes_that_words_text() {
         (5_200, "Yeah"),
     ]);
     assert_eq!(texts(&[1_000, 5_000], &said), ["Lots of glitches.", "Yeah"]);
+    // A spoken word that opens with an apostrophe is a word of its own, not punctuation.
+    let said = words(&[
+        (0, "Done."),
+        (2_000, "'Cause"),
+        (2_200, "it"),
+        (2_400, "works."),
+    ]);
+    assert_eq!(texts(&[0, 2_000], &said), ["Done.", "'Cause it works."]);
 }
 
 #[test]
@@ -246,6 +254,16 @@ fn ink_drawn_just_before_speaking_takes_what_is_said_next() {
 fn ink_drawn_long_before_speaking_leaves_the_words_to_ink_drawn_while_saying_them() {
     let said = words(&[(3_000, "This"), (3_200, "one"), (3_400, "flickers.")]);
     assert_eq!(texts(&[0, 3_300], &said), ["", "This one flickers."]);
+    // Ink drawn 3 s before a long sentence, and ink drawn 3.5 s into it.
+    let mut spoken = vec![(3_000, "This")];
+    spoken.extend((3_200..8_000).step_by(200).map(|at| (at, "one")));
+    spoken.push((8_000, "flickers."));
+    let sentence = spoken
+        .iter()
+        .map(|&(_, word)| word)
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert_eq!(texts(&[0, 6_500], &words(&spoken)), ["", sentence.as_str()]);
 }
 
 #[test]
@@ -265,7 +283,8 @@ fn a_click_just_before_speaking_leaves_the_words_to_ink_drawn_nearer_their_start
 #[test]
 fn a_sentence_left_hanging_is_over_once_the_silence_runs_long() {
     // The recognizer stretched "the" across the silence, so the bound counts from its start. Ink
-    // in the silence past the bound, or in the words that end it, leaves "So the" behind.
+    // in the silence within the bound takes "So the"; ink past the bound, or in the words that end
+    // the silence, leaves it behind.
     let mut said = words(&[
         (0, "That's"),
         (200, "done."),
@@ -278,6 +297,10 @@ fn a_sentence_left_hanging_is_over_once_the_silence_runs_long() {
     .to_vec();
     said[3].span = Span::new(Moment::from_millis(1_200), Moment::from_millis(9_000));
     let said = Narration::Words(said);
+    assert_eq!(
+        texts(&[0, 3_000], &said),
+        ["That's done.", "So the Next thing."]
+    );
     for anchor in [6_000, 9_100] {
         assert_eq!(
             texts(&[0, anchor], &said),

@@ -58,7 +58,7 @@ pub(crate) fn align(anchors: &[Moment], narration: &Narration) -> Vec<Option<Str
             let mut owner = 0;
             for word in words {
                 let text = word.text.trim();
-                if !attaches(text) {
+                if word.is_spoken() || !attaches(text) {
                     let onset = word.span.start().saturating_add(ONSET_TOLERANCE);
                     owner = starts
                         .iter()
