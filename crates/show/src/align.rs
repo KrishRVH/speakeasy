@@ -13,9 +13,9 @@ const PAUSE: Duration = Duration::from_secs(2);
 /// A finished clause lasts at most this long past its last word's start; the recognizer's
 /// reported end can run through the silence that follows.
 const WORD_REACH: Duration = Duration::from_millis(700);
-/// A clause left unfinished stays in progress through a pause until speech resumes, for up to
-/// this long past its last word's start, and a clause beginning within that time resumes it:
-/// people stop mid-sentence to draw what they mean, then go on.
+/// A clause left unfinished stays in progress through the silence after it until speech resumes
+/// or, at the latest, this long past its last word's start, and a clause beginning by then
+/// resumes it: people stop mid-sentence to draw what they mean, then go on.
 const HESITATION: Duration = Duration::from_secs(4);
 /// An anchor in silence may take a clause beginning up to this long after it: people mark or
 /// click something just before saying what it is, and removing a filler such as "um" leaves
@@ -119,6 +119,14 @@ fn clauses(words: &[&Word]) -> Vec<Clause> {
             resumes,
         });
         clause_words = usize::from(word.is_spoken());
+    }
+    if let Some(last) = previous
+        && !ends_clause(&last.text, clause_words)
+        && let Some(hanging) = clauses.last_mut()
+    {
+        hanging.span = hanging
+            .span
+            .union(Span::at(last.span.start().saturating_add(HESITATION)));
     }
     clauses
 }

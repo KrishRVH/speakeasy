@@ -193,6 +193,28 @@ fn ink_begun_as_speech_resumes_takes_the_sentence_it_carries_on() {
 }
 
 #[test]
+fn a_sentence_left_hanging_as_the_narration_ends_stays_open_as_long_as_any() {
+    // Ink 1.1 s after "one" begins takes the unfinished sentence, as it would if speech went on
+    // later; ink past the bound does not.
+    let said = words(&[
+        (0, "Make"),
+        (200, "this"),
+        (400, "bigger."),
+        (2_000, "And"),
+        (2_200, "this"),
+        (2_400, "one"),
+    ]);
+    assert_eq!(
+        texts(&[300, 3_500], &said),
+        ["Make this bigger.", "And this one"]
+    );
+    assert_eq!(
+        texts(&[300, 6_500], &said),
+        ["Make this bigger. And this one", ""]
+    );
+}
+
+#[test]
 fn ink_drawn_just_before_speaking_takes_what_is_said_next() {
     // The underline was drawn during "Um,". Speakeasy removes fillers by default, which leaves
     // the underline in the silence before the clause the filler opened, and the next mark inside
