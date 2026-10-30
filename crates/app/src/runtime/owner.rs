@@ -487,7 +487,7 @@ impl<P: Ports> Owner<P> {
         let footage = match event {
             ShowEvent::Finished(_, footage) => footage,
             ShowEvent::Unchosen(_, unchosen) => {
-                self.gesture.cancel();
+                self.gesture.abandon();
                 self.discard();
                 self.cue(Cue::Cancel);
                 self.outcome = Outcome::Unchosen(unchosen);

@@ -562,8 +562,7 @@ async fn an_earlier_show_with_nothing_to_record_never_cancels_a_later_one() -> a
         !h.take_sounds().contains(&Sound::Played(Cue::Cancel)),
         "The later Show sounded cancelled"
     );
-    h.input(Input::Release);
-    h.input(Input::Press);
+    finish_show(&h);
     h.transcribe_next_as("this one").await?;
     receive(&h.published).await?;
     h.close().await
