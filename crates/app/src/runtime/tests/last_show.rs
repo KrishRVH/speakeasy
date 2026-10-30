@@ -302,6 +302,10 @@ fn without_an_owner_a_report_shows_while_idle_and_forgets_only_the_show_found_go
             "Only a recurring failure shows again just when it changes"
         );
     }
+    assert!(
+        !Report::Recurring("Disk full".into()).present(&mut paused),
+        "A recurring failure that repeats the one shown reported a change"
+    );
 
     let mut recording = Snapshot {
         phase: Phase::Recording,

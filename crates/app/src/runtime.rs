@@ -169,9 +169,10 @@ impl Report {
     /// changed. It shows unless a session is under way, which it must not interrupt, and a Show it
     /// found gone is forgotten either way.
     pub(crate) fn present(self, snapshot: &mut Snapshot) -> bool {
-        let forgot = self.forget_gone(&mut snapshot.last_show);
+        let shown = snapshot.clone();
+        self.forget_gone(&mut snapshot.last_show);
         if snapshot.phase.is_active() {
-            return forgot;
+            return *snapshot != shown;
         }
         if self.presents_anew() {
             snapshot.reported = snapshot.reported.wrapping_add(1);
@@ -186,7 +187,7 @@ impl Report {
             },
             Self::ShowGone(_) => (Phase::Notice, SHOW_GONE.to_owned()),
         };
-        true
+        *snapshot != shown
     }
 
     /// Whether this report shows anew even when it repeats the last, as an answer to the user does.
@@ -195,13 +196,14 @@ impl Report {
         !matches!(self, Self::Recurring(_))
     }
 
-    /// Forgets `last_show` if this report found that same Show gone, returning whether it did; a
-    /// newer Show saved meanwhile stays.
-    fn forget_gone(&self, last_show: &mut Option<SavedShow>) -> bool {
-        let Self::ShowGone(gone) = self else {
-            return false;
-        };
-        last_show.take_if(|last| *last == *gone).is_some()
+    /// Forgets `last_show` if this report found that same Show gone; a newer Show saved meanwhile
+    /// stays.
+    fn forget_gone(&self, last_show: &mut Option<SavedShow>) {
+        if let Self::ShowGone(gone) = self
+            && last_show.as_ref() == Some(gone)
+        {
+            *last_show = None;
+        }
     }
 }
 
