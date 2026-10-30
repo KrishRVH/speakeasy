@@ -48,7 +48,8 @@ impl Command {
         while let Some(arg) = args.next() {
             match arg.to_str() {
                 Some("--out") => {
-                    out = Some(args.next().context("--out needs a directory")?.into());
+                    let directory = args.next().filter(|directory| !directory.is_empty());
+                    out = Some(directory.context("--out needs a directory")?.into());
                 },
                 _ => anyhow::bail!("Unknown show option: {}", arg.display()),
             }
@@ -95,6 +96,7 @@ mod tests {
         assert!(parse(&[]).is_err());
         assert!(parse(&["record"]).is_err());
         assert!(parse(&["demo", "--out"]).is_err());
+        assert!(parse(&["demo", "--out", ""]).is_err());
         Ok(())
     }
 }

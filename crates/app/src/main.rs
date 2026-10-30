@@ -88,7 +88,11 @@ impl Invocation {
                 },
                 Some("--demo-tray") => mode = LaunchMode::DemoTray,
                 Some("--config") => {
-                    settings = Some(args.next().context("--config needs a path")?.into());
+                    let file = args
+                        .next()
+                        .map(PathBuf::from)
+                        .filter(|file| file.file_name().is_some());
+                    settings = Some(file.context("--config needs the path of a settings file")?);
                 },
                 Some("--toggle") => request = Some(Request::Toggle),
                 Some("--cancel") => request = Some(Request::Cancel),
@@ -395,6 +399,8 @@ mod tests {
         ));
         assert!(parse(&["--unknown", "--version"]).is_err());
         assert!(parse(&["--config"]).is_err());
+        assert!(parse(&["--config", ""]).is_err());
+        assert!(parse(&["--config", "/"]).is_err());
         Ok(())
     }
 
