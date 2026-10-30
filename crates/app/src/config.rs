@@ -73,6 +73,8 @@ pub(crate) struct Config {
     pub preserve_clipboard: bool,
     pub play_sounds: bool,
     pub theme: Theme,
+    /// Whether Windows starts Speakeasy when the user signs in; other platforms ignore it.
+    pub start_at_login: bool,
 }
 
 impl Default for Config {
@@ -91,6 +93,7 @@ impl Default for Config {
             preserve_clipboard: false,
             play_sounds: true,
             theme: Theme::default(),
+            start_at_login: false,
         }
     }
 }
@@ -334,6 +337,7 @@ impl Config {
             preserve_clipboard,
             play_sounds,
             theme,
+            start_at_login,
         } = next;
         [
             (
@@ -363,6 +367,8 @@ impl Config {
                 self.theme != *theme || self.reduced_motion != *reduced_motion,
                 Change::Presentation,
             ),
+            // Services registers a saved change itself, so a session continues.
+            (self.start_at_login != *start_at_login, Change::Presentation),
         ]
         .into_iter()
         .filter_map(|(changed, tier)| changed.then_some(tier))

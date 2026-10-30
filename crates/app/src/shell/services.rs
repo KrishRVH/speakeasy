@@ -291,14 +291,18 @@ impl Services {
 
     /// Adopts settings that a save made durable, enabling dictation only as
     /// [`Lifecycle::save_may_enable`] allows; otherwise the settings persist and show while
-    /// dictation stays off.
+    /// dictation stays off. On Windows, a save that turns Start at login on or off registers that
+    /// at once, and its failure is returned unless adopting failed first.
     pub(super) fn adopt_saved(
         &mut self,
         config: ValidConfig,
         saved_at: ConfigEpoch,
         cx: &App,
     ) -> anyhow::Result<()> {
-        if self
+        #[cfg(target_os = "windows")]
+        let sign_in =
+            (config.start_at_login != self.config.start_at_login).then_some(config.start_at_login);
+        let adopted = if self
             .lifecycle
             .save_may_enable(saved_at, |owners| owners.runtime.is_running())
         {
@@ -306,7 +310,13 @@ impl Services {
         } else {
             self.config = config.into_inner();
             Ok(())
+        };
+        #[cfg(target_os = "windows")]
+        if let Some(on) = sign_in {
+            let registered = speakeasy_platform::start_at_login(on);
+            return adopted.and(registered);
         }
+        adopted
     }
 
     /// Checks the saved settings off the UI thread, then enables dictation with them, unless

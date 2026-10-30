@@ -10,5 +10,6 @@
   "reduced_motion": false,
   "preserve_clipboard": false,
   "play_sounds": true,
-  "theme": "jet"
+  "theme": "jet",
+  "start_at_login": false
 }

@@ -259,6 +259,25 @@ impl Settings {
                         "Select English to remove um / uh."
                     }),
             )
+            .when(cfg!(target_os = "windows"), |section| {
+                section.child(self.start_at_login(ui))
+            })
+    }
+
+    /// The sign-in launch, with the remedy beside it while Windows' Startup apps page holds it off.
+    fn start_at_login(&self, ui: &Ui<'_>) -> impl IntoElement {
+        row()
+            .items_center()
+            .child(self.switch(ui, "Start at login", Setting::StartAtLogin))
+            .when(self.config.start_at_login && self.startup_apps_off, |row| {
+                row.child(
+                    div()
+                        .flex_1()
+                        .text_size(TEXT)
+                        .text_color(rgb(ui.palette.warn))
+                        .child("Turned off in Windows' Startup apps. Turn it on there."),
+                )
+            })
     }
 
     /// A button that toggles `setting`, labeled with its draft state.

@@ -42,6 +42,9 @@ pub(super) struct Settings {
     saving: Option<Task<()>>,
     saves: SaveQueue,
     _updates: Task<()>,
+    /// Whether Windows' Startup apps page has turned off the sign-in launch, as last read when
+    /// Settings came to the front; only a live Windows launch reads it.
+    startup_apps_off: bool,
     /// What a desktop shortcut runs to reach this instance, without `--toggle` or `--cancel`.
     #[cfg(target_os = "linux")]
     desktop_command: SharedString,
@@ -81,6 +84,7 @@ impl Settings {
             _updates: follow(updates, cx, Snapshot::clone, |view, snapshot, cx| {
                 view.apply_snapshot(&snapshot, cx);
             }),
+            startup_apps_off: false,
             #[cfg(target_os = "linux")]
             desktop_command,
             #[cfg(target_os = "windows")]
@@ -88,6 +92,20 @@ impl Settings {
         };
         view.refresh_microphones(cx);
         view
+    }
+
+    /// Reads whether Windows' Startup apps page has turned off the sign-in launch now and whenever
+    /// Settings comes to the front, as on the way back from that page.
+    #[cfg(target_os = "windows")]
+    pub(super) fn follow_startup_apps(&mut self, window: &mut Window, cx: &Context<'_, Self>) {
+        self.startup_apps_off = !speakeasy_platform::startup_approved();
+        cx.observe_window_activation(window, |view, window, cx| {
+            if window.is_window_active() {
+                view.startup_apps_off = !speakeasy_platform::startup_approved();
+                cx.notify();
+            }
+        })
+        .detach();
     }
 
     fn apply_snapshot(&mut self, snapshot: &Snapshot, cx: &mut Context<'_, Self>) {
@@ -533,6 +551,7 @@ impl Action {
             Self::Toggle(Setting::RemoveFillers) => "remove-fillers",
             Self::Toggle(Setting::PlaySounds) => "play-sounds",
             Self::Toggle(Setting::DesktopBindings) => "desktop-bindings",
+            Self::Toggle(Setting::StartAtLogin) => "start-at-login",
             Self::Theme => "theme",
             Self::Save | Self::Resume => "primary",
             Self::Pause => "pause",
@@ -555,6 +574,7 @@ enum Setting {
     RemoveFillers,
     PlaySounds,
     DesktopBindings,
+    StartAtLogin,
 }
 
 impl Setting {
@@ -565,6 +585,7 @@ impl Setting {
             Self::RemoveFillers => &mut config.remove_fillers,
             Self::PlaySounds => &mut config.play_sounds,
             Self::DesktopBindings => &mut config.linux.external_shortcut,
+            Self::StartAtLogin => &mut config.start_at_login,
         }
     }
 
@@ -575,6 +596,7 @@ impl Setting {
             Self::RemoveFillers => config.remove_fillers,
             Self::PlaySounds => config.play_sounds,
             Self::DesktopBindings => config.linux.external_shortcut,
+            Self::StartAtLogin => config.start_at_login,
         }
     }
 }
@@ -698,6 +720,7 @@ mod tests {
             saving: None,
             saves,
             _updates: Task::ready(()),
+            startup_apps_off: false,
             #[cfg(target_os = "linux")]
             desktop_command: SharedString::default(),
             #[cfg(target_os = "windows")]

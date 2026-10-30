@@ -105,6 +105,12 @@ Settings. A fresh install sets itself up there: a card names each step with its 
 pauses and later resumes, and completion enables dictation. The manual engine controls stay hidden
 while setup runs. Linux opens Settings at startup to expose desktop permissions and tray state.
 
+On Windows, Start at login, off by default, makes each live launch register the running executable
+to start at sign-in, or remove that entry, as the setting says; a save that changes it does so at
+once. Demos never touch the entry, and settings that need repair leave it as it was, so sign-in
+still opens them. While Windows' Startup apps page holds the entry off, Settings says so beside the
+switch and sends the user there.
+
 Close hides the existing window, preserving edits; Windows minimize also hides it. macOS minimize
 retains normal Dock behavior. Relaunch and the tray's Settings action reveal the same window. The
 first hide shows the tray hint (see the pill table). On Linux, closing Settings without a tray host
@@ -172,7 +178,7 @@ line stay in view below the scrolling controls.
   cannot be inferred from submitting keystrokes.
 - Settings exposes automatic setup while no engine is set up, and manual engine/model selection,
   microphone selection, language where applicable, GPU preference, text delivery, English filler
-  removal, reduced motion, sounds, and theme.
+  removal, reduced motion, sounds, theme, and on Windows start at login.
 
 ## Acceptance
 

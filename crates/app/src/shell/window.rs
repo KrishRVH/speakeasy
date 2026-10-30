@@ -75,6 +75,10 @@ pub(super) fn open(cx: &mut App) -> anyhow::Result<()> {
             anyhow::Ok(())
         })??;
     }
+    #[cfg(target_os = "windows")]
+    if mode == LaunchMode::Live {
+        settings.update(cx, |view, window, cx| view.follow_startup_apps(window, cx))?;
+    }
     cx.global_mut::<Services>().settings = Some(settings);
     if mode.is_demo() {
         settings.update_if_open(cx, |view, _, cx| view.play(cx));

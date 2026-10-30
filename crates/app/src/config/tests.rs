@@ -210,6 +210,15 @@ fn engine_and_theme_spellings_are_the_wire_format() -> anyhow::Result<()> {
 }
 
 #[test]
+fn starting_at_login_reaches_neither_a_session_nor_the_engine() {
+    let next = Config {
+        start_at_login: true,
+        ..Config::default()
+    };
+    assert_eq!(Config::default().change_to(&next), Change::Presentation);
+}
+
+#[test]
 fn omitted_keys_read_as_the_defaults() -> anyhow::Result<()> {
     let read = serde_json::from_str::<Config>("{}")?;
     assert_eq!(read, Config::default());

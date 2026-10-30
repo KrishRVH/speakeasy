@@ -164,6 +164,8 @@ fn launch(
     } else {
         Config::load(&path)
     };
+    #[cfg(target_os = "windows")]
+    let sign_in = sign_in_launch(mode, &startup, &config);
     let (valid, snapshot) = split_startup(startup);
     let configured = valid.is_some();
     let (output, updates) = watch::channel(snapshot);
@@ -215,6 +217,12 @@ fn launch(
                 cx.update_global::<Services, _>(|services, cx| services.apply(valid, cx))
         {
             cx.global::<Services>().publish_error(&error);
+        }
+        #[cfg(target_os = "windows")]
+        if let Some(on) = sign_in
+            && let Err(error) = speakeasy_platform::start_at_login(on)
+        {
+            cx.global::<Services>().report(&error);
         }
         if mode.is_resident()
             && let Err(error) = tray::install(cx)
@@ -339,6 +347,15 @@ fn print_version() -> io::Result<()> {
     )
 }
 
+/// Whether a launch turns Windows' sign-in launch on or off, as its settings say, or leaves it
+/// alone (`None`). A demo never touches it, and settings that need repair leave it as it was, so
+/// the next sign-in still opens them.
+#[cfg(any(target_os = "windows", test))]
+fn sign_in_launch(mode: LaunchMode, startup: &Startup, config: &Config) -> Option<bool> {
+    (mode == LaunchMode::Live && !matches!(startup, Startup::Invalid(_)))
+        .then_some(config.start_at_login)
+}
+
 /// Splits the launch state into the settings to apply, if any, and the first snapshot.
 fn split_startup(startup: Startup) -> (Option<ValidConfig>, Snapshot) {
     // Applying a configured app's settings replaces this placeholder before it shows.
@@ -437,6 +454,27 @@ mod tests {
         );
         assert!(parse(&["--cancel", "--demo"]).is_err());
         assert!(parse(&["--demo-tray", "--toggle"]).is_err());
+    }
+
+    #[test]
+    fn only_a_live_launch_with_readable_settings_touches_the_sign_in_launch() {
+        use LaunchMode::{Demo, DemoTray, Live};
+        let on = Config {
+            start_at_login: true,
+            ..Config::default()
+        };
+        let configured = Startup::Configured(ValidConfig::assume(on.clone()));
+        assert_eq!(sign_in_launch(Live, &configured, &on), Some(true));
+        let off = Config::default();
+        assert_eq!(
+            sign_in_launch(Live, &Startup::Unconfigured, &off),
+            Some(false)
+        );
+        let invalid = Startup::Invalid("Invalid settings".into());
+        assert_eq!(sign_in_launch(Live, &invalid, &off), None);
+        for demo in [Demo, DemoTray] {
+            assert_eq!(sign_in_launch(demo, &Startup::Unconfigured, &off), None);
+        }
     }
 
     #[test]

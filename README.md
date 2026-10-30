@@ -310,15 +310,16 @@ file.
 </p>
 
 Settings show the shortcuts and the engine and model in use, and choose the microphone, Whisper's
-language, GPU use, filler removal, how text is delivered, reduced motion, sounds, and theme. The
-buttons and the status line stay at the bottom while the rest scrolls. The status says whether
-dictation is ready, or shows the latest error or notice; problems show in the attention color.
+language, GPU use, filler removal, how text is delivered, reduced motion, sounds, theme, and on
+Windows whether Speakeasy starts at login. The buttons and the status line stay at the bottom while
+the rest scrolls. The status says whether dictation is ready, or shows the latest error or notice;
+problems show in the attention color.
 
-Changes apply when you save. Theme and reduced-motion changes keep a recording running; microphone,
-language, filler removal, delivery, and sound changes end it but keep the model loaded. On Linux,
-Shortcuts changes and most Insert changes restart dictation, which reloads the model. Saving stays
-responsive and preserves edits made while the save is running. Pausing during a save keeps dictation
-paused; Quit finishes requested saves.
+Changes apply when you save. Theme, reduced-motion, and Start at login changes keep a recording
+running; microphone, language, filler removal, delivery, and sound changes end it but keep the model
+loaded. On Linux, Shortcuts changes and most Insert changes restart dictation, which reloads the
+model. Saving stays responsive and preserves edits made while the save is running. Pausing during a
+save keeps dictation paused; Quit finishes requested saves.
 
 <p align="center">
   <img src="docs/assets/themes.png"
@@ -327,6 +328,11 @@ paused; Quit finishes requested saves.
 
 The theme colors Settings, the pill, and the Windows and Linux tray icon: **Jet & Champagne**,
 **Emerald Lounge**, **Iris**, or **Midnight Chrome**.
+
+On Windows, **Start at login** opens Speakeasy in the tray when you sign in; it is off by default.
+While it is on, each launch registers the copy you run, so a moved or updated Speakeasy keeps
+starting; turn it off before you delete Speakeasy. If Windows' Startup apps page, in Settings or
+Task Manager, has turned Speakeasy off, Settings says so beside the switch: turn it on there.
 
 Settings live in `%APPDATA%\speakeasy\settings.json` on Windows and
 `~/Library/Application Support/speakeasy/settings.json` on Mac. The Windows and Mac packages include
