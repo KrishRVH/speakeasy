@@ -1,6 +1,6 @@
 //! Pins `show.json`, keeps file contents out of debug output, checks that the summary says how to
-//! read the Show with every path set apart, and that contact sheets show every keyframe once and
-//! stop loading at a failed frame.
+//! read the Show with every path whole and set apart, and that contact sheets show every keyframe
+//! once and stop loading at a failed frame.
 
 use serde_json::json;
 
@@ -174,7 +174,7 @@ fn show_json_keeps_its_wire_format() {
 }
 
 #[test]
-fn the_summary_says_how_to_read_every_sheet_and_sets_each_path_apart() {
+fn the_summary_says_how_to_read_every_sheet_and_sets_each_full_path_apart() {
     let manifest = Manifest {
         version: Manifest::VERSION,
         recording: Recording {
@@ -201,7 +201,12 @@ fn the_summary_says_how_to_read_every_sheet_and_sets_each_path_apart() {
     }
     .to_string();
     let lines: Vec<&str> = summary.lines().collect();
-    let sheet = |name| format!("`{}`", directory.join(name).display());
+    let file = |parts: &[&str]| {
+        let path = parts
+            .iter()
+            .fold(directory.clone(), |path, part| path.join(part));
+        format!("`{}`", path.display())
+    };
     assert_eq!(
         lines[0],
         format!(
@@ -219,18 +224,24 @@ fn the_summary_says_how_to_read_every_sheet_and_sets_each_path_apart() {
         [
             format!(
                 "Contact sheet 1 (frames #1–#4): {}",
-                sheet("contact-sheet.png")
+                file(&["contact-sheet.png"])
             ),
             format!(
                 "Contact sheet 2 (frames #5–#7): {}",
-                sheet("contact-sheet-02.png")
+                file(&["contact-sheet-02.png"])
             ),
         ]
     );
     assert_eq!(
-        summary.lines().last(),
+        lines.last().copied(),
         Some(
-            "Full-size keyframes: `frames/frame-01.png` to `frames/frame-07.png`. Timeline: `show.json`."
+            format!(
+                "Full-size keyframes: {} to {}. Timeline: {}.",
+                file(&["frames", "frame-01.png"]),
+                file(&["frames", "frame-07.png"]),
+                file(&["show.json"])
+            )
+            .as_str()
         )
     );
 }

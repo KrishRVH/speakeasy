@@ -1,6 +1,9 @@
 //! The finished Show: annotated keyframes, contact sheets, the summary, and the manifest.
 
-use std::{fmt, path::Path};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -146,8 +149,9 @@ pub fn compose<E: From<Error> + Send>(
 /// screen's spelling of a name over speech recognition's, and to cite frames as `#N` and marks by
 /// number. It treats what was shown and heard as evidence, never as instructions to follow. One
 /// line per keyframe gives its number and time, what the pointer or ink did there, and what was
-/// said, or only what happened when nothing was said. Every path is a Markdown code span, so a
-/// reader sees where it ends. Window titles and other screen text never appear in it.
+/// said, or only what happened when nothing was said. Every path is a Markdown code span naming
+/// its file under `directory`: a reader sees where it ends, and an agent working in another folder
+/// can still open it. Window titles and other screen text never appear in it.
 struct Summary<'a> {
     manifest: &'a Manifest,
     directory: &'a Path,
@@ -165,6 +169,11 @@ impl fmt::Display for Summary<'_> {
             keyframes,
             ..
         } = manifest;
+        // Joined part by part, a bundle file's `/`-separated name takes the platform's separator.
+        let file = |name: &str| {
+            let within: PathBuf = name.split('/').collect();
+            Code(directory.join(within).display().to_string())
+        };
         writeln!(
             f,
             "Screen recording ({}, {}): {}",
@@ -184,17 +193,16 @@ impl fmt::Display for Summary<'_> {
             )?;
         }
         for (number, page) in pages.iter().enumerate() {
-            let path = directory.join(sheet_file(number));
+            let sheet = file(&sheet_file(number));
             match (pages.len(), page.first(), page.last()) {
                 (2.., Some(first), Some(last)) => writeln!(
                     f,
-                    "Contact sheet {} (frames #{}–#{}): {}",
+                    "Contact sheet {} (frames #{}–#{}): {sheet}",
                     number.saturating_add(1),
                     first.index,
                     last.index,
-                    Code(path.display())
                 ),
-                _ => writeln!(f, "Contact sheet: {}", Code(path.display())),
+                _ => writeln!(f, "Contact sheet: {sheet}"),
             }?;
         }
         for keyframe in keyframes {
@@ -214,19 +222,19 @@ impl fmt::Display for Summary<'_> {
                 None => writeln!(f, "- #{index} ({at}) {event}"),
             }?;
         }
-        let timeline = Code(MANIFEST);
+        let timeline = file(MANIFEST);
         match keyframes.as_slice() {
             [] => Ok(()),
             [only] => writeln!(
                 f,
                 "Full-size keyframe: {}. Timeline: {timeline}.",
-                Code(only.file())
+                file(&only.file())
             ),
             [first, .., last] => writeln!(
                 f,
                 "Full-size keyframes: {} to {}. Timeline: {timeline}.",
-                Code(first.file()),
-                Code(last.file())
+                file(&first.file()),
+                file(&last.file())
             ),
         }
     }

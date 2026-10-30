@@ -122,7 +122,7 @@ Contact sheet: `…\speakeasy\shows\20261020T143205Z\contact-sheet.png`
 - #2 (0:09) [① circled, ② drew an arrow] “the theme picker is here, but look, this label runs under the save button.”
 - #3 (0:12) [③ pinned, clicked] “Now I click reduce motion and nothing happens.”
 - #4 (0:17) [dragged right] “Dragging the text size slider works, though.”
-Full-size keyframes: `frames/frame-01.png` to `frames/frame-04.png`. Timeline: `show.json`.
+Full-size keyframes: `…\speakeasy\shows\20261020T143205Z\frames\frame-01.png` to `…\speakeasy\shows\20261020T143205Z\frames\frame-04.png`. Timeline: `…\speakeasy\shows\20261020T143205Z\show.json`.
 ```
 
 ## What's said here stays here

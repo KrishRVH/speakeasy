@@ -482,10 +482,13 @@ Contact sheet: `{}`
 - #2 (0:09) [① circled, ② drew an arrow] “the theme picker is here, but look, this label runs under the save button.”
 - #3 (0:12) [③ pinned, clicked] “Now I click reduce motion and nothing happens.”
 - #4 (0:17) [dragged right] “Dragging the text size slider works, though.”
-Full-size keyframes: `frames/frame-01.png` to `frames/frame-04.png`. Timeline: `show.json`.
+Full-size keyframes: `{}` to `{}`. Timeline: `{}`.
 ",
                 directory.display(),
-                directory.join("contact-sheet.png").display()
+                directory.join("contact-sheet.png").display(),
+                directory.join("frames").join("frame-01.png").display(),
+                directory.join("frames").join("frame-04.png").display(),
+                directory.join("show.json").display()
             )
         );
         let marks = &expected.marks;
