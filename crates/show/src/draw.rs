@@ -129,8 +129,9 @@ fn nearest_click(actions: &[Action], moment: Moment) -> Option<Point> {
 
 /// Marks where the pointer acted: a blue ring around a blue dot, each edged in white just outside.
 ///
-/// The blue stands out on light screens and the white on blue and dark ones, so the mark shows on
-/// an accent-blue button as on a page. The ring is unfilled and each stroke lets about a tenth of
+/// The blue stands out on white and light gray screens and the white on accent blues and dark ones,
+/// so the mark shows on an accent-blue button as on a page. On a pale blue between the two, such
+/// as a sky-blue selection, neither stands out fully. The ring is unfilled and each stroke lets about a tenth of
 /// the screen through, so what was clicked stays legible.
 fn ripple(canvas: &mut PixmapMut<'_>, center: Point, scale: f32) {
     let edge_outside = |boundary: f32| (boundary + CLICK_EDGE / 2.0, CLICK_EDGE, CLICK_WHITE);

@@ -28,10 +28,11 @@ use crate::{
 ///
 /// How long a click's result settles and how far apart keyframes keep are tuned against it.
 pub const SAMPLE_INTERVAL: Duration = Duration::from_millis(200);
-/// Keyframes other than marks keep at least this far apart, and from a mark's keyframe unless the
-/// screen has changed since it. Two clicks' keyframes need only show different frames, and
-/// different screens when the clicks came this close. The recording's last screen, added after
-/// the rest, may come closer.
+/// Keyframes other than marks keep at least this far apart, measured between their frames, so a
+/// click's counts from where its result settled; and from a mark's keyframe unless the screen has
+/// changed since it. Two clicks' keyframes need only show different frames, and different screens
+/// when the clicks were released this close. The recording's last screen, added after the rest,
+/// may come closer.
 const FRAME_GAP: Duration = Duration::from_millis(750);
 /// Clicks this close in time and place are one click.
 const DOUBLE_CLICK: Duration = Duration::from_millis(650);

@@ -20,8 +20,9 @@ const NOVELTY: f32 = 0.03;
 /// A transition that a click started or a spoken cue points at starts at most this long before
 /// it, since a transition starts on the last frame captured before the screen changed.
 const LEAD: Duration = Duration::from_millis(300);
-/// An app starts answering a click or drag within this long of its release. A change that starts
-/// later is something a Show does not record, such as a scroll or a key press.
+/// A change starting within this long of a click's or drag's release counts as its answer. A later
+/// one is taken for input a Show does not record, such as a scroll or a key press, so the click
+/// shows the screen [`SETTLE`] after its release.
 const CLICK_REACH: Duration = Duration::from_millis(500);
 /// A spoken cue points at a transition starting up to this long after the word.
 const CUE_REACH: Duration = Duration::from_millis(1_200);

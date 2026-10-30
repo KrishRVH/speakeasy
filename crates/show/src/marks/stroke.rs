@@ -81,8 +81,8 @@ const HEAD_BALANCE: f32 = 0.3;
 /// What one stroke looks like, and the region it marks.
 pub(super) struct Ink {
     pub(super) shape: Shape,
-    /// Normalized: the box of the loop of a circle that closes on itself once, without its lead-in
-    /// or tail, and otherwise of the whole stroke.
+    /// Normalized: the box of a circle's rounded loop drawn once, without its lead-in or tail, and
+    /// otherwise of the whole stroke.
     pub(super) region: Rect,
 }
 

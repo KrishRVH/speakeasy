@@ -124,7 +124,7 @@ pub(crate) trait Speech: Send + 'static {
     ) -> impl Future<Output = anyhow::Result<String>> + Send;
 
     /// Returns raw engine words timed from the start of `wav`, or untimed text when the engine
-    /// gives no timings or any of them cannot be placed on the recording; times are never guessed.
+    /// gives no timings or any time is missing, negative, or reversed; times are never guessed.
     fn transcribe_words(
         &mut self,
         wav: Vec<u8>,

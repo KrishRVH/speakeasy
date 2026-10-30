@@ -350,7 +350,7 @@ struct Heard {
 }
 
 impl Timed {
-    /// The reply's words at their times. When any time cannot be placed on the recording, the
+    /// The reply's words at their times. When any time is missing, negative, or reversed, the
     /// narration is only text, the reply's or else its words'. Untimed text visibly goes to the
     /// first keyframe, while a guessed time would silently misplace a word.
     fn into_narration(self) -> Narration {
@@ -621,8 +621,8 @@ impl fmt::Display for Incompatible {
 
 impl std::error::Error for Incompatible {}
 
-/// The remedy an engine's exit status names whenever the engine exits: the engine cannot run on
-/// this machine. Any other status names none.
+/// The remedy for an exit status that proves the engine cannot run on this machine, at any stage;
+/// `None` for any other status.
 fn exit_remedy(status: ExitStatus) -> Option<&'static str> {
     #[cfg(unix)]
     let signal = status.signal();
