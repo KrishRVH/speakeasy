@@ -30,20 +30,22 @@ const VALUE: &str = "Speakeasy";
 /// Fails, with a remedy, when this executable's path is unavailable or the registry refuses the
 /// change, as a security policy may.
 pub fn start_at_login(on: bool) -> anyhow::Result<()> {
-    on.then(env::current_exe)
-        .transpose()
-        .and_then(|exe| set_run(RUN, exe.as_deref()))
-        .map_err(|error| {
-            if on {
-                anyhow!(
-                    "Cannot turn on Start at login: {error}. Allow Speakeasy in your security software, or turn off Start at login in Settings."
-                )
-            } else {
-                anyhow!(
-                    "Cannot turn off Start at login: {error}. Turn Speakeasy off in Windows' Startup apps."
-                )
-            }
-        })
+    let result = if on {
+        env::current_exe().and_then(|exe| set_run(RUN, Some(&exe)))
+    } else {
+        set_run(RUN, None)
+    };
+    result.map_err(|error| {
+        if on {
+            anyhow!(
+                "Cannot turn on Start at login: {error}. Allow Speakeasy in your security software, or turn off Start at login in Settings."
+            )
+        } else {
+            anyhow!(
+                "Cannot turn off Start at login: {error}. Turn Speakeasy off in Windows' Startup apps."
+            )
+        }
+    })
 }
 
 /// Whether Windows' Startup apps page lets the sign-in launch start. An entry the page never
