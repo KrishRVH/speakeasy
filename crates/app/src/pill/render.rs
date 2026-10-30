@@ -88,9 +88,7 @@ impl Pill {
             Content::Error => self
                 .render_message(palette.warn, scene.footer(), palette)
                 .into_any_element(),
-            // Neither a success nor a warning: text that reached the clipboard rather than the
-            // focused app, a Show copied short, one with nothing to record, or a message that
-            // needs no action.
+            // Muted, since a notice is neither a success nor a warning.
             Content::Notice => self
                 .render_message(palette.muted, scene.footer(), palette)
                 .into_any_element(),
