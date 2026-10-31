@@ -18,7 +18,7 @@ pub(super) struct Editor {
 }
 
 impl Editor {
-    #[cfg(test)]
+    #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
     pub(super) fn enter(&self, text: &str, cx: &mut Context<'_, Settings>) {
         self.field
             .update(cx, |field, cx| field.set(text.into(), cx));

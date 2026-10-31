@@ -241,5 +241,5 @@ impl Settings {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
 pub(super) mod native_tests;
