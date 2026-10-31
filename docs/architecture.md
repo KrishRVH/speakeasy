@@ -148,11 +148,14 @@ module unless a test file is named.
   rendering invariants; [Windows acceptance](../scripts/check-demo-windows.ps1) drives the demo and
   a [static owned fixture](../crates/app/src/shell/settings/native_accessibility.rs) through UI
   Automation. The [text registration](../vendor/gpui/src/window/a11y/text.rs) publishes the current
-  shaped line, byte-based selection, and paint viewport together after layout succeeds. Scalar
+  shaped line, byte-based selection, and paint viewport together after layout succeeds. Grapheme
   positions map back through the current field's runs; every replacement retires retained ranges,
   including replacement with identical text. The editor rejects selection during active IME
-  composition. The [Windows text adapter](../vendor/accesskit_windows/src/text/geometry.rs) clips
-  native rectangles and visible ranges without removing document text. Its
+  composition. Clusters exceeding AccessKit’s 255-byte character limit retain the field value but
+  omit text ranges until the text is representable again. Committed edits and completed composition
+  restore grapheme-aligned selections without changing active UTF-16 composition ranges. The
+  [Windows text adapter](../vendor/accesskit_windows/src/text/geometry.rs) clips native rectangles
+  and visible ranges without removing document text. Its
   [scroll adapter](../vendor/accesskit_windows/src/text/scroll.rs) converts exact ranges into
   absolute horizontal offsets; queued requests preserve the latest intent even when its range was
   already visible. The field owns its viewport and resumes caret tracking after edits or selection

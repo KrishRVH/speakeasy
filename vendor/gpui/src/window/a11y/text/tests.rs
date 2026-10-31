@@ -63,7 +63,7 @@ fn begin(builder: &mut A11yNodeBuilder) {
 }
 
 #[test]
-fn scalar_offsets_preserve_unicode_direction_and_reject_foreign_or_oversized_endpoints() {
+fn grapheme_offsets_preserve_direction_and_reject_partial_or_foreign_endpoints() {
     let text = "a🦀e\u{301}👩🏽‍💻";
     let mut next_id = 1;
     let snapshot = Snapshot::new(&registration(NodeId(0), text, 0), &mut next_id).unwrap();
@@ -79,6 +79,8 @@ fn scalar_offsets_preserve_unicode_direction_and_reject_foreign_or_oversized_end
         })
     );
     assert!(snapshot.position(2).is_none());
+    assert!(snapshot.position(6).is_none());
+    assert!(snapshot.position(12).is_none());
     let foreign = Snapshot::new(&registration(NodeId(0), text, 0), &mut next_id).unwrap();
     assert!(
         selection(
@@ -127,7 +129,38 @@ fn long_words_cross_runs_without_new_word_or_line_boundaries() {
     assert_eq!(runs[1].1.previous_on_line(), Some(runs[0].0));
     assert!(!runs[1].1.word_starts().contains(&0));
     assert_eq!(runs[1].1.word_starts(), &[6, 7]);
-    assert_eq!(runs[1].1.character_lengths(), &[1, 1, 1, 1, 1, 1, 4, 1, 2]);
+    assert_eq!(runs[1].1.character_lengths(), &[1, 1, 1, 1, 1, 1, 4, 3]);
+}
+
+#[test]
+fn unrepresentable_graphemes_retire_ranges_without_splitting_or_losing_the_value() {
+    let representable = format!("a{}", "\u{301}".repeat(127));
+    let oversized = format!("{representable}\u{301}");
+    let mut builder = A11yNodeBuilder::new();
+    begin(&mut builder);
+    let parent = register(&mut builder, &representable, representable.len());
+    builder.finish_text();
+    let original = builder.text_snapshots[&parent].position(0).unwrap();
+    let update = builder.finalize();
+    let run = update.nodes.iter().find(|(_, node)| node.role() == Role::TextRun).unwrap();
+    assert_eq!(run.1.character_lengths(), &[255]);
+
+    begin(&mut builder);
+    register(&mut builder, &oversized, oversized.len());
+    builder.node_mut(parent).unwrap().set_value(oversized.clone());
+    assert!(builder.finish_text().is_empty());
+    assert!(builder.text_snapshots.is_empty());
+    assert!(!builder.contains_native(original.node));
+    let update = builder.finalize();
+    let field = update.nodes.iter().find(|(id, _)| *id == parent).unwrap();
+    assert_eq!(field.1.value(), Some(oversized.as_str()));
+    assert!(field.1.text_selection().is_none());
+    assert!(update.nodes.iter().all(|(_, node)| node.role() != Role::TextRun));
+
+    begin(&mut builder);
+    register(&mut builder, &representable, representable.len());
+    builder.finish_text();
+    assert_ne!(builder.text_snapshots[&parent].position(0), Some(original));
 }
 
 #[test]

@@ -140,11 +140,10 @@ impl TextField {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.edit.marked.is_some() {
+        if self.edit.marked.is_some() || !self.edit.select_range(selection.anchor, selection.focus)
+        {
             return;
         }
-        self.edit.select(selection.anchor, false);
-        self.edit.select(selection.focus, true);
         self.viewport.reveal_caret();
         window.focus(&self.focus);
         cx.notify();
@@ -248,7 +247,7 @@ impl EntityInputHandler for TextField {
     }
 
     fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) {
-        self.edit.marked = None;
+        self.edit.unmark();
         cx.notify();
     }
 

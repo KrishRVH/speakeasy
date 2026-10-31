@@ -1,6 +1,7 @@
 use super::{A11yActionListener, Registration, allocate_id, physical_bounds};
 use crate::{App, Bounds, Pixels, Point, Window};
 use accesskit::{Action, ActionData, Node, NodeId, Role};
+use unicode_segmentation::UnicodeSegmentation as _;
 
 pub(super) type Listener = Box<dyn FnMut(Pixels, &mut Window, &mut App)>;
 
@@ -27,7 +28,7 @@ impl Geometry {
             advances: registration
                 .line
                 .text
-                .char_indices()
+                .grapheme_indices(true)
                 .map(|(offset, _)| offset)
                 .chain([registration.line.text.len()])
                 .map(|offset| registration.line.x_for_index(offset))

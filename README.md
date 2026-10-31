@@ -582,7 +582,7 @@ dictation is ready, or shows the latest error or notice; problems show in the at
 
 On Windows, assistive tools can read and operate the main Settings buttons, page tabs, switches, and
 phrase-correction and recognition-hint fields. Native acceptance checks their values, focus,
-actions, Unicode text selection, visible text ranges, horizontal text scrolling, and hide/reopen
+actions, grapheme text selection, visible text ranges, horizontal text scrolling, and hide/reopen
 behavior. Scrolling preserves selection and focus; text replacements retire prior ranges. Native
 selection is unavailable during active IME composition. Scrolling the Settings page and complete
 screen-reader navigation remain unfinished; macOS and Linux do not yet publish an accessibility

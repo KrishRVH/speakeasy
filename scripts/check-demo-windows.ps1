@@ -184,7 +184,9 @@ public sealed class TextEventCounts : IDisposable {
     $events = New-Object TextEventCounts $Field
     try {
         $rocket = [string][char]0xD83D + [char]0xDE80
-        $unicode = 'a' + $rocket + 'e' + [char]0x0301 + 'b'
+        $accented = 'e' + [char]0x0301
+        $emoji = [string][char]0xD83D + [char]0xDC69 + [char]0xD83C + [char]0xDFFD + [char]0x200D + [char]0xD83D + [char]0xDCBB
+        $unicode = 'a' + $rocket + $accented + $emoji + 'b'
         Set-Text $unicode
         $deadline = [DateTime]::UtcNow.AddSeconds(5)
         while ($events.Changed -eq 0 -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 30 }
@@ -205,6 +207,33 @@ public sealed class TextEventCounts : IDisposable {
         while (($text.GetSelection()[0].GetText(-1) -ne $rocket -or $events.Selected -le $beforeSelection) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 30 }
         if ($text.GetSelection()[0].GetText(-1) -ne $rocket) { throw 'Native text selection did not reach the editor' }
         if ($events.Selected -le $beforeSelection) { throw 'Native text selection event was not raised' }
+
+        foreach ($grapheme in @($accented, $emoji)) {
+            $null = $range.Move([Windows.Automation.Text.TextUnit]::Character, 1)
+            if ($range.GetText(-1) -ne $grapheme) { throw 'TextPattern character units split a grapheme' }
+            $range.Select()
+            $deadline = [DateTime]::UtcNow.AddSeconds(5)
+            while ($text.GetSelection()[0].GetText(-1) -ne $grapheme -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 20 }
+            if ($text.GetSelection()[0].GetText(-1) -ne $grapheme) { throw 'Native selection split a grapheme' }
+        }
+        $null = [DemoWindows]::PostMessage($Window, 0x0100, [IntPtr]0x08, [IntPtr]::Zero)
+        $null = [DemoWindows]::PostMessage($Window, 0x0101, [IntPtr]0x08, [IntPtr]::Zero)
+        $expected = 'a' + $rocket + $accented + 'b'
+        $deadline = [DateTime]::UtcNow.AddSeconds(5)
+        while ($value.Current.Value -ne $expected -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 20 }
+        if ($value.Current.Value -ne $expected) { throw 'Backspace after native selection orphaned an emoji component' }
+
+        $oversized = 'a' + (([string][char]0x0301) * 128)
+        $value.SetValue($oversized)
+        $deadline = [DateTime]::UtcNow.AddSeconds(5)
+        $pattern = $null
+        while (($value.Current.Value -ne $oversized -or $Field.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern, [ref]$pattern)) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 20 }
+        if ($value.Current.Value -ne $oversized -or $Field.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern, [ref]$pattern)) { throw 'Oversized grapheme was truncated or exposed partial character ranges' }
+        $value.SetValue('Restored field')
+        $deadline = [DateTime]::UtcNow.AddSeconds(5)
+        while (!$Field.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern, [ref]$pattern) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 20 }
+        if (!$Field.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern, [ref]$pattern)) { throw 'TextPattern did not return after an oversized grapheme' }
+        $text = $pattern
 
         $long = ('a' * 260) + ' ' + $rocket + ' end'
         Set-Text $long

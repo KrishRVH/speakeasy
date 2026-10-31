@@ -28,10 +28,53 @@ impl Edit {
     }
 
     pub(super) fn select(&mut self, offset: usize, extend: bool) {
-        self.cursor = self.text.floor_char_boundary(offset.min(self.text.len()));
+        self.cursor = self.floor_grapheme(offset);
         if !extend {
             self.anchor = self.cursor;
         }
+    }
+
+    pub(super) fn select_range(&mut self, anchor: usize, focus: usize) -> bool {
+        if self.floor_grapheme(anchor) != anchor || self.floor_grapheme(focus) != focus {
+            return false;
+        }
+        self.anchor = anchor;
+        self.cursor = focus;
+        true
+    }
+
+    pub(super) fn unmark(&mut self) {
+        let selection = self.selection();
+        let end = self.ceil_grapheme(selection.end);
+        let start = if selection.is_empty() {
+            end
+        } else {
+            self.floor_grapheme(selection.start)
+        };
+        (self.anchor, self.cursor) = if self.reversed() {
+            (end, start)
+        } else {
+            (start, end)
+        };
+        self.marked = None;
+    }
+
+    fn floor_grapheme(&self, offset: usize) -> usize {
+        self.text
+            .grapheme_indices(true)
+            .map(|(at, _)| at)
+            .chain([self.text.len()])
+            .take_while(|at| *at <= offset)
+            .last()
+            .unwrap_or(0)
+    }
+
+    fn ceil_grapheme(&self, offset: usize) -> usize {
+        self.text
+            .grapheme_indices(true)
+            .map(|(at, _)| at)
+            .find(|at| *at >= offset)
+            .unwrap_or(self.text.len())
     }
 
     pub(super) fn step(&mut self, forward: bool, extend: bool) {
@@ -107,6 +150,9 @@ impl Edit {
             self.anchor = end;
             self.cursor = end;
         }
+        if self.marked.is_none() {
+            self.unmark();
+        }
         true
     }
 
@@ -133,6 +179,74 @@ fn from_utf16(text: &str, offset: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pointer_selection_cannot_orphan_a_combining_or_emoji_grapheme() {
+        for grapheme in ["e\u{301}", "👩🏽‍💻"] {
+            for offset in 1..grapheme.len() {
+                let mut edit = Edit::default();
+                edit.set(format!("a{grapheme}b"));
+                edit.select(1 + offset, false);
+                assert_eq!(edit.cursor, 1);
+                edit.step(false, true);
+                assert!(edit.replace(None, "", Composition::Commit));
+                assert_eq!(edit.text, format!("{grapheme}b"));
+            }
+        }
+    }
+
+    #[test]
+    fn a_committed_insertion_keeps_the_caret_after_a_joined_grapheme() {
+        let mut edit = Edit::default();
+        edit.set("\u{301}b".into());
+        edit.select(0, false);
+        assert!(edit.replace(None, "e", Composition::Commit));
+        assert_eq!(edit.cursor, "e\u{301}".len());
+        edit.step(false, true);
+        assert!(edit.replace(None, "", Composition::Commit));
+        assert_eq!(edit.text, "b");
+    }
+
+    #[test]
+    fn accessible_selection_rejects_partial_graphemes_before_changing_either_endpoint() {
+        let mut edit = Edit::default();
+        edit.set("ae\u{301}👩🏽‍💻".into());
+        let end = edit.text.len();
+        assert!(edit.select_range(end, 1));
+        for (anchor, focus) in [(2, 1), (0, 2), (0, usize::MAX)] {
+            assert!(!edit.select_range(anchor, focus));
+            assert_eq!(edit.anchor, end);
+            assert_eq!(edit.cursor, 1);
+        }
+        assert!(edit.replace(None, "", Composition::Commit));
+        assert_eq!(edit.text, "a");
+    }
+
+    #[test]
+    fn unmarking_restores_graphemes_without_rounding_an_active_utf16_composition() {
+        for selected in [1..1, 1..2, Range { start: 2, end: 1 }] {
+            let mut edit = Edit::default();
+            assert!(edit.replace(None, "e\u{301}", Composition::Mark(Some(selected.clone()))));
+            assert_eq!(
+                edit.utf16(edit.selection()),
+                selected.start.min(selected.end)..selected.start.max(selected.end)
+            );
+            assert_eq!(edit.reversed(), selected.start > selected.end);
+            edit.unmark();
+            assert!(edit.marked.is_none());
+            if selected.start == selected.end {
+                assert_eq!(edit.selection(), 3..3);
+            } else {
+                assert_eq!(edit.selection(), 0..3);
+                assert_eq!(edit.reversed(), selected.start > selected.end);
+            }
+            if edit.selection().is_empty() {
+                edit.step(false, true);
+            }
+            assert!(edit.replace(None, "", Composition::Commit));
+            assert_eq!(edit.text, "");
+        }
+    }
 
     #[test]
     fn deletion_and_selection_do_not_split_combining_or_emoji_graphemes() {

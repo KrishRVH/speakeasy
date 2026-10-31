@@ -9,7 +9,7 @@ mod scroll;
 #[cfg(test)]
 mod tests;
 
-/// A single-line editor's selection, in UTF-8 byte offsets. Direction is preserved.
+/// A single-line editor's grapheme selection, in UTF-8 byte offsets. Direction is preserved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AccessibleTextSelection {
     /// The stationary end of the selection.
@@ -73,10 +73,13 @@ impl Snapshot {
         let revision = registration.revision;
         let scroll = scroll::ScrollTarget::new(registration, next_id)?;
         let offsets: Vec<_> = text
-            .char_indices()
+            .grapheme_indices(true)
             .map(|(at, _)| at)
             .chain([text.len()])
             .collect();
+        if offsets.windows(2).any(|pair| u8::try_from(pair[1] - pair[0]).is_err()) {
+            return None;
+        }
         let count = offsets.len() - 1;
         let mut runs = Vec::new();
         for start in (0..count.max(1)).step_by(255) {
@@ -130,7 +133,7 @@ fn selection(runs: &[Run], selection: &TextSelection) -> Option<AccessibleTextSe
 impl Window {
     /// Registers the current single-line text during prepaint, under its enclosing TextInput.
     /// `origin` and `viewport` are logical window coordinates from the same layout used to paint.
-    /// Invalid byte selections, hidden parents, and aborted layout publish no text ranges.
+    /// Partial graphemes, clusters over 255 bytes, hidden parents, and aborted layout publish no text ranges.
     /// Native selection actions are validated against the current text snapshot before dispatch.
     pub fn register_accessible_text(
         &mut self,

@@ -18,9 +18,10 @@ The source patches cover native windows, accessibility, frame scheduling, and pa
   disconnection precedes HWND destruction. Node bounds use physical client coordinates. The app's
   Windows acceptance script verifies real providers; `src/window/a11y/tests.rs` covers the pure
   tree and mocked rendering. `src/window/a11y/text.rs` registers single-line editor text from its
-  current shaped layout. Selection uses scalar boundaries and byte offsets; bounded runs preserve
+  current shaped layout. Selection uses grapheme boundaries and byte offsets; bounded runs preserve
   word and line continuity. Text updates retire retained range identities, and aborted layout
-  cannot publish partial selection references. A clipping ancestor carries the actual paint
+  cannot publish partial selection references. Clusters exceeding the character-length representation
+  retain the parent value without publishing text ranges. A clipping ancestor carries the actual paint
   viewport to the [Windows adapter patch](../accesskit_windows/README.speakeasy.md). It exposes bounded
   horizontal offsets and delivers scrolling to the editor owner. Geometry changes retire the scroll
   target without retiring text ranges; plain panning preserves both identities.
