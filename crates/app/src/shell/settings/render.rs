@@ -458,6 +458,7 @@ impl Settings {
             .flex_col()
             .gap(ROW_GAP)
             .child(
+                // The activating key release must not also select through the group.
                 ui.button(label, Action::Language)
                     .track_focus(&self.language.button)
                     .on_click(|_, _, cx| cx.stop_propagation()),
