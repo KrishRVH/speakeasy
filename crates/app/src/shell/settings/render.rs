@@ -8,7 +8,9 @@ use gpui::{
     prelude::*, px, relative, rgb, svg,
 };
 
-use super::{Action, EngineFile, Setting, Settings, is_demo, language, permissions};
+use super::{
+    Action, EngineFile, Setting, Settings, is_demo, language, navigation::Page, permissions,
+};
 use crate::{
     BRAND_FONT,
     config::{Engine, TextDelivery},
@@ -30,62 +32,40 @@ const TEXT: Pixels = px(12.0);
 const EDGE: Pixels = px(32.0);
 
 impl Render for Settings {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         self.vocabulary.theme(self.config.theme, cx);
         self.recognition.theme(self.config.theme, cx);
         let palette = self.config.theme.palette();
         let ui = Ui { palette, cx };
         let unconfigured = !is_demo(cx) && self.config.needs_engine();
         let unsaved = self.unsaved(cx);
+        let compact = window.viewport_size().height < px(600.0);
+        let top = div()
+            .flex_none()
+            .p(EDGE)
+            .pb(px(16.0))
+            .when(compact, |top| top.pt(px(16.0)).pb(px(12.0)))
+            .flex()
+            .flex_col()
+            .gap(px(16.0))
+            .child(header(self.presentation.indicator, palette, compact))
+            .child(self.navigation(&ui));
         let body = div()
             .id("settings")
+            .track_scroll(&self.navigation.scroll)
             .flex_1()
             .min_h(px(0.0))
             .overflow_y_scroll()
             .p(EDGE)
+            .pt(px(0.0))
             .pb(px(24.0))
             .flex()
             .flex_col()
             .gap(px(20.0))
-            .child(header(self.presentation.indicator, palette))
-            .child(self.readiness_card(&ui))
-            .child(if self.is_setting_up() || unconfigured {
-                self.setup_card(&ui).into_any_element()
-            } else {
-                self.gesture_hints(&ui).into_any_element()
+            .when(self.is_setting_up() || unconfigured, |body| {
+                body.child(self.setup_card(&ui))
             })
-            .when(!self.is_setting_up(), |settings| {
-                settings.child(self.engine_section(&ui))
-            })
-            .when(cfg!(target_os = "linux"), |settings| {
-                settings.child(self.linux_section(&ui))
-            })
-            .child(self.microphone_section(&ui))
-            .child(self.preferences_section(&ui))
-            .when(
-                self.config.uses_nemotron() || !self.config.recognition_terms.phrases().is_empty(),
-                |settings| settings.child(self.recognition_section(cx)),
-            )
-            .child(self.vocabulary_section(cx))
-            .child(
-                ui.section("UPDATES")
-                    .child(format!("Speakeasy {}", env!("CARGO_PKG_VERSION")))
-                    .child(
-                        row()
-                            .child(ui.button(
-                                if self.update_check.is_some() {
-                                    "Checking…"
-                                } else {
-                                    "Check for updates"
-                                },
-                                Action::CheckUpdates,
-                            ))
-                            .when(self.available_update.is_some(), |row| {
-                                row.child(ui.button("Open release", Action::OpenUpdate))
-                            }),
-                    )
-                    .child("Checks GitHub only when you ask. Installation stays in your control."),
-            )
+            .child(self.page(&ui))
             .child(footer(palette, cx));
         // The commands and the status stay in view however far the body scrolls, since the status
         // line is where every failure and unsaved change is told once the pill has faded.
@@ -108,6 +88,7 @@ impl Render for Settings {
             .text_color(rgb(palette.ink))
             .flex()
             .flex_col()
+            .child(top)
             .child(body)
             .child(bar)
     }
@@ -120,6 +101,93 @@ struct Ui<'a> {
 }
 
 impl Settings {
+    fn navigation(&self, ui: &Ui<'_>) -> impl IntoElement {
+        row().children([Page::Dictation, Page::Words, Page::Advanced].map(|page| {
+            ui.button(page.label(), Action::Page(page))
+                .track_focus(self.navigation.focus(page))
+                .when(self.navigation.page == page, |button| {
+                    button
+                        .border_color(rgb(ui.palette.lamp))
+                        .bg(rgb(ui.palette.panel))
+                })
+        }))
+    }
+
+    fn page(&self, ui: &Ui<'_>) -> impl IntoElement {
+        let page = div().flex().flex_col().gap(px(20.0));
+        let model = if is_demo(ui.cx) {
+            "Simulated model"
+        } else if self.is_setting_up() {
+            "Setting up local speech…"
+        } else if self.config.needs_engine() {
+            "Not set up"
+        } else {
+            self.config
+                .model_choice()
+                .map_or_else(|| self.config.engine.label(), Model::label)
+        };
+        match self.navigation.page {
+            Page::Dictation => page
+                .child(self.readiness_card(ui))
+                .child(self.gesture_hints(ui, false))
+                .child(self.microphone_section(ui))
+                .child(
+                    ui.section("LOCAL SPEECH")
+                        .child(
+                            row()
+                                .items_center()
+                                .justify_between()
+                                .child(model)
+                                .child(ui.button("Change model", Action::Page(Page::Advanced))),
+                        )
+                        .when(!self.is_setting_up(), |section| {
+                            section.child(self.language_control(ui))
+                        }),
+                )
+                .child(self.preferences_section(ui)),
+            Page::Words => page
+                .when(
+                    self.config.uses_nemotron()
+                        || !self.config.recognition_terms.phrases().is_empty(),
+                    |page| page.child(self.recognition_section(ui.cx)),
+                )
+                .child(self.vocabulary_section(ui.cx)),
+            Page::Advanced => page
+                .when(!self.is_setting_up(), |page| {
+                    page.child(self.engine_section(ui)).child(self.switch(
+                        ui,
+                        "Prefer GPU",
+                        Setting::PreferGpu,
+                    ))
+                })
+                .when(cfg!(target_os = "linux"), |page| {
+                    page.child(self.linux_section(ui))
+                })
+                .child(self.gesture_hints(ui, true))
+                .child(self.update_section(ui)),
+        }
+    }
+
+    fn update_section(&self, ui: &Ui<'_>) -> impl IntoElement {
+        ui.section("UPDATES")
+            .child(format!("Speakeasy {}", env!("CARGO_PKG_VERSION")))
+            .child(
+                row()
+                    .child(ui.button(
+                        if self.update_check.is_some() {
+                            "Checking…"
+                        } else {
+                            "Check for updates"
+                        },
+                        Action::CheckUpdates,
+                    ))
+                    .when(self.available_update.is_some(), |row| {
+                        row.child(ui.button("Open release", Action::OpenUpdate))
+                    }),
+            )
+            .child("Checks GitHub only when you ask. Installation stays in your control.")
+    }
+
     fn readiness_card(&self, ui: &Ui<'_>) -> impl IntoElement {
         let readiness = self.presentation.readiness;
         let active = self.practice.task.is_some();
@@ -254,7 +322,7 @@ impl Settings {
             .child(div().flex().child(ui.button(command, Action::Setup)))
     }
 
-    fn gesture_hints(&self, ui: &Ui<'_>) -> impl IntoElement {
+    fn gesture_hints(&self, ui: &Ui<'_>, detailed: bool) -> impl IntoElement {
         let alternative_hint = "Hold briefly before adding Space, S, W, or A. Quick combinations keep their usual action.";
         let shortcut = &self.presentation.shortcut;
         let cancel_shortcut = &self.presentation.cancel_shortcut;
@@ -290,7 +358,7 @@ impl Settings {
                     && self.config.mac_shortcut != speakeasy_platform::MacShortcut::Function,
                 |panel| panel.child(alternative_hint),
             )
-            .when(records_shows, |panel| {
+            .when(records_shows && detailed, |panel| {
                 panel.children(
                     [
                         "For a Show, add S screen · W window · A area.".into(),
@@ -390,13 +458,6 @@ impl Settings {
 
     fn preferences_section(&self, ui: &Ui<'_>) -> impl IntoElement {
         ui.section("PREFERENCES")
-            .when(!self.is_setting_up(), |section| {
-                section.child(row().child(self.language_control(ui)).child(self.switch(
-                    ui,
-                    "Prefer GPU",
-                    Setting::PreferGpu,
-                )))
-            })
             .child(
                 row()
                     .child(self.delivery_control(ui))
@@ -707,7 +768,7 @@ fn cycle_focus(event: &KeyDownEvent, window: &mut Window, cx: &mut App) {
     }
 }
 
-fn header(indicator: Indicator, palette: &'static Palette) -> impl IntoElement {
+fn header(indicator: Indicator, palette: &'static Palette, compact: bool) -> impl IntoElement {
     let indicator_color = match indicator {
         Indicator::Recording => palette.live,
         Indicator::Attention => palette.warn,
@@ -726,13 +787,16 @@ fn header(indicator: Indicator, palette: &'static Palette) -> impl IntoElement {
                 .child(jewel(indicator_color, 10.0))
                 .child(wordmark(palette)),
         )
-        .child(
-            div()
-                .text_size(px(14.0))
-                .text_color(rgb(palette.muted))
-                .child("Say the word."),
-        )
-        .child(keystone_rule(palette))
+        .when(!compact, |header| {
+            header
+                .child(
+                    div()
+                        .text_size(px(14.0))
+                        .text_color(rgb(palette.muted))
+                        .child("Say the word."),
+                )
+                .child(keystone_rule(palette))
+        })
 }
 
 fn footer(palette: &'static Palette, cx: &App) -> impl IntoElement {

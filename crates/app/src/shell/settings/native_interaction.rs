@@ -191,6 +191,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     view.practice.task = Some(Task::ready(()));
                     anyhow::Ok(())
                 })??;
+                navigate(settings, cx).await?;
                 other.update(cx, |_, window, _| window.remove_window())?;
                 // GPUI invokes should-close with the window already borrowed, but without borrowing
                 // the Settings entity. Recursing through WindowHandle::update silently misses it.
@@ -211,6 +212,54 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
     outcome
         .try_recv()
         .context("Native interaction acceptance did not complete")?
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "The owned-window fixture dispatches keys and checks focus on GPUI's UI thread"
+)]
+async fn navigate(settings: WindowHandle<Settings>, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    use super::navigation::Page;
+
+    for (page, activation) in [
+        (Page::Advanced, "enter"),
+        (Page::Words, "space"),
+        (Page::Dictation, "enter"),
+    ] {
+        settings.update(cx, |view, window, _| {
+            view.navigation.focus(page).focus(window);
+        })?;
+        Timer::after(Duration::from_millis(100)).await;
+        key(settings, activation, cx)?;
+        Timer::after(Duration::from_millis(100)).await;
+        settings.update(cx, |view, window, _| {
+            ensure!(
+                view.navigation.page == page,
+                "Keyboard navigation missed its page"
+            );
+            ensure!(
+                view.navigation.focus(page).is_focused(window),
+                "Page change lost keyboard focus"
+            );
+            ensure!(
+                view.practice.task.is_none()
+                    && view.practice.text.is_empty()
+                    && !view.practice.ready,
+                "Leaving the dictation page retained private practice"
+            );
+            ensure!(
+                view.config.language == "auto",
+                "Changing pages lost an unsaved edit"
+            );
+            anyhow::Ok(())
+        })??;
+    }
+    settings.update(cx, |view, _, _| {
+        view.practice.text = zeroize::Zeroizing::new("Synthetic private practice".into());
+        view.practice.ready = true;
+        view.practice.task = Some(Task::ready(()));
+    })?;
+    Ok(())
 }
 
 fn grant_microphone_on_return() -> impl FnMut() -> Permissions {

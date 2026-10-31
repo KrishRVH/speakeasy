@@ -43,6 +43,7 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                     vocabulary: vocabulary::Editor::new(config.theme, cx),
                     recognition: recognition::Editor::new(config.theme, cx),
                     language: language::Picker::new(cx),
+                    navigation: navigation::Navigation::new(cx),
                     practice: practice::Practice::default(),
                     permissions: None,
                     update_check: None,

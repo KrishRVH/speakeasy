@@ -3,6 +3,7 @@
 //! and saves it starts, and waits on the microphone scan that Services holds.
 
 mod language;
+mod navigation;
 mod permissions;
 mod practice;
 mod recognition;
@@ -52,6 +53,7 @@ pub(super) struct Settings {
     vocabulary: vocabulary::Editor,
     recognition: recognition::Editor,
     language: language::Picker,
+    navigation: navigation::Navigation,
     practice: practice::Practice,
     update_check: Option<(crate::updates::Check, Task<()>)>,
     available_update: Option<crate::updates::Version>,
@@ -96,6 +98,7 @@ impl Settings {
             vocabulary,
             recognition,
             language: language::Picker::new(cx),
+            navigation: navigation::Navigation::new(cx),
             practice: practice::Practice::default(),
             update_check: None,
             available_update: None,
@@ -145,6 +148,7 @@ impl Settings {
             self.practice.stop();
         }
         match action {
+            Action::Page(page) => self.open_page(page, window),
             Action::Setup => self.toggle_setup(cx),
             Action::Install(model) => self.install_model(model, cx),
             Action::Engine => self.switch_engine(),
@@ -671,6 +675,7 @@ impl Presentation {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
+    Page(navigation::Page),
     Revert,
     #[cfg(target_os = "macos")]
     MacShortcut,
@@ -702,6 +707,9 @@ impl Action {
     /// resuming share the primary button, which keeps focus as it turns from one to the other.
     const fn element_id(self) -> &'static str {
         match self {
+            Self::Page(navigation::Page::Dictation) => "page-dictation",
+            Self::Page(navigation::Page::Words) => "page-words",
+            Self::Page(navigation::Page::Advanced) => "page-advanced",
             Self::Revert => "revert",
             #[cfg(target_os = "macos")]
             Self::MacShortcut => "mac-shortcut",

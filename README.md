@@ -350,7 +350,12 @@ about 0.8 GB in all, and turns dictation on:
 Then hold <kbd>Ctrl</kbd> + <kbd>Win</kbd> (Windows), <kbd>Fn</kbd> (Mac), or <kbd>Ctrl</kbd> +
 <kbd>Super</kbd> + <kbd>Space</kbd> (Linux) in an editor and speak.
 
-Settings shows whether the local model and shortcut are ready. It also shows macOS microphone,
+Settings opens on **Dictation**, with microphone, language, delivery, and practice controls.
+**Words** holds recognition hints and phrase corrections. **Advanced** holds model downloads, engine
+paths, GPU preference, desktop bindings, Show shortcuts, and updates. Changing pages keeps unsaved
+edits; leaving Dictation ends private practice and clears its text.
+
+Dictation shows whether the local model and shortcut are ready. It also shows macOS microphone,
 Accessibility, and screen permissions without prompting or capturing anything. Permission status
 refreshes when Settings comes to the front; **Open settings** opens the matching system page on
 macOS and Windows. Linux's **Microphone help** opens the setup guide. Windows and Linux access stays
@@ -361,8 +366,8 @@ saved, and practice cannot record a Show. **End practice**, hiding the window, l
 changing settings ends practice and clears its text. To check delivery, end practice and dictate
 into an editor; practice does not verify another app's input or clipboard behavior.
 
-**Check for updates** in Settings contacts the repository's latest-release endpoint on GitHub only
-when clicked. It sends no recordings, settings, or device details. **Open release** opens that
+**Check for updates** under Advanced contacts the repository's latest-release endpoint on GitHub
+only when clicked. It sends no recordings, settings, or device details. **Open release** opens that
 version's official download page; checking never installs or runs an update.
 
 Downloads come from pinned GitHub and Hugging Face URLs and are checked against their SHA-256 before
@@ -468,24 +473,25 @@ Long Parakeet dictation starts recognition at pauses while you keep speaking, re
 after release. Text still arrives once, when you finish, with phrase corrections applied across the
 whole dictation.
 
-**Nemotron** is an optional 742 MB download under **Local speech**. NVIDIA's Nemotron 3.5 ASR
-Streaming 0.6B supports 32 locales, including Hindi, Japanese, Korean, and Mandarin. Choose a
+**Nemotron** is an optional 742 MB download under **Advanced → Local speech**. NVIDIA's Nemotron 3.5
+ASR Streaming 0.6B supports 32 locales, including Hindi, Japanese, Korean, and Mandarin. Choose a
 language or automatic detection. It performs continuous inference during ordinary dictation and
 practice; final text arrives once, after release. If continuous recognition fails, Speakeasy retries
 the complete recording with the same model. Parakeet remains the default; download, then save to
 switch. Whisper and Show narration use whole-recording recognition.
 
-**Recognition hints** helps Nemotron recognize names and jargon without forcing replacement text.
-Add a name or phrase, then save. Up to 100 hints are stored locally; each allows six words and 64
-characters. They remain saved when another model is selected, but only Nemotron uses them. Use
-**Phrase corrections** when you want a deterministic replacement.
+**Recognition hints** under Words helps Nemotron recognize names and jargon without forcing
+replacement text. Add a name or phrase, then save. Up to 100 hints are stored locally; each allows
+six words and 64 characters. They remain saved when another model is selected, but only Nemotron
+uses them. Use **Phrase corrections** when you want a deterministic replacement.
 
-**Whisper** runs a local whisper.cpp server with a GGML model. Switch the engine under **Local
-speech**, choose its executable and model, and save; switching is always explicit. The known-good
-Windows build is [whisper.cpp b5130](https://github.com/ggml-org/whisper.cpp/releases/tag/b5130):
-extract the complete runtime and choose `Release/whisper-server.exe`. Turn off **Prefer GPU** for a
-CPU-only build. The `threads` setting applies to Whisper and defaults to four. On shared Linux
-machines, prefer Parakeet: other accounts can read Whisper's
+**Whisper** runs a local whisper.cpp server with a GGML model. Switch the engine under **Advanced →
+Local speech**, choose its executable and model, and save; switching is always explicit. The
+known-good Windows build is
+[whisper.cpp b5130](https://github.com/ggml-org/whisper.cpp/releases/tag/b5130): extract the
+complete runtime and choose `Release/whisper-server.exe`. Turn off **Prefer GPU** for a CPU-only
+build. The `threads` setting applies to Whisper and defaults to four. On shared Linux machines,
+prefer Parakeet: other accounts can read Whisper's
 [request route](docs/architecture.md#local-recognition-and-privacy).
 
 The worker stays warm on loopback. With a GPU, one silent request initializes its kernels before the
@@ -641,9 +647,9 @@ paused clock exercises gesture deadlines and the five-minute cap.
   expiry, and image cleanup on close. Linux also checks the owned window's rendered frame pixels. It
   uses no microphone, global input, screen capture, or clipboard.
 - The same command with `native_phrase_editor_` checks Settings IME composition and save draining;
-  with `native_settings_picker_` it checks language navigation, focus restoration, permission
-  refresh using fake observations, and private practice cleanup. Run each filter separately so each
-  process owns one GPUI application.
+  with `native_settings_picker_` it checks language and page navigation, focus restoration,
+  permission refresh using fake observations, and private practice cleanup. Run each filter
+  separately so each process owns one GPUI application.
 
 Live microphone, editor, and screen acceptance is tracked under
 [verification](docs/architecture.md#verification).

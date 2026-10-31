@@ -60,7 +60,7 @@ impl Readiness {
             model: match snapshot.model {
                 ModelState::Ready => "Ready",
                 ModelState::Loading => "Loading…",
-                ModelState::Unavailable => "Unavailable (check Local speech below)",
+                ModelState::Unavailable => "Unavailable (see Advanced → Local speech)",
             },
             shortcut: if snapshot.desktop_ready {
                 "Available"

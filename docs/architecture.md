@@ -119,6 +119,8 @@ module unless a test file is named.
   example checks owned-window rendering on each platform.
 - **Settings and the settings file**: [shell/settings.rs](../crates/app/src/shell/settings.rs) and
   [settings/render.rs](../crates/app/src/shell/settings/render.rs) edit a draft;
+  [navigation.rs](../crates/app/src/shell/settings/navigation.rs) owns page selection and keyboard
+  focus without changing that draft, and ends private practice when its page is hidden.
   [config.rs](../crates/app/src/config.rs) and [paths.rs](../crates/app/src/paths.rs) own the file
   contract and where it lives. [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns
   native selection and IME composition; its pure edit state tests Unicode boundaries, and
