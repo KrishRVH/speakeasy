@@ -47,6 +47,7 @@ pub struct MoviePrefix {
     pub duration: Duration,
     /// Number of samples in complete fragments, including held images produced by the codec.
     pub frames: u32,
+    samples: Vec<Duration>,
     /// A malformed or incomplete fragment follows the surviving prefix.
     pub truncated: bool,
 }
@@ -54,6 +55,12 @@ pub struct MoviePrefix {
 impl MoviePrefix {
     /// Maximum accepted container size. Capture adapters may impose smaller writing budgets.
     pub const FILE_LIMIT: u64 = 1 << 30;
+
+    /// Presentation times of complete surviving samples, relative to the movie's zero origin.
+    #[must_use]
+    pub fn samples(&self) -> &[Duration] {
+        &self.samples
+    }
 
     /// Reads bounded metadata ranges from a silent, single-track fragmented AVC MP4. `read` must
     /// return exactly the requested bytes. The returned prefix excludes optional final indexes;
@@ -78,6 +85,7 @@ impl MoviePrefix {
             size: track.size,
             duration: Duration::ZERO,
             frames: 0,
+            samples: Vec::new(),
             truncated: false,
         };
         let mut decoded = 0_u64;
@@ -131,6 +139,9 @@ impl MoviePrefix {
             decoded = fragment.decoded;
             presented = presented.max(fragment.presented);
             result.frames = frames;
+            for at in fragment.times {
+                result.samples.push(duration(at, track.timescale)?);
+            }
             result.bytes = data.end;
             position = data.end;
             sequence = sequence
@@ -140,16 +151,19 @@ impl MoviePrefix {
         if result.frames == 0 {
             return Err(MovieError::NoFragment.into());
         }
-        let nanos = u128::from(presented)
-            .saturating_mul(1_000_000_000)
-            .checked_div(u128::from(track.timescale))
-            .ok_or(MovieError::Invalid("Movie timescale is zero"))?;
-        result.duration = Duration::from_nanos(
-            u64::try_from(nanos)
-                .map_err(|_too_long| MovieError::Invalid("Movie duration overflows"))?,
-        );
+        result.duration = duration(presented, track.timescale)?;
         Ok(result)
     }
+}
+
+fn duration(ticks: u64, timescale: u32) -> Result<Duration, MovieError> {
+    let nanos = u128::from(ticks)
+        .saturating_mul(1_000_000_000)
+        .checked_div(u128::from(timescale))
+        .ok_or(MovieError::Invalid("Movie timescale is zero"))?;
+    Ok(Duration::from_nanos(u64::try_from(nanos).map_err(
+        |_too_long| MovieError::Invalid("Movie duration overflows"),
+    )?))
 }
 
 struct Input<F> {
@@ -262,6 +276,7 @@ struct Fragment {
     samples: u32,
     decoded: u64,
     presented: u64,
+    times: Vec<u64>,
 }
 
 fn fragment(
@@ -325,6 +340,7 @@ fn fragment(
         samples: 0,
         decoded,
         presented: decoded,
+        times: Vec::new(),
     };
     if parts.iter().any(|(kind, _)| kind == b"tfdt") {
         let mut time = Fields::new(child(&parts, *b"tfdt")?);
@@ -420,6 +436,7 @@ fn fragment(
                 "Movie duration exceeds its limit",
             )?;
             result.presented = result.presented.max(end);
+            result.times.push(at);
             next = next
                 .checked_add(u64::from(size))
                 .filter(|end| *end <= data.end)

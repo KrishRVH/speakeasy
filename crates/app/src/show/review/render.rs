@@ -373,7 +373,19 @@ impl Review {
                                 cx,
                             )
                             .child("All retained frames"),
-                        ),
+                        )
+                        .when(cfg!(target_os = "windows"), |bar| {
+                            bar.child(
+                                button(
+                                    Action::Mode(Mode::Video),
+                                    palette,
+                                    detail.movie.is_some(),
+                                    self.mode == Mode::Video,
+                                    cx,
+                                )
+                                .child("Video"),
+                            )
+                        }),
                 )
                 .child(
                     div()
@@ -388,7 +400,12 @@ impl Review {
                     self.detail
                         .as_ref()
                         .and_then(|detail| detail.frames.get(key.frame))
-                        .map(|frame| request.caption(frame, self.mode))
+                        .and_then(|frame| match &self.image {
+                            ImageState::Ready(decoded) => {
+                                Some(request.caption(frame, self.mode, decoded.at))
+                            },
+                            _ => None,
+                        })
                 }),
                 |body, caption| {
                     body.child(
@@ -400,7 +417,10 @@ impl Review {
                 },
             )
             .child(self.navigation(key.frame, palette, cx))
-            .when(self.mode == Mode::Source, |body| {
+            .when(self.mode == Mode::Video, |body| {
+                body.child(self.timeline(palette, cx))
+            })
+            .when(matches!(self.mode, Mode::Source | Mode::Video), |body| {
                 body.child(
                     div()
                         .id("show-marks")
@@ -479,7 +499,7 @@ impl Review {
             .items_center()
             .justify_center()
             .child(match &self.image {
-                ImageState::Ready(image) => img(std::sync::Arc::clone(image))
+                ImageState::Ready(decoded) => img(std::sync::Arc::clone(&decoded.image))
                     .size_full()
                     .into_any_element(),
                 ImageState::Loading => message("Loading frame…", palette).into_any_element(),
@@ -507,18 +527,22 @@ impl Review {
             .as_ref()
             .map_or(&[][..], |detail| detail.frames.as_slice());
         let count = frames.len();
-        let caption = frames.get(index).map_or_else(
-            || "No saved frame available".into(),
-            |frame| {
-                format!(
-                    "#{} of {count} · {} · {} ms{}",
-                    frame.number,
-                    frame.at,
-                    frame.at.as_millis(),
-                    frame.marker
-                )
-            },
-        );
+        let caption = if self.mode == Mode::Video {
+            self.video_caption()
+        } else {
+            frames.get(index).map_or_else(
+                || "No saved frame available".into(),
+                |frame| {
+                    format!(
+                        "#{} of {count} · {} · {} ms{}",
+                        frame.number,
+                        frame.at,
+                        frame.at.as_millis(),
+                        frame.marker
+                    )
+                },
+            )
+        };
         div()
             .flex()
             .flex_col()
@@ -771,7 +795,9 @@ impl Review {
                     button(
                         Action::Copy(CopyKind::Moment),
                         palette,
-                        can_copy && matches!(self.image, ImageState::Ready(_)),
+                        can_copy
+                            && self.loading.is_none()
+                            && matches!(self.image, ImageState::Ready(_)),
                         false,
                         cx,
                     )
@@ -857,6 +883,7 @@ fn button(
         Action::Jump(false) => "rewind-show".into(),
         Action::Mode(Mode::Keyframes) => "show-keyframes".into(),
         Action::Mode(Mode::Source) => "show-source-frames".into(),
+        Action::Mode(Mode::Video) => "show-video-frames".into(),
         Action::Keep => "keep-show".into(),
         Action::Previous => "previous-frame".into(),
         Action::Next => "next-frame".into(),

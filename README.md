@@ -173,8 +173,12 @@ In **All retained frames**, numbered mark buttons jump to the sample at or befor
 viewer reports both the mark time and the actual sample time. If retained frames cannot be saved,
 the selected keyframes still save and Speakeasy reports the loss.
 
-For a Show with video, **Play video** opens its MP4 in your system player. The saved summary and
-`inspect` report its coverage. Playback does not overlay the Show's marks or narration.
+On Windows, choose **Video** to scrub the recorded timeline or step through its actual samples.
+Numbered marks and timed narration jump to their recorded times. The displayed timestamp belongs to
+the decoded frame; recovered video can extend past the annotation journal. Rapid seeks replace the
+pending request while the previous decoder closes, and Copy moment waits for the selected frame.
+**Play video** opens the MP4 in your system player. Video has no drawn annotations or narration
+audio.
 
 Choose **Narration** beside **Summary** to read the recorded words. Click a timed clause to jump to
 a frame; the caption gives both the clause's time and the displayed frame's actual time, including
@@ -717,6 +721,11 @@ paused clock exercises gesture deadlines and the five-minute cap.
   and `cargo test --locked -p speakeasy native_video_export_ -- --ignored --test-threads=1`. They
   check native seeks, pixel orientation, cancellation, file replacement, and command exports beyond
   the annotation journal without microphone, screen, input, or clipboard access.
+- With the same Windows fixtures, run
+  `cargo test --locked -p speakeasy native_show_video_review_ -- --ignored --test-threads=1`. It
+  checks the owned review window's rapid seeks, scrubber, keyboard and narration navigation, exact
+  Copy moment retrieval, and cleanup on close. It injects events into that window without installing
+  hooks, recording the screen, or touching the clipboard.
 
 Live microphone, editor, and screen acceptance is tracked under
 [verification](docs/architecture.md#verification).

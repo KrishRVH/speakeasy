@@ -22,6 +22,7 @@ crc32fast.workspace = true
 getrandom.workspace = true
 futures-util.workspace = true
 gpui = { workspace = true, features = ["font-kit"] }
+image = { workspace = true, features = ["png"] }
 raw-window-handle.workspace = true
 reqwest = { workspace = true, features = ["multipart"] }
 rtrb.workspace = true

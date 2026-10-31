@@ -5000,6 +5000,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "gpui",
+ "image",
  "proptest",
  "raw-window-handle",
  "reqwest",

@@ -25,6 +25,7 @@ pub(super) enum Mode {
     #[default]
     Keyframes,
     Source,
+    Video,
 }
 
 #[derive(Debug)]
@@ -142,7 +143,20 @@ pub(super) struct Frame {
     pub number: usize,
     pub at: Moment,
     pub marker: String,
-    pub file: super::frame::Content,
+    pub file: crate::show::preview::Content,
+}
+
+impl Frame {
+    pub(super) fn presentation(&self) -> std::time::Duration {
+        let start = self.at.since(Moment::START);
+        match &self.file {
+            crate::show::preview::Content::Video { span, .. } => start.saturating_add(
+                span.start
+                    .saturating_sub(Moment::from(span.start).since(Moment::START)),
+            ),
+            _ => start,
+        }
+    }
 }
 
 /// Only the selected Show's summary and bounded recorded clauses remain in memory. No Debug.
@@ -161,9 +175,14 @@ impl Detail {
     pub(super) fn locate(&self, at: Moment) -> Option<(usize, Relation)> {
         let index = self
             .frames
-            .partition_point(|frame| frame.at <= at)
+            .partition_point(|frame| {
+                super::navigation::decoder_time(frame.presentation()) <= at.since(Moment::START)
+            })
             .saturating_sub(1);
-        Some((index, Relation::between(at, self.frames.get(index)?.at)))
+        Some((
+            index,
+            Relation::between(at, self.frames.get(index)?.presentation()),
+        ))
     }
 
     pub(super) fn open(directory: &Path, mode: Mode) -> io::Result<Self> {
@@ -236,7 +255,7 @@ impl Detail {
                         number: frame.index,
                         at: frame.at,
                         marker: frame.marker(manifest.marks()),
-                        file: super::frame::Content::Png(frame.file()),
+                        file: crate::show::preview::Content::Png(frame.file()),
                     })
                     .collect();
             },
@@ -266,7 +285,7 @@ impl Detail {
                                 number: index.saturating_add(1),
                                 at,
                                 marker: String::new(),
-                                file: super::frame::Content::Source {
+                                file: crate::show::preview::Content::Source {
                                     index: Arc::clone(&source),
                                     at,
                                 },
@@ -278,6 +297,52 @@ impl Detail {
         }
         if mode == Mode::Source && !source_available {
             frames.clear();
+        }
+        if mode == Mode::Video {
+            frames.clear();
+            if let Some(metadata) = &movie {
+                match crate::show::store::movie::inspect(directory) {
+                    Ok(Some(inspected)) => {
+                        let annotations = Moment::from_millis(
+                            metadata
+                                .coverage
+                                .as_ref()
+                                .map_or(0, |coverage| coverage.annotations_through_ms),
+                        );
+                        frames = inspected
+                            .prefix
+                            .samples()
+                            .iter()
+                            .copied()
+                            .enumerate()
+                            .map(|(index, at)| Frame {
+                                number: index.saturating_add(1),
+                                at: Moment::from_millis(metadata.origin_ms.saturating_add(
+                                    u64::try_from(at.as_millis()).unwrap_or(u64::MAX),
+                                )),
+                                marker: String::new(),
+                                file: crate::show::preview::Content::Video {
+                                    span: at..inspected
+                                        .prefix
+                                        .samples()
+                                        .get(index.saturating_add(1))
+                                        .copied()
+                                        .unwrap_or(inspected.prefix.duration),
+                                    annotations,
+                                },
+                            })
+                            .collect();
+                        coverage = format!(
+                            "{} video samples · annotations through {} · video has no drawn annotations",
+                            frames.len(),
+                            super::navigation::Stamp(annotations)
+                        );
+                    },
+                    Ok(None) => warnings
+                        .push("Retained video is no longer available. Refresh this Show.".into()),
+                    Err(error) => warnings.push(format!("Video frames are unavailable: {error:#}")),
+                }
+            }
         }
         Ok(Self {
             frames,

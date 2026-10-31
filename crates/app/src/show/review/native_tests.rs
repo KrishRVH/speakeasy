@@ -6,9 +6,12 @@ use std::{
 };
 
 use anyhow::ensure;
-use gpui::{Application, AsyncApp, Render, Timer, div, prelude::*};
+use gpui::{Application, AsyncApp, Render, RenderImage, Timer, div, prelude::*};
 
 use super::*;
+
+#[cfg(target_os = "windows")]
+mod video;
 
 #[test]
 #[ignore = "Opt-in owned windows; Linux requires a private X11 display. No microphone, input, or clipboard"]
@@ -33,6 +36,9 @@ fn native_show_review_navigates_damage_and_releases_private_images() -> anyhow::
         .context("Review acceptance did not complete")?
 }
 
+struct TestReads(super::super::preview::Reads);
+impl gpui::Global for TestReads {}
+
 struct TestEdits(super::super::edits::Edits);
 impl gpui::Global for TestEdits {}
 
@@ -55,6 +61,7 @@ impl Render for Keeper {
 )]
 async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     cx.update(|cx| cx.set_global(TestEdits(super::super::edits::Edits::default())))?;
+    cx.update(|cx| cx.set_global(TestReads(super::super::preview::Reads::default())))?;
     let keeper = cx.open_window(
         WindowOptions {
             show: false,
@@ -87,6 +94,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                         edit: |edit, fixture, cx| {
                             cx.global_mut::<TestEdits>().0.submit(edit, fixture)
                         },
+                        preview: |request, cx| cx.global_mut::<TestReads>().0.submit(request),
                         can_copy: |_| false,
                         copy: |_, _| anyhow::bail!("Synthetic review does not use the clipboard"),
                         recover: |_, _| {
@@ -202,7 +210,12 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                         .frames
                         .get(index)
                         .context("Narration selected a missing frame")?,
-                    view.mode
+                    view.mode,
+                    detail
+                        .frames
+                        .get(index)
+                        .context("Missing synthetic frame")?
+                        .presentation()
                 )
                 .contains("retained sample")
         );
@@ -523,7 +536,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     .await?;
     let pixels = window
         .read_with(cx, |view, _| match &view.image {
-            ImageState::Ready(image) => Some(Arc::downgrade(image)),
+            ImageState::Ready(decoded) => Some(Arc::downgrade(&decoded.image)),
             _ => None,
         })?
         .context("The wait established a decoded frame")?;
@@ -614,11 +627,11 @@ async fn export_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> any
 )]
 async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyhow::Result<()> {
     window.update(cx, |view, _, cx| {
-        let ImageState::Ready(image) = &view.image else {
+        let ImageState::Ready(decoded) = &view.image else {
             anyhow::bail!("The copy fixture has no displayed image");
         };
         cx.set_global(CopyProbe {
-            image: Arc::downgrade(image),
+            image: Arc::downgrade(&decoded.image),
             received: false,
         });
         // Only the injected action can run. No real clipboard operation is reachable.

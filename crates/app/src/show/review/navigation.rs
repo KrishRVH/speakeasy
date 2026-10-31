@@ -27,22 +27,37 @@ pub(super) enum Relation {
 }
 
 impl Relation {
-    pub(super) fn between(requested: Moment, sampled: Moment) -> Self {
+    pub(super) fn between(requested: Moment, sampled: Duration) -> Self {
+        let requested = requested.since(Moment::START);
+        let sampled = decoder_time(sampled);
         match sampled.cmp(&requested) {
             std::cmp::Ordering::Equal => Self::At,
-            std::cmp::Ordering::Less => Self::Earlier(requested.since(sampled)),
-            std::cmp::Ordering::Greater => Self::Later(sampled.since(requested)),
+            std::cmp::Ordering::Less => Self::Earlier(requested.saturating_sub(sampled)),
+            std::cmp::Ordering::Greater => Self::Later(sampled.saturating_sub(requested)),
         }
     }
+}
+
+pub(super) fn decoder_time(at: Duration) -> Duration {
+    // Windows video decoding reports sample times in 100 ns units.
+    at.saturating_sub(Duration::from_nanos(u64::from(at.subsec_nanos() % 100)))
 }
 
 impl fmt::Display for Relation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::At => f.write_str("same timestamp"),
-            Self::Earlier(gap) => write!(f, "{} ms earlier", gap.as_millis()),
-            Self::Later(gap) => write!(f, "{} ms later", gap.as_millis()),
+            Self::Earlier(gap) => write!(f, "{} ms earlier", milliseconds(*gap)),
+            Self::Later(gap) => write!(f, "{} ms later", milliseconds(*gap)),
         }
+    }
+}
+
+fn milliseconds(gap: Duration) -> String {
+    if gap.subsec_nanos().is_multiple_of(1_000_000) {
+        gap.as_millis().to_string()
+    } else {
+        format!("{:.3}", gap.as_secs_f64() * 1000.0)
     }
 }
 
@@ -55,23 +70,31 @@ impl fmt::Display for Stamp {
 }
 
 impl Request {
-    pub(super) fn caption(self, frame: &Frame, mode: Mode) -> String {
+    pub(super) fn caption(self, frame: &Frame, mode: Mode, sampled: Duration) -> String {
         let origin = match self.origin {
             Origin::Clause(_) => "Narration clause".into(),
             Origin::Mark(number) => format!("Mark #{number}"),
         };
-        let relation = Relation::between(self.at, frame.at);
+        let relation = Relation::between(self.at, sampled);
+        if mode == Mode::Video {
+            return format!(
+                "{origin} at {} · video sample at {}, {relation}",
+                Stamp(self.at),
+                Stamp(sampled.into())
+            );
+        }
         let kind = match (mode, relation) {
             (Mode::Keyframes, Relation::Later(_)) => "first keyframe",
             (Mode::Source, Relation::Later(_)) => "first retained sample",
             (Mode::Keyframes, _) => "keyframe",
             (Mode::Source, _) => "retained sample",
+            (Mode::Video, _) => "video sample",
         };
         format!(
             "{origin} at {} · {kind} #{} at {}, {}",
             Stamp(self.at),
             frame.number,
-            Stamp(frame.at),
+            Stamp(sampled.into()),
             relation
         )
     }
@@ -84,6 +107,7 @@ pub(super) fn pointer(
     frame: &Frame,
     mode: Mode,
     request: Option<Request>,
+    sampled: Duration,
 ) -> String {
     let sample = match mode {
         Mode::Keyframes => format!(
@@ -98,14 +122,36 @@ pub(super) fn pointer(
             Stamp(frame.at),
             Stamp(frame.at)
         ),
+        Mode::Video => {
+            let command = video_query(frame, sampled).map_or_else(String::new, |at| format!("\nUse the installed Speakeasy command with `show frame SHOW --video --at {} --out NEW.png --json`; pass this folder as SHOW.", Stamp(at)));
+            format!(
+                "Video sample at {} (no drawn annotations).{command}",
+                Stamp(sampled.into())
+            )
+        },
     };
     let request = request.map_or_else(String::new, |request| {
-        format!("{}\n", request.caption(frame, mode))
+        format!("{}\n", request.caption(frame, mode, sampled))
     });
     format!(
         "Show folder: {}\n{sample}\n{request}A frame shows its own timestamp; nearby samples do not prove a missing moment.\n",
         path(directory)
     )
+}
+
+fn video_query(frame: &Frame, sampled: Duration) -> Option<Moment> {
+    let crate::show::preview::Content::Video { span, .. } = &frame.file else {
+        return None;
+    };
+    let start = frame.presentation();
+    if decoder_time(start) != decoder_time(sampled) {
+        return None;
+    }
+    let end = start.checked_add(span.end.checked_sub(span.start)?)?;
+    let requested = Duration::from_millis(
+        u64::try_from(start.max(sampled).as_nanos().div_ceil(1_000_000)).ok()?,
+    );
+    (requested < decoder_time(end)).then(|| requested.into())
 }
 
 fn path(path: &Path) -> String {

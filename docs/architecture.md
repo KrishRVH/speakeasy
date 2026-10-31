@@ -199,7 +199,7 @@ module unless a test file is named.
   [show/publish/tests.rs](../crates/app/src/show/publish/tests.rs) checks every published file, a
   refused copy, and the cancel path.
 - **Show review**: [show/review.rs](../crates/app/src/show/review.rs) owns the native library view,
-  selection, background reads, and one decoded frame. Its
+  selection, cancellable read receipts, and one decoded frame. Its
   [library.rs](../crates/app/src/show/review/library.rs) projects content-free rows through the
   shared store reader, without CLI output types; only the selected summary and bounded recorded
   clauses remain in memory. [narration.rs](../crates/app/src/show/review/narration.rs) distinguishes
@@ -208,13 +208,20 @@ module unless a test file is named.
   on manual navigation, refresh, or another Show.
   [navigation.rs](../crates/app/src/show/review/navigation.rs) describes earlier/later samples
   honestly and formats Copy moment without transcript text. Selection revisions reject stale Show
-  and frame results. Closing cancels reads and releases the image directly, bypassing GPUI's asset
-  cache. Services owns accepted Keep/Discard writes through
+  and frame results. The [preview owner](../crates/app/src/show/preview.rs) retains one blocking
+  reader through native cleanup; a replacement waits for that acknowledgement, and the view keeps
+  only its latest pending seek. Closing cancels its receipt; Quit cancels and drains the owner.
+  [preview/frame.rs](../crates/app/src/show/preview/frame.rs) caps PNG files at 32 MiB and
+  dimensions at 4096 pixels per side. It decodes off the UI thread, leaves private pixels out of
+  GPUI's asset cache, and passes decoded video BGRA directly to the renderer. Decoder errors never
+  include content. Services owns accepted Keep/Discard writes through
   [edits.rs](../crates/app/src/show/edits.rs); Quit awaits them, and an immutable fixture lease
   keeps preview storage alive until completion. Recovery enters the session owner's shielded
   publication stage through a bounded request lane, without microphone, inference, or clipboard
-  work. [frame.rs](../crates/app/src/show/review/frame.rs) caps PNG files at 32 MiB and dimensions
-  at 4096 pixels per side before decoding off the UI thread. Decoder errors never include content.
+  work. The [video timeline](../crates/app/src/show/review/timeline.rs) uses complete fragment
+  sample times for stepping and seeking. Lookups and captions preserve the decoder's 100 ns clock;
+  Copy moment emits a retrieval query only when a whole millisecond lies inside the displayed
+  sample. During seeking, the previous video image stays visible and copying is disabled.
   [review/tests.rs](../crates/app/src/show/review/tests.rs) checks navigation, damage, and private
   text boundaries. Opt-in [native_tests.rs](../crates/app/src/show/review/native_tests.rs) exercises
   the real view with synthetic files, including rendering on a private Linux display, retention
@@ -339,15 +346,16 @@ module unless a test file is named.
   fragments. Failed copy or sync preserves the checkpoint. A missing or incomplete first fragment
   permits still-only publication with an explicit video-loss notice; other damaged video stays
   recoverable with a concrete manual remedy. Saved-bundle inspection and export remain strict. The
-  viewer opens video in the system player; its marks and narration remain separate. Explicit
-  `show frame --video` queries use the [native reader](../crates/platform/src/windows/movie/read.rs)
-  on Windows. Validation and decoding share one open file with writes denied. The synchronous reader
-  releases its decoder and native I/O before returning; cancellation is checked between native
-  calls. It checks canvas and buffer bounds and returns top-down opaque BGRA with the actual decoded
-  timestamp. The [video command](../crates/app/src/show/command/source/video.rs) reports
-  session-relative time and separate annotation coverage, including recovered tails. It refuses
-  crops until timed content geometry is available. Opt-in synthetic checks cover seek direction,
-  orientation, cancellation, file replacement, and exports beyond the annotation journal.
+  viewer offers Windows video scrubbing and opens playback in the system player; its marks and
+  narration remain separate from the video pixels. Explicit `show frame --video` queries use the
+  [native reader](../crates/platform/src/windows/movie/read.rs) on Windows. Validation and decoding
+  share one open file with writes denied. The synchronous reader releases its decoder and native I/O
+  before returning; cancellation is checked between native calls. It checks canvas and buffer bounds
+  and returns top-down opaque BGRA with the actual decoded timestamp. The
+  [video command](../crates/app/src/show/command/source/video.rs) reports session-relative time and
+  separate annotation coverage, including recovered tails. It refuses crops until timed content
+  geometry is available. Opt-in synthetic checks cover seek direction, orientation, cancellation,
+  file replacement, and exports beyond the annotation journal.
 - **Scripts and packaging**: [scripts/](../scripts) and [packaging/](../packaging) profile, check,
   package, and launch the app, [app/build.rs](../crates/app/build.rs) embeds the Windows resources,
   and `mise run hygiene` runs [check_repository.py](../scripts/check_repository.py).

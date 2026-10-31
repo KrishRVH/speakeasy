@@ -50,15 +50,28 @@ fn navigation_reports_exact_earlier_and_first_later_samples_and_never_infers_tex
         (Mode::Keyframes, "first keyframe"),
         (Mode::Source, "first retained sample"),
     ] {
-        let caption = early.caption(&detail.frames[0], mode);
+        let caption = early.caption(&detail.frames[0], mode, detail.frames[0].presentation());
         assert!(caption.contains(kind) && caption.contains("100 ms later"));
         assert!(!caption.contains("first available"));
         assert!(
-            !pointer(directory, &detail.frames[0], mode, Some(early)).contains("first available")
+            !pointer(
+                directory,
+                &detail.frames[0],
+                mode,
+                Some(early),
+                detail.frames[0].at.since(speakeasy_show::Moment::START)
+            )
+            .contains("first available")
         );
     }
     for mode in [Mode::Keyframes, Mode::Source] {
-        let text = pointer(directory, &detail.frames[2], mode, Some(request));
+        let text = pointer(
+            directory,
+            &detail.frames[2],
+            mode,
+            Some(request),
+            detail.frames[2].at.since(speakeasy_show::Moment::START),
+        );
         assert!(!text.contains("PRIVATE"));
         assert!(text.contains("0:20.000") && text.contains("0:01.500"));
         assert!(text.contains("18500 ms earlier"));
@@ -128,4 +141,117 @@ fn narration_distinguishes_silence_missing_words_and_untimed_text_and_bounds_the
     };
     assert_eq!(clauses[0].text.len(), 64 << 10);
     assert!(truncated);
+}
+#[test]
+fn a_video_reference_requests_inside_the_displayed_sample_instead_of_rounding_into_its_predecessor()
+{
+    use std::time::Duration;
+    let mut frame = super::library::Frame {
+        number: 2,
+        at: Moment::from_millis(283),
+        marker: String::new(),
+        file: crate::show::preview::Content::Video {
+            span: Duration::from_nanos(33_333_333)..Duration::from_nanos(66_666_666),
+            annotations: Moment::from_millis(1000),
+        },
+    };
+    let at = Duration::from_nanos(283_333_300);
+    let text = pointer(
+        std::path::Path::new("synthetic"),
+        &frame,
+        Mode::Video,
+        None,
+        at,
+    );
+    assert!(text.contains("sample at 0:00.283"));
+    assert!(text.contains("--video --at 0:00.284"));
+    assert!(
+        !pointer(
+            std::path::Path::new("synthetic"),
+            &frame,
+            Mode::Video,
+            None,
+            Duration::from_millis(300)
+        )
+        .contains("--at")
+    );
+    if let crate::show::preview::Content::Video { span, .. } = &mut frame.file {
+        span.end = Duration::from_micros(33_500);
+    }
+    assert!(
+        !pointer(
+            std::path::Path::new("synthetic"),
+            &frame,
+            Mode::Video,
+            None,
+            at
+        )
+        .contains("--at")
+    );
+    frame.at = Moment::from_millis(99);
+    frame.file = crate::show::preview::Content::Video {
+        span: Duration::from_micros(99_500)..Duration::from_nanos(100_000_033),
+        annotations: Moment::from_millis(1000),
+    };
+    assert!(
+        !pointer(
+            std::path::Path::new("synthetic"),
+            &frame,
+            Mode::Video,
+            None,
+            Duration::from_micros(99_500)
+        )
+        .contains("--at"),
+        "A query at the decoder's next sample boundary selected the wrong frame"
+    );
+}
+#[test]
+fn video_seeking_and_request_captions_preserve_submillisecond_order() -> anyhow::Result<()> {
+    use std::time::Duration;
+    let root = Source::Demo.load()?;
+    let (rows, _) = library::list(&root.directory)?;
+    let mut detail = library::Detail::open(&rows[0].directory, Mode::Keyframes)?;
+    detail.frames = [0_u64, 33_333_300]
+        .into_iter()
+        .enumerate()
+        .map(|(index, nanos)| {
+            let at = Duration::from_nanos(nanos);
+            library::Frame {
+                number: index + 1,
+                at: Moment::from_millis(250).saturating_add(at),
+                marker: String::new(),
+                file: crate::show::preview::Content::Video {
+                    span: at..at.saturating_add(Duration::from_nanos(33_333_300)),
+                    annotations: Moment::from_millis(1000),
+                },
+            }
+        })
+        .collect();
+    assert_eq!(
+        detail.locate(Moment::from_millis(283)),
+        Some((0, Relation::Earlier(Duration::from_millis(33))))
+    );
+    assert_eq!(detail.locate(Moment::from_millis(284)).unwrap().0, 1);
+    let request = Request {
+        at: Moment::from_millis(283),
+        origin: Origin::Mark(1),
+    };
+    let caption = request.caption(
+        &detail.frames[1],
+        Mode::Video,
+        detail.frames[1].presentation(),
+    );
+    assert!(caption.contains("0.333 ms later"));
+    assert!(!caption.contains("same timestamp"));
+    detail.frames[1].at = Moment::from_millis(284);
+    detail.frames[1].file = crate::show::preview::Content::Video {
+        span: Duration::from_nanos(34_000_033)..Duration::from_millis(50),
+        annotations: Moment::from_millis(1000),
+    };
+    assert_eq!(
+        detail.locate(Moment::from_millis(284)),
+        Some((1, Relation::At)),
+        "Navigation disagreed with the decoder's 100 ns clock"
+    );
+    Ok(())
 }

@@ -185,11 +185,31 @@ impl Reading {
             "Requested time is outside the retained video coverage"
         );
         let requested = Duration::from_millis(at.as_millis().saturating_sub(metadata.origin_ms));
+        let origin = metadata.origin_ms;
+        let Some(frame) = self.sample(requested, cancelled)? else {
+            return Ok(None);
+        };
+        Ok(Some(speakeasy_show::SourceFrame {
+            at: Moment::from_millis(origin.saturating_add(u64::try_from(frame.at.as_millis())?)),
+            image: speakeasy_show::Image::from_bgra(frame.size[0], frame.size[1], frame.bgra)?,
+        }))
+    }
+
+    /// Reads a precise movie-relative sample; UI stepping preserves submillisecond timestamps.
+    pub(crate) fn sample(
+        self,
+        at: Duration,
+        cancelled: impl Fn() -> bool,
+    ) -> anyhow::Result<Option<speakeasy_platform::MovieFrame>> {
+        anyhow::ensure!(
+            at <= self.movie.prefix.duration,
+            "Requested time is outside the retained video coverage"
+        );
         let Some(frame) = speakeasy_platform::read_movie_frame(
             self.file,
             self.movie.prefix.bytes,
-            metadata.size,
-            requested,
+            self.movie.metadata.size,
+            at,
             cancelled,
         )?
         else {
@@ -199,14 +219,7 @@ impl Reading {
             frame.at < self.movie.prefix.duration,
             "Decoded video sample exceeds its retained coverage"
         );
-        Ok(Some(speakeasy_show::SourceFrame {
-            at: Moment::from_millis(
-                metadata
-                    .origin_ms
-                    .saturating_add(u64::try_from(frame.at.as_millis())?),
-            ),
-            image: speakeasy_show::Image::from_bgra(frame.size[0], frame.size[1], frame.bgra)?,
-        }))
+        Ok(Some(frame))
     }
 }
 

@@ -57,8 +57,8 @@ fn refresh_preserves_the_explicit_path_but_never_substitutes_for_a_deleted_show(
     assert!(library.selected.is_none());
 }
 
-#[test]
-fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> anyhow::Result<()> {
+#[tokio::test]
+async fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> anyhow::Result<()> {
     let root = Source::Demo.load()?;
     assert!(root.fixture.is_some());
     let (rows, _) = list(&root.directory)?;
@@ -68,8 +68,20 @@ fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> anyhow
     assert_eq!(rows[2].health, Health::Damaged);
     let detail = Detail::open(&rows[2].directory, library::Mode::Keyframes)?;
     assert_eq!(detail.frames.len(), 4);
-    assert!(frame::read(&rows[2].directory, &detail.frames[2].file).is_err());
-    assert!(frame::read(&rows[2].directory, &detail.frames[1].file).is_ok());
+    let mut reads = crate::show::preview::Reads::default();
+    for (index, valid) in [(2, false), (1, true)] {
+        let frame = &detail.frames[index];
+        let work = reads.submit(crate::show::preview::Request {
+            directory: rows[2].directory.clone(),
+            content: frame.file.clone(),
+            at: frame.at,
+            fixture: root.fixture.clone(),
+        })?;
+        let crate::show::preview::Work::Reading(receipt) = work else {
+            anyhow::bail!("Synthetic frame read was not drained");
+        };
+        assert_eq!(receipt.await.is_ok(), valid);
+    }
     let path = &rows[0].directory;
     let manifest_path = path.join("show.json");
     let mut manifest: serde_json::Value = serde_json::from_slice(&fs::read(&manifest_path)?)?;

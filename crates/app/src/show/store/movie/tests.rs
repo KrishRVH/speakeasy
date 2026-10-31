@@ -135,3 +135,37 @@ fn malformed_complete_first_fragment_stays_in_its_checkpoint_for_repair() -> any
     assert_eq!(fs::read(path)?, bytes);
     Ok(())
 }
+
+#[cfg(target_os = "windows")]
+pub(in crate::show) fn native_fixture(show: &Path) -> anyhow::Result<()> {
+    let fixtures = std::path::PathBuf::from(
+        std::env::var_os("SPEAKEASY_MOVIE_READ_DIRECTORY")
+            .context("Choose the synthetic movie prefix directory")?,
+    );
+    fs::copy(fixtures.join("moving.mp4"), show.join(FILE))?;
+    let original = fs::read(show.join(FILE))?;
+    fs::write(
+        show.join(HEADER),
+        serde_json::to_vec(&serde_json::json!({
+            "version":1,"originMs":250,"size":[1280,720],"finished":null,
+            "coverage":{"endMs":4250,"frames":120,"bytes":original.len(),"annotationsThroughMs":1000,"partial":true}
+        }))?,
+    )?;
+    fs::write(
+        show.join("show.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "version":2,"duration":1000,"surface":{"width":1280,"height":720},
+            "strokes":[],"pins":[],"actions":[],
+            "marks":[{"number":1,"shape":"pin","point":[0.5,0.5],"bounds":[0.5,0.5,0.5,0.5],"span":[750,750],"strokes":[0,0]}],
+            "narration":{"words":[{"span":[500,700],"text":"PRIVATE_PHRASE"}]},
+            "keyframes":[{"index":1,"at":500,"reason":"middle","event":"PRIVATE_EVENT","marks":[0,0]}]
+        }))?,
+    )?;
+    fs::write(show.join("summary.md"), "Synthetic video review")?;
+    fs::create_dir(show.join("frames"))?;
+    fs::write(
+        show.join("frames/frame-01.png"),
+        speakeasy_show::Image::from_bgra(2, 2, [50, 50, 50, 255].repeat(4))?.encode_png()?,
+    )?;
+    Ok(())
+}

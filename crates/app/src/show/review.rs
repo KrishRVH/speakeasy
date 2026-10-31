@@ -7,12 +7,12 @@ const DISCARD_SHOW: &str = "This permanently removes the interrupted Show's reco
                            including kept audio. Any saved copies stay.";
 
 mod export;
-mod frame;
 mod library;
 mod narration;
 mod navigation;
 mod render;
 mod source;
+mod timeline;
 
 use std::{
     io,
@@ -23,8 +23,8 @@ use std::{
 
 use anyhow::Context as _;
 use gpui::{
-    App, AppContext, Bounds, Context, FocusHandle, RenderImage, Subscription, Task,
-    TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, px, size,
+    App, AppContext, Bounds, Context, FocusHandle, Subscription, Task, TitlebarOptions, Window,
+    WindowBounds, WindowHandle, WindowOptions, px, size,
 };
 use library::{Detail, Key, Kind, Library, Mode};
 use navigation::{Origin, Request};
@@ -45,6 +45,7 @@ pub(crate) struct Actions {
         Option<Arc<tempfile::TempDir>>,
         &mut App,
     ) -> anyhow::Result<super::edits::Receipt>,
+    pub preview: fn(super::preview::Request, &mut App) -> anyhow::Result<super::preview::Work>,
     pub can_copy: fn(&App) -> bool,
     pub copy: fn(super::copy::Request, &mut App) -> anyhow::Result<super::copy::Receipt>,
     pub recover:
@@ -54,7 +55,7 @@ pub(crate) struct Actions {
 enum ImageState {
     Empty,
     Loading,
-    Ready(Arc<RenderImage>),
+    Ready(super::preview::Decoded),
     Failed(String),
 }
 
@@ -68,6 +69,7 @@ pub(crate) struct Review {
     directory: Option<PathBuf>,
     detail: Option<Detail>,
     mode: Mode,
+    timeline: timeline::Timeline,
     pane: Pane,
     request: Option<Request>,
     image: ImageState,
@@ -145,6 +147,7 @@ impl Review {
             directory: None,
             detail: None,
             mode: Mode::Keyframes,
+            timeline: timeline::Timeline::default(),
             pane: Pane::Summary,
             request: None,
             image: ImageState::Empty,
@@ -286,7 +289,9 @@ impl Review {
 
     fn load_frame(&mut self, key: Key, window: Option<&mut Window>, cx: &mut Context<'_, Self>) {
         self.loading = None;
-        self.replace_image(ImageState::Loading, window, cx);
+        if self.mode != Mode::Video || !matches!(self.image, ImageState::Ready(_)) {
+            self.replace_image(ImageState::Loading, window, cx);
+        }
         let Some(frame) = self
             .detail
             .as_ref()
@@ -295,25 +300,44 @@ impl Review {
             self.replace_image(ImageState::Empty, None, cx);
             return;
         };
-        let (directory, name, renderer) =
-            (key.directory.clone(), frame.file.clone(), cx.svg_renderer());
-        let work = cx.background_executor().spawn(async move {
-            frame::read(&directory, &name)?
-                .to_image_data(renderer)
-                .map_err(|_private_error| {
-                    "This frame could not be decoded as a PNG image.".to_owned()
-                })
-        });
+        let request = super::preview::Request {
+            directory: key.directory.clone(),
+            content: frame.file.clone(),
+            at: frame.at,
+            fixture: self.fixture.clone(),
+        };
+        let work = match (self.actions.preview)(request, cx) {
+            Ok(work) => work,
+            Err(error) => {
+                self.replace_image(
+                    ImageState::Failed(format!("Cannot load this frame: {error:#}")),
+                    None,
+                    cx,
+                );
+                cx.notify();
+                return;
+            },
+        };
         self.loading = Some(cx.spawn(async move |view, cx| {
-            let result = work.await;
+            let result = match work {
+                super::preview::Work::Reading(receipt) => Some(receipt.await),
+                super::preview::Work::Waiting(wait) => {
+                    wait.await;
+                    None
+                },
+            };
             view.update_if_alive(cx, |view, cx| {
                 if !view.library.accepts(&key) {
                     return;
                 }
                 view.loading = None;
+                let Some(result) = result else {
+                    view.load_frame(key, None, cx);
+                    return;
+                };
                 view.replace_image(
                     match result {
-                        Ok(image) => ImageState::Ready(image),
+                        Ok(decoded) => ImageState::Ready(decoded),
                         Err(message) => ImageState::Failed(message),
                     },
                     None,
@@ -333,13 +357,14 @@ impl Review {
         self.detail = None;
         self.request = None;
         self.confirm_discard = false;
+        self.timeline = timeline::Timeline::default();
         self.notice = None;
         self.replace_image(ImageState::Empty, window, cx);
     }
 
     fn replace_image(&mut self, image: ImageState, window: Option<&mut Window>, cx: &mut App) {
         if let ImageState::Ready(old) = std::mem::replace(&mut self.image, image) {
-            cx.drop_image(old, window);
+            cx.drop_image(old.image, window);
         }
     }
 
@@ -489,7 +514,11 @@ impl Review {
     }
 
     fn copy(&mut self, kind: CopyKind, cx: &mut Context<'_, Self>) {
-        if self.source == Source::Demo || !(self.actions.can_copy)(cx) || self.copying.is_some() {
+        if self.source == Source::Demo
+            || !(self.actions.can_copy)(cx)
+            || self.copying.is_some()
+            || (kind == CopyKind::Moment && self.loading.is_some())
+        {
             return;
         }
         let Some(key) = self.library.selected.clone() else {
@@ -502,12 +531,18 @@ impl Review {
             let Some(frame) = detail.frames.get(key.frame) else {
                 return;
             };
-            let ImageState::Ready(image) = &self.image else {
+            let ImageState::Ready(decoded) = &self.image else {
                 return;
             };
             super::copy::Request::Moment {
-                text: navigation::pointer(&key.directory, frame, self.mode, self.request),
-                image: Arc::clone(image),
+                text: navigation::pointer(
+                    &key.directory,
+                    frame,
+                    self.mode,
+                    self.request,
+                    decoded.at,
+                ),
+                image: Arc::clone(&decoded.image),
             }
         } else {
             super::copy::Request::Summary(key.directory.clone())
@@ -676,7 +711,7 @@ impl Review {
                 }
             },
             Action::Mark(number) => {
-                if self.mode == Mode::Source
+                if matches!(self.mode, Mode::Source | Mode::Video)
                     && let Some((_, at)) = self
                         .detail
                         .as_ref()

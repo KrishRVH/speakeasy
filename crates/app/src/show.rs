@@ -5,6 +5,7 @@ mod command;
 pub(crate) mod copy;
 pub(crate) mod edits;
 mod overlay;
+pub(crate) mod preview;
 mod publish;
 mod recorder;
 pub(crate) mod review;

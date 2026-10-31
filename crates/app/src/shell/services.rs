@@ -115,6 +115,7 @@ pub(crate) struct Services {
     instance: Option<Instance>,
     pub(super) show_edits: crate::show::edits::Edits,
     show_copies: crate::show::copy::Copies,
+    pub(super) show_previews: crate::show::preview::Reads,
 }
 
 impl Global for Services {}
@@ -159,6 +160,7 @@ impl Services {
             instance,
             show_edits: crate::show::edits::Edits::default(),
             show_copies: crate::show::copy::Copies::default(),
+            show_previews: crate::show::preview::Reads::default(),
         }
     }
 
@@ -484,6 +486,7 @@ impl Services {
             return None;
         }
         self.show_copies.cancel();
+        self.show_previews.cancel();
         self.validation = None;
         self.requests = None;
         self.visibility = None;
@@ -497,9 +500,11 @@ impl Services {
         let scanned = self.microphone_scan.as_ref().map(MicrophoneScan::exited);
         let edited = self.show_edits.drained();
         let copied = self.show_copies.drained();
+        let previewed = self.show_previews.drained();
         Some(async move {
             edited.await;
             copied.await;
+            previewed.await;
             if let Some(stopped) = stopped {
                 stopped.await;
             }
