@@ -755,7 +755,7 @@ impl error::Error for Failure {}
 
 pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyhow::Result<()> {
     let hwnd = window.native.hwnd;
-    // First, so a build that cannot exclude the overlay leaves the window untouched.
+    // Capture exclusion must succeed before the overlay can cover the screen.
     exclude_always(hwnd)?;
     // The overlay is the pill's click-through popup, stretched over the display.
     window.configure_pill()?;

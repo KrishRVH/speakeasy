@@ -38,8 +38,7 @@ fn source_arguments_reject_ambiguous_times_and_missing_destinations() -> anyhow:
 }
 
 #[test]
-fn exported_frame_reports_actual_time_without_overwriting_or_printing_content() -> anyhow::Result<()>
-{
+fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = root.path().join("show");
     fs::create_dir(&directory)?;

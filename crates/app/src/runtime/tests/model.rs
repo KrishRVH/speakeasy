@@ -847,7 +847,7 @@ proptest! {
 
 /// Concrete failure sequences stay stable when strategy changes alter what saved seeds generate.
 #[test]
-fn concrete_failure_sequences_release_every_owner() -> anyhow::Result<()> {
+fn concrete_failures_release_devices_and_come_to_rest() -> anyhow::Result<()> {
     let show = || Step::Inputs(SHOW_GESTURE.to_vec());
     let keys = |keys: &[Key]| Step::Inputs(keys.to_vec());
     let at_once = Releases {

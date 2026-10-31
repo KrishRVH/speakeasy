@@ -259,8 +259,8 @@ or an unsupported format, after printing its findings. A listing succeeds even w
 are damaged. An unreadable Shows folder fails the command; a missing one is an empty listing. The
 recording's `narrationLost` field is absent for complete narration, or `audioStopped`,
 `notTranscribed`, or `incomplete`. `incomplete` means recovery transcribed the surviving audio
-prefix; its text and timings cover only that prefix. Reading this value requires narration recovery
-support.
+prefix; its text and timings cover only that prefix. CLI builds without narration recovery support
+cannot read this value.
 
 Manifests are limited to 16 MiB and summaries to 1 MiB. Only format 2 is read; unknown fields are
 ignored.

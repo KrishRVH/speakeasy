@@ -1,8 +1,8 @@
 //! All application-owned Quit routes drain native work and requested saves while the foreground
 //! executor continues rendering. Cleanup has no timeout: audio driver teardown, a microphone scan,
-//! process reaping, insertion, setup, update checks, and saves must acknowledge. A stuck native owner keeps
-//! Quitting visible and the UI responsive; forced native termination retains synchronous Drop as
-//! the emergency fallback.
+//! process reaping, insertion, setup, update checks, and saves must acknowledge. A stuck native
+//! owner keeps Quitting visible and the UI responsive; forced native termination retains
+//! synchronous Drop as the emergency fallback.
 
 use std::time::Duration;
 

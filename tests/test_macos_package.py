@@ -40,8 +40,8 @@ with open("commands.jsonl", "a") as log:
 if name == "uname":
     print("Darwin")
 if name == "xcrun" and sys.argv[1] == "notarytool":
-    rejected = sys.argv[3].endswith(os.environ.get("STUB_NOTARY_SUFFIX", ""))
-    status = os.environ.get("STUB_NOTARY_STATUS", "Accepted") if rejected else "Accepted"
+    targeted = sys.argv[3].endswith(os.environ.get("STUB_NOTARY_SUFFIX", ""))
+    status = os.environ.get("STUB_NOTARY_STATUS", "Accepted") if targeted else "Accepted"
     print(json.dumps({"id": "synthetic-submission", "status": status}))
 if name == "ditto":
     if "-c" in sys.argv:
@@ -130,11 +130,14 @@ def test_failed_distribution_never_emits_a_release_archive(
         },
     )
     assert result.returncode != 0
-    assert not (tmp_path / "artifacts/speakeasy-macos.zip").exists()
+    assert not (artifacts / "speakeasy-macos.zip").exists()
     assert not (artifacts / "speakeasy-macos.dmg").exists()
     assert not list(artifacts.glob(".macos-package.*"))
     if "STUB_NOTARY_STATUS" in failure:
-        assert "notarization" in result.stderr.lower()
+        if failure.get("STUB_NOTARY_SUFFIX") == ".dmg":
+            assert "Disk image notarization was rejected." in result.stderr
+        else:
+            assert "synthetic-submission" in result.stderr
 
 
 def test_partial_distribution_configuration_fails_before_building(tmp_path: Path) -> None:
