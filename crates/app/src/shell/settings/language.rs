@@ -55,12 +55,18 @@ impl Settings {
             self.language.focus_out =
                 Some(
                     cx.on_focus_out(&self.language.group, window, |view, _, window, cx| {
-                        if (!window.is_window_active()
-                            || !view.language.group.contains_focused(window, cx))
-                            && view.language.cursor.take().is_some()
+                        let inside = view.language.group.contains_focused(window, cx);
+                        if (inside && window.is_window_active())
+                            || view.language.cursor.take().is_none()
                         {
-                            cx.notify();
+                            return;
                         }
+                        // Deactivation leaves focus in the closing menu. Restore its button
+                        // without activating this window or taking focus from another control.
+                        if inside {
+                            view.language.button.focus(window);
+                        }
+                        cx.notify();
                     }),
                 );
             let cursor = options(&self.config)

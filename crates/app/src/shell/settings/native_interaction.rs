@@ -47,10 +47,12 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     cx.new(|cx| Settings::new(config, updates, cx))
                 })?;
                 cx.update(|cx| cx.global_mut::<Services>().settings = Some(settings))?;
-                settings.update(cx, |view, window, cx| {
-                    view.toggle_language(window, cx);
-                    cx.notify();
-                })?;
+                settings.update(cx, |view, window, _| view.language.button.focus(window))?;
+                key(settings, "enter", cx)?;
+                ensure!(
+                    settings.read_with(cx, |view, _| view.language.cursor.is_some())?,
+                    "The toggle's release immediately selected a language"
+                );
                 Timer::after(Duration::from_millis(100)).await;
                 key(settings, "end", cx)?;
                 Timer::after(Duration::from_millis(100)).await;
@@ -117,12 +119,54 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     anyhow::Ok(())
                 })??;
                 Timer::after(Duration::from_millis(100)).await;
+                settings.update(cx, |view, window, _| view.language.group.focus(window))?;
+                key(settings, "home", cx)?;
+                key(settings, "enter", cx)?;
+                settings.update(cx, |view, window, cx| {
+                    ensure!(
+                        view.config.language == "auto" && view.language.cursor.is_none(),
+                        "The picker group ignored keyboard navigation"
+                    );
+                    view.toggle_language(window, cx);
+                    cx.notify();
+                    anyhow::Ok(())
+                })??;
+                Timer::after(Duration::from_millis(100)).await;
                 settings.update(cx, |_, window, _| window.blur())?;
                 Timer::after(Duration::from_millis(100)).await;
-                settings.update(cx, |view, _, _| {
+                settings.update(cx, |view, window, cx| {
                     ensure!(
                         view.language.cursor.is_none(),
                         "Losing focus left the picker open"
+                    );
+                    view.toggle_language(window, cx);
+                    cx.notify();
+                    anyhow::Ok(())
+                })??;
+                Timer::after(Duration::from_millis(100)).await;
+                let other = cx.open_window(WindowOptions::default(), |_, cx| {
+                    cx.new(|_| gpui::EmptyView)
+                })?;
+                Timer::after(Duration::from_millis(100)).await;
+                other.update(cx, |_, window, _| window.activate_window())?;
+                Timer::after(Duration::from_millis(100)).await;
+                settings.update(cx, |view, window, _| {
+                    ensure!(
+                        !window.is_window_active(),
+                        "The second owned window did not activate"
+                    );
+                    ensure!(
+                        view.language.cursor.is_none(),
+                        "Deactivation left the picker open"
+                    );
+                    window.activate_window();
+                    anyhow::Ok(())
+                })??;
+                Timer::after(Duration::from_millis(100)).await;
+                settings.update(cx, |view, window, _| {
+                    ensure!(
+                        view.language.button.is_focused(window),
+                        "Reactivation lost picker focus"
                     );
                     view.practice.text =
                         zeroize::Zeroizing::new("Synthetic private practice".into());
@@ -130,6 +174,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     view.practice.task = Some(Task::ready(()));
                     anyhow::Ok(())
                 })??;
+                other.update(cx, |_, window, _| window.remove_window())?;
                 // GPUI invokes should-close with the window already borrowed, but without borrowing
                 // the Settings entity. Recursing through WindowHandle::update silently misses it.
                 cx.update(|cx| close(settings, cx))??;

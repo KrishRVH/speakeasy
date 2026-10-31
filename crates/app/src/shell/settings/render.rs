@@ -452,12 +452,15 @@ impl Settings {
         div()
             .id("language-picker")
             .track_focus(&self.language.group)
+            .on_key_down(ui.cx.listener(Self::language_key))
+            .on_key_up(ui.cx.listener(Self::language_release))
             .flex()
             .flex_col()
             .gap(ROW_GAP)
             .child(
                 ui.button(label, Action::Language)
-                    .track_focus(&self.language.button),
+                    .track_focus(&self.language.button)
+                    .on_click(|_, _, cx| cx.stop_propagation()),
             )
             .when(self.language.cursor.is_some(), |column| {
                 column.child(
@@ -469,8 +472,6 @@ impl Settings {
                         .flex_col()
                         .track_scroll(&self.language.scroll)
                         .track_focus(&self.language.menu)
-                        .on_key_down(ui.cx.listener(Self::language_key))
-                        .on_key_up(ui.cx.listener(Self::language_release))
                         .children(languages.iter().enumerate().map(
                             |(index, &(language, name))| {
                                 div()
