@@ -204,19 +204,9 @@ fn record(
                 Choice::Unchosen(unchosen) => return Ok(Ended::Unchosen(unchosen)),
                 Choice::Cancelled => return Ok(Ended::Cancelled),
             };
-            let (frame_lane, frames) = async_channel::bounded(FRAME_LANE);
-            let capture =
-                ScreenCapture::start(target, SAMPLE_INTERVAL, LONGEST_EDGE, frame_lane, None)?;
             let display = target.display();
-            let (sample_lane, samples) = async_channel::bounded(POINTER_LANE);
-            let pointer = PointerMonitor::start(display, sample_lane, shortcut)?;
             let part = target.part();
             lanes.canvas.send_replace(Canvas::covering(display, part));
-            let sources = Sources {
-                frames,
-                samples,
-                stop: stop(&capture, &pointer),
-            };
             let mut take = Take::new(started, display.size, part, lanes.canvas);
             take.notices = Some((id, events));
             if let Some(writer) = &mut log
@@ -224,6 +214,23 @@ fn record(
             {
                 take.warn_checkpoint();
             }
+            let movie = match &mut log {
+                Some(writer) => writer.movie(started).await,
+                None => None,
+            };
+            if lanes.finishing.is_closed() {
+                return Ok(Ended::Cancelled);
+            }
+            let (frame_lane, frames) = async_channel::bounded(FRAME_LANE);
+            let capture =
+                ScreenCapture::start(target, SAMPLE_INTERVAL, LONGEST_EDGE, frame_lane, movie)?;
+            let (sample_lane, samples) = async_channel::bounded(POINTER_LANE);
+            let pointer = PointerMonitor::start(display, sample_lane, shortcut)?;
+            let sources = Sources {
+                frames,
+                samples,
+                stop: stop(&capture, &pointer),
+            };
             take.log = log;
             let footage = take.run(lanes, sources).await?;
             Ok(footage.map_or(Ended::Cancelled, |footage| {

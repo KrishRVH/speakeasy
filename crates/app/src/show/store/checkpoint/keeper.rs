@@ -1,6 +1,7 @@
-//! One owner writes both Show streams and retains the checkpoint lock until both producers close.
+//! One owner retains the checkpoint lock until its streams and native movie writer close.
 //! Separate bounded lanes isolate storage failures; credits keep queue accounting with producers.
 
+mod movie;
 mod producers;
 
 use std::{
@@ -13,9 +14,10 @@ use std::{
 
 use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
+use movie::Writing;
 pub(crate) use producers::{AudioLog, FrameLog};
 use producers::{Credit, Producer};
-use speakeasy_platform::StoppableThread;
+use speakeasy_platform::{MovieTarget, StoppableThread};
 use speakeasy_show::{Log, Size, TakeEvent};
 
 use super::{Checkpoint, audio};
@@ -112,14 +114,21 @@ impl Keeper {
 }
 
 enum FrameRecord {
-    Begin { budget: usize, surface: Size },
+    Begin {
+        budget: usize,
+        surface: Size,
+    },
+    Movie {
+        started: Instant,
+        returned: Sender<MovieTarget>,
+    },
     Event(TakeEvent),
 }
 
 impl FrameRecord {
     fn bytes(&self) -> usize {
         match self {
-            Self::Begin { .. } => 64,
+            Self::Begin { .. } | Self::Movie { .. } => 64,
             Self::Event(event) => event.bytes(),
         }
     }
@@ -176,26 +185,29 @@ async fn write(
 ) {
     let mut frames = Some(frames);
     let mut audio = Some(audio);
-    while !stopping.is_closed() && (frames.is_some() || audio.is_some()) {
+    let mut movie: Option<Writing> = None;
+    let mut stopped = false;
+    while frames.is_some() || audio.is_some() || movie.is_some() {
         tokio::select! {
-            stopped = stopping.recv() => {
-                if stopped.is_err() {
-                    break;
+            _stop = stopping.recv(), if !stopped => {
+                stopped = true;
+                if let Some(input) = frames.take() { input.finish(false); }
+                if let Some(input) = audio.take() { input.finish(false); }
+                if let Some(movie) = &movie { movie.stop(); }
+            },
+            event = movie::next(movie.as_ref()) => {
+                match event {
+                    Some(event) => if let Some(movie) = &mut movie { movie.event(directory, event); },
+                    None => movie = None,
                 }
             },
             record = receive(frames.as_ref()) => {
-                consume(&mut frames, record, |input, record| frame(directory, input, record));
+                consume(&mut frames, record, |input, record| frame(directory, input, record, &mut movie));
             },
             record = receive(audio.as_ref()) => {
                 consume(&mut audio, record, |input, record| sound(directory, input, record));
             },
         }
-    }
-    if let Some(input) = frames {
-        input.finish(false);
-    }
-    if let Some(input) = audio {
-        input.finish(false);
     }
 }
 
@@ -229,6 +241,7 @@ fn frame(
     directory: &Path,
     input: &mut Input<FrameRecord>,
     record: FrameRecord,
+    movie: &mut Option<Writing>,
 ) -> anyhow::Result<()> {
     let bytes = record.bytes();
     match record {
@@ -236,6 +249,21 @@ fn frame(
             input
                 .storage
                 .begin(directory, super::LOG, &Log::header(budget, surface)?)?;
+        },
+        FrameRecord::Movie { started, returned } => {
+            anyhow::ensure!(
+                input.storage.file.is_some() && movie.is_none(),
+                "Movie needs a new checkpoint stream"
+            );
+            let (writing, target) = Writing::new(directory, started)?;
+            *movie = Some(writing);
+            // A cancelled recorder drops the returned target; the independent lane still waits
+            // for that release before the checkpoint can unlock.
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A dropped recorder refuses this target and closes its native lease"
+            )]
+            let _ = returned.try_send(target);
         },
         FrameRecord::Event(event) => {
             input

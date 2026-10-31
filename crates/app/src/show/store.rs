@@ -89,6 +89,34 @@ pub(super) struct Staged {
 }
 
 impl Staged {
+    fn retain_movie(&mut self, checkpoint: &Path, annotations: Moment) -> anyhow::Result<bool> {
+        let lost = match movie::checkpoint(checkpoint)? {
+            movie::CheckpointMovie::Absent => return Ok(false),
+            movie::CheckpointMovie::Unavailable => {
+                self.summary.push_str("\n\nVideo could not be saved: no complete fragment survived. The saved keyframes and narration remain available.\n");
+                true
+            },
+            movie::CheckpointMovie::Present(movie) => {
+                let metadata = movie::retain(checkpoint, self.staging.path(), movie, annotations)
+                    .context(
+                    "Cannot retain the recorded movie; its checkpoint remains available",
+                )?;
+                self.summary
+                    .push_str(&metadata.note(&self.directory.join(movie::FILE))?);
+                false
+            },
+        };
+        let summary = self.staging.path().join(Bundle::SUMMARY);
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(summary)?;
+        file.write_all(self.summary.as_bytes())?;
+        file.sync_all()?;
+        checkpoint::sync_directory(self.staging.path())?;
+        Ok(lost)
+    }
+
     /// Moves the bundle into place and returns the saved Show with the summary written in it.
     pub(super) fn persist(mut self) -> anyhow::Result<(SavedShow, String)> {
         let parent = self.directory.parent().unwrap_or(&self.directory);
@@ -431,6 +459,7 @@ pub(super) mod address;
 pub(super) mod age;
 pub(crate) mod checkpoint;
 pub(super) mod export;
+pub(super) mod movie;
 pub(super) mod recall;
 pub(super) mod retention;
 pub(super) mod source;

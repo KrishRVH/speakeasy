@@ -264,7 +264,7 @@ module unless a test file is named.
   also discovers and inspects saved Shows without changing them.
   [store/export.rs](../crates/app/src/show/store/export.rs) streams a format-owned inventory into a
   new ZIP, preserves the edited summary, and adds a relative-path guide. It excludes audio and
-  retention markers, bounds input to 1 GiB, reports failed staging cleanup, and publishes with
+  retention markers, bounds input to 2 GiB, reports failed staging cleanup, and publishes with
   `persist_noclobber` after flush. The CLI and review window use the same exporter; accepted GUI
   exports use the app's [edit owner](../crates/app/src/show/edits.rs), so closing review cannot
   cancel them. [export/tests.rs](../crates/app/src/show/store/export/tests.rs) checks portability,
@@ -286,15 +286,17 @@ module unless a test file is named.
   [keeper](../crates/app/src/show/store/checkpoint/keeper.rs) from explicit Show promotion. One
   writer drains independent bounded frame and audio lanes; a stream failure leaves the other usable.
   Frame close acknowledges its flush without waiting for audio; the checkpoint lock releases only
-  after both producers close. The frame lane queues at most 512 events/64 MiB and its log caps at 1
-  GiB/200,000 events. The audio lane queues at most 64 events/8 MiB and its checksummed PCM log caps
-  at 128 MiB; a backlog stays in capture's existing PCM buffer.
+  after both producers close and the native movie lease acknowledges file closure, including on
+  unwind. The independent movie lane durably saves the original-session origin before accepting
+  capture; frame or audio failure cannot release its lock. The frame lane queues at most 512
+  events/64 MiB and its log caps at 1 GiB/200,000 events. The audio lane queues at most 64 events/8
+  MiB and its checksummed PCM log caps at 128 MiB; a backlog stays in capture's existing PCM buffer.
   [Audio checkpointing](../crates/app/src/audio/checkpoint.rs) preserves cue boundaries before and
   after promotion, so recovery seals through the same speech gate and trimming. Narration is
   atomically written and synced before audio deletion. Publication binds durable checkpoint and
   bundle markers before rename; untranscribed audio keeps a published checkpoint visible as
   Narration pending. A retry creates a new bundle. Unfinished cancellation records discard before
-  deletion; private audio, narration, and frame files are removed before the lock, so blocked
+  deletion; private audio, narration, frame, and movie files are removed before the lock, so blocked
   deletion remains available to cleanup. Audio retains the original seven-day expiry regardless of a
   saved bundle's Keep marker. Discovery isolates damaged checkpoints so healthy entries remain
   visible and saved bundles still expire.
@@ -321,14 +323,23 @@ module unless a test file is named.
   Geometry, overlay timing, and the area drag run on every host; native capture is opt-in, and
   window lookup and the picker's clicks need native acceptance. On Windows, an opt-in acceptance
   test stops an owned window's capture as it hides, minimizes, cloaks, moves away, and closes. The
-  optional [movie adapter](../crates/platform/src/windows/movie.rs) writes silent H.264 fragments
-  from the same admitted, cropped Windows frames. Its non-cloneable
-  [lease](../crates/platform/src/movie.rs) waits for a durable origin acknowledgment before opening
-  the file and closes only after native file handles release. It bounds its canvas to 2560 pixels
-  per edge, its reported native input queue to 64 MiB, and actual file writes to 384 MiB. Those
-  bounds do not cover memory allocated internally by the system codec. Resized windows fit inside a
-  cleared fixed canvas; a quiet tail holds the last image through capture's observed end. This
-  adapter is not yet enabled by the app: live Shows retain their sampled lossless frames.
+  [movie adapter](../crates/platform/src/windows/movie.rs) writes silent H.264 fragments from the
+  same admitted, cropped Windows frames. Its non-cloneable [lease](../crates/platform/src/movie.rs)
+  waits for a durable origin acknowledgment before opening the file and closes only after native
+  file handles release. It bounds its canvas to 2560 pixels per edge, its reported native input
+  queue to 64 MiB, and actual file writes to 384 MiB. Those bounds do not cover memory allocated
+  internally by the system codec. Resized windows fit inside a cleared fixed canvas; a quiet tail
+  holds the last image through capture's observed end. The original session deadline bounds
+  admission and the held tail. Windows Shows save this video beside their sampled lossless frames;
+  Mac Shows currently retain only sampled frames. [show/src/movie.rs](../crates/show/src/movie.rs)
+  validates bounded, single-track fragment metadata and returns only the complete prefix. It checks
+  sample byte ranges and timing, not compressed picture decoding.
+  [store/movie.rs](../crates/app/src/show/store/movie.rs) copies that prefix before publication
+  commits, records the separate annotation horizon, and checks finalized native timing against the
+  fragments. Failed copy or sync preserves the checkpoint. A missing or incomplete first fragment
+  permits still-only publication with an explicit video-loss notice; other damaged video stays
+  recoverable with a concrete manual remedy. Saved-bundle inspection and export remain strict. The
+  viewer opens video in the system player; its marks and narration remain separate.
 - **Scripts and packaging**: [scripts/](../scripts) and [packaging/](../packaging) profile, check,
   package, and launch the app, [app/build.rs](../crates/app/build.rs) embeds the Windows resources,
   and `mise run hygiene` runs [check_repository.py](../scripts/check_repository.py).

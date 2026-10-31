@@ -27,6 +27,7 @@ mod journal;
 pub mod locate;
 mod marks;
 mod moment;
+mod movie;
 mod parallel;
 mod recording;
 mod select;
@@ -49,6 +50,7 @@ pub use crate::{
     },
     marks::{Mark, Shape},
     moment::{Moment, Span},
+    movie::{MovieError, MoviePrefix},
     recording::{
         Action, EmptyStroke, Ending, InkPoint, Narration, NarrationLoss, Pin, Recording, Size,
         Stroke, Word,

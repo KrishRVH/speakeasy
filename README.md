@@ -115,6 +115,15 @@ Mac, but not on Linux. On Windows, streaming and screen-sharing apps such as Sun
 video-call app don't see Speakeasy's windows or ink while a Show records; the keyframes still carry
 the ink.
 
+Windows Shows also save silent H.264 video in `recording.mp4`, targeting 30 frames per second at up
+to 2560 pixels per edge. The video follows the chosen screen, window, or area and the original
+five-minute limit. Resized windows fit inside a fixed canvas; a quiet ending holds the last image.
+The video has no audio or drawn annotations. Its timing file, `recording.json`, records the session
+origin, surviving video coverage, and the separate horizon of marks and narration. Capture or disk
+failure can shorten video coverage. Recovery retains only complete fragments; if none were written,
+the stills save with a video-loss notice. A failed copy of surviving video keeps the checkpoint for
+recovery. Mac Shows currently retain sampled frames only.
+
 <p align="center">
   <img src="docs/assets/show-sheet.png"
     alt="The made-up app's contact sheet: a click, a circle and arrow numbered 1 and 2, pin 3 and a click, and a drag"
@@ -163,6 +172,9 @@ current time. Source images have no annotations. Older Shows still offer their s
 In **All retained frames**, numbered mark buttons jump to the sample at or before the mark. The
 viewer reports both the mark time and the actual sample time. If retained frames cannot be saved,
 the selected keyframes still save and Speakeasy reports the loss.
+
+For a Show with video, **Play video** opens its MP4 in your system player. The saved summary and
+`inspect` report its coverage. Playback does not overlay the Show's marks or narration.
 
 Choose **Narration** beside **Summary** to read the recorded words. Click a timed clause to jump to
 a frame; the caption gives both the clause's time and the displayed frame's actual time, including
@@ -242,10 +254,13 @@ There is no implicit latest Show.
 `export` writes only a new ZIP outside the original bundle and leaves the original and its retention
 unchanged. It checks the manifest and expected file inventory without decoding image payloads.
 Missing, linked, or oversized files, invalid retained-source indexes, and mismatched timelines fail
-the export. Image payloads are copied unchanged. It streams at most 1 GiB of saved content into a
-private temporary file, then publishes the complete archive without overwriting an existing path.
-JSON output contains the export path, file count, byte count, and whether retained samples are
+the export. Image and video payloads are copied unchanged. It streams at most 2 GiB of saved content
+into a private temporary file, then publishes the complete archive without overwriting an existing
+path. JSON output contains the export path, file count, byte count, and whether retained samples are
 included; it contains no private text.
+
+Video exports include `recording.mp4`, `recording.json`, and relative playback links in the guide.
+Inspection validates complete fragment ranges and their timing; it does not decode compressed video.
 
 `frames` accepts a time, mark, or spoken phrase to locate surrounding evidence. Phrases match
 recorded narration after corrections, ignoring case and punctuation; summary edits are separate.
@@ -680,6 +695,16 @@ paused clock exercises gesture deadlines and the five-minute cap.
   through the native reader, and forces storage failure. The separate
   `a_cancelled_active_movie_releases_its_file_without_a_new_frame` filter checks cancellation and
   file release. Neither opens a microphone, captures the screen, or touches input or the clipboard.
+- The Windows platform filter
+  `a_movie_survives_still_backpressure_and_closes_at_the_session_deadline`, with the same opt-in
+  arguments, captures only an owned, blacked-out scene into a temporary movie. It changes that scene
+  after filling the still queue and checks later video submissions, the original deadline, and file
+  release. It accesses no microphone, input, or clipboard.
+- On any host, set `SPEAKEASY_MOVIE_FIXTURES` to the synthetic codec probe directory and
+  `SPEAKEASY_MOVIE_PREFIX_OUT` to a new output directory, then run
+  `cargo test --locked -p speakeasy-show --test movie_native -- --ignored --nocapture`. It validates
+  native fragment timing and writes recovered prefixes for independent decoder checks. These
+  fixtures contain generated pixels only.
 
 Live microphone, editor, and screen acceptance is tracked under
 [verification](docs/architecture.md#verification).

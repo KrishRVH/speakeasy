@@ -163,6 +163,7 @@ pub(crate) enum Published {
     Recovered {
         show: SavedShow,
         source_lost: bool,
+        movie_lost: bool,
         lost: Option<NarrationLoss>,
         audio_kept: bool,
         narrated_copy: bool,
@@ -174,6 +175,7 @@ pub(crate) enum Published {
         ending: Ending,
         lost: Option<NarrationLoss>,
         source_lost: bool,
+        movie_lost: bool,
         audio_kept: bool,
         copied: anyhow::Result<()>,
     },

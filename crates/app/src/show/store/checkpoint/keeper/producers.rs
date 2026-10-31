@@ -1,7 +1,7 @@
 //! Capture-side queue budgets. A stalled audio writer leaves its backlog in the existing PCM
 //! buffer; a frame gap permanently closes that stream so replay never invents missing events.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_channel::{Receiver, Sender};
 use speakeasy_show::{Size, TakeEvent};
@@ -102,6 +102,17 @@ impl FrameLog {
 
     pub(crate) fn send(&mut self, event: TakeEvent) -> bool {
         self.offer(FrameRecord::Event(event))
+    }
+
+    pub(crate) async fn movie(
+        &mut self,
+        started: Instant,
+    ) -> Option<speakeasy_platform::MovieTarget> {
+        let (returned, target) = async_channel::bounded(1);
+        if !self.offer(FrameRecord::Movie { started, returned }) {
+            return None;
+        }
+        target.recv().await.ok()
     }
 
     fn offer(&mut self, record: FrameRecord) -> bool {

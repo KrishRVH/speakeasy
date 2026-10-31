@@ -190,6 +190,14 @@ impl Checkpoint {
         Ok(())
     }
 
+    pub(in crate::show) fn retain_movie(
+        &self,
+        staged: &mut Staged,
+        annotations: speakeasy_show::Moment,
+    ) -> anyhow::Result<bool> {
+        staged.retain_movie(&self.directory, annotations)
+    }
+
     /// Stores recognized narration before erasing its audio. A crash between these steps retries
     /// deletion after reading the durable narration; it never needs a second transcription.
     pub(crate) fn narrate(&self, narration: &Narration, incomplete: bool) -> anyhow::Result<()> {
@@ -334,7 +342,13 @@ impl Checkpoint {
         }
         sync_directory(&self.directory)?;
         // Private content goes before the lock, so a blocked deletion remains retryable.
-        for name in [audio::FILE, NARRATION, LOG] {
+        for name in [
+            audio::FILE,
+            NARRATION,
+            LOG,
+            super::movie::FILE,
+            super::movie::HEADER,
+        ] {
             remove(&self.directory.join(name))
                 .context("Cannot remove Show content; close files open in the Show's folder")?;
         }
@@ -603,7 +617,7 @@ fn read_complete(file: &mut File, bytes: &mut [u8]) -> io::Result<bool> {
 }
 
 #[cfg(unix)]
-fn sync_directory(directory: &Path) -> io::Result<()> {
+pub(super) fn sync_directory(directory: &Path) -> io::Result<()> {
     File::open(directory)?.sync_all()
 }
 
@@ -612,7 +626,7 @@ fn sync_directory(directory: &Path) -> io::Result<()> {
     clippy::unnecessary_wraps,
     reason = "Callers share Unix's fallible contract; portable Rust cannot sync a Windows directory handle"
 )]
-const fn sync_directory(_: &Path) -> io::Result<()> {
+pub(super) const fn sync_directory(_: &Path) -> io::Result<()> {
     Ok(())
 }
 

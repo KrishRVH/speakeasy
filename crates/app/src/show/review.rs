@@ -790,6 +790,16 @@ impl Review {
                     cx.open_with_system(&key.directory);
                 }
             },
+            Action::Movie => {
+                if self
+                    .detail
+                    .as_ref()
+                    .is_some_and(|detail| detail.movie.is_some())
+                    && let Some(key) = &self.library.selected
+                {
+                    cx.open_with_system(&key.directory.join(super::store::movie::FILE));
+                }
+            },
         }
         cx.notify();
     }
@@ -836,6 +846,7 @@ enum Action {
     Export,
     Keep,
     Folder,
+    Movie,
 }
 
 #[cfg(test)]

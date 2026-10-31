@@ -148,6 +148,7 @@ impl Ports for ModelPorts {
                     ending,
                     lost,
                     source_lost: false,
+                    movie_lost: false,
                     audio_kept: false,
                     copied: Ok(()),
                 }

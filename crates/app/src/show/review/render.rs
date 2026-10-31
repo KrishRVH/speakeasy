@@ -779,6 +779,14 @@ impl Review {
                 )
             })
             .child(button(Action::Folder, palette, true, false, cx).child("Open folder"))
+            .when(
+                self.detail
+                    .as_ref()
+                    .is_some_and(|detail| detail.movie.is_some()),
+                |bar| {
+                    bar.child(button(Action::Movie, palette, true, false, cx).child("Play video"))
+                },
+            )
             .child(
                 button(
                     Action::Export,
@@ -859,6 +867,7 @@ fn button(
         Action::Pane(Pane::Narration) => "show-narration-tab".into(),
         Action::Clause(index) => SharedString::from(format!("show-clause-{index}")).into(),
         Action::Folder => "shows-folder".into(),
+        Action::Movie => "shows-movie".into(),
         Action::Export => "shows-export".into(),
         Action::Show(index) => SharedString::from(format!("show-{index}")).into(),
         Action::Frame(index) => SharedString::from(format!("frame-{index}")).into(),

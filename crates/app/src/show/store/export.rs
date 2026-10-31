@@ -12,11 +12,11 @@ use serde::Serialize;
 use speakeasy_show::{Bundle, Manifest, Source};
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
-use super::{recall, source};
+use super::{movie, recall, source};
 
 const GUIDE: &str = "README.md";
 /// A malicious or damaged inventory cannot make an export consume unbounded disk space.
-const CONTENT_LIMIT: u64 = 1 << 30;
+const CONTENT_LIMIT: u64 = 2 << 30;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -132,17 +132,32 @@ fn archive(
             "Source and Show timelines differ; inspect the bundle before exporting"
         );
         archive.start_file(source::FILE, options)?;
-        copy(
+        let copied = copy(
             directory,
             source::FILE,
             Source::FILE_LIMIT.min(remaining),
             &mut archive,
         )
         .context("Cannot export retained frames")?;
+        remaining = remaining.saturating_sub(copied);
         files = files.saturating_add(1);
     }
+    let movie = movie::saved(directory, manifest.recording().duration)
+        .context("Cannot export damaged video")?;
+    if movie.is_some() {
+        for (name, limit) in [
+            (movie::FILE, speakeasy_show::MoviePrefix::FILE_LIMIT),
+            (movie::HEADER, movie::HEADER_LIMIT),
+        ] {
+            archive.start_file(name, options)?;
+            let copied = copy(directory, name, limit.min(remaining), &mut archive)
+                .context("Cannot export video")?;
+            remaining = remaining.saturating_sub(copied);
+            files = files.saturating_add(1);
+        }
+    }
     archive.start_file(GUIDE, options)?;
-    guide(&manifest, retained_frames, &mut archive)?;
+    guide(&manifest, retained_frames, movie.as_ref(), &mut archive)?;
     archive.finish()?.flush()?;
     Ok((files.saturating_add(1), retained_frames))
 }
@@ -163,7 +178,12 @@ fn copy(directory: &Path, name: &str, limit: u64, out: &mut impl io::Write) -> i
     Ok(copied)
 }
 
-fn guide(manifest: &Manifest, retained_frames: bool, out: &mut impl io::Write) -> io::Result<()> {
+fn guide(
+    manifest: &Manifest,
+    retained_frames: bool,
+    movie: Option<&movie::Metadata>,
+    out: &mut impl io::Write,
+) -> io::Result<()> {
     writeln!(out, "# Speakeasy Show\n")?;
     writeln!(
         out,
@@ -194,6 +214,15 @@ fn guide(manifest: &Manifest, retained_frames: bool, out: &mut impl io::Write) -
         writeln!(
             out,
             "\n## Retained frames\n\n[source.frames](source.frames) contains the additional saved samples. With Speakeasy installed, run `speakeasy show frames . --json` inside this extracted folder to inspect sample times, or `speakeasy show frame . --at 0:01 --out ../frame.png` to export a sample. Use this folder's path, not an ID from the original machine."
+        )?;
+    }
+    if let Some(movie) = movie {
+        writeln!(
+            out,
+            "\n## Video\n\nOpen [recording.mp4](recording.mp4) in a video player. [recording.json](recording.json) records its session origin and surviving coverage.{}",
+            movie
+                .note(Path::new(movie::FILE))
+                .map_err(io::Error::other)?
         )?;
     }
     Ok(())

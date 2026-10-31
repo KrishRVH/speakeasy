@@ -111,6 +111,38 @@ fn archive_moves_with_edited_summary_images_and_retained_samples_but_no_extra_fi
 }
 
 #[test]
+fn movie_exports_preserve_video_timing_and_relative_playback_links() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let directory = fixture(root.path())?;
+    let checkpoint = tempfile::tempdir()?;
+    movie::tests::checkpoint(checkpoint.path(), true)?;
+    movie::retain(
+        checkpoint.path(),
+        &directory,
+        movie::inspect(checkpoint.path())?.unwrap(),
+        Moment::from_millis(1000),
+    )?;
+    let destination = root.path().join("video.zip");
+    write(&directory, &destination)?;
+    let mut archive = ZipArchive::new(File::open(destination)?)?;
+    for name in [movie::FILE, movie::HEADER, Bundle::SUMMARY] {
+        let mut bytes = Vec::new();
+        archive.by_name(name)?.read_to_end(&mut bytes)?;
+        assert_eq!(bytes, fs::read(directory.join(name))?);
+    }
+    let mut guide = String::new();
+    archive.by_name(GUIDE)?.read_to_string(&mut guide)?;
+    assert!(guide.contains("[recording.mp4](recording.mp4)"));
+    assert!(guide.contains("250–1250 ms") && guide.contains("through 1000 ms"));
+    assert!(!guide.contains(&directory.to_string_lossy().to_string()));
+    fs::remove_file(directory.join(movie::FILE))?;
+    let failed = root.path().join("missing-video.zip");
+    assert!(write(&directory, &failed).is_err());
+    assert!(!failed.exists());
+    Ok(())
+}
+
+#[test]
 fn failed_or_repeated_exports_leave_destinations_and_originals_unchanged() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = fixture(root.path())?;

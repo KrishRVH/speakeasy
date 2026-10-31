@@ -16,7 +16,7 @@ use encoder::Encoder;
 use crate::{Frame, MovieTarget};
 
 pub(super) const INTERVAL: Duration = Duration::from_nanos(33_333_334);
-/// Leaves room beside a 512 MiB lossless source and keyframes in the 1 GiB portable export.
+/// Bounds the native encoder's disk use independently of retained still frames.
 const FILE_LIMIT: u64 = 384 << 20;
 const MAX_FRAMES: u32 = 9_001;
 
@@ -56,7 +56,8 @@ impl Movie {
             Self::Stopped => return,
         };
         if target.cancelled() || stopping.is_closed() {
-            self.stop(now);
+            let ending = now.min(target.deadline());
+            self.stop(ending);
         }
     }
 
@@ -119,7 +120,9 @@ impl Recording {
     fn frame(&mut self, frame: &Frame) -> anyhow::Result<()> {
         let at = frame.at.saturating_duration_since(self.first);
         anyhow::ensure!(
-            at <= Duration::from_secs(300) && self.frames < MAX_FRAMES,
+            frame.at < self.target.deadline()
+                && at <= Duration::from_secs(300)
+                && self.frames < MAX_FRAMES,
             "The Show movie reached its recording limit"
         );
         if frame.at < self.last || (self.frames > 0 && frame.at == self.last) {
@@ -136,9 +139,14 @@ impl Recording {
 
 impl Drop for Recording {
     fn drop(&mut self) {
-        let through = self.ending.unwrap_or(self.last).max(self.last);
+        let through = self
+            .ending
+            .unwrap_or(self.last)
+            .max(self.last)
+            .min(self.target.deadline());
         let ending = self.ending.map(|at| {
-            at.saturating_duration_since(self.first)
+            at.min(self.target.deadline())
+                .saturating_duration_since(self.first)
                 .min(Duration::from_secs(300))
         });
         let finalized = self

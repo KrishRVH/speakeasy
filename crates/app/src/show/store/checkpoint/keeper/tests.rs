@@ -116,3 +116,70 @@ async fn an_audio_failure_does_not_stop_frames_or_release_the_owner() -> anyhow:
     checkpoint.discard()?;
     Ok(())
 }
+
+#[tokio::test]
+async fn failed_frame_and_closed_audio_lanes_cannot_unlock_a_native_movie() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let Kept {
+        keeper,
+        mut frames,
+        audio,
+    } = begin(root.path())?;
+    record_frame(&mut frames)?;
+    let target = frames.movie(Instant::now()).await.unwrap();
+    // A duplicate stream header is a real write failure after the native lease was acquired.
+    assert!(frames.begin(1_000, surface()));
+    assert!(!frames.close().await);
+    drop(audio);
+    let closing = keeper.close();
+    tokio::pin!(closing);
+    let waiting = tokio::time::timeout(Duration::from_millis(20), &mut closing)
+        .await
+        .is_err();
+    let cancelled = target.cancelled();
+    let unlocked = super::super::list(root.path(), SystemTime::now()).shows;
+    drop(target);
+    let checkpoint = tokio::time::timeout(crate::testing::PATIENCE, closing).await??;
+    assert!(waiting);
+    assert!(!cancelled, "An unrelated frame failure stopped the movie");
+    assert_eq!(unlocked, []);
+    assert!(checkpoint.replay()?.ended());
+    checkpoint.discard()?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn emergency_drop_cancels_but_waits_for_the_native_movie_file_lease() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let Kept {
+        keeper,
+        mut frames,
+        audio,
+    } = begin(root.path())?;
+    record_frame(&mut frames)?;
+    let target = frames.movie(Instant::now()).await.unwrap();
+    assert!(frames.close().await);
+    drop(audio);
+    let mut dropping = tokio::task::spawn_blocking(move || drop(keeper));
+    tokio::time::timeout(crate::testing::PATIENCE, async {
+        while !target.cancelled() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await?;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut dropping)
+            .await
+            .is_err()
+    );
+    assert_eq!(super::super::list(root.path(), SystemTime::now()).shows, []);
+    drop(target);
+    tokio::time::timeout(crate::testing::PATIENCE, dropping).await??;
+    assert_eq!(
+        super::super::list(root.path(), SystemTime::now())
+            .shows
+            .len(),
+        1
+    );
+    Ok(())
+}

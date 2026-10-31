@@ -138,6 +138,14 @@ struct Detail {
     sheets: Vec<Sheet>,
     frames: Vec<Frame>,
     mark_frames: Vec<MarkFrame>,
+    movie: Option<Movie>,
+}
+
+#[derive(Serialize)]
+struct Movie {
+    path: PathBuf,
+    #[serde(flatten)]
+    timing: super::super::store::movie::Metadata,
 }
 
 #[derive(Serialize)]
@@ -170,6 +178,10 @@ impl Detail {
         let manifest = &show.manifest;
         Self {
             ending: manifest.recording().ending,
+            movie: show.movie.clone().map(|timing| Movie {
+                path: entry.file(super::super::store::movie::FILE),
+                timing,
+            }),
             narration_lost: manifest.recording().narration_lost,
             summary: entry.file(Bundle::SUMMARY),
             manifest: entry.file(Manifest::FILE),
@@ -361,6 +373,17 @@ pub(super) fn inspect(
             detail.summary.display(),
             detail.manifest.display()
         )?;
+        if let Some(movie) = detail.movie {
+            writeln!(
+                out,
+                "{}",
+                movie
+                    .timing
+                    .note(&movie.path)
+                    .map_err(io::Error::other)?
+                    .trim()
+            )?;
+        }
         for sheet in detail.sheets {
             writeln!(
                 out,

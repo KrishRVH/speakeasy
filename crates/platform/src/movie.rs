@@ -52,6 +52,7 @@ pub struct MovieTarget {
     pub(crate) path: PathBuf,
     cancelled: Receiver<Infallible>,
     events: Sender<MovieEvent>,
+    deadline: Instant,
 }
 
 /// Leaves the private checkpoint path out of diagnostics.
@@ -64,9 +65,10 @@ impl std::fmt::Debug for MovieTarget {
 impl MovieControl {
     /// Reserves a new movie path beneath a private, locked checkpoint. This opens no file. The
     /// native writer refuses an existing destination; the checkpoint remains responsible for
-    /// recovery and deletion of any partial file.
+    /// recovery and deletion of any partial file. `deadline` is the original session's hard end,
+    /// even when movie capture begins later.
     #[must_use]
-    pub fn new(path: PathBuf) -> (Self, MovieTarget) {
+    pub fn new(path: PathBuf, deadline: Instant) -> (Self, MovieTarget) {
         let (cancel, cancelled) = async_channel::bounded(1);
         let (outgoing, events) = async_channel::bounded(2);
         (
@@ -75,6 +77,7 @@ impl MovieControl {
                 path,
                 cancelled,
                 events: outgoing,
+                deadline,
             },
         )
     }
@@ -87,6 +90,14 @@ impl MovieControl {
     /// Receives the next event, or `None` only after the native lease has been released.
     pub async fn next(&self) -> Option<MovieEvent> {
         self.events.recv().await.ok()
+    }
+
+    /// Cancels and drains native teardown on an owning background thread. This also drops any
+    /// unanswered acceptance request, so an unwinding checkpoint keeps its lock until every
+    /// native file handle has released. Never call this on a UI thread or while holding the target.
+    pub fn close_blocking(&self) {
+        self.request_stop();
+        while self.events.recv_blocking().is_ok() {}
     }
 }
 
@@ -106,7 +117,14 @@ impl MovieTarget {
     /// Whether the checkpoint has requested that movie writing stop.
     #[must_use]
     pub fn cancelled(&self) -> bool {
-        self.cancelled.is_closed() || self.events.is_closed()
+        self.cancelled.is_closed() || self.events.is_closed() || Instant::now() >= self.deadline
+    }
+
+    /// The original session's hard recording deadline. It bounds input and held-tail timing;
+    /// reaching it never permits the checkpoint to unlock before native cleanup acknowledges.
+    #[must_use]
+    pub const fn deadline(&self) -> Instant {
+        self.deadline
     }
 
     #[cfg(target_os = "windows")]
@@ -116,6 +134,9 @@ impl MovieTarget {
         size: [u32; 2],
         stopping: &Receiver<Infallible>,
     ) -> bool {
+        if at >= self.deadline || self.cancelled() {
+            return false;
+        }
         let (accepted, answer) = async_channel::bounded(1);
         if self
             .events
@@ -124,7 +145,10 @@ impl MovieTarget {
         {
             return false;
         }
-        let Ok(runtime) = tokio::runtime::Builder::new_current_thread().build() else {
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+        else {
             return false;
         };
         runtime.block_on(async {
@@ -132,6 +156,7 @@ impl MovieTarget {
                 biased;
                 _cancelled = self.cancelled.recv() => false,
                 _stopped = stopping.recv() => false,
+                () = tokio::time::sleep_until(tokio::time::Instant::from_std(self.deadline)) => false,
                 accepted = answer.recv() => accepted.unwrap_or(false),
             }
         }) && !self.cancelled()
@@ -163,8 +188,26 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn the_session_deadline_cancels_an_unused_target_without_releasing_its_lease() {
+        let (control, target) = MovieControl::new(PathBuf::from("synthetic.mp4"), Instant::now());
+        assert!(target.cancelled());
+        let mut waiting = std::pin::pin!(control.next());
+        assert!(
+            waiting
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending()
+        );
+        drop(target);
+        assert!(waiting.await.is_none());
+    }
+
+    #[tokio::test]
     async fn cancellation_does_not_acknowledge_a_native_writer_still_holding_its_lease() {
-        let (control, target) = MovieControl::new(PathBuf::from("synthetic.mp4"));
+        let (control, target) = MovieControl::new(
+            PathBuf::from("synthetic.mp4"),
+            Instant::now().checked_add(crate::PATIENCE).unwrap(),
+        );
         control.request_stop();
         assert!(target.cancelled());
         let mut waiting = std::pin::pin!(control.next());
@@ -183,7 +226,10 @@ mod tests {
     async fn checkpoint_and_capture_cancellation_interrupt_an_unanswered_acceptance()
     -> anyhow::Result<()> {
         for cancel_checkpoint in [true, false] {
-            let (control, target) = MovieControl::new(PathBuf::from("synthetic.mp4"));
+            let (control, target) = MovieControl::new(
+                PathBuf::from("synthetic.mp4"),
+                Instant::now().checked_add(crate::PATIENCE).unwrap(),
+            );
             let (stop, stopping) = async_channel::bounded(1);
             let native = crate::OwnedThread::spawn("synthetic movie handshake", move || {
                 assert!(!target.begin(Instant::now(), [2, 2], &stopping));

@@ -9,6 +9,9 @@ EIS = "EIS"
 # ISO 639 language codes in the Whisper language catalog.
 ba = "ba"
 fo = "fo"
+# ISO BMFF track and track-run box types.
+trak = "trak"
+trun = "trun"
 
 [files]
 # Dotfiles hold the CI workflows and the task and tool config.

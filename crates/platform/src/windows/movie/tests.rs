@@ -5,7 +5,10 @@ use crate::Part;
 
 #[tokio::test]
 async fn a_cancelled_pending_movie_releases_its_lease_without_a_frame() {
-    let (control, target) = crate::MovieControl::new(PathBuf::from("synthetic.mp4"));
+    let (control, target) = crate::MovieControl::new(
+        PathBuf::from("synthetic.mp4"),
+        Instant::now().checked_add(crate::PATIENCE).unwrap(),
+    );
     let (_stop, stopping) = async_channel::bounded(1);
     let mut movie = Movie::new(Some(target));
     control.request_stop();
@@ -19,7 +22,10 @@ async fn a_cancelled_pending_movie_releases_its_lease_without_a_frame() {
 async fn a_cancelled_active_movie_releases_its_file_without_a_new_frame() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("synthetic.mp4");
-    let (control, target) = crate::MovieControl::new(path.clone());
+    let (control, target) = crate::MovieControl::new(
+        path.clone(),
+        Instant::now().checked_add(crate::PATIENCE).unwrap(),
+    );
     let (_stop, stopping) = async_channel::bounded(1);
     let (submitted, wrote) = async_channel::bounded(1);
     let (poll, polling) = async_channel::bounded(1);

@@ -47,12 +47,14 @@ enum Outcome {
         ending: Ending,
         lost: Option<NarrationLoss>,
         source_lost: bool,
+        movie_lost: bool,
         audio_kept: bool,
     },
     /// The menu found the last Show gone.
     ShowGone,
     Recovered {
         source_lost: bool,
+        movie_lost: bool,
         lost: Option<NarrationLoss>,
         audio_kept: bool,
         narrated_copy: bool,
@@ -129,11 +131,13 @@ impl Outcome {
         if let Self::ShowCopied {
             audio_kept,
             source_lost,
+            movie_lost,
             ..
         }
         | Self::Recovered {
             audio_kept,
             source_lost,
+            movie_lost,
             ..
         } = self
         {
@@ -141,6 +145,10 @@ impl Outcome {
                 message.push_str(
                     " Audio is kept privately for retry in Shows until its original seven-day expiry.",
                 );
+            }
+            if *movie_lost {
+                message
+                    .push_str(" Video could not be saved; the selected keyframes are available.");
             }
             if *source_lost {
                 message.push_str(
@@ -500,6 +508,7 @@ impl<P: Ports> Owner<P> {
                 ending: Ending::Finished,
                 lost: None,
                 source_lost: false,
+                movie_lost: false,
             },
             Report::ShowGone(_) => Outcome::ShowGone,
         };
@@ -816,6 +825,7 @@ impl<P: Ports> Owner<P> {
                 ending,
                 lost,
                 source_lost,
+                movie_lost,
                 audio_kept,
                 copied,
             }))) => {
@@ -825,6 +835,7 @@ impl<P: Ports> Owner<P> {
                         ending,
                         lost,
                         source_lost,
+                        movie_lost,
                         audio_kept,
                     },
                     Err(error) => {
@@ -860,6 +871,7 @@ impl<P: Ports> Owner<P> {
             Ok(Delivered::Published(Ok(Published::Recovered {
                 show: saved,
                 source_lost,
+                movie_lost,
                 lost,
                 audio_kept,
                 narrated_copy,
@@ -867,6 +879,7 @@ impl<P: Ports> Owner<P> {
                 self.remember(saved, self.latest.id);
                 Outcome::Recovered {
                     source_lost,
+                    movie_lost,
                     lost,
                     audio_kept,
                     narrated_copy,
@@ -1366,6 +1379,7 @@ mod tests {
             ending: Ending::Finished,
             lost: None,
             source_lost: false,
+            movie_lost: false,
             audio_kept: false,
             copied: Ok(()),
         }))
@@ -1399,6 +1413,7 @@ mod tests {
                         lost: None,
                         audio_kept,
                         source_lost,
+                        movie_lost: false,
                     },
                     SHOW_COPIED,
                 ),
@@ -1408,6 +1423,7 @@ mod tests {
                         narrated_copy: false,
                         audio_kept,
                         source_lost,
+                        movie_lost: false,
                     },
                     "Show recovered. Find it in Shows.",
                 ),

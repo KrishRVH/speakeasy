@@ -214,3 +214,4 @@ fn recover_with(
 }
 
 mod audio;
+mod movie;

@@ -31,6 +31,7 @@ pub(crate) struct ReadShow {
     pub manifest: Manifest,
     pub pinned: bool,
     pub problems: Vec<FileProblem>,
+    pub movie: Option<super::movie::Metadata>,
 }
 
 /// A fixed file name and a content-free explanation of why it cannot be read.
@@ -162,7 +163,7 @@ fn read(directory: &Path) -> Result<ReadShow, ReadError> {
         .map_err(|error| file_error(Manifest::FILE, error))?;
     let manifest = Manifest::parse(&bytes).map_err(ReadError::Manifest)?;
     let pinned = pinned(directory).map_err(|error| file_error(PIN, error))?;
-    let problems = manifest
+    let mut problems: Vec<_> = manifest
         .files()
         .filter_map(|name| {
             let limit = if name == Bundle::SUMMARY {
@@ -178,10 +179,21 @@ fn read(directory: &Path) -> Result<ReadShow, ReadError> {
                 })
         })
         .collect();
+    let movie = match super::movie::saved(directory, manifest.recording().duration) {
+        Ok(movie) => movie,
+        Err(error) => {
+            problems.push(FileProblem {
+                name: super::movie::FILE.to_owned(),
+                reason: error.to_string(),
+            });
+            None
+        },
+    };
     Ok(ReadShow {
         manifest,
         pinned,
         problems,
+        movie,
     })
 }
 

@@ -126,6 +126,7 @@ fn publish_with(
             show,
             summary,
             source_lost,
+            movie_lost,
         })) => {
             if !audio_kept {
                 remove_published(checkpoint);
@@ -136,12 +137,14 @@ fn publish_with(
                     ending,
                     lost,
                     source_lost,
+                    movie_lost,
                     audio_kept,
                     copied: copy(&summary),
                 }),
                 Origin::Recovered { pending } => Ok(Published::Recovered {
                     show,
                     source_lost,
+                    movie_lost,
                     lost,
                     audio_kept,
                     narrated_copy: pending,
@@ -220,6 +223,7 @@ struct Persisted {
     show: SavedShow,
     summary: String,
     source_lost: bool,
+    movie_lost: bool,
 }
 
 fn persist(
@@ -258,7 +262,7 @@ fn persist(
     if cancelled() {
         return Ok(None);
     }
-    let staged = store::stage(
+    let mut staged = store::stage(
         &directory,
         bundle,
         Some(store::Retained {
@@ -267,6 +271,10 @@ fn persist(
             command,
         }),
     )?;
+    let movie_lost = match checkpoint {
+        Some(checkpoint) => checkpoint.retain_movie(&mut staged, duration)?,
+        None => false,
+    };
     let source_lost = staged.source_lost;
     drop(journal);
     if !permit.commit() {
@@ -280,6 +288,7 @@ fn persist(
         show,
         summary,
         source_lost,
+        movie_lost,
     }))
 }
 

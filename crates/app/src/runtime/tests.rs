@@ -297,6 +297,7 @@ impl Ports for FakePorts {
                     Published::Recovered {
                         show: saved_show(&narration),
                         source_lost: false,
+                        movie_lost: false,
                         lost,
                         audio_kept: false,
                         narrated_copy: false,
@@ -326,6 +327,7 @@ impl Ports for FakePorts {
                 ending,
                 lost,
                 source_lost: false,
+                movie_lost: false,
                 audio_kept: false,
                 copied: copy_error.map_or(Ok(()), |error| Err(anyhow!(error))),
             })

@@ -154,6 +154,7 @@ pub(super) struct Detail {
     pub narration: Narration,
     pub source_available: bool,
     pub coverage: String,
+    pub movie: Option<super::super::store::movie::Metadata>,
 }
 
 impl Detail {
@@ -173,6 +174,7 @@ impl Detail {
         let mut frames = Vec::new();
         let mut marks = Vec::new();
         let mut narration = Narration::Unavailable;
+        let mut movie = None;
         match entry.show {
             Err(ReadError::Manifest(Unreadable::Unsupported(version))) => warnings.push(format!(
                 "This Show uses format {version}. Update Speakeasy to view its frames. Its summary may still be readable."
@@ -181,6 +183,7 @@ impl Detail {
                 "Cannot read this Show's frame list: {error}. Its summary may still be readable."
             )),
             Ok(show) => {
+                movie = show.movie;
                 let manifest = show.manifest;
                 let recording = manifest.recording();
                 narration = Narration::from_recording(recording);
@@ -284,6 +287,7 @@ impl Detail {
             narration,
             source_available,
             coverage,
+            movie,
         })
     }
 }
