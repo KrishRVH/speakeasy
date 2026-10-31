@@ -21,7 +21,9 @@ The source patches cover native windows, accessibility, frame scheduling, and pa
   current shaped layout. Selection uses scalar boundaries and byte offsets; bounded runs preserve
   word and line continuity. Text updates retire retained range identities, and aborted layout
   cannot publish partial selection references. A clipping ancestor carries the actual paint
-  viewport to the [Windows adapter patch](../accesskit_windows/README.speakeasy.md).
+  viewport to the [Windows adapter patch](../accesskit_windows/README.speakeasy.md). It exposes bounded
+  horizontal offsets and delivers scrolling to the editor owner. Geometry changes retire the scroll
+  target without retiring text ranges; plain panning preserves both identities.
   macOS and Linux bridges are not included.
 
 - `src/platform/linux/x11/window.rs` backports

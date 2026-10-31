@@ -4,7 +4,7 @@ use accesskit_consumer::{Node, TextRange};
 #[cfg(test)]
 mod tests;
 
-fn clipped(mut rect: Rect, node: Node<'_>) -> Option<Rect> {
+pub(super) fn clipped(mut rect: Rect, node: Node<'_>) -> Option<Rect> {
     let zero_advance = rect.width() == 0.0;
     let mut parent = node.parent();
     while let Some(node) = parent {

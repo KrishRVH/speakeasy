@@ -582,10 +582,11 @@ dictation is ready, or shows the latest error or notice; problems show in the at
 
 On Windows, assistive tools can read and operate the main Settings buttons, page tabs, switches, and
 phrase-correction and recognition-hint fields. Native acceptance checks their values, focus,
-actions, Unicode text selection, visible text ranges, and hide/reopen behavior. Text replacements
-retire prior ranges. Native selection is unavailable during active IME composition. Programmatic
-text scrolling and complete screen-reader navigation remain unfinished; macOS and Linux do not yet
-publish an accessibility tree.
+actions, Unicode text selection, visible text ranges, horizontal text scrolling, and hide/reopen
+behavior. Scrolling preserves selection and focus; text replacements retire prior ranges. Native
+selection is unavailable during active IME composition. Scrolling the Settings page and complete
+screen-reader navigation remain unfinished; macOS and Linux do not yet publish an accessibility
+tree.
 
 **Phrase corrections** replaces recurring recognition mistakes in dictation and Show narration.
 Enter what the engine hears and the spelling you want, then save. Matching is case-insensitive, uses
@@ -698,10 +699,11 @@ paused clock exercises gesture deadlines and the five-minute cap.
   switches, invocation, focus, input limits, bounds, hide/minimize, and retired providers. Build the
   app test executable with `cargo test --locked -p speakeasy --no-run`, then pass its path to the
   same script with `-StaticAccessibility` to check nonactivating and normal reopen without animation
-  or unrelated redraws, stale field edits, and the provider after window destruction.
-  `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks minimize, close, relaunch, and
-  configuration preservation with owned `--demo-tray` windows. `mise run ps:syntax` parses the
-  Windows scripts on a native PowerShell host.
+  or unrelated redraws, stale field edits, and the provider after window destruction. It also checks
+  precise text scrolling without changing selection or focus, and retained ranges after field
+  resizing. `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks minimize, close,
+  relaunch, and configuration preservation with owned `--demo-tray` windows. `mise run ps:syntax`
+  parses the Windows scripts on a native PowerShell host.
 - On Linux, `mise exec -- python scripts/check_demo_linux.py target/release/speakeasy` opens a
   private Xvfb display, checks rendered Settings and Shows, and checks that the preview shows and
   then hides the pill. It needs Xvfb, x11-utils, and a Vulkan driver.

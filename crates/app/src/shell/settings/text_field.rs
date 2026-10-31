@@ -3,6 +3,7 @@
 //! are bounded here, and neither content nor shaping failures enter diagnostics.
 
 mod edit;
+mod viewport;
 
 use std::ops::Range;
 
@@ -13,12 +14,14 @@ use gpui::{
     Point, ShapedLine, TextRun, UTF16Selection, UnderlineStyle, Window, canvas, div, fill, point,
     prelude::*, px, size,
 };
+use viewport::Viewport;
 
 use crate::theme::{Theme, alpha};
 
 pub(super) struct TextField {
     label: &'static str,
     edit: Edit,
+    viewport: Viewport,
     focus: FocusHandle,
     theme: Theme,
     layout: Option<(ShapedLine, Bounds<Pixels>, Pixels)>,
@@ -34,6 +37,7 @@ impl TextField {
         Self {
             label,
             edit: Edit::default(),
+            viewport: Viewport::default(),
             focus: cx.focus_handle().tab_stop(true),
             theme,
             layout: None,
@@ -114,6 +118,7 @@ impl TextField {
             _ => return,
         }
         cx.stop_propagation();
+        self.viewport.reveal_caret();
         cx.notify();
     }
 
@@ -140,8 +145,15 @@ impl TextField {
         }
         self.edit.select(selection.anchor, false);
         self.edit.select(selection.focus, true);
+        self.viewport.reveal_caret();
         window.focus(&self.focus);
         cx.notify();
+    }
+
+    fn scroll_accessible(&mut self, offset: Pixels, cx: &mut Context<'_, Self>) {
+        if self.viewport.pan(offset) {
+            cx.notify();
+        }
     }
 
     fn paint_text(
@@ -189,6 +201,7 @@ impl TextField {
         if let Some((line, bounds, scroll)) = &self.layout {
             let at = line.closest_index_for_x(position.x - bounds.left() + *scroll);
             self.edit.select(at, extend);
+            self.viewport.reveal_caret();
         }
     }
 
@@ -388,7 +401,6 @@ impl Render for TextField {
                                 .text_system()
                                 .shape_line(text.into(), px(12.0), &runs, None);
                         let cursor = line.x_for_index(input.edit.cursor);
-                        let scroll = (cursor - bounds.size.width + px(3.0)).max(px(0.0));
                         let range = input.edit.selection();
                         let anchor = if input.edit.reversed() {
                             range.end
@@ -399,12 +411,22 @@ impl Render for TextField {
                             anchor,
                             focus: input.edit.cursor,
                         };
+                        let viewport = input.viewport.layout(
+                            input.edit.generation,
+                            selected,
+                            cursor,
+                            bounds.size.width,
+                            line.width,
+                        );
                         let editor = field.clone();
+                        let scroll_editor = field.clone();
                         window.register_accessible_text(
                             gpui::AccessibleText {
                                 line: &line,
-                                origin: point(bounds.left() - scroll, bounds.top()),
+                                origin: bounds.origin,
                                 viewport: bounds,
+                                scroll_offset: viewport.offset,
+                                scroll_limit: viewport.limit,
                                 selection: selected,
                                 revision: input.edit.generation,
                             },
@@ -413,11 +435,17 @@ impl Render for TextField {
                                     field.select_accessible(selection, window, cx);
                                 });
                             },
+                            move |offset, _, cx| {
+                                scroll_editor
+                                    .update(cx, |field, cx| field.scroll_accessible(offset, cx));
+                            },
                         );
-                        (field.clone(), line, scroll)
+                        (field.clone(), line, viewport)
                     },
-                    move |bounds, (field, line, scroll), window, cx| {
+                    move |bounds, (field, line, viewport), window, cx| {
                         field.update(cx, |input, cx| {
+                            let scroll = viewport.offset;
+                            input.viewport = viewport;
                             window.handle_input(
                                 &input.focus,
                                 ElementInputHandler::new(bounds, field.clone()),

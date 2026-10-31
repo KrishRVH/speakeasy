@@ -70,7 +70,7 @@ run = [
   "cargo nextest run --workspace --lib --bins --tests --all-features --locked",
   "cargo test --workspace --doc --all-features --locked",
   "cargo test --manifest-path vendor/gpui/Cargo.toml --target-dir target/gpui-a11y-tests --lib --no-default-features --features test-support window::a11y --locked",
-  "{% if os() == 'windows' %}cargo test --manifest-path vendor/accesskit_windows/Cargo.toml --target-dir target/accesskit-geometry-tests --lib text::geometry --locked{% else %}true{% endif %}",
+  "{% if os() == 'windows' %}cargo test --manifest-path vendor/accesskit_windows/Cargo.toml --target-dir target/accesskit-geometry-tests --lib text:: --locked{% else %}true{% endif %}",
 ]
 
 [tasks."rust:machete"]

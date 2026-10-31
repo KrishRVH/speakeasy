@@ -14,4 +14,7 @@ include its license too. Registry cache markers are omitted.
 `ITextProvider::GetVisibleRanges` returns visible character spans, including a degenerate
 range when no text is visible. Full document text and positions remain available while
 the viewport scrolls. The app's Windows acceptance checks these methods on owned fields.
-`mise run rust:test` also runs the pure geometry regressions on Windows.
+`src/text/scroll.rs` implements reachable horizontal `ScrollIntoView` through `SetScrollOffset` on
+an explicit clipping container. It uses exact character positions, preserves absolute request
+ordering, and reports unsupported for unreachable ranges. Action callbacks run after releasing the
+tree lock. `mise run rust:test` runs the pure geometry and scrolling regressions on Windows.

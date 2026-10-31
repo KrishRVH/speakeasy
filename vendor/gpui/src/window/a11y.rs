@@ -202,11 +202,11 @@ impl A11y {
     }
 
     pub(crate) fn end_frame(&mut self) -> TreeUpdate {
-        for (parent, listener) in self.nodes.finish_text() {
+        for (target, action, listener) in self.nodes.finish_text() {
             self.action_listeners
-                .entry(parent)
+                .entry(target)
                 .or_default()
-                .push((Action::SetTextSelection, listener));
+                .push((action, listener));
         }
         self.nodes.finalize()
     }

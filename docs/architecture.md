@@ -152,8 +152,14 @@ module unless a test file is named.
   positions map back through the current field's runs; every replacement retires retained ranges,
   including replacement with identical text. The editor rejects selection during active IME
   composition. The [Windows text adapter](../vendor/accesskit_windows/src/text/geometry.rs) clips
-  native rectangles and visible ranges without removing document text. Programmatic text scrolling,
-  complete app semantics, and the other native bridges remain unimplemented.
+  native rectangles and visible ranges without removing document text. Its
+  [scroll adapter](../vendor/accesskit_windows/src/text/scroll.rs) converts exact ranges into
+  absolute horizontal offsets; queued requests preserve the latest intent even when its range was
+  already visible. The field owns its viewport and resumes caret tracking after edits or selection
+  changes. Layout changes retire the scroll target while preserving text ranges; requests computed
+  against old geometry cannot pan the new viewport. Unreachable or empty viewports return an
+  unsupported result. Outer Settings scrolling, complete app semantics, and the other native bridges
+  remain unimplemented.
 - **Private practice and readiness**:
   [settings/practice.rs](../crates/app/src/shell/settings/practice.rs) owns the receipt and
   transient rendered text. The session fixes its destination at admission; practice commits the same

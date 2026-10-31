@@ -237,10 +237,69 @@ public sealed class TextEventCounts : IDisposable {
         $hit.ExpandToEnclosingUnit([Windows.Automation.Text.TextUnit]::Character)
         if ([string]::IsNullOrEmpty($hit.GetText(-1))) { throw 'Text hit testing failed in the visible line' }
         if ($events.Changed -eq 0) { throw 'Native text change event was not raised' }
+        function New-TextRange([int]$Start, [int]$End) {
+            $result = $text.DocumentRange.Clone()
+            $result.MoveEndpointByRange([Windows.Automation.Text.TextPatternRangeEndpoint]::End, $result, [Windows.Automation.Text.TextPatternRangeEndpoint]::Start)
+            $null = $result.MoveEndpointByUnit([Windows.Automation.Text.TextPatternRangeEndpoint]::End, [Windows.Automation.Text.TextUnit]::Character, $End)
+            $null = $result.MoveEndpointByUnit([Windows.Automation.Text.TextPatternRangeEndpoint]::Start, [Windows.Automation.Text.TextUnit]::Character, $Start)
+            return $result
+        }
+        function Wait-Visible($Range, [string]$Phase) {
+            $deadline = [DateTime]::UtcNow.AddSeconds(5)
+            $visiblePolls = 0
+            while ([DateTime]::UtcNow -lt $deadline) {
+                if ($Range.GetBoundingRectangles().Count -gt 0) { $visiblePolls++ } else { $visiblePolls = 0 }
+                if ($visiblePolls -ge 3) { return }
+                Start-Sleep -Milliseconds 20
+            }
+            throw "ScrollIntoView did not reveal the requested text: $Phase"
+        }
+        $selection = New-TextRange 210 215
+        $selection.Select()
+        $deadline = [DateTime]::UtcNow.AddSeconds(5)
+        while ($text.GetSelection()[0].CompareEndpoints([Windows.Automation.Text.TextPatternRangeEndpoint]::Start, $selection, [Windows.Automation.Text.TextPatternRangeEndpoint]::Start) -ne 0 -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 20 }
+        $selected = $text.GetSelection()[0].Clone()
+        if (!$Field.Current.HasKeyboardFocus -or $selected.GetText(-1).Length -ne 5) { throw 'Scroll fixture did not establish a focused selection' }
+        $first = New-TextRange 5 6
+        $later = New-TextRange 200 201
+        $first.ScrollIntoView($true)
+        Wait-Visible $first first-position
+        if ($later.GetBoundingRectangles().Count -ne 0) { throw 'Scrolling one position unexpectedly revealed a distant position in the same run' }
+        $later.ScrollIntoView($false)
+        Wait-Visible $later later-position
+        $first.ScrollIntoView($true)
+        $later.ScrollIntoView($true)
+        Wait-Visible $later queued-later-position
+        Start-Sleep -Milliseconds 100
+        Wait-Visible $later settled-later-position
+        $document.ScrollIntoView($true)
+        Wait-Visible (New-TextRange 0 1) document-start
+        $document.ScrollIntoView($false)
+        Wait-Visible (New-TextRange 265 266) document-end
+        $caret.ScrollIntoView($false)
+        if (!$text.GetVisibleRanges()[0].GetText(-1).EndsWith(' end')) { throw 'End caret scrolling lost the document suffix' }
+        $first.ScrollIntoView($true)
+        Wait-Visible $first first-position
+        $windowElement = [Windows.Automation.AutomationElement]::FromHandle($Window)
+        $resize = $windowElement.FindFirst([Windows.Automation.TreeScope]::Descendants, (New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::NameProperty), 'Resize field'))
+        $width = $Field.Current.BoundingRectangle.Width
+        $resize.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+        $deadline = [DateTime]::UtcNow.AddSeconds(5)
+        while ($Field.Current.BoundingRectangle.Width -ge $width -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 20 }
+        if ($Field.Current.BoundingRectangle.Width -ge $width) { throw 'Owned field did not resize' }
+        Wait-Visible $first first-position
+        if ($later.GetText(-1) -ne 'a') { throw 'Resizing retired a valid retained text range' }
+        $later.ScrollIntoView($false)
+        Wait-Visible $later resized-later-position
+        foreach ($endpoint in @([Windows.Automation.Text.TextPatternRangeEndpoint]::Start, [Windows.Automation.Text.TextPatternRangeEndpoint]::End)) {
+            if ($text.GetSelection()[0].CompareEndpoints($endpoint, $selected, $endpoint) -ne 0) { throw 'Native scrolling changed the selection' }
+        }
+        if (!$Field.Current.HasKeyboardFocus -or $value.Current.Value -ne $long) { throw 'Native scrolling changed field focus or text' }
         Set-Text ''
+        $text.DocumentRange.ScrollIntoView($true)
         if ($text.GetVisibleRanges().Count -ne 1 -or $text.GetSelection()[0].GetText(-1) -ne '') { throw 'Empty field lost its caret range' }
         Set-Text 'Synthetic private draft'
-        Write-Host 'PASS: native TextPattern Unicode selection, events, retired ranges, empty carets, cross-run visibility, and clipped scrolled geometry.'
+        Write-Host 'PASS: native TextPattern Unicode selection, events, retired ranges, empty carets, cross-run visibility, clipped geometry, precise scrolling, and retained ranges after resizing.'
     } finally {
         $events.Dispose()
     }

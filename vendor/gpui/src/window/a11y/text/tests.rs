@@ -1,5 +1,8 @@
 use super::*;
-use crate::{FontId, GlyphId, LineLayout, ShapedGlyph, ShapedRun, point, px, size};
+use crate::{
+    self as gpui, FontId, GlyphId, LineLayout, ShapedGlyph, ShapedRun, TestAppContext, point, px,
+    size,
+};
 use std::sync::Arc;
 
 fn line(text: &str) -> ShapedLine {
@@ -32,19 +35,27 @@ fn register(builder: &mut A11yNodeBuilder, text: &str, focus: usize) -> NodeId {
     let key = super::super::ElementKey(7);
     assert!(builder.push(key, Node::new(Role::TextInput)));
     let parent = builder.native_id(key).unwrap();
-    builder.pending_text.push(Registration {
+    builder.pending_text.push(registration(parent, text, focus));
+    builder.pop();
+    parent
+}
+
+fn registration(parent: NodeId, text: &str, focus: usize) -> Registration {
+    Registration {
         parent,
         line: line(text),
         origin: point(px(-20.0), px(10.0)),
         viewport: Bounds::new(point(px(5.0), px(10.0)), size(px(30.0), px(20.0))),
+        full_viewport: Bounds::new(point(px(5.0), px(10.0)), size(px(30.0), px(20.0))),
+        scroll_offset: px(0.0),
+        scroll_limit: px(100.0),
         line_height: px(20.0),
         scale: 1.5,
         selection: AccessibleTextSelection { anchor: 0, focus },
         revision: 0,
         listener: Box::new(|_, _, _| {}),
-    });
-    builder.pop();
-    parent
+        scroll_listener: Box::new(|_, _, _| {}),
+    }
 }
 
 fn begin(builder: &mut A11yNodeBuilder) {
@@ -55,7 +66,7 @@ fn begin(builder: &mut A11yNodeBuilder) {
 fn scalar_offsets_preserve_unicode_direction_and_reject_foreign_or_oversized_endpoints() {
     let text = "a🦀e\u{301}👩🏽‍💻";
     let mut next_id = 1;
-    let snapshot = Snapshot::new(text.to_owned().into(), 0, &mut next_id).unwrap();
+    let snapshot = Snapshot::new(&registration(NodeId(0), text, 0), &mut next_id).unwrap();
     let native = TextSelection {
         anchor: snapshot.position(text.len()).unwrap(),
         focus: snapshot.position(1).unwrap(),
@@ -68,7 +79,7 @@ fn scalar_offsets_preserve_unicode_direction_and_reject_foreign_or_oversized_end
         })
     );
     assert!(snapshot.position(2).is_none());
-    let foreign = Snapshot::new(text.to_owned().into(), 0, &mut next_id).unwrap();
+    let foreign = Snapshot::new(&registration(NodeId(0), text, 0), &mut next_id).unwrap();
     assert!(
         selection(
             &snapshot.runs,
@@ -92,7 +103,7 @@ fn scalar_offsets_preserve_unicode_direction_and_reject_foreign_or_oversized_end
         )
         .is_none()
     );
-    let empty = Snapshot::new("".into(), 0, &mut next_id).unwrap();
+    let empty = Snapshot::new(&registration(NodeId(0), "", 0), &mut next_id).unwrap();
     assert_eq!(empty.position(0).unwrap().character_index, 0);
     assert!(empty.position(1).is_none());
 }
@@ -220,4 +231,92 @@ fn separated_viewport_and_ancestor_publish_no_visible_gap() {
         .unwrap();
     assert!(clip.1.bounds().unwrap().is_empty());
     assert_eq!(clip.1.bounds().unwrap().x0, 300.0);
+}
+
+#[test]
+fn scrolling_preserves_action_identity_while_layout_changes_retire_only_the_container() {
+    let mut builder = A11yNodeBuilder::new();
+    begin(&mut builder);
+    let parent = register(&mut builder, "abc", 1);
+    builder.finish_text();
+    let original_clip = builder.text_snapshots[&parent].scroll.id;
+    let original_text = builder.text_snapshots[&parent].position(1).unwrap();
+    builder.finalize();
+    begin(&mut builder);
+    register(&mut builder, "abc", 2);
+    builder.pending_text[0].scroll_offset = px(15.0);
+    builder.finish_text();
+    assert_eq!(builder.text_snapshots[&parent].scroll.id, original_clip);
+    assert_eq!(
+        builder.text_snapshots[&parent].position(1),
+        Some(original_text)
+    );
+    builder.finalize();
+
+    let changes: [fn(&mut Registration); 7] = [
+        |registration| registration.origin.x += px(1.0),
+        |registration| registration.viewport.size.width -= px(1.0),
+        |registration| registration.full_viewport.size.width += px(1.0),
+        |registration| registration.scale = 2.0,
+        |registration| registration.line_height += px(1.0),
+        |registration| registration.scroll_limit += px(1.0),
+        |registration| Arc::get_mut(&mut registration.line.layout).unwrap().width += px(1.0),
+    ];
+    for change in changes {
+        begin(&mut builder);
+        register(&mut builder, "abc", 1);
+        builder.finish_text();
+        let previous = builder.text_snapshots[&parent].scroll.id;
+        builder.finalize();
+        begin(&mut builder);
+        register(&mut builder, "abc", 1);
+        change(&mut builder.pending_text[0]);
+        builder.finish_text();
+        assert_ne!(builder.text_snapshots[&parent].scroll.id, previous);
+        assert!(!builder.contains_native(previous));
+        assert_eq!(
+            builder.text_snapshots[&parent].position(1),
+            Some(original_text)
+        );
+        builder.finalize();
+    }
+}
+
+#[gpui::test]
+fn scroll_actions_use_admitted_scale_and_reject_invalid_offsets(cx: &mut TestAppContext) {
+    let mut builder = A11yNodeBuilder::new();
+    begin(&mut builder);
+    register(&mut builder, "abc", 1);
+    let (sent, received) = std::sync::mpsc::channel();
+    builder.pending_text[0].scroll_listener =
+        Box::new(move |offset, _, _| sent.send(offset).unwrap());
+    let (_, _, mut listener) = builder
+        .finish_text()
+        .into_iter()
+        .find(|(_, action, _)| *action == Action::SetScrollOffset)
+        .unwrap();
+    let cx = cx.add_empty_window();
+    cx.update(|window, cx| {
+        listener(
+            Some(&ActionData::SetScrollOffset(accesskit::Point::new(
+                30.0, 0.0,
+            ))),
+            window,
+            cx,
+        );
+        assert_eq!(received.try_recv().unwrap(), px(20.0));
+        for point in [
+            accesskit::Point::new(f64::NAN, 0.0),
+            accesskit::Point::new(f64::INFINITY, 0.0),
+            accesskit::Point::new(-1.0, 0.0),
+            accesskit::Point::new(151.0, 0.0),
+            accesskit::Point::new(30.0, 1.0),
+        ] {
+            listener(Some(&ActionData::SetScrollOffset(point)), window, cx);
+        }
+        assert!(matches!(
+            received.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+    });
 }

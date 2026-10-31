@@ -5,7 +5,7 @@
 
 #![allow(non_upper_case_globals)]
 
-use accesskit::{Action, ActionData, ActionRequest, ScrollHint, VerticalOffset};
+use accesskit::{Action, ActionData, ActionRequest, VerticalOffset};
 use accesskit_consumer::{
     Node, TextPosition as Position, TextRange as Range, Tree, TreeState, WeakTextRange as WeakRange,
 };
@@ -21,6 +21,7 @@ use windows::{
 use crate::{context::Context, node::PlatformNode, util::*};
 
 pub(crate) mod geometry;
+mod scroll;
 
 fn upgrade_range<'a>(weak: &WeakRange, tree_state: &'a TreeState) -> Result<Range<'a>> {
     if let Some(range) = weak.upgrade(tree_state) {
@@ -293,12 +294,12 @@ impl PlatformRange {
 
     fn do_action<F>(&self, f: F) -> Result<()>
     where
-        for<'a> F: FnOnce(Range<'a>, &Tree) -> ActionRequest,
+        for<'a> F: FnOnce(Range<'a>, &Tree) -> Result<ActionRequest>,
     {
         let context = self.upgrade_context()?;
         let tree = context.read_tree();
         let range = self.upgrade_for_read(tree.state())?;
-        let request = f(range, &tree);
+        let request = f(range, &tree)?;
         drop(tree);
         context.do_action(request);
         Ok(())
@@ -601,12 +602,12 @@ impl ITextRangeProvider_Impl for PlatformRange_Impl {
     fn Select(&self) -> Result<()> {
         self.do_action(|range, tree| {
             let (target_node, target_tree) = tree.state().locate_node(range.node().id()).unwrap();
-            ActionRequest {
+            Ok(ActionRequest {
                 action: Action::SetTextSelection,
                 target_tree,
                 target_node,
                 data: Some(ActionData::SetTextSelection(range.to_text_selection())),
-            }
+            })
         })
     }
 
@@ -622,25 +623,17 @@ impl ITextRangeProvider_Impl for PlatformRange_Impl {
 
     fn ScrollIntoView(&self, align_to_top: BOOL) -> Result<()> {
         self.do_action(|range, tree| {
-            let position = if align_to_top.into() {
-                range.start()
-            } else {
-                range.end()
-            };
+            let request = scroll::reveal(&range, align_to_top.into()).ok_or_else(not_supported)?;
             let (target_node, target_tree) = tree
                 .state()
-                .locate_node(position.inner_node().id())
-                .unwrap();
-            ActionRequest {
-                action: Action::ScrollIntoView,
+                .locate_node(request.target)
+                .ok_or_else(element_not_available)?;
+            Ok(ActionRequest {
+                action: Action::SetScrollOffset,
                 target_tree,
                 target_node,
-                data: Some(ActionData::ScrollHint(if align_to_top.into() {
-                    ScrollHint::TopEdge
-                } else {
-                    ScrollHint::BottomEdge
-                })),
-            }
+                data: Some(ActionData::SetScrollOffset(request.point)),
+            })
         })
     }
 
