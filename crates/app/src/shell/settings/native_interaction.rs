@@ -1,5 +1,5 @@
 //! Owned-window acceptance of picker focus and the borrowed-window close callback. No devices or
-//! system input are used; private practice text is a synthetic fixture.
+//! system input are used; private practice text and permission observations are synthetic fixtures.
 
 use std::time::Duration;
 
@@ -150,7 +150,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 Timer::after(Duration::from_millis(100)).await;
                 other.update(cx, |_, window, _| window.activate_window())?;
                 Timer::after(Duration::from_millis(100)).await;
-                settings.update(cx, |view, window, _| {
+                settings.update(cx, |view, window, cx| {
                     ensure!(
                         !window.is_window_active(),
                         "The second owned window did not activate"
@@ -158,6 +158,13 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     ensure!(
                         view.language.cursor.is_none(),
                         "Deactivation left the picker open"
+                    );
+                    view.follow_permissions(window, cx, grant_microphone_on_return());
+                    ensure!(
+                        view.permissions
+                            .map(|snapshot| permissions::description(snapshot.microphone))
+                            == Some("Not enabled"),
+                        "A denied microphone permission was presented as allowed"
                     );
                     window.activate_window();
                     anyhow::Ok(())
@@ -167,6 +174,16 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     ensure!(
                         view.language.button.is_focused(window),
                         "Reactivation lost picker focus"
+                    );
+                    ensure!(
+                        view.permissions
+                            .map(|snapshot| permissions::description(snapshot.microphone))
+                            == Some("Allowed"),
+                        "Returning from system settings did not refresh microphone permission"
+                    );
+                    ensure!(
+                        view.config.language == "auto",
+                        "Refreshing permission lost an unsaved language edit"
                     );
                     view.practice.text =
                         zeroize::Zeroizing::new("Synthetic private practice".into());
@@ -194,6 +211,20 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
     outcome
         .try_recv()
         .context("Native interaction acceptance did not complete")?
+}
+
+fn grant_microphone_on_return() -> impl FnMut() -> Permissions {
+    use speakeasy_platform::Permission;
+
+    let mut microphone = Permission::NotGranted;
+    move || {
+        let snapshot = Permissions {
+            microphone,
+            ..Permissions::default()
+        };
+        microphone = Permission::Granted;
+        snapshot
+    }
 }
 
 fn close(settings: WindowHandle<Settings>, cx: &mut App) -> anyhow::Result<()> {

@@ -350,11 +350,16 @@ about 0.8 GB in all, and turns dictation on:
 Then hold <kbd>Ctrl</kbd> + <kbd>Win</kbd> (Windows), <kbd>Fn</kbd> (Mac), or <kbd>Ctrl</kbd> +
 <kbd>Super</kbd> + <kbd>Space</kbd> (Linux) in an editor and speak.
 
-Settings shows whether the local model and shortcut are ready. **Try dictation here** lets you use
-the real shortcut and microphone while your words appear only in Settings. Nothing is pasted,
-copied, or saved, and practice cannot record a Show. **End practice**, hiding the window, losing
-focus, or changing settings ends practice and clears its text. To check delivery, end practice and
-dictate into an editor; practice does not verify another app's input or clipboard behavior.
+Settings shows whether the local model and shortcut are ready. It also shows macOS microphone,
+Accessibility, and screen permissions without prompting or capturing anything. Permission status
+refreshes when Settings comes to the front; **Open settings** opens the matching system page on
+macOS and Windows. Linux's **Microphone help** opens the setup guide. Windows and Linux access stays
+**Checked when used**, because a privacy setting alone cannot prove access. An allowed permission
+does not prove the hardware or another app works. **Try dictation here** lets you use the real
+shortcut and microphone while your words appear only in Settings. Nothing is pasted, copied, or
+saved, and practice cannot record a Show. **End practice**, hiding the window, losing focus, or
+changing settings ends practice and clears its text. To check delivery, end practice and dictate
+into an editor; practice does not verify another app's input or clipboard behavior.
 
 **Check for updates** in Settings contacts the repository's latest-release endpoint on GitHub only
 when clicked. It sends no recordings, settings, or device details. **Open release** opens that
@@ -636,8 +641,9 @@ paused clock exercises gesture deadlines and the five-minute cap.
   expiry, and image cleanup on close. Linux also checks the owned window's rendered frame pixels. It
   uses no microphone, global input, screen capture, or clipboard.
 - The same command with `native_phrase_editor_` checks Settings IME composition and save draining;
-  with `native_settings_picker_` it checks language navigation, focus restoration, and private
-  practice cleanup. Run each filter separately so each process owns one GPUI application.
+  with `native_settings_picker_` it checks language navigation, focus restoration, permission
+  refresh using fake observations, and private practice cleanup. Run each filter separately so each
+  process owns one GPUI application.
 
 Live microphone, editor, and screen acceptance is tracked under
 [verification](docs/architecture.md#verification).

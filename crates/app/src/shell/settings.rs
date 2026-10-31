@@ -3,6 +3,7 @@
 //! and saves it starts, and waits on the microphone scan that Services holds.
 
 mod language;
+mod permissions;
 mod practice;
 mod recognition;
 mod render;
@@ -13,7 +14,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use async_channel::Receiver;
 use gpui::{App, BorrowAppContext, Context, SharedString, Task, Timer, Window};
-use speakeasy_platform::FileFilter;
+use speakeasy_platform::{FileFilter, Permissions};
 use tokio::sync::watch;
 
 use super::{
@@ -38,6 +39,7 @@ const PROGRESS_THROTTLE: Duration = Duration::from_millis(100);
 pub(super) struct Settings {
     config: Config,
     presentation: Presentation,
+    permissions: Option<Permissions>,
     notice: Option<Notice>,
     microphones: Vec<InputDevice>,
     file_picker: Option<Task<()>>,
@@ -81,6 +83,7 @@ impl Settings {
         let mut view = Self {
             config,
             presentation,
+            permissions: None,
             notice: None,
             microphones: Vec::new(),
             file_picker: None,
@@ -193,13 +196,7 @@ impl Settings {
                     cx.open_url(&version.release_url());
                 }
             },
-            Action::MicrophoneHelp => cx.open_url(if cfg!(target_os = "windows") {
-                "ms-settings:privacy-microphone"
-            } else if cfg!(target_os = "macos") {
-                "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
-            } else {
-                "https://github.com/KrishRVH/speakeasy#linux-experimental"
-            }),
+            Action::PermissionHelp(help) => cx.open_url(help.url()),
             Action::Shows => super::reveal_shows(cx),
             Action::Quit => request_quit(cx),
         }
@@ -682,7 +679,7 @@ enum Action {
     CheckUpdates,
     OpenUpdate,
     Practice,
-    MicrophoneHelp,
+    PermissionHelp(permissions::Help),
     Shows,
     Setup,
     Engine,
@@ -714,7 +711,11 @@ impl Action {
             Self::CheckUpdates => "check-updates",
             Self::OpenUpdate => "open-update",
             Self::Practice => "practice",
-            Self::MicrophoneHelp => "microphone-help",
+            Self::PermissionHelp(permissions::Help::Microphone) => "microphone-help",
+            #[cfg(target_os = "macos")]
+            Self::PermissionHelp(permissions::Help::Accessibility) => "accessibility-help",
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            Self::PermissionHelp(permissions::Help::Screen) => "screen-help",
             Self::Shows => "shows",
             Self::Setup => "setup",
             Self::Engine => "engine",

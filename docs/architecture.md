@@ -136,6 +136,10 @@ module unless a test file is named.
   covers private delivery, cancellation, configuration, and Show exclusion.
   [status.rs](../crates/app/src/status.rs) derives readiness from observed resources without probing
   devices or claiming external delivery.
+  [platform/src/permissions.rs](../crates/platform/src/permissions.rs) reads macOS consent without
+  prompting; [settings/permissions.rs](../crates/app/src/shell/settings/permissions.rs) refreshes
+  that separate observation on window activation. The native interaction test uses fake observations
+  to check permission changes and preservation of unsaved settings.
 - **Update discovery**: [updates.rs](../crates/app/src/updates.rs) owns one cancellable check, with
   system TLS, a deadline, no redirects, and bounded input. Only a numeric release version forms a
   link to this repository; returned URLs are ignored. Settings starts it explicitly and shutdown

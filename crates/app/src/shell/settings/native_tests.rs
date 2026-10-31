@@ -44,6 +44,7 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                     recognition: recognition::Editor::new(config.theme, cx),
                     language: language::Picker::new(cx),
                     practice: practice::Practice::default(),
+                    permissions: None,
                     update_check: None,
                     available_update: None,
                     config,

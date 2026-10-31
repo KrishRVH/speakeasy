@@ -8,7 +8,7 @@ use gpui::{
     prelude::*, px, relative, rgb, svg,
 };
 
-use super::{Action, EngineFile, Setting, Settings, is_demo, language};
+use super::{Action, EngineFile, Setting, Settings, is_demo, language, permissions};
 use crate::{
     BRAND_FONT,
     config::{Engine, TextDelivery},
@@ -124,7 +124,11 @@ impl Settings {
         let readiness = self.presentation.readiness;
         let active = self.practice.task.is_some();
         let may_practice = ui.cx.global::<Services>().is_running() && !is_demo(ui.cx);
-        let access = "Microphone access is checked when you speak. Screen access is checked only for a Show.";
+        let access = if is_demo(ui.cx) {
+            "Demo: microphone, shortcut, and screen activity are simulated."
+        } else {
+            "Permission status refreshes when you return here. Try dictation to check your microphone and shortcut. Screen capture starts only when you ask for a Show."
+        };
         let delivery = "To check delivery, end practice and dictate into an editor. Practice clears when this window hides or loses focus.";
         ui.panel()
             .flex()
@@ -136,26 +140,25 @@ impl Settings {
                 "Model: {} · Shortcut: {}",
                 readiness.model, readiness.shortcut
             ))
+            .when_some(self.permissions, |card, permissions| {
+                card.child(Self::permission_rows(ui, permissions))
+            })
             .child(
                 div()
                     .text_size(px(11.0))
                     .text_color(rgb(ui.palette.muted))
                     .child(access),
             )
-            .child(
-                row()
-                    .when(may_practice, |row| {
-                        row.child(ui.button(
-                            if active {
-                                "End practice"
-                            } else {
-                                "Try dictation here"
-                            },
-                            Action::Practice,
-                        ))
-                    })
-                    .child(ui.button("Microphone help", Action::MicrophoneHelp)),
-            )
+            .child(row().when(may_practice, |row| {
+                row.child(ui.button(
+                    if active {
+                        "End practice"
+                    } else {
+                        "Try dictation here"
+                    },
+                    Action::Practice,
+                ))
+            }))
             .when(active, |card| {
                 card.child(if self.practice.ready {
                     format!(
@@ -183,6 +186,43 @@ impl Settings {
                         .child(delivery),
                 )
             })
+    }
+
+    fn permission_rows(
+        ui: &Ui<'_>,
+        permissions: speakeasy_platform::Permissions,
+    ) -> impl IntoElement {
+        let permission = |name, state, help| {
+            row()
+                .justify_between()
+                .child(format!("{name}: {}", permissions::description(state)))
+                .child(ui.button(
+                    if cfg!(target_os = "linux") {
+                        "Microphone help"
+                    } else {
+                        "Open settings"
+                    },
+                    Action::PermissionHelp(help),
+                ))
+        };
+        let rows = div().flex().flex_col().gap(ROW_GAP).child(permission(
+            "Microphone permission",
+            permissions.microphone,
+            permissions::Help::Microphone,
+        ));
+        #[cfg(target_os = "macos")]
+        let rows = rows.child(permission(
+            "Accessibility permission",
+            permissions.accessibility,
+            permissions::Help::Accessibility,
+        ));
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        let rows = rows.child(permission(
+            "Screen permission (Shows only)",
+            permissions.screen,
+            permissions::Help::Screen,
+        ));
+        rows
     }
 
     /// Setup chooses the engine, so manual engine controls wait until it ends.

@@ -19,6 +19,7 @@ mod macos;
 #[cfg(any(target_os = "macos", test))]
 mod monitor;
 mod owned_thread;
+mod permissions;
 mod process;
 mod screen;
 #[cfg(target_os = "windows")]
@@ -42,6 +43,7 @@ pub use self::{
     input::{Input, InputSender, InsertPermit, Taps},
     insertion::{Delivery, Inserted, Inserter},
     owned_thread::{OwnedThread, StoppableThread},
+    permissions::{Permission, Permissions},
     process::ProcessGroup,
     screen::{
         Display, Frame, Part, PointerMonitor, PointerSample, Scope, ScreenCapture, ScreenEvent,

@@ -111,6 +111,9 @@ pub(super) fn open(cx: &mut App) -> anyhow::Result<()> {
         cx.new(|cx| {
             let mut view = Settings::new(config, updates, cx);
             Settings::watch_practice_focus(window, cx);
+            if !mode.is_demo() {
+                view.follow_permissions(window, cx, speakeasy_platform::Permissions::read);
+            }
             if fresh_install {
                 view.start_setup(cx);
             }
