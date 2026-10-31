@@ -6,6 +6,7 @@ const DISCARD_AUDIO: &str = "This permanently removes the kept audio and its rec
 const DISCARD_SHOW: &str = "This permanently removes the interrupted Show's recovery data, \
                            including kept audio. Any saved copies stay.";
 
+mod export;
 mod frame;
 mod library;
 mod narration;
@@ -74,6 +75,7 @@ pub(crate) struct Review {
     opening: Option<Task<()>>,
     loading: Option<Task<()>>,
     copying: Option<Task<()>>,
+    exporting: Option<Task<()>>,
     checking: Option<Task<()>>,
     keeping: Option<(PathBuf, Task<()>)>,
     recovering: Option<Task<()>>,
@@ -150,6 +152,7 @@ impl Review {
             opening: None,
             loading: None,
             copying: None,
+            exporting: None,
             checking: None,
             keeping: None,
             recovering: None,
@@ -442,9 +445,9 @@ impl Review {
                                 .unwrap_or_else(io::Error::other)
                         })
                     })
-                    .and_then(|retention| {
-                        retention
-                            .ok_or_else(|| io::Error::other("Retention write returned no result"))
+                    .and_then(|written| match written {
+                        super::edits::Written::Retention(retention) => Ok(retention),
+                        _ => Err(io::Error::other("Retention write returned no result")),
                     });
                 view.update_if_alive(cx, |view, cx| {
                     view.keeping = None;
@@ -792,6 +795,7 @@ impl Review {
                 }
             },
             Action::Copy(kind) => self.copy(kind, cx),
+            Action::Export => self.export(cx),
             Action::Keep => self.keep(cx),
             Action::Folder => {
                 if let Some(key) = &self.library.selected {
@@ -847,6 +851,7 @@ enum Action {
     Show(usize),
     Frame(usize),
     Copy(CopyKind),
+    Export,
     Keep,
     Folder,
 }

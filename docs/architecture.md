@@ -248,6 +248,13 @@ module unless a test file is named.
 - **Show store**: [show/store.rs](../crates/app/src/show/store.rs) names, writes, and expires
   bundles, and [store/recall.rs](../crates/app/src/show/store/recall.rs) reads a saved one back; it
   also discovers and inspects saved Shows without changing them.
+  [store/export.rs](../crates/app/src/show/store/export.rs) streams a format-owned inventory into a
+  new ZIP, preserves the edited summary, and adds a relative-path guide. It excludes audio and
+  retention markers, bounds input to 1 GiB, reports failed staging cleanup, and publishes with
+  `persist_noclobber` after flush. The CLI and review window use the same exporter; accepted GUI
+  exports use the app's [edit owner](../crates/app/src/show/edits.rs), so closing review cannot
+  cancel them. [export/tests.rs](../crates/app/src/show/store/export/tests.rs) checks portability,
+  source retrieval after moving, exclusions, links, size limits, and failure cleanup.
   [store/tests.rs](../crates/app/src/show/store/tests.rs) checks publication, expiry, and edited
   summaries; [recall/tests.rs](../crates/app/src/show/store/recall/tests.rs) checks discovery, read
   limits, damage, links, and moved bundles. [age.rs](../crates/app/src/show/store/age.rs) parses the

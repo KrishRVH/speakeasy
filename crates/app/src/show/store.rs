@@ -430,6 +430,7 @@ fn civil_date(days: u64) -> (u64, u64, u64) {
 pub(super) mod address;
 pub(super) mod age;
 pub(crate) mod checkpoint;
+pub(super) mod export;
 pub(super) mod recall;
 pub(super) mod retention;
 pub(super) mod source;

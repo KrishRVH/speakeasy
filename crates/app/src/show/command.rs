@@ -21,6 +21,7 @@ speakeasy show frames SHOW [FOCUS] [--around MS] [--json]
 speakeasy show frames SHOW FOCUS --out NEW.png [--most N] [--around MS] [--crop] [--json]
 speakeasy show frame SHOW FOCUS --out NEW.png [--crop] [--json]
 speakeasy show keep SHOW [--off] [--json]
+speakeasy show export SHOW --out NEW.zip [--json]
 speakeasy show discard INTERRUPTED_SHOW [--json]
 speakeasy show skill
 speakeasy show demo [--out NEW_DIR]
@@ -45,6 +46,9 @@ SHOW is an exact folder-name ID in Speakeasy's Shows folder, or an explicit path
 Use ./ID to address a relative path. No command chooses the latest Show.
 keep prevents expiry; --off restores the original seven-day expiry date.
 An overdue Show then expires at the next cleanup. Only managed Shows can be kept.
+export writes a new ZIP with saved images, narration, retained samples, and a relative reading guide.
+It preserves summary edits, excludes recovery audio and unrelated files, and never overwrites.
+Exported copies do not expire automatically. Reports print paths and sizes, never private text.
 discard permanently removes an explicit interrupted:ID or checkpoint path from list,
 including pending audio. Saved Show bundles are unchanged.
 Recover interrupted Shows in the Shows window; recovery leaves the clipboard untouched.
@@ -64,6 +68,11 @@ pub(crate) enum Command {
         json: bool,
     },
     Source(source::Command),
+    Export {
+        directory: PathBuf,
+        destination: PathBuf,
+        json: bool,
+    },
     Keep {
         directory: PathBuf,
         kept: bool,
@@ -93,6 +102,7 @@ impl Command {
         let mut json = false;
         let mut off = false;
         let mut path = None;
+        let mut destination = None;
         while let Some(arg) = args.next() {
             match arg.to_str() {
                 Some("--help" | "-h") => return Ok(Self::Help),
@@ -100,12 +110,22 @@ impl Command {
                     if (verb == "list"
                         || verb == "inspect"
                         || verb == "keep"
+                        || verb == "export"
                         || verb == "discard")
                         && !json =>
                 {
                     json = true;
                 },
                 Some("--off") if verb == "keep" && !off => off = true,
+                Some("--out") if verb == "export" && destination.is_none() => {
+                    destination = Some(PathBuf::from(
+                        args.next()
+                            .filter(|path| {
+                                !path.is_empty() && !path.to_string_lossy().starts_with('-')
+                            })
+                            .context("--out needs a new ZIP file path")?,
+                    ));
+                },
                 Some("--out") if verb == "demo" && path.is_none() => {
                     path = Some(PathBuf::from(
                         args.next()
@@ -113,7 +133,10 @@ impl Command {
                             .context("--out needs a new directory")?,
                     ));
                 },
-                _ if (verb == "inspect" || verb == "keep" || verb == "discard")
+                _ if (verb == "inspect"
+                    || verb == "keep"
+                    || verb == "discard"
+                    || verb == "export")
                     && path.is_none()
                     && !arg.is_empty()
                     && !arg.to_string_lossy().starts_with('-') =>
@@ -127,6 +150,11 @@ impl Command {
         }
         match verb.to_str() {
             Some("list") => Ok(Self::List { json }),
+            Some("export") => Ok(Self::Export {
+                directory: path.context("show export needs an exact Show ID or path")?,
+                destination: destination.context("show export needs --out NEW.zip")?,
+                json,
+            }),
             Some("inspect") => Ok(Self::Inspect {
                 directory: path.context("show inspect needs an exact Show ID or path")?,
                 json,
@@ -165,6 +193,26 @@ impl Command {
             Self::Help => writeln!(out, "{HELP}")?,
             Self::Skill => write!(out, "{SKILL}")?,
             Self::Source(command) => command.write(out)?,
+            Self::Export {
+                directory,
+                destination,
+                json,
+            } => {
+                let directory =
+                    address::resolve(&directory, || store::directory().map_err(io::Error::other))?;
+                let exported = store::export::write(&directory, &destination)?;
+                if json {
+                    output::json(&exported, out)?;
+                } else {
+                    writeln!(
+                        out,
+                        "Exported {} files ({} bytes) to {}",
+                        exported.files,
+                        exported.bytes,
+                        exported.path.display()
+                    )?;
+                }
+            },
             Self::List { json } => {
                 let directory = store::directory()?;
                 let entries = recall::list(&directory)

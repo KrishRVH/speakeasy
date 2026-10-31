@@ -781,6 +781,20 @@ impl Review {
             .child(button(Action::Folder, palette, true, false, cx).child("Open folder"))
             .child(
                 button(
+                    Action::Export,
+                    palette,
+                    self.exporting.is_none() && self.detail.is_some(),
+                    false,
+                    cx,
+                )
+                .child(if self.exporting.is_some() {
+                    "Exporting…"
+                } else {
+                    "Export ZIP…"
+                }),
+            )
+            .child(
+                button(
                     Action::Keep,
                     palette,
                     kept.is_some() && self.keeping.is_none() && self.listing.is_none(),
@@ -845,6 +859,7 @@ fn button(
         Action::Pane(Pane::Narration) => "show-narration-tab".into(),
         Action::Clause(index) => SharedString::from(format!("show-clause-{index}")).into(),
         Action::Folder => "shows-folder".into(),
+        Action::Export => "shows-export".into(),
         Action::Show(index) => SharedString::from(format!("show-{index}")).into(),
         Action::Frame(index) => SharedString::from(format!("frame-{index}")).into(),
     };

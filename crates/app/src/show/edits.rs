@@ -8,7 +8,10 @@ use speakeasy_platform::OwnedThread;
 
 use super::{
     Interrupted,
-    store::retention::{self, Retention},
+    store::{
+        export,
+        retention::{self, Retention},
+    },
 };
 
 pub(crate) enum Edit {
@@ -18,9 +21,19 @@ pub(crate) enum Edit {
         kept: bool,
     },
     Discard(Interrupted),
+    Export {
+        directory: PathBuf,
+        destination: PathBuf,
+    },
 }
 
-pub(crate) type Receipt = Receiver<anyhow::Result<Option<Retention>>>;
+pub(crate) enum Written {
+    Retention(Retention),
+    Discarded,
+    Exported(export::Exported),
+}
+
+pub(crate) type Receipt = Receiver<anyhow::Result<Written>>;
 
 #[derive(Default)]
 pub(crate) struct Edits {
@@ -42,16 +55,22 @@ impl Edits {
                     directory,
                     kept,
                 } => retention::set_kept(&parent, &directory, kept)
-                    .map(Some)
+                    .map(Written::Retention)
                     .map_err(Into::into),
-                Edit::Discard(interrupted) => interrupted.lock()?.discard().map(|()| None),
+                Edit::Discard(interrupted) => {
+                    interrupted.lock()?.discard().map(|()| Written::Discarded)
+                },
+                Edit::Export {
+                    directory,
+                    destination,
+                } => export::write(&directory, &destination).map(Written::Exported),
             }
         })
     }
 
     fn start(
         &mut self,
-        write: impl FnOnce() -> anyhow::Result<Option<Retention>> + Send + 'static,
+        write: impl FnOnce() -> anyhow::Result<Written> + Send + 'static,
     ) -> anyhow::Result<Receipt> {
         anyhow::ensure!(
             self.writing.as_ref().is_none_or(OwnedThread::is_finished),
@@ -92,10 +111,10 @@ mod tests {
         let result = edits.start(move || {
             wait.recv()?;
             wrote.try_send(())?;
-            Ok(None)
+            Ok(Written::Discarded)
         })?;
         drop(result);
-        assert!(edits.start(|| Ok(None)).is_err());
+        assert!(edits.start(|| Ok(Written::Discarded)).is_err());
         assert!(
             tokio::time::timeout(std::time::Duration::from_millis(10), edits.drained())
                 .await
@@ -104,7 +123,7 @@ mod tests {
         release.send(())?;
         edits.drained().await;
         written.try_recv()?;
-        assert!(edits.start(|| Ok(None)).is_ok());
+        assert!(edits.start(|| Ok(Written::Discarded)).is_ok());
         Ok(())
     }
 }

@@ -25,6 +25,14 @@ fn commands_require_explicit_paths_and_accept_only_their_options() -> anyhow::Re
     );
     assert_eq!(parse(&["skill"])?, Command::Skill);
     assert_eq!(
+        parse(&["export", "a show", "--out", "share.zip", "--json"])?,
+        Command::Export {
+            directory: "a show".into(),
+            destination: "share.zip".into(),
+            json: true,
+        }
+    );
+    assert_eq!(
         parse(&["keep", "20261030T101010Z", "--off", "--json"])?,
         Command::Keep {
             directory: "20261030T101010Z".into(),
@@ -53,9 +61,44 @@ fn commands_require_explicit_paths_and_accept_only_their_options() -> anyhow::Re
         &["keep", "here", "--json", "--json"],
         &["inspect", "here", "--off"],
         &["keep", "here", "extra"],
+        &["export", "--out", "share.zip"],
+        &["export", "here"],
+        &["export", "here", "--out"],
+        &["export", "here", "--out", "--json"],
+        &["export", "here", "--out", "share.zip", "--out", "again.zip"],
+        &["export", "here", "--out", "share.zip", "--off"],
     ] {
         assert!(parse(args).is_err(), "accepted {args:?}");
     }
+    Ok(())
+}
+
+#[test]
+fn portable_export_reports_only_metadata_and_preserves_the_saved_summary() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let directory = root.path().join("a show");
+    Command::Demo {
+        out: Some(directory.clone()),
+    }
+    .write(&mut io::sink())?;
+    fs::write(directory.join("summary.md"), "PRIVATE_EDITED_SUMMARY")?;
+    let destination = root.path().join("portable.zip");
+    let mut printed = Vec::new();
+    Command::Export {
+        directory: directory.clone(),
+        destination: destination.clone(),
+        json: true,
+    }
+    .write(&mut printed)?;
+    let value: Value = serde_json::from_slice(&printed)?;
+    assert_eq!(value["path"], destination.to_string_lossy().as_ref());
+    assert_eq!(value["bytes"], fs::metadata(destination)?.len());
+    assert_eq!(value["retainedFrames"], false);
+    assert!(!String::from_utf8(printed)?.contains("PRIVATE_EDITED_SUMMARY"));
+    assert_eq!(
+        fs::read_to_string(directory.join("summary.md"))?,
+        "PRIVATE_EDITED_SUMMARY"
+    );
     Ok(())
 }
 

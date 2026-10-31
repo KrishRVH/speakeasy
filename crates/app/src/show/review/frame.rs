@@ -15,13 +15,12 @@ pub(super) enum Content {
     },
 }
 
-const FILE_LIMIT: u64 = 32 << 20;
 const LONGEST_EDGE: u32 = 4_096;
 
 pub(super) fn read(directory: &Path, content: &Content) -> Result<Image, String> {
     let bytes = match content {
         Content::Png(name) => {
-            let bytes = recall::read_file(directory, name, FILE_LIMIT)
+            let bytes = recall::read_file(directory, name, recall::IMAGE_LIMIT)
                 .map_err(|error| format!("Cannot open {name}: {error}"))?;
             check_header(&bytes).map_err(str::to_owned)?;
             bytes

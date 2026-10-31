@@ -106,6 +106,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     .await?;
     #[cfg(target_os = "linux")]
     pixels(window, cx).await?;
+    export_selected(window, cx).await?;
     // Focus starts on the root: Refresh, three Show rows, then Next (Previous is disabled).
     for _ in 0..5 {
         key(window, "tab", cx)?;
@@ -562,6 +563,41 @@ fn key(window: WindowHandle<Review>, stroke: &str, cx: &mut AsyncApp) -> anyhow:
     cx.update_window(window.into(), |_, window, cx| {
         window.dispatch_keystroke(keystroke, cx);
     })
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "The export acceptance drives the owned GPUI review view on its UI thread"
+)]
+async fn export_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let destination = root.path().join("show.zip");
+    let directory = window
+        .read_with(cx, |view, _| {
+            view.library
+                .selected
+                .as_ref()
+                .map(|key| key.directory.clone())
+        })?
+        .context("The export fixture has a selected Show")?;
+    window.update(cx, |view, _, cx| {
+        view.export_to(directory.clone(), destination.clone(), cx);
+    })?;
+    wait_for(window, |view| view.exporting.is_none(), cx).await?;
+    let success = window.read_with(cx, |view, _| {
+        view.notice
+            .as_ref()
+            .is_some_and(|notice| notice.starts_with("Exported to "))
+    })?;
+    ensure!(success, "Review did not report a completed export");
+    let mut archive = zip::ZipArchive::new(fs::File::open(destination)?)?;
+    let mut summary = Vec::new();
+    std::io::Read::read_to_end(&mut archive.by_name("summary.md")?, &mut summary)?;
+    ensure!(
+        summary == fs::read(directory.join("summary.md"))?,
+        "Review export changed the saved summary"
+    );
+    Ok(())
 }
 
 async fn wait_for(

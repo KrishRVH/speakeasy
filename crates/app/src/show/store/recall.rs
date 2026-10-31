@@ -20,7 +20,10 @@ pub(super) const SUMMARY_LIMIT: u64 = 1 << 20;
 
 /// Five minutes at 125 pointer samples per second fits comfortably even as pretty-printed JSON.
 /// Inspection reads at most one byte beyond this cap and never decodes screen pixels.
-const MANIFEST_LIMIT: u64 = 16 << 20;
+pub(super) const MANIFEST_LIMIT: u64 = 16 << 20;
+
+/// Bounded compressed image input shared by review and portable export.
+pub(crate) const IMAGE_LIMIT: u64 = 32 << 20;
 
 /// A manifest plus its file inventory. A missing image does not hide the other frames.
 #[derive(Debug)]

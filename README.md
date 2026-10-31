@@ -184,6 +184,14 @@ already overdue Show the button says **Allow cleanup**, and cleanup can remove i
 Keeping a Show changes only its `.pinned` marker, including when the manifest or a frame is damaged.
 Keep and Discard finish even if you close the window; Quit waits for accepted writes.
 
+**Export ZIP…** saves a portable copy to a new path you choose. It includes the saved summary,
+manifest with narration, contact sheets, keyframes, and retained source samples when available.
+`README.md` inside the archive links to those files by relative path; summary edits remain
+unchanged, including any old machine-local paths. Unzip the archive before opening its files on
+another machine. Recovery audio, retention markers, and unrelated files are excluded. Export does
+not upload anything, and exported copies do not expire automatically. Closing the window leaves an
+accepted export running; Quit waits for it.
+
 An **Interrupted Show** offers **Recover Show** and **Discard**. Recovery restores checkpointed
 frames, ink, marks, and narration into a new bundle, using your configured local speech engine and
 the original language. It waits for any active recording to finish, opens no microphone, and leaves
@@ -213,6 +221,7 @@ speakeasy show frames 20261020T143205Z --phrase "save button" --json
 speakeasy show frames 20261020T143205Z --mark 2 --crop --out /path/to/new-sheet.png --json
 speakeasy show keep 20261020T143205Z
 speakeasy show keep 20261020T143205Z --off --json
+speakeasy show export 20261020T143205Z --out /path/to/new-show.zip --json
 speakeasy show skill
 ```
 
@@ -223,6 +232,14 @@ suffix such as `-2`, is an exact Show ID in Speakeasy's Shows folder. IDs never 
 folder or a partial name; use `./ID` to force a relative path. These commands also work without a
 desktop on Linux. `list` and `inspect` leave files, edits, permissions, and retention unchanged.
 There is no implicit latest Show.
+
+`export` writes only a new ZIP outside the original bundle and leaves the original and its retention
+unchanged. It checks the manifest and expected file inventory without decoding image payloads.
+Missing, linked, or oversized files, invalid retained-source indexes, and mismatched timelines fail
+the export. Image payloads are copied unchanged. It streams at most 1 GiB of saved content into a
+private temporary file, then publishes the complete archive without overwriting an existing path.
+JSON output contains the export path, file count, byte count, and whether retained samples are
+included; it contains no private text.
 
 `frames` accepts a time, mark, or spoken phrase to locate surrounding evidence. Phrases match
 recorded narration after corrections, ignoring case and punctuation; summary edits are separate.
