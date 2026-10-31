@@ -3,8 +3,11 @@
 
 use std::time::Duration;
 
-use anyhow::Context as _;
-use gpui::{AppContext as _, Application, KeyDownEvent, Keystroke, WindowHandle, WindowOptions};
+use anyhow::{Context as _, ensure};
+use gpui::{
+    AppContext as _, Application, AsyncApp, KeyDownEvent, KeyUpEvent, Keystroke, PlatformInput,
+    WindowHandle, WindowOptions,
+};
 
 use super::*;
 use crate::{gpui_ext::AppUpdate as _, runtime::Meter, shell::LaunchMode, show::Canvas};
@@ -45,33 +48,75 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 })?;
                 cx.update(|cx| cx.global_mut::<Services>().settings = Some(settings))?;
                 settings.update(cx, |view, window, cx| {
-                    view.toggle_language(window);
+                    view.toggle_language(window, cx);
                     cx.notify();
                 })?;
                 Timer::after(Duration::from_millis(100)).await;
-                settings.update(cx, |view, window, cx| {
-                    assert!(view.language.menu.is_focused(window));
-                    view.language_key(&key("end"), window, cx);
-                })?;
+                key(settings, "end", cx)?;
                 Timer::after(Duration::from_millis(100)).await;
-                settings.update(cx, |view, window, cx| {
+                settings.update(cx, |view, _, _| {
                     assert!(
                         view.language.scroll.offset().y < gpui::px(0.0),
                         "The last language remained off screen"
                     );
-                    view.language_key(&key("enter"), window, cx);
-                    assert_eq!(view.config.language, "yo");
+                })?;
+                key(settings, "enter", cx)?;
+                settings.update(cx, |view, window, cx| {
+                    ensure!(
+                        view.config.language == "yo",
+                        "Keyboard selection missed the last language"
+                    );
+                    ensure!(
+                        view.language.cursor.is_none(),
+                        "Key release reopened the picker"
+                    );
+                    ensure!(
+                        view.language.button.is_focused(window),
+                        "Selection lost focus"
+                    );
+                    view.toggle_language(window, cx);
+                    cx.notify();
+                    anyhow::Ok(())
+                })??;
+                key(settings, "space", cx)?;
+                settings.update(cx, |view, window, cx| {
+                    ensure!(
+                        view.language.cursor.is_none(),
+                        "Space release reopened the picker"
+                    );
+                    view.toggle_language(window, cx);
+                    cx.notify();
+                    anyhow::Ok(())
+                })??;
+                key(settings, "escape", cx)?;
+                settings.update(cx, |view, window, cx| {
                     assert!(view.language.cursor.is_none());
                     assert!(view.language.button.is_focused(window));
-                    view.toggle_language(window);
-                    view.language_key(&key("escape"), window, cx);
-                    assert!(view.language.cursor.is_none());
-                    assert!(view.language.button.is_focused(window));
+                    window.activate_window();
+                    view.toggle_language(window, cx);
+                    cx.notify();
+                })?;
+                Timer::after(Duration::from_millis(100)).await;
+                settings.update(cx, |view, window, _| {
+                    ensure!(
+                        window.is_window_active(),
+                        "The owned focus fixture did not activate"
+                    );
+                    view.language.button.focus(window);
+                    anyhow::Ok(())
+                })??;
+                Timer::after(Duration::from_millis(100)).await;
+                settings.update(cx, |view, _, _| {
+                    ensure!(
+                        view.language.cursor.is_none(),
+                        "Losing focus left the picker open"
+                    );
                     view.practice.text =
                         zeroize::Zeroizing::new("Synthetic private practice".into());
                     view.practice.ready = true;
                     view.practice.task = Some(Task::ready(()));
-                })?;
+                    anyhow::Ok(())
+                })??;
                 // GPUI invokes should-close with the window already borrowed, but without borrowing
                 // the Settings entity. Recursing through WindowHandle::update silently misses it.
                 cx.update(|cx| close(settings, cx))??;
@@ -99,12 +144,16 @@ fn close(settings: WindowHandle<Settings>, cx: &mut App) -> anyhow::Result<()> {
     })
 }
 
-fn key(name: &str) -> KeyDownEvent {
-    KeyDownEvent {
-        keystroke: Keystroke {
-            key: name.into(),
-            ..Keystroke::default()
-        },
-        is_held: false,
-    }
+fn key(settings: WindowHandle<Settings>, name: &str, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    let keystroke = Keystroke::parse(name)?;
+    cx.update_window(settings.into(), |_, window, cx| {
+        window.dispatch_event(
+            PlatformInput::KeyDown(KeyDownEvent {
+                keystroke: keystroke.clone(),
+                is_held: false,
+            }),
+            cx,
+        );
+        window.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke }), cx);
+    })
 }

@@ -1271,9 +1271,12 @@ impl Window {
     }
 }
 
+/// Whether a dispatched input event continues to the platform's default handling.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct DispatchEventResult {
+pub struct DispatchEventResult {
+    /// Whether event propagation continues.
     pub propagate: bool,
+    /// Whether the event's default action was prevented.
     pub default_prevented: bool,
 }
 

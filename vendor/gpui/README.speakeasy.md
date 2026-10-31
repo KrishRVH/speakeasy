@@ -18,6 +18,10 @@ The source patches cover native windows, frame scheduling, and path resources:
 - `src/window.rs` honors `WindowOptions::show` before mapping. This lets the
   hidden Linux pill receive its nonactivating hints and empty input shape
   before its first map.
+  It also makes `DispatchEventResult` public to match the existing public
+  `Window::dispatch_event` method. Owned-window Settings tests dispatch both
+  key-down and key-up through GPUI, so focus changes cannot hide a second
+  activation on key release. No input dispatch behavior changes.
 - `src/platform/linux/x11/client.rs` drains queued events before startup and
   after foreground dispatch. Checked XCB requests can buffer MapNotify and
   Expose while reading replies; those events must start the refresh timer

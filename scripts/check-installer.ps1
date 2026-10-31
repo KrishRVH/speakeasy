@@ -35,6 +35,7 @@ function Check-RunningAppProtection {
     $image = Join-Path $app 'speakeasy.exe'
     $imageHash = (Get-FileHash -LiteralPath $image).Hash
     $preview = Start-Process -FilePath $image -ArgumentList '--demo-tray', "--config `"$previewConfig`"" -PassThru
+    $checked = $false
     try {
         $deadline = [DateTime]::UtcNow.AddSeconds(15)
         do {
@@ -44,24 +45,39 @@ function Check-RunningAppProtection {
             Start-Sleep -Milliseconds 100
         } while ($preview.MainWindowHandle -eq [IntPtr]::Zero)
         $blocked = Start-Process -FilePath $Installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$app`"" -Wait -PassThru
-        if ($blocked.ExitCode -eq 0) { throw 'Upgrade accepted a running app.' }
+        if ($blocked.ExitCode -ne 7) { throw "Upgrade did not refuse the running app before installation (exit $($blocked.ExitCode))." }
         $blocked = Start-Process -FilePath (Join-Path $app 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
         if ($blocked.ExitCode -eq 0) { throw 'Uninstall accepted a running app.' }
+        foreach ($file in 'unins000.exe', 'speakeasy-cli.exe') {
+            if (!(Test-Path (Join-Path $app $file))) { throw "Blocked uninstall removed $file." }
+        }
         $preview.Refresh()
         if ($preview.HasExited -or (Get-FileHash -LiteralPath $image).Hash -ne $imageHash) { throw 'Blocked maintenance disturbed the running app.' }
         if ([IO.File]::ReadAllText($previewConfig) -ne 'demo preserves this file') { throw 'Demo changed its config.' }
+        $checked = $true
     } finally {
         # The owned demo opens no devices and has no saves; end only its main message loop.
-        if (!$preview.HasExited) {
-            [uint32]$owner = 0
-            $thread = [InstallerPreview]::GetWindowThreadProcessId($preview.MainWindowHandle, [ref]$owner)
-            if ($owner -ne $preview.Id -or ![InstallerPreview]::PostThreadMessage($thread, 0x0012, [IntPtr]::Zero, [IntPtr]::Zero)) {
-                $preview.Kill()
-                throw 'Could not close the owned preview.'
+        try {
+            if (!$preview.HasExited) {
+                [uint32]$owner = 0
+                $thread = [InstallerPreview]::GetWindowThreadProcessId($preview.MainWindowHandle, [ref]$owner)
+                if ($owner -ne $preview.Id -or ![InstallerPreview]::PostThreadMessage($thread, 0x0012, [IntPtr]::Zero, [IntPtr]::Zero)) {
+                    $preview.Kill()
+                    [void]$preview.WaitForExit(10000)
+                    throw 'Could not close the owned preview.'
+                }
+                if (!$preview.WaitForExit(10000)) {
+                    $preview.Kill()
+                    [void]$preview.WaitForExit(10000)
+                    throw 'The owned preview did not exit.'
+                }
             }
-            if (!$preview.WaitForExit(10000)) { $preview.Kill(); throw 'The owned preview did not exit.' }
+        } catch {
+            if ($checked) { throw }
+            Write-Warning "Preview cleanup after an earlier failure: $_"
+        } finally {
+            $preview.Dispose()
         }
-        $preview.Dispose()
     }
 }
 Add-Type -TypeDefinition @'

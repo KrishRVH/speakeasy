@@ -215,6 +215,7 @@ impl Settings {
     }
 
     fn gesture_hints(&self, ui: &Ui<'_>) -> impl IntoElement {
+        let alternative_hint = "Hold briefly before adding Space, S, W, or A. Quick combinations keep their usual action.";
         let shortcut = &self.presentation.shortcut;
         let cancel_shortcut = &self.presentation.cancel_shortcut;
         let desktop_bindings = cfg!(target_os = "linux") && self.config.linux.external_shortcut;
@@ -244,9 +245,11 @@ impl Settings {
                 ));
                 panel
             })
-            .when(cfg!(target_os = "macos") && self.config.mac_shortcut != speakeasy_platform::MacShortcut::Function, |panel| {
-                panel.child("Hold the shortcut briefly before adding Space, S, W, or A. Quick key combinations keep their usual action.")
-            })
+            .when(
+                cfg!(target_os = "macos")
+                    && self.config.mac_shortcut != speakeasy_platform::MacShortcut::Function,
+                |panel| panel.child(alternative_hint),
+            )
             .when(records_shows, |panel| {
                 panel.children(
                     [
@@ -465,6 +468,7 @@ impl Settings {
                         .track_scroll(&self.language.scroll)
                         .track_focus(&self.language.menu)
                         .on_key_down(ui.cx.listener(Self::language_key))
+                        .on_key_up(ui.cx.listener(Self::language_release))
                         .children(languages.iter().enumerate().map(
                             |(index, &(language, name))| {
                                 div()

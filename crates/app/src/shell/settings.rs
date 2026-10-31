@@ -148,7 +148,7 @@ impl Settings {
             Action::Choose(file) => self.choose(file, window, cx),
             Action::Refresh => self.refresh_microphones(cx),
             Action::Microphone => self.cycle_microphone(),
-            Action::Language => self.toggle_language(window),
+            Action::Language => self.toggle_language(window, cx),
             Action::SelectLanguage(language) => {
                 self.config.language = if self.config.engine == Engine::Whisper {
                     crate::models::whisper_language(language)
@@ -381,6 +381,7 @@ impl Settings {
             return;
         }
         self.practice.stop();
+        self.language.cursor = None;
         let setup = match Setup::start(model) {
             Ok(setup) => setup,
             Err(error) => {
@@ -588,17 +589,16 @@ impl Settings {
             let result = outcome.await;
             this.update_if_alive(cx, |view, cx| {
                 view.update_check = None;
-                if cx.global::<Services>().is_quitting() { return; }
-                match result {
+                if cx.global::<Services>().is_quitting() {
+                    return;
+                }
+                view.notice = Some(match result {
                     Ok(version) => {
                         view.available_update = version;
-                        view.notice = Some(Notice::Note(version.map_or_else(
-                            || "No newer release is available.".into(),
-                            |version| format!("Speakeasy {version} is available. Open the release to download it.")
-                        ).into()));
+                        update_notice(version)
                     },
-                    Err(_) => view.notice = Some(Notice::Problem("Cannot check for updates. Check your connection and try again.".into())),
-                }
+                    Err(error) => Notice::Problem(error.to_string().into()),
+                });
                 cx.notify();
             });
         });
@@ -621,6 +621,14 @@ enum Notice {
     Note(SharedString),
     /// A failure the user must act on.
     Problem(SharedString),
+}
+
+fn update_notice(version: Option<crate::updates::Version>) -> Notice {
+    let message = match version {
+        Some(version) => format!("Speakeasy {version} is available. Choose Open release."),
+        None => "No newer release is available.".into(),
+    };
+    Notice::Note(message.into())
 }
 
 impl Notice {

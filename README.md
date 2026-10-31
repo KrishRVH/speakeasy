@@ -313,10 +313,10 @@ its next pass.
 
 ## Get started
 
-Download the Windows installer or Mac disk image from the
-[latest release](https://github.com/KrishRVH/speakeasy/releases/latest). The Windows installer needs
-no administrator access; on Mac, drag Speakeasy to Applications. Portable ZIPs remain available.
-Linux's experimental AppImage and tar packages are described below.
+Download Speakeasy from the [latest release](https://github.com/KrishRVH/speakeasy/releases/latest).
+Choose the Windows installer or Mac disk image when offered; otherwise unpack the portable ZIP. The
+Windows installer needs no administrator access; on Mac, drag Speakeasy to Applications. Linux's
+experimental AppImage and tar packages are described below.
 
 The Windows installer is unsigned. If SmartScreen warns, use **More info › Run anyway** only for the
 installer you downloaded from this repository's release page. Quit Speakeasy from its tray menu
@@ -610,9 +610,9 @@ paused clock exercises gesture deadlines and the five-minute cap.
   `show demo` writes a bundle with its summary and contact sheet. It inspects the bundle, prints the
   embedded agent skill, and checks that a missing frame produces findings and a failure status. The
   release workflow runs it on the portable packages and Mac DMG before upload.
-  `scripts/check-installer.ps1 -Installer <setup.exe>` tests install, upgrade, CLI launch, and
-  uninstall on disposable GitHub Actions Windows runners; it preserves settings and other copies'
-  sign-in entries and never opens the app.
+  `scripts/check-installer.ps1 -Installer <setup.exe>` tests install, running-app protection,
+  upgrade, CLI launch, and uninstall on disposable GitHub Actions Windows runners. It opens an owned
+  `--demo-tray` copy without devices and preserves settings and other copies' sign-in entries.
 - `scripts/check-demo-windows.ps1 -Executable <speakeasy.exe>` checks that the demo pill stays
   non-activating and passes clicks through, and that closing Shows keeps Settings open.
   `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks minimize, close, relaunch, and

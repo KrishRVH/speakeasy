@@ -12,6 +12,11 @@ use anyhow::{Context as _, bail, ensure};
 use tokio::time::timeout;
 
 use super::*;
+use crate::{
+    local_speech::LocalSpeech,
+    runtime::ports::Speech,
+    testing::{PATIENCE, still_pending},
+};
 
 #[test]
 fn model_installation_preserves_language_gpu_preference_and_unrelated_edits() {
@@ -45,11 +50,6 @@ fn model_installation_preserves_language_gpu_preference_and_unrelated_edits() {
     assert!(config.fillers_apply());
     assert!(!config.use_gpu);
 }
-use crate::{
-    local_speech::LocalSpeech,
-    runtime::ports::Speech,
-    testing::{PATIENCE, still_pending},
-};
 
 /// A setup whose body, once cancelled, reports on `cleaning` and holds its cleanup open until
 /// `release` sends.

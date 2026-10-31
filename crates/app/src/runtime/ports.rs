@@ -209,7 +209,8 @@ pub(crate) trait Pinning: Capturing {
 
 pub(crate) trait Speech: Send + 'static {
     /// Returns only committed text from a continuous PCM stream. Failure uses the same model's
-    /// whole-recording path after capture ends; no partial text may reach insertion.
+    /// whole-recording path after capture ends; no partial text may reach insertion. `Ok(None)`
+    /// verifies that the worker is reusable; `Err` requires replacing it before fallback.
     fn transcribe_stream(
         &mut self,
         audio: LiveAudio,

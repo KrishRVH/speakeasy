@@ -1,6 +1,6 @@
 //! A language picker with one keyboard focus, visible arrow navigation, and focus restored on close.
 
-use gpui::{Context, FocusHandle, KeyDownEvent, ScrollHandle, Window};
+use gpui::{Context, FocusHandle, KeyDownEvent, KeyUpEvent, ScrollHandle, Subscription, Window};
 
 use super::{Action, Settings};
 use crate::{
@@ -13,6 +13,8 @@ pub(super) struct Picker {
     pub(super) menu: FocusHandle,
     pub(super) scroll: ScrollHandle,
     pub(super) cursor: Option<usize>,
+    // Opening binds focus cleanup to the popup's window; Settings owns that subscription.
+    blur: Option<Subscription>,
 }
 
 impl Picker {
@@ -22,6 +24,7 @@ impl Picker {
             menu: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             cursor: None,
+            blur: None,
         }
     }
 }
@@ -43,10 +46,18 @@ pub(super) fn selected(config: &Config) -> &str {
 }
 
 impl Settings {
-    pub(super) fn toggle_language(&mut self, window: &mut Window) {
+    pub(super) fn toggle_language(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         if self.language.cursor.is_some() {
             self.close_language(window);
         } else {
+            self.language.blur =
+                Some(cx.on_blur(&self.language.menu, window, |view, window, cx| {
+                    if (!window.is_window_active() || !view.language.menu.is_focused(window))
+                        && view.language.cursor.take().is_some()
+                    {
+                        cx.notify();
+                    }
+                }));
             let cursor = options(&self.config)
                 .iter()
                 .position(|&(code, _)| code == selected(&self.config))
@@ -79,9 +90,6 @@ impl Settings {
             "home" => 0,
             "end" => last,
             "enter" | "space" => {
-                if let Some(&(language, _)) = languages.get(cursor) {
-                    self.act(Action::SelectLanguage(language), window, cx);
-                }
                 cx.stop_propagation();
                 return;
             },
@@ -99,5 +107,27 @@ impl Settings {
         self.language.scroll.scroll_to_item(next);
         cx.stop_propagation();
         cx.notify();
+    }
+
+    pub(super) fn language_release(
+        &mut self,
+        event: &KeyUpEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if event.keystroke.modifiers.modified()
+            || !matches!(event.keystroke.key.as_str(), "enter" | "space")
+        {
+            return;
+        }
+        let Some(cursor) = self.language.cursor else {
+            return;
+        };
+        // Select on release, like GPUI buttons: returning focus on key-down would let the same
+        // key-up activate the Language button and reopen this menu.
+        if let Some(&(language, _)) = options(&self.config).get(cursor) {
+            self.act(Action::SelectLanguage(language), window, cx);
+        }
+        cx.stop_propagation();
     }
 }

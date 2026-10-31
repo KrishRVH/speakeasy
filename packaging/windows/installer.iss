@@ -54,8 +54,8 @@ begin
   if not FileExists(Path) then
     Exit;
   try
-    { Open without truncation, read/write and exclusive. Windows refuses writing a running image. }
-    Image := TFileStream.Create(Path, $0012);
+    { Open without truncation, read/write with sharing. Windows refuses writing a running image. }
+    Image := TFileStream.Create(Path, $0042);
     Image.Free;
   except
     Result := False;

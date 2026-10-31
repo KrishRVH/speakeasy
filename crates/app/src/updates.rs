@@ -84,7 +84,7 @@ impl Check {
         async move {
             let result = receipt.recv().await.context(FAILED)?;
             stopped.await;
-            result
+            result.context(FAILED)
         }
     }
 
