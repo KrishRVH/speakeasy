@@ -136,6 +136,19 @@ module unless a test file is named.
   [native interaction test](../crates/app/src/shell/settings/native_interaction.rs) checks language
   navigation, focus restoration, and private practice cleanup through the borrowed-window close
   callback. [config/tests.rs](../crates/app/src/config/tests.rs) pins the file contract.
+- **Accessibility**: Settings owns accessible names, roles, switch/page state, and bounded field
+  edits. The [GPUI accessibility owner](../vendor/gpui/src/window/a11y.rs) builds each active tree
+  with physical client bounds, preserves semantic parents through deferred rendering, and rolls back
+  aborted or hidden layout. Window-owned tasks receive bounded native requests. Native node
+  identities survive ordinary redraws and retire on removal or hiding; actions resolve against
+  current, enabled controls. The
+  [Windows adapter](../vendor/gpui/src/platform/windows/accessibility.rs) redacts before
+  hide/minimize, restores only after the committed visibility transition, and disconnects before
+  destroying its HWND. The [framework tests](../vendor/gpui/src/window/a11y/tests.rs) cover tree and
+  rendering invariants; [Windows acceptance](../scripts/check-demo-windows.ps1) drives the demo and
+  a [static owned fixture](../crates/app/src/shell/settings/native_accessibility.rs) through UI
+  Automation. Text selection, complete app semantics, and the other native bridges remain
+  unimplemented.
 - **Private practice and readiness**:
   [settings/practice.rs](../crates/app/src/shell/settings/practice.rs) owns the receipt and
   transient rendered text. The session fixes its destination at admission; practice commits the same

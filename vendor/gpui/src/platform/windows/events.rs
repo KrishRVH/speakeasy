@@ -42,6 +42,20 @@ impl WindowsWindowInner {
             WM_ACTIVATE => self.handle_activate_msg(wparam),
             WM_CREATE => self.handle_create_msg(handle),
             WM_MOVE => self.handle_move_msg(handle, lparam),
+            WM_WINDOWPOSCHANGED => {
+                // SAFETY: Windows supplies WINDOWPOS for this message's duration, and
+                // the original parameters are forwarded to its default procedure.
+                let (flags, result) = unsafe {
+                    let flags = (lparam.0 as *const WINDOWPOS)
+                        .as_ref()
+                        .map(|position| position.flags)
+                        .unwrap_or_default();
+                    (flags, DefWindowProcW(handle, msg, wparam, lparam))
+                };
+                // Default processing delivers WM_SIZE, which restores the frame callback.
+                self.reconcile_accessibility_visibility(flags);
+                Some(result.0)
+            }
             WM_SIZE => self.handle_size_msg(wparam, lparam),
             WM_GETMINMAXINFO => self.handle_get_min_max_info_msg(lparam),
             WM_ENTERSIZEMOVE | WM_ENTERMENULOOP => self.handle_size_move_loop(handle),
@@ -104,6 +118,7 @@ impl WindowsWindowInner {
             WM_SETCURSOR => self.handle_set_cursor(handle, lparam),
             WM_SETTINGCHANGE => self.handle_system_settings_changed(handle, wparam, lparam),
             WM_INPUTLANGCHANGE => self.handle_input_language_changed(),
+            WM_GETOBJECT => self.accessibility_object(wparam, lparam),
             WM_SHOWWINDOW => self.handle_window_visibility_changed(handle, wparam),
             WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(lparam),
             WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
@@ -168,11 +183,15 @@ impl WindowsWindowInner {
     }
 
     fn handle_size_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        let minimized = wparam.0 == SIZE_MINIMIZED as usize;
+        if minimized {
+            self.redact_accessibility();
+        }
         let mut lock = self.state.borrow_mut();
 
         // Don't resize the renderer when the window is minimized, but record that it was minimized so
         // that on restore the swap chain can be recreated via `update_drawable_size_even_if_unchanged`.
-        if wparam.0 == SIZE_MINIMIZED as usize {
+        if minimized {
             lock.restore_from_minimized = lock.callbacks.request_frame.take();
             return Some(0);
         }
@@ -261,6 +280,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_destroy_msg(&self, handle: HWND) -> Option<isize> {
+        self.disconnect_accessibility();
         let callback = {
             let mut lock = self.state.borrow_mut();
             lock.callbacks.close.take()
@@ -748,6 +768,14 @@ impl WindowsWindowInner {
 
     fn handle_activate_msg(self: &Rc<Self>, wparam: WPARAM) -> Option<isize> {
         let activated = wparam.loword() > 0;
+        let events = self
+            .a11y
+            .borrow_mut()
+            .as_mut()
+            .and_then(|state| state.adapter.update_window_focus_state(activated));
+        if let Some(events) = events {
+            events.raise();
+        }
         let this = self.clone();
         self.executor
             .spawn(async move {
@@ -1178,6 +1206,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_window_visibility_changed(&self, handle: HWND, wparam: WPARAM) -> Option<isize> {
+        self.request_accessibility_visibility(wparam.0 != 0);
         if wparam.0 == 1 {
             self.draw_window(handle, false);
         }

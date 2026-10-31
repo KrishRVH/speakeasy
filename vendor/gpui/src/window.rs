@@ -45,7 +45,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, Weak,
-        atomic::{AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::SeqCst},
     },
     time::{Duration, Instant},
 };
@@ -53,7 +53,9 @@ use util::post_inc;
 use util::{ResultExt, measure};
 use uuid::Uuid;
 
+pub(crate) mod a11y;
 mod prompts;
+use self::a11y::{A11y, ROOT_NODE_ID};
 
 use crate::util::atomic_incr_if_not_zero;
 pub use prompts::*;
@@ -656,6 +658,7 @@ pub(crate) struct DeferredDraw {
     current_view: EntityId,
     priority: usize,
     parent_node: DispatchNodeId,
+    pub(crate) a11y_parent: Option<accesskit::NodeId>,
     element_id_stack: SmallVec<[ElementId; 32]>,
     text_style_stack: Vec<TextStyleRefinement>,
     element: Option<AnyElement>,
@@ -817,6 +820,7 @@ impl Frame {
 
 /// Holds the state for a specific window.
 pub struct Window {
+    pub(crate) a11y: A11y,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) invalidator: WindowInvalidator,
     pub(crate) removed: bool,
@@ -1005,6 +1009,98 @@ impl Window {
             }
         }
 
+        let a11y_active_flag = Arc::new(AtomicBool::new(false));
+
+        // Native callbacks stamp queued actions; the owner rejects requests that predate
+        // visibility changes or the current incarnation of their target node.
+        let a11y_revision = Arc::new(AtomicU64::new(0));
+        let mut a11y_tasks = Vec::new();
+        {
+            let initial_tree = accesskit::TreeUpdate {
+                nodes: vec![(ROOT_NODE_ID, accesskit::Node::new(accesskit::Role::Window))],
+                tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
+                tree_id: accesskit::TreeId::ROOT,
+                focus: ROOT_NODE_ID,
+            };
+            let (activation_sender, activation_receiver) = async_channel::bounded::<()>(1);
+            let (deactivation_sender, deactivation_receiver) = async_channel::bounded::<()>(1);
+            let (action_sender, action_receiver) = async_channel::bounded::<a11y::Request>(64);
+
+            platform_window.a11y_init(crate::A11yCallbacks {
+                invalidate: {
+                    let revision = a11y_revision.clone();
+                    Box::new(move || {
+                        revision.fetch_add(1, SeqCst);
+                    })
+                },
+                activation: {
+                    let active_flag = a11y_active_flag.clone();
+                    Box::new(move || {
+                        log::info!("Accessibility activated");
+                        active_flag.store(true, SeqCst);
+                        // Coalesced notifications are represented by the atomic flag.
+                        let _ = activation_sender.try_send(());
+                        Some(initial_tree.clone())
+                    })
+                },
+                action: {
+                    let revision = a11y_revision.clone();
+                    Box::new(move |request| {
+                        let request = a11y::Request {
+                            revision: revision.load(SeqCst),
+                            action: request,
+                        };
+                        if action_sender.try_send(request).is_err() {
+                            log::debug!("Accessibility action queue is unavailable");
+                        }
+                    })
+                },
+                deactivation: {
+                    let active_flag = a11y_active_flag.clone();
+                    Box::new(move || {
+                        log::info!("Accessibility deactivated");
+                        active_flag.store(false, SeqCst);
+                        // Coalesced notifications are represented by the atomic flag.
+                        let _ = deactivation_sender.try_send(());
+                    })
+                },
+            });
+            platform_window.a11y_update_window_bounds();
+
+            // A11y can be activated at any time, and so we cannot compute a
+            // correct `TreeUpdate` on-demand. When this happens, we return a
+            // default empty `TreeUpdate`.
+            //
+            // So we force a new frame, which will then send a correct `TreeUpdate`.
+            let mut async_cx = cx.to_async();
+            a11y_tasks.push(cx.foreground_executor().spawn(async move {
+                while activation_receiver.recv().await.is_ok() {
+                    handle
+                        .update(&mut async_cx, |_, window, _| window.refresh())
+                        .log_err();
+                }
+            }));
+
+            let mut async_cx = cx.to_async();
+            a11y_tasks.push(cx.foreground_executor().spawn(async move {
+                while deactivation_receiver.recv().await.is_ok() {
+                    handle
+                        .update(&mut async_cx, |_, window, _| window.refresh())
+                        .log_err();
+                }
+            }));
+
+            let mut async_cx = cx.to_async();
+            a11y_tasks.push(cx.foreground_executor().spawn(async move {
+                while let Ok(request) = action_receiver.recv().await {
+                    handle
+                        .update(&mut async_cx, |_, window, cx| {
+                            window.handle_a11y_action(request, cx);
+                        })
+                        .log_err();
+                }
+            }));
+        }
         platform_window.on_close(Box::new({
             let window_id = handle.window_id();
             let mut cx = cx.to_async();
@@ -1207,6 +1303,7 @@ impl Window {
         }
 
         Ok(Window {
+            a11y: A11y::new(a11y_active_flag, a11y_revision, a11y_tasks),
             handle,
             invalidator,
             removed: false,
@@ -1678,6 +1775,7 @@ impl Window {
     }
 
     fn bounds_changed(&mut self, cx: &mut App) {
+        self.platform_window.a11y_update_window_bounds();
         self.scale_factor = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
         self.display_id = self.platform_window.display().map(|display| display.id());
@@ -2019,6 +2117,11 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 
+        self.a11y.sync_active_flag();
+        if self.a11y.is_active() {
+            self.a11y.begin_frame(self.viewport_size, self.scale_factor);
+        }
+
         let _inspector_width: Pixels = rems(30.0).to_pixels(self.rem_size());
         let root_size = {
             #[cfg(any(feature = "inspector", debug_assertions))]
@@ -2088,6 +2191,26 @@ impl Window {
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector_hitbox(cx);
+
+        // a11y may have been activated/deactivated halfway through the frame
+        let a11y_active_start_of_frame = self.a11y.is_active();
+        self.a11y.sync_active_flag();
+        let a11y_active_end_of_frame = self.a11y.is_active();
+
+        let should_send_a11y_update = a11y_active_start_of_frame && a11y_active_end_of_frame;
+
+        if a11y_active_start_of_frame {
+            // clear the builder state regardless
+            let tree_update = self.a11y.end_frame();
+
+            if should_send_a11y_update {
+                log::debug!(
+                    "Sending a11y tree update: {} nodes",
+                    tree_update.nodes.len()
+                );
+                self.platform_window.a11y_tree_update(tree_update);
+            }
+        }
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {
@@ -2174,6 +2297,7 @@ impl Window {
                 .set_active_node(deferred_draw.parent_node);
 
             let prepaint_start = self.prepaint_index();
+            self.a11y.nodes.scope_parent = deferred_draw.a11y_parent;
             if let Some(element) = deferred_draw.element.as_mut() {
                 self.with_rendered_view(deferred_draw.current_view, |window| {
                     window.with_absolute_element_offset(deferred_draw.absolute_offset, |window| {
@@ -2185,6 +2309,7 @@ impl Window {
             }
             let prepaint_end = self.prepaint_index();
             deferred_draw.prepaint_range = prepaint_start..prepaint_end;
+            self.a11y.nodes.scope_parent = Some(ROOT_NODE_ID);
         }
         assert_eq!(
             self.next_frame.deferred_draws.len(),
@@ -2272,6 +2397,7 @@ impl Window {
                 .map(|deferred_draw| DeferredDraw {
                     current_view: deferred_draw.current_view,
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
+                    a11y_parent: deferred_draw.a11y_parent,
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
                     priority: deferred_draw.priority,
@@ -2461,8 +2587,12 @@ impl Window {
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
         self.invalidator.debug_assert_prepaint();
         let index = self.prepaint_index();
+        let a11y = self.a11y.is_active().then(|| self.a11y.nodes.checkpoint());
         let result = f(self);
         if result.is_err() {
+            if let Some(checkpoint) = a11y {
+                self.a11y.rollback(checkpoint);
+            }
             self.next_frame.hitboxes.truncate(index.hitboxes_index);
             self.next_frame
                 .tooltip_requests
@@ -2769,6 +2899,7 @@ impl Window {
         self.next_frame.deferred_draws.push(DeferredDraw {
             current_view: self.current_view(),
             parent_node,
+            a11y_parent: self.a11y.nodes.parent(),
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
             priority,
@@ -4430,6 +4561,80 @@ impl Window {
     pub fn set_tabbing_identifier(&self, tabbing_identifier: Option<String>) {
         self.platform_window
             .set_tabbing_identifier(tabbing_identifier)
+    }
+
+    /// Register a listener for an accessibility action on a specific node.
+    /// The listener will be called when a screen reader requests the given
+    /// action on the node identified by `node_id`.
+    ///
+    /// See the [accessibility guide](crate::_accessibility) for an overview.
+    pub(crate) fn on_a11y_action(
+        &mut self,
+        node_id: a11y::ElementKey,
+        action: accesskit::Action,
+        listener: impl FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App) + 'static,
+    ) {
+        let Some(node_id) = self.a11y.nodes.native_id(node_id) else {
+            return;
+        };
+        self.a11y
+            .action_listeners
+            .entry(node_id)
+            .or_default()
+            .push((action, Box::new(listener)));
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn handle_a11y_action(&mut self, request: a11y::Request, cx: &mut App) {
+        if !self.platform_window.a11y_is_visible() {
+            return;
+        }
+        if self.invalidator.is_dirty() {
+            self.draw(cx).clear();
+        }
+        if !self
+            .a11y
+            .accepts(request.revision, request.action.target_node)
+        {
+            return;
+        }
+        let request = request.action;
+        // Take listeners out temporarily so the closures can borrow Window
+        // mutably, then restore them afterward.
+        if let Some(mut listeners) = self.a11y.action_listeners.remove(&request.target_node) {
+            let extra_data = request.data.as_ref();
+            let mut matched = false;
+            for (action, listener) in &mut listeners {
+                if *action == request.action {
+                    listener(extra_data, self, cx);
+                    matched = true;
+                }
+            }
+            self.a11y
+                .action_listeners
+                .insert(request.target_node, listeners);
+            if matched {
+                return;
+            }
+        }
+
+        // Fall back to built-in action handling.
+        match request.action {
+            accesskit::Action::Focus => {
+                if let Some(focus_id) = self.a11y.focus_ids.get(&request.target_node).copied()
+                    && let Some(handle) = FocusHandle::for_id(focus_id, &cx.focus_handles)
+                {
+                    self.focus(&handle);
+                }
+            }
+            _ => {
+                log::debug!(
+                    "Unhandled a11y action: {:?} on {:?}",
+                    request.action,
+                    request.target_node
+                );
+            }
+        }
     }
 
     /// Toggles the inspector mode on this window.

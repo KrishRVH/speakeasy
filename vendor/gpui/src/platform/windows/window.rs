@@ -1,4 +1,6 @@
 #![deny(unsafe_op_in_unsafe_fn)]
+#[path = "accessibility.rs"]
+mod accessibility;
 
 use std::{
     cell::RefCell,
@@ -65,6 +67,8 @@ pub(crate) struct WindowsWindowInner {
     pub(super) this: Weak<Self>,
     drop_target_helper: IDropTargetHelper,
     pub(crate) state: RefCell<WindowsWindowState>,
+    // UIA can re-enter the native window while ordinary window state is borrowed.
+    pub(super) a11y: RefCell<Option<accessibility::State>>,
     pub(crate) system_settings: RefCell<WindowsSystemSettings>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
@@ -223,6 +227,7 @@ impl WindowsWindowInner {
             this: this.clone(),
             drop_target_helper: context.drop_target_helper.clone(),
             state,
+            a11y: RefCell::new(None),
             handle: context.handle,
             hide_title_bar: context.hide_title_bar,
             is_movable: context.is_movable,
@@ -506,6 +511,7 @@ impl Drop for WindowsWindow {
             .executor
             .spawn(async move {
                 let handle = this.hwnd;
+                this.disconnect_accessibility();
                 unsafe {
                     RevokeDragDrop(handle).log_err();
                     DestroyWindow(handle).log_err();
@@ -516,6 +522,30 @@ impl Drop for WindowsWindow {
 }
 
 impl PlatformWindow for WindowsWindow {
+    fn a11y_init(&self, callbacks: crate::A11yCallbacks) {
+        *self.0.a11y.borrow_mut() = Some(accessibility::State::new(self.0.hwnd, callbacks));
+    }
+
+    fn a11y_tree_update(&self, tree: accesskit::TreeUpdate) {
+        let visible = self.a11y_is_visible();
+        let events = self.0.a11y.borrow_mut().as_mut().and_then(|state| {
+            state.adapter.update_if_active(|| {
+                if visible {
+                    tree
+                } else {
+                    crate::platform::empty_accessibility_tree()
+                }
+            })
+        });
+        if let Some(events) = events {
+            events.raise();
+        }
+    }
+
+    fn a11y_is_visible(&self) -> bool {
+        self.0.accessibility_visible()
+    }
+
     fn bounds(&self) -> Bounds<Pixels> {
         self.0.state.borrow().bounds()
     }

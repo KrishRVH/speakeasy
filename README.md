@@ -580,6 +580,11 @@ reduced motion, sounds, theme, phrase corrections, and on Windows whether Speake
 The buttons and the status line stay at the bottom while the rest scrolls. The status says whether
 dictation is ready, or shows the latest error or notice; problems show in the attention color.
 
+On Windows, assistive tools can read and operate the main Settings buttons, page tabs, switches, and
+phrase-correction and recognition-hint fields. Native acceptance checks their values, focus,
+actions, and hide/reopen behavior. Text selection and complete screen-reader navigation remain
+unfinished; macOS and Linux do not yet publish an accessibility tree.
+
 **Phrase corrections** replaces recurring recognition mistakes in dictation and Show narration.
 Enter what the engine hears and the spelling you want, then save. Matching is case-insensitive, uses
 whole words, and prefers the longest phrase; replacements do not trigger other rules. Timed
@@ -686,7 +691,12 @@ paused clock exercises gesture deadlines and the five-minute cap.
   upgrade, CLI launch, and uninstall on disposable GitHub Actions Windows runners. It opens an owned
   `--demo-tray` copy without devices and preserves settings and other copies' sign-in entries.
 - `scripts/check-demo-windows.ps1 -Executable <speakeasy.exe>` checks that the demo pill stays
-  non-activating and passes clicks through, and that closing Shows keeps Settings open.
+  non-activating and passes clicks through, and that closing Shows keeps Settings open. It also
+  checks Settings through Windows UI Automation with synthetic Unicode input: roles, selection,
+  switches, invocation, focus, input limits, bounds, hide/minimize, and retired providers. Build the
+  app test executable with `cargo test --locked -p speakeasy --no-run`, then pass its path to the
+  same script with `-StaticAccessibility` to check nonactivating and normal reopen without animation
+  or unrelated redraws, stale field edits, and the provider after window destruction.
   `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks minimize, close, relaunch, and
   configuration preservation with owned `--demo-tray` windows. `mise run ps:syntax` parses the
   Windows scripts on a native PowerShell host.

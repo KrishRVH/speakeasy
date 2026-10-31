@@ -457,6 +457,18 @@ pub(crate) struct RequestFrameOptions {
     pub(crate) force_render: bool,
 }
 
+/// Callbacks for the accessibility adapter.
+pub struct A11yCallbacks {
+    /// Called when the adapter is activated (a screen reader connects).
+    pub activation: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
+    /// Called when an action is requested by the screen reader.
+    pub action: Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>,
+    /// Called when the adapter is deactivated (screen reader disconnects).
+    pub deactivation: Box<dyn Fn() + Send + 'static>,
+    /// Revoke queued actions when the native window hides or minimizes.
+    pub invalidate: Box<dyn Fn() + Send + 'static>,
+}
+
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<Pixels>;
     fn is_maximized(&self) -> bool;
@@ -549,6 +561,20 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
+
+    /// Initialize the accessibility adapter with callbacks.
+    fn a11y_init(&self, _callbacks: A11yCallbacks) {}
+
+    /// Provide a TreeUpdate to the accessibility adapter.
+    fn a11y_tree_update(&self, _tree_update: accesskit::TreeUpdate) {}
+
+    /// Whether the native window can currently expose interactive accessibility content.
+    fn a11y_is_visible(&self) -> bool {
+        true
+    }
+
+    /// Inform the adapter of updated window bounds.
+    fn a11y_update_window_bounds(&self) {}
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
@@ -1858,5 +1884,16 @@ impl From<String> for ClipboardString {
             text: value,
             metadata: None,
         }
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn empty_accessibility_tree() -> accesskit::TreeUpdate {
+    let root = accesskit::NodeId(0);
+    accesskit::TreeUpdate {
+        nodes: vec![(root, accesskit::Node::new(accesskit::Role::Window))],
+        tree: Some(accesskit::Tree::new(root)),
+        tree_id: accesskit::TreeId::ROOT,
+        focus: root,
     }
 }

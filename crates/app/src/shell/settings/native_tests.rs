@@ -78,6 +78,9 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                 drop(view);
                 cx.update(|_| {})?;
                 assert_eq!(Config::read(&path)?.threads, 8);
+                let input = cx.new(|cx| {
+                    text_field::TextField::new("Synthetic field", Theme::default(), cx)
+                })?;
                 let window = cx.open_window(
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(Bounds::new(
@@ -86,7 +89,7 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                         ))),
                         ..Default::default()
                     },
-                    |_, cx| cx.new(|cx| text_field::TextField::new(Theme::default(), cx)),
+                    |_, _| input,
                 )?;
                 window.update(cx, |field, window, cx| {
                     field.set("🦀 café ".into(), cx);

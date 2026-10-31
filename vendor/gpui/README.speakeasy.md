@@ -6,7 +6,18 @@ under its original Apache-2.0 license. The published archive SHA-256 is
 `Cargo.toml.orig`, `.cargo_vcs_info.json`, `README.md`, and `LICENSE-APACHE`
 preserve upstream provenance. Registry cache and checksum markers are omitted.
 
-The source patches cover native windows, frame scheduling, and path resources:
+The source patches cover native windows, accessibility, frame scheduling, and path resources:
+
+- `src/window/a11y.rs`, `element.rs`, `elements/div.rs`, `elements/text.rs`, and `window.rs` adapt
+  the AccessKit core from [Zed commit 1d029c5ff5654fb1b1e8caf4462993c8ee13a133](https://github.com/zed-industries/zed/commit/1d029c5ff5654fb1b1e8caf4462993c8ee13a133).
+  The Windows bridge exposes UI Automation. Bounded queues and window-owned tasks deliver actions
+  to the current logical control. Native IDs retire after removal or hiding, cached views are
+  traversed while accessibility is active, layout rollback removes speculative nodes, and deferred
+  children keep their accessible parents. Hidden subtrees are omitted. Native hide/minimize clears
+  the tree before events are raised; a committed visibility transition restores it. Adapter
+  disconnection precedes HWND destruction. Node bounds use physical client coordinates. The app's
+  Windows acceptance script verifies real providers; `src/window/a11y/tests.rs` covers the pure
+  tree and mocked rendering. macOS and Linux bridges are not included.
 
 - `src/platform/linux/x11/window.rs` backports
   [zed commit 608185be4e0cc32ad925074185b5821af8aa2da9](https://github.com/zed-industries/zed/commit/608185be4e0cc32ad925074185b5821af8aa2da9)

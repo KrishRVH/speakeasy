@@ -102,15 +102,21 @@ struct Ui<'a> {
 
 impl Settings {
     fn navigation(&self, ui: &Ui<'_>) -> impl IntoElement {
-        row().children([Page::Dictation, Page::Words, Page::Advanced].map(|page| {
-            ui.button(page.label(), Action::Page(page))
-                .track_focus(self.navigation.focus(page))
-                .when(self.navigation.page == page, |button| {
-                    button
-                        .border_color(rgb(ui.palette.lamp))
-                        .bg(rgb(ui.palette.panel))
-                })
-        }))
+        row()
+            .id("settings-tabs")
+            .role(gpui::Role::TabList)
+            .aria_label("Settings pages")
+            .children([Page::Dictation, Page::Words, Page::Advanced].map(|page| {
+                ui.button(page.label(), Action::Page(page))
+                    .role(gpui::Role::Tab)
+                    .aria_selected(self.navigation.page == page)
+                    .track_focus(self.navigation.focus(page))
+                    .when(self.navigation.page == page, |button| {
+                        button
+                            .border_color(rgb(ui.palette.lamp))
+                            .bg(rgb(ui.palette.panel))
+                    })
+            }))
     }
 
     fn page(&self, ui: &Ui<'_>) -> impl IntoElement {
@@ -242,7 +248,10 @@ impl Settings {
                             .max_h(px(140.0))
                             .id("practice-result")
                             .overflow_y_scroll()
-                            .child(self.practice.text.to_string()),
+                            .child(gpui::text!(
+                                id = "practice-words",
+                                self.practice.text.to_string()
+                            )),
                     )
                 })
             })
@@ -512,6 +521,12 @@ impl Settings {
             "Off"
         };
         ui.button(format!("{label}: {state}"), Action::Toggle(setting))
+            .role(gpui::Role::Switch)
+            .aria_toggled(if setting.is_on(&self.config) {
+                gpui::accesskit::Toggled::True
+            } else {
+                gpui::accesskit::Toggled::False
+            })
     }
 
     /// How dictated text reaches the editor. Windows and macOS offer paste or typing as a switch;
@@ -646,10 +661,13 @@ impl Settings {
 }
 
 impl Ui<'_> {
-    fn button(&self, label: impl IntoElement, action: Action) -> gpui::Stateful<Div> {
+    fn button(&self, label: impl Into<SharedString>, action: Action) -> gpui::Stateful<Div> {
         let palette = self.palette;
+        let label = label.into();
         div()
             .id(action.element_id())
+            .role(gpui::Role::Button)
+            .aria_label(label.clone())
             .focusable()
             .tab_stop(true)
             .px(px(12.0))

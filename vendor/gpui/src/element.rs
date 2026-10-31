@@ -103,6 +103,27 @@ pub trait Element: 'static + IntoElement {
         cx: &mut App,
     );
 
+    /// Returns the accessible role for this element, if any.
+    /// Elements that return `None` are not included in the accessibility tree.
+    ///
+    /// Note: inclusion in accessibility tree requires non-`None` [`id`][Element::id].
+    ///
+    /// See the [accessibility guide](crate::_accessibility) for an overview.
+    fn a11y_role(&self) -> Option<accesskit::Role> {
+        None
+    }
+
+    /// Write accessibility properties to the given node.
+    /// Called only when `a11y_role()` returns `Some`.
+    ///
+    /// See the [accessibility guide](crate::_accessibility) for an overview.
+    fn write_a11y_info(&self, _node: &mut accesskit::Node) {}
+
+    /// Whether the computed style excludes this element and its descendants from accessibility.
+    fn a11y_hidden(&self, _state: &Self::RequestLayoutState) -> bool {
+        false
+    }
+
     /// Convert this element into a dynamically-typed [`AnyElement`].
     fn into_any(self) -> AnyElement {
         AnyElement::new(self)
@@ -287,6 +308,15 @@ impl Display for GlobalElementId {
     }
 }
 
+impl GlobalElementId {
+    pub(crate) fn accessibility_key(&self) -> crate::window::a11y::ElementKey {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::hash::DefaultHasher::default();
+        self.hash(&mut hasher);
+        crate::window::a11y::ElementKey(hasher.finish())
+    }
+}
+
 trait ElementObject {
     fn inner_element(&mut self) -> &mut dyn Any;
 
@@ -416,6 +446,30 @@ impl<E: Element> Drawable<E> {
                 }
 
                 let bounds = window.layout_bounds(layout_id);
+                let checkpoint = window
+                    .a11y
+                    .is_active()
+                    .then(|| window.a11y.nodes.checkpoint());
+                let deferred_start = window.next_frame.deferred_draws.len();
+                let mut pushed_a11y_node = false;
+                if window.a11y.is_active() {
+                    if let Some(global_id) = global_id.as_ref() {
+                        if let Some(role) = self.element.a11y_role() {
+                            let node_id = global_id.accessibility_key();
+                            let mut node = accesskit::Node::new(role);
+                            let scale = window.scale_factor();
+                            node.set_bounds(accesskit::Rect {
+                                x0: (bounds.origin.x.0 * scale) as f64,
+                                y0: (bounds.origin.y.0 * scale) as f64,
+                                x1: ((bounds.origin.x.0 + bounds.size.width.0) * scale) as f64,
+                                y1: ((bounds.origin.y.0 + bounds.size.height.0) * scale) as f64,
+                            });
+                            self.element.write_a11y_info(&mut node);
+                            pushed_a11y_node = window.a11y.nodes.push(node_id, node);
+                        }
+                    }
+                }
+
                 let node_id = window.next_frame.dispatch_tree.push_node();
                 let prepaint = self.element.prepaint(
                     global_id.as_ref(),
@@ -426,6 +480,18 @@ impl<E: Element> Drawable<E> {
                     cx,
                 );
                 window.next_frame.dispatch_tree.pop_node();
+
+                if pushed_a11y_node {
+                    window.a11y.nodes.pop();
+                }
+                if self.element.a11y_hidden(&request_layout)
+                    && let Some(checkpoint) = checkpoint
+                {
+                    window.a11y.rollback(checkpoint);
+                    for deferred in &mut window.next_frame.deferred_draws[deferred_start..] {
+                        deferred.a11y_parent = None;
+                    }
+                }
 
                 if global_id.is_some() {
                     window.element_id_stack.pop();

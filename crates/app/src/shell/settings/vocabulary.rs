@@ -22,8 +22,8 @@ pub(super) struct Editor {
 
 impl Editor {
     pub(super) fn new(theme: Theme, cx: &mut Context<'_, Settings>) -> Self {
-        let heard = cx.new(|cx| TextField::new(theme, cx));
-        let written = cx.new(|cx| TextField::new(theme, cx));
+        let heard = cx.new(|cx| TextField::new("When I say", theme, cx));
+        let written = cx.new(|cx| TextField::new("Write", theme, cx));
         for field in [&heard, &written] {
             cx.observe(field, |_, _, cx| cx.notify()).detach();
             cx.subscribe(field, |settings, _, _: &Submit, cx| {

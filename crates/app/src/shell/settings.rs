@@ -878,3 +878,6 @@ mod native_tests;
 
 #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
 mod native_interaction;
+
+#[cfg(all(test, target_os = "windows"))]
+mod native_accessibility;

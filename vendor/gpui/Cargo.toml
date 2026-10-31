@@ -757,3 +757,12 @@ priority = 0
 # Keep the standalone dependency lockfile consistent with the root override.
 [patch.crates-io]
 gpui_media = { path = "../gpui_media" }
+
+[dependencies.accesskit]
+version = "0.24.1"
+
+[target.'cfg(target_os = "windows")'.dependencies.accesskit_windows]
+version = "0.32.1"
+
+[dependencies.async-channel]
+version = "2.5.0"

@@ -17,6 +17,7 @@ use gpui::{
 use crate::theme::{Theme, alpha};
 
 pub(super) struct TextField {
+    label: &'static str,
     edit: Edit,
     focus: FocusHandle,
     theme: Theme,
@@ -29,8 +30,9 @@ pub(super) struct Submit;
 impl EventEmitter<Submit> for TextField {}
 
 impl TextField {
-    pub(super) fn new(theme: Theme, cx: &Context<'_, Self>) -> Self {
+    pub(super) fn new(label: &'static str, theme: Theme, cx: &Context<'_, Self>) -> Self {
         Self {
+            label,
             edit: Edit::default(),
             focus: cx.focus_handle().tab_stop(true),
             theme,
@@ -252,8 +254,23 @@ impl Render for TextField {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let palette = self.theme.palette();
         let field = cx.entity();
+        let set_value = cx.listener(|field, value: &str, _, cx| {
+            let range = 0..field.edit.text.encode_utf16().count();
+            field.replace(Some(range), value, Composition::Commit, cx);
+        });
         div()
             .id("text-field")
+            .role(gpui::Role::TextInput)
+            .aria_label(self.label)
+            .aria_value(self.edit.text.clone())
+            .on_a11y_action(
+                gpui::accesskit::Action::SetValue,
+                move |data, window, cx| {
+                    if let Some(gpui::accesskit::ActionData::Value(value)) = data {
+                        set_value(value, window, cx);
+                    }
+                },
+            )
             .track_focus(&self.focus)
             .cursor_text()
             .w_full()

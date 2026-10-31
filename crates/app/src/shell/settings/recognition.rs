@@ -24,7 +24,7 @@ impl Editor {
     }
 
     pub(super) fn new(theme: Theme, cx: &mut Context<'_, Settings>) -> Self {
-        let field = cx.new(|cx| TextField::new(theme, cx));
+        let field = cx.new(|cx| TextField::new("Recognition hints", theme, cx));
         cx.observe(&field, |_, _, cx| cx.notify()).detach();
         cx.subscribe(&field, |settings, _, _: &Submit, cx| {
             settings.add_recognition_term(cx);
