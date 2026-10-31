@@ -90,14 +90,15 @@ pub enum MovieEvent {
     /// Submitted frame coverage, after encoder teardown. An unfinished file must be inspected
     /// for a playable fragment prefix before claiming that coverage survived.
     Finished {
-        /// Timestamp of the last submitted frame.
+        /// Capture timestamp of the most recent image successfully presented. Held samples do
+        /// not advance this time, and a received image may not have reached the output yet.
         last: Instant,
-        /// Capture's observed end. Playback may hold its final image through this time; it does
-        /// not imply that another image was captured then.
+        /// Capture's observed end, or the last submitted presentation time after a failure.
+        /// Playback may hold its final image; this does not imply another capture occurred.
         through: Instant,
-        /// Number of submitted frames.
+        /// Number of successfully submitted samples, including held images.
         frames: u32,
-        /// Whether native finalization succeeded.
+        /// Whether recording avoided a writer failure and native finalization succeeded.
         finalized: bool,
     },
 }

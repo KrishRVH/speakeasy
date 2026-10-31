@@ -1,7 +1,7 @@
 //! Native objects stay on the capture thread. Field order releases the writer, shuts down its
 //! sink, closes its stream, and only then leaves Media Foundation and the COM apartment.
 
-use std::{path::Path, time::Duration};
+use std::{ops::ControlFlow, path::Path, time::Duration};
 
 use anyhow::{Context as _, ensure};
 use windows::{
@@ -24,6 +24,21 @@ use crate::Frame;
 
 const TICKS: u64 = 10_000_000;
 const QUEUED_BYTES: u32 = 64 << 20;
+const FRAME_LIMIT: u32 = 9_000;
+// A longer stall saves the submitted prefix rather than monopolizing the capture thread.
+const CATCH_UP_LIMIT: u32 = 60;
+
+pub(super) enum End {
+    Before(Duration),
+    Through(Duration),
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct Coverage {
+    pub last: Duration,
+    pub at: Duration,
+    pub frames: u32,
+}
 
 pub(super) struct Encoder {
     writer: IMFSinkWriter,
@@ -31,7 +46,8 @@ pub(super) struct Encoder {
     stream: file::Stream,
     canvas: Canvas,
     synced: Duration,
-    last: Option<Duration>,
+    capture: Option<Duration>,
+    coverage: Option<Coverage>,
     _foundation: Foundation,
 }
 
@@ -85,30 +101,86 @@ impl Encoder {
             stream,
             canvas,
             synced: Duration::ZERO,
-            last: None,
+            capture: None,
+            coverage: None,
             _foundation: foundation,
         })
     }
 
-    pub(super) fn write(&mut self, frame: &Frame, at: Duration) -> anyhow::Result<()> {
-        if at.saturating_sub(self.synced) >= Duration::from_secs(1) {
-            // SAFETY: the byte stream stays open until finalization, and Commit syncs its file.
-            unsafe { self.stream.native.Flush()? };
-            self.synced = at;
+    pub(super) fn write(
+        &mut self,
+        frame: &Frame,
+        at: Duration,
+        cancelled: &dyn Fn() -> bool,
+    ) -> anyhow::Result<ControlFlow<()>> {
+        let at = Duration::from_nanos(u64::try_from(at.as_nanos() / 100)?.saturating_mul(100));
+        ensure!(
+            at <= Duration::from_secs(300)
+                && self
+                    .capture
+                    .map_or_else(|| at.is_zero(), |previous| at >= previous),
+            "Movie capture time is invalid"
+        );
+        // Contiguous input prevents native frame-rate conversion from filling gaps with a
+        // future image. Painting is safe only after every earlier grid point has been submitted.
+        if self.advance(End::Before(at), cancelled)?.is_break() || cancelled() {
+            return Ok(ControlFlow::Break(()));
         }
-        let pixels = self.canvas.paint(frame)?;
-        submit(&self.writer, pixels, at)?;
-        self.last = Some(at);
-        Ok(())
+        self.canvas.paint(frame)?;
+        self.capture = Some(at);
+        self.advance(End::Through(at), cancelled)
     }
 
-    pub(super) fn finish(self, through: Option<Duration>) -> anyhow::Result<()> {
-        if let (Some(last), Some(through)) = (self.last, through) {
-            let tail = through.saturating_sub(super::INTERVAL);
-            if tail > last {
-                submit(&self.writer, self.canvas.held(), tail)?;
+    pub(super) fn advance(
+        &mut self,
+        end: End,
+        cancelled: &dyn Fn() -> bool,
+    ) -> anyhow::Result<ControlFlow<()>> {
+        let Some(capture) = self.capture else {
+            return Ok(ControlFlow::Continue(()));
+        };
+        let ticks = match end {
+            End::Before(at) => at.as_nanos() / 100,
+            End::Through(at) => (at.as_nanos() / 100).saturating_add(1),
+        };
+        let first = self.coverage.map_or(0, |coverage| coverage.frames);
+        let mut index = first;
+        while index < FRAME_LIMIT && time(index).as_nanos() / 100 < ticks {
+            if cancelled() {
+                return Ok(ControlFlow::Break(()));
+            }
+            ensure!(
+                index.saturating_sub(first) < CATCH_UP_LIMIT,
+                "Video encoding fell behind; retained frames remain available"
+            );
+            let at = time(index);
+            let through = time(index.saturating_add(1));
+            submit(
+                &self.writer,
+                self.canvas.held(),
+                at,
+                through.saturating_sub(at),
+            )?;
+            index = index.saturating_add(1);
+            self.coverage = Some(Coverage {
+                last: capture,
+                at,
+                frames: index,
+            });
+            if at.saturating_sub(self.synced) >= Duration::from_secs(1) {
+                // SAFETY: the byte stream stays open until finalization; Flush syncs its file.
+                unsafe { self.stream.native.Flush()? };
+                self.synced = at;
             }
         }
+        Ok(ControlFlow::Continue(()))
+    }
+
+    pub(super) const fn coverage(&self) -> Option<Coverage> {
+        self.coverage
+    }
+
+    pub(super) fn finish(self) -> anyhow::Result<()> {
         // SAFETY: all input submissions ended. Finalize closes the stream; no later Flush may
         // touch it. Field teardown still shuts the sink down when Finalize fails.
         unsafe { self.writer.Finalize()? };
@@ -117,7 +189,21 @@ impl Encoder {
     }
 }
 
-fn submit(writer: &IMFSinkWriter, pixels: &[u8], at: Duration) -> anyhow::Result<()> {
+fn time(index: u32) -> Duration {
+    Duration::from_nanos(
+        u64::from(index)
+            .saturating_mul(TICKS)
+            .saturating_div(30)
+            .saturating_mul(100),
+    )
+}
+
+fn submit(
+    writer: &IMFSinkWriter,
+    pixels: &[u8],
+    at: Duration,
+    duration: Duration,
+) -> anyhow::Result<()> {
     let mut statistics = MF_SINK_WRITER_STATISTICS {
         cb: u32::try_from(size_of::<MF_SINK_WRITER_STATISTICS>())?,
         ..MF_SINK_WRITER_STATISTICS::default()
@@ -129,7 +215,7 @@ fn submit(writer: &IMFSinkWriter, pixels: &[u8], at: Duration) -> anyhow::Result
         statistics.dwByteCountQueued.saturating_add(bytes) <= QUEUED_BYTES,
         "Video encoding cannot keep up; retained frames remain available"
     );
-    let sample = sample(pixels, at)?;
+    let sample = sample(pixels, at, duration)?;
     // SAFETY: the sample owns its buffer. WriteSample retains it for deferred encoding; the actual
     // stream enforces its byte cap even during later writes. Held tail samples use this same gate.
     unsafe { writer.WriteSample(0, &sample)? };
@@ -170,7 +256,7 @@ impl Drop for Locked<'_> {
     }
 }
 
-fn sample(pixels: &[u8], at: Duration) -> anyhow::Result<IMFSample> {
+fn sample(pixels: &[u8], at: Duration, duration: Duration) -> anyhow::Result<IMFSample> {
     let bytes = u32::try_from(pixels.len())?;
     // SAFETY: the allocation is bounded by Canvas. The lock guard releases the borrowed native
     // buffer on every path, and only its reported writable length is copied.
@@ -191,7 +277,7 @@ fn sample(pixels: &[u8], at: Duration) -> anyhow::Result<IMFSample> {
         let sample = MFCreateSample()?;
         sample.AddBuffer(&buffer)?;
         sample.SetSampleTime(i64::try_from(at.as_nanos() / 100)?)?;
-        sample.SetSampleDuration(i64::try_from(TICKS / 30)?)?;
+        sample.SetSampleDuration(i64::try_from(duration.as_nanos() / 100)?)?;
         Ok(sample)
     }
 }

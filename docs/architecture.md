@@ -335,27 +335,34 @@ module unless a test file is named.
   waits for a durable origin acknowledgment before opening the file and closes only after native
   file handles release. It bounds its canvas to 2560 pixels per edge, its reported native input
   queue to 64 MiB, and actual file writes to 384 MiB. Those bounds do not cover memory allocated
-  internally by the system codec. Resized windows fit inside a cleared fixed canvas; a quiet tail
-  holds the last image through capture's observed end. The original session deadline bounds
-  admission and the held tail. Windows Shows save this video beside their sampled lossless frames;
-  Mac Shows currently retain only sampled frames. [show/src/movie.rs](../crates/show/src/movie.rs)
-  validates bounded, single-track fragment metadata and returns only the complete prefix. It checks
-  sample byte ranges and timing, not compressed picture decoding.
-  [store/movie.rs](../crates/app/src/show/store/movie.rs) copies that prefix before publication
-  commits, records the separate annotation horizon, and checks finalized native timing against the
-  fragments. Failed copy or sync preserves the checkpoint. A missing or incomplete first fragment
-  permits still-only publication with an explicit video-loss notice; other damaged video stays
-  recoverable with a concrete manual remedy. Saved-bundle inspection and export remain strict. The
-  viewer offers Windows video scrubbing and opens playback in the system player; its marks and
-  narration remain separate from the video pixels. Explicit `show frame --video` queries use the
-  [native reader](../crates/platform/src/windows/movie/read.rs) on Windows. Validation and decoding
-  share one open file with writes denied. The synchronous reader releases its decoder and native I/O
-  before returning; cancellation is checked between native calls. It checks canvas and buffer bounds
-  and returns top-down opaque BGRA with the actual decoded timestamp. The
-  [video command](../crates/app/src/show/command/source/video.rs) reports session-relative time and
-  separate annotation coverage, including recovered tails. It refuses crops until timed content
-  geometry is available. Opt-in synthetic checks cover seek direction, orientation, cancellation,
-  file replacement, and exports beyond the annotation journal.
+  internally by the system codec. Resized windows fit inside a cleared fixed canvas. An explicit 30
+  Hz clock submits the latest eligible capture and holds it through quiet periods; contiguous input
+  prevents the native converter from filling a gap with a future image. Captures sharing an
+  unsubmitted tick coalesce. Every read image reaches the movie before quiet advancement, including
+  images read for the still lane. Cancellation is checked between submissions, and a catch-up burst
+  stops after 60 samples instead of monopolizing the capture thread. A failure retains the committed
+  output count and presentation horizon separately from the last capture time. Finalization adds no
+  samples. The original session deadline bounds capture and held output. Windows Shows save this
+  video beside their sampled lossless frames; Mac Shows currently retain only sampled frames.
+  [show/src/movie.rs](../crates/show/src/movie.rs) validates bounded, single-track fragment metadata
+  and returns only the complete prefix. It checks sample byte ranges and timing, not compressed
+  picture decoding. [store/movie.rs](../crates/app/src/show/store/movie.rs) copies that prefix
+  before publication commits, records the separate annotation horizon, and checks finalized native
+  timing against the fragments. Failed copy or sync preserves the checkpoint. A missing or
+  incomplete first fragment permits still-only publication with an explicit video-loss notice; other
+  damaged video stays recoverable with a concrete manual remedy. Saved-bundle inspection and export
+  remain strict. The viewer offers Windows video scrubbing and opens playback in the system player;
+  its marks and narration remain separate from the video pixels. Explicit `show frame --video`
+  queries use the [native reader](../crates/platform/src/windows/movie/read.rs) on Windows.
+  Validation and decoding share one open file with writes denied. The synchronous reader releases
+  its decoder and native I/O before returning; cancellation is checked between native calls. It
+  checks canvas and buffer bounds and returns top-down opaque BGRA with the actual decoded
+  timestamp. The [video command](../crates/app/src/show/command/source/video.rs) reports
+  session-relative time and separate annotation coverage, including recovered tails. It refuses
+  crops until timed content geometry is available. Opt-in synthetic checks cover seek direction,
+  orientation, cancellation, file replacement, and exports beyond the annotation journal. Synthetic
+  encoder checks decode irregular captures sample by sample, reject future images, and exercise
+  quiet fragments, same-tick coalescing, cancellation, and partial progress after a stall.
 - **Scripts and packaging**: [scripts/](../scripts) and [packaging/](../packaging) profile, check,
   package, and launch the app, [app/build.rs](../crates/app/build.rs) embeds the Windows resources,
   and `mise run hygiene` runs [check_repository.py](../scripts/check_repository.py).

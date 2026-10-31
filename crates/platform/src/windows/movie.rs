@@ -13,30 +13,29 @@ use std::{
     time::{Duration, Instant},
 };
 
-use encoder::Encoder;
+use encoder::{Encoder, End};
 
 use crate::{Frame, MovieTarget};
 
 pub(super) const INTERVAL: Duration = Duration::from_nanos(33_333_334);
 /// Bounds the native encoder's disk use independently of retained still frames.
 const FILE_LIMIT: u64 = 384 << 20;
-const MAX_FRAMES: u32 = 9_001;
 
 #[cfg(test)]
 mod tests;
 
 pub(super) enum Movie {
     Pending(MovieTarget),
-    Active(Recording),
+    Active(Box<Recording>),
     Stopped,
 }
 
 pub(super) struct Recording {
     encoder: Option<Encoder>,
     first: Instant,
-    last: Instant,
-    frames: u32,
+    received_at: Option<Instant>,
     ending: Option<Instant>,
+    failed: bool,
     // Last to drop: a receiver observing closure may immediately unlock or delete the checkpoint.
     target: MovieTarget,
 }
@@ -50,17 +49,35 @@ impl Movie {
         !matches!(self, Self::Stopped)
     }
 
-    /// Cancellation must be observed even when the desktop produces no new frames.
-    pub(super) fn poll(&mut self, now: Instant, stopping: &async_channel::Receiver<Infallible>) {
+    /// Advances held frames and observes cancellation even on a quiet desktop. False reports
+    /// a codec/storage failure once, while the caller continues retaining still frames.
+    pub(super) fn poll(
+        &mut self,
+        now: Instant,
+        stopping: &async_channel::Receiver<Infallible>,
+    ) -> bool {
         let target = match self {
             Self::Pending(target) => target,
             Self::Active(recording) => &recording.target,
-            Self::Stopped => return,
+            Self::Stopped => return true,
         };
         if target.cancelled() || stopping.is_closed() {
             let ending = now.min(target.deadline());
             self.stop(ending);
+            return true;
         }
+        if let Self::Active(recording) = self {
+            match recording.advance(now, stopping) {
+                Ok(true) => {},
+                Ok(false) => self.stop(now),
+                Err(_private_native_error) => {
+                    recording.failed = true;
+                    *self = Self::Stopped;
+                    return false;
+                },
+            }
+        }
+        true
     }
 
     pub(super) fn stop(&mut self, at: Instant) {
@@ -81,17 +98,25 @@ impl Movie {
                 return true;
             };
             match Recording::begin(target, frame, stopping) {
-                Ok(Some(recording)) => *self = Self::Active(recording),
+                Ok(Some(recording)) => *self = Self::Active(Box::new(recording)),
                 Ok(None) => return true,
                 Err(_private_native_error) => return false,
             }
         }
         if let Self::Active(recording) = self {
             if recording.target.cancelled() || stopping.is_closed() {
-                *self = Self::Stopped;
-            } else if recording.frame(frame).is_err() {
-                *self = Self::Stopped;
-                return false;
+                let end = Instant::now().min(recording.target.deadline());
+                self.stop(end);
+            } else {
+                match recording.frame(frame, stopping) {
+                    Ok(true) => {},
+                    Ok(false) => self.stop(Instant::now()),
+                    Err(_private_native_error) => {
+                        recording.failed = true;
+                        *self = Self::Stopped;
+                        return false;
+                    },
+                }
             }
         }
         true
@@ -112,50 +137,88 @@ impl Recording {
         Ok(Some(Self {
             encoder: Some(encoder),
             first: frame.at,
-            last: frame.at,
-            frames: 0,
+            received_at: None,
             ending: None,
+            failed: false,
             target,
         }))
     }
 
-    fn frame(&mut self, frame: &Frame) -> anyhow::Result<()> {
+    fn frame(
+        &mut self,
+        frame: &Frame,
+        stopping: &async_channel::Receiver<Infallible>,
+    ) -> anyhow::Result<bool> {
         let at = frame.at.saturating_duration_since(self.first);
         anyhow::ensure!(
-            frame.at < self.target.deadline()
-                && at <= Duration::from_secs(300)
-                && self.frames < MAX_FRAMES,
+            frame.at < self.target.deadline() && at <= Duration::from_secs(300),
             "The Show movie reached its recording limit"
         );
-        if frame.at < self.last || (self.frames > 0 && frame.at == self.last) {
-            return Ok(());
+        if self
+            .received_at
+            .is_some_and(|previous| frame.at <= previous)
+        {
+            return Ok(true);
         }
         if let Some(encoder) = &mut self.encoder {
-            encoder.write(frame, at)?;
-            self.last = frame.at;
-            self.frames = self.frames.saturating_add(1);
+            let target = &self.target;
+            if encoder
+                .write(frame, at, &|| target.cancelled() || stopping.is_closed())?
+                .is_break()
+            {
+                return Ok(false);
+            }
+            self.received_at = Some(frame.at);
         }
-        Ok(())
+        Ok(true)
+    }
+
+    fn advance(
+        &mut self,
+        now: Instant,
+        stopping: &async_channel::Receiver<Infallible>,
+    ) -> anyhow::Result<bool> {
+        let target = &self.target;
+        if let Some(encoder) = &mut self.encoder {
+            return Ok(encoder
+                .advance(
+                    End::Through(
+                        now.min(target.deadline())
+                            .saturating_duration_since(self.first),
+                    ),
+                    &|| target.cancelled() || stopping.is_closed(),
+                )?
+                .is_continue());
+        }
+        Ok(true)
     }
 }
 
 impl Drop for Recording {
     fn drop(&mut self) {
+        let coverage = self.encoder.as_ref().and_then(Encoder::coverage);
+        let last = coverage
+            .and_then(|coverage| self.first.checked_add(coverage.last))
+            .unwrap_or(self.first);
+        let presented = coverage
+            .and_then(|coverage| self.first.checked_add(coverage.at))
+            .unwrap_or(self.first);
         let through = self
             .ending
-            .unwrap_or(self.last)
-            .max(self.last)
+            .or(self.received_at)
+            .unwrap_or(self.first)
+            .max(presented)
             .min(self.target.deadline());
-        let ending = self.ending.map(|at| {
-            at.min(self.target.deadline())
-                .saturating_duration_since(self.first)
-                .min(Duration::from_secs(300))
-        });
         let finalized = self
             .encoder
             .take()
-            .is_some_and(|encoder| encoder.finish(ending).is_ok());
-        self.target
-            .finish(self.last, through, self.frames, finalized);
+            .is_some_and(|encoder| encoder.finish().is_ok())
+            && !self.failed;
+        self.target.finish(
+            last,
+            through,
+            coverage.map_or(0, |coverage| coverage.frames),
+            finalized,
+        );
     }
 }

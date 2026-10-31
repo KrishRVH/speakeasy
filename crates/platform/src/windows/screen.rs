@@ -388,20 +388,14 @@ fn record(
                 capture.discard_pending();
             }
             let now = Instant::now();
-            movie.poll(now, stopping);
+            let mut movie_failed = false;
             // A full lane leaves the pending frame waiting rather than reading back one to drop.
             let still = pacer.due(now) && !events.is_full();
             let moving = movie.active() && now >= motion;
             if (still || moving)
                 && let Some(frame) = capture.read_pending()?
             {
-                if moving && !movie.frame(&frame, stopping) {
-                    #[expect(
-                        clippy::let_underscore_must_use,
-                        reason = "A closed event lane means the owner has left; otherwise failure replaces the oldest queued still"
-                    )]
-                    let _ = events.force_send(ScreenEvent::MovieStopped);
-                }
+                movie_failed = !movie.frame(&frame, stopping);
                 if moving {
                     let elapsed = now
                         .saturating_duration_since(motion)
@@ -416,6 +410,14 @@ fn record(
                 if still && events.try_send(ScreenEvent::Frame(frame)).is_ok() {
                     pacer.sent(now);
                 }
+            }
+            movie_failed |= !movie.poll(Instant::now(), stopping);
+            if movie_failed {
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "A closed event lane means the owner has left; otherwise failure replaces the oldest queued still"
+                )]
+                let _ = events.force_send(ScreenEvent::MovieStopped);
             }
             thread::sleep(POLL);
         }

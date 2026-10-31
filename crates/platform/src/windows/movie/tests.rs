@@ -3,6 +3,8 @@ use std::{path::PathBuf, time::Duration};
 use super::*;
 use crate::Part;
 
+mod timing;
+
 #[tokio::test]
 async fn a_cancelled_pending_movie_releases_its_lease_without_a_frame() {
     let (control, target) = crate::MovieControl::new(
@@ -12,7 +14,7 @@ async fn a_cancelled_pending_movie_releases_its_lease_without_a_frame() {
     let (_stop, stopping) = async_channel::bounded(1);
     let mut movie = Movie::new(Some(target));
     control.request_stop();
-    movie.poll(Instant::now(), &stopping);
+    assert!(movie.poll(Instant::now(), &stopping));
     assert!(!movie.active());
     assert!(control.next().await.is_none());
 }
@@ -34,7 +36,7 @@ async fn a_cancelled_active_movie_releases_its_file_without_a_new_frame() -> any
         assert!(movie.frame(&frame(320, 240, 140), &stopping));
         submitted.send_blocking(()).unwrap();
         if polling.recv_blocking().is_ok() {
-            movie.poll(Instant::now(), &stopping);
+            assert!(movie.poll(Instant::now(), &stopping));
             assert!(!movie.active());
         }
     })?;
@@ -119,6 +121,7 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
         FILE_LIMIT,
     )?;
     let mut image = frame(1280, 720, 240);
+    let start = Instant::now();
     for number in 0..120_u32 {
         for (index, pixel) in image.bgra.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let x = u32::try_from(index % 1280)?;
@@ -131,12 +134,18 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
                 [240, 245, 250, 255]
             };
         }
-        moving.write(
-            &image,
-            Duration::from_nanos(u64::from(number).saturating_mul(1_000_000_000) / 30),
-        )?;
+        assert!(
+            moving
+                .write(&image, wait_for_sample(start, number), &|| false)?
+                .is_continue()
+        );
     }
-    moving.finish(Some(Duration::from_secs(4)))?;
+    assert!(
+        moving
+            .advance(End::Before(Duration::from_secs(4)), &|| false)?
+            .is_continue()
+    );
+    moving.finish()?;
     let times = encoder::sample_times(&directory.join("moving.mp4"))?;
     assert_eq!(times.len(), 120);
     assert_eq!(times[0].0, 0);
@@ -148,9 +157,19 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
         canvas::Canvas::new([1280, 720])?,
         FILE_LIMIT,
     )?;
-    held.write(&frame(1280, 720, 20), Duration::ZERO)?;
-    held.write(&frame(1280, 720, 220), Duration::from_millis(1_500))?;
-    held.finish(Some(Duration::from_secs(6)))?;
+    let start = Instant::now();
+    for number in 0..180 {
+        let at = wait_for_sample(start, number);
+        assert!(
+            match number {
+                0 => held.write(&frame(1280, 720, 20), at, &|| false),
+                45 => held.write(&frame(1280, 720, 220), at, &|| false),
+                _ => held.advance(End::Through(at), &|| false),
+            }?
+            .is_continue()
+        );
+    }
+    held.finish()?;
     let times = encoder::sample_times(&directory.join("held.mp4"))?;
     let &(last, duration) = times.last().unwrap();
     assert!(
@@ -162,6 +181,7 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
     let limit = 1 << 20;
     let mut capped = Encoder::open(&path, canvas::Canvas::new([1280, 720])?, limit)?;
     let mut failed = false;
+    let start = Instant::now();
     for number in 0..900_u32 {
         for (index, pixel) in image.bgra.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let shade = u8::try_from(
@@ -170,17 +190,14 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
             *pixel = [shade, shade, shade, 255];
         }
         if capped
-            .write(
-                &image,
-                Duration::from_nanos(u64::from(number).saturating_mul(1_000_000_000) / 30),
-            )
+            .write(&image, wait_for_sample(start, number), &|| false)
             .is_err()
         {
             failed = true;
             break;
         }
     }
-    let finalized = capped.finish(None);
+    let finalized = capped.finish();
     assert!(
         failed || finalized.is_err(),
         "Native encoder did not exercise its byte cap"
@@ -192,11 +209,18 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
     // file; it cannot leave teardown waiting for work that can no longer be submitted.
     let too_small = directory.join("no-header.mp4");
     if let Ok(mut encoder) = Encoder::open(&too_small, canvas::Canvas::new([320, 240])?, 1) {
-        let submitted = encoder.write(&frame(320, 240, 50), Duration::ZERO);
-        let finished = encoder.finish(None);
+        let submitted = encoder.write(&frame(320, 240, 50), Duration::ZERO, &|| false);
+        let finished = encoder.finish();
         assert!(submitted.is_err() || finished.is_err());
     }
     assert!(std::fs::metadata(&too_small)?.len() <= 1);
     std::fs::remove_file(too_small)?;
     Ok(())
+}
+
+fn wait_for_sample(start: Instant, number: u32) -> Duration {
+    let at = Duration::from_nanos(u64::from(number).saturating_mul(1_000_000_000) / 30);
+    // Match capture pacing so this fixture exercises the disk cap rather than the input queue.
+    std::thread::sleep(at.saturating_sub(start.elapsed()));
+    at
 }

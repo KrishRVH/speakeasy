@@ -178,7 +178,8 @@ Numbered marks and timed narration jump to their recorded times. The displayed t
 the decoded frame; recovered video can extend past the annotation journal. Rapid seeks replace the
 pending request while the previous decoder closes, and Copy moment waits for the selected frame.
 **Play video** opens the MP4 in your system player. Video has no drawn annotations or narration
-audio.
+audio. Its 30 Hz timeline holds the latest captured image during quiet periods. A long encoder stall
+stops video and keeps its completed prefix; sampled frames continue recording.
 
 Choose **Narration** beside **Summary** to read the recorded words. Click a timed clause to jump to
 a frame; the caption gives both the clause's time and the displayed frame's actual time, including
@@ -703,9 +704,12 @@ paused clock exercises gesture deadlines and the five-minute cap.
 - On Windows, set `SPEAKEASY_MOVIE_PROBE_DIRECTORY` to an empty artifact directory and run
   `cargo test --locked -p speakeasy-platform encode_synthetic_movie_fragments --release -- --ignored --test-threads=1`.
   It exercises the native movie adapter with generated pixels, checks motion and quiet-tail timing
-  through the native reader, and forces storage failure. The separate
+  through the native reader, and forces storage failure. The `windows::movie::tests::timing::`
+  filter checks irregular capture timing, coalescing, quiet fragments before finalization,
+  cancellation during catch-up, and the surviving prefix after a stall. The separate
   `a_cancelled_active_movie_releases_its_file_without_a_new_frame` filter checks cancellation and
-  file release. Neither opens a microphone, captures the screen, or touches input or the clipboard.
+  file release. These checks use generated pixels and access no microphone, screen, input, or
+  clipboard.
 - The Windows platform filter
   `a_movie_survives_still_backpressure_and_closes_at_the_session_deadline`, with the same opt-in
   arguments, captures only an owned, blacked-out scene into a temporary movie. It changes that scene
