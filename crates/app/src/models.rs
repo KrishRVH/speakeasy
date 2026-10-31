@@ -32,14 +32,25 @@ impl Model {
     }
 }
 
-/// Recovered Shows can carry another engine's language spelling. Unsupported locales request
-/// detection rather than forwarding an invalid decoder prompt.
+/// Preserve explicit locale choices and adapt a previous engine's bare language code. Unsupported
+/// languages use detection instead of an invalid decoder prompt.
 pub(crate) fn nemotron_language(language: &str) -> &str {
     if LANGUAGES.iter().any(|(code, _)| *code == language) {
-        language
-    } else {
-        "auto"
+        return language;
     }
+    let primary = match language {
+        "no" => "nb",
+        language => language,
+    };
+    LANGUAGES
+        .iter()
+        .find_map(|&(code, _)| {
+            (code
+                .split_once('-')
+                .is_some_and(|(prefix, _)| prefix == primary))
+            .then_some(code)
+        })
+        .unwrap_or("auto")
 }
 
 /// The unadapted Nemotron checkpoint supports these 32 locales. Other tokenizer languages require

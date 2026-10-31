@@ -123,8 +123,10 @@ module unless a test file is named.
   contract and where it lives. [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns
   native selection and IME composition; its pure edit state tests Unicode boundaries, and
   [native_tests.rs](../crates/app/src/shell/settings/native_tests.rs) checks owned-window
-  composition and save draining. [config/tests.rs](../crates/app/src/config/tests.rs) pins that
-  contract.
+  composition and save draining. The
+  [native interaction test](../crates/app/src/shell/settings/native_interaction.rs) checks language
+  navigation, focus restoration, and private practice cleanup through the borrowed-window close
+  callback. [config/tests.rs](../crates/app/src/config/tests.rs) pins the file contract.
 - **Private practice and readiness**:
   [settings/practice.rs](../crates/app/src/shell/settings/practice.rs) owns the receipt and
   transient rendered text. The session fixes its destination at admission; practice commits the same

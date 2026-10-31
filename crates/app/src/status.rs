@@ -63,7 +63,7 @@ impl Readiness {
                 ModelState::Unavailable => "Unavailable · Check local speech below",
             },
             shortcut: if snapshot.desktop_ready {
-                "Available · Try it here"
+                "Available"
             } else {
                 "Waiting for desktop access · See status below"
             },

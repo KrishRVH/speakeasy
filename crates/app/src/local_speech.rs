@@ -258,7 +258,11 @@ impl Speech for LocalSpeech {
         language: &str,
         terms: &Terms,
     ) -> anyhow::Result<Option<String>> {
-        let text = streaming::transcribe(self, audio, language, terms).await?;
+        // Continuous recognition is optional. A healthy engine can recognize the sealed audio
+        // after a transport failure; the probe still rejects a dead or replaced listener.
+        let text = streaming::transcribe(self, audio, language, terms)
+            .await
+            .unwrap_or(None);
         if text.is_none() {
             // Closing a stream cancels its engine-side job. A bounded probe acknowledges cleanup
             // before the owner reuses this worker for a Show or another recording.

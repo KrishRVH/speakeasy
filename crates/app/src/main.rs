@@ -396,7 +396,7 @@ fn split_startup(startup: Startup) -> (Option<ValidConfig>, Snapshot) {
             },
         ),
         Startup::Unconfigured => (None, placeholder()),
-        Startup::Configured(valid) => (Some(valid), placeholder()),
+        Startup::Configured(valid) => (Some(*valid), placeholder()),
     }
 }
 
@@ -487,7 +487,7 @@ mod tests {
             start_at_login: true,
             ..Config::default()
         };
-        let configured = Startup::Configured(ValidConfig::assume(on.clone()));
+        let configured = Startup::Configured(Box::new(ValidConfig::assume(on.clone())));
         assert_eq!(sign_in_launch(Live, default, &configured, &on), Some(true));
         assert_eq!(sign_in_launch(Live, other, &configured, &on), None);
         let off = Config::default();

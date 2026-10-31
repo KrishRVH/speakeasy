@@ -325,7 +325,7 @@ impl Config {
             return (config, Startup::Unconfigured);
         }
         match config.validated(path) {
-            Ok(valid) => (Self::clone(&valid), Startup::Configured(valid)),
+            Ok(valid) => (Self::clone(&valid), Startup::Configured(Box::new(valid))),
             Err(error) => (config, Startup::Invalid(format!("{error:#}"))),
         }
     }
@@ -531,7 +531,7 @@ pub(crate) enum Change {
 pub(crate) enum Startup {
     /// A first launch, or a file without an engine: Settings offers setup.
     Unconfigured,
-    Configured(ValidConfig),
+    Configured(Box<ValidConfig>),
     /// The file cannot be read or validated; the message says why.
     Invalid(String),
 }

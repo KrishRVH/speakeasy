@@ -8,12 +8,12 @@ use gpui::{
     prelude::*, px, relative, rgb, svg,
 };
 
-use super::{Action, EngineFile, Setting, Settings, is_demo};
+use super::{Action, EngineFile, Setting, Settings, is_demo, language};
 use crate::{
     BRAND_FONT,
     config::{Engine, TextDelivery},
     icons::KEYSTONE,
-    models::{LANGUAGES, Model, WHISPER_LANGUAGES},
+    models::Model,
     setup::Progress,
     shell::Services,
     status::{Indicator, ServiceState},
@@ -130,10 +130,18 @@ impl Settings {
             .flex()
             .flex_col()
             .gap(ROW_GAP)
-            .child(ui.heading("READY TO DICTATE"))
-            .child(format!("Local model: {}", readiness.model))
-            .child(format!("Shortcut: {}", readiness.shortcut))
-            .child(access)
+            .text_size(TEXT)
+            .child(ui.heading("DICTATION STATUS"))
+            .child(format!(
+                "Model: {} · Shortcut: {}",
+                readiness.model, readiness.shortcut
+            ))
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(rgb(ui.palette.muted))
+                    .child(access),
+            )
             .child(
                 row()
                     .when(may_practice, |row| {
@@ -167,7 +175,14 @@ impl Settings {
                     )
                 })
             })
-            .child(delivery)
+            .when(active, |card| {
+                card.child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(ui.palette.muted))
+                        .child(delivery),
+                )
+            })
     }
 
     /// Setup chooses the engine, so manual engine controls wait until it ends.
@@ -253,6 +268,17 @@ impl Settings {
             .flex_col()
             .gap(ROW_GAP)
             .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(ui.heading("LOCAL SPEECH"))
+                    .child(ui.button(
+                        format!("Engine: {}", self.config.engine.label()),
+                        Action::Engine,
+                    )),
+            )
+            .child(
                 row()
                     .child(ui.button("Set up Parakeet v3", Action::Install(Model::Parakeet)))
                     .child(ui.button("Set up Nemotron 3.5", Action::Install(Model::Nemotron))),
@@ -266,17 +292,6 @@ impl Settings {
             .when_some(self.config.model_choice(), |section, model| {
                 section.child(format!("Selected model: {}", model.label()))
             })
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(ui.heading("LOCAL SPEECH"))
-                    .child(ui.button(
-                        format!("Engine: {}", self.config.engine.label()),
-                        Action::Engine,
-                    )),
-            )
             .child(ui.file_row(
                 &self.config.engine_executable,
                 "Choose executable",
@@ -424,16 +439,8 @@ impl Settings {
                 .child("Language: Automatic")
                 .into_any_element();
         }
-        let languages = if self.config.engine == Engine::Whisper {
-            WHISPER_LANGUAGES
-        } else {
-            LANGUAGES
-        };
-        let code = if self.config.engine == Engine::Whisper {
-            crate::models::whisper_language(&self.config.language)
-        } else {
-            &self.config.language
-        };
+        let languages = language::options(&self.config);
+        let code = language::selected(&self.config);
         let name = languages
             .iter()
             .find_map(|&(language, name)| (language == code).then_some(name))
@@ -443,8 +450,11 @@ impl Settings {
             .flex()
             .flex_col()
             .gap(ROW_GAP)
-            .child(ui.button(label, Action::Language))
-            .when(self.choosing_language, |column| {
+            .child(
+                ui.button(label, Action::Language)
+                    .track_focus(&self.language.button),
+            )
+            .when(self.language.cursor.is_some(), |column| {
                 column.child(
                     div()
                         .id("language-choices")
@@ -452,11 +462,30 @@ impl Settings {
                         .overflow_y_scroll()
                         .flex()
                         .flex_col()
-                        .children(
-                            languages
-                                .iter()
-                                .map(|&(code, name)| ui.button(name, Action::SelectLanguage(code))),
-                        ),
+                        .track_scroll(&self.language.scroll)
+                        .track_focus(&self.language.menu)
+                        .on_key_down(ui.cx.listener(Self::language_key))
+                        .children(languages.iter().enumerate().map(
+                            |(index, &(language, name))| {
+                                div()
+                                    .id(SharedString::from(format!("language-option-{language}")))
+                                    .px(px(12.0))
+                                    .py(CONTROL_PAD_Y)
+                                    .cursor_pointer()
+                                    .when(self.language.cursor == Some(index), |row| {
+                                        row.bg(rgb(ui.palette.raise))
+                                    })
+                                    .hover(|row| row.bg(rgb(ui.palette.raise)))
+                                    .on_click(ui.cx.listener(move |view, _, window, cx| {
+                                        view.act(Action::SelectLanguage(language), window, cx);
+                                    }))
+                                    .child(if language == code {
+                                        format!("✓ {name}")
+                                    } else {
+                                        name.to_owned()
+                                    })
+                            },
+                        )),
                 )
             })
             .into_any_element()
@@ -508,7 +537,7 @@ impl Settings {
 }
 
 impl Ui<'_> {
-    fn button(&self, label: impl IntoElement, action: Action) -> impl IntoElement {
+    fn button(&self, label: impl IntoElement, action: Action) -> gpui::Stateful<Div> {
         let palette = self.palette;
         div()
             .id(action.element_id())

@@ -183,7 +183,7 @@ fn set_visible(settings: WindowHandle<Settings>, visible: bool, cx: &mut App) {
     cx.global_mut::<Services>().visibility = Some(task);
 }
 
-fn hide_on_close(window: &mut Window, cx: &mut App) -> bool {
+pub(super) fn hide_on_close(window: &mut Window, cx: &mut App) -> bool {
     if !cx.has_global::<Services>() {
         return true;
     }

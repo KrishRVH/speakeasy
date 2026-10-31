@@ -625,7 +625,7 @@ async fn streaming_authenticates_and_sends_per_request_language_and_hints() -> a
             bail!("Missing session update");
         };
         let update: serde_json::Value = serde_json::from_str(&update)?;
-        assert_eq!(update["session"]["language"], "auto");
+        assert_eq!(update["session"]["language"], "de-DE");
         assert_eq!(update["session"]["speech_contexts"], terms.contexts());
         socket
             .send(Message::Text(r#"{"type":"session.updated"}"#.into()))
@@ -698,32 +698,38 @@ async fn transcribe_beside(
 /// engine's port could; returns only on failure.
 #[cfg(unix)]
 async fn impersonate_engine(listener: &tokio::net::TcpListener) -> anyhow::Result<()> {
-    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     loop {
-        let mut stream = BufReader::new(listener.accept().await?.0);
-        let mut length = 0;
-        loop {
-            let mut line = String::new();
-            if stream.read_line(&mut line).await? == 0 || line.trim().is_empty() {
-                break;
-            }
-            if let Some((name, value)) = line.split_once(':')
-                && name.eq_ignore_ascii_case("content-length")
-            {
-                length = value.trim().parse()?;
-            }
-        }
-        stream.read_exact(&mut vec![0; length]).await?;
-        stream
-            .write_all(
-                concat!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n",
-                    "Content-Length: 11\r\nConnection: close\r\n\r\n{\"text\":\"\"}",
-                )
-                .as_bytes(),
-            )
-            .await?;
+        answer_silence(listener.accept().await?.0).await?;
     }
+}
+
+#[cfg(unix)]
+async fn answer_silence(stream: tokio::net::TcpStream) -> anyhow::Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+    let mut stream = BufReader::new(stream);
+    let mut length = 0;
+    loop {
+        let mut line = String::new();
+        if stream.read_line(&mut line).await? == 0 || line.trim().is_empty() {
+            break;
+        }
+        if let Some((name, value)) = line.split_once(':')
+            && name.eq_ignore_ascii_case("content-length")
+        {
+            length = value.trim().parse()?;
+        }
+    }
+    stream.read_exact(&mut vec![0; length]).await?;
+    stream
+        .write_all(
+            concat!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n",
+                "Content-Length: 11\r\nConnection: close\r\n\r\n{\"text\":\"\"}",
+            )
+            .as_bytes(),
+        )
+        .await?;
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -768,5 +774,69 @@ async fn local_worker_recognizes_fixture_and_stops() -> anyhow::Result<()> {
         worker.child.try_wait()?.is_some(),
         "Owned worker did not terminate"
     );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn abandoned_and_failed_streams_probe_the_owned_engine_before_reuse() -> anyhow::Result<()> {
+    use futures_util::{SinkExt as _, StreamExt as _};
+    use tokio_tungstenite::{accept_async, tungstenite::Message};
+
+    use crate::runtime::ports::LiveAudio;
+
+    for failed in [false, true] {
+        let held = std::net::TcpListener::bind((LOOPBACK, 0))?;
+        let listener = held.try_clone()?;
+        listener.set_nonblocking(true)?;
+        let listener = tokio::net::TcpListener::from_std(listener)?;
+        let (_directory, mut speech) = shell_engine("read -r _", held).await?;
+        speech.engine = Engine::Parakeet;
+        speech.nemotron = true;
+        let (frames, received) = tokio::sync::mpsc::channel(1);
+        let _frames = failed.then_some(frames);
+        let (ending, tail) = tokio::sync::oneshot::channel();
+        drop(ending);
+        let server = async {
+            let mut socket = accept_async(listener.accept().await?.0).await?;
+            socket
+                .send(Message::Text(r#"{"type":"session.created"}"#.into()))
+                .await?;
+            assert!(matches!(socket.next().await, Some(Ok(Message::Text(_)))));
+            socket
+                .send(Message::Text(r#"{"type":"session.updated"}"#.into()))
+                .await?;
+            if failed {
+                socket
+                    .send(Message::Text(r#"{"type":"error"}"#.into()))
+                    .await?;
+            }
+            assert!(matches!(
+                socket.next().await,
+                None | Some(Err(_) | Ok(Message::Close(_)))
+            ));
+            // No response can arrive until the client closes its stream and asks the same owned
+            // process to acknowledge readiness with a complete silent request.
+            answer_silence(listener.accept().await?.0).await
+        };
+        let terms = Terms::default();
+        let result = timeout(crate::testing::PATIENCE, async {
+            tokio::try_join!(
+                speech.transcribe_stream(
+                    LiveAudio {
+                        rate: 16_000,
+                        frames: received,
+                        tail
+                    },
+                    "en-US",
+                    &terms
+                ),
+                server
+            )
+        })
+        .await;
+        speech.stop().await;
+        assert!(result??.0.is_none());
+    }
     Ok(())
 }

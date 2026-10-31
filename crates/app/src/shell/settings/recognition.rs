@@ -1,6 +1,8 @@
 //! Recognition hints edit their own vocabulary; they never become phrase replacement rules.
 
-use gpui::{App, AppContext as _, Context, Entity, IntoElement, div, prelude::*, px, rgb};
+use gpui::{
+    App, AppContext as _, Context, Entity, Focusable as _, IntoElement, div, prelude::*, px, rgb,
+};
 
 use super::{
     Notice, Settings,
@@ -76,13 +78,19 @@ impl Settings {
                 .border_color(alpha(palette.lamp, 0.25))
                 .rounded(px(4.0))
                 .focus(|style| style.border_color(rgb(palette.lamp)))
-                .on_click(cx.listener(move |settings, _, _, cx| {
+                .on_click(cx.listener(move |settings, _, window, cx| {
                     if cx.global::<Services>().is_quitting() {
                         return;
                     }
                     match remove {
                         Some(index) => {
                             settings.config.recognition_terms.remove(index);
+                            settings
+                                .recognition
+                                .field
+                                .read(cx)
+                                .focus_handle(cx)
+                                .focus(window);
                             settings.edited();
                             cx.notify();
                         },

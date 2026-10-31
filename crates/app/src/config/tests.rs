@@ -519,7 +519,7 @@ fn startup_classifies_saved_settings() -> anyhow::Result<()> {
         valid.engine_executable,
         directory.path().join("engine").canonicalize()?
     );
-    assert_eq!(config, *valid);
+    assert_eq!(config, **valid);
     Ok(())
 }
 

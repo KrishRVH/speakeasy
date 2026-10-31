@@ -2,6 +2,7 @@
 //! which never saves, previews its theme and motion directly. The view owns the setup, file picker,
 //! and saves it starts, and waits on the microphone scan that Services holds.
 
+mod language;
 mod practice;
 mod recognition;
 mod render;
@@ -48,7 +49,7 @@ pub(super) struct Settings {
     saves: SaveQueue,
     vocabulary: vocabulary::Editor,
     recognition: recognition::Editor,
-    choosing_language: bool,
+    language: language::Picker,
     practice: practice::Practice,
     update_check: Option<(crate::updates::Check, Task<()>)>,
     available_update: Option<crate::updates::Version>,
@@ -91,7 +92,7 @@ impl Settings {
             saves,
             vocabulary,
             recognition,
-            choosing_language: false,
+            language: language::Picker::new(cx),
             practice: practice::Practice::default(),
             update_check: None,
             available_update: None,
@@ -130,7 +131,7 @@ impl Settings {
         }
     }
 
-    fn act(&mut self, action: Action, window: &Window, cx: &mut Context<'_, Self>) {
+    fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<'_, Self>) {
         if cx.global::<Services>().is_quitting() {
             return;
         }
@@ -147,7 +148,7 @@ impl Settings {
             Action::Choose(file) => self.choose(file, window, cx),
             Action::Refresh => self.refresh_microphones(cx),
             Action::Microphone => self.cycle_microphone(),
-            Action::Language => self.choosing_language = !self.choosing_language,
+            Action::Language => self.toggle_language(window),
             Action::SelectLanguage(language) => {
                 self.config.language = if self.config.engine == Engine::Whisper {
                     crate::models::whisper_language(language)
@@ -155,7 +156,7 @@ impl Settings {
                     language
                 }
                 .into();
-                self.choosing_language = false;
+                self.close_language(window);
                 self.edited();
             },
             Action::Delivery => self.cycle_delivery(),
@@ -172,7 +173,7 @@ impl Settings {
                     self.config = cx.global::<Services>().config.clone();
                     self.vocabulary.clear(cx);
                     self.recognition.clear(cx);
-                    self.choosing_language = false;
+                    self.language.cursor = None;
                     self.edited();
                 }
             },
@@ -212,7 +213,7 @@ impl Settings {
         } else if self.config.uses_nemotron() {
             self.config.language = crate::models::nemotron_language(&self.config.language).into();
         }
-        self.choosing_language = false;
+        self.language.cursor = None;
         self.notice = Some(Notice::Note(
             "Choose the executable and model for this engine, then save.".into(),
         ));
@@ -856,3 +857,6 @@ mod tests {
 
 #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
 mod native_tests;
+
+#[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
+mod native_interaction;

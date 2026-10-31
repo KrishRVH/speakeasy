@@ -318,6 +318,10 @@ Download the Windows installer or Mac disk image from the
 no administrator access; on Mac, drag Speakeasy to Applications. Portable ZIPs remain available.
 Linux's experimental AppImage and tar packages are described below.
 
+The Windows installer is unsigned. If SmartScreen warns, use **More info › Run anyway** only for the
+installer you downloaded from this repository's release page. Quit Speakeasy from its tray menu
+before upgrading or uninstalling; the installer asks you to do so if its files are in use.
+
 Windows installs into your local Programs folder and adds a Start menu entry. Installing an update
 replaces the app; uninstalling keeps your settings, downloaded models, and Shows. The installer does
 not change your PATH. Add its folder yourself if you want to run `speakeasy-cli` by name.
@@ -631,6 +635,9 @@ paused clock exercises gesture deadlines and the five-minute cap.
   or with `xvfb-run -a` on Linux, checks synthetic Show navigation, damage, edited summaries,
   expiry, and image cleanup on close. Linux also checks the owned window's rendered frame pixels. It
   uses no microphone, global input, screen capture, or clipboard.
+- The same command with `native_phrase_editor_` checks Settings IME composition and save draining;
+  with `native_settings_picker_` it checks language navigation, focus restoration, and private
+  practice cleanup. Run each filter separately so each process owns one GPUI application.
 
 Live microphone, editor, and screen acceptance is tracked under
 [verification](docs/architecture.md#verification).

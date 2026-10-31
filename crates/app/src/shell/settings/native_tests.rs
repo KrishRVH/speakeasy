@@ -42,7 +42,7 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                 let view = cx.new(|cx| Settings {
                     vocabulary: vocabulary::Editor::new(config.theme, cx),
                     recognition: recognition::Editor::new(config.theme, cx),
-                    choosing_language: false,
+                    language: language::Picker::new(cx),
                     practice: practice::Practice::default(),
                     update_check: None,
                     available_update: None,

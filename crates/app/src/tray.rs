@@ -53,7 +53,7 @@ impl TrayState {
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             last_show: services.recallable_show(snapshot).is_some(),
             #[cfg(any(target_os = "windows", target_os = "macos"))]
-            shortcut: snapshot.shortcut.clone(),
+            shortcut: std::sync::Arc::clone(&snapshot.shortcut),
         }
     }
 }

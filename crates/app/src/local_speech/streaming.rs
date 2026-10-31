@@ -18,6 +18,7 @@ use crate::runtime::ports::LiveAudio;
 
 const FAILED: &str =
     "Continuous recognition stopped. Retrying this recording with the selected model.";
+const FINAL_TIMEOUT: Duration = Duration::from_secs(10);
 type Socket = WebSocketStream<TcpStream>;
 
 pub(super) async fn transcribe(
@@ -65,12 +66,19 @@ pub(super) async fn transcribe(
     .map_err(|_private| anyhow!(FAILED))?;
     timeout(CONNECT_TIMEOUT, async {
         expect(&mut socket, "session.created").await?;
-        send(&mut socket, Message::Text(serde_json::json!({
+        let session = serde_json::json!({
             "type": "session.update",
-            "session": {"sample_rate": audio.rate, "language": crate::models::nemotron_language(language), "speech_contexts": terms.contexts()}
-        }).to_string().into())).await?;
+            "session": {
+                "sample_rate": audio.rate,
+                "language": crate::models::nemotron_language(language),
+                "speech_contexts": terms.contexts()
+            }
+        });
+        send(&mut socket, Message::Text(session.to_string().into())).await?;
         expect(&mut socket, "session.updated").await
-    }).await.map_err(|_private| anyhow!(FAILED))??;
+    })
+    .await
+    .map_err(|_private| anyhow!(FAILED))??;
     timeout(INFERENCE_TIMEOUT, recognize(&mut socket, audio))
         .await
         .map_err(|_private| anyhow!(FAILED))?
@@ -80,7 +88,8 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
     let mut committed = false;
     let mut final_seen = false;
     let mut text = Zeroizing::new(String::new());
-    let deadline = tokio::time::sleep(Duration::from_secs(10));
+    let chunk_size = usize::try_from(audio.rate / 10)?.saturating_mul(2);
+    let deadline = tokio::time::sleep(FINAL_TIMEOUT);
     tokio::pin!(deadline);
     loop {
         tokio::select! {
@@ -89,27 +98,44 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
                 if let Some(mut bytes) = frame {
                     send(socket, Message::Binary(mem::take(&mut *bytes).into())).await?;
                 } else {
-                    let Ok(tail) = (&mut audio.tail).await else { return Ok(None); };
+                    let Ok(tail) = (&mut audio.tail).await else {
+                        return Ok(None);
+                    };
                     // Capture never waits on inference. Its final tail can include a backlog;
                     // preserve every sample while keeping each network write small and bounded.
-                    for chunk in tail.chunks(usize::try_from(audio.rate / 10)?.saturating_mul(2)) {
+                    for chunk in tail.chunks(chunk_size) {
                         send(socket, Message::Binary(chunk.to_vec().into())).await?;
                     }
-                    send(socket, Message::Text("{\"type\":\"input_audio_buffer.commit\"}".into())).await?;
+                    send(
+                        socket,
+                        Message::Text("{\"type\":\"input_audio_buffer.commit\"}".into()),
+                    ).await?;
                     committed = true;
-                    deadline.as_mut().reset(tokio::time::Instant::now().checked_add(Duration::from_secs(10)).ok_or_else(|| anyhow!(FAILED))?);
+                    let end = tokio::time::Instant::now()
+                        .checked_add(FINAL_TIMEOUT)
+                        .ok_or_else(|| anyhow!(FAILED))?;
+                    deadline.as_mut().reset(end);
                 }
             },
             message = socket.next() => {
-                let message = message.ok_or_else(|| anyhow!(FAILED))?.map_err(|_private| anyhow!(FAILED))?;
+                let message = message
+                    .ok_or_else(|| anyhow!(FAILED))?
+                    .map_err(|_private| anyhow!(FAILED))?;
                 match message {
                     Message::Text(bytes) => {
                         let event = parse(&bytes)?;
                         match event.kind.as_str() {
                             "conversation.item.input_audio_transcription.completed" => {
-                                let words = event.transcript.as_deref().ok_or_else(|| anyhow!(FAILED))?.trim();
-                                ensure!(words.len().saturating_add(1) <= MAX_RESPONSE_BYTES.saturating_sub(text.len()), FAILED);
-                                if !text.is_empty() && !words.is_empty() { text.push(' '); }
+                                let words = event.transcript.as_deref()
+                                    .ok_or_else(|| anyhow!(FAILED))?.trim();
+                                ensure!(
+                                    words.len().saturating_add(1)
+                                        <= MAX_RESPONSE_BYTES.saturating_sub(text.len()),
+                                    FAILED
+                                );
+                                if !text.is_empty() && !words.is_empty() {
+                                    text.push(' ');
+                                }
                                 text.push_str(words);
                                 final_seen = true;
                             },
@@ -122,7 +148,11 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
                             _ => {},
                         }
                     },
-                    Message::Ping(_) => timeout(CONNECT_TIMEOUT, socket.flush()).await.map_err(|_private| anyhow!(FAILED))?.map_err(|_private| anyhow!(FAILED))?,
+                    Message::Ping(_) => {
+                        timeout(CONNECT_TIMEOUT, socket.flush()).await
+                            .map_err(|_private| anyhow!(FAILED))?
+                            .map_err(|_private| anyhow!(FAILED))?;
+                    },
                     Message::Pong(_) => {},
                     _ => return Err(anyhow!(FAILED)),
                 }
@@ -143,9 +173,6 @@ fn parse(text: &str) -> anyhow::Result<Event> {
     serde_json::from_str(text).map_err(|_private| anyhow!(FAILED))
 }
 
-#[cfg(test)]
-mod tests;
-
 async fn expect(socket: &mut Socket, kind: &str) -> anyhow::Result<()> {
     let message = socket
         .next()
@@ -165,3 +192,6 @@ async fn send(socket: &mut Socket, message: Message) -> anyhow::Result<()> {
         .map_err(|_private| anyhow!(FAILED))?
         .map_err(|_private| anyhow!(FAILED))
 }
+
+#[cfg(test)]
+mod tests;

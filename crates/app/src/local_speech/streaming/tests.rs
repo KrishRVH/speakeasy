@@ -115,3 +115,32 @@ async fn closed_feed_and_premature_or_malformed_final_never_return_text() -> any
     assert!(parse(&oversized).is_err());
     Ok(())
 }
+
+#[tokio::test]
+async fn a_committed_stream_cannot_wait_forever_for_its_final() -> anyhow::Result<()> {
+    let (mut client, mut server) = sockets().await?;
+    let (frames, received) = mpsc::channel(1);
+    drop(frames);
+    let (ending, tail) = oneshot::channel();
+    assert!(ending.send(Zeroizing::new(Vec::new())).is_ok());
+    let recognizer = recognize(
+        &mut client,
+        LiveAudio {
+            rate: 16_000,
+            frames: received,
+            tail,
+        },
+    );
+    tokio::pin!(recognizer);
+    tokio::select! {
+        result = &mut recognizer => panic!("Returned before committing: {}", result.is_ok()),
+        message = server.next() => assert!(matches!(message, Some(Ok(Message::Text(_))))),
+    }
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(11)).await;
+    let error = timeout(Duration::from_secs(1), recognizer)
+        .await?
+        .unwrap_err();
+    assert_eq!(error.to_string(), FAILED);
+    Ok(())
+}
