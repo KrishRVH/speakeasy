@@ -582,8 +582,10 @@ dictation is ready, or shows the latest error or notice; problems show in the at
 
 On Windows, assistive tools can read and operate the main Settings buttons, page tabs, switches, and
 phrase-correction and recognition-hint fields. Native acceptance checks their values, focus,
-actions, and hide/reopen behavior. Text selection and complete screen-reader navigation remain
-unfinished; macOS and Linux do not yet publish an accessibility tree.
+actions, Unicode text selection, visible text ranges, and hide/reopen behavior. Text replacements
+retire prior ranges. Native selection is unavailable during active IME composition. Programmatic
+text scrolling and complete screen-reader navigation remain unfinished; macOS and Linux do not yet
+publish an accessibility tree.
 
 **Phrase corrections** replaces recurring recognition mistakes in dictation and Show narration.
 Enter what the engine hears and the spelling you want, then save. Matching is case-insensitive, uses

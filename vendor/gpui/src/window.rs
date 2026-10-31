@@ -54,6 +54,7 @@ use util::{ResultExt, measure};
 use uuid::Uuid;
 
 pub(crate) mod a11y;
+pub use a11y::{AccessibleText, AccessibleTextSelection};
 mod prompts;
 use self::a11y::{A11y, ROOT_NODE_ID};
 
@@ -4586,7 +4587,9 @@ impl Window {
 
     #[cfg(not(target_family = "wasm"))]
     pub(crate) fn handle_a11y_action(&mut self, request: a11y::Request, cx: &mut App) {
-        if !self.platform_window.a11y_is_visible() {
+        if !self.platform_window.a11y_is_visible()
+            || request.action.target_tree != accesskit::TreeId::ROOT
+        {
             return;
         }
         if self.invalidator.is_dirty() {

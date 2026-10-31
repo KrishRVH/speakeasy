@@ -99,6 +99,17 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                     composition_keys(field, window, cx);
                     field.replace_text_in_range(None, "日本語", window, cx);
                     assert_eq!(field.text(), "🦀 café 日本語");
+                    field.select_accessible(
+                        gpui::AccessibleTextSelection {
+                            anchor: field.text().len(),
+                            focus: 4,
+                        },
+                        window,
+                        cx,
+                    );
+                    let selected = field.selected_text_range(false, window, cx).unwrap();
+                    assert!(selected.reversed);
+                    assert_eq!(selected.range, 2..11);
                 })?;
                 gpui::Timer::after(Duration::from_millis(100)).await;
                 window.update(cx, |field, window, cx| {
@@ -128,6 +139,14 @@ fn composition_keys(
     window: &mut gpui::Window,
     cx: &mut gpui::Context<'_, text_field::TextField>,
 ) {
+    field.select_accessible(
+        gpui::AccessibleTextSelection {
+            anchor: 0,
+            focus: 0,
+        },
+        window,
+        cx,
+    );
     for key in ["backspace", "delete", "left", "right", "enter"] {
         field.key_down(
             &gpui::KeyDownEvent {

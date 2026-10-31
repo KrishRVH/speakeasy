@@ -1,11 +1,12 @@
 [workspace]
 members = ["crates/core", "crates/show", "crates/platform", "crates/app"]
-exclude = ["vendor/gpui", "vendor/gpui_media"]
+exclude = ["vendor/gpui", "vendor/gpui_media", "vendor/accesskit_windows"]
 resolver = "3"
 
 [patch.crates-io]
 gpui = { path = "vendor/gpui" }
 gpui_media = { path = "vendor/gpui_media" }
+accesskit_windows = { path = "vendor/accesskit_windows" }
 
 [workspace.package]
 version = "0.7.0"

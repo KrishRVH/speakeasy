@@ -14,6 +14,7 @@ public static class DemoWindows {
     [DllImport("user32")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
     [DllImport("user32", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr window, StringBuilder text, int capacity);
     [DllImport("user32")] public static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32")] public static extern uint GetDpiForWindow(IntPtr window);
     [DllImport("user32")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
     [DllImport("user32")] public static extern IntPtr WindowFromPhysicalPoint(Point point);
     [DllImport("user32")] public static extern IntPtr GetForegroundWindow();
@@ -147,6 +148,104 @@ function Test-DemoAccessibility([IntPtr]$Window, [int]$Owner) {
     if ($restoredValue.Current.Value -ne $synthetic) { throw 'Restoring changed the private draft' }
     Write-Host 'PASS: owned UI Automation roles, selection, toggle, invocation, focus, bounded Unicode editing, moved bounds, hide/minimize redaction, and retired providers.'
 }
+function Test-TextAccessibility($Field, [IntPtr]$Window) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Threading;
+using System.Windows.Automation;
+public sealed class TextEventCounts : IDisposable {
+    readonly AutomationElement element;
+    readonly AutomationEventHandler changed;
+    readonly AutomationEventHandler selected;
+    public int Changed;
+    public int Selected;
+    public TextEventCounts(AutomationElement element) {
+        this.element = element;
+        changed = (sender, args) => Interlocked.Increment(ref Changed);
+        selected = (sender, args) => Interlocked.Increment(ref Selected);
+        Automation.AddAutomationEventHandler(TextPattern.TextChangedEvent, element, TreeScope.Element, changed);
+        Automation.AddAutomationEventHandler(TextPattern.TextSelectionChangedEvent, element, TreeScope.Element, selected);
+    }
+    public void Dispose() {
+        Automation.RemoveAutomationEventHandler(TextPattern.TextChangedEvent, element, changed);
+        Automation.RemoveAutomationEventHandler(TextPattern.TextSelectionChangedEvent, element, selected);
+    }
+}
+'@ -ReferencedAssemblies ([Windows.Automation.AutomationElement].Assembly.Location), ([Windows.Automation.AutomationEvent].Assembly.Location), ([Windows.Point].Assembly.Location)
+    $value = $Field.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
+    $text = $Field.GetCurrentPattern([Windows.Automation.TextPattern]::Pattern)
+    function Set-Text([string]$Content) {
+        $value.SetValue($Content)
+        $deadline = [DateTime]::UtcNow.AddSeconds(5)
+        while ($text.DocumentRange.GetText(-1) -ne $Content -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 30 }
+        if ($text.DocumentRange.GetText(-1) -ne $Content) { throw 'DocumentRange did not track the bounded field value' }
+    }
+    $Field.SetFocus()
+    $events = New-Object TextEventCounts $Field
+    try {
+        $rocket = [string][char]0xD83D + [char]0xDE80
+        $unicode = 'a' + $rocket + 'e' + [char]0x0301 + 'b'
+        Set-Text $unicode
+        $deadline = [DateTime]::UtcNow.AddSeconds(5)
+        while ($events.Changed -eq 0 -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 30 }
+        $beforeReplacement = $events.Changed
+        Set-Text $unicode
+        $deadline = [DateTime]::UtcNow.AddSeconds(5)
+        while ($events.Changed -le $beforeReplacement -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 30 }
+        if ($events.Changed -le $beforeReplacement) { throw 'Replacing identical text did not raise TextChanged' }
+        $document = $text.DocumentRange
+        $range = $document.Clone()
+        $range.MoveEndpointByRange([Windows.Automation.Text.TextPatternRangeEndpoint]::End, $document, [Windows.Automation.Text.TextPatternRangeEndpoint]::Start)
+        $null = $range.MoveEndpointByUnit([Windows.Automation.Text.TextPatternRangeEndpoint]::Start, [Windows.Automation.Text.TextUnit]::Character, 1)
+        $null = $range.MoveEndpointByUnit([Windows.Automation.Text.TextPatternRangeEndpoint]::End, [Windows.Automation.Text.TextUnit]::Character, 1)
+        if ($range.GetText(-1) -ne $rocket) { throw 'TextPattern character units split a Unicode scalar' }
+        $beforeSelection = $events.Selected
+        $range.Select()
+        $deadline = [DateTime]::UtcNow.AddSeconds(5)
+        while (($text.GetSelection()[0].GetText(-1) -ne $rocket -or $events.Selected -le $beforeSelection) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 30 }
+        if ($text.GetSelection()[0].GetText(-1) -ne $rocket) { throw 'Native text selection did not reach the editor' }
+        if ($events.Selected -le $beforeSelection) { throw 'Native text selection event was not raised' }
+
+        $long = ('a' * 260) + ' ' + $rocket + ' end'
+        Set-Text $long
+        try {
+            if (![string]::IsNullOrEmpty($document.GetText(-1))) { throw 'Retired range exposed an older text snapshot' }
+        } catch [Windows.Automation.ElementNotAvailableException] {}
+        catch [InvalidOperationException] {}
+        $document = $text.DocumentRange
+        $word = $document.Clone()
+        $word.ExpandToEnclosingUnit([Windows.Automation.Text.TextUnit]::Word)
+        if ($word.GetText(-1).TrimEnd() -ne ('a' * 260)) { throw 'Word navigation split a word at a text-run boundary' }
+        $visible = $text.GetVisibleRanges()
+        if ($visible.Count -ne 1 -or [string]::IsNullOrEmpty($visible[0].GetText(-1))) { throw 'Scrolled field has no single continuous visible text range' }
+        if ($visible[0].GetText(-1).Length -ge $long.Length -or !$visible[0].GetText(-1).EndsWith(' end')) { throw 'Visible range does not match the scrolled suffix' }
+        $rectangles = $document.GetBoundingRectangles()
+        if ($rectangles.Count -ne 1) { throw 'One scrolled line must have one visible rectangle' }
+        $scale = [DemoWindows]::GetDpiForWindow($Window) / 96.0
+        $control = $Field.Current.BoundingRectangle
+        $viewport = New-Object Windows.Rect ($control.Left + 9 * $scale), ($control.Top + 6 * $scale), ($control.Width - 18 * $scale), (20 * $scale)
+        $rect = $rectangles[0]
+        if ([Math]::Abs($rect.Left - $viewport.Left) -gt 1 -or $rect.Right -gt $viewport.Right + 1 -or $rect.Top -lt $viewport.Top - 1 -or $rect.Bottom -gt $viewport.Bottom + 1) { throw 'Text geometry escaped or did not reach the actual paint clip' }
+        $hidden = $document.Clone()
+        $hidden.MoveEndpointByRange([Windows.Automation.Text.TextPatternRangeEndpoint]::End, $document, [Windows.Automation.Text.TextPatternRangeEndpoint]::Start)
+        $null = $hidden.MoveEndpointByUnit([Windows.Automation.Text.TextPatternRangeEndpoint]::End, [Windows.Automation.Text.TextUnit]::Character, 2)
+        if ($hidden.GetBoundingRectangles().Count -ne 0) { throw 'Fully scrolled-out text retained rectangles' }
+        $caret = $document.Clone()
+        $caret.MoveEndpointByRange([Windows.Automation.Text.TextPatternRangeEndpoint]::Start, $document, [Windows.Automation.Text.TextPatternRangeEndpoint]::End)
+        if ($caret.GetBoundingRectangles().Count -ne 0) { throw 'Degenerate caret retained rectangles' }
+        $hit = $text.RangeFromPoint((New-Object Windows.Point ($rect.Right - 3), (($rect.Top + $rect.Bottom) / 2)))
+        $hit.ExpandToEnclosingUnit([Windows.Automation.Text.TextUnit]::Character)
+        if ([string]::IsNullOrEmpty($hit.GetText(-1))) { throw 'Text hit testing failed in the visible line' }
+        if ($events.Changed -eq 0) { throw 'Native text change event was not raised' }
+        Set-Text ''
+        if ($text.GetVisibleRanges().Count -ne 1 -or $text.GetSelection()[0].GetText(-1) -ne '') { throw 'Empty field lost its caret range' }
+        Set-Text 'Synthetic private draft'
+        Write-Host 'PASS: native TextPattern Unicode selection, events, retired ranges, empty carets, cross-run visibility, and clipped scrolled geometry.'
+    } finally {
+        $events.Dispose()
+    }
+}
+
 function Test-StaticAccessibility([IntPtr]$Window) {
     $root = [Windows.Automation.AutomationElement]::FromHandle($Window)
     $condition = New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::NameProperty), 'Synthetic field'
@@ -165,7 +264,9 @@ function Test-StaticAccessibility([IntPtr]$Window) {
     }
     $null = [DemoWindows]::ShowWindow($Window, 4)
     $field = Wait-Field 'first nonactivating show'
+    Test-TextAccessibility $field $Window
     $oldValue = $field.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
+    $oldText = $field.GetCurrentPattern([Windows.Automation.TextPattern]::Pattern).DocumentRange
     foreach ($transition in @(@{Hide=0; Show=4}, @{Hide=6; Show=9}, @{Hide=0; Show=1})) {
         $hide = $transition.Hide
         $null = [DemoWindows]::ShowWindow($Window, $hide)
@@ -175,6 +276,10 @@ function Test-StaticAccessibility([IntPtr]$Window) {
         }
         try {
             if (![string]::IsNullOrEmpty($oldValue.Current.Value)) { throw 'Hidden provider retained its field value' }
+        } catch [Windows.Automation.ElementNotAvailableException] {}
+        catch [InvalidOperationException] {}
+        try {
+            if (![string]::IsNullOrEmpty($oldText.GetText(-1))) { throw 'Hidden text range retained its text' }
         } catch [Windows.Automation.ElementNotAvailableException] {}
         catch [InvalidOperationException] {}
         # This fixture has no presentation updates, timers that redraw, or animation.
@@ -188,6 +293,7 @@ function Test-StaticAccessibility([IntPtr]$Window) {
         $value = $field.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
         if ($value.Current.Value -ne 'Synthetic private draft') { throw 'Retired provider changed the current draft' }
         $oldValue = $value
+        $oldText = $field.GetCurrentPattern([Windows.Automation.TextPattern]::Pattern).DocumentRange
     }
     Write-Host 'PASS: static owned UIA hide/minimize, nonactivating and normal reopen, and stale-provider rejection without unrelated redraws.'
     return $root

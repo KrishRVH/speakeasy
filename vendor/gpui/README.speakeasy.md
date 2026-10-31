@@ -17,7 +17,12 @@ The source patches cover native windows, accessibility, frame scheduling, and pa
   the tree before events are raised; a committed visibility transition restores it. Adapter
   disconnection precedes HWND destruction. Node bounds use physical client coordinates. The app's
   Windows acceptance script verifies real providers; `src/window/a11y/tests.rs` covers the pure
-  tree and mocked rendering. macOS and Linux bridges are not included.
+  tree and mocked rendering. `src/window/a11y/text.rs` registers single-line editor text from its
+  current shaped layout. Selection uses scalar boundaries and byte offsets; bounded runs preserve
+  word and line continuity. Text updates retire retained range identities, and aborted layout
+  cannot publish partial selection references. A clipping ancestor carries the actual paint
+  viewport to the [Windows adapter patch](../accesskit_windows/README.speakeasy.md).
+  macOS and Linux bridges are not included.
 
 - `src/platform/linux/x11/window.rs` backports
   [zed commit 608185be4e0cc32ad925074185b5821af8aa2da9](https://github.com/zed-industries/zed/commit/608185be4e0cc32ad925074185b5821af8aa2da9)

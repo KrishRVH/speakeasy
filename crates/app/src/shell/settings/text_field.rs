@@ -129,6 +129,55 @@ impl TextField {
         cx.notify();
     }
 
+    pub(super) fn select_accessible(
+        &mut self,
+        selection: gpui::AccessibleTextSelection,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.edit.marked.is_some() {
+            return;
+        }
+        self.edit.select(selection.anchor, false);
+        self.edit.select(selection.focus, true);
+        window.focus(&self.focus);
+        cx.notify();
+    }
+
+    fn paint_text(
+        &self,
+        line: &ShapedLine,
+        bounds: Bounds<Pixels>,
+        scroll: Pixels,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> anyhow::Result<()> {
+        let origin = point(bounds.left() - scroll, bounds.top());
+        let selection = self.edit.selection();
+        let lamp = self.theme.palette().lamp;
+        window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
+            if !selection.is_empty() {
+                window.paint_quad(fill(
+                    Bounds::from_corners(
+                        point(origin.x + line.x_for_index(selection.start), bounds.top()),
+                        point(origin.x + line.x_for_index(selection.end), bounds.bottom()),
+                    ),
+                    alpha(lamp, 0.25),
+                ));
+            }
+            if self.focus.is_focused(window) {
+                window.paint_quad(fill(
+                    Bounds::new(
+                        point(origin.x + line.x_for_index(self.edit.cursor), bounds.top()),
+                        size(px(1.0), bounds.size.height),
+                    ),
+                    gpui::rgb(lamp),
+                ));
+            }
+            line.paint(origin, bounds.size.height, window, cx)
+        })
+    }
+
     fn mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<'_, Self>) {
         if self.selecting {
             self.select_point(event.position, true);
@@ -340,46 +389,42 @@ impl Render for TextField {
                                 .shape_line(text.into(), px(12.0), &runs, None);
                         let cursor = line.x_for_index(input.edit.cursor);
                         let scroll = (cursor - bounds.size.width + px(3.0)).max(px(0.0));
+                        let range = input.edit.selection();
+                        let anchor = if input.edit.reversed() {
+                            range.end
+                        } else {
+                            range.start
+                        };
+                        let selected = gpui::AccessibleTextSelection {
+                            anchor,
+                            focus: input.edit.cursor,
+                        };
+                        let editor = field.clone();
+                        window.register_accessible_text(
+                            gpui::AccessibleText {
+                                line: &line,
+                                origin: point(bounds.left() - scroll, bounds.top()),
+                                viewport: bounds,
+                                selection: selected,
+                                revision: input.edit.generation,
+                            },
+                            move |selection, window, cx| {
+                                editor.update(cx, |field, cx| {
+                                    field.select_accessible(selection, window, cx);
+                                });
+                            },
+                        );
                         (field.clone(), line, scroll)
                     },
                     move |bounds, (field, line, scroll), window, cx| {
-                        let input = field.read(cx);
-                        window.handle_input(
-                            &input.focus,
-                            ElementInputHandler::new(bounds, field.clone()),
-                            cx,
-                        );
-                        let origin = point(bounds.left() - scroll, bounds.top());
-                        let selection = input.edit.selection();
-                        if !selection.is_empty() {
-                            window.paint_quad(fill(
-                                Bounds::from_corners(
-                                    point(
-                                        origin.x + line.x_for_index(selection.start),
-                                        bounds.top(),
-                                    ),
-                                    point(
-                                        origin.x + line.x_for_index(selection.end),
-                                        bounds.bottom(),
-                                    ),
-                                ),
-                                alpha(palette.lamp, 0.25),
-                            ));
-                        }
-                        if input.focus.is_focused(window) {
-                            window.paint_quad(fill(
-                                Bounds::new(
-                                    point(
-                                        origin.x + line.x_for_index(input.edit.cursor),
-                                        bounds.top(),
-                                    ),
-                                    size(px(1.0), bounds.size.height),
-                                ),
-                                gpui::rgb(palette.lamp),
-                            ));
-                        }
-                        let failed = line.paint(origin, bounds.size.height, window, cx).is_err();
                         field.update(cx, |input, cx| {
+                            window.handle_input(
+                                &input.focus,
+                                ElementInputHandler::new(bounds, field.clone()),
+                                cx,
+                            );
+                            let failed =
+                                input.paint_text(&line, bounds, scroll, window, cx).is_err();
                             if failed && input.problem.is_none() {
                                 input.problem = Some("Cannot render this phrase.");
                                 cx.notify();

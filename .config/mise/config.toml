@@ -36,6 +36,7 @@ description = "Refresh workspace dependency requirements and check packaging can
 run = [
   "cargo update --workspace",
   "cargo update --manifest-path vendor/gpui/Cargo.toml --workspace",
+  "cargo update --manifest-path vendor/accesskit_windows/Cargo.toml --workspace",
   "mkdir -p target && cargo about generate --locked --fail -c packaging/about.toml --target x86_64-pc-windows-msvc --target aarch64-apple-darwin --target x86_64-unknown-linux-gnu -o target/THIRD-PARTY-NOTICES.txt packaging/notices.hbs",
 ]
 
@@ -69,6 +70,7 @@ run = [
   "cargo nextest run --workspace --lib --bins --tests --all-features --locked",
   "cargo test --workspace --doc --all-features --locked",
   "cargo test --manifest-path vendor/gpui/Cargo.toml --target-dir target/gpui-a11y-tests --lib --no-default-features --features test-support window::a11y --locked",
+  "{% if os() == 'windows' %}cargo test --manifest-path vendor/accesskit_windows/Cargo.toml --target-dir target/accesskit-geometry-tests --lib text::geometry --locked{% else %}true{% endif %}",
 ]
 
 [tasks."rust:machete"]

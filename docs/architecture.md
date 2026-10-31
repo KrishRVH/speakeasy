@@ -147,8 +147,13 @@ module unless a test file is named.
   destroying its HWND. The [framework tests](../vendor/gpui/src/window/a11y/tests.rs) cover tree and
   rendering invariants; [Windows acceptance](../scripts/check-demo-windows.ps1) drives the demo and
   a [static owned fixture](../crates/app/src/shell/settings/native_accessibility.rs) through UI
-  Automation. Text selection, complete app semantics, and the other native bridges remain
-  unimplemented.
+  Automation. The [text registration](../vendor/gpui/src/window/a11y/text.rs) publishes the current
+  shaped line, byte-based selection, and paint viewport together after layout succeeds. Scalar
+  positions map back through the current field's runs; every replacement retires retained ranges,
+  including replacement with identical text. The editor rejects selection during active IME
+  composition. The [Windows text adapter](../vendor/accesskit_windows/src/text/geometry.rs) clips
+  native rectangles and visible ranges without removing document text. Programmatic text scrolling,
+  complete app semantics, and the other native bridges remain unimplemented.
 - **Private practice and readiness**:
   [settings/practice.rs](../crates/app/src/shell/settings/practice.rs) owns the receipt and
   transient rendered text. The session fixes its destination at admission; practice commits the same

@@ -97,6 +97,9 @@ use std::sync::{
 
 #[cfg(test)]
 mod tests;
+mod text;
+
+pub use text::{AccessibleText, AccessibleTextSelection};
 
 /// The fixed AccessKit node ID used for the root of every window's a11y tree.
 pub(crate) const ROOT_NODE_ID: NodeId = NodeId(0);
@@ -199,6 +202,12 @@ impl A11y {
     }
 
     pub(crate) fn end_frame(&mut self) -> TreeUpdate {
+        for (parent, listener) in self.nodes.finish_text() {
+            self.action_listeners
+                .entry(parent)
+                .or_default()
+                .push((Action::SetTextSelection, listener));
+        }
         self.nodes.finalize()
     }
 }
@@ -209,6 +218,7 @@ pub(crate) struct Checkpoint {
     parent: Option<NodeId>,
     children: usize,
     focus: NodeId,
+    text_count: usize,
     #[cfg(debug_assertions)]
     has_set_focus: bool,
 }
@@ -225,6 +235,8 @@ pub(crate) struct A11yNodeBuilder {
     identities: FxHashMap<ElementKey, NodeId>,
     live_ids: FxHashSet<NodeId>,
     next_id: u64,
+    text_snapshots: FxHashMap<NodeId, text::Snapshot>,
+    pending_text: Vec<text::Registration>,
     focus: NodeId,
     #[cfg(debug_assertions)]
     has_set_focus: bool,
@@ -242,6 +254,8 @@ impl A11yNodeBuilder {
             identities: FxHashMap::default(),
             live_ids: FxHashSet::default(),
             next_id: 1,
+            text_snapshots: FxHashMap::default(),
+            pending_text: Vec::new(),
             focus: ROOT_NODE_ID,
             #[cfg(debug_assertions)]
             has_set_focus: false,
@@ -309,6 +323,7 @@ impl A11yNodeBuilder {
         self.inserted_ids.clear();
         self.scope_parent = Some(ROOT_NODE_ID);
         self.live_ids.clear();
+        self.pending_text.clear();
         #[cfg(debug_assertions)]
         {
             self.has_set_focus = false;
@@ -367,12 +382,14 @@ impl A11yNodeBuilder {
                 .and_then(|id| self.node_mut(id))
                 .map_or(0, |node| node.children().len()),
             focus: self.focus,
+            text_count: self.pending_text.len(),
             #[cfg(debug_assertions)]
             has_set_focus: self.has_set_focus,
         }
     }
 
     fn rollback(&mut self, checkpoint: Checkpoint) {
+        self.pending_text.truncate(checkpoint.text_count);
         self.all_nodes.truncate(checkpoint.node_count);
         for id in self.inserted_ids.drain(checkpoint.inserted_count..) {
             self.seen_ids.remove(&id);
