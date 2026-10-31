@@ -9,6 +9,70 @@ use std::{
 
 use async_channel::{Receiver, Sender};
 
+/// A decoded video sample. Pixel rows are top-down, tightly packed opaque BGRA.
+pub struct MovieFrame {
+    /// Actual presentation time relative to the movie's zero origin.
+    pub at: std::time::Duration,
+    /// Encoded canvas dimensions.
+    pub size: [u32; 2],
+    /// The sample's private pixels; never included in diagnostics.
+    pub bgra: Vec<u8>,
+}
+
+impl std::fmt::Debug for MovieFrame {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.debug_struct("MovieFrame")
+            .field("at", &self.at)
+            .field("size", &self.size)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Reads the video sample at or immediately before `at`, or the first sample if seeking lands
+/// later. The returned timestamp is authoritative.
+///
+/// The caller must first validate the file's
+/// silent single-track container and canvas, using the same open file handle.
+///
+/// Runs blocking native work on the calling background thread. Cancellation is checked between
+/// native calls; a blocked codec must finish before this returns and releases all its resources.
+/// Returns `None` on cancellation. No decoder or file remains open after return.
+///
+/// # Errors
+/// Rejects changed file length, canvas mismatch, invalid samples, and native decoder failure.
+/// Currently supported on Windows; other hosts report unavailability without opening a decoder.
+pub fn read_movie_frame(
+    file: std::fs::File,
+    bytes: u64,
+    size: [u32; 2],
+    at: std::time::Duration,
+    cancelled: impl Fn() -> bool,
+) -> anyhow::Result<Option<MovieFrame>> {
+    anyhow::ensure!(
+        file.metadata()?.len() == bytes && (1..=1 << 30).contains(&bytes),
+        "Movie changed; refresh the Show before reading it"
+    );
+    anyhow::ensure!(
+        size.into_iter()
+            .all(|edge| (2..=2560).contains(&edge) && edge.is_multiple_of(2))
+            && at <= std::time::Duration::from_secs(300),
+        "Movie frame request is out of range"
+    );
+    if cancelled() {
+        return Ok(None);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        crate::windows::read_movie_frame(file, size, at, &cancelled)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        anyhow::bail!(
+            "Video frame decoding is currently available on Windows. Open recording.mp4 in your system player."
+        )
+    }
+}
+
 /// Native movie events. A checkpoint must retain its lock until this lane closes, even after an
 /// error or cancellation. No event contains pixels or narration.
 #[derive(Debug)]

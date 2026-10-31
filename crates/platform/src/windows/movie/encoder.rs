@@ -1,29 +1,25 @@
 //! Native objects stay on the capture thread. Field order releases the writer, shuts down its
 //! sink, closes its stream, and only then leaves Media Foundation and the COM apartment.
 
-use std::{marker::PhantomData, path::Path, time::Duration};
+use std::{path::Path, time::Duration};
 
 use anyhow::{Context as _, ensure};
 use windows::{
-    Win32::{
-        Media::MediaFoundation::{
-            IMFAttributes, IMFMediaBuffer, IMFMediaSink, IMFMediaType, IMFSample, IMFSinkWriter,
-            MF_LOW_LATENCY, MF_MPEG4SINK_MAX_CODED_SEQUENCES_PER_FRAGMENT,
-            MF_MPEG4SINK_MIN_FRAGMENT_DURATION, MF_MT_ALL_SAMPLES_INDEPENDENT, MF_MT_AVG_BITRATE,
-            MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE,
-            MF_MT_MAJOR_TYPE, MF_MT_MPEG2_PROFILE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
-            MF_SINK_WRITER_DISABLE_THROTTLING, MF_SINK_WRITER_STATISTICS, MF_VERSION,
-            MFCreateAttributes, MFCreateFMPEG4MediaSink, MFCreateMediaType, MFCreateMemoryBuffer,
-            MFCreateSample, MFCreateSinkWriterFromMediaSink, MFMediaType_Video, MFSTARTUP_FULL,
-            MFShutdown, MFStartup, MFVideoFormat_H264, MFVideoFormat_RGB32,
-            MFVideoInterlace_Progressive,
-        },
-        System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize},
+    Win32::Media::MediaFoundation::{
+        IMFAttributes, IMFMediaBuffer, IMFMediaSink, IMFMediaType, IMFSample, IMFSinkWriter,
+        MF_LOW_LATENCY, MF_MPEG4SINK_MAX_CODED_SEQUENCES_PER_FRAGMENT,
+        MF_MPEG4SINK_MIN_FRAGMENT_DURATION, MF_MT_ALL_SAMPLES_INDEPENDENT, MF_MT_AVG_BITRATE,
+        MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE,
+        MF_MT_MAJOR_TYPE, MF_MT_MPEG2_PROFILE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
+        MF_SINK_WRITER_DISABLE_THROTTLING, MF_SINK_WRITER_STATISTICS, MFCreateAttributes,
+        MFCreateFMPEG4MediaSink, MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample,
+        MFCreateSinkWriterFromMediaSink, MFMediaType_Video, MFVideoFormat_H264,
+        MFVideoFormat_RGB32, MFVideoInterlace_Progressive,
     },
     core::{GUID, Interface as _},
 };
 
-use super::{canvas::Canvas, file};
+use super::{canvas::Canvas, file, foundation::Foundation};
 use crate::Frame;
 
 const TICKS: u64 = 10_000_000;
@@ -40,42 +36,6 @@ pub(super) struct Encoder {
 }
 
 struct Sink(IMFMediaSink);
-
-struct Foundation {
-    // COM apartment cleanup must run on its initializing thread, including on partial open failure.
-    _thread: PhantomData<*mut ()>,
-}
-
-impl Foundation {
-    fn start() -> anyhow::Result<Self> {
-        // SAFETY: this owned capture thread uses the MTA. Every successful initialization has a
-        // matching uninitialize on this thread, after its Media Foundation objects are released.
-        unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok()? };
-        // SAFETY: balanced with MFShutdown after every object this startup creates is released.
-        if let Err(error) = unsafe { MFStartup(MF_VERSION, MFSTARTUP_FULL) } {
-            // SAFETY: the preceding CoInitializeEx succeeded on this thread.
-            unsafe { CoUninitialize() };
-            return Err(error.into());
-        }
-        Ok(Self {
-            _thread: PhantomData,
-        })
-    }
-}
-
-impl Drop for Foundation {
-    fn drop(&mut self) {
-        // SAFETY: field/local drop order has released every native object before this guard.
-        unsafe {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "Teardown has no observer on partial initialization or unwind; the checkpoint retains any partial movie"
-            )]
-            let _ = MFShutdown();
-            CoUninitialize();
-        }
-    }
-}
 
 impl Drop for Sink {
     fn drop(&mut self) {

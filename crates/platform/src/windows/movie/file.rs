@@ -12,13 +12,13 @@ use std::{
 
 use windows::Win32::{
     Foundation::{
-        E_FAIL, E_NOTIMPL, E_POINTER, S_FALSE, S_OK, STG_E_INVALIDFUNCTION, STG_E_MEDIUMFULL,
-        STG_E_READFAULT, STG_E_WRITEFAULT,
+        E_FAIL, E_NOTIMPL, E_POINTER, S_FALSE, S_OK, STG_E_ACCESSDENIED, STG_E_INVALIDFUNCTION,
+        STG_E_MEDIUMFULL, STG_E_READFAULT, STG_E_WRITEFAULT,
     },
     Media::MediaFoundation::{IMFByteStream, MFCreateMFByteStreamOnStream},
     System::Com::{
         ISequentialStream_Impl, IStream, IStream_Impl, LOCKTYPE, STATFLAG, STATSTG, STGC,
-        STGM_READWRITE, STGTY_STREAM, STREAM_SEEK, STREAM_SEEK_CUR, STREAM_SEEK_END,
+        STGM_READ, STGM_READWRITE, STGTY_STREAM, STREAM_SEEK, STREAM_SEEK_CUR, STREAM_SEEK_END,
         STREAM_SEEK_SET,
     },
 };
@@ -44,6 +44,50 @@ impl Drop for Stream {
     }
 }
 
+pub(super) struct ReadStream {
+    pub native: IMFByteStream,
+    _closed: Closed,
+}
+
+impl Drop for ReadStream {
+    fn drop(&mut self) {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "Reader teardown must cancel asynchronous I/O before waiting for the last callback to release its file"
+        )]
+        // SAFETY: the reader is gone; this owner retains the stream until all callbacks release.
+        let _ = unsafe { self.native.Close() };
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Access {
+    Read,
+    Write,
+}
+
+#[expect(
+    clippy::disallowed_types,
+    reason = "Media Foundation reads and seeks on its own I/O threads; those callbacks must share the validated file's cursor"
+)]
+pub(super) fn read(mut file: File) -> anyhow::Result<ReadStream> {
+    let limit = file.metadata()?.len();
+    file.rewind()?;
+    let (released, closed) = async_channel::bounded(1);
+    let stream: IStream = CappedFile {
+        file: Mutex::new(file),
+        limit,
+        access: Access::Read,
+        _released: released,
+    }
+    .into();
+    Ok(ReadStream {
+        // SAFETY: the wrapper retains the owned file and serializes native I/O callbacks.
+        native: unsafe { MFCreateMFByteStreamOnStream(&stream) }?,
+        _closed: Closed(closed),
+    })
+}
+
 struct Closed(async_channel::Receiver<Infallible>);
 
 impl Drop for Closed {
@@ -67,6 +111,7 @@ pub(super) fn create(path: &Path, limit: u64) -> anyhow::Result<Stream> {
     let stream: IStream = CappedFile {
         file: Mutex::new(file),
         limit,
+        access: Access::Write,
         _released: released,
     }
     .into();
@@ -91,7 +136,7 @@ pub(super) fn create(path: &Path, limit: u64) -> anyhow::Result<Stream> {
 mod com {
     use windows_core::implement;
 
-    use super::{File, IStream, Infallible, Mutex};
+    use super::{Access, File, IStream, Infallible, Mutex};
 
     #[implement(IStream)]
     pub(super) struct CappedFile {
@@ -103,6 +148,7 @@ mod com {
         )]
         pub(super) file: Mutex<File>,
         pub(super) limit: u64,
+        pub(super) access: Access,
         // Field order closes the actual file before acknowledging asynchronous COM teardown.
         pub(super) _released: async_channel::Sender<Infallible>,
     }
@@ -163,6 +209,9 @@ impl ISequentialStream_Impl for CappedFile_Impl {
                 // SAFETY: ISequentialStream permits a null count; a non-null pointer is writable.
                 unsafe { written.write(0) };
             }
+            if self.access == Access::Read {
+                return Err(Error::from_hresult(STG_E_ACCESSDENIED));
+            }
             if count == 0 {
                 return Ok(());
             }
@@ -217,6 +266,9 @@ impl IStream_Impl for CappedFile_Impl {
     }
 
     fn SetSize(&self, length: u64) -> Result<()> {
+        if self.access == Access::Read {
+            return Err(Error::from_hresult(STG_E_ACCESSDENIED));
+        }
         if length > self.limit {
             return Err(Error::from_hresult(STG_E_MEDIUMFULL));
         }
@@ -226,6 +278,9 @@ impl IStream_Impl for CappedFile_Impl {
     }
 
     fn Commit(&self, _: &STGC) -> Result<()> {
+        if self.access == Access::Read {
+            return Ok(());
+        }
         self.file()?.sync_data().map_err(io_error(STG_E_WRITEFAULT))
     }
 
@@ -243,7 +298,10 @@ impl IStream_Impl for CappedFile_Impl {
             output.write(STATSTG {
                 r#type: STGTY_STREAM.0.cast_unsigned(),
                 cbSize: size,
-                grfMode: STGM_READWRITE,
+                grfMode: match self.access {
+                    Access::Read => STGM_READ,
+                    Access::Write => STGM_READWRITE,
+                },
                 ..STATSTG::default()
             });
         };
@@ -276,6 +334,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn native_read_access_preserves_bytes_and_bounds_seeks() -> anyhow::Result<()> {
+        let mut file = tempfile::tempfile()?;
+        file.write_all(&[1, 2, 3, 4])?;
+        file.rewind()?;
+        let (released, closed) = async_channel::bounded(1);
+        #[expect(
+            clippy::disallowed_types,
+            reason = "The test supplies a writable file so the native adapter, rather than the OS handle, must enforce read-only access"
+        )]
+        let stream: IStream = CappedFile {
+            file: Mutex::new(file),
+            limit: 4,
+            access: Access::Read,
+            _released: released,
+        }
+        .into();
+        let mut bytes = [0_u8; 4];
+        let mut count = 0;
+        // SAFETY: every buffer and output is owned and valid for these synchronous COM calls.
+        unsafe {
+            assert_eq!(
+                stream.Write(bytes.as_ptr().cast(), 4, Some(&raw mut count)),
+                STG_E_ACCESSDENIED
+            );
+            assert_eq!(count, 0);
+            assert_eq!(stream.SetSize(0).unwrap_err().code(), STG_E_ACCESSDENIED);
+            assert!(stream.Seek(5, STREAM_SEEK_SET, None).is_err());
+            stream
+                .Read(bytes.as_mut_ptr().cast(), 4, Some(&raw mut count))
+                .ok()?;
+            assert_eq!(bytes, [1, 2, 3, 4]);
+            assert_eq!(count, 4);
+        }
+        drop(stream);
+        assert!(closed.is_closed());
+        Ok(())
+    }
+
+    #[test]
     fn native_stream_caps_every_write_and_retains_its_file_until_the_last_reference()
     -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;
@@ -289,6 +386,7 @@ mod tests {
         let stream: IStream = CappedFile {
             file: Mutex::new(file),
             limit: 16,
+            access: Access::Write,
             _released: released,
         }
         .into();

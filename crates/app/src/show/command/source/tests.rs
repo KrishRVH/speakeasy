@@ -30,6 +30,7 @@ fn source_arguments_reject_ambiguous_times_and_missing_destinations() -> anyhow:
         vec!["show", "--at", "1"],
         vec!["show", "--out", "x"],
         vec!["show", "--at", "1", "--at", "2", "--out", "x"],
+        vec!["show", "--at", "1", "--out", "--video"],
     ] {
         assert!(Command::parse(true, args.into_iter().map(OsString::from)).is_err());
     }
@@ -70,6 +71,7 @@ fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> an
             around: 1000,
             most: 6,
             json: true,
+            video: false,
         });
         let error = command.write(&mut super::super::tests::Closed).unwrap_err();
         assert_eq!(
@@ -89,6 +91,7 @@ fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> an
             around: 1000,
             most: 6,
             json: true,
+            video: false,
         })
     };
     let mut output = Vec::new();
@@ -108,6 +111,7 @@ fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> an
         most: 6,
         output: Output::List,
         json: true,
+        video: false,
     })
     .write(&mut output)?;
     let value: serde_json::Value = serde_json::from_slice(&output)?;
@@ -257,9 +261,25 @@ fn focus_options_reject_conflicts_and_unbounded_work() {
         vec!["--at", "1", "--most", "0", "--out", "x.png"],
         vec!["--at", "1", "--most", "2"],
         vec!["--out", "x.png"],
+        vec!["--video", "--at", "1", "--out", "x.png"],
     ] {
         let args = std::iter::once("show").chain(options).map(OsString::from);
         let error = Command::parse(false, args).unwrap_err();
         assert!(!format!("{error:#}").contains("PRIVATE"));
     }
+    for options in [
+        vec!["show", "--video", "--video", "--at", "1", "--out", "x.png"],
+        vec!["show", "--video", "--mark", "1", "--crop", "--out", "x.png"],
+    ] {
+        assert!(Command::parse(true, options.into_iter().map(OsString::from)).is_err());
+    }
+    assert!(
+        Command::parse(
+            true,
+            ["show", "--video", "--at", "1", "--out", "x.png"]
+                .into_iter()
+                .map(OsString::from)
+        )
+        .is_ok()
+    );
 }

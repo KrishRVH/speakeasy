@@ -235,6 +235,7 @@ speakeasy show inspect "PATH_TO_SHOW" --json
 speakeasy show inspect 20261020T143205Z --json
 speakeasy show frames 20261020T143205Z --json
 speakeasy show frame 20261020T143205Z --at 0:12.500 --out /path/to/new-frame.png --json
+speakeasy show frame 20261020T143205Z --video --at 0:12.500 --out /path/to/new-video-frame.png --json
 speakeasy show frames 20261020T143205Z --phrase "save button" --json
 speakeasy show frames 20261020T143205Z --mark 2 --crop --out /path/to/new-sheet.png --json
 speakeasy show keep 20261020T143205Z
@@ -271,6 +272,12 @@ most six distinct samples by default (`--most` accepts 1–12), with millisecond
 cell. `--crop` focuses on a numbered mark with surrounding context, and refuses sheets spanning a
 surface resize. Reports include the requested window, carried-in sample, sampling gaps, actual
 times, and source crop pixels. Exports require new paths and preserve the saved bundle.
+
+On Windows, `frame --video` retrieves a moment from `recording.mp4` by time, mark, or phrase. Times
+use the original recording's clock. The report distinguishes the requested time from the actual
+decoded sample and includes video coverage and the separate annotation horizon. Recovered video can
+extend beyond the sampled-frame journal. Video frames have no drawn annotations; `--crop` and video
+contact sheets are not supported. Other platforms can open the movie in their system player.
 
 `keep` accepts an ID or an explicit path directly inside Speakeasy's Shows folder. `--off` allows
 expiry at the original date; it does not grant another seven days. These actions never recreate a
@@ -705,6 +712,11 @@ paused clock exercises gesture deadlines and the five-minute cap.
   `cargo test --locked -p speakeasy-show --test movie_native -- --ignored --nocapture`. It validates
   native fragment timing and writes recovered prefixes for independent decoder checks. These
   fixtures contain generated pixels only.
+- On Windows, set `SPEAKEASY_MOVIE_READ_DIRECTORY` to those recovered synthetic prefixes. Run
+  `cargo test --locked -p speakeasy-platform recovered_movie_seeks_ --release -- --ignored --test-threads=1`
+  and `cargo test --locked -p speakeasy native_video_export_ -- --ignored --test-threads=1`. They
+  check native seeks, pixel orientation, cancellation, file replacement, and command exports beyond
+  the annotation journal without microphone, screen, input, or clipboard access.
 
 Live microphone, editor, and screen acceptance is tracked under
 [verification](docs/architecture.md#verification).

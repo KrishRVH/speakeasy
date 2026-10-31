@@ -339,7 +339,15 @@ module unless a test file is named.
   fragments. Failed copy or sync preserves the checkpoint. A missing or incomplete first fragment
   permits still-only publication with an explicit video-loss notice; other damaged video stays
   recoverable with a concrete manual remedy. Saved-bundle inspection and export remain strict. The
-  viewer opens video in the system player; its marks and narration remain separate.
+  viewer opens video in the system player; its marks and narration remain separate. Explicit
+  `show frame --video` queries use the [native reader](../crates/platform/src/windows/movie/read.rs)
+  on Windows. Validation and decoding share one open file with writes denied. The synchronous reader
+  releases its decoder and native I/O before returning; cancellation is checked between native
+  calls. It checks canvas and buffer bounds and returns top-down opaque BGRA with the actual decoded
+  timestamp. The [video command](../crates/app/src/show/command/source/video.rs) reports
+  session-relative time and separate annotation coverage, including recovered tails. It refuses
+  crops until timed content geometry is available. Opt-in synthetic checks cover seek direction,
+  orientation, cancellation, file replacement, and exports beyond the annotation journal.
 - **Scripts and packaging**: [scripts/](../scripts) and [packaging/](../packaging) profile, check,
   package, and launch the app, [app/build.rs](../crates/app/build.rs) embeds the Windows resources,
   and `mise run hygiene` runs [check_repository.py](../scripts/check_repository.py).

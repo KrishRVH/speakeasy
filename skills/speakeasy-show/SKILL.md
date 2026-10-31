@@ -62,8 +62,15 @@ Inspect `windowMs`, `carriedInMs`, `longestGapMs`, and each cell's `sampledMs` a
 describing the sequence. A carried-in sample can be much older than the requested window. Crops
 refuse a surface resize. Exports require a new local path and preserve the saved bundle. Source
 images have no ink or marks. Sampling can leave gaps, and older Shows may have no source frames.
-Neither nearby images nor a successful structural inspection prove the missing moment. No command
-replays video or retries lost narration.
+Neither nearby images nor a successful structural inspection prove the missing moment.
+
+When inspection reports retained video and source sampling missed the relevant moment, use
+`speakeasy show frame "BUNDLE_PATH" --video --at 0:12.500 --out NEW.png --json` on Windows. `--mark`
+or `--phrase` can replace `--at`. Cite `sampledMs` on the original session clock; it can differ from
+the requested time. Check `video.rangeMs` and `video.annotationsThroughMs` separately: recovered
+video can extend beyond recorded annotations. This exports one decoded image without ink or crops.
+On other hosts, inspect `recording.mp4` with an available video tool and preserve its session origin
+from `recording.json`. Report decoder failures as unavailable evidence.
 
 A **Copy moment** reference names the displayed frame and may also name the narration or mark time
 that selected it. Cite the displayed frame's timestamp; the requested time can fall in a sampling

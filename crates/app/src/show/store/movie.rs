@@ -2,10 +2,10 @@
 //! checkpoint metadata supplies only its origin, completion receipt, and annotation horizon.
 
 use std::{
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{Read as _, Seek as _, Write as _},
     path::Path,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use anyhow::Context as _;
@@ -148,6 +148,68 @@ pub(crate) struct Inspected {
     pub prefix: MoviePrefix,
 }
 
+pub(crate) struct Reading {
+    file: File,
+    pub movie: Inspected,
+}
+
+impl Reading {
+    pub(crate) fn open(directory: &Path, annotations: Moment) -> anyhow::Result<Self> {
+        let reading = open(directory)?
+            .context("This Show has no retained video; use its source frames instead")?;
+        let coverage = reading
+            .movie
+            .metadata
+            .coverage
+            .as_ref()
+            .context("Movie has no published coverage")?;
+        anyhow::ensure!(
+            coverage.annotations_through_ms == annotations.as_millis(),
+            "Movie annotation coverage differs from the Show"
+        );
+        Ok(reading)
+    }
+
+    pub(crate) fn frame(
+        self,
+        at: Moment,
+        cancelled: impl Fn() -> bool,
+    ) -> anyhow::Result<Option<speakeasy_show::SourceFrame>> {
+        let metadata = &self.movie.metadata;
+        let coverage = metadata
+            .coverage
+            .as_ref()
+            .context("Movie has no published coverage")?;
+        anyhow::ensure!(
+            (metadata.origin_ms..=coverage.end_ms).contains(&at.as_millis()),
+            "Requested time is outside the retained video coverage"
+        );
+        let requested = Duration::from_millis(at.as_millis().saturating_sub(metadata.origin_ms));
+        let Some(frame) = speakeasy_platform::read_movie_frame(
+            self.file,
+            self.movie.prefix.bytes,
+            metadata.size,
+            requested,
+            cancelled,
+        )?
+        else {
+            return Ok(None);
+        };
+        anyhow::ensure!(
+            frame.at < self.movie.prefix.duration,
+            "Decoded video sample exceeds its retained coverage"
+        );
+        Ok(Some(speakeasy_show::SourceFrame {
+            at: Moment::from_millis(
+                metadata
+                    .origin_ms
+                    .saturating_add(u64::try_from(frame.at.as_millis())?),
+            ),
+            image: speakeasy_show::Image::from_bgra(frame.size[0], frame.size[1], frame.bgra)?,
+        }))
+    }
+}
+
 pub(super) enum CheckpointMovie {
     Absent,
     Unavailable,
@@ -197,6 +259,10 @@ fn read_metadata(directory: &Path) -> anyhow::Result<Metadata> {
 /// Missing video remains compatible with still-only bundles. A present damaged or linked movie
 /// is an error, so exports and publication never silently substitute a different evidence set.
 pub(crate) fn inspect(directory: &Path) -> anyhow::Result<Option<Inspected>> {
+    Ok(open(directory)?.map(|reading| reading.movie))
+}
+
+fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
     match fs::symlink_metadata(directory.join(FILE)) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return match fs::symlink_metadata(directory.join(HEADER)) {
@@ -210,7 +276,16 @@ pub(crate) fn inspect(directory: &Path) -> anyhow::Result<Option<Inspected>> {
     }
     recall::regular_file(directory, FILE, MoviePrefix::FILE_LIMIT)?;
     let metadata = read_metadata(directory)?;
-    let mut file = File::open(directory.join(FILE))?;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        // Deny writes through validation and native decoding; expiry may still unlink the bundle.
+        const SHARE_READ_DELETE: u32 = 0x1 | 0x4;
+        options.share_mode(SHARE_READ_DELETE);
+    }
+    let mut file = options.open(directory.join(FILE))?;
     let length = file.metadata()?.len();
     let prefix = MoviePrefix::read(length, |range| {
         let length = range
@@ -271,7 +346,10 @@ pub(crate) fn inspect(directory: &Path) -> anyhow::Result<Option<Inspected>> {
             "Saved movie coverage differs from its fragments"
         );
     }
-    Ok(Some(Inspected { metadata, prefix }))
+    Ok(Some(Reading {
+        file,
+        movie: Inspected { metadata, prefix },
+    }))
 }
 
 pub(crate) fn saved(directory: &Path, annotations: Moment) -> anyhow::Result<Option<Metadata>> {

@@ -4,6 +4,8 @@
 mod canvas;
 mod encoder;
 mod file;
+mod foundation;
+pub(super) mod read;
 
 use std::{
     convert::Infallible,

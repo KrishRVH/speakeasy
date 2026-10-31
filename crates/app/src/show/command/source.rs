@@ -1,6 +1,7 @@
 //! Explicit source queries and PNG exports. Reports contain provenance, never private text.
 
 mod query;
+mod video;
 
 use std::{ffi::OsString, io, path::PathBuf, time::Duration};
 
@@ -28,6 +29,7 @@ pub(crate) struct Request {
     most: usize,
     output: Output,
     json: bool,
+    video: bool,
 }
 
 impl std::fmt::Debug for Request {
@@ -50,10 +52,12 @@ impl Command {
     ) -> anyhow::Result<Self> {
         let (mut directory, mut focus, mut destination, mut json) = (None, None, None, false);
         let (mut around, mut most, mut occurrence, mut crop) = (None, None, None, false);
+        let mut video = false;
         while let Some(arg) = args.next() {
             match arg.to_str() {
                 Some("--help" | "-h") => return Ok(Self::Help),
                 Some("--json") if !json => json = true,
+                Some("--video") if !video => video = true,
                 Some("--at" | "--mark" | "--phrase") if focus.is_none() => {
                     let value = value(&mut args)?;
                     focus = Some(match arg.to_str() {
@@ -84,7 +88,9 @@ impl Command {
                 Some("--out") if destination.is_none() => {
                     destination = Some(PathBuf::from(
                         args.next()
-                            .filter(|arg| !arg.is_empty())
+                            .filter(|arg| {
+                                !arg.is_empty() && !arg.to_string_lossy().starts_with('-')
+                            })
                             .context("--out needs a new PNG path")?,
                     ));
                 },
@@ -99,6 +105,10 @@ impl Command {
                 ),
             }
         }
+        anyhow::ensure!(
+            !video || (single && !crop),
+            "--video supports show frame without --crop; video has no annotation geometry"
+        );
         anyhow::ensure!(
             occurrence.is_none() || matches!(focus, Some(Query::Phrase(_))),
             "--match requires --phrase"
@@ -135,6 +145,7 @@ impl Command {
             most: most.unwrap_or(6),
             output,
             json,
+            video,
         }))
     }
 
@@ -166,6 +177,9 @@ impl Request {
         let directory = address::resolve(&self.directory, || {
             store::directory().map_err(io::Error::other)
         })?;
+        if self.video {
+            return video::write(self, &directory, out);
+        }
         anyhow::ensure!(
             source::size(&directory)?.is_some(),
             "This Show has no retained source frames. Its selected keyframes may still be available through show inspect."
@@ -289,6 +303,8 @@ struct Report<'a> {
     requested_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sampled_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    video: Option<video::Coverage>,
 }
 
 impl<'a> Report<'a> {
@@ -317,6 +333,7 @@ impl<'a> Report<'a> {
             path: None,
             requested_ms: None,
             sampled_ms: None,
+            video: None,
         }
     }
 
@@ -346,6 +363,15 @@ impl<'a> Report<'a> {
             for at in &self.times_ms {
                 writeln!(out, "Sampled {at} ms")?;
             }
+        }
+        if let Some(video) = &self.video {
+            writeln!(
+                out,
+                "Video {}–{} ms · annotations through {} ms",
+                video.span.start().as_millis(),
+                video.span.end().as_millis(),
+                video.annotations.as_millis()
+            )?;
         }
         if let Some(path) = &self.path {
             writeln!(out, "{}", path.display())?;

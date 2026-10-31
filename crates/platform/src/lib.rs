@@ -45,7 +45,7 @@ pub use self::{
     },
     input::{IdleInput, Input, InputSender, InsertPermit, Taps},
     insertion::{Delivery, Inserted, Inserter},
-    movie::{MovieControl, MovieEvent, MovieTarget},
+    movie::{MovieControl, MovieEvent, MovieFrame, MovieTarget, read_movie_frame},
     owned_thread::{OwnedThread, StoppableThread},
     permissions::{Permission, Permissions},
     process::ProcessGroup,
