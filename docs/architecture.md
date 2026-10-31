@@ -320,7 +320,15 @@ module unless a test file is named.
   [show/overlay.rs](../crates/app/src/show/overlay.rs) shows ink, mark numbers, and the area picker.
   Geometry, overlay timing, and the area drag run on every host; native capture is opt-in, and
   window lookup and the picker's clicks need native acceptance. On Windows, an opt-in acceptance
-  test stops an owned window's capture as it hides, minimizes, cloaks, moves away, and closes.
+  test stops an owned window's capture as it hides, minimizes, cloaks, moves away, and closes. The
+  optional [movie adapter](../crates/platform/src/windows/movie.rs) writes silent H.264 fragments
+  from the same admitted, cropped Windows frames. Its non-cloneable
+  [lease](../crates/platform/src/movie.rs) waits for a durable origin acknowledgment before opening
+  the file and closes only after native file handles release. It bounds its canvas to 2560 pixels
+  per edge, its reported native input queue to 64 MiB, and actual file writes to 384 MiB. Those
+  bounds do not cover memory allocated internally by the system codec. Resized windows fit inside a
+  cleared fixed canvas; a quiet tail holds the last image through capture's observed end. This
+  adapter is not yet enabled by the app: live Shows retain their sampled lossless frames.
 - **Scripts and packaging**: [scripts/](../scripts) and [packaging/](../packaging) profile, check,
   package, and launch the app, [app/build.rs](../crates/app/build.rs) embeds the Windows resources,
   and `mise run hygiene` runs [check_repository.py](../scripts/check_repository.py).

@@ -602,6 +602,7 @@ fn frame_of(event: ScreenEvent) -> anyhow::Result<Frame> {
         ScreenEvent::Frame(frame) => Ok(frame),
         ScreenEvent::WindowGone(gone) => bail!(gone),
         ScreenEvent::Failed(message) => bail!(message),
+        ScreenEvent::MovieStopped => bail!("Synthetic movie stopped"),
     }
 }
 
@@ -782,7 +783,7 @@ impl Scene {
             target.display() == display,
             "The pointer moved to another display; nothing was inspected"
         );
-        let capture = ScreenCapture::start(target, INTERVAL, u32::MAX, events)?;
+        let capture = ScreenCapture::start(target, INTERVAL, u32::MAX, events, None)?;
         let deadline = started.checked_add(FIRST_FRAME).unwrap();
         let first = next_event(&frames, deadline).context("No frame arrived")?;
         println!("First frame {:.1?} after start", started.elapsed());

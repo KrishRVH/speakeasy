@@ -81,7 +81,7 @@ use self::{
     exclusion::{Exclusions, exclude_always},
     readback::{Readback, device_for},
 };
-use super::{BASE_DPI, is_key_down, is_own_window, modifiers, ok_or_last_error};
+use super::{BASE_DPI, is_key_down, is_own_window, modifiers, movie, ok_or_last_error};
 use crate::{
     NativeWindow,
     screen::{
@@ -345,8 +345,9 @@ pub(crate) fn capture(
     longest_edge: u32,
     events: &Sender<ScreenEvent>,
     stopping: &Receiver<Infallible>,
+    movie: Option<crate::MovieTarget>,
 ) {
-    if let Err(failure) = record(target, interval, longest_edge, events, stopping)
+    if let Err(failure) = record(target, interval, longest_edge, events, stopping, movie)
         && !stopping.is_closed()
     {
         // A full lane gives up its oldest frame so that the failure always arrives.
@@ -364,31 +365,64 @@ fn record(
     longest_edge: u32,
     events: &Sender<ScreenEvent>,
     stopping: &Receiver<Infallible>,
+    movie: Option<crate::MovieTarget>,
 ) -> Result<(), Failure> {
     join_lasting_apartment()?;
     let mut exclusions = Exclusions::default();
     exclusions.refresh()?;
     let mut clean_from = clean_after_now();
-    let mut capture = Capture::start(target, interval, longest_edge, stopping)?;
+    let mut movie = movie::Movie::new(movie);
+    let cadence = if movie.active() {
+        interval.min(movie::INTERVAL)
+    } else {
+        interval
+    };
+    let mut capture = Capture::start(target, cadence, longest_edge, stopping)?;
     let mut pacer = Pacer::new(interval);
-    while !stopping.is_closed() && !events.is_closed() {
-        // A window opened since the last check is in the first frame Windows composes with it.
-        if capture.poll(clean_from)? && exclusions.refresh()? {
-            clean_from = clean_after_now();
-            capture.discard_pending();
+    let mut motion = Instant::now();
+    let outcome = (|| {
+        while !stopping.is_closed() && !events.is_closed() {
+            // A window opened since the last check is in the first frame Windows composes with it.
+            if capture.poll(clean_from)? && exclusions.refresh()? {
+                clean_from = clean_after_now();
+                capture.discard_pending();
+            }
+            let now = Instant::now();
+            movie.poll(now, stopping);
+            // A full lane leaves the pending frame waiting rather than reading back one to drop.
+            let still = pacer.due(now) && !events.is_full();
+            let moving = movie.active() && now >= motion;
+            if (still || moving)
+                && let Some(frame) = capture.read_pending()?
+            {
+                if moving && !movie.frame(&frame, stopping) {
+                    #[expect(
+                        clippy::let_underscore_must_use,
+                        reason = "A closed event lane means the owner has left; otherwise failure replaces the oldest queued still"
+                    )]
+                    let _ = events.force_send(ScreenEvent::MovieStopped);
+                }
+                if moving {
+                    let elapsed = now
+                        .saturating_duration_since(motion)
+                        .as_nanos()
+                        .checked_div(movie::INTERVAL.as_nanos())
+                        .unwrap_or_default();
+                    let intervals = u32::try_from(elapsed).unwrap_or(u32::MAX).saturating_add(1);
+                    motion = motion
+                        .checked_add(movie::INTERVAL.saturating_mul(intervals))
+                        .unwrap_or(now);
+                }
+                if still && events.try_send(ScreenEvent::Frame(frame)).is_ok() {
+                    pacer.sent(now);
+                }
+            }
+            thread::sleep(POLL);
         }
-        let now = Instant::now();
-        // A full lane leaves the pending frame waiting rather than reading back one to drop.
-        if pacer.due(now)
-            && !events.is_full()
-            && let Some(frame) = capture.read_pending()?
-            && events.try_send(ScreenEvent::Frame(frame)).is_ok()
-        {
-            pacer.sent(now);
-        }
-        thread::sleep(POLL);
-    }
-    Ok(())
+        Ok(())
+    })();
+    movie.stop(Instant::now());
+    outcome
 }
 
 /// The earliest frame timestamp that cannot predate an exclusion made now.

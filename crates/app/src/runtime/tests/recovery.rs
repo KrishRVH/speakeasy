@@ -133,39 +133,46 @@ async fn session_owns_checkpoint_cleanup_even_when_finish_reports_are_stale() ->
 }
 
 #[tokio::test(start_paused = true)]
-async fn checkpoint_notice_clears_on_cancel_and_never_hides_lost_narration() -> anyhow::Result<()> {
-    let (publication, publishing) = gate(1);
-    let mut h = Harness::with_ports(Config::default(), |ports| {
-        ports.publication = Some(publication);
-    })?;
-    let (id, _, events) = start_show(&mut h).await?;
-    events.send(ShowEvent::CheckpointLost(id)).await?;
-    h.observe(|snapshot| snapshot.message.contains("Recovery stopped"))
-        .await?;
-    h.input(Input::Cancel);
-    h.phase(Phase::Cancelled).await?;
-    assert!(!h.snapshot().message.contains("Recovery stopped"));
-    h.input(Input::Release);
-    h.input(Input::Press);
-    h.phase(Phase::Recording).await?;
-    let (id, microphone) = receive(&h.captures).await?;
-    h.input(Input::Show(Scope::Screen));
-    let (_, _, events) = receive(&h.shows).await?;
-    microphone
-        .send(CaptureEvent::Finished(
-            id,
-            Err(anyhow!("Reconnect the microphone.")),
-        ))
-        .await?;
-    publishing.reached().await?;
-    events.send(ShowEvent::CheckpointLost(id)).await?;
-    assert!(
-        still_pending(h.observe(|snapshot| snapshot.message.contains("Recovery stopped"))).await
-    );
-    publishing.release().await?;
-    h.phase(Phase::Copied).await?;
-    assert!(h.snapshot().message.contains("Reconnect the microphone."));
-    h.close().await
+async fn capture_notice_clears_on_cancel_and_never_hides_lost_narration() -> anyhow::Result<()> {
+    for (notice, message) in [
+        (
+            ShowEvent::CheckpointLost as fn(SessionId) -> ShowEvent,
+            "Recovery stopped",
+        ),
+        (ShowEvent::MovieStopped, "Video stopped"),
+    ] {
+        let (publication, publishing) = gate(1);
+        let mut h = Harness::with_ports(Config::default(), |ports| {
+            ports.publication = Some(publication);
+        })?;
+        let (id, _, events) = start_show(&mut h).await?;
+        events.send(notice(id)).await?;
+        h.observe(|snapshot| snapshot.message.contains(message))
+            .await?;
+        h.input(Input::Cancel);
+        h.phase(Phase::Cancelled).await?;
+        assert!(!h.snapshot().message.contains(message));
+        h.input(Input::Release);
+        h.input(Input::Press);
+        h.phase(Phase::Recording).await?;
+        let (id, microphone) = receive(&h.captures).await?;
+        h.input(Input::Show(Scope::Screen));
+        let (_, _, events) = receive(&h.shows).await?;
+        microphone
+            .send(CaptureEvent::Finished(
+                id,
+                Err(anyhow!("Reconnect the microphone.")),
+            ))
+            .await?;
+        publishing.reached().await?;
+        events.send(notice(id)).await?;
+        assert!(still_pending(h.observe(|snapshot| snapshot.message.contains(message))).await);
+        publishing.release().await?;
+        h.phase(Phase::Copied).await?;
+        assert!(h.snapshot().message.contains("Reconnect the microphone."));
+        h.close().await?;
+    }
+    Ok(())
 }
 
 mod audio;

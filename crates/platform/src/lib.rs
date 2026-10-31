@@ -19,6 +19,7 @@ mod linux;
 mod macos;
 #[cfg(any(target_os = "macos", test))]
 mod monitor;
+mod movie;
 mod owned_thread;
 mod permissions;
 mod process;
@@ -44,6 +45,7 @@ pub use self::{
     },
     input::{IdleInput, Input, InputSender, InsertPermit, Taps},
     insertion::{Delivery, Inserted, Inserter},
+    movie::{MovieControl, MovieEvent, MovieTarget},
     owned_thread::{OwnedThread, StoppableThread},
     permissions::{Permission, Permissions},
     process::ProcessGroup,

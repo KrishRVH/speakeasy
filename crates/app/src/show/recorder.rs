@@ -205,7 +205,8 @@ fn record(
                 Choice::Cancelled => return Ok(Ended::Cancelled),
             };
             let (frame_lane, frames) = async_channel::bounded(FRAME_LANE);
-            let capture = ScreenCapture::start(target, SAMPLE_INTERVAL, LONGEST_EDGE, frame_lane)?;
+            let capture =
+                ScreenCapture::start(target, SAMPLE_INTERVAL, LONGEST_EDGE, frame_lane, None)?;
             let display = target.display();
             let (sample_lane, samples) = async_channel::bounded(POINTER_LANE);
             let pointer = PointerMonitor::start(display, sample_lane, shortcut)?;
@@ -217,7 +218,7 @@ fn record(
                 stop: stop(&capture, &pointer),
             };
             let mut take = Take::new(started, display.size, part, lanes.canvas);
-            take.checkpoint_notice = Some((id, events));
+            take.notices = Some((id, events));
             if let Some(writer) = &mut log
                 && !writer.begin(JOURNAL_BUDGET, surface(display.size, part))
             {
@@ -305,7 +306,8 @@ struct Take<'a> {
     part: Part,
     state: speakeasy_show::Take,
     log: Option<FrameLog>,
-    checkpoint_notice: Option<(SessionId, Sender<ShowEvent>)>,
+    notices: Option<(SessionId, Sender<ShowEvent>)>,
+    checkpoint_warned: bool,
 }
 
 impl<'a> Take<'a> {
@@ -324,7 +326,8 @@ impl<'a> Take<'a> {
             part,
             state: speakeasy_show::Take::new(JOURNAL_BUDGET, surface(size, part)),
             log: None,
-            checkpoint_notice: None,
+            notices: None,
+            checkpoint_warned: false,
         }
     }
 
@@ -378,6 +381,13 @@ impl<'a> Take<'a> {
                         Ok(ScreenEvent::Failed(message)) => {
                             (Ending::ScreenStopped, anyhow!(message))
                         },
+                        Ok(ScreenEvent::MovieStopped) => {
+                            if let Some((id, events)) = &self.notices {
+                                #[expect(clippy::let_underscore_must_use, reason = "A departed session no longer observes this capture's status")]
+                                let _ = events.try_send(ShowEvent::MovieStopped(*id));
+                            }
+                            continue;
+                        },
                         Err(_) => (Ending::ScreenStopped, anyhow!(CAPTURE_STOPPED)),
                     };
                     // Frames already journaled stay sound, so capture stopping partway ends the
@@ -425,12 +435,16 @@ impl<'a> Take<'a> {
     }
 
     fn warn_checkpoint(&mut self) {
-        if let Some((id, events)) = self.checkpoint_notice.take() {
+        if self.checkpoint_warned {
+            return;
+        }
+        self.checkpoint_warned = true;
+        if let Some((id, events)) = &self.notices {
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "A departed owner cannot receive notices; a full lane must not stall screen capture"
             )]
-            let _ = events.try_send(ShowEvent::CheckpointLost(id));
+            let _ = events.try_send(ShowEvent::CheckpointLost(*id));
         }
     }
 

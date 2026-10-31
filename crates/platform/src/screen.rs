@@ -216,6 +216,9 @@ pub enum ScreenEvent {
     WindowGone(WindowGone),
     /// Capture stopped and cannot resume; the message explains what the user can do.
     Failed(String),
+    /// Full-motion video stopped; retained still frames can continue. No native error text is
+    /// exposed because codec diagnostics can contain private paths or image metadata.
+    MovieStopped,
 }
 
 /// Why a recorded window can no longer be followed.
@@ -290,7 +293,9 @@ impl ScreenCapture {
     /// took its place. No frame waits behind a full lane: Windows holds back its newest frame
     /// until there is room or a newer one replaces it, and macOS drops it. No frame shows a
     /// Speakeasy window, including one opened while capturing; they still appear in the user's own
-    /// screen sharing before and after.
+    /// screen sharing before and after. On Windows, an optional movie lease records silent
+    /// full-motion video from the same admitted pixels. Its event lane closes only after native
+    /// file cleanup; other platforms release the unused lease without creating a movie.
     ///
     /// # Errors
     /// Fails when the thread cannot start. Failures after starting arrive as
@@ -300,9 +305,16 @@ impl ScreenCapture {
         interval: Duration,
         longest_edge: u32,
         events: Sender<ScreenEvent>,
+        movie: Option<crate::MovieTarget>,
     ) -> anyhow::Result<Self> {
         let thread = StoppableThread::spawn("screen-capture", move |stopping| {
-            native::capture(target, interval, longest_edge, &events, &stopping);
+            #[cfg(target_os = "windows")]
+            native::capture(target, interval, longest_edge, &events, &stopping, movie);
+            #[cfg(not(target_os = "windows"))]
+            {
+                drop(movie);
+                native::capture(target, interval, longest_edge, &events, &stopping);
+            }
         })?;
         Ok(Self { thread })
     }

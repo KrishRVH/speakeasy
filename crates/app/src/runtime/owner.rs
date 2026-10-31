@@ -169,6 +169,7 @@ impl Outcome {
 /// A Show copied without narration still shows the failure it outlived, after its own message.
 enum Notice {
     CheckpointLost,
+    MovieStopped,
     LoadingModel,
     SettingsApplied,
     /// The model failed to load; a later load clears it.
@@ -184,6 +185,9 @@ impl Notice {
             Self::CheckpointLost => {
                 "Recovery stopped for this Show. Recording continues; finish it to save the full Show."
             },
+            Self::MovieStopped => {
+                "Video stopped for this Show. Still frames and narration continue; finish to save what was recorded."
+            },
             Self::LoadingModel => LOADING,
             Self::SettingsApplied => "Settings applied",
             Self::WarmupFailed(failure) | Self::NarrationLost(failure) => failure,
@@ -194,7 +198,10 @@ impl Notice {
     fn failure(&self) -> Option<&str> {
         match self {
             Self::WarmupFailed(failure) | Self::NarrationLost(failure) => Some(failure),
-            Self::LoadingModel | Self::SettingsApplied | Self::CheckpointLost => None,
+            Self::LoadingModel
+            | Self::SettingsApplied
+            | Self::CheckpointLost
+            | Self::MovieStopped => None,
         }
     }
 }
@@ -756,6 +763,16 @@ impl<P: Ports> Owner<P> {
                 self.checkpoint_lost();
                 return None;
             },
+            ShowEvent::MovieStopped(_) => {
+                if self
+                    .notice
+                    .as_ref()
+                    .is_none_or(|notice| notice.failure().is_none())
+                {
+                    self.notice = Some(Notice::MovieStopped);
+                }
+                return None;
+            },
             ShowEvent::Finished(_, footage) => footage,
             ShowEvent::Unchosen(_, unchosen) => {
                 session.forfeit();
@@ -1020,7 +1037,10 @@ impl<P: Ports> Owner<P> {
             session.permit.revoke();
         }
         self.gesture.complete();
-        if matches!(self.notice, Some(Notice::CheckpointLost)) {
+        if matches!(
+            self.notice,
+            Some(Notice::CheckpointLost | Notice::MovieStopped)
+        ) {
             self.notice = None;
         }
         self.outcome = outcome;
@@ -1035,7 +1055,10 @@ impl<P: Ports> Owner<P> {
 
     /// Revokes the session and hands its native work to cleanup without awaiting any OS call.
     fn abandon(&mut self) {
-        if matches!(self.notice, Some(Notice::CheckpointLost)) {
+        if matches!(
+            self.notice,
+            Some(Notice::CheckpointLost | Notice::MovieStopped)
+        ) {
             self.notice = None;
         }
         let Some(session) = self.session.take() else {

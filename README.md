@@ -674,6 +674,12 @@ paused clock exercises gesture deadlines and the five-minute cap.
   with `native_settings_picker_` it checks language and page navigation, focus restoration,
   permission refresh using fake observations, and private practice cleanup. Run each filter
   separately so each process owns one GPUI application.
+- On Windows, set `SPEAKEASY_MOVIE_PROBE_DIRECTORY` to an empty artifact directory and run
+  `cargo test --locked -p speakeasy-platform encode_synthetic_movie_fragments --release -- --ignored --test-threads=1`.
+  It exercises the native movie adapter with generated pixels, checks motion and quiet-tail timing
+  through the native reader, and forces storage failure. The separate
+  `a_cancelled_active_movie_releases_its_file_without_a_new_frame` filter checks cancellation and
+  file release. Neither opens a microphone, captures the screen, or touches input or the clipboard.
 
 Live microphone, editor, and screen acceptance is tracked under
 [verification](docs/architecture.md#verification).

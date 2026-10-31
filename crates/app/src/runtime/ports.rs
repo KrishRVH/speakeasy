@@ -119,6 +119,8 @@ impl Drop for Sealed {
 pub(crate) enum ShowEvent {
     /// Checkpointing stopped; the live recording still proceeds in memory.
     CheckpointLost(SessionId),
+    /// Movie encoding stopped; still-frame recording can continue.
+    MovieStopped(SessionId),
     /// Recording ended with its footage, boxed since it is far larger than the other reports, or
     /// failed.
     Finished(SessionId, anyhow::Result<Box<Footage>>),
@@ -131,6 +133,7 @@ impl ShowEvent {
         match self {
             Self::Finished(session, _)
             | Self::Unchosen(session, _)
+            | Self::MovieStopped(session)
             | Self::CheckpointLost(session) => *session,
         }
     }

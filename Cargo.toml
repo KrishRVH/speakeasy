@@ -67,6 +67,7 @@ tokio-tungstenite = { version = "0.30.0", default-features = false, features = [
 tray-icon = { version = "0.26.1", default-features = false }
 ttf-parser = { version = "0.25.1", default-features = false, features = ["std"] }
 windows = "0.62.2"
+windows-core = "0.62.2"
 # The release whose async types windows returns; move it with windows.
 windows-future = "0.3.2"
 windows-sys = "0.61.2"

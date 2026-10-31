@@ -5,6 +5,40 @@ use super::*;
 use crate::show::{Keeper, Kept};
 
 #[tokio::test(start_paused = true)]
+async fn a_movie_failure_keeps_stills_and_reports_after_a_checkpoint_warning() -> anyhow::Result<()>
+{
+    let (events, notices) = async_channel::bounded(4);
+    let (recorded, _) = record_with(
+        |take| {
+            take.notices = Some((SessionId::FIRST, events));
+            take.warn_checkpoint();
+        },
+        async |feed| {
+            feed.frame(0).await;
+            feed.frames.send(ScreenEvent::MovieStopped).await.unwrap();
+            wait(200).await;
+            feed.frame(200).await;
+            wait(10).await;
+            feed.finish().await;
+        },
+    )
+    .await;
+    let footage = recorded?.context("Still recording survives a codec failure")?;
+    assert_eq!(footage.recording.ending, Ending::Finished);
+    assert_eq!(footage.journal.samples().len(), 2);
+    assert!(matches!(
+        notices.recv().await?,
+        ShowEvent::CheckpointLost(SessionId::FIRST)
+    ));
+    assert!(matches!(
+        notices.recv().await?,
+        ShowEvent::MovieStopped(SessionId::FIRST)
+    ));
+    assert!(notices.try_recv().is_err());
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
 async fn capture_finish_flushes_end_before_handoff() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let (keeper, log) = Keeper::fixture(
@@ -86,7 +120,7 @@ async fn a_failed_writer_warns_once_and_keeps_recording_in_memory() -> anyhow::R
     let (recorded, _) = record_with(
         |take| {
             take.log = Some(writer);
-            take.checkpoint_notice = Some((SessionId::FIRST, events));
+            take.notices = Some((SessionId::FIRST, events));
         },
         async |feed| {
             let deadline = Instant::now() + Duration::from_secs(2);

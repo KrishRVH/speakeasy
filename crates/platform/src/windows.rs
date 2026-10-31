@@ -11,6 +11,7 @@ mod dialog;
 mod input;
 mod insertion;
 pub(crate) mod login;
+mod movie;
 mod presentation;
 pub(crate) mod screen;
 
