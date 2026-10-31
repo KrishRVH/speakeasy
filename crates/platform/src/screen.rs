@@ -259,22 +259,58 @@ impl Display {
 
 /// Where the pointer was and what it was doing.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PointerSample {
-    /// When it was sampled.
-    pub at: Instant,
-    /// Position normalized to the display from its top-left corner: `0.0..=1.0` spans it on each
-    /// axis, and a pointer beyond an edge falls outside.
-    pub position: [f32; 2],
-    /// Shift was held, alone or beside the held talk shortcut, which draws ink.
-    pub drawing: bool,
-    /// The primary button was down.
-    pub pressed: bool,
+pub enum PointerSample {
+    /// Pointer and target geometry observed together.
+    Observed {
+        /// When it was sampled.
+        at: Instant,
+        /// Position normalized to the display; a pointer beyond an edge falls outside `0..=1`.
+        position: [f32; 2],
+        /// The recorded target's part of the display at this sample.
+        part: Part,
+        /// Shift was held, alone or beside the held talk shortcut, which draws ink.
+        drawing: bool,
+        /// The primary button was down.
+        pressed: bool,
+    },
+    /// Pointer or target geometry became unavailable. End pending gestures without inventing
+    /// button releases or joining ink across the gap.
+    Gap(Instant),
 }
 
 impl PointerSample {
+    /// When this observation or gap began.
+    #[must_use]
+    pub const fn at(self) -> Instant {
+        match self {
+            Self::Observed { at, .. } | Self::Gap(at) => at,
+        }
+    }
+
     fn differs(&self, other: &Self) -> bool {
-        (self.position, self.drawing, self.pressed)
-            != (other.position, other.drawing, other.pressed)
+        match (self, other) {
+            (
+                Self::Observed {
+                    position,
+                    part,
+                    drawing,
+                    pressed,
+                    ..
+                },
+                Self::Observed {
+                    position: other_position,
+                    part: other_part,
+                    drawing: other_drawing,
+                    pressed: other_pressed,
+                    ..
+                },
+            ) => {
+                (position, part, drawing, pressed)
+                    != (other_position, other_part, other_drawing, other_pressed)
+            },
+            (Self::Gap(_), Self::Gap(_)) => false,
+            _ => true,
+        }
     }
 }
 
@@ -338,26 +374,30 @@ pub struct PointerMonitor {
 }
 
 impl PointerMonitor {
-    /// Samples the pointer over `display` often enough to catch a deliberate click, sending a
-    /// sample whenever its position, drawing state, or primary button changes. Polling needs no
+    /// Samples the pointer over `target` often enough to catch a deliberate click, sending a
+    /// sample whenever its position, target geometry, drawing state, or primary button changes. Polling needs no
     /// input hook or permission, and never delays the pointer.
+    /// The caller provides a bounded lane with at least two slots and no other producer. One
+    /// slot stays available for a gap when changed observations cannot be retained.
     ///
     /// # Errors
-    /// Fails when the thread cannot start.
+    /// Fails when the thread cannot start or the lane has fewer than two bounded slots.
     pub fn start(
-        display: Display,
+        target: Target,
         samples: Sender<PointerSample>,
         shortcut: crate::MacShortcut,
     ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            samples.capacity().is_some_and(|capacity| capacity >= 2),
+            "Pointer sampling needs a bounded lane with at least two slots"
+        );
         let thread = StoppableThread::spawn("pointer", move |stopping| {
-            let mut last: Option<PointerSample> = None;
-            while !stopping.is_closed() && !samples.is_closed() {
-                if let Some(sample) = native::pointer(display.native, shortcut)
-                    && last.is_none_or(|last| last.differs(&sample))
-                    && samples.try_send(sample).is_ok()
-                {
-                    last = Some(sample);
-                }
+            let mut pending = Samples {
+                outgoing: samples,
+                last: None,
+            };
+            while !stopping.is_closed() && !pending.outgoing.is_closed() {
+                pending.send(native::pointer(target, shortcut), Instant::now());
                 thread::sleep(POINTER_INTERVAL);
             }
         })?;
@@ -372,6 +412,35 @@ impl PointerMonitor {
     /// Resolves once the monitor has stopped.
     pub fn stopped(&self) -> impl Future<Output = ()> + Send + use<> {
         self.thread.stopped()
+    }
+}
+
+struct Samples {
+    outgoing: Sender<PointerSample>,
+    last: Option<PointerSample>,
+}
+
+impl Samples {
+    fn send(&mut self, sample: Option<PointerSample>, now: Instant) {
+        let mut sample = sample.unwrap_or(PointerSample::Gap(now));
+        if self.last.is_some_and(|last| !last.differs(&sample)) {
+            return;
+        }
+        // This is the only producer. The consumer can free slots during the check, never fill
+        // them, so the reserved slot retains a gap without waiting or losing it on shutdown.
+        if matches!(sample, PointerSample::Observed { .. })
+            && self
+                .outgoing
+                .capacity()
+                .is_some_and(|capacity| self.outgoing.len().saturating_add(1) >= capacity)
+        {
+            sample = PointerSample::Gap(sample.at());
+        }
+        if self.last.is_none_or(|last| last.differs(&sample))
+            && self.outgoing.try_send(sample).is_ok()
+        {
+            self.last = Some(sample);
+        }
     }
 }
 
@@ -432,7 +501,7 @@ mod unsupported {
     ) {
     }
 
-    pub(super) const fn pointer(_: Display, _: crate::MacShortcut) -> Option<PointerSample> {
+    pub(super) const fn pointer(_: Target, _: crate::MacShortcut) -> Option<PointerSample> {
         None
     }
 
@@ -448,6 +517,61 @@ mod unsupported {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pointer_gaps_survive_backpressure_and_stationary_resizes_are_observed() {
+        let started = Instant::now();
+        let at = |ms| started.checked_add(Duration::from_millis(ms)).unwrap();
+        let observed = |ms, part| PointerSample::Observed {
+            at: at(ms),
+            position: [0.5, 0.5],
+            part,
+            drawing: false,
+            pressed: true,
+        };
+        let (samples, received) = async_channel::bounded(2);
+        let mut pending = Samples {
+            outgoing: samples,
+            last: None,
+        };
+        pending.send(Some(observed(0, Part::WHOLE)), at(0));
+        pending.send(None, at(10));
+        let resized = Part::between([0.25, 0.25], [0.75, 0.75]);
+        pending.send(Some(observed(20, resized)), at(20));
+        assert_eq!(received.try_recv().unwrap(), observed(0, Part::WHOLE));
+        pending.send(Some(observed(30, resized)), at(30));
+        assert_eq!(received.try_recv().unwrap(), PointerSample::Gap(at(10)));
+        pending.send(Some(observed(40, resized)), at(40));
+        assert_eq!(received.try_recv().unwrap(), observed(40, resized));
+        pending.send(Some(observed(50, resized)), at(50));
+        assert!(received.is_empty());
+        pending.send(Some(observed(60, Part::WHOLE)), at(60));
+        assert_eq!(received.try_recv().unwrap(), observed(60, Part::WHOLE));
+    }
+
+    #[test]
+    fn a_lost_button_transition_leaves_a_gap_when_the_producer_stops() {
+        let start = Instant::now();
+        let sample = |pressed| PointerSample::Observed {
+            at: start,
+            position: [0.5, 0.5],
+            part: Part::WHOLE,
+            drawing: false,
+            pressed,
+        };
+        let (outgoing, incoming) = async_channel::bounded(2);
+        let mut pending = Samples {
+            outgoing,
+            last: None,
+        };
+        pending.send(Some(sample(true)), start);
+        pending.send(Some(sample(false)), start);
+        pending.send(Some(sample(true)), start);
+        drop(pending);
+        assert_eq!(incoming.try_recv().unwrap(), sample(true));
+        assert_eq!(incoming.try_recv().unwrap(), PointerSample::Gap(start));
+        assert!(incoming.is_closed());
+    }
 
     #[test]
     fn points_map_from_a_display_into_its_part() {

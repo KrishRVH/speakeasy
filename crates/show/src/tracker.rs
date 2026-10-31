@@ -25,7 +25,8 @@ pub struct Tracker {
     drawing: Vec<InkPoint>,
     /// Whether the stroke being drawn has spanned enough to be ink.
     deliberate: bool,
-    press: Option<Press>,
+    press: Button,
+    pin_after: Option<Moment>,
     /// When Shift, down to draw at the last sample, went down.
     shift_down: Option<Moment>,
     /// Each press of Shift that drew ink or was down with the button, by the moment it first did,
@@ -50,6 +51,13 @@ struct Press {
     drawing: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum Button {
+    Up,
+    Down(Press),
+    Unknown,
+}
+
 impl Tracker {
     /// A tracker for a surface `surface` logical pixels in size, which distances are measured in.
     #[must_use]
@@ -59,7 +67,8 @@ impl Tracker {
             pointer: None,
             drawing: Vec::new(),
             deliberate: false,
-            press: None,
+            press: Button::Up,
+            pin_after: None,
             shift_down: None,
             shift_uses: Vec::new(),
             strokes: Vec::new(),
@@ -74,10 +83,24 @@ impl Tracker {
         self.surface = surface;
     }
 
+    /// Ends known ink and discards gestures that cross an unavailable pointer observation.
+    pub fn gap(&mut self, at: Moment) {
+        self.lift();
+        self.pointer = None;
+        self.press = Button::Unknown;
+        self.shift_down = None;
+        self.pin_after = Some(self.pin_after.unwrap_or(at).max(at));
+    }
+
     /// Observes the pointer at `at`, in time order, with `drawing` while Shift is held to draw and
     /// `pressed` while the primary button is down. `point` is normalized to the surface, and may
     /// lie outside it when the pointer is on another display.
     pub fn observe(&mut self, at: Moment, point: Point, drawing: bool, pressed: bool) {
+        if self.pointer.is_none()
+            && let Some(gap) = &mut self.pin_after
+        {
+            *gap = (*gap).max(at);
+        }
         self.pointer = Some(point);
         self.shift_down = drawing.then(|| self.shift_down.unwrap_or(at));
         if drawing && pressed {
@@ -89,9 +112,9 @@ impl Tracker {
         } else {
             self.lift();
         }
-        match (self.press.as_mut(), pressed) {
-            (None, true) if inside => {
-                self.press = Some(Press {
+        match (&mut self.press, pressed) {
+            (Button::Up, true) if inside => {
+                self.press = Button::Down(Press {
                     at,
                     from: point,
                     to: point,
@@ -99,13 +122,14 @@ impl Tracker {
                     drawing,
                 });
             },
-            (Some(press), true) => {
+            (Button::Down(press), true) => {
                 press.to = point;
                 press.reach = press.reach.max(pixels(self.surface, press.from, point));
                 press.drawing |= drawing;
             },
-            (Some(_), false) => self.release(at, point),
-            (None, _) => {},
+            (Button::Down(_), false) => self.release(at, point),
+            (Button::Unknown, false) => self.press = Button::Up,
+            (Button::Up | Button::Unknown, _) => {},
         }
     }
 
@@ -137,6 +161,7 @@ impl Tracker {
         let pinned = self.pins.last().is_some_and(|pin| taps.start() <= pin.at);
         if !used
             && !pinned
+            && self.pin_after.is_none_or(|gap| taps.start() > gap)
             && let Some(point) = self.pointer
             && inside(point)
         {
@@ -162,7 +187,7 @@ impl Tracker {
     #[must_use]
     pub fn finish(mut self, at: Moment) -> Recording {
         self.lift();
-        if let Some(press) = self.press {
+        if let Button::Down(press) = self.press {
             self.release(at, press.to);
         }
         Recording {
@@ -226,7 +251,7 @@ impl Tracker {
     }
 
     fn release(&mut self, at: Moment, point: Point) {
-        let Some(press) = self.press.take() else {
+        let Button::Down(press) = mem::replace(&mut self.press, Button::Up) else {
             return;
         };
         if press.drawing {

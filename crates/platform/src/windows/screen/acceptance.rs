@@ -2,6 +2,7 @@
 //! for a few seconds and tallies captured pixels only after proving, before and after each
 //! capture, that no other window covers them; it prints nothing but counts and timings.
 
+mod geometry;
 mod movie;
 
 use std::{

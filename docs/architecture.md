@@ -327,6 +327,12 @@ module unless a test file is named.
   [macos/screen.rs](../crates/platform/src/macos/screen.rs) capture a display, a window as it moves
   until it closes or goes off screen, or an area, and
   [show/overlay.rs](../crates/app/src/show/overlay.rs) shows ink, mark numbers, and the area picker.
+  Pointer samples carry their target geometry; queued stills cannot rewind the live overlay, and
+  each sample uses its own surface for annotation coordinates and gesture distances. Unavailable
+  observations and queue overflow produce explicit gaps, with one lane slot reserved for their
+  delivery. Gaps preserve known ink, discard incomplete clicks and drags, and prevent pins from
+  crossing an unobserved interval. Finishing drains observations through the chosen end after the
+  producers stop; teardown adds no annotations. Checkpoint replay preserves these same gaps.
   Geometry, overlay timing, and the area drag run on every host; native capture is opt-in, and
   window lookup and the picker's clicks need native acceptance. On Windows, an opt-in acceptance
   test stops an owned window's capture as it hides, minimizes, cloaks, moves away, and closes. The

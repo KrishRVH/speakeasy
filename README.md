@@ -710,6 +710,10 @@ paused clock exercises gesture deadlines and the five-minute cap.
   `a_cancelled_active_movie_releases_its_file_without_a_new_frame` filter checks cancellation and
   file release. These checks use generated pixels and access no microphone, screen, input, or
   clipboard.
+- The Windows platform filter `target_geometry_tracks_an_owned_window_without_sampling_input`, with
+  `--ignored --test-threads=1`, moves and hides an owned window, verifies current target bounds
+  against a fixed area, and reports geometry lookup timings. It accesses no microphone, screen
+  pixels, input, or clipboard.
 - The Windows platform filter
   `a_movie_survives_still_backpressure_and_closes_at_the_session_deadline`, with the same opt-in
   arguments, captures only an owned, blacked-out scene into a temporary movie. It changes that scene

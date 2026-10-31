@@ -315,15 +315,25 @@ fn describe(
     })
 }
 
-pub(crate) fn pointer(display: Display, _: crate::MacShortcut) -> Option<PointerSample> {
+pub(crate) fn pointer(target: Target, _: crate::MacShortcut) -> Option<PointerSample> {
+    let display = target.display.native;
+    let part = pointer_part(target)?;
     let at = Instant::now();
     let POINT { x, y } = pointer_location()?;
-    Some(PointerSample {
+    Some(PointerSample::Observed {
         at,
         position: display.bounds().normalize([x, y].map(f64::from))?,
+        part,
         drawing: modifiers().draws(),
         pressed: primary_button_down(),
     })
+}
+
+fn pointer_part(target: Target) -> Option<Part> {
+    match target.region {
+        Region::Window(window, _) => window_part(target.display.native, window).ok().flatten(),
+        _ => Some(target.part()),
+    }
 }
 
 fn pointer_location() -> Option<POINT> {

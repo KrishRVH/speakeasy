@@ -4,6 +4,8 @@ use proptest::prelude::*;
 
 use super::*;
 
+mod gaps;
+
 fn surface() -> Size {
     Size {
         width: 800.0,

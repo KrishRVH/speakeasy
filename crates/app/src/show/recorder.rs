@@ -33,7 +33,7 @@ const FIRST_FRAME_WAIT: Duration = Duration::from_secs(3);
 /// How many frames wait for the recorder; [`ScreenCapture::start`] says what capture does with a
 /// frame the lane has no room for.
 const FRAME_LANE: usize = 2;
-/// How many pointer samples wait for the recorder. A sample that finds the lane full is skipped.
+/// How many pointer events wait for the recorder, including the reserved observation-gap slot.
 const POINTER_LANE: usize = 256;
 /// How many pins wait for the recorder. A pin that finds the lane full is dropped.
 const PIN_LANE: usize = 8;
@@ -225,7 +225,7 @@ fn record(
             let capture =
                 ScreenCapture::start(target, SAMPLE_INTERVAL, LONGEST_EDGE, frame_lane, movie)?;
             let (sample_lane, samples) = async_channel::bounded(POINTER_LANE);
-            let pointer = PointerMonitor::start(display, sample_lane, shortcut)?;
+            let pointer = PointerMonitor::start(target, sample_lane, shortcut)?;
             let sources = Sources {
                 frames,
                 samples,
@@ -309,8 +309,9 @@ struct Take<'a> {
     canvas: &'a watch::Sender<Canvas>,
     /// The display's size in logical pixels.
     display: [f32; 2],
-    /// The part of the display the latest frame showed, which the pointer is placed in.
+    /// The newest observed target geometry, independent of frame-lane delivery order.
     part: Part,
+    placed_at: Instant,
     state: speakeasy_show::Take,
     log: Option<FrameLog>,
     notices: Option<(SessionId, Sender<ShowEvent>)>,
@@ -331,6 +332,7 @@ impl<'a> Take<'a> {
             canvas,
             display: size,
             part,
+            placed_at: started,
             state: speakeasy_show::Take::new(JOURNAL_BUDGET, surface(size, part)),
             log: None,
             notices: None,
@@ -421,6 +423,14 @@ impl<'a> Take<'a> {
             }
         };
         stop.await;
+        let ended = ended.map(|result| {
+            result.and_then(|(at, ending)| {
+                std::iter::from_fn(|| samples.try_recv().ok())
+                    .filter(|sample| sample.at() <= at)
+                    .try_for_each(|sample| self.pointer(sample))?;
+                Ok((at, ending))
+            })
+        });
         match ended {
             Some(Ok((at, ending))) => self.into_footage(at, ending).await.map(Some),
             Some(Err(_invalid_event)) if !self.state.journal().is_empty() => {
@@ -474,15 +484,7 @@ impl<'a> Take<'a> {
     }
 
     fn frame(&mut self, frame: Frame) -> anyhow::Result<()> {
-        if frame.part != self.part {
-            self.part = frame.part;
-            self.apply(TakeEvent::Surface(surface(self.display, frame.part)))?;
-            self.canvas.send_if_modified(|canvas| {
-                canvas
-                    .sheet_mut()
-                    .is_some_and(|sheet| sheet.track(frame.part))
-            });
-        }
+        self.place(frame.part, frame.at)?;
         let at = self.moment(frame.at);
         let event = self.state.arrive(at, || {
             Image::from_bgra(frame.width, frame.height, frame.bgra).ok()
@@ -491,16 +493,50 @@ impl<'a> Take<'a> {
         Ok(())
     }
 
+    fn place(&mut self, part: Part, at: Instant) -> anyhow::Result<()> {
+        if at < self.placed_at {
+            return Ok(());
+        }
+        self.placed_at = at;
+        if part != self.part {
+            self.apply(TakeEvent::Surface(surface(self.display, part)))?;
+            self.part = part;
+            self.canvas.send_if_modified(|canvas| {
+                canvas.sheet_mut().is_some_and(|sheet| sheet.track(part))
+            });
+        }
+        Ok(())
+    }
+
     fn pointer(&mut self, sample: PointerSample) -> anyhow::Result<()> {
-        let at = self.moment(sample.at);
+        let at = self.moment(sample.at());
         let earlier = self.state.tracker().strokes().len();
-        let point = Point::from(self.part.within(sample.position));
-        self.apply(TakeEvent::Pointer {
-            at,
-            point,
-            drawing: sample.drawing,
-            pressed: sample.pressed,
-        })?;
+        match sample {
+            PointerSample::Gap(_) => self.apply(TakeEvent::PointerGap(at))?,
+            PointerSample::Observed {
+                at: sampled_at,
+                position,
+                part,
+                drawing,
+                pressed,
+            } => {
+                self.place(part, sampled_at)?;
+                let local = surface(self.display, part);
+                let latest = surface(self.display, self.part);
+                if local != latest {
+                    self.apply(TakeEvent::Surface(local))?;
+                }
+                self.apply(TakeEvent::Pointer {
+                    at,
+                    point: Point::from(part.within(position)),
+                    drawing,
+                    pressed,
+                })?;
+                if local != latest {
+                    self.apply(TakeEvent::Surface(latest))?;
+                }
+            },
+        }
         let finished: Vec<Arc<[Point]>> = self
             .state
             .tracker()

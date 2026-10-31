@@ -6,6 +6,8 @@ use speakeasy_show::{Action, Pin};
 
 use super::*;
 
+mod geometry;
+
 /// How long the fake capture and pointer monitor take to stop.
 const TEARDOWN: Duration = Duration::from_millis(400);
 
@@ -46,9 +48,10 @@ impl Feed {
     /// The pointer at `x`, `y` on the display `millis` into the take, drawing when `drawing` and
     /// with the button down when `pressed`.
     async fn pointer(&self, millis: u64, x: f32, y: f32, drawing: bool, pressed: bool) {
-        let sample = PointerSample {
+        let sample = PointerSample::Observed {
             at: self.at(millis),
             position: [x, y],
+            part: Part::WHOLE,
             drawing,
             pressed,
         };

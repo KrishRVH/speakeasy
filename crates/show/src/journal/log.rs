@@ -28,6 +28,8 @@ pub enum TakeEvent {
         /// The primary pointer button is down.
         pressed: bool,
     },
+    /// Pointer or target geometry became unavailable; no gesture may bridge this time.
+    PointerGap(Moment),
     /// The two Shift taps that asked for a pin.
     Pin(Span),
     /// One capture arrival, with tiles only when an image was admitted and could be prepared.
@@ -153,6 +155,11 @@ impl Take {
                 require(point.is_finite(), "checkpoint pointer is not finite")?;
                 self.latest = self.latest.max(*at);
                 self.tracker.observe(*at, *point, *drawing, *pressed);
+            },
+            TakeEvent::PointerGap(at) => {
+                valid_time(*at)?;
+                self.latest = self.latest.max(*at);
+                self.tracker.gap(*at);
             },
             TakeEvent::Pin(span) => {
                 valid_time(span.end())?;
@@ -333,6 +340,10 @@ impl Log {
                 });
                 5
             },
+            TakeEvent::PointerGap(at) => {
+                data.extend_from_slice(&at.as_millis().to_le_bytes());
+                6
+            },
         };
         require(
             data.len().saturating_add(4) <= Self::RECORD_LIMIT,
@@ -400,6 +411,7 @@ impl Log {
                     _ => return Err(SourceError("checkpoint ending is invalid")),
                 },
             },
+            6 => TakeEvent::PointerGap(Moment::from_millis(data.wide()?)),
             _ => return Err(SourceError("unsupported checkpoint event")),
         };
         require(data.0.is_empty(), "checkpoint record has trailing data")?;
