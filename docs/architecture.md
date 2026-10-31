@@ -129,8 +129,15 @@ module unless a test file is named.
   [navigation.rs](../crates/app/src/shell/settings/navigation.rs) owns page selection and keyboard
   focus without changing that draft, and ends private practice when its page is hidden.
   [config.rs](../crates/app/src/config.rs) and [paths.rs](../crates/app/src/paths.rs) own the file
-  contract and where it lives. [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns
-  native selection and IME composition; its pure edit state tests Unicode boundaries, and
+  contract and where it lives. [config/presets.rs](../crates/app/src/config/presets.rs) stores
+  bounded named dictation choices, validates them without opening inactive model paths, and loads
+  them into the draft. Its snapshot excludes microphone, delivery, shortcuts, sound, and
+  presentation options. [settings/presets.rs](../crates/app/src/shell/settings/presets.rs) commits
+  pending phrase and hint edits when capturing a preset and blocks loading during unfinished edits,
+  model setup, file selection, or saves. The existing save queue applies loaded choices;
+  library-only changes leave sessions running.
+  [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns native selection and IME
+  composition; its pure edit state tests Unicode boundaries, and
   [native_tests.rs](../crates/app/src/shell/settings/native_tests.rs) checks owned-window
   composition and save draining. The
   [native interaction test](../crates/app/src/shell/settings/native_interaction.rs) checks language

@@ -47,6 +47,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     cx.new(|cx| Settings::new(config, updates, cx))
                 })?;
                 cx.update(|cx| cx.global_mut::<Services>().settings = Some(settings))?;
+                presets::native_tests::exercise(settings, cx).await?;
                 settings.update(cx, |view, window, _| view.language.button.focus(window))?;
                 key(settings, "enter", cx)?;
                 ensure!(

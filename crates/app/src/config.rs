@@ -35,6 +35,8 @@ use crate::{
     },
 };
 
+pub(crate) mod presets;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Engine {
@@ -80,6 +82,7 @@ pub(crate) struct Config {
     pub recognition_terms: Terms,
     pub remove_fillers: bool,
     pub vocabulary: Vec<Correction>,
+    pub presets: Vec<presets::Preset>,
     pub threads: u16,
     pub use_gpu: bool,
     pub reduced_motion: bool,
@@ -104,6 +107,7 @@ impl Default for Config {
             recognition_terms: Terms::default(),
             remove_fillers: true,
             vocabulary: Vec::new(),
+            presets: Vec::new(),
             threads: 4,
             use_gpu: true,
             reduced_motion: false,
@@ -369,6 +373,7 @@ impl Config {
             recognition_terms,
             remove_fillers,
             vocabulary,
+            presets,
             threads,
             use_gpu,
             reduced_motion,
@@ -411,6 +416,7 @@ impl Config {
             ),
             // Services registers every save itself, so a session continues.
             (self.start_at_login != *start_at_login, Change::Presentation),
+            (self.presets != *presets, Change::Presentation),
         ]
         .into_iter()
         .filter_map(|(changed, tier)| changed.then_some(tier))
@@ -422,16 +428,8 @@ impl Config {
     /// them, then checks that they exist and that the remaining values are in range. The draft
     /// stays as the user wrote it.
     pub(crate) fn validated(&self, path: &Path) -> anyhow::Result<ValidConfig> {
-        vocabulary::validate(&self.vocabulary)?;
-        self.recognition_terms.validate()?;
-        if self.uses_nemotron() {
-            ensure!(
-                crate::models::LANGUAGES
-                    .iter()
-                    .any(|(code, _)| *code == self.language),
-                "Choose a supported Nemotron language in Settings, or Automatic."
-            );
-        }
+        self.validate_choices()?;
+        presets::validate(&self.presets)?;
         let mut config = self.clone();
         let directory = path.parent().unwrap_or_else(|| Path::new("."));
         for file in [&mut config.engine_executable, &mut config.model] {
@@ -463,15 +461,29 @@ impl Config {
                 "Speech executable is not executable. Choose an installed engine or enable its executable permission."
             );
         }
+        Ok(ValidConfig(config))
+    }
+
+    fn validate_choices(&self) -> anyhow::Result<()> {
+        vocabulary::validate(&self.vocabulary)?;
+        self.recognition_terms.validate()?;
+        if self.uses_nemotron() {
+            ensure!(
+                crate::models::LANGUAGES
+                    .iter()
+                    .any(|(code, _)| *code == self.language),
+                "Choose a supported Nemotron language in Settings, or Automatic."
+            );
+        }
         ensure!(
-            (1..=256).contains(&config.threads),
+            (1..=256).contains(&self.threads),
             "Set threads in the settings file to a number from 1 to 256."
         );
         ensure!(
-            (1..=16).contains(&config.language.len()),
+            (1..=16).contains(&self.language.len()),
             "Set language in the settings file to a language code, such as en, or to auto."
         );
-        Ok(ValidConfig(config))
+        Ok(())
     }
 
     /// Saves what Settings changed in `draft`, writing each changed key's value from `validated`.
@@ -568,6 +580,7 @@ impl Deref for ValidConfig {
 fn parse(contents: &[u8], path: &Path) -> anyhow::Result<(Config, Map<String, Value>)> {
     let invalid = || format!("Invalid settings in {}", path.display());
     let config: Config = from_json(contents).with_context(invalid)?;
+    presets::validate(&config.presets).with_context(invalid)?;
     let file: Map<String, Value> = from_json(contents).with_context(invalid)?;
     if file.get("linux").is_some_and(|linux| !linux.is_object()) {
         return Err(anyhow!("The linux settings must be an object").context(invalid()));

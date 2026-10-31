@@ -35,6 +35,7 @@ impl Render for Settings {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         self.vocabulary.theme(self.config.theme, cx);
         self.recognition.theme(self.config.theme, cx);
+        self.presets.theme(self.config.theme, cx);
         let palette = self.config.theme.palette();
         let ui = Ui { palette, cx };
         let unconfigured = !is_demo(cx) && self.config.needs_engine();
@@ -150,6 +151,7 @@ impl Settings {
                             section.child(self.language_control(ui))
                         }),
                 )
+                .child(self.presets_section(ui.cx))
                 .child(self.preferences_section(ui)),
             Page::Words => page
                 .when(

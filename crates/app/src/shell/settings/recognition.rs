@@ -18,6 +18,12 @@ pub(super) struct Editor {
 }
 
 impl Editor {
+    #[cfg(test)]
+    pub(super) fn enter(&self, text: &str, cx: &mut Context<'_, Settings>) {
+        self.field
+            .update(cx, |field, cx| field.set(text.into(), cx));
+    }
+
     pub(super) fn clear(&self, cx: &mut Context<'_, Settings>) {
         self.field
             .update(cx, |field, cx| field.set(String::new(), cx));

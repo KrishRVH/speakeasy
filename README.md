@@ -606,12 +606,22 @@ does not provide live transcription. Up to 200 rules are stored locally in `voca
 `[{"heard": "speak easy", "written": "Speakeasy"}]`. Each side allows up to six words and 64
 characters.
 
-Changes apply when you save. Theme, reduced-motion, and Start at login changes keep a recording
-running; microphone, language, filler removal, recognition hints, phrase correction, delivery, and
-sound changes end it but keep the model loaded. Changing the Mac shortcut, Linux Shortcuts, or most
-Linux Insert settings restarts dictation, which reloads the model. Saving stays responsive and
-preserves edits made while the save is running. Pausing during a save keeps dictation paused; Quit
-finishes requested saves.
+**Dictation presets** on the Dictation page keep named combinations of engine, model, language,
+recognition hints, phrase corrections, filler cleanup, thread count, and GPU preference. Enter a
+name and choose **Store current**, then **Save changes** to keep it. Storing includes unfinished
+phrase and hint edits when they are valid. **Load** puts a preset into the draft; **Save changes**
+applies it through the normal settings flow. Finish or cancel unfinished edits before loading.
+**Replace from draft** updates a saved preset's choices, and **Delete** removes its saved entry.
+Both take effect on disk when you save. Up to 16 presets are stored locally in `presets`, with
+distinct names of up to 48 characters. An unavailable model can remain in a saved preset; loading it
+requires choosing valid files before the settings can apply.
+
+Changes apply when you save. Preset-library, theme, reduced-motion, and Start at login changes keep
+a recording running; microphone, language, filler removal, recognition hints, phrase correction,
+delivery, and sound changes end it but keep the model loaded. Changing the Mac shortcut, Linux
+Shortcuts, or most Linux Insert settings restarts dictation, which reloads the model. Saving stays
+responsive and preserves edits made while the save is running. Pausing during a save keeps dictation
+paused; Quit finishes requested saves.
 
 <p align="center">
   <img src="docs/assets/themes.png"

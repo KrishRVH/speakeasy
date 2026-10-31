@@ -918,3 +918,46 @@ async fn phrase_corrections_follow_filler_cleanup_for_dictation_and_shows_withou
     );
     h.close().await
 }
+
+#[tokio::test(start_paused = true)]
+async fn preset_library_edits_keep_recording_but_loading_words_cancels_old_inference()
+-> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    receive(&h.loads).await?;
+    let mut library = Config::default();
+    let choices = Config {
+        vocabulary: vec![crate::transcript::vocabulary::Correction {
+            heard: "cube control".into(),
+            written: "kubectl".into(),
+        }],
+        ..Config::default()
+    };
+    library
+        .presets
+        .push(crate::config::presets::Preset::capture(
+            "Coding".into(),
+            &choices,
+        )?);
+    h.start().await?;
+    h.runtime.configure(ValidConfig::assume(library.clone()));
+    h.finish_as("Original words.").await?;
+    assert_eq!(receive(&h.pasted).await?, "Original words.");
+    h.phase(Phase::Done).await?;
+    h.start().await?;
+    let mut old_reply = h.finish().await?;
+    let preset = library.presets[0].clone();
+    preset.load(&mut library);
+    h.runtime.configure(ValidConfig::assume(library));
+    h.phase(Phase::Cancelled).await?;
+    timeout(PATIENCE, old_reply.closed()).await?;
+    assert!(answer(old_reply, "Stale words.").is_err());
+    assert!(h.pasted.try_recv().is_err());
+    h.start().await?;
+    h.finish_as("Use cube control.").await?;
+    assert_eq!(receive(&h.pasted).await?, "Use kubectl.");
+    assert!(
+        h.loads.try_recv().is_err(),
+        "Loading only corrections restarted the model"
+    );
+    h.close().await
+}

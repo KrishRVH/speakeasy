@@ -21,6 +21,14 @@ pub(super) struct Editor {
 }
 
 impl Editor {
+    #[cfg(test)]
+    pub(super) fn enter(&self, heard: &str, written: &str, cx: &mut Context<'_, Settings>) {
+        self.heard
+            .update(cx, |field, cx| field.set(heard.into(), cx));
+        self.written
+            .update(cx, |field, cx| field.set(written.into(), cx));
+    }
+
     pub(super) fn new(theme: Theme, cx: &mut Context<'_, Settings>) -> Self {
         let heard = cx.new(|cx| TextField::new("When I say", theme, cx));
         let written = cx.new(|cx| TextField::new("Write", theme, cx));

@@ -6,6 +6,7 @@ mod language;
 mod navigation;
 mod permissions;
 mod practice;
+mod presets;
 mod recognition;
 mod render;
 mod text_field;
@@ -54,6 +55,7 @@ pub(super) struct Settings {
     saves: SaveQueue,
     vocabulary: vocabulary::Editor,
     recognition: recognition::Editor,
+    presets: presets::Editor,
     language: language::Picker,
     navigation: navigation::Navigation,
     practice: practice::Practice,
@@ -83,6 +85,7 @@ impl Settings {
         let desktop_command = desktop_command(&services.path, services.default_settings).into();
         let vocabulary = vocabulary::Editor::new(config.theme, cx);
         let recognition = recognition::Editor::new(config.theme, cx);
+        let presets = presets::Editor::new(config.theme, cx);
         let mut view = Self {
             config,
             presentation,
@@ -98,6 +101,7 @@ impl Settings {
             saves,
             vocabulary,
             recognition,
+            presets,
             language: language::Picker::new(cx),
             navigation: navigation::Navigation::new(cx),
             practice: practice::Practice::default(),
@@ -180,6 +184,7 @@ impl Settings {
                     self.config = cx.global::<Services>().config.clone();
                     self.vocabulary.clear(cx);
                     self.recognition.clear(cx);
+                    self.presets.clear(cx);
                     self.language.cursor = None;
                     self.edited();
                 }
@@ -247,7 +252,8 @@ impl Settings {
         !is_demo(cx)
             && (self.saves.needs_save(&self.config)
                 || self.vocabulary.pending(cx)
-                || self.recognition.pending(cx))
+                || self.recognition.pending(cx)
+                || self.presets.pending(cx))
     }
 
     fn cycle_microphone(&mut self) {
@@ -452,6 +458,7 @@ impl Settings {
                 && started == self.config
                 && !self.vocabulary.pending(cx)
                 && !self.recognition.pending(cx)
+                && !self.presets.pending(cx)
         });
         match outcome {
             Some(Ok(installed)) => {
@@ -491,6 +498,9 @@ impl Settings {
             return;
         }
         if self.recognition.pending(cx) && !self.add_recognition_term(cx) {
+            return;
+        }
+        if self.presets.pending(cx) && !self.capture_preset(None, cx) {
             return;
         }
         let services = cx.global::<Services>();
