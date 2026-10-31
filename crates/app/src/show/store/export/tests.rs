@@ -117,9 +117,8 @@ fn movie_exports_preserve_video_timing_and_relative_playback_links() -> anyhow::
     let checkpoint = tempfile::tempdir()?;
     movie::tests::checkpoint(checkpoint.path(), true)?;
     movie::retain(
-        checkpoint.path(),
         &directory,
-        movie::inspect(checkpoint.path())?.unwrap(),
+        movie::open(checkpoint.path())?.unwrap(),
         Moment::from_millis(1000),
     )?;
     let destination = root.path().join("video.zip");

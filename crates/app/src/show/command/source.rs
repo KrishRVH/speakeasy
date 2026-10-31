@@ -105,10 +105,7 @@ impl Command {
                 ),
             }
         }
-        anyhow::ensure!(
-            !video || (single && !crop),
-            "--video supports show frame without --crop; video has no annotation geometry"
-        );
+        anyhow::ensure!(!video || single, "--video supports show frame");
         anyhow::ensure!(
             occurrence.is_none() || matches!(focus, Some(Query::Phrase(_))),
             "--match requires --phrase"

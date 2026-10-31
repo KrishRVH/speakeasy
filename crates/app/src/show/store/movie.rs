@@ -1,6 +1,8 @@
 //! Silent movie storage and original-session timing. The container supplies surviving coverage;
 //! checkpoint metadata supplies only its origin, completion receipt, and annotation horizon.
 
+pub(in crate::show::store) mod geometry;
+
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read as _, Seek as _, Write as _},
@@ -10,23 +12,27 @@ use std::{
 
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
-use speakeasy_show::{Moment, MoviePrefix};
+use speakeasy_show::{Image, Moment, MoviePrefix, Rect, locate::PixelRect};
 
 use super::{checkpoint, recall};
 
 pub(crate) const FILE: &str = "recording.mp4";
 pub(crate) const HEADER: &str = "recording.json";
-pub(super) const HEADER_LIMIT: u64 = 4 << 10;
+pub(super) const HEADER_LIMIT: u64 = 4 << 20;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Metadata {
     version: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    identity: Option<[u8; 16]>,
     pub origin_ms: u64,
     pub size: [u32; 2],
     pub finished: Option<Finished>,
     /// Filled during publication; absent in a live checkpoint.
     pub coverage: Option<Coverage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry: Option<geometry::Geometry>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -54,7 +60,7 @@ impl Metadata {
         started: Instant,
         at: Instant,
         size: [u32; 2],
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<(Self, geometry::Writing)> {
         let origin = at
             .checked_duration_since(started)
             .context("Movie began before its session")?;
@@ -68,19 +74,25 @@ impl Metadata {
                     && edge.is_multiple_of(2)),
             "Movie canvas is invalid"
         );
+        let mut identity = [0; 16];
+        getrandom::fill(&mut identity)
+            .map_err(|_unavailable| anyhow::anyhow!("Cannot create a private movie identifier"))?;
+        let geometry = geometry::Writing::create(directory, identity, size)?;
         let metadata = Self {
-            version: 1,
+            version: 2,
+            identity: Some(identity),
             origin_ms: u64::try_from(origin.as_millis())?,
             size,
             finished: None,
             coverage: None,
+            geometry: None,
         };
         let bytes = serde_json::to_vec(&metadata)?;
         let mut file = File::create_new(directory.join(HEADER))?;
         file.write_all(&bytes)?;
         file.sync_all()?;
         checkpoint::sync_directory(directory)?;
-        Ok(metadata)
+        Ok((metadata, geometry))
     }
 
     pub(in crate::show::store) fn finish(
@@ -113,8 +125,13 @@ impl Metadata {
     }
 
     fn replace(&self, directory: &Path) -> anyhow::Result<()> {
+        let bytes = serde_json::to_vec(self)?;
+        anyhow::ensure!(
+            u64::try_from(bytes.len())? <= HEADER_LIMIT,
+            "Movie metadata exceeds its size limit"
+        );
         let mut staging = tempfile::NamedTempFile::new_in(directory)?;
-        staging.write_all(&serde_json::to_vec(self)?)?;
+        staging.write_all(&bytes)?;
         staging.as_file().sync_all()?;
         staging
             .persist(directory.join(HEADER))
@@ -133,8 +150,17 @@ impl Metadata {
         } else {
             ""
         };
+        let geometry = if self
+            .geometry
+            .as_ref()
+            .is_some_and(|geometry| geometry.through < coverage.frames)
+        {
+            " Some frames have no saved crop geometry; export those frames uncropped."
+        } else {
+            ""
+        };
         Ok(format!(
-            "\n\nSilent video: `{}`. Recorded session coverage: {}–{} ms. {partial}The video has no narration audio or drawn annotations; its last image may be held through the end. Marks and narration in show.json are documented through {} ms.\n",
+            "\n\nSilent video: `{}`. Recorded session coverage: {}–{} ms. {partial}The video has no narration audio or drawn annotations; its last image may be held through the end. Marks and narration in show.json are documented through {} ms.{geometry}\n",
             path.display(),
             self.origin_ms,
             coverage.end_ms,
@@ -153,10 +179,35 @@ pub(crate) struct Reading {
     pub movie: Inspected,
 }
 
+pub(crate) struct Frame {
+    pub at: Moment,
+    pub image: Image,
+    pub crop_px: Option<PixelRect>,
+}
+
+pub(crate) struct Crop {
+    pub bounds: Rect,
+    pub part: Rect,
+}
+
+pub(crate) fn decoder_time(at: Duration) -> Duration {
+    // Windows video decoding reports sample times in 100 ns units.
+    at.saturating_sub(Duration::from_nanos(u64::from(at.subsec_nanos() % 100)))
+}
+
 impl Reading {
     pub(crate) fn open(directory: &Path, annotations: Moment) -> anyhow::Result<Self> {
-        let reading = open(directory)?
-            .context("This Show has no retained video; use its source frames instead")?;
+        Self::optional(directory, annotations)?
+            .context("This Show has no retained video; use its source frames instead")
+    }
+
+    pub(in crate::show::store) fn optional(
+        directory: &Path,
+        annotations: Moment,
+    ) -> anyhow::Result<Option<Self>> {
+        let Some(reading) = open(directory)? else {
+            return Ok(None);
+        };
         let coverage = reading
             .movie
             .metadata
@@ -167,14 +218,28 @@ impl Reading {
             coverage.annotations_through_ms == annotations.as_millis(),
             "Movie annotation coverage differs from the Show"
         );
-        Ok(reading)
+        Ok(Some(reading))
+    }
+
+    pub(in crate::show::store) fn copy_to(
+        &mut self,
+        out: &mut impl std::io::Write,
+        limit: u64,
+    ) -> anyhow::Result<u64> {
+        let bytes = self.movie.prefix.bytes;
+        anyhow::ensure!(bytes <= limit, "Movie exceeds the export size limit");
+        self.file.rewind()?;
+        let copied = std::io::copy(&mut (&mut self.file).take(bytes), out)?;
+        anyhow::ensure!(copied == bytes, "Movie changed during publication");
+        Ok(copied)
     }
 
     pub(crate) fn frame(
         self,
         at: Moment,
+        crop: Option<Crop>,
         cancelled: impl Fn() -> bool,
-    ) -> anyhow::Result<Option<speakeasy_show::SourceFrame>> {
+    ) -> anyhow::Result<Option<Frame>> {
         let metadata = &self.movie.metadata;
         let coverage = metadata
             .coverage
@@ -186,12 +251,15 @@ impl Reading {
         );
         let requested = Duration::from_millis(at.as_millis().saturating_sub(metadata.origin_ms));
         let origin = metadata.origin_ms;
-        let Some(frame) = self.sample(requested, cancelled)? else {
+        let Some(frame) = decode(self.file, &self.movie, requested, cancelled)? else {
             return Ok(None);
         };
-        Ok(Some(speakeasy_show::SourceFrame {
-            at: Moment::from_millis(origin.saturating_add(u64::try_from(frame.at.as_millis())?)),
-            image: speakeasy_show::Image::from_bgra(frame.size[0], frame.size[1], frame.bgra)?,
+        let sampled = frame.at;
+        let (image, crop_px) = geometry::crop(&self.movie, frame, crop)?;
+        Ok(Some(Frame {
+            at: Moment::from_millis(origin.saturating_add(u64::try_from(sampled.as_millis())?)),
+            image,
+            crop_px,
         }))
     }
 
@@ -201,32 +269,41 @@ impl Reading {
         at: Duration,
         cancelled: impl Fn() -> bool,
     ) -> anyhow::Result<Option<speakeasy_platform::MovieFrame>> {
-        anyhow::ensure!(
-            at <= self.movie.prefix.duration,
-            "Requested time is outside the retained video coverage"
-        );
-        let Some(frame) = speakeasy_platform::read_movie_frame(
-            self.file,
-            self.movie.prefix.bytes,
-            self.movie.metadata.size,
-            at,
-            cancelled,
-        )?
-        else {
-            return Ok(None);
-        };
-        anyhow::ensure!(
-            frame.at < self.movie.prefix.duration,
-            "Decoded video sample exceeds its retained coverage"
-        );
-        Ok(Some(frame))
+        decode(self.file, &self.movie, at, cancelled)
     }
+}
+
+fn decode(
+    file: File,
+    movie: &Inspected,
+    at: Duration,
+    cancelled: impl Fn() -> bool,
+) -> anyhow::Result<Option<speakeasy_platform::MovieFrame>> {
+    anyhow::ensure!(
+        at <= movie.prefix.duration,
+        "Requested time is outside the retained video coverage"
+    );
+    let Some(frame) = speakeasy_platform::read_movie_frame(
+        file,
+        movie.prefix.bytes,
+        movie.metadata.size,
+        at,
+        cancelled,
+    )?
+    else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        frame.at < movie.prefix.duration,
+        "Decoded video sample exceeds its retained coverage"
+    );
+    Ok(Some(frame))
 }
 
 pub(super) enum CheckpointMovie {
     Absent,
     Unavailable,
-    Present(Inspected),
+    Present(Reading),
 }
 
 pub(super) fn checkpoint(directory: &Path) -> anyhow::Result<CheckpointMovie> {
@@ -248,11 +325,11 @@ pub(super) fn checkpoint(directory: &Path) -> anyhow::Result<CheckpointMovie> {
         }
         return Ok(CheckpointMovie::Unavailable);
     }
-    match inspect(directory) {
+    match open(directory) {
         Ok(Some(movie)) => Ok(CheckpointMovie::Present(movie)),
         Ok(None) => Ok(CheckpointMovie::Absent),
         Err(error) if matches!(error.downcast_ref::<speakeasy_show::MovieError>(), Some(speakeasy_show::MovieError::NoFragment)) => Ok(CheckpointMovie::Unavailable),
-        Err(error) => Err(error.context(format!("Video cannot be recovered automatically. To save the stills, move recording.mp4 and recording.json out of {} into a private folder, then choose Recover again. Keep those files for repair.", directory.display()))),
+        Err(error) => Err(error.context(format!("Video cannot be recovered automatically. To save the stills, move recording.mp4, recording.json, and any recording.geometry out of {} into a private folder, then choose Recover again. Keep those files for repair.", directory.display()))),
     }
 }
 
@@ -261,7 +338,10 @@ fn read_metadata(directory: &Path) -> anyhow::Result<Metadata> {
     let metadata: Metadata = serde_json::from_slice(&bytes)
         .map_err(|_private_content| anyhow::anyhow!("Movie timing metadata is damaged"))?;
     anyhow::ensure!(
-        metadata.version == 1
+        ((metadata.version == 1 && metadata.identity.is_none() && metadata.geometry.is_none())
+            || (metadata.version == 2
+                && metadata.identity.is_some()
+                && metadata.geometry.is_some() == metadata.coverage.is_some()))
             && metadata.origin_ms
                 < u64::try_from(speakeasy_core::gesture::RECORDING_LIMIT.as_millis())?,
         "Movie timing metadata is unsupported"
@@ -275,7 +355,7 @@ pub(crate) fn inspect(directory: &Path) -> anyhow::Result<Option<Inspected>> {
     Ok(open(directory)?.map(|reading| reading.movie))
 }
 
-fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
+pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
     match fs::symlink_metadata(directory.join(FILE)) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return match fs::symlink_metadata(directory.join(HEADER)) {
@@ -288,7 +368,7 @@ fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
         Ok(_) => {},
     }
     recall::regular_file(directory, FILE, MoviePrefix::FILE_LIMIT)?;
-    let metadata = read_metadata(directory)?;
+    let mut metadata = read_metadata(directory)?;
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(target_os = "windows")]
@@ -359,6 +439,21 @@ fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
             "Saved movie coverage differs from its fragments"
         );
     }
+    if let Some(identity) = metadata.identity {
+        if metadata.coverage.is_none() {
+            metadata.geometry = Some(geometry::recover(
+                directory,
+                identity,
+                metadata.size,
+                prefix.frames,
+            )?);
+        }
+        metadata
+            .geometry
+            .as_ref()
+            .context("Video crop geometry is missing")?
+            .validate(metadata.size, prefix.frames)?;
+    }
     Ok(Some(Reading {
         file,
         movie: Inspected { metadata, prefix },
@@ -366,37 +461,20 @@ fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
 }
 
 pub(crate) fn saved(directory: &Path, annotations: Moment) -> anyhow::Result<Option<Metadata>> {
-    let Some(movie) = inspect(directory)? else {
-        return Ok(None);
-    };
-    let coverage = movie
-        .metadata
-        .coverage
-        .as_ref()
-        .context("Movie has no published coverage")?;
-    anyhow::ensure!(
-        coverage.annotations_through_ms == annotations.as_millis(),
-        "Movie annotation coverage differs from the Show"
-    );
-    Ok(Some(movie.metadata))
+    Ok(Reading::optional(directory, annotations)?.map(|reading| reading.movie.metadata))
 }
 
 /// The source checkpoint stays locked throughout this operation. A valid movie's copy/sync
 /// failure aborts publication; its only surviving copy must remain recoverable.
 pub(in crate::show::store) fn retain(
-    source: &Path,
     destination: &Path,
-    mut movie: Inspected,
+    mut reading: Reading,
     annotations: Moment,
 ) -> anyhow::Result<Metadata> {
-    let input = File::open(source.join(FILE))?;
     let mut output = File::create_new(destination.join(FILE))?;
-    let copied = std::io::copy(&mut input.take(movie.prefix.bytes), &mut output)?;
-    anyhow::ensure!(
-        copied == movie.prefix.bytes,
-        "Movie changed during publication"
-    );
+    reading.copy_to(&mut output, MoviePrefix::FILE_LIMIT)?;
     output.sync_all()?;
+    let mut movie = reading.movie;
     let end_ms = movie
         .metadata
         .origin_ms

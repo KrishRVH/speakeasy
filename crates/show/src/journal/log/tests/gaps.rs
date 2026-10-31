@@ -4,6 +4,7 @@ use super::*;
 fn pointer_gaps_survive_replay_without_joining_actions_ink_or_pins() {
     let at = Moment::from_millis;
     let pointer = |ms, x, drawing, pressed| TakeEvent::Pointer {
+        part: None,
         at: at(ms),
         point: Point::new(x, 0.5),
         drawing,

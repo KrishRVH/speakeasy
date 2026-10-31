@@ -12,6 +12,7 @@ fn fixture() -> Value {
         "surface": {"width": 800, "height": 600},
         "strokes": [[[0.2, 0.3, 100], [0.4, 0.3, 200]]],
         "pins": [], "actions": [],
+        "spaces":{"strokes":[{"generation":1,"part":[0,0,1,1]}],"pins":[]},
         "narration": {"words": [{"span": [100, 200], "text": "PRIVATE_SPEECH"}]},
         "marks": [{"number": 1, "shape": "underline", "strokes": [0, 1],
             "span": [100, 200], "bounds": [0.2, 0.3, 0.4, 0.3]}],
@@ -53,6 +54,12 @@ fn broken_references_and_order_are_rejected() {
         })
         .collect();
     let faults = [
+        ("/spaces", json!({"strokes": [], "pins": [null]})),
+        ("/spaces", json!({"strokes": [null, null], "pins": []})),
+        (
+            "/spaces",
+            json!({"strokes": [{"generation":1,"part":[0,0,2,1]}], "pins": []}),
+        ),
         ("/keyframes", json!([])),
         ("/keyframes", json!(oversized)),
         ("/keyframes/0/index", json!(0)),

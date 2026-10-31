@@ -6,6 +6,7 @@ use std::{fmt, path::Path, time::Duration};
 use speakeasy_show::Moment;
 
 use super::library::{Frame, Mode};
+use crate::show::store::movie::decoder_time;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Origin {
@@ -36,11 +37,6 @@ impl Relation {
             std::cmp::Ordering::Greater => Self::Later(sampled.saturating_sub(requested)),
         }
     }
-}
-
-pub(super) fn decoder_time(at: Duration) -> Duration {
-    // Windows video decoding reports sample times in 100 ns units.
-    at.saturating_sub(Duration::from_nanos(u64::from(at.subsec_nanos() % 100)))
 }
 
 impl fmt::Display for Relation {

@@ -330,10 +330,16 @@ pub(crate) fn pointer(target: Target, _: crate::MacShortcut) -> Option<PointerSa
 }
 
 fn pointer_part(target: Target) -> Option<Part> {
-    match target.region {
+    if describe(target.display.native.handle().0).ok()? != target.display {
+        return None;
+    }
+    let part = match target.region {
         Region::Window(window, _) => window_part(target.display.native, window).ok().flatten(),
         _ => Some(target.part()),
-    }
+    }?;
+    let [width, height] = target.display.native.extent();
+    let size = [u32::try_from(width).ok()?, u32::try_from(height).ok()?];
+    Some(part_of_box(pixel_box(part, size), size))
 }
 
 fn pointer_location() -> Option<POINT> {
@@ -469,7 +475,7 @@ impl Pacer {
 
 /// A capture of one display, all of it or a part, polled on the capture thread.
 struct Capture {
-    display: Display,
+    display: screen::Display,
     /// The window whose place frames follow, when recording one.
     followed: Option<Window>,
     /// The part of the display frames show: fixed for an area, following a window.
@@ -478,8 +484,6 @@ struct Capture {
     content: [u32; 2],
     device: ID3D11Device,
     context: ID3D11DeviceContext,
-    /// The same device as the Windows Runtime sees it, for recreating the pool.
-    direct3d: IDirect3DDevice,
     item: GraphicsCaptureItem,
     pool: Direct3D11CaptureFramePool,
     session: GraphicsCaptureSession,
@@ -541,13 +545,12 @@ impl Capture {
             Region::Whole | Region::Area(_) => None,
         };
         Ok(Self {
-            display,
+            display: target.display,
             followed,
             part,
             content: content_size,
             device,
             context,
-            direct3d,
             item,
             pool,
             session,
@@ -565,6 +568,9 @@ impl Capture {
         if self.item_closed.is_closed() {
             return Err(Failure::DisplayLost);
         }
+        if !describe(self.display.native.handle().0).is_ok_and(|current| current == self.display) {
+            return Err(Failure::DisplayChanged);
+        }
         // SAFETY: asks a live device whether it was removed.
         if unsafe { self.device.GetDeviceRemovedReason() }.is_err() {
             return Err(Failure::DeviceLost);
@@ -579,13 +585,8 @@ impl Capture {
         let size = frame.ContentSize()?;
         let content = pixels(size);
         if content != self.content {
-            // The display changed resolution or rotation: this frame fills only part of its
-            // surface, and the pending one belongs to the pool being replaced.
             self.pending = None;
-            self.pool
-                .Recreate(&self.direct3d, POOL_FORMAT, BUFFERS, size)?;
-            self.content = content;
-            return Ok(false);
+            return Err(Failure::DisplayChanged);
         }
         let captured = composed_at(frame.SystemRelativeTime()?);
         if captured < clean_from {
@@ -640,7 +641,7 @@ impl Capture {
         if let Some(window) = self.followed {
             // An unreadable frame ends the Show as closed rather than read a place the window may
             // have left.
-            self.part = window_part(self.display, window)?.ok_or(WindowGone::Closed)?;
+            self.part = window_part(self.display.native, window)?.ok_or(WindowGone::Closed)?;
         }
         Ok(self.part)
     }
@@ -744,6 +745,8 @@ enum Failure {
     Exposed,
     /// The display was disconnected or turned off.
     DisplayLost,
+    /// Display geometry changed, invalidating pointer and capture coordinate spaces.
+    DisplayChanged,
     /// The graphics driver restarted or the adapter went away.
     DeviceLost,
     /// Windows refused a capture step.
@@ -787,6 +790,9 @@ impl fmt::Display for Failure {
             Self::DisplayLost => {
                 f.write_str("The recorded display was disconnected. Start the Show again.")
             },
+            Self::DisplayChanged => f.write_str(
+                "The recorded display changed size, position, or scale. Start the Show again.",
+            ),
             Self::DeviceLost => f.write_str("The graphics driver restarted. Start the Show again."),
             Self::Refused(error) => write!(
                 f,

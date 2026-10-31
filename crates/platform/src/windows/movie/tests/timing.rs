@@ -23,14 +23,14 @@ fn irregular_captures_never_appear_before_their_capture_time() -> anyhow::Result
                 .write(
                     &frame(width, height, 40 + u8::try_from(index)? * 20),
                     Duration::from_millis(at),
-                    &|| false,
+                    &mut || false,
                 )?
                 .is_continue()
         );
     }
     assert!(
         encoder
-            .advance(End::Before(Duration::from_secs(3)), &|| false)?
+            .advance(End::Before(Duration::from_secs(3)), &mut || false)?
             .is_continue()
     );
     encoder.finish()?;
@@ -74,21 +74,27 @@ fn pending_images_and_quiet_output_keep_capture_and_presentation_distinct() -> a
         let mut encoder = Encoder::open(&path, canvas::Canvas::new([320, 240])?, FILE_LIMIT)?;
         assert!(
             encoder
-                .write(&frame(320, 240, 40), Duration::ZERO, &|| false)?
+                .write(&frame(320, 240, 40), Duration::ZERO, &mut || false)?
                 .is_continue()
         );
         for (ms, shade) in [(31, 80), (32, 120)] {
             assert!(
                 encoder
-                    .write(&frame(320, 240, shade), Duration::from_millis(ms), &|| {
-                        false
-                    })?
+                    .write(
+                        &frame(320, 240, shade),
+                        Duration::from_millis(ms),
+                        &mut || { false }
+                    )?
                     .is_continue()
             );
         }
         assert!(
             encoder
-                .write(&frame(320, 240, 200), Duration::from_millis(30), &|| false)
+                .write(
+                    &frame(320, 240, 200),
+                    Duration::from_millis(30),
+                    &mut || false
+                )
                 .is_err()
         );
         assert_eq!(encoder.coverage().unwrap().last, Duration::ZERO);
@@ -96,7 +102,7 @@ fn pending_images_and_quiet_output_keep_capture_and_presentation_distinct() -> a
         if !stop {
             assert!(
                 encoder
-                    .advance(End::Through(Duration::from_millis(34)), &|| false)?
+                    .advance(End::Through(Duration::from_millis(34)), &mut || false)?
                     .is_continue()
             );
             assert_eq!(encoder.coverage().unwrap().last, Duration::from_millis(32));
@@ -123,13 +129,13 @@ fn pending_images_and_quiet_output_keep_capture_and_presentation_distinct() -> a
     let mut encoder = Encoder::open(&path, canvas::Canvas::new([320, 240])?, FILE_LIMIT)?;
     assert!(
         encoder
-            .write(&frame(320, 240, 80), Duration::ZERO, &|| false)?
+            .write(&frame(320, 240, 80), Duration::ZERO, &mut || false)?
             .is_continue()
     );
     for second in 1..=3 {
         assert!(
             encoder
-                .advance(End::Through(Duration::from_secs(second)), &|| false)?
+                .advance(End::Through(Duration::from_secs(second)), &mut || false)?
                 .is_continue()
         );
     }
@@ -171,17 +177,13 @@ fn cancelled_catchup_keeps_its_committed_output_without_backfilling_on_close() -
     let mut encoder = Encoder::open(&path, canvas::Canvas::new([320, 240])?, FILE_LIMIT)?;
     assert!(
         encoder
-            .write(&frame(320, 240, 50), Duration::ZERO, &|| false)?
+            .write(&frame(320, 240, 50), Duration::ZERO, &mut || false)?
             .is_continue()
     );
-    #[expect(
-        clippy::disallowed_types,
-        reason = "The immutable cancellation callback counts observations on this test's native thread"
-    )]
-    let checks = std::cell::Cell::new(0_u32);
-    let result = encoder.advance(End::Through(Duration::from_secs(1)), &|| {
-        let count = checks.get();
-        checks.set(count.saturating_add(1));
+    let mut checks = 0_u32;
+    let result = encoder.advance(End::Through(Duration::from_secs(1)), &mut || {
+        let count = checks;
+        checks = checks.saturating_add(1);
         count == 3
     })?;
     assert!(result.is_break());
@@ -218,6 +220,14 @@ async fn a_stalled_writer_reports_the_held_prefix_even_without_a_new_capture() -
     let Some(crate::MovieEvent::Started { at, accepted, .. }) = control.next().await else {
         anyhow::bail!("Synthetic movie did not request its origin");
     };
+    accepted.send(true).await?;
+    let Some(crate::MovieEvent::Geometry {
+        sample, accepted, ..
+    }) = control.next().await
+    else {
+        anyhow::bail!("Synthetic movie did not request its content rectangle");
+    };
+    assert_eq!(sample, 0);
     accepted.send(true).await?;
     native.join().await;
     let Some(crate::MovieEvent::Finished {

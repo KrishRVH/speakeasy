@@ -33,6 +33,30 @@ pub(super) enum End {
     Through(Duration),
 }
 
+pub(super) trait Observer {
+    fn cancelled(&mut self) -> bool;
+
+    /// Acknowledge durable geometry before this sample may be submitted. False means cancelled;
+    /// an error means persistence failed and the caller must report incomplete video.
+    fn geometry(
+        &mut self,
+        sample: u32,
+        content: [u32; 4],
+        part: crate::Part,
+    ) -> anyhow::Result<bool>;
+}
+
+#[cfg(test)]
+impl<F: FnMut() -> bool> Observer for F {
+    fn cancelled(&mut self) -> bool {
+        self()
+    }
+
+    fn geometry(&mut self, _: u32, _: [u32; 4], _: crate::Part) -> anyhow::Result<bool> {
+        Ok(true)
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct Coverage {
     pub last: Duration,
@@ -48,6 +72,7 @@ pub(super) struct Encoder {
     synced: Duration,
     capture: Option<Duration>,
     coverage: Option<Coverage>,
+    geometry: Option<([u32; 4], crate::Part)>,
     _foundation: Foundation,
 }
 
@@ -103,6 +128,7 @@ impl Encoder {
             synced: Duration::ZERO,
             capture: None,
             coverage: None,
+            geometry: None,
             _foundation: foundation,
         })
     }
@@ -111,7 +137,7 @@ impl Encoder {
         &mut self,
         frame: &Frame,
         at: Duration,
-        cancelled: &dyn Fn() -> bool,
+        observer: &mut impl Observer,
     ) -> anyhow::Result<ControlFlow<()>> {
         let at = Duration::from_nanos(u64::try_from(at.as_nanos() / 100)?.saturating_mul(100));
         ensure!(
@@ -123,18 +149,18 @@ impl Encoder {
         );
         // Contiguous input prevents native frame-rate conversion from filling gaps with a
         // future image. Painting is safe only after every earlier grid point has been submitted.
-        if self.advance(End::Before(at), cancelled)?.is_break() || cancelled() {
+        if self.advance(End::Before(at), observer)?.is_break() || observer.cancelled() {
             return Ok(ControlFlow::Break(()));
         }
         self.canvas.paint(frame)?;
         self.capture = Some(at);
-        self.advance(End::Through(at), cancelled)
+        self.advance(End::Through(at), observer)
     }
 
     pub(super) fn advance(
         &mut self,
         end: End,
-        cancelled: &dyn Fn() -> bool,
+        observer: &mut impl Observer,
     ) -> anyhow::Result<ControlFlow<()>> {
         let Some(capture) = self.capture else {
             return Ok(ControlFlow::Continue(()));
@@ -146,7 +172,7 @@ impl Encoder {
         let first = self.coverage.map_or(0, |coverage| coverage.frames);
         let mut index = first;
         while index < FRAME_LIMIT && time(index).as_nanos() / 100 < ticks {
-            if cancelled() {
+            if observer.cancelled() {
                 return Ok(ControlFlow::Break(()));
             }
             ensure!(
@@ -155,6 +181,14 @@ impl Encoder {
             );
             let at = time(index);
             let through = time(index.saturating_add(1));
+            let content = self.canvas.content();
+            let part = self.canvas.part();
+            if self.geometry != Some((content, part)) {
+                if !observer.geometry(index, content, part)? || observer.cancelled() {
+                    return Ok(ControlFlow::Break(()));
+                }
+                self.geometry = Some((content, part));
+            }
             submit(
                 &self.writer,
                 self.canvas.held(),

@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use encoder::{Encoder, End};
+use encoder::{Encoder, End, Observer};
 
 use crate::{Frame, MovieTarget};
 
@@ -38,6 +38,26 @@ pub(super) struct Recording {
     failed: bool,
     // Last to drop: a receiver observing closure may immediately unlock or delete the checkpoint.
     target: MovieTarget,
+}
+
+struct Publication<'a> {
+    target: &'a MovieTarget,
+    stopping: &'a async_channel::Receiver<Infallible>,
+}
+
+impl Observer for Publication<'_> {
+    fn cancelled(&mut self) -> bool {
+        self.target.cancelled() || self.stopping.is_closed()
+    }
+
+    fn geometry(
+        &mut self,
+        sample: u32,
+        content: [u32; 4],
+        part: crate::Part,
+    ) -> anyhow::Result<bool> {
+        self.target.geometry(sample, content, part, self.stopping)
+    }
 }
 
 impl Movie {
@@ -161,9 +181,15 @@ impl Recording {
             return Ok(true);
         }
         if let Some(encoder) = &mut self.encoder {
-            let target = &self.target;
             if encoder
-                .write(frame, at, &|| target.cancelled() || stopping.is_closed())?
+                .write(
+                    frame,
+                    at,
+                    &mut Publication {
+                        target: &self.target,
+                        stopping,
+                    },
+                )?
                 .is_break()
             {
                 return Ok(false);
@@ -186,7 +212,7 @@ impl Recording {
                         now.min(target.deadline())
                             .saturating_duration_since(self.first),
                     ),
-                    &|| target.cancelled() || stopping.is_closed(),
+                    &mut Publication { target, stopping },
                 )?
                 .is_continue());
         }

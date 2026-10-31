@@ -267,16 +267,12 @@ fn focus_options_reject_conflicts_and_unbounded_work() {
         let error = Command::parse(false, args).unwrap_err();
         assert!(!format!("{error:#}").contains("PRIVATE"));
     }
-    for options in [
-        vec!["show", "--video", "--video", "--at", "1", "--out", "x.png"],
-        vec!["show", "--video", "--mark", "1", "--crop", "--out", "x.png"],
-    ] {
-        assert!(Command::parse(true, options.into_iter().map(OsString::from)).is_err());
-    }
+    let repeated = ["show", "--video", "--video", "--at", "1", "--out", "x.png"];
+    assert!(Command::parse(true, repeated.into_iter().map(OsString::from)).is_err());
     assert!(
         Command::parse(
             true,
-            ["show", "--video", "--at", "1", "--out", "x.png"]
+            ["show", "--video", "--mark", "1", "--crop", "--out", "x.png"]
                 .into_iter()
                 .map(OsString::from)
         )

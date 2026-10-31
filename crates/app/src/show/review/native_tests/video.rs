@@ -119,8 +119,11 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
     let served = cx
         .background_executor()
         .spawn(async move {
-            movie::Reading::open(&path, speakeasy_show::Moment::from_millis(1000))?
-                .frame(speakeasy_show::Moment::from_millis(284), || false)
+            movie::Reading::open(&path, speakeasy_show::Moment::from_millis(1000))?.frame(
+                speakeasy_show::Moment::from_millis(284),
+                None,
+                || false,
+            )
         })
         .await?
         .context("Synthetic retrieval was cancelled")?;

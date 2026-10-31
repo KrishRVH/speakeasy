@@ -6,7 +6,7 @@ use super::{
     record::{Cursor, emit_record, payload, require},
     tiles,
 };
-use crate::{Ending, Image, Moment, Point, Recording, Signature, Size, Span, Tracker};
+use crate::{Ending, Image, Moment, Point, Recording, Rect, Signature, Size, Span, Tracker};
 
 const MAGIC: &[u8; 8] = b"SPKLOG01";
 const DURATION_MS: u64 = 360_000;
@@ -23,6 +23,8 @@ pub enum TakeEvent {
         at: Moment,
         /// Position normalized to the current captured surface.
         point: Point,
+        /// Display rectangle observed with this pointer. Legacy samples leave it unknown.
+        part: Option<Rect>,
         /// Shift is held without taking input away from the focused app.
         drawing: bool,
         /// The primary pointer button is down.
@@ -148,11 +150,16 @@ impl Take {
             TakeEvent::Pointer {
                 at,
                 point,
+                part,
                 drawing,
                 pressed,
             } => {
                 valid_time(*at)?;
                 require(point.is_finite(), "checkpoint pointer is not finite")?;
+                require(
+                    self.tracker.locate(*part),
+                    "checkpoint pointer geometry is invalid",
+                )?;
                 self.latest = self.latest.max(*at);
                 self.tracker.observe(*at, *point, *drawing, *pressed);
             },
@@ -307,6 +314,7 @@ impl Log {
             TakeEvent::Pointer {
                 at,
                 point,
+                part,
                 drawing,
                 pressed,
             } => {
@@ -315,7 +323,16 @@ impl Log {
                 data.extend_from_slice(&point.y.to_le_bytes());
                 data.push(u8::from(*drawing));
                 data.push(u8::from(*pressed));
-                2
+                if let Some(part) = part {
+                    data.extend(
+                        [part.left, part.top, part.right, part.bottom]
+                            .into_iter()
+                            .flat_map(f32::to_le_bytes),
+                    );
+                    7
+                } else {
+                    2
+                }
             },
             TakeEvent::Pin(span) => {
                 data.extend_from_slice(&span.start().as_millis().to_le_bytes());
@@ -380,7 +397,7 @@ impl Log {
                 width: f32::from_le_bytes(data.take()?),
                 height: f32::from_le_bytes(data.take()?),
             }),
-            2 => TakeEvent::Pointer {
+            2 | 7 => TakeEvent::Pointer {
                 at: Moment::from_millis(data.wide()?),
                 point: Point::new(
                     f32::from_le_bytes(data.take()?),
@@ -388,6 +405,16 @@ impl Log {
                 ),
                 drawing: boolean(&mut data)?,
                 pressed: boolean(&mut data)?,
+                part: if kind == 7 {
+                    Some(Rect::from([
+                        f32::from_le_bytes(data.take()?),
+                        f32::from_le_bytes(data.take()?),
+                        f32::from_le_bytes(data.take()?),
+                        f32::from_le_bytes(data.take()?),
+                    ]))
+                } else {
+                    None
+                },
             },
             3 => TakeEvent::Pin(Span::new(
                 Moment::from_millis(data.wide()?),

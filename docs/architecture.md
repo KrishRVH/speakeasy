@@ -332,43 +332,59 @@ module unless a test file is named.
   observations and queue overflow produce explicit gaps, with one lane slot reserved for their
   delivery. Gaps preserve known ink, discard incomplete clicks and drags, and prevent pins from
   crossing an unobserved interval. Finishing drains observations through the chosen end after the
-  producers stop; teardown adds no annotations. Checkpoint replay preserves these same gaps.
-  Geometry, overlay timing, and the area drag run on every host; native capture is opt-in, and
-  window lookup and the picker's clicks need native acceptance. On Windows, an opt-in acceptance
-  test stops an owned window's capture as it hides, minimizes, cloaks, moves away, and closes. The
+  producers stop; teardown adds no annotations. Checkpoint replay preserves these same gaps. Pointer
+  events also carry their source display rectangle. The tracker retains one coordinate-space proof
+  per stroke and pin: mixed strokes and groups across resizes or gaps have none. A delayed pin uses
+  the actual pointer point’s proof; stroke cuts preserve the carried joint’s proof. Older pointer
+  records remain readable with unknown provenance. Geometry, overlay timing, and the area drag run
+  on every host; native capture is opt-in, and window lookup and the picker's clicks need native
+  acceptance. On Windows, an opt-in acceptance test stops an owned window's capture as it hides,
+  minimizes, cloaks, moves away, and closes. The
   [movie adapter](../crates/platform/src/windows/movie.rs) writes silent H.264 fragments from the
   same admitted, cropped Windows frames. Its non-cloneable [lease](../crates/platform/src/movie.rs)
   waits for a durable origin acknowledgment before opening the file and closes only after native
   file handles release. It bounds its canvas to 2560 pixels per edge, its reported native input
   queue to 64 MiB, and actual file writes to 384 MiB. Those bounds do not cover memory allocated
-  internally by the system codec. Resized windows fit inside a cleared fixed canvas. An explicit 30
-  Hz clock submits the latest eligible capture and holds it through quiet periods; contiguous input
-  prevents the native converter from filling a gap with a future image. Captures sharing an
-  unsubmitted tick coalesce. Every read image reaches the movie before quiet advancement, including
-  images read for the still lane. Cancellation is checked between submissions, and a catch-up burst
-  stops after 60 samples instead of monopolizing the capture thread. A failure retains the committed
-  output count and presentation horizon separately from the last capture time. Finalization adds no
-  samples. The original session deadline bounds capture and held output. Windows Shows save this
-  video beside their sampled lossless frames; Mac Shows currently retain only sampled frames.
-  [show/src/movie.rs](../crates/show/src/movie.rs) validates bounded, single-track fragment metadata
-  and returns only the complete prefix. It checks sample byte ranges and timing, not compressed
-  picture decoding. [store/movie.rs](../crates/app/src/show/store/movie.rs) copies that prefix
-  before publication commits, records the separate annotation horizon, and checks finalized native
-  timing against the fragments. Failed copy or sync preserves the checkpoint. A missing or
+  internally by the system codec. Resized windows fit inside a cleared fixed canvas. Display size,
+  position, or scale changes end capture, since the pointer coordinate grid is no longer valid. An
+  explicit 30 Hz clock submits the latest eligible capture and holds it through quiet periods;
+  contiguous input prevents the native converter from filling a gap with a future image. Captures
+  sharing an unsubmitted tick coalesce. Before presenting a changed content or source rectangle, the
+  encoder waits for its durable, checksummed geometry receipt. The first receipt starts at sample
+  zero; coalesced inputs never create unpresented layouts. Cancellation after acceptance still
+  prevents submission; failed persistence reports a video failure. Every read image reaches the
+  movie before quiet advancement, including images read for the still lane. Cancellation is checked
+  between submissions, and a catch-up burst stops after 60 samples instead of monopolizing the
+  capture thread. A failure retains the committed output count and presentation horizon separately
+  from the last capture time. Finalization adds no samples. The original session deadline bounds
+  capture and held output. Windows Shows save this video beside their sampled lossless frames; Mac
+  Shows currently retain only sampled frames. [show/src/movie.rs](../crates/show/src/movie.rs)
+  validates bounded, single-track fragment metadata and returns only the complete prefix. It checks
+  sample byte ranges and timing, not compressed picture decoding.
+  [store/movie.rs](../crates/app/src/show/store/movie.rs) copies that prefix from the validated
+  handle before publication commits, records the separate annotation horizon, and checks finalized
+  native timing against the fragments. Failed copy or sync preserves the checkpoint. A missing or
   incomplete first fragment permits still-only publication with an explicit video-loss notice; other
   damaged video stays recoverable with a concrete manual remedy. Saved-bundle inspection and export
-  remain strict. The viewer offers Windows video scrubbing and opens playback in the system player;
-  its marks and narration remain separate from the video pixels. Explicit `show frame --video`
-  queries use the [native reader](../crates/platform/src/windows/movie/read.rs) on Windows.
-  Validation and decoding share one open file with writes denied. The synchronous reader releases
-  its decoder and native I/O before returning; cancellation is checked between native calls. It
-  checks canvas and buffer bounds and returns top-down opaque BGRA with the actual decoded
-  timestamp. The [video command](../crates/app/src/show/command/source/video.rs) reports
-  session-relative time and separate annotation coverage, including recovered tails. It refuses
-  crops until timed content geometry is available. Opt-in synthetic checks cover seek direction,
-  orientation, cancellation, file replacement, and exports beyond the annotation journal. Synthetic
-  encoder checks decode irregular captures sample by sample, reject future images, and exercise
-  quiet fragments, same-tick coalescing, cancellation, and partial progress after a stall.
+  remain strict. A sparse geometry table is published inside versioned movie metadata; the bounded
+  checkpoint journal stays private. A random identifier pairs the header with that journal; it does
+  not authenticate MP4 bytes. A damaged journal retains geometry only through the last complete
+  change’s first sample, clipping against surviving video after computing this bound. Missing
+  geometry preserves uncropped video. ZIP export also copies the validated handle and metadata
+  snapshot. The viewer offers Windows video scrubbing and opens playback in the system player; its
+  marks and narration remain separate from the video pixels. Explicit `show frame --video` queries
+  use the [native reader](../crates/platform/src/windows/movie/read.rs) on Windows. Validation and
+  decoding share one open file with writes denied. The synchronous reader releases its decoder and
+  native I/O before returning; cancellation is checked between native calls. It checks canvas and
+  buffer bounds and returns top-down opaque BGRA with the actual decoded timestamp. The
+  [video command](../crates/app/src/show/command/source/video.rs) reports session-relative time and
+  separate annotation coverage, including recovered tails. It refuses crops unless the actual
+  decoded sample’s saved source rectangle matches the mark’s coordinate proof. Crops expand within
+  the fitted content, with output coordinates reported in the full canvas. Legacy videos remain
+  available uncropped. Opt-in synthetic checks cover seek direction, orientation, cancellation, file
+  replacement, and exports beyond the annotation journal. Synthetic encoder checks decode irregular
+  captures sample by sample, reject future images, and exercise quiet fragments, same-tick
+  coalescing, cancellation, and partial progress after a stall.
 - **Scripts and packaging**: [scripts/](../scripts) and [packaging/](../packaging) profile, check,
   package, and launch the app, [app/build.rs](../crates/app/build.rs) embeds the Windows resources,
   and `mise run hygiene` runs [check_repository.py](../scripts/check_repository.py).

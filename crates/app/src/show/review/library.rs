@@ -176,7 +176,8 @@ impl Detail {
         let index = self
             .frames
             .partition_point(|frame| {
-                super::navigation::decoder_time(frame.presentation()) <= at.since(Moment::START)
+                crate::show::store::movie::decoder_time(frame.presentation())
+                    <= at.since(Moment::START)
             })
             .saturating_sub(1);
         Some((

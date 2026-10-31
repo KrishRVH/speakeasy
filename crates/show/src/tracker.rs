@@ -20,6 +20,11 @@ const MOST_STROKE_POINTS: usize = 2_400;
 #[derive(Debug)]
 pub struct Tracker {
     surface: Size,
+    space: Option<crate::recording::spaces::Space>,
+    generation: Option<u64>,
+    drawn_space: Option<crate::recording::spaces::Space>,
+    last_drawn_space: Option<crate::recording::spaces::Space>,
+    spaces: crate::Spaces,
     /// Where the pointer was last seen.
     pointer: Option<Point>,
     drawing: Vec<InkPoint>,
@@ -64,6 +69,14 @@ impl Tracker {
     pub const fn new(surface: Size) -> Self {
         Self {
             surface,
+            space: None,
+            generation: Some(0),
+            drawn_space: None,
+            last_drawn_space: None,
+            spaces: crate::Spaces {
+                strokes: Vec::new(),
+                pins: Vec::new(),
+            },
             pointer: None,
             drawing: Vec::new(),
             deliberate: false,
@@ -83,9 +96,25 @@ impl Tracker {
         self.surface = surface;
     }
 
+    pub(crate) fn locate(&mut self, part: Option<crate::Rect>) -> bool {
+        if part.is_some_and(|part| !crate::recording::spaces::valid(part)) {
+            return false;
+        }
+        if self.space.map(|space| space.part) != part {
+            self.generation = self
+                .generation
+                .and_then(|generation| generation.checked_add(1));
+            self.space = part
+                .zip(self.generation)
+                .map(|(part, generation)| crate::recording::spaces::Space { generation, part });
+        }
+        true
+    }
+
     /// Ends known ink and discards gestures that cross an unavailable pointer observation.
     pub fn gap(&mut self, at: Moment) {
         self.lift();
+        self.space = None;
         self.pointer = None;
         self.press = Button::Unknown;
         self.shift_down = None;
@@ -169,6 +198,7 @@ impl Tracker {
                 at: taps.end(),
                 point,
             });
+            self.spaces.pins.push(self.space);
             true
         } else {
             false
@@ -196,6 +226,7 @@ impl Tracker {
             strokes: self.strokes,
             pins: self.pins,
             actions: self.actions,
+            spaces: self.spaces,
             ..Recording::default()
         }
     }
@@ -211,6 +242,12 @@ impl Tracker {
         if self.drawing.len() >= MOST_STROKE_POINTS {
             self.cut();
         }
+        if self.drawing.is_empty() {
+            self.drawn_space = self.space;
+        } else if self.drawn_space != self.space {
+            self.drawn_space = None;
+        }
+        self.last_drawn_space = self.space;
         self.deliberate |= self.drawing.first().is_some_and(|first| {
             pixels(self.surface, first.point, ink.point) >= SHORTEST_STROKE_PIXELS
         });
@@ -235,18 +272,24 @@ impl Tracker {
     /// ended, as deliberate as it was.
     fn cut(&mut self) {
         let (joint, deliberate) = (self.drawing.last().copied(), self.deliberate);
+        let space = self.last_drawn_space;
         self.lift();
         self.drawing.extend(joint);
+        self.drawn_space = space;
+        self.last_drawn_space = space;
         self.deliberate = deliberate;
     }
 
     /// Ends the stroke being drawn, keeping it only if it spans enough to be deliberate.
     fn lift(&mut self) {
         let points = mem::take(&mut self.drawing);
+        let space = self.drawn_space.take();
+        self.last_drawn_space = None;
         if mem::take(&mut self.deliberate)
             && let Some(stroke) = Stroke::new(points)
         {
             self.strokes.push(stroke);
+            self.spaces.strokes.push(space);
         }
     }
 

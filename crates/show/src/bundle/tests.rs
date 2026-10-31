@@ -45,6 +45,7 @@ fn show_json_keeps_its_wire_format() {
             ],
             narration: words(&[(100, "Look"), (300, "here.")]),
             narration_lost: None,
+            spaces: crate::Spaces::default(),
         },
         marks: vec![
             Mark {

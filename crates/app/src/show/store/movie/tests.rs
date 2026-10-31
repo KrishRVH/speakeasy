@@ -11,12 +11,13 @@ mod fixture {
 
 pub(in crate::show) fn checkpoint(directory: &Path, truncated: bool) -> anyhow::Result<()> {
     let started = Instant::now();
-    Metadata::begin(
+    let (_metadata, mut geometry) = Metadata::begin(
         directory,
         started,
         started.checked_add(Duration::from_millis(250)).unwrap(),
         [4, 2],
     )?;
+    geometry.record(0, [0, 0, 4, 2], [0.0, 0.0, 1.0, 1.0])?;
     let mut fixture = fixture::movie();
     assert!(fixture.ends[0] > fixture.initialized);
     if truncated {
@@ -32,14 +33,9 @@ fn publication_keeps_only_complete_video_and_separate_annotation_coverage() -> a
     let destination = tempfile::tempdir()?;
     checkpoint(source.path(), true)?;
     let original = fs::read(source.path().join(FILE))?;
-    let inspected = inspect(source.path())?.unwrap();
-    assert!(inspected.prefix.truncated);
-    retain(
-        source.path(),
-        destination.path(),
-        inspected,
-        Moment::from_millis(500),
-    )?;
+    let inspected = open(source.path())?.unwrap();
+    assert!(inspected.movie.prefix.truncated);
+    retain(destination.path(), inspected, Moment::from_millis(500))?;
     let kept = saved(destination.path(), Moment::from_millis(500))?.unwrap();
     let coverage = kept.coverage.unwrap();
     assert_eq!(kept.origin_ms, 250);
@@ -59,9 +55,8 @@ fn lost_video_or_edited_coverage_never_passes_inspection_as_an_ordinary_show() -
     let destination = tempfile::tempdir()?;
     checkpoint(source.path(), false)?;
     let mut metadata = retain(
-        source.path(),
         destination.path(),
-        inspect(source.path())?.unwrap(),
+        open(source.path())?.unwrap(),
         Moment::from_millis(500),
     )?;
     metadata.coverage.as_mut().unwrap().frames += 1;
@@ -73,7 +68,8 @@ fn lost_video_or_edited_coverage_never_passes_inspection_as_an_ordinary_show() -
 }
 
 #[test]
-fn a_short_or_refused_copy_leaves_its_source_available() -> anyhow::Result<()> {
+fn a_refused_copy_preserves_its_source_and_a_replaced_path_cannot_substitute_video()
+-> anyhow::Result<()> {
     let source = tempfile::tempdir()?;
     let destination = tempfile::tempdir()?;
     checkpoint(source.path(), false)?;
@@ -81,23 +77,20 @@ fn a_short_or_refused_copy_leaves_its_source_available() -> anyhow::Result<()> {
     fs::create_dir(destination.path().join(FILE))?;
     assert!(
         retain(
-            source.path(),
             destination.path(),
-            inspect(source.path())?.unwrap(),
+            open(source.path())?.unwrap(),
             Moment::START
         )
         .is_err()
     );
     assert_eq!(fs::read(source.path().join(FILE))?, original);
     fs::remove_dir(destination.path().join(FILE))?;
-    let inspected = inspect(source.path())?.unwrap();
-    File::options()
-        .write(true)
-        .open(source.path().join(FILE))?
-        .set_len(inspected.prefix.bytes - 1)?;
-    assert!(retain(source.path(), destination.path(), inspected, Moment::START).is_err());
-    assert!(!destination.path().join(HEADER).exists());
-    assert!(source.path().join(FILE).exists());
+    let inspected = open(source.path())?.unwrap();
+    fs::rename(source.path().join(FILE), source.path().join("original.mp4"))?;
+    fs::write(source.path().join(FILE), vec![0; original.len()])?;
+    retain(destination.path(), inspected, Moment::START)?;
+    assert_eq!(fs::read(destination.path().join(FILE))?, original);
+    assert!(saved(destination.path(), Moment::START)?.is_some());
     Ok(())
 }
 
@@ -130,9 +123,55 @@ fn malformed_complete_first_fragment_stays_in_its_checkpoint_for_repair() -> any
     assert!(
         error
             .to_string()
-            .contains("move recording.mp4 and recording.json")
+            .contains("move recording.mp4, recording.json, and any recording.geometry")
     );
     assert_eq!(fs::read(path)?, bytes);
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+pub(in crate::show) fn native_geometry_fixture(show: &Path) -> anyhow::Result<()> {
+    native_fixture(show)?;
+    fs::remove_file(show.join(FILE))?;
+    fs::remove_file(show.join(HEADER))?;
+    let fixtures = std::path::PathBuf::from(
+        std::env::var_os("SPEAKEASY_MOVIE_GEOMETRY_DIRECTORY")
+            .context("Choose the synthetic geometry fixture directory")?,
+    );
+    let checkpoint = tempfile::tempdir()?;
+    let started = Instant::now();
+    let (_metadata, mut geometry) = Metadata::begin(
+        checkpoint.path(),
+        started,
+        started.checked_add(Duration::from_millis(250)).unwrap(),
+        [320, 240],
+    )?;
+    for line in fs::read_to_string(fixtures.join("geometry.csv"))?.lines() {
+        let values: Vec<_> = line.split(',').collect();
+        anyhow::ensure!(values.len() == 9, "Synthetic geometry fixture is invalid");
+        geometry.record(
+            values[0].parse()?,
+            [
+                values[1].parse()?,
+                values[2].parse()?,
+                values[3].parse()?,
+                values[4].parse()?,
+            ],
+            [
+                values[5].parse()?,
+                values[6].parse()?,
+                values[7].parse()?,
+                values[8].parse()?,
+            ],
+        )?;
+    }
+    drop(geometry);
+    fs::copy(fixtures.join("geometry.mp4"), checkpoint.path().join(FILE))?;
+    retain(
+        show,
+        open(checkpoint.path())?.unwrap(),
+        Moment::from_millis(1000),
+    )?;
     Ok(())
 }
 

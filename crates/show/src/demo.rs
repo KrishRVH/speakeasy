@@ -398,6 +398,7 @@ fn recording() -> Recording {
         ],
         narration: narration(),
         narration_lost: None,
+        spaces: crate::Spaces::default(),
     }
 }
 

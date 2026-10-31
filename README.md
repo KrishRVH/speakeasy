@@ -119,10 +119,11 @@ Windows Shows also save silent H.264 video in `recording.mp4`, targeting 30 fram
 to 2560 pixels per edge. The video follows the chosen screen, window, or area and the original
 five-minute limit. Resized windows fit inside a fixed canvas; a quiet ending holds the last image.
 The video has no audio or drawn annotations. Its timing file, `recording.json`, records the session
-origin, surviving video coverage, and the separate horizon of marks and narration. Capture or disk
-failure can shorten video coverage. Recovery retains only complete fragments; if none were written,
-the stills save with a video-loss notice. A failed copy of surviving video keeps the checkpoint for
-recovery. Mac Shows currently retain sampled frames only.
+origin, surviving video coverage, timed content rectangles, and the separate horizon of marks and
+narration. Changing the display size, position, or scale ends capture; start a new Show. Capture or
+disk failure can shorten video coverage. Recovery retains only complete fragments; if none were
+written, the stills save with a video-loss notice. A failed copy of surviving video keeps the
+checkpoint for recovery. Mac Shows currently retain sampled frames only.
 
 <p align="center">
   <img src="docs/assets/show-sheet.png"
@@ -281,8 +282,12 @@ times, and source crop pixels. Exports require new paths and preserve the saved 
 On Windows, `frame --video` retrieves a moment from `recording.mp4` by time, mark, or phrase. Times
 use the original recording's clock. The report distinguishes the requested time from the actual
 decoded sample and includes video coverage and the separate annotation horizon. Recovered video can
-extend beyond the sampled-frame journal. Video frames have no drawn annotations; `--crop` and video
-contact sheets are not supported. Other platforms can open the movie in their system player.
+extend beyond the sampled-frame journal. Add `--crop` with `--mark` to focus on a mark with
+surrounding context. The crop uses the actual decoded frame’s content rectangle and requires a
+matching saved coordinate space for every point in the mark. Older, mixed, missing, or mismatched
+geometry refuses the crop; the uncropped video remains available. Video frames have no drawn
+annotations, and video contact sheets are not supported. Other platforms can open the movie in their
+system player.
 
 `keep` accepts an ID or an explicit path directly inside Speakeasy's Shows folder. `--off` allows
 expiry at the original date; it does not grant another seven days. These actions never recreate a

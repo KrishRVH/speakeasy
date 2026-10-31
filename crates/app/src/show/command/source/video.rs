@@ -55,12 +55,8 @@ pub(super) fn write(
         .selected
         .context("The phrase has several matches; choose --match N")?
         .start();
-    let Output::Frame {
-        destination,
-        crop: false,
-    } = request.output
-    else {
-        anyhow::bail!("Video export needs show frame without --crop");
+    let Output::Frame { destination, crop } = request.output else {
+        anyhow::bail!("Video export needs show frame");
     };
     let mut report = Report::new(&manifest, &found);
     report.video = Some(Coverage {
@@ -70,14 +66,31 @@ pub(super) fn write(
         ),
         annotations: Moment::from_millis(coverage.annotations_through_ms),
     });
+    let crop = if let Some(bounds) = crop_bounds(&manifest, query, crop)? {
+        let Query::Mark(number) = query else {
+            anyhow::bail!("--crop requires --mark");
+        };
+        let mark = manifest
+            .marks()
+            .iter()
+            .find(|mark| mark.number == *number)
+            .context("The selected mark is unavailable")?;
+        let part = manifest
+            .recording()
+            .mark_part(mark)
+            .context("This mark has mixed or unknown geometry; export without --crop")?;
+        Some(movie::Crop { bounds, part })
+    } else {
+        None
+    };
     let served = reading
-        .frame(at, || false)?
+        .frame(at, crop, || false)?
         .context("Video frame export was cancelled")?;
     report.requested_ms = Some(at.as_millis());
     report.sampled_ms = Some(served.at.as_millis());
     report.cells.push(locate::Cell {
         sampled_ms: served.at.as_millis(),
-        crop_px: None,
+        crop_px: served.crop_px,
     });
     report.path = Some(export(destination, &served.image)?);
     report.write(request.json, out)

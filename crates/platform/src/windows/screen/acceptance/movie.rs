@@ -53,6 +53,14 @@ fn a_movie_survives_still_backpressure_and_closes_at_the_session_deadline() -> a
         let receipt = std::fs::File::create_new(directory.path().join("origin-receipt"))?;
         receipt.sync_all()?;
         accepted.send(true).await?;
+        let Some(crate::MovieEvent::Geometry {
+            sample, accepted, ..
+        }) = control.next().await
+        else {
+            anyhow::bail!("Synthetic movie did not request its content rectangle");
+        };
+        assert_eq!(sample, 0);
+        accepted.send(true).await?;
         tokio::time::timeout(FIRST_FRAME, async {
             while !frames.is_full() {
                 tokio::time::sleep(Duration::from_millis(10)).await;

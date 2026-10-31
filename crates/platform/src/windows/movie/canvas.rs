@@ -3,13 +3,15 @@
 
 use anyhow::{Context as _, ensure};
 
-use crate::Frame;
+use crate::{Frame, Part};
 
 const EDGE: u32 = 2_560;
 
 pub(super) struct Canvas {
     size: [u32; 2],
     pixels: Vec<u8>,
+    content: [u32; 4],
+    part: Part,
 }
 
 impl Canvas {
@@ -23,6 +25,8 @@ impl Canvas {
         Ok(Self {
             size,
             pixels: vec![0; bytes],
+            content: [0, 0, size[0], size[1]],
+            part: Part::WHOLE,
         })
     }
 
@@ -34,6 +38,14 @@ impl Canvas {
         &self.pixels
     }
 
+    pub(super) const fn content(&self) -> [u32; 4] {
+        self.content
+    }
+
+    pub(super) const fn part(&self) -> Part {
+        self.part
+    }
+
     pub(super) fn paint(&mut self, frame: &Frame) -> anyhow::Result<&[u8]> {
         let source = [frame.width, frame.height];
         ensure!(
@@ -43,10 +55,12 @@ impl Canvas {
         );
         if source == self.size {
             self.pixels.copy_from_slice(&frame.bgra);
+            self.content = [0, 0, source[0], source[1]];
         } else {
             self.pixels.fill(0);
-            fit(&frame.bgra, source, &mut self.pixels, self.size)?;
+            self.content = fit(&frame.bgra, source, &mut self.pixels, self.size)?;
         }
+        self.part = frame.part;
         Ok(&self.pixels)
     }
 }
@@ -69,15 +83,17 @@ fn fit(
     [sw, sh]: [u32; 2],
     destination: &mut [u8],
     [dw, dh]: [u32; 2],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<[u32; 4]> {
     let (mut width, mut height) = (sw.min(dw), sh.min(dh));
     if width * sh <= height * sw {
         height = (sh * width / sw).max(1);
     } else {
         width = (sw * height / sh).max(1);
     }
-    let left = usize::try_from((dw - width) / 2)? * 4;
-    let top = usize::try_from((dh - height) / 2)?;
+    let x = (dw - width) / 2;
+    let y = (dh - height) / 2;
+    let left = usize::try_from(x)? * 4;
+    let top = usize::try_from(y)?;
     let source_stride = usize::try_from(sw)? * 4;
     let stride = usize::try_from(dw)? * 4;
     let columns: Vec<_> = (0..width).map(|x| axis(x, width, sw)).collect();
@@ -111,7 +127,7 @@ fn fit(
             }
         }
     }
-    Ok(())
+    Ok([x, y, width, height])
 }
 
 #[expect(

@@ -62,6 +62,7 @@ fn recording(strokes: Vec<Stroke>, actions: Vec<Action>, narration: Narration) -
         actions,
         narration,
         narration_lost: None,
+        spaces: crate::Spaces::default(),
     }
 }
 

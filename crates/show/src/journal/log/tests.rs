@@ -52,7 +52,7 @@ proptest! {
             apply(&mut live, &TakeEvent::Surface(Size { width: 800.0 + f32::from(color), height: 600.0 }), &mut bytes);
             let event = live.arrive(at, || Some(Image::filled(65 + u32::from(color % 2), 66, [color; 3]).unwrap())).unwrap();
             bytes.extend(Log::encode(&event).unwrap());
-            apply(&mut live, &TakeEvent::Pointer { at, point: Point::new(f32::from(color) / 255.0, 0.5), drawing: index % 3 != 0, pressed: false }, &mut bytes);
+            apply(&mut live, &TakeEvent::Pointer { part: (index % 3 != 0).then(|| Rect::from([0.0, 0.0, 0.5 + f32::from(color) / 510.0, 1.0])), at, point: Point::new(f32::from(color) / 255.0, 0.5), drawing: index % 3 != 0, pressed: false }, &mut bytes);
         }
         apply(&mut live, &TakeEvent::End { at: Moment::from_millis(4_000), ending: Ending::WindowClosed }, &mut bytes);
         let replayed = replay(&bytes).unwrap();
@@ -89,6 +89,7 @@ fn every_torn_tail_recovers_only_whole_events_and_keeps_an_honest_ending() {
     apply(
         &mut live,
         &TakeEvent::Pointer {
+            part: None,
             at: Moment::from_millis(200),
             point: Point::new(0.4, 0.6),
             drawing: false,

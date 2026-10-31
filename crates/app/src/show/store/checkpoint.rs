@@ -348,6 +348,7 @@ impl Checkpoint {
             LOG,
             super::movie::FILE,
             super::movie::HEADER,
+            super::movie::geometry::FILE,
         ] {
             remove(&self.directory.join(name))
                 .context("Cannot remove Show content; close files open in the Show's folder")?;

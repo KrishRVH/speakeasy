@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Moment, Point, Span};
 
+pub(crate) mod spaces;
+pub use spaces::Spaces;
+
 /// Everything a Show captured except its frames.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,6 +21,9 @@ pub struct Recording {
     pub ending: Ending,
     /// The captured surface's size in logical pixels, which ink is measured against.
     pub surface: Size,
+    /// Coordinate provenance for the points retained in strokes and pins.
+    #[serde(default, skip_serializing_if = "Spaces::is_empty")]
+    pub spaces: Spaces,
     /// Ink in the order it was drawn.
     pub strokes: Vec<Stroke>,
     /// Numbered pins in the order they were dropped.
@@ -30,6 +36,18 @@ pub struct Recording {
     /// `show.json` leaves it out otherwise, as bundles written before it existed do.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub narration_lost: Option<NarrationLoss>,
+}
+
+impl Recording {
+    /// The display rectangle shared by every point in this mark, or none when observations are
+    /// missing, mixed, interrupted, or legacy. The mark must belong to this recording.
+    #[must_use]
+    pub fn mark_part(&self, mark: &crate::Mark) -> Option<crate::Rect> {
+        self.spaces
+            .valid(self.strokes.len(), self.pins.len())
+            .then_some(())?;
+        self.spaces.mark(mark, &self.pins)
+    }
 }
 
 /// How a Show's screen recording ended. Every way but [`Finished`](Self::Finished) stopped it at

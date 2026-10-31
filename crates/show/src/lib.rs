@@ -53,7 +53,7 @@ pub use crate::{
     movie::{MovieError, MoviePrefix},
     recording::{
         Action, EmptyStroke, Ending, InkPoint, Narration, NarrationLoss, Pin, Recording, Size,
-        Stroke, Word,
+        Spaces, Stroke, Word,
     },
     select::{Keyframe, Reason, SAMPLE_INTERVAL, Selection, select},
     signature::{Sample, Signature},

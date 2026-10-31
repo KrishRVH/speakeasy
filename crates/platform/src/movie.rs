@@ -87,6 +87,18 @@ pub enum MovieEvent {
         /// `true` permits encoding; closing or rejecting prevents creation of the movie.
         accepted: Sender<bool>,
     },
+    /// A changed content rectangle, before its first output sample is submitted. Save it durably
+    /// before accepting. Rejection reports a storage failure; cancellation ends the wait normally.
+    Geometry {
+        /// Zero-based output sample index, including held images.
+        sample: u32,
+        /// Left, top, width and height within the fixed encoded canvas, in pixels.
+        content: [u32; 4],
+        /// The display rectangle from which this sample was captured.
+        part: crate::Part,
+        /// True acknowledges persistence; false refuses further video submissions.
+        accepted: Sender<bool>,
+    },
     /// Submitted frame coverage, after encoder teardown. An unfinished file must be inspected
     /// for a playable fragment prefix before claiming that coverage survived.
     Finished {
@@ -210,22 +222,58 @@ impl MovieTarget {
         {
             return false;
         }
-        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+        self.accepted(answer, stopping).unwrap_or(false)
+    }
+
+    #[cfg(target_os = "windows")]
+    pub(crate) fn geometry(
+        &self,
+        sample: u32,
+        content: [u32; 4],
+        part: crate::Part,
+        stopping: &Receiver<Infallible>,
+    ) -> anyhow::Result<bool> {
+        if self.cancelled() || stopping.is_closed() {
+            return Ok(false);
+        }
+        let (accepted, answer) = async_channel::bounded(1);
+        self.events
+            .try_send(MovieEvent::Geometry {
+                sample,
+                content,
+                part,
+                accepted,
+            })
+            .map_err(|_closed| anyhow::anyhow!("Video crop geometry could not be saved"))?;
+        self.accepted(answer, stopping)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn accepted(
+        &self,
+        answer: Receiver<bool>,
+        stopping: &Receiver<Infallible>,
+    ) -> anyhow::Result<bool> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_time()
-            .build()
-        else {
-            return false;
-        };
-        runtime.block_on(async {
+            .build()?;
+        let accepted = runtime.block_on(async {
             tokio::select! {
                 biased;
-                _cancelled = self.cancelled.recv() => false,
-                _stopped = stopping.recv() => false,
-                () = tokio::time::sleep_until(tokio::time::Instant::from_std(self.deadline)) => false,
-                accepted = answer.recv() => accepted.unwrap_or(false),
+                _cancelled = self.cancelled.recv() => None,
+                _stopped = stopping.recv() => None,
+                () = tokio::time::sleep_until(tokio::time::Instant::from_std(self.deadline)) => None,
+                accepted = answer.recv() => Some(accepted.unwrap_or(false)),
             }
-        }) && !self.cancelled()
-            && !stopping.is_closed()
+        });
+        if self.cancelled() || stopping.is_closed() || accepted.is_none() {
+            return Ok(false);
+        }
+        anyhow::ensure!(
+            accepted == Some(true),
+            "Video crop geometry could not be saved"
+        );
+        Ok(true)
     }
 
     #[cfg(target_os = "windows")]

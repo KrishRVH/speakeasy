@@ -97,8 +97,7 @@ impl Staged {
                 true
             },
             movie::CheckpointMovie::Present(movie) => {
-                let metadata = movie::retain(checkpoint, self.staging.path(), movie, annotations)
-                    .context(
+                let metadata = movie::retain(self.staging.path(), movie, annotations).context(
                     "Cannot retain the recorded movie; its checkpoint remains available",
                 )?;
                 self.summary

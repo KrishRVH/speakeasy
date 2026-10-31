@@ -142,22 +142,30 @@ fn archive(
         remaining = remaining.saturating_sub(copied);
         files = files.saturating_add(1);
     }
-    let movie = movie::saved(directory, manifest.recording().duration)
+    let mut movie = movie::Reading::optional(directory, manifest.recording().duration)
         .context("Cannot export damaged video")?;
-    if movie.is_some() {
-        for (name, limit) in [
-            (movie::FILE, speakeasy_show::MoviePrefix::FILE_LIMIT),
-            (movie::HEADER, movie::HEADER_LIMIT),
-        ] {
-            archive.start_file(name, options)?;
-            let copied = copy(directory, name, limit.min(remaining), &mut archive)
-                .context("Cannot export video")?;
-            remaining = remaining.saturating_sub(copied);
-            files = files.saturating_add(1);
-        }
+    if let Some(reading) = &mut movie {
+        archive.start_file(movie::FILE, options)?;
+        let copied = reading
+            .copy_to(&mut archive, remaining)
+            .context("Cannot export video")?;
+        remaining = remaining.saturating_sub(copied);
+        let metadata = serde_json::to_vec(&reading.movie.metadata)?;
+        anyhow::ensure!(
+            u64::try_from(metadata.len())? <= remaining,
+            "Movie timing exceeds the export size limit"
+        );
+        archive.start_file(movie::HEADER, options)?;
+        archive.write_all(&metadata)?;
+        files = files.saturating_add(2);
     }
     archive.start_file(GUIDE, options)?;
-    guide(&manifest, retained_frames, movie.as_ref(), &mut archive)?;
+    guide(
+        &manifest,
+        retained_frames,
+        movie.as_ref().map(|reading| &reading.movie.metadata),
+        &mut archive,
+    )?;
     archive.finish()?.flush()?;
     Ok((files.saturating_add(1), retained_frames))
 }

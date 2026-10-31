@@ -19,7 +19,7 @@ const HELP: &str = "speakeasy show list [--json]
 speakeasy show inspect SHOW [--json]
 speakeasy show frames SHOW [FOCUS] [--around MS] [--json]
 speakeasy show frames SHOW FOCUS --out NEW.png [--most N] [--around MS] [--crop] [--json]
-speakeasy show frame SHOW FOCUS --out NEW.png [--crop | --video] [--json]
+speakeasy show frame SHOW FOCUS --out NEW.png [--crop] [--video] [--json]
 speakeasy show keep SHOW [--off] [--json]
 speakeasy show export SHOW --out NEW.zip [--json]
 speakeasy show discard INTERRUPTED_SHOW [--json]
@@ -43,7 +43,7 @@ It reports the actual sample time, excludes annotations, and never overwrites a 
 Source frames are available only in Shows saved by versions that retain them.
 frame --video decodes the retained movie on Windows, using original session times.
 It reports actual decoded time and separate annotation coverage, including recovered video tails.
-Video exports have no drawn annotations and do not support --crop.
+Video exports have no drawn annotations. --crop needs matching saved mark and video geometry.
 inspect exits with status 1 for a damaged or unsupported Show.
 SHOW is an exact folder-name ID in Speakeasy's Shows folder, or an explicit path.
 Use ./ID to address a relative path. No command chooses the latest Show.

@@ -3,6 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use super::*;
 use crate::Part;
 
+mod geometry;
 mod timing;
 
 #[tokio::test]
@@ -43,6 +44,14 @@ async fn a_cancelled_active_movie_releases_its_file_without_a_new_frame() -> any
     let Some(crate::MovieEvent::Started { accepted, .. }) = control.next().await else {
         anyhow::bail!("Synthetic movie did not request its origin");
     };
+    accepted.send(true).await?;
+    let Some(crate::MovieEvent::Geometry {
+        sample, accepted, ..
+    }) = control.next().await
+    else {
+        anyhow::bail!("Synthetic movie did not request its content rectangle");
+    };
+    assert_eq!(sample, 0);
     accepted.send(true).await?;
     wrote.recv().await?;
     control.request_stop();
@@ -136,13 +145,13 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
         }
         assert!(
             moving
-                .write(&image, wait_for_sample(start, number), &|| false)?
+                .write(&image, wait_for_sample(start, number), &mut || false)?
                 .is_continue()
         );
     }
     assert!(
         moving
-            .advance(End::Before(Duration::from_secs(4)), &|| false)?
+            .advance(End::Before(Duration::from_secs(4)), &mut || false)?
             .is_continue()
     );
     moving.finish()?;
@@ -162,9 +171,9 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
         let at = wait_for_sample(start, number);
         assert!(
             match number {
-                0 => held.write(&frame(1280, 720, 20), at, &|| false),
-                45 => held.write(&frame(1280, 720, 220), at, &|| false),
-                _ => held.advance(End::Through(at), &|| false),
+                0 => held.write(&frame(1280, 720, 20), at, &mut || false),
+                45 => held.write(&frame(1280, 720, 220), at, &mut || false),
+                _ => held.advance(End::Through(at), &mut || false),
             }?
             .is_continue()
         );
@@ -190,7 +199,7 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
             *pixel = [shade, shade, shade, 255];
         }
         if capped
-            .write(&image, wait_for_sample(start, number), &|| false)
+            .write(&image, wait_for_sample(start, number), &mut || false)
             .is_err()
         {
             failed = true;
@@ -209,7 +218,7 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
     // file; it cannot leave teardown waiting for work that can no longer be submitted.
     let too_small = directory.join("no-header.mp4");
     if let Ok(mut encoder) = Encoder::open(&too_small, canvas::Canvas::new([320, 240])?, 1) {
-        let submitted = encoder.write(&frame(320, 240, 50), Duration::ZERO, &|| false);
+        let submitted = encoder.write(&frame(320, 240, 50), Duration::ZERO, &mut || false);
         let finished = encoder.finish();
         assert!(submitted.is_err() || finished.is_err());
     }

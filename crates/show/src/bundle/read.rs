@@ -134,6 +134,12 @@ impl Manifest {
             }
         };
         require(
+            self.recording
+                .spaces
+                .valid(self.recording.strokes.len(), self.recording.pins.len()),
+            "pointer coordinate spaces are invalid",
+        )?;
+        require(
             (1..=MOST_KEYFRAMES).contains(&self.keyframes.len()),
             "a Show needs between 1 and 36 keyframes",
         )?;
