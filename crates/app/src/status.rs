@@ -37,6 +37,40 @@ pub(crate) enum Indicator {
     Attention,
 }
 
+/// Readiness describes observed resources, not permission grants or successful external delivery.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Readiness {
+    pub model: &'static str,
+    pub shortcut: &'static str,
+}
+
+impl Readiness {
+    pub(crate) const fn new(snapshot: &Snapshot, service: ServiceState) -> Self {
+        if !matches!(service, ServiceState::Running) {
+            return Self {
+                model: if matches!(service, ServiceState::NotSetUp) {
+                    "Set up local speech below"
+                } else {
+                    "Resume dictation to check"
+                },
+                shortcut: "Checked when dictation resumes",
+            };
+        }
+        Self {
+            model: match snapshot.model {
+                ModelState::Ready => "Ready",
+                ModelState::Loading => "Loading…",
+                ModelState::Unavailable => "Unavailable · Check local speech below",
+            },
+            shortcut: if snapshot.desktop_ready {
+                "Available · Try it here"
+            } else {
+                "Waiting for desktop access · See status below"
+            },
+        }
+    }
+}
+
 /// What Settings and the tray show for a snapshot: one indicator and the text that explains it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Status {

@@ -76,6 +76,7 @@ impl ScreenRecorder {
         log: Option<FrameLog>,
         events: Sender<ShowEvent>,
         canvas: watch::Sender<Canvas>,
+        shortcut: speakeasy_platform::MacShortcut,
     ) -> anyhow::Result<Self> {
         let (finish, finishing) = async_channel::bounded(1);
         let (pins, pinned) = async_channel::bounded(PIN_LANE);
@@ -86,7 +87,7 @@ impl ScreenRecorder {
                 canvas: &canvas,
             };
             let mut report = Report::new(id, events.clone(), &lanes);
-            report.outcome = record(started, scope, &lanes, id, events, log);
+            report.outcome = record(started, scope, &lanes, id, events, log, shortcut);
         })?;
         Ok(Self {
             finish,
@@ -192,6 +193,7 @@ fn record(
     id: SessionId,
     events: Sender<ShowEvent>,
     mut log: Option<FrameLog>,
+    shortcut: speakeasy_platform::MacShortcut,
 ) -> anyhow::Result<Ended> {
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
@@ -206,7 +208,7 @@ fn record(
             let capture = ScreenCapture::start(target, SAMPLE_INTERVAL, LONGEST_EDGE, frame_lane)?;
             let display = target.display();
             let (sample_lane, samples) = async_channel::bounded(POINTER_LANE);
-            let pointer = PointerMonitor::start(display, sample_lane)?;
+            let pointer = PointerMonitor::start(display, sample_lane, shortcut)?;
             let part = target.part();
             lanes.canvas.send_replace(Canvas::covering(display, part));
             let sources = Sources {
@@ -592,6 +594,7 @@ mod native_tests {
             None,
             events,
             canvas,
+            speakeasy_platform::MacShortcut::default(),
         )?;
         tokio::time::sleep(Duration::from_millis(1_300)).await;
         let display = ink
@@ -660,6 +663,7 @@ mod native_tests {
             None,
             events,
             canvas,
+            speakeasy_platform::MacShortcut::default(),
         )?;
         tokio::time::sleep(Duration::from_secs(10)).await;
         recorder.finish();

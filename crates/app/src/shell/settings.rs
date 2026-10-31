@@ -2,6 +2,8 @@
 //! which never saves, previews its theme and motion directly. The view owns the setup, file picker,
 //! and saves it starts, and waits on the microphone scan that Services holds.
 
+mod practice;
+mod recognition;
 mod render;
 mod text_field;
 mod vocabulary;
@@ -24,9 +26,10 @@ use crate::{
     audio::{InputDevice, MicrophoneScan},
     config::{Config, Engine},
     gpui_ext::{EntityUpdate, WindowUpdate, follow},
+    models::Model,
     runtime::Snapshot,
     setup::{Installed, Setup},
-    status::Indicator,
+    status::{Indicator, Readiness},
 };
 
 const PROGRESS_THROTTLE: Duration = Duration::from_millis(100);
@@ -39,11 +42,16 @@ pub(super) struct Settings {
     file_picker: Option<Task<()>>,
     microphone_listing: Option<Task<()>>,
     preview: Option<Task<()>>,
-    setup: Option<(Setup, Task<()>)>,
+    setup: Option<(Setup, Task<()>, Config)>,
     retiring_setups: Vec<(Setup, Task<()>)>,
     saving: Option<Task<()>>,
     saves: SaveQueue,
     vocabulary: vocabulary::Editor,
+    recognition: recognition::Editor,
+    choosing_language: bool,
+    practice: practice::Practice,
+    update_check: Option<(crate::updates::Check, Task<()>)>,
+    available_update: Option<crate::updates::Version>,
     _updates: Task<()>,
     /// Whether Windows' Startup apps page has turned off the sign-in launch, as last read when
     /// Settings came to the front; only a live Windows launch of the default settings reads it.
@@ -68,6 +76,7 @@ impl Settings {
         #[cfg(target_os = "linux")]
         let desktop_command = desktop_command(&services.path, services.default_settings).into();
         let vocabulary = vocabulary::Editor::new(config.theme, cx);
+        let recognition = recognition::Editor::new(config.theme, cx);
         let mut view = Self {
             config,
             presentation,
@@ -81,6 +90,11 @@ impl Settings {
             saving: None,
             saves,
             vocabulary,
+            recognition,
+            choosing_language: false,
+            practice: practice::Practice::default(),
+            update_check: None,
+            available_update: None,
             _updates: follow(updates, cx, Snapshot::clone, |view, snapshot, cx| {
                 view.apply_snapshot(&snapshot, cx);
             }),
@@ -120,17 +134,48 @@ impl Settings {
         if cx.global::<Services>().is_quitting() {
             return;
         }
+        if matches!(
+            action,
+            Action::Pause | Action::Resume | Action::Engine | Action::Setup
+        ) {
+            self.practice.stop();
+        }
         match action {
             Action::Setup => self.toggle_setup(cx),
+            Action::Install(model) => self.install_model(model, cx),
             Action::Engine => self.switch_engine(),
             Action::Choose(file) => self.choose(file, window, cx),
             Action::Refresh => self.refresh_microphones(cx),
             Action::Microphone => self.cycle_microphone(),
-            Action::Language => self.toggle_language(),
+            Action::Language => self.choosing_language = !self.choosing_language,
+            Action::SelectLanguage(language) => {
+                self.config.language = if self.config.engine == Engine::Whisper {
+                    crate::models::whisper_language(language)
+                } else {
+                    language
+                }
+                .into();
+                self.choosing_language = false;
+                self.edited();
+            },
             Action::Delivery => self.cycle_delivery(),
+            #[cfg(target_os = "macos")]
+            Action::MacShortcut => {
+                self.config.mac_shortcut = self.config.mac_shortcut.next();
+                self.edited();
+            },
             Action::Toggle(setting) => self.toggle(setting, cx),
             Action::Theme => self.cycle_theme(cx),
             Action::Save => self.save(cx),
+            Action::Revert => {
+                if self.setup.is_none() && self.saving.is_none() {
+                    self.config = cx.global::<Services>().config.clone();
+                    self.vocabulary.clear(cx);
+                    self.recognition.clear(cx);
+                    self.choosing_language = false;
+                    self.edited();
+                }
+            },
             Action::Resume => {
                 cx.update_global::<Services, _>(|services, cx| services.resume(cx));
                 self.notice = None;
@@ -140,6 +185,20 @@ impl Settings {
                 self.notice = None;
             },
             Action::Preview => self.play(cx),
+            Action::Practice => self.toggle_practice(cx),
+            Action::CheckUpdates => self.check_updates(cx),
+            Action::OpenUpdate => {
+                if let Some(version) = self.available_update {
+                    cx.open_url(&version.release_url());
+                }
+            },
+            Action::MicrophoneHelp => cx.open_url(if cfg!(target_os = "windows") {
+                "ms-settings:privacy-microphone"
+            } else if cfg!(target_os = "macos") {
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+            } else {
+                "https://github.com/KrishRVH/speakeasy#linux-experimental"
+            }),
             Action::Shows => super::reveal_shows(cx),
             Action::Quit => request_quit(cx),
         }
@@ -148,6 +207,12 @@ impl Settings {
 
     fn switch_engine(&mut self) {
         self.config.engine = self.config.engine.next();
+        if self.config.engine == Engine::Whisper {
+            self.config.language = crate::models::whisper_language(&self.config.language).into();
+        } else if self.config.uses_nemotron() {
+            self.config.language = crate::models::nemotron_language(&self.config.language).into();
+        }
+        self.choosing_language = false;
         self.notice = Some(Notice::Note(
             "Choose the executable and model for this engine, then save.".into(),
         ));
@@ -155,31 +220,21 @@ impl Settings {
 
     /// An edit supersedes the last notice; whether edits remain to save shows from the draft.
     fn edited(&mut self) {
+        self.practice.stop();
         self.notice = None;
     }
 
     /// Whether the draft has edits the file does not hold. A demo never saves, so it has none.
     fn unsaved(&self, cx: &App) -> bool {
-        !is_demo(cx) && (self.saves.needs_save(&self.config) || self.vocabulary.pending(cx))
+        !is_demo(cx)
+            && (self.saves.needs_save(&self.config)
+                || self.vocabulary.pending(cx)
+                || self.recognition.pending(cx))
     }
 
     fn cycle_microphone(&mut self) {
         self.config.microphone =
             next_microphone(&self.microphones, self.config.microphone.as_deref());
-        self.edited();
-    }
-
-    /// Parakeet detects the language itself, so only Whisper offers a choice.
-    fn toggle_language(&mut self) {
-        if self.config.engine == Engine::Parakeet {
-            return;
-        }
-        self.config.language = if self.config.language == "en" {
-            "auto"
-        } else {
-            "en"
-        }
-        .into();
         self.edited();
     }
 
@@ -238,7 +293,7 @@ impl Settings {
         }
         let title = match (self.config.engine, file) {
             (Engine::Parakeet, EngineFile::Executable) => "Choose nemo-speech",
-            (Engine::Parakeet, EngineFile::Model) => "Choose a Parakeet v3 GGUF model",
+            (Engine::Parakeet, EngineFile::Model) => "Choose a NeMo GGUF model",
             (Engine::Whisper, EngineFile::Executable) => "Choose whisper-server",
             (Engine::Whisper, EngineFile::Model) => "Choose a Whisper GGML model",
         };
@@ -248,7 +303,7 @@ impl Settings {
                 pattern: "*.exe",
             },
             (Engine::Parakeet, EngineFile::Model) => FileFilter {
-                name: "Parakeet models",
+                name: "NeMo models",
                 pattern: "*.gguf",
             },
             (Engine::Whisper, EngineFile::Model) => FileFilter {
@@ -273,7 +328,14 @@ impl Settings {
             Ok(Some(path)) => {
                 match file {
                     EngineFile::Executable => self.config.engine_executable = path,
-                    EngineFile::Model => self.config.model = path,
+                    EngineFile::Model => {
+                        self.config.nemo_model = Model::at(&path);
+                        self.config.model = path;
+                        if self.config.uses_nemotron() {
+                            self.config.language =
+                                crate::models::nemotron_language(&self.config.language).into();
+                        }
+                    },
                 }
                 self.edited();
             },
@@ -306,10 +368,19 @@ impl Settings {
     }
 
     pub(super) fn start_setup(&mut self, cx: &Context<'_, Self>) {
-        if cx.global::<Services>().is_quitting() {
+        self.install_model(Model::Parakeet, cx);
+    }
+
+    fn install_model(&mut self, model: Model, cx: &Context<'_, Self>) {
+        if cx.global::<Services>().is_quitting()
+            || is_demo(cx)
+            || self.setup.is_some()
+            || !self.retiring_setups.is_empty()
+        {
             return;
         }
-        let setup = match Setup::start() {
+        self.practice.stop();
+        let setup = match Setup::start(model) {
             Ok(setup) => setup,
             Err(error) => {
                 self.notice = Some(Notice::Problem(error.to_string().into()));
@@ -329,10 +400,14 @@ impl Settings {
             let outcome = outcome.await;
             this.update_if_alive(cx, |view, cx| view.finish_setup(outcome, cx));
         });
-        self.setup = Some((setup, follow_setup));
+        self.setup = Some((setup, follow_setup, self.config.clone()));
     }
 
-    fn pause_setup(&mut self, (setup, follow_setup): (Setup, Task<()>), cx: &Context<'_, Self>) {
+    fn pause_setup(
+        &mut self,
+        (setup, follow_setup, _): (Setup, Task<()>, Config),
+        cx: &Context<'_, Self>,
+    ) {
         drop(follow_setup);
         setup.request_stop();
         let stopped = setup.stopped();
@@ -354,11 +429,23 @@ impl Settings {
         outcome: Option<anyhow::Result<Installed>>,
         cx: &mut Context<'_, Self>,
     ) {
-        self.setup = None;
+        let auto_apply = self.setup.take().is_some_and(|(_, _, started)| {
+            started.needs_engine()
+                && started == self.config
+                && !self.vocabulary.pending(cx)
+                && !self.recognition.pending(cx)
+        });
         match outcome {
             Some(Ok(installed)) => {
                 installed.apply_to(&mut self.config);
-                self.save(cx);
+                if auto_apply {
+                    self.save(cx);
+                } else {
+                    self.notice = Some(Notice::Note(
+                        "Model ready. Save to use it. Your other changes remain in this draft."
+                            .into(),
+                    ));
+                }
             },
             // The outermost message says what failed and what to do; transport detail stays out.
             Some(Err(error)) => self.notice = Some(Notice::Problem(error.to_string().into())),
@@ -372,13 +459,20 @@ impl Settings {
     }
 
     fn request_setup_stops(&self) {
-        for (setup, _) in self.setup.iter().chain(&self.retiring_setups) {
+        if let Some((setup, _, _)) = &self.setup {
+            setup.request_stop();
+        }
+        for (setup, _) in &self.retiring_setups {
             setup.request_stop();
         }
     }
 
     fn save(&mut self, cx: &mut Context<'_, Self>) {
+        self.practice.stop();
         if self.vocabulary.pending(cx) && !self.add_correction(cx) {
+            return;
+        }
+        if self.recognition.pending(cx) && !self.add_recognition_term(cx) {
             return;
         }
         let services = cx.global::<Services>();
@@ -449,18 +543,65 @@ impl Settings {
     }
 
     pub(super) fn cancel_background_work(&mut self) {
+        self.practice.stop();
         self.file_picker = None;
         self.microphone_listing = None;
         self.preview = None;
         self.request_setup_stops();
+        if let Some((check, _)) = &self.update_check {
+            check.request_stop();
+        }
     }
 
     /// Releases setups whose threads have exited; returns whether no setup or save remains.
     pub(super) fn drain_finished(&mut self) -> bool {
-        self.setup = self.setup.take().filter(|(setup, _)| !setup.is_finished());
+        self.update_check = self
+            .update_check
+            .take()
+            .filter(|(check, _)| !check.is_finished());
+        self.setup = self
+            .setup
+            .take()
+            .filter(|(setup, _, _)| !setup.is_finished());
         self.retiring_setups
             .retain(|(setup, _)| !setup.is_finished());
-        self.setup.is_none() && self.retiring_setups.is_empty() && self.saves.is_idle()
+        self.setup.is_none()
+            && self.retiring_setups.is_empty()
+            && self.saves.is_idle()
+            && self.update_check.is_none()
+    }
+
+    fn check_updates(&mut self, cx: &Context<'_, Self>) {
+        if is_demo(cx) || self.update_check.is_some() {
+            return;
+        }
+        let Ok(check) = crate::updates::Check::start() else {
+            self.notice = Some(Notice::Problem(
+                "Cannot start the update check. Try again.".into(),
+            ));
+            return;
+        };
+        let outcome = check.outcome();
+        self.notice = Some(Notice::Note("Checking the latest GitHub release…".into()));
+        let follow = cx.spawn(async move |this, cx| {
+            let result = outcome.await;
+            this.update_if_alive(cx, |view, cx| {
+                view.update_check = None;
+                if cx.global::<Services>().is_quitting() { return; }
+                match result {
+                    Ok(version) => {
+                        view.available_update = version;
+                        view.notice = Some(Notice::Note(version.map_or_else(
+                            || "No newer release is available.".into(),
+                            |version| format!("Speakeasy {version} is available. Open the release to download it.")
+                        ).into()));
+                    },
+                    Err(_) => view.notice = Some(Notice::Problem("Cannot check for updates. Check your connection and try again.".into())),
+                }
+                cx.notify();
+            });
+        });
+        self.update_check = Some((check, follow));
     }
 }
 
@@ -501,6 +642,7 @@ struct Presentation {
     shortcut: Arc<str>,
     cancel_shortcut: Arc<str>,
     message: String,
+    readiness: Readiness,
 }
 
 impl Presentation {
@@ -508,6 +650,7 @@ impl Presentation {
         let status = services.status(snapshot);
         Self {
             indicator: status.indicator,
+            readiness: Readiness::new(snapshot, services.service_state()),
             shortcut: Arc::clone(&snapshot.shortcut),
             cancel_shortcut: Arc::clone(&snapshot.cancel_shortcut),
             message: if snapshot.message.is_empty() {
@@ -521,6 +664,15 @@ impl Presentation {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
+    Revert,
+    #[cfg(target_os = "macos")]
+    MacShortcut,
+    Install(Model),
+    SelectLanguage(&'static str),
+    CheckUpdates,
+    OpenUpdate,
+    Practice,
+    MicrophoneHelp,
     Shows,
     Setup,
     Engine,
@@ -543,6 +695,16 @@ impl Action {
     /// resuming share the primary button, which keeps focus as it turns from one to the other.
     const fn element_id(self) -> &'static str {
         match self {
+            Self::Revert => "revert",
+            #[cfg(target_os = "macos")]
+            Self::MacShortcut => "mac-shortcut",
+            Self::Install(Model::Parakeet) => "install-parakeet",
+            Self::Install(Model::Nemotron) => "install-nemotron",
+            Self::SelectLanguage(code) => code,
+            Self::CheckUpdates => "check-updates",
+            Self::OpenUpdate => "open-update",
+            Self::Practice => "practice",
+            Self::MicrophoneHelp => "microphone-help",
             Self::Shows => "shows",
             Self::Setup => "setup",
             Self::Engine => "engine",

@@ -2,7 +2,6 @@
 //! A GPU build is kept only once its own `doctor` report shows it runs on this machine.
 
 use std::{
-    fs,
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -19,7 +18,6 @@ use super::{
     Installation, Progress,
     archive::{EXECUTABLE, unpack},
     download::Download,
-    file_error,
 };
 use crate::child::hidden_command;
 
@@ -80,22 +78,9 @@ pub(super) struct ChosenEngine {
 }
 
 impl ChosenEngine {
-    /// Removes every other engine build under `root` and returns this build's executable.
-    pub(super) fn keep(self, root: &Path) -> anyhow::Result<PathBuf> {
-        let engines = root.join("engines");
-        for entry in fs::read_dir(&engines)
-            .map_err(file_error(&engines))?
-            .flatten()
-        {
-            if entry.path() != self.directory {
-                #[expect(
-                    clippy::let_underscore_must_use,
-                    reason = "Failure to prune an unused engine cache must not prevent the verified selected engine from running"
-                )]
-                let _ = fs::remove_dir_all(entry.path());
-            }
-        }
-        Ok(self.directory.join(EXECUTABLE))
+    /// Other builds may still belong to the active worker. Setup never removes a usable engine.
+    pub(super) fn executable(self) -> PathBuf {
+        self.directory.join(EXECUTABLE)
     }
 }
 
@@ -247,23 +232,5 @@ mod tests {
             51_061_784_576
         )));
         assert!(!has_discrete_gpu(&report(false, "gpu", 25_756_696_576)));
-    }
-
-    #[test]
-    fn keeping_the_chosen_engine_removes_only_the_other_builds() -> anyhow::Result<()> {
-        let root = tempfile::tempdir()?;
-        let engines = root.path().join("engines");
-        for build in ["chosen", "rejected"] {
-            fs::create_dir_all(engines.join(build))?;
-        }
-        let chosen = engines.join("chosen");
-        let engine = ChosenEngine {
-            directory: chosen.clone(),
-            use_gpu: false,
-        };
-        assert_eq!(engine.keep(root.path())?, chosen.join(EXECUTABLE));
-        assert!(chosen.is_dir(), "The chosen build was removed");
-        assert!(!engines.join("rejected").exists(), "Another build was kept");
-        Ok(())
     }
 }

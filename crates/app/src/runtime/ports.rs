@@ -13,6 +13,7 @@ use zeroize::Zeroize;
 
 use crate::{
     config::Config,
+    recognition_terms::Terms,
     show::{AudioLog, FrameLog, Kept, Publication, Reopened, SavedShow},
     sounds::Cue,
 };
@@ -46,6 +47,8 @@ impl From<SessionId> for u64 {
 
 /// A capture thread's report about the session that opened it.
 pub(crate) enum CaptureEvent {
+    /// A bounded feed for continuous inference. Closing before Finish abandons the optimization.
+    Streaming(SessionId, LiveAudio),
     /// The first samples arrived; a capture reports it before any audio it seals.
     Ready(SessionId),
     /// The Show audio checkpoint stopped; live transcription remains available.
@@ -62,13 +65,31 @@ pub(crate) enum CaptureEvent {
 impl CaptureEvent {
     pub(super) const fn session(&self) -> SessionId {
         match self {
-            Self::Ready(session)
+            Self::Streaming(session, _)
+            | Self::Ready(session)
             | Self::CheckpointLost(session)
             | Self::Level(session, _)
             | Self::Piece(session, _, _)
             | Self::Finished(session, _) => *session,
         }
     }
+}
+
+/// Recognition work allowed during capture. Shows always keep the whole recording for timing.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecognitionMode {
+    Whole,
+    Segmented,
+    Streaming,
+}
+
+/// One capture's bounded, private PCM16 feed. The full recording remains available for fallback.
+pub(crate) struct LiveAudio {
+    pub rate: u32,
+    pub frames: tokio::sync::mpsc::Receiver<zeroize::Zeroizing<Vec<u8>>>,
+    /// The unqueued tail after every queued frame. Only a successfully drained capture sends it;
+    /// a separate completion lane cannot lose the tail when the bounded chunk lane is full.
+    pub tail: tokio::sync::oneshot::Receiver<zeroize::Zeroizing<Vec<u8>>>,
 }
 
 /// Speech prepared for recognition. Leading quiet trimmed from the whole recording places the
@@ -187,11 +208,20 @@ pub(crate) trait Pinning: Capturing {
 }
 
 pub(crate) trait Speech: Send + 'static {
+    /// Returns only committed text from a continuous PCM stream. Failure uses the same model's
+    /// whole-recording path after capture ends; no partial text may reach insertion.
+    fn transcribe_stream(
+        &mut self,
+        audio: LiveAudio,
+        language: &str,
+        terms: &Terms,
+    ) -> impl Future<Output = anyhow::Result<Option<String>>> + Send;
     /// Returns raw engine text. The worker applies transcript cleanup before insertion.
     fn transcribe(
         &mut self,
         wav: Vec<u8>,
         language: &str,
+        terms: &Terms,
     ) -> impl Future<Output = anyhow::Result<String>> + Send;
 
     /// Returns raw engine words timed from the start of `wav`, or untimed text when the engine
@@ -201,6 +231,7 @@ pub(crate) trait Speech: Send + 'static {
         &mut self,
         wav: Vec<u8>,
         language: &str,
+        terms: &Terms,
     ) -> impl Future<Output = anyhow::Result<Narration>> + Send;
 
     /// Transcribes silence and discards the text. Engines serialize requests, so completion proves
@@ -225,7 +256,7 @@ pub(crate) trait Ports: Send + 'static {
         &self,
         id: SessionId,
         microphone: Option<&str>,
-        segmenting: bool,
+        recognition: RecognitionMode,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<Self::Microphone>;
 

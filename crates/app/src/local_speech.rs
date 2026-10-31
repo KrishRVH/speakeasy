@@ -1,6 +1,8 @@
 //! One local speech engine process behind a loopback HTTP API. The process is contained and reaped
 //! on every exit path, and its output never reaches diagnostics.
 
+mod streaming;
+
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 use std::{fmt, iter, net::TcpListener, path::Path, process::ExitStatus, time::Duration};
@@ -21,6 +23,7 @@ use crate::{
     child::{hidden_command, kill_and_reap},
     config::{Config, Engine},
     http::{Trust, client_builder},
+    recognition_terms::Terms,
     runtime::ports::{STARTUP_CANCELLED, Speech},
 };
 
@@ -46,6 +49,7 @@ const STATUS_INVALID_IMAGE_FORMAT: u32 = 0xC000_007B;
 
 pub(crate) struct LocalSpeech {
     engine: Engine,
+    nemotron: bool,
     /// Declared before `child`, so dropping terminates the group before its leader can be reaped.
     group: ProcessGroup,
     child: Child,
@@ -78,6 +82,7 @@ impl LocalSpeech {
         let group = contain(&mut child).await?;
         let mut speech = Self {
             engine: config.engine,
+            nemotron: config.uses_nemotron(),
             group,
             child,
             port,
@@ -167,8 +172,7 @@ impl LocalSpeech {
         }
     }
 
-    /// Sends `wav` for transcription and reads the engine's reply as `R`.
-    async fn request<R: Reply>(&mut self, wav: Vec<u8>, language: &str) -> anyhow::Result<R> {
+    async fn verify_listener(&mut self) -> anyhow::Result<()> {
         // The engine may have exited and lost its port since readiness. Each request connects
         // afresh, leaving only the moment between these checks and that connection.
         if !matches!(self.child.try_wait(), Ok(None)) {
@@ -181,6 +185,16 @@ impl LocalSpeech {
                 .is_ok_and(|held| held),
             STOPPED
         );
+        Ok(())
+    }
+
+    async fn request<R: Reply>(
+        &mut self,
+        wav: Vec<u8>,
+        language: &str,
+        terms: &Terms,
+    ) -> anyhow::Result<R> {
+        self.verify_listener().await?;
         let request = match self.engine {
             Engine::Parakeet => {
                 let rate = audio::wav_sample_rate(&wav)?;
@@ -188,14 +202,27 @@ impl LocalSpeech {
                     (8_000..=96_000).contains(&rate),
                     "Parakeet needs 8–96 kHz audio. Set your microphone to 48 kHz in your system's sound settings, or choose Whisper."
                 );
+                let mut form = recording_form(wav, R::FORMAT)?;
+                if self.nemotron {
+                    form = form.text(
+                        "language",
+                        crate::models::nemotron_language(language).to_owned(),
+                    );
+                    if !terms.phrases().is_empty() {
+                        form = form.text("speech_contexts", terms.contexts().to_string());
+                    }
+                }
                 self.client
                     .post(self.url("v1/audio/transcriptions"))
                     .bearer_auth(&self.secret)
-                    .multipart(recording_form(wav, R::FORMAT)?)
+                    .multipart(form)
             },
             Engine::Whisper => {
                 let form = recording_form(wav, R::FORMAT)?
-                    .text("language", language.to_owned())
+                    .text(
+                        "language",
+                        crate::models::whisper_language(language).to_owned(),
+                    )
                     .text("temperature", "0.0");
                 self.client.post(self.url("inference")).multipart(form)
             },
@@ -225,8 +252,28 @@ impl LocalSpeech {
 }
 
 impl Speech for LocalSpeech {
-    async fn transcribe(&mut self, wav: Vec<u8>, language: &str) -> anyhow::Result<String> {
-        self.request::<Plain>(wav, language)
+    async fn transcribe_stream(
+        &mut self,
+        audio: crate::runtime::ports::LiveAudio,
+        language: &str,
+        terms: &Terms,
+    ) -> anyhow::Result<Option<String>> {
+        let text = streaming::transcribe(self, audio, language, terms).await?;
+        if text.is_none() {
+            // Closing a stream cancels its engine-side job. A bounded probe acknowledges cleanup
+            // before the owner reuses this worker for a Show or another recording.
+            timeout(CONNECT_TIMEOUT, self.probe_with_silence()).await??;
+        }
+        Ok(text)
+    }
+
+    async fn transcribe(
+        &mut self,
+        wav: Vec<u8>,
+        language: &str,
+        terms: &Terms,
+    ) -> anyhow::Result<String> {
+        self.request::<Plain>(wav, language, terms)
             .await?
             .text
             .context("The speech engine returned no transcript. Check the selected model and engine, then try again.")
@@ -236,15 +283,21 @@ impl Speech for LocalSpeech {
         &mut self,
         wav: Vec<u8>,
         language: &str,
+        terms: &Terms,
     ) -> anyhow::Result<Narration> {
-        self.request::<Timed>(wav, language)
+        self.request::<Timed>(wav, language, terms)
             .await
             .map(Timed::into_narration)
     }
 
     async fn probe_with_silence(&mut self) -> anyhow::Result<()> {
         let silence = audio::silent_wav(16_000, Duration::from_secs(1))?;
-        self.transcribe(silence, "en").await?;
+        self.transcribe(
+            silence,
+            if self.nemotron { "en-US" } else { "en" },
+            &Terms::default(),
+        )
+        .await?;
         Ok(())
     }
 
@@ -494,7 +547,7 @@ fn server_command(config: &Config, port: u16, secret: &str, served: &Path) -> Co
                     "--threads",
                     &config.threads.to_string(),
                     "--language",
-                    &config.language,
+                    crate::models::whisper_language(&config.language),
                 ]);
             if !config.use_gpu {
                 command.arg("--no-gpu");

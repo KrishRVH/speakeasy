@@ -35,6 +35,8 @@ struct TrayState {
     /// Linux records no Shows, so has neither.
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     last_show: bool,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    shortcut: std::sync::Arc<str>,
 }
 
 impl TrayState {
@@ -50,6 +52,8 @@ impl TrayState {
             ),
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             last_show: services.recallable_show(snapshot).is_some(),
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            shortcut: snapshot.shortcut.clone(),
         }
     }
 }

@@ -16,7 +16,11 @@ use speakeasy_platform::{
     Scope,
 };
 use speakeasy_show::{Ending, NarrationLoss};
-use tokio::{sync::watch, task::JoinError};
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinError,
+};
+use zeroize::Zeroizing;
 
 use self::ports::{CaptureEvent, Ports, Published, SessionId, ShowEvent};
 use crate::{
@@ -233,6 +237,7 @@ pub(crate) struct Runtime<Host = OwnedThread> {
     configuration: watch::Sender<Config>,
     reports: Sender<Report>,
     recoveries: Sender<Recovery>,
+    practices: Sender<mpsc::Sender<PracticeEvent>>,
     stop: Sender<Infallible>,
 }
 
@@ -250,6 +255,7 @@ impl Runtime {
             inserter,
             canvas,
             sounds: Sounds::start()?,
+            mac_shortcut: config.mac_shortcut,
         };
         let runtime = Self::host(
             config.into_inner(),
@@ -313,11 +319,13 @@ impl<Host> Runtime<Host> {
         let (reports, reported) = async_channel::bounded(1);
         let (stop, stopping) = async_channel::bounded(1);
         let (recoveries, recovering) = async_channel::bounded(1);
+        let (practices, practicing) = async_channel::bounded(1);
         let host = run(Wiring {
             changes,
             inputs,
             reports: reported,
             recoveries: recovering,
+            practices: practicing,
             snapshots,
             meter,
             permits: input.clone(),
@@ -332,6 +340,7 @@ impl<Host> Runtime<Host> {
             configuration,
             reports,
             recoveries,
+            practices,
             stop,
         })
     }
@@ -364,6 +373,19 @@ impl<Host> Runtime<Host> {
         Ok(result)
     }
 
+    /// Arms private practice after the owner acknowledges `Ready`. Dropping the receipt revokes
+    /// practice; text is never sent to the focused application or a shared status snapshot.
+    pub(crate) fn practice(&self) -> Result<mpsc::Receiver<PracticeEvent>, &'static str> {
+        let (sender, receipt) = mpsc::channel(2);
+        self.practices
+            .try_send(sender)
+            .map_err(|error| match error {
+                TrySendError::Full(_) => "Practice is already starting.",
+                TrySendError::Closed(_) => "Resume dictation to try it here.",
+            })?;
+        Ok(receipt)
+    }
+
     pub(crate) fn configure(&self, config: ValidConfig) {
         if self.configuration.borrow().change_to(&config) < Change::Session {
             return;
@@ -394,6 +416,7 @@ struct Desktop {
     /// Where a Show's live ink reaches the overlay.
     canvas: watch::Sender<Canvas>,
     sounds: Sounds,
+    mac_shortcut: speakeasy_platform::MacShortcut,
 }
 
 impl Ports for Desktop {
@@ -409,10 +432,10 @@ impl Ports for Desktop {
         &self,
         id: SessionId,
         microphone: Option<&str>,
-        segmenting: bool,
+        recognition: crate::runtime::ports::RecognitionMode,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<Capture> {
-        Capture::start(id, microphone, segmenting, events)
+        Capture::start(id, microphone, recognition, events)
     }
 
     fn keep(&self, recorded: std::time::SystemTime) -> anyhow::Result<Option<show::Kept>> {
@@ -427,7 +450,15 @@ impl Ports for Desktop {
         log: Option<show::FrameLog>,
         events: Sender<ShowEvent>,
     ) -> anyhow::Result<ScreenRecorder> {
-        ScreenRecorder::start(id, started, scope, log, events, self.canvas.clone())
+        ScreenRecorder::start(
+            id,
+            started,
+            scope,
+            log,
+            events,
+            self.canvas.clone(),
+            self.mac_shortcut,
+        )
     }
 
     fn publish(
@@ -475,6 +506,13 @@ impl Ports for Desktop {
 /// Completion of an accepted recovery; dropping the receipt does not cancel owned publication.
 pub(crate) type RecoveryReceipt = Receiver<Result<SavedShow, String>>;
 
+/// Private, transient practice output. No implementation of `Debug` exposes recognized words.
+pub(crate) enum PracticeEvent {
+    Ready,
+    Text(Zeroizing<String>),
+    Unavailable(&'static str),
+}
+
 struct Recovery {
     interrupted: Interrupted,
     completed: Sender<Result<SavedShow, String>>,
@@ -486,6 +524,7 @@ struct Wiring<P> {
     inputs: Receiver<Input>,
     reports: Receiver<Report>,
     recoveries: Receiver<Recovery>,
+    practices: Receiver<mpsc::Sender<PracticeEvent>>,
     snapshots: watch::Sender<Snapshot>,
     meter: watch::Sender<Meter>,
     permits: InputSender,

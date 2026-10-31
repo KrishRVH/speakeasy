@@ -6,6 +6,7 @@
 mod checkpoint;
 mod control;
 mod cuts;
+mod live;
 mod microphones;
 mod pcm;
 mod speech;
@@ -69,7 +70,7 @@ impl Capture {
     pub(crate) fn start(
         id: SessionId,
         microphone: Option<&str>,
-        segmenting: bool,
+        recognition: crate::runtime::ports::RecognitionMode,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<Self> {
         let microphone = microphone.map(str::to_owned);
@@ -78,7 +79,7 @@ impl Capture {
             events,
             move |events, control, cues, keep, whole| match Recorder::open(
                 microphone.as_deref(),
-                segmenting,
+                recognition,
                 events,
                 control,
             ) {
@@ -255,6 +256,7 @@ struct Recorder<D = LiveStream> {
     started: Instant,
     rate: u32,
     cuts: Option<Cuts>,
+    live: live::Feed,
     #[cfg(test)]
     profile: Option<fixture::Profile>,
 }
@@ -262,7 +264,7 @@ struct Recorder<D = LiveStream> {
 impl Recorder {
     fn open(
         microphone: Option<&str>,
-        segmenting: bool,
+        recognition: crate::runtime::ports::RecognitionMode,
         events: &Sender<CaptureEvent>,
         control: &Arc<Control>,
     ) -> Result<Self, Startup> {
@@ -312,7 +314,13 @@ impl Recorder {
             errors: stream_errors,
             started,
             rate,
-            cuts: segmenting.then(|| Cuts::new(rate)),
+            cuts: (recognition == crate::runtime::ports::RecognitionMode::Segmented)
+                .then(|| Cuts::new(rate)),
+            live: if recognition == crate::runtime::ports::RecognitionMode::Streaming {
+                live::Feed::Waiting
+            } else {
+                live::Feed::Abandoned
+            },
             #[cfg(test)]
             profile: None,
         })
@@ -344,6 +352,7 @@ impl<D> Recorder<D> {
             errors,
             rate,
             cuts,
+            live,
             ..
         } = self;
         let outcome = drained.and_then(|()| {
@@ -353,6 +362,7 @@ impl<D> Recorder<D> {
             // A callback may have failed between the last poll and quiescence.
             capture_failure(control, &errors)?;
             speech.complete(pcm.audio());
+            live.finish(pcm.audio());
             let partition = cuts.and_then(|cuts| cuts.finish(&speech, pcm.audio().len()));
             let mut sealed = pcm.seal(speech, rate)?;
             if let Some(sealed) = &mut sealed {
@@ -386,6 +396,7 @@ impl<D> Recorder<D> {
             }
             if whole.try_recv().is_ok() {
                 self.cuts = None;
+                self.live = live::Feed::Abandoned;
             }
             capture_failure(control, &self.errors)?;
             let stopping = control.mode() == Mode::Finishing
@@ -417,6 +428,8 @@ impl<D> Recorder<D> {
                 )]
                 let _ = events.try_send(CaptureEvent::Level(id, level));
             }
+            self.live
+                .offer(id, events, self.pcm.audio(), &self.speech, self.rate);
             if stopping {
                 return Ok(());
             }

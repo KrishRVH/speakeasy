@@ -76,6 +76,11 @@ jobs:
       - name: Package macOS
         if: runner.os == 'macOS'
         run: bash scripts/package-macos.sh
+      - name: Check per-user Windows installation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 5
+        run: ./scripts/check-installer.ps1 -Installer artifacts/speakeasy-windows-x64-setup.exe
       - name: Package Linux against glibc 2.35
         if: runner.os == 'Linux'
         run: bash scripts/package-linux.sh
@@ -86,7 +91,7 @@ jobs:
         timeout-minutes: 5
         run: |
           shopt -s nullglob
-          for package in artifacts/*.zip artifacts/*.AppImage artifacts/*.tar.gz; do
+          for package in artifacts/*.zip artifacts/*.dmg artifacts/*.AppImage artifacts/*.tar.gz; do
             bash scripts/check-package.sh "$package"
           done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -94,6 +99,8 @@ jobs:
           name: speakeasy-${{ runner.os }}
           path: |
             artifacts/*.zip
+            artifacts/*.dmg
+            artifacts/*-setup.exe
             artifacts/*.AppImage
             artifacts/*.tar.gz
           if-no-files-found: error
@@ -117,7 +124,7 @@ jobs:
         run: |
           tag="v$VERSION"
           notes="docs/release-notes.md"
-          assets=(speakeasy-windows-x64.zip speakeasy-macos.zip speakeasy-linux-x86_64.AppImage speakeasy-linux-x86_64.tar.gz)
+          assets=(speakeasy-windows-x64.zip speakeasy-windows-x64-setup.exe speakeasy-macos.zip speakeasy-macos.dmg speakeasy-linux-x86_64.AppImage speakeasy-linux-x86_64.tar.gz)
           (cd artifacts && sha256sum "${assets[@]}" > SHA256SUMS)
           assets=("${assets[@]/#/artifacts/}" artifacts/SHA256SUMS)
           # Git refuses to move an existing tag, so a version another commit claimed after the

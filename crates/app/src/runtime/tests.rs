@@ -13,7 +13,10 @@ use super::{
     ports::{Capturing, Footage, Listening, Pinning, Sealed, Speech, Unchosen},
     *,
 };
-use crate::testing::{PATIENCE, still_pending};
+use crate::{
+    recognition_terms::Terms,
+    testing::{PATIENCE, still_pending},
+};
 
 type Reply = oneshot::Sender<anyhow::Result<String>>;
 type TranscriptionJob = (String, Reply);
@@ -207,14 +210,15 @@ impl Ports for FakePorts {
         &self,
         id: SessionId,
         _: Option<&str>,
-        segmenting: bool,
+        recognition: crate::runtime::ports::RecognitionMode,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<FakeMicrophone> {
         if let Some(error) = self.microphone_error {
             bail!(error);
         }
         if let Some(segmentation) = &self.segmentation {
-            segmentation.try_send(segmenting)?;
+            segmentation
+                .try_send(recognition == crate::runtime::ports::RecognitionMode::Segmented)?;
         }
         self.captures.try_send((id, events.clone()))?;
         events.try_send(CaptureEvent::Ready(id))?;
@@ -513,7 +517,25 @@ struct FakeSpeech {
 }
 
 impl Speech for FakeSpeech {
-    async fn transcribe(&mut self, wav: Vec<u8>, language: &str) -> anyhow::Result<String> {
+    async fn transcribe_stream(
+        &mut self,
+        mut audio: crate::runtime::ports::LiveAudio,
+        language: &str,
+        terms: &Terms,
+    ) -> anyhow::Result<Option<String>> {
+        while audio.frames.recv().await.is_some() {}
+        if audio.tail.await.is_err() {
+            return Ok(None);
+        }
+        self.transcribe(Vec::new(), language, terms).await.map(Some)
+    }
+
+    async fn transcribe(
+        &mut self,
+        wav: Vec<u8>,
+        language: &str,
+        _terms: &Terms,
+    ) -> anyhow::Result<String> {
         if let Some(requests) = &self.recorded_requests {
             requests.try_send(wav)?;
         }
@@ -526,8 +548,11 @@ impl Speech for FakeSpeech {
         &mut self,
         wav: Vec<u8>,
         language: &str,
+        terms: &Terms,
     ) -> anyhow::Result<Narration> {
-        self.transcribe(wav, language).await.map(Narration::Text)
+        self.transcribe(wav, language, terms)
+            .await
+            .map(Narration::Text)
     }
 
     async fn probe_with_silence(&mut self) -> anyhow::Result<()> {
@@ -838,7 +863,9 @@ mod cues;
 mod dictation;
 mod last_show;
 mod model;
+mod practice;
 mod shows;
 
 mod recognition;
 mod recovery;
+mod streaming;

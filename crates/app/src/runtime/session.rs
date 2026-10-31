@@ -11,10 +11,13 @@ use std::{
 use speakeasy_core::gesture::State;
 use speakeasy_platform::{InsertPermit, Inserted, Scope};
 use speakeasy_show::{Narration, NarrationLoss};
-use tokio::task::{JoinError, JoinHandle};
+use tokio::{
+    sync::mpsc,
+    task::{JoinError, JoinHandle},
+};
 
 use super::{
-    Phase,
+    Phase, PracticeEvent,
     ports::{Footage, Published, Sealed, SessionId},
     recognition::{Detail, Recognition, Request, Ticket, Transcript},
 };
@@ -27,11 +30,18 @@ pub(super) struct Session {
     pub permit: InsertPermit,
     /// When the session began; a Show's timeline counts from here.
     pub started: Instant,
+    pub destination: Destination,
     stage: Stage,
     recognition: Recognition,
     /// The screen side of a Show; `None` while the session is plain dictation.
     show: Option<Show>,
     receipt: Option<async_channel::Sender<Result<SavedShow, String>>>,
+}
+
+/// Fixed at admission, so changing or closing a practice view cannot redirect its recording.
+pub(super) enum Destination {
+    Focused,
+    Practice(mpsc::Sender<PracticeEvent>),
 }
 
 struct Show {
@@ -113,6 +123,7 @@ impl Session {
             id,
             permit,
             started,
+            destination: Destination::Focused,
             stage: Stage::Queued,
             recognition: Recognition::new(id),
             show: None,
@@ -219,6 +230,10 @@ impl Session {
         self.show.is_some()
     }
 
+    pub(super) const fn is_practice(&self) -> bool {
+        matches!(self.destination, Destination::Practice(_))
+    }
+
     /// Whether the session's microphone waits for the previous one to retire.
     pub(super) const fn is_queued(&self) -> bool {
         matches!(self.stage, Stage::Queued)
@@ -320,6 +335,12 @@ impl Session {
     pub(super) fn piece(&mut self, number: u32, audio: Sealed) {
         if self.is_capturing() && !self.is_show() {
             self.recognition.piece(number, audio);
+        }
+    }
+
+    pub(super) fn stream(&mut self, audio: super::ports::LiveAudio) {
+        if self.is_capturing() && !self.is_show() {
+            self.recognition.stream(audio);
         }
     }
 
@@ -430,8 +451,10 @@ impl Session {
     /// already revoked keeps the session dictation, which the revoking cancel or settings change
     /// then discards.
     pub(super) fn turn_into_show(&mut self, scope: Scope) -> bool {
-        let turns =
-            !self.is_show() && (self.is_queued() || self.is_capturing()) && self.permit.shield();
+        let turns = !self.is_practice()
+            && !self.is_show()
+            && (self.is_queued() || self.is_capturing())
+            && self.permit.shield();
         if turns {
             self.recognition.whole();
             self.show = Some(Show::new(Screen::Queued(scope)));

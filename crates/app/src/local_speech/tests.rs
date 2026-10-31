@@ -377,7 +377,9 @@ async fn an_engine_that_died_while_idle_names_the_remedy_its_exit_proves() -> an
     let (_directory, mut speech) = shell_engine("kill -s ILL $$", listener).await?;
     speech.child.wait().await?;
     let wav = audio::silent_wav(16_000, Duration::from_secs(1))?;
-    let transcribed = speech.transcribe(wav, "en").await;
+    let transcribed = speech
+        .transcribe(wav, "en", &crate::recognition_terms::Terms::default())
+        .await;
     speech.stop().await;
     let error = transcribed.err().context("The exited engine transcribed")?;
     assert!(error.to_string().contains("CPU instructions"), "{error}");
@@ -394,7 +396,8 @@ async fn a_request_the_engine_crashes_during_names_its_remedy_and_ends_its_group
         crashing_engine("sleep 60 & printf '%s' \"$!\" > member.pid; ").await?;
     let wav = audio::silent_wav(16_000, Duration::from_secs(1))?;
     let (transcribed, crashed) = timeout(PATIENCE, async {
-        tokio::join!(speech.transcribe(wav, "en"), engine)
+        let terms = Terms::default();
+        tokio::join!(speech.transcribe(wav, "en", &terms), engine)
     })
     .await?;
     crashed?;
@@ -534,11 +537,136 @@ async fn sleeping_engine(port: u16) -> anyhow::Result<LocalSpeech> {
     engine_from(command, port).await
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn streaming_verifies_the_listener_before_sending_credentials_or_audio() -> anyhow::Result<()>
+{
+    let listener = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
+    let mut speech = sleeping_engine(listener.local_addr()?.port()).await?;
+    speech.engine = Engine::Parakeet;
+    speech.nemotron = true;
+    let (_frames, received) = tokio::sync::mpsc::channel(1);
+    let result = timeout(
+        crate::testing::PATIENCE,
+        speech.transcribe_stream(
+            crate::runtime::ports::LiveAudio {
+                rate: 16_000,
+                frames: received,
+                tail: tokio::sync::oneshot::channel().1,
+            },
+            "en-US",
+            &Terms::default(),
+        ),
+    )
+    .await;
+    speech.stop().await;
+    assert!(result?.is_err());
+    assert!(
+        timeout(Duration::from_millis(30), listener.accept())
+            .await
+            .is_err(),
+        "Connected to a program that does not own the engine"
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn streaming_authenticates_and_sends_per_request_language_and_hints() -> anyhow::Result<()> {
+    use futures_util::{SinkExt as _, StreamExt as _};
+    use tokio_tungstenite::{
+        accept_hdr_async,
+        tungstenite::{
+            Message,
+            handshake::server::{Request, Response},
+        },
+    };
+
+    use crate::runtime::ports::LiveAudio;
+
+    let held = std::net::TcpListener::bind((LOOPBACK, 0))?;
+    let listener = held.try_clone()?;
+    listener.set_nonblocking(true)?;
+    let listener = tokio::net::TcpListener::from_std(listener)?;
+    let (_directory, mut speech) = shell_engine("read -r _", held).await?;
+    speech.engine = Engine::Parakeet;
+    speech.nemotron = true;
+    let authorization = format!("Bearer {}", speech.secret);
+    let mut terms = Terms::default();
+    terms.add("Example Name")?;
+    let (frames, received) = tokio::sync::mpsc::channel(2);
+    frames.send(zeroize::Zeroizing::new(vec![0; 3200])).await?;
+    drop(frames);
+    let (ending, tail) = tokio::sync::oneshot::channel();
+    assert!(ending.send(zeroize::Zeroizing::new(Vec::new())).is_ok());
+    let server = async {
+        #[expect(
+            clippy::result_large_err,
+            reason = "The WebSocket handshake callback returns the library-owned HTTP response type"
+        )]
+        let mut socket = accept_hdr_async(
+            listener.accept().await?.0,
+            |request: &Request, response: Response| {
+                assert!(
+                    request
+                        .headers()
+                        .get("Authorization")
+                        .is_some_and(|value| value == authorization.as_str())
+                );
+                assert_eq!(request.uri().path(), "/v1/audio/transcriptions/realtime");
+                Ok(response)
+            },
+        )
+        .await?;
+        socket
+            .send(Message::Text(r#"{"type":"session.created"}"#.into()))
+            .await?;
+        let Some(Ok(Message::Text(update))) = socket.next().await else {
+            bail!("Missing session update");
+        };
+        let update: serde_json::Value = serde_json::from_str(&update)?;
+        assert_eq!(update["session"]["language"], "auto");
+        assert_eq!(update["session"]["speech_contexts"], terms.contexts());
+        socket
+            .send(Message::Text(r#"{"type":"session.updated"}"#.into()))
+            .await?;
+        assert!(matches!(socket.next().await, Some(Ok(Message::Binary(_)))));
+        assert!(matches!(socket.next().await, Some(Ok(Message::Text(_)))));
+        for event in [
+            r#"{"type":"conversation.item.input_audio_transcription.completed","transcript":"Fixture."}"#,
+            r#"{"type":"input_audio_buffer.committed"}"#,
+        ] {
+            socket.send(Message::Text(event.into())).await?;
+        }
+        anyhow::Ok(())
+    };
+    let outcome = timeout(crate::testing::PATIENCE, async {
+        tokio::try_join!(
+            speech.transcribe_stream(
+                LiveAudio {
+                    rate: 16_000,
+                    frames: received,
+                    tail,
+                },
+                "de",
+                &terms
+            ),
+            server
+        )
+    })
+    .await;
+    speech.stop().await;
+    let (text, ()) = outcome??;
+    assert_eq!(text.as_deref(), Some("Fixture."));
+    Ok(())
+}
+
 /// A ready engine serving `port` from the process `command` spawns.
 #[cfg(unix)]
 async fn engine_from(mut command: Command, port: u16) -> anyhow::Result<LocalSpeech> {
     let mut child = command.process_group(0).spawn()?;
     Ok(LocalSpeech {
+        nemotron: false,
         engine: Engine::Whisper,
         group: contain(&mut child).await?,
         child,
@@ -556,8 +684,9 @@ async fn transcribe_beside(
     squatter: &tokio::net::TcpListener,
 ) -> anyhow::Result<anyhow::Result<String>> {
     let wav = audio::silent_wav(16_000, Duration::from_secs(1))?;
+    let terms = Terms::default();
     tokio::select! {
-        transcribed = speech.transcribe(wav, "en") => Ok(transcribed),
+        transcribed = speech.transcribe(wav, "en", &terms) => Ok(transcribed),
         failed = impersonate_engine(squatter) => {
             failed?;
             bail!("The impersonated engine stopped answering");
@@ -618,10 +747,11 @@ async fn local_worker_recognizes_fixture_and_stops() -> anyhow::Result<()> {
     let language = config.language.clone();
     let started = Instant::now();
     let (_cancel, cancelled) = watch::channel(false);
+    let terms = config.recognition_terms.clone();
     let mut worker = LocalSpeech::start(config, cancelled).await?;
     let startup = started.elapsed();
     let started = Instant::now();
-    let result = worker.transcribe(wav, &language).await?;
+    let result = worker.transcribe(wav, &language, &terms).await?;
     eprintln!(
         "Engine startup: {startup:?}; inference: {:?}",
         started.elapsed()

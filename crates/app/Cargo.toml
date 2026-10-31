@@ -20,6 +20,7 @@ async-channel.workspace = true
 cpal.workspace = true
 crc32fast.workspace = true
 getrandom.workspace = true
+futures-util.workspace = true
 gpui = { workspace = true, features = ["font-kit"] }
 raw-window-handle.workspace = true
 reqwest = { workspace = true, features = ["multipart"] }
@@ -30,7 +31,8 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 serde_path_to_error.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "process", "rt", "sync", "time"] }
+tokio-tungstenite.workspace = true
 unicode-segmentation.workspace = true
 zeroize.workspace = true
 

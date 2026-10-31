@@ -49,12 +49,17 @@ module unless a test file is named.
   that text reaches only the session that spoke it, over generated input, settings changes and
   engine faults included. [tests/recognition.rs](../crates/app/src/runtime/tests/recognition.rs)
   checks early recognition, stale piece results, Show promotion, and cleanup across boundaries.
+  [tests/streaming.rs](../crates/app/src/runtime/tests/streaming.rs) covers continuous cancellation,
+  worker reuse, promotion, and private delivery;
+  [tests/practice.rs](../crates/app/src/runtime/tests/practice.rs) checks practice destination and
+  lifetime.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
   [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs), and
-  [cuts.rs](../crates/app/src/audio/cuts.rs) capture, meter, and seal a trimmed WAV before driver
-  teardown; [microphones.rs](../crates/app/src/audio/microphones.rs) lists the input devices
-  Settings offers. [audio/tests.rs](../crates/app/src/audio/tests.rs) and
+  [cuts.rs](../crates/app/src/audio/cuts.rs), and [live.rs](../crates/app/src/audio/live.rs)
+  capture, meter, and seal a trimmed WAV before driver teardown;
+  [microphones.rs](../crates/app/src/audio/microphones.rs) lists the input devices Settings offers.
+  [audio/tests.rs](../crates/app/src/audio/tests.rs) and
   [stream/tests.rs](../crates/app/src/audio/stream/tests.rs) use synthetic samples; microphones.rs
   checks that a scan the driver blocks serves the next request.
 - **Sound cues**: [sounds.rs](../crates/app/src/sounds.rs) plays the cues the owner asks for through
@@ -72,6 +77,13 @@ module unless a test file is named.
   [local_speech/tests.rs](../crates/app/src/local_speech/tests.rs) drives startup and requests
   against fake engines; [runtime/fixture.rs](../crates/app/src/runtime/fixture.rs) profiles the real
   owner and worker on public audio, opt-in.
+  [local_speech/streaming.rs](../crates/app/src/local_speech/streaming.rs) owns the authenticated
+  loopback WebSocket and bounded final wait. Its tests cover final-only delivery, abandoned feeds,
+  malformed replies, authentication, and listener ownership.
+- **Model choices and hints**: [models.rs](../crates/app/src/models.rs) owns curated identities and
+  engine language adaptation. [recognition_terms.rs](../crates/app/src/recognition_terms.rs)
+  validates bounded recognition hints independently of transcript corrections. Hints travel per
+  request; editing them cancels the session but keeps the worker.
 - **Transcript cleanup**: [transcript.rs](../crates/app/src/transcript.rs), with the filler policy
   in `Config::fillers` ([config.rs](../crates/app/src/config.rs)).
   [vocabulary.rs](../crates/app/src/transcript/vocabulary.rs) validates and compiles per-request
@@ -113,6 +125,20 @@ module unless a test file is named.
   [native_tests.rs](../crates/app/src/shell/settings/native_tests.rs) checks owned-window
   composition and save draining. [config/tests.rs](../crates/app/src/config/tests.rs) pins that
   contract.
+- **Private practice and readiness**:
+  [settings/practice.rs](../crates/app/src/shell/settings/practice.rs) owns the receipt and
+  transient rendered text. The session fixes its destination at admission; practice commits the same
+  cancellation permit before sending text through a private channel and never calls native
+  insertion. Closing the receipt cancels its recording, and hiding or deactivating Settings clears
+  the receipt and text. [runtime/tests/practice.rs](../crates/app/src/runtime/tests/practice.rs)
+  covers private delivery, cancellation, configuration, and Show exclusion.
+  [status.rs](../crates/app/src/status.rs) derives readiness from observed resources without probing
+  devices or claiming external delivery.
+- **Update discovery**: [updates.rs](../crates/app/src/updates.rs) owns one cancellable check, with
+  system TLS, a deadline, no redirects, and bounded input. Only a numeric release version forms a
+  link to this repository; returned URLs are ignored. Settings starts it explicitly and shutdown
+  awaits its thread. [updates/tests.rs](../crates/app/src/updates/tests.rs) covers version ordering,
+  hostile tags, redirects, and oversized responses.
 - **Pause, reconfigure, quit, and saves**: [shell.rs](../crates/app/src/shell.rs),
   [services.rs](../crates/app/src/shell/services.rs),
   [lifecycle.rs](../crates/app/src/shell/lifecycle.rs),
@@ -394,11 +420,23 @@ Remote microphone routing belongs to the OS and the user's audio bridge; see
 The speech worker listens on loopback only. On Linux and Windows, Speakeasy declares the worker
 ready, and sends each request, only after checking that the worker's own process group, a job object
 on Windows, holds its listener. macOS has no listener lookup, so each request there checks only that
-the worker still runs. Each worker gets a fresh random key. Parakeet receives it in its owner-only
-environment, but whisper-server accepts its route only on the command line, so on Linux other local
-accounts can read it through `/proc` unless `/proc` is mounted with `hidepid`. That route is the
-only guard on Whisper's `/inference` and model-loading `/load` requests, so prefer Parakeet on
-shared Linux machines; automatic setup installs it.
+the worker still runs. Each worker gets a fresh random key. The NeMo engine receives it in its
+owner-only environment, but whisper-server accepts its route only on the command line, so on Linux
+other local accounts can read it through `/proc` unless `/proc` is mounted with `hidepid`. That
+route is the only guard on Whisper's `/inference` and model-loading `/load` requests, so prefer
+Parakeet on shared Linux machines; automatic setup installs it.
+
+Nemotron's continuous stream opens only when the worker is ready and speech passes the audio gate.
+The drain thread offers bounded PCM chunks without blocking capture. Backpressure leaves its cursor
+for the next drain; completion hands over the remaining tail. Whole audio remains available until
+final delivery. Closing a feed abandons optional inference; a successful silent probe acknowledges
+engine cleanup before reuse. Cancellation revokes the session before closing its request. Show
+promotion abandons the stream and recognizes the whole narration with timing.
+
+Only final events enter the session, and text waits for capture to seal. The pinned NeMo 0.2.0
+server emits final results before its commit acknowledgement. Malformed or interrupted streams fall
+back to the same model's whole-recording request. HTTP and WebSocket requests share listener checks,
+language adaptation, and hint snapshots; neither logs private engine responses.
 
 ## Verification
 

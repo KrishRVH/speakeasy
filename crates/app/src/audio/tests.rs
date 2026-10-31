@@ -28,7 +28,12 @@ fn stopped_startup_returns_without_audio() -> anyhow::Result<()> {
     let records_nothing =
         |events: &Sender<CaptureEvent>, control: &Arc<Control>| -> anyhow::Result<bool> {
             Ok(matches!(
-                Recorder::open(None, false, events, control),
+                Recorder::open(
+                    None,
+                    crate::runtime::ports::RecognitionMode::Whole,
+                    events,
+                    control
+                ),
                 Err(Startup::Stopped)
             ))
         };

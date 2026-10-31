@@ -13,6 +13,7 @@ use std::collections::{HashMap, VecDeque};
 use proptest::prelude::*;
 
 use super::*;
+use crate::recognition_terms::Terms;
 
 /// One clock jump past the five-minute limit, so every capturing gesture finishes.
 const PAST_THE_LIMIT: Duration = Duration::from_secs(301);
@@ -100,7 +101,7 @@ impl Ports for ModelPorts {
         &self,
         id: SessionId,
         _: Option<&str>,
-        _: bool,
+        _: crate::runtime::ports::RecognitionMode,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<ModelDevice> {
         self.log
@@ -266,7 +267,21 @@ impl Drop for ModelSpeech {
 }
 
 impl Speech for ModelSpeech {
-    async fn transcribe(&mut self, wav: Vec<u8>, _: &str) -> anyhow::Result<String> {
+    fn transcribe_stream(
+        &mut self,
+        _: crate::runtime::ports::LiveAudio,
+        _: &str,
+        _: &Terms,
+    ) -> impl Future<Output = anyhow::Result<Option<String>>> + Send {
+        std::future::ready(Err(anyhow!("The model fixture does not request streaming")))
+    }
+
+    async fn transcribe(
+        &mut self,
+        wav: Vec<u8>,
+        _: &str,
+        _terms: &Terms,
+    ) -> anyhow::Result<String> {
         let (reply, result) = oneshot::channel();
         self.jobs.try_send((wav, reply))?;
         result.await?
@@ -276,8 +291,11 @@ impl Speech for ModelSpeech {
         &mut self,
         wav: Vec<u8>,
         language: &str,
+        terms: &Terms,
     ) -> anyhow::Result<Narration> {
-        self.transcribe(wav, language).await.map(Narration::Text)
+        self.transcribe(wav, language, terms)
+            .await
+            .map(Narration::Text)
     }
 
     fn probe_with_silence(&mut self) -> impl Future<Output = anyhow::Result<()>> + Send {

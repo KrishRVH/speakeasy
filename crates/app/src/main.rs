@@ -13,8 +13,10 @@ mod icons;
 mod instance;
 mod local_speech;
 mod lowpass;
+mod models;
 mod paths;
 mod pill;
+mod recognition_terms;
 mod runtime;
 mod setup;
 mod shell;
@@ -26,6 +28,7 @@ mod testing;
 mod theme;
 mod transcript;
 mod tray;
+mod updates;
 
 use std::{
     borrow::Cow,

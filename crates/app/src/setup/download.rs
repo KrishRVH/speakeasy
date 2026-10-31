@@ -32,6 +32,20 @@ pub(super) async fn fetch(
     let name = file_name(download.url);
     let path = directory.join(name);
     if path.is_file() {
+        let size = fs::metadata(&path).map_err(file_error(directory))?.len();
+        if size != download.size
+            || hex_digest(
+                &hash_partial(&path, size, progress)
+                    .await
+                    .map_err(file_error(directory))?
+                    .finalize(),
+            ) != download.sha256
+        {
+            bail!(
+                "The installed download at {} does not match its published checksum. Move this file aside and try setup again.",
+                path.display()
+            );
+        }
         return Ok(path);
     }
     fs::create_dir_all(directory).map_err(file_error(directory))?;
@@ -107,7 +121,7 @@ pub(super) async fn fetch(
     Ok(path)
 }
 
-fn hex_digest(bytes: &[u8]) -> String {
+pub(super) fn hex_digest(bytes: &[u8]) -> String {
     bytes
         .iter()
         .flat_map(|byte| [byte >> 4, byte & 0xF])

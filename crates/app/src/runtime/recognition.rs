@@ -6,7 +6,7 @@ use std::{mem, ops::Range, time::Duration};
 use speakeasy_show::Narration;
 use zeroize::Zeroizing;
 
-use super::ports::{Sealed, SessionId};
+use super::ports::{LiveAudio, Sealed, SessionId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Ticket {
@@ -16,6 +16,7 @@ pub(super) struct Ticket {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Part {
+    Stream,
     Piece(u32),
     Final,
 }
@@ -33,9 +34,20 @@ pub(super) enum Transcript {
 
 pub(super) struct Request {
     pub ticket: Ticket,
-    pub audio: Sealed,
+    pub audio: Source,
     pub detail: Detail,
     pub language: Option<Box<str>>,
+}
+
+pub(super) enum Source {
+    Wav(Sealed),
+    Stream(LiveAudio),
+}
+
+enum Stream {
+    Queued(LiveAudio),
+    Sent,
+    Heard(Zeroizing<String>),
 }
 
 enum Piece {
@@ -70,6 +82,7 @@ pub(super) struct Recognition {
     id: SessionId,
     pieces: Vec<Piece>,
     segmented: bool,
+    stream: Option<Stream>,
     final_part: Option<Final>,
 }
 
@@ -79,7 +92,15 @@ impl Recognition {
             id,
             pieces: Vec::new(),
             segmented: true,
+            stream: None,
             final_part: None,
+        }
+    }
+
+    pub(super) fn stream(&mut self, audio: LiveAudio) {
+        if self.segmented && self.final_part.is_none() {
+            self.whole();
+            self.stream = Some(Stream::Queued(audio));
         }
     }
 
@@ -104,6 +125,7 @@ impl Recognition {
     pub(super) fn whole(&mut self) {
         self.segmented = false;
         self.pieces.clear();
+        self.stream = None;
         if let Some(final_part) = &mut self.final_part {
             final_part.mode = Audio::Whole;
         }
@@ -116,19 +138,23 @@ impl Recognition {
         language: Option<Box<str>>,
         detail: Detail,
     ) {
-        let mode = match audio.partition.take() {
-            Some(partition)
-                if self.segmented
-                    && detail == Detail::Text
-                    && usize::try_from(partition.pieces).ok() == Some(self.pieces.len())
-                    && partition.pieces > 0 =>
-            {
-                Audio::Tail(partition.tail)
-            },
-            _ => {
-                self.whole();
-                Audio::Whole
-            },
+        let mode = if detail == Detail::Text && self.stream.is_some() {
+            Audio::Whole
+        } else {
+            match audio.partition.take() {
+                Some(partition)
+                    if self.segmented
+                        && detail == Detail::Text
+                        && usize::try_from(partition.pieces).ok() == Some(self.pieces.len())
+                        && partition.pieces > 0 =>
+                {
+                    Audio::Tail(partition.tail)
+                },
+                _ => {
+                    self.whole();
+                    Audio::Whole
+                },
+            }
         };
         self.final_part = Some(Final {
             audio,
@@ -143,6 +169,23 @@ impl Recognition {
 
     /// Called only when the worker is ready, so moving queued audio into a request cannot lose it.
     pub(super) fn request(&mut self) -> Option<Request> {
+        if let Some(stream) = &mut self.stream {
+            if !matches!(stream, Stream::Queued(_)) {
+                return None;
+            }
+            let Stream::Queued(audio) = mem::replace(stream, Stream::Sent) else {
+                return None;
+            };
+            return Some(Request {
+                ticket: Ticket {
+                    session: self.id,
+                    part: Part::Stream,
+                },
+                audio: Source::Stream(audio),
+                detail: Detail::Text,
+                language: None,
+            });
+        }
         for (index, piece) in self.pieces.iter_mut().enumerate() {
             match piece {
                 Piece::Heard(_) => {},
@@ -157,7 +200,7 @@ impl Recognition {
                             session: self.id,
                             part: Part::Piece(number),
                         },
-                        audio,
+                        audio: Source::Wav(audio),
                         detail: Detail::Text,
                         language: None,
                     });
@@ -188,11 +231,11 @@ impl Recognition {
                 session: self.id,
                 part: Part::Final,
             },
-            audio: Sealed {
+            audio: Source::Wav(Sealed {
                 wav,
                 trimmed: Duration::ZERO,
                 partition: None,
-            },
+            }),
             detail: final_part.detail,
             language: final_part.language.clone(),
         })
@@ -201,6 +244,7 @@ impl Recognition {
     pub(super) fn accepts(&self, ticket: Ticket) -> bool {
         ticket.session == self.id
             && match ticket.part {
+                Part::Stream => matches!(self.stream, Some(Stream::Sent)),
                 Part::Piece(number) => usize::try_from(number)
                     .ok()
                     .and_then(|index| self.pieces.get(index))
@@ -214,6 +258,14 @@ impl Recognition {
             return None;
         }
         match ticket.part {
+            Part::Stream => {
+                let Transcript::Text(text) = transcript else {
+                    self.whole();
+                    return None;
+                };
+                self.stream = Some(Stream::Heard(Zeroizing::new(text)));
+                self.complete().map(Transcript::Text)
+            },
             Part::Piece(number) => {
                 let Transcript::Text(text) = transcript else {
                     self.whole();
@@ -245,6 +297,10 @@ impl Recognition {
             .final_part
             .as_mut()
             .filter(|part| part.phase == Phase::Waiting)?;
+        if let Some(Stream::Heard(text)) = &mut self.stream {
+            final_part.phase = Phase::Done;
+            return Some(mem::take(&mut **text));
+        }
         if !matches!(&final_part.mode, Audio::Tail(range) if range.is_empty())
             || self
                 .pieces
@@ -274,7 +330,7 @@ impl Recognition {
         if !self.accepts(ticket) {
             return true;
         }
-        if matches!(ticket.part, Part::Piece(_)) {
+        if matches!(ticket.part, Part::Piece(_) | Part::Stream) {
             self.whole();
             return true;
         }

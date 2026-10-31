@@ -35,7 +35,11 @@ slot on screen while you speak, and keeps every word on your machine.
 | Show the screen, a window, or an area; see below | <kbd>S</kbd>, <kbd>W</kbd>, or <kbd>A</kbd> during the hold | <kbd>S</kbd>, <kbd>W</kbd>, or <kbd>A</kbd> during the hold |
 
 The shortcuts match Wispr Flow's defaults, and double-tapping the shortcut also starts hands-free.
-On Mac, set **System Settings › Keyboard › Press 🌐 key to** to **Do Nothing** so Fn only dictates.
+On Mac, Settings offers Fn, Right Option, or Right Command. With either right modifier, hold it for
+a quarter-second before adding Space, S, W, or A; quick combinations keep their usual action. Left
+Option and Left Command remain ordinary modifiers.
+
+For Fn, set **System Settings › Keyboard › Press 🌐 key to** to **Do Nothing** so Fn only dictates.
 **Remove um / uh** is on by default and removes standalone English hesitation words locally before
 insertion. Speech containing only these fillers sends nothing. Turn it off for non-English Parakeet
 dictation or literal transcription; Whisper removes fillers only when its language is set to
@@ -309,9 +313,14 @@ its next pass.
 
 ## Get started
 
-Download the Windows or Mac zip from the
-[latest release](https://github.com/KrishRVH/speakeasy/releases/latest), unzip it, and open
-Speakeasy. Linux's experimental AppImage and tar packages are described below.
+Download the Windows installer or Mac disk image from the
+[latest release](https://github.com/KrishRVH/speakeasy/releases/latest). The Windows installer needs
+no administrator access; on Mac, drag Speakeasy to Applications. Portable ZIPs remain available.
+Linux's experimental AppImage and tar packages are described below.
+
+Windows installs into your local Programs folder and adds a Start menu entry. Installing an update
+replaces the app; uninstalling keeps your settings, downloaded models, and Shows. The installer does
+not change your PATH. Add its folder yourself if you want to run `speakeasy-cli` by name.
 
 Keep the Windows package together: `speakeasy.exe` opens the app, and `speakeasy-cli.exe` runs Show
 commands from a terminal or agent, returning output and exit status to the caller. The CLI accepts
@@ -336,6 +345,16 @@ about 0.8 GB in all, and turns dictation on:
 
 Then hold <kbd>Ctrl</kbd> + <kbd>Win</kbd> (Windows), <kbd>Fn</kbd> (Mac), or <kbd>Ctrl</kbd> +
 <kbd>Super</kbd> + <kbd>Space</kbd> (Linux) in an editor and speak.
+
+Settings shows whether the local model and shortcut are ready. **Try dictation here** lets you use
+the real shortcut and microphone while your words appear only in Settings. Nothing is pasted,
+copied, or saved, and practice cannot record a Show. **End practice**, hiding the window, losing
+focus, or changing settings ends practice and clears its text. To check delivery, end practice and
+dictate into an editor; practice does not verify another app's input or clipboard behavior.
+
+**Check for updates** in Settings contacts the repository's latest-release endpoint on GitHub only
+when clicked. It sends no recordings, settings, or device details. **Open release** opens that
+version's official download page; checking never installs or runs an update.
 
 Downloads come from pinned GitHub and Hugging Face URLs and are checked against their SHA-256 before
 use. They live in `%LOCALAPPDATA%\speakeasy` on Windows and
@@ -438,7 +457,19 @@ GPU** switches between the GPU and the CPU. After a five-minute recording the GP
 
 Long Parakeet dictation starts recognition at pauses while you keep speaking, reducing the work left
 after release. Text still arrives once, when you finish, with phrase corrections applied across the
-whole dictation. Whisper and Show narration use whole-recording recognition.
+whole dictation.
+
+**Nemotron** is an optional 742 MB download under **Local speech**. NVIDIA's Nemotron 3.5 ASR
+Streaming 0.6B supports 32 locales, including Hindi, Japanese, Korean, and Mandarin. Choose a
+language or automatic detection. It performs continuous inference during ordinary dictation and
+practice; final text arrives once, after release. If continuous recognition fails, Speakeasy retries
+the complete recording with the same model. Parakeet remains the default; download, then save to
+switch. Whisper and Show narration use whole-recording recognition.
+
+**Recognition hints** helps Nemotron recognize names and jargon without forcing replacement text.
+Add a name or phrase, then save. Up to 100 hints are stored locally; each allows six words and 64
+characters. They remain saved when another model is selected, but only Nemotron uses them. Use
+**Phrase corrections** when you want a deterministic replacement.
 
 **Whisper** runs a local whisper.cpp server with a GGML model. Switch the engine under **Local
 speech**, choose its executable and model, and save; switching is always explicit. The known-good
@@ -450,11 +481,12 @@ machines, prefer Parakeet: other accounts can read Whisper's
 
 The worker stays warm on loopback. With a GPU, one silent request initializes its kernels before the
 first dictation; Linux CPU workers also validate inference before readiness. Cancelling before final
-recognition discards early results while their worker finishes. Cancelling final GPU inference keeps
-a healthy worker and replaces it if a two-second recovery check fails; cancelling final CPU
-inference replaces the worker. On Mac and Linux, force-quitting Speakeasy can leave the worker
-running; quit from its menu instead. Relative engine and model paths resolve beside the settings
-file.
+recognition discards early Parakeet results while their worker finishes. Cancelling a Nemotron
+stream closes it and reuses the worker after a bounded recovery check. Cancelling final GPU
+inference keeps a healthy worker and replaces it if a two-second recovery check fails; cancelling
+final CPU inference replaces the worker. On Mac and Linux, force-quitting Speakeasy can leave the
+worker running; quit from its menu instead. Relative engine and model paths resolve beside the
+settings file.
 
 ## Everyday use
 
@@ -467,10 +499,10 @@ file.
 </p>
 
 Settings shows the shortcuts and the engine and model in use, and lets you choose the microphone,
-Whisper's language, GPU use, filler removal, how text is delivered, reduced motion, sounds, theme,
-phrase corrections, and on Windows whether Speakeasy starts at login. The buttons and the status
-line stay at the bottom while the rest scrolls. The status says whether dictation is ready, or shows
-the latest error or notice; problems show in the attention color.
+Nemotron or Whisper's language, recognition hints, GPU use, filler removal, how text is delivered,
+reduced motion, sounds, theme, phrase corrections, and on Windows whether Speakeasy starts at login.
+The buttons and the status line stay at the bottom while the rest scrolls. The status says whether
+dictation is ready, or shows the latest error or notice; problems show in the attention color.
 
 **Phrase corrections** replaces recurring recognition mistakes in dictation and Show narration.
 Enter what the engine hears and the spelling you want, then save. Matching is case-insensitive, uses
@@ -481,10 +513,11 @@ does not provide live transcription. Up to 200 rules are stored locally in `voca
 characters.
 
 Changes apply when you save. Theme, reduced-motion, and Start at login changes keep a recording
-running; microphone, language, filler removal, phrase correction, delivery, and sound changes end it
-but keep the model loaded. On Linux, Shortcuts changes and most Insert changes restart dictation,
-which reloads the model. Saving stays responsive and preserves edits made while the save is running.
-Pausing during a save keeps dictation paused; Quit finishes requested saves.
+running; microphone, language, filler removal, recognition hints, phrase correction, delivery, and
+sound changes end it but keep the model loaded. Changing the Mac shortcut, Linux Shortcuts, or most
+Linux Insert settings restarts dictation, which reloads the model. Saving stays responsive and
+preserves edits made while the save is running. Pausing during a save keeps dictation paused; Quit
+finishes requested saves.
 
 <p align="center">
   <img src="docs/assets/themes.png"
@@ -556,21 +589,26 @@ paused clock exercises gesture deadlines and the five-minute cap.
   `bash scripts/package-linux.sh` package the app into `artifacts/`; `--native-tar` makes an
   unbundled Linux archive for the current machine. Each script generates the package's third-party
   notices with the `cargo about` that `mise install` provides. Packages carry no engine or model;
-  setup downloads them on first launch. The Mac bundle carries its microphone usage declaration and
-  a local signature by default; grant its permissions as [Get started](#get-started) describes. For
-  distribution, set both `SPEAKEASY_MAC_SIGN_IDENTITY` to a Developer ID Application identity
-  already in the keychain and `SPEAKEASY_MAC_NOTARY_PROFILE` to a stored `notarytool` keychain
-  profile. Packaging then signs with hardened runtime and the microphone entitlement, submits to
-  Apple, staples the accepted ticket, and checks Gatekeeper before emitting the ZIP. Incomplete
-  settings or rejected notarization fail the build. CI remains locally signed until those
-  credentials are configured; no credentials belong in the repository. Moving from a local signature
-  to Developer ID can require granting microphone, Accessibility, and screen recording permissions
-  again; check them after replacing the app.
+  setup downloads them on first launch. Windows packaging also requires Inno Setup 6 and emits a
+  per-user installer beside the portable ZIP. Mac packaging emits a drag-to-Applications DMG and
+  ZIP. The Mac bundle carries its microphone usage declaration and a local signature by default;
+  grant its permissions as [Get started](#get-started) describes. For distribution, set both
+  `SPEAKEASY_MAC_SIGN_IDENTITY` to a Developer ID Application identity already in the keychain and
+  `SPEAKEASY_MAC_NOTARY_PROFILE` to a stored `notarytool` keychain profile. Packaging then signs
+  with hardened runtime and the microphone entitlement, submits to Apple, staples the accepted
+  ticket, and checks Gatekeeper before emitting the ZIP and DMG. Incomplete settings or rejected
+  notarization fail the build. CI remains locally signed until those credentials are configured; no
+  credentials belong in the repository. Moving from a local signature to Developer ID can require
+  granting microphone, Accessibility, and screen recording permissions again; check them after
+  replacing the app.
 - `bash scripts/check-package.sh <package>` unpacks a package and checks, with no display or model,
   that it prints its version and help, answers a mistyped option on stderr with status 2, and that
   `show demo` writes a bundle with its summary and contact sheet. It inspects the bundle, prints the
   embedded agent skill, and checks that a missing frame produces findings and a failure status. The
-  release workflow runs it on every package before upload.
+  release workflow runs it on the portable packages and Mac DMG before upload.
+  `scripts/check-installer.ps1 -Installer <setup.exe>` tests install, upgrade, CLI launch, and
+  uninstall on disposable GitHub Actions Windows runners; it preserves settings and other copies'
+  sign-in entries and never opens the app.
 - `scripts/check-demo-windows.ps1 -Executable <speakeasy.exe>` checks that the demo pill stays
   non-activating and passes clicks through, and that closing Shows keeps Settings open.
   `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks minimize, close, relaunch, and

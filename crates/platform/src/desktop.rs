@@ -75,9 +75,11 @@ pub fn prepare(
     Ok((monitor, inserter))
 }
 
-/// Shortcut and insertion choices for the Linux desktop; Windows and macOS read none of them.
+/// Native shortcut choices and Linux insertion preferences.
 #[derive(Clone, Debug)]
 pub struct DesktopOptions {
+    /// The macOS modifier used to hold or toggle dictation. Other platforms ignore it.
+    pub mac_shortcut: MacShortcut,
     /// Reserved Linux dictation chord in portal syntax.
     pub shortcut: String,
     /// Reserved Linux cancellation chord in portal syntax.
@@ -86,6 +88,41 @@ pub struct DesktopOptions {
     pub paste: LinuxPaste,
     /// Whether desktop command bindings replace observing a native shortcut.
     pub external_shortcut: bool,
+}
+
+/// Modifier-only macOS shortcuts. The left Option and Command keys retain their ordinary uses.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MacShortcut {
+    /// The Fn or Globe key.
+    #[default]
+    Function,
+    /// Right Option, useful on keyboards without Fn.
+    RightOption,
+    /// Right Command, useful when Option is needed for text entry.
+    RightCommand,
+}
+
+impl MacShortcut {
+    /// The native name shown in Settings and the active shortcut status.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Function => "Fn",
+            Self::RightOption => "Right Option",
+            Self::RightCommand => "Right Command",
+        }
+    }
+
+    /// The next finite preset offered by Settings.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Function => Self::RightOption,
+            Self::RightOption => Self::RightCommand,
+            Self::RightCommand => Self::Function,
+        }
+    }
 }
 
 /// How a Linux clipboard submission ends once the text is on the clipboard.
@@ -102,6 +139,7 @@ pub enum LinuxPaste {
 impl Default for DesktopOptions {
     fn default() -> Self {
         Self {
+            mac_shortcut: MacShortcut::default(),
             shortcut: "CTRL+LOGO+space".into(),
             cancel: "CTRL+LOGO+Escape".into(),
             paste: LinuxPaste::Standard,

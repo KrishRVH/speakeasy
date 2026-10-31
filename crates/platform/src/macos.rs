@@ -49,8 +49,8 @@ use objc2_foundation::{
 use raw_window_handle::{RawWindowHandle, WindowHandle};
 
 use super::{
-    CANCEL_SHORTCUT, DesktopOptions, Input, InputSender, Inserted, Inserter, NativeWindow,
-    OwnedThread, PILL_MARGIN, PILL_WIDTH, SHORTCUT,
+    CANCEL_SHORTCUT, DesktopOptions, Input, InputSender, Inserted, Inserter, MacShortcut,
+    NativeWindow, OwnedThread, PILL_MARGIN, PILL_WIDTH,
     insertion::{self, NativeInsert as _},
     keyboard::{self, MacEvent, Modifiers},
     monitor::MonitorControl,
@@ -85,10 +85,17 @@ impl Monitor {
 
 pub(super) fn start(
     input: InputSender,
-    _: DesktopOptions,
+    options: DesktopOptions,
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
     let (insertion, inserter) = insertion::Worker::start(input.clone())?;
-    let policy = Arc::new(SharedPolicy::default());
+    #[expect(
+        clippy::disallowed_types,
+        reason = "The event tap and AppKit lifecycle callbacks share the same narrowly locked policy; see SharedPolicy"
+    )]
+    let policy = Arc::new(SharedPolicy {
+        shortcut: options.mac_shortcut,
+        policy: Mutex::new(keyboard::Mac::new(options.mac_shortcut)),
+    });
     let observers = lifecycle_observers(&input, &policy);
     let control = Arc::new(MonitorControl::default());
     let thread = OwnedThread::spawn("input-monitor", {
@@ -105,6 +112,7 @@ pub(super) fn start(
 
 /// The run-loop entry observer's context, borrowed from `run_event_loop`'s frame.
 struct RunLoopReady<'a> {
+    shortcut: MacShortcut,
     control: &'a MonitorControl<CFRunLoop>,
     input: &'a InputSender,
 }
@@ -116,7 +124,7 @@ impl RunLoopReady<'_> {
         let run_loop = CFRunLoop::get_current();
         let started = self.control.start(run_loop.clone(), || {
             self.input.deliver(Input::DesktopReady {
-                shortcut: SHORTCUT.into(),
+                shortcut: self.shortcut.label().into(),
                 cancel: CANCEL_SHORTCUT.into(),
             });
         });
@@ -130,6 +138,7 @@ impl RunLoopReady<'_> {
 /// interrupt from the thread that posts them.
 #[derive(Default)]
 struct SharedPolicy {
+    shortcut: MacShortcut,
     #[expect(
         clippy::disallowed_types,
         reason = "AppKit posts lifecycle notifications on its own thread while the event tap decides keys on its run loop, which cannot receive them as events; deciding and delivering under one lock keeps the owner's inputs in decision order"
@@ -236,7 +245,11 @@ fn run_event_loop(
         .create_runloop_source(0)
         .map_err(|()| anyhow!(UNWATCHED))?;
     let run_loop = CFRunLoop::get_current();
-    let mut ready = RunLoopReady { control, input };
+    let mut ready = RunLoopReady {
+        control,
+        input,
+        shortcut: policy.shortcut,
+    };
     let mut context = CFRunLoopObserverContext {
         version: 0,
         info: (&raw mut ready).cast(),
@@ -325,7 +338,7 @@ fn shortcut_tap<'tap>(
                 // Closing the input makes the owner cancel rather than continue with lost key
                 // edges.
                 panic::catch_unwind(AssertUnwindSafe(|| {
-                    observe(input, &mut policy.lock(), port, kind, event)
+                    observe(input, &mut policy.lock(), policy.shortcut, port, kind, event)
                 }))
                 .unwrap_or_else(|_| {
                     input.close();
@@ -357,11 +370,12 @@ extern "C" fn on_run_loop_entry(
     }
 }
 
-/// Fn, Fn+Space, Fn+S, W, or A, passive Escape, and Shift taps, on the event tap's run-loop
+/// The selected modifier, its Space/S/W/A gestures, passive Escape, and Shift taps, on the run-loop
 /// thread.
 fn observe(
     input: &InputSender,
     policy: &mut keyboard::Mac,
+    shortcut: MacShortcut,
     port: &TapPort,
     kind: CGEventType,
     event: &CGEvent,
@@ -381,7 +395,7 @@ fn observe(
     }
     let code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
     // Both crates mirror the same CGEventFlags bits.
-    let held = modifiers_in(cg::CGEventFlags(event.get_flags().bits()));
+    let held = shortcut.modifiers(event.get_flags().bits());
     let key_event = match kind {
         CGEventType::KeyDown => MacEvent::Key {
             code,
@@ -396,7 +410,15 @@ fn observe(
         CGEventType::FlagsChanged => MacEvent::FlagsChanged { code, held },
         _ => return CallbackResult::Keep,
     };
-    let decision = policy.observe(key_event, keyboard_holds_fn, Instant::now());
+    let decision = policy.observe(
+        key_event,
+        || {
+            u16::try_from(shortcut.key_code()).is_ok_and(|code| {
+                cg::CGEventSource::key_state(cg::CGEventSourceStateID::HIDSystemState, code)
+            })
+        },
+        Instant::now(),
+    );
     decision.deliver(input);
     if decision.swallows() {
         CallbackResult::Drop
@@ -494,29 +516,12 @@ impl Window {
 
 /// The modifier keys held now, as the session's combined input state reports them.
 pub(super) fn modifiers() -> Modifiers {
-    modifiers_in(cg::CGEventSource::flags_state(
-        cg::CGEventSourceStateID::CombinedSessionState,
-    ))
+    modifiers_for(MacShortcut::Function)
 }
 
-/// Whether the keyboard itself holds Fn, whatever the flags of an event another process posted
-/// claim.
-fn keyboard_holds_fn() -> bool {
-    cg::CGEventSource::flags_state(cg::CGEventSourceStateID::HIDSystemState)
-        .contains(cg::CGEventFlags::MaskSecondaryFn)
-}
-
-/// The modifier keys `flags` report held.
-fn modifiers_in(flags: cg::CGEventFlags) -> Modifiers {
-    Modifiers {
-        shift: flags.contains(cg::CGEventFlags::MaskShift),
-        other_shortcut: flags.intersects(
-            cg::CGEventFlags::MaskControl
-                | cg::CGEventFlags::MaskAlternate
-                | cg::CGEventFlags::MaskCommand,
-        ),
-        talk: flags.contains(cg::CGEventFlags::MaskSecondaryFn),
-    }
+pub(super) fn modifiers_for(shortcut: MacShortcut) -> Modifiers {
+    shortcut
+        .modifiers(cg::CGEventSource::flags_state(cg::CGEventSourceStateID::CombinedSessionState).0)
 }
 
 pub(super) fn copy_text(text: &str) -> anyhow::Result<()> {

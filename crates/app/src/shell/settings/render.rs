@@ -13,6 +13,7 @@ use crate::{
     BRAND_FONT,
     config::{Engine, TextDelivery},
     icons::KEYSTONE,
+    models::{LANGUAGES, Model, WHISPER_LANGUAGES},
     setup::Progress,
     shell::Services,
     status::{Indicator, ServiceState},
@@ -31,6 +32,7 @@ const EDGE: Pixels = px(32.0);
 impl Render for Settings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         self.vocabulary.theme(self.config.theme, cx);
+        self.recognition.theme(self.config.theme, cx);
         let palette = self.config.theme.palette();
         let ui = Ui { palette, cx };
         let unconfigured = !is_demo(cx) && self.config.needs_engine();
@@ -46,6 +48,7 @@ impl Render for Settings {
             .flex_col()
             .gap(px(20.0))
             .child(header(self.presentation.indicator, palette))
+            .child(self.readiness_card(&ui))
             .child(if self.is_setting_up() || unconfigured {
                 self.setup_card(&ui).into_any_element()
             } else {
@@ -59,7 +62,30 @@ impl Render for Settings {
             })
             .child(self.microphone_section(&ui))
             .child(self.preferences_section(&ui))
+            .when(
+                self.config.uses_nemotron() || !self.config.recognition_terms.phrases().is_empty(),
+                |settings| settings.child(self.recognition_section(cx)),
+            )
             .child(self.vocabulary_section(cx))
+            .child(
+                ui.section("UPDATES")
+                    .child(format!("Speakeasy {}", env!("CARGO_PKG_VERSION")))
+                    .child(
+                        row()
+                            .child(ui.button(
+                                if self.update_check.is_some() {
+                                    "Checking…"
+                                } else {
+                                    "Check for updates"
+                                },
+                                Action::CheckUpdates,
+                            ))
+                            .when(self.available_update.is_some(), |row| {
+                                row.child(ui.button("Open release", Action::OpenUpdate))
+                            }),
+                    )
+                    .child("Checks GitHub only when you ask. Installation stays in your control."),
+            )
             .child(footer(palette, cx));
         // The commands and the status stay in view however far the body scrolls, since the status
         // line is where every failure and unsaved change is told once the pill has faded.
@@ -94,13 +120,63 @@ struct Ui<'a> {
 }
 
 impl Settings {
+    fn readiness_card(&self, ui: &Ui<'_>) -> impl IntoElement {
+        let readiness = self.presentation.readiness;
+        let active = self.practice.task.is_some();
+        let may_practice = ui.cx.global::<Services>().is_running() && !is_demo(ui.cx);
+        let access = "Microphone access is checked when you speak. Screen access is checked only for a Show.";
+        let delivery = "To check delivery, end practice and dictate into an editor. Practice clears when this window hides or loses focus.";
+        ui.panel()
+            .flex()
+            .flex_col()
+            .gap(ROW_GAP)
+            .child(ui.heading("READY TO DICTATE"))
+            .child(format!("Local model: {}", readiness.model))
+            .child(format!("Shortcut: {}", readiness.shortcut))
+            .child(access)
+            .child(
+                row()
+                    .when(may_practice, |row| {
+                        row.child(ui.button(
+                            if active {
+                                "End practice"
+                            } else {
+                                "Try dictation here"
+                            },
+                            Action::Practice,
+                        ))
+                    })
+                    .child(ui.button("Microphone help", Action::MicrophoneHelp)),
+            )
+            .when(active, |card| {
+                card.child(if self.practice.ready {
+                    format!(
+                        "Hold {} and speak. Your words stay here; nothing is pasted or saved.",
+                        self.presentation.shortcut
+                    )
+                } else {
+                    "Preparing practice…".into()
+                })
+                .when(!self.practice.text.is_empty(), |card| {
+                    card.child(
+                        div()
+                            .max_h(px(140.0))
+                            .id("practice-result")
+                            .overflow_y_scroll()
+                            .child(self.practice.text.to_string()),
+                    )
+                })
+            })
+            .child(delivery)
+    }
+
     /// Setup chooses the engine, so manual engine controls wait until it ends.
     const fn is_setting_up(&self) -> bool {
         self.setup.is_some()
     }
 
     fn setup_card(&self, ui: &Ui<'_>) -> impl IntoElement {
-        let progress = self.setup.as_ref().map(|(setup, _)| setup.progress());
+        let progress = self.setup.as_ref().map(|(setup, _, _)| setup.progress());
         let (title, command) = if self.is_setting_up() {
             ("Setting up dictation", "Cancel")
         } else {
@@ -145,6 +221,17 @@ impl Settings {
             .line_height(px(23.0))
             .child(hold_hint)
             .child(div().child(gesture_hint))
+            .map(|panel| {
+                #[cfg(target_os = "macos")]
+                let panel = panel.child(ui.button(
+                    format!("Shortcut: {}", self.config.mac_shortcut.label()),
+                    Action::MacShortcut,
+                ));
+                panel
+            })
+            .when(cfg!(target_os = "macos") && self.config.mac_shortcut != speakeasy_platform::MacShortcut::Function, |panel| {
+                panel.child("Hold the shortcut briefly before adding Space, S, W, or A. Quick key combinations keep their usual action.")
+            })
             .when(records_shows, |panel| {
                 panel.children(
                     [
@@ -160,10 +247,25 @@ impl Settings {
     }
 
     fn engine_section(&self, ui: &Ui<'_>) -> impl IntoElement {
+        let detail = "Parakeet: 714 MB · 25 European languages. Nemotron: 742 MB · 32 locales, including Hindi, Japanese, Korean, and Mandarin. Downloads stay local; save to switch.";
         div()
             .flex()
             .flex_col()
             .gap(ROW_GAP)
+            .child(
+                row()
+                    .child(ui.button("Set up Parakeet v3", Action::Install(Model::Parakeet)))
+                    .child(ui.button("Set up Nemotron 3.5", Action::Install(Model::Nemotron))),
+            )
+            .child(
+                div()
+                    .text_size(TEXT)
+                    .text_color(rgb(ui.palette.muted))
+                    .child(detail),
+            )
+            .when_some(self.config.model_choice(), |section, model| {
+                section.child(format!("Selected model: {}", model.label()))
+            })
             .child(
                 div()
                     .flex()
@@ -315,25 +417,55 @@ impl Settings {
     }
 
     fn language_control(&self, ui: &Ui<'_>) -> AnyElement {
-        if self.config.engine == Engine::Parakeet {
+        if self.config.engine == Engine::Parakeet && !self.config.uses_nemotron() {
             return div()
                 .py(CONTROL_PAD_Y)
                 .text_size(TEXT)
                 .child("Language: Automatic")
                 .into_any_element();
         }
-        let label: SharedString = match self.config.language.as_str() {
-            "auto" => "Language: Automatic".into(),
-            "en" => "Language: English".into(),
-            language => format!("Language: {language}").into(),
+        let languages = if self.config.engine == Engine::Whisper {
+            WHISPER_LANGUAGES
+        } else {
+            LANGUAGES
         };
-        ui.button(label, Action::Language).into_any_element()
+        let code = if self.config.engine == Engine::Whisper {
+            crate::models::whisper_language(&self.config.language)
+        } else {
+            &self.config.language
+        };
+        let name = languages
+            .iter()
+            .find_map(|&(language, name)| (language == code).then_some(name))
+            .unwrap_or(code);
+        let label = format!("Language: {name}");
+        div()
+            .flex()
+            .flex_col()
+            .gap(ROW_GAP)
+            .child(ui.button(label, Action::Language))
+            .when(self.choosing_language, |column| {
+                column.child(
+                    div()
+                        .id("language-choices")
+                        .max_h(px(200.0))
+                        .overflow_y_scroll()
+                        .flex()
+                        .flex_col()
+                        .children(
+                            languages
+                                .iter()
+                                .map(|&(code, name)| ui.button(name, Action::SelectLanguage(code))),
+                        ),
+                )
+            })
+            .into_any_element()
     }
 
     fn commands(&self, ui: &Ui<'_>, unsaved: bool) -> impl IntoElement {
         let services = ui.cx.global::<Services>();
         let running = services.is_running();
-        let primary = if self.is_setting_up() {
+        let primary = if self.is_setting_up() && self.config.needs_engine() {
             None
         } else {
             primary_command(is_demo(ui.cx), services.service_state(), unsaved)
@@ -342,6 +474,10 @@ impl Settings {
             .when_some(primary, |row, (label, action)| {
                 row.child(ui.button(label, action))
             })
+            .when(
+                unsaved && self.setup.is_none() && self.saving.is_none(),
+                |row| row.child(ui.button("Revert", Action::Revert)),
+            )
             .when(running, |row| row.child(ui.button("Pause", Action::Pause)))
             .child(ui.button("Shows…", Action::Shows))
             .child(ui.button("Quit", Action::Quit))

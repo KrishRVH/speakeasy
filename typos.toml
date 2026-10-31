@@ -5,6 +5,11 @@ locale = "en-us"
 # Emulated Input Server is the native portal/libei interface name.
 EIS = "EIS"
 
+[type.rust.extend-words]
+# ISO 639 language codes in the Whisper language catalog.
+ba = "ba"
+fo = "fo"
+
 [files]
 # Dotfiles hold the CI workflows and the task and tool config.
 ignore-hidden = false

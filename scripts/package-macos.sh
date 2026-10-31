@@ -72,4 +72,19 @@ else
   codesign --verify --strict "$bundle"
 fi
 ditto -c -k --keepParent "$bundle" artifacts/speakeasy-macos.zip
+# Keep the ZIP for direct downloads and create the familiar drag-to-Applications installation.
+dmg_directory=$(mktemp -d artifacts/.macos-dmg.XXXXXX)
+trap 'rm -rf -- "$dmg_directory" "${notary_directory:-}"' EXIT
+ditto "$bundle" "$dmg_directory/Speakeasy.app"
+ln -s /Applications "$dmg_directory/Applications"
+hdiutil create -quiet -ov -format UDZO -volname Speakeasy -srcfolder "$dmg_directory" artifacts/speakeasy-macos.dmg
+if [[ -n "$signing_identity" ]]; then
+  codesign --sign "$signing_identity" --timestamp artifacts/speakeasy-macos.dmg
+  xcrun notarytool submit artifacts/speakeasy-macos.dmg --keychain-profile "$notary_profile" \
+    --wait --output-format json > "$dmg_directory/result.json"
+  python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("status") == "Accepted" else "Disk image notarization was rejected.")' < "$dmg_directory/result.json"
+  xcrun stapler staple artifacts/speakeasy-macos.dmg
+  xcrun stapler validate artifacts/speakeasy-macos.dmg
+  spctl --assess --type open --context context:primary-signature artifacts/speakeasy-macos.dmg
+fi
 echo "Built $bundle"

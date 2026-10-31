@@ -41,6 +41,136 @@ const NONE_HELD: Physical = Physical {
     chord_keys: [false; 4],
     other_shortcut: false,
 };
+
+#[test]
+fn mac_presets_keep_hands_free_shows_and_escape_without_claiming_left_modifiers() {
+    use crate::MacShortcut;
+    for (shortcut, flags, left_code, left_flag) in [
+        (
+            MacShortcut::Function,
+            0x0080_0000,
+            MAC_LEFT_OPTION,
+            0x0008_0020,
+        ),
+        (
+            MacShortcut::RightOption,
+            0x0008_0040,
+            MAC_LEFT_OPTION,
+            0x0008_0020,
+        ),
+        (
+            MacShortcut::RightCommand,
+            0x0010_0010,
+            MAC_LEFT_COMMAND,
+            0x0010_0008,
+        ),
+    ] {
+        let held = shortcut.modifiers(flags);
+        assert!(held.talk && !held.other_shortcut);
+        assert!(!shortcut.modifiers(left_flag).talk);
+        assert!(shortcut.modifiers(left_flag).other_shortcut);
+        for (code, expected) in [
+            (MAC_SPACE, Action::Lock),
+            (MAC_S, Action::Show(Scope::Screen)),
+            (MAC_W, Action::Show(Scope::Window)),
+            (MAC_A, Action::Show(Scope::Area)),
+        ] {
+            let mut policy = Mac::new(shortcut);
+            assert!(
+                policy
+                    .observe(
+                        MacEvent::FlagsChanged {
+                            code: shortcut.key_code(),
+                            held
+                        },
+                        || false,
+                        now()
+                    )
+                    .starts()
+            );
+            let decision = policy.observe(
+                key(code, true, held),
+                || true,
+                now() + Duration::from_millis(250),
+            );
+            assert_eq!(decision.action, Some(expected));
+            assert!(decision.swallows());
+            let escape = policy.observe(key(MAC_ESCAPE, true, held), || true, now());
+            assert_eq!(escape.action, Some(Action::Escape));
+            assert!(!escape.swallows());
+            let other = policy.observe(
+                MacEvent::FlagsChanged {
+                    code: left_code,
+                    held: shortcut.modifiers(flags | left_flag),
+                },
+                || true,
+                now(),
+            );
+            assert_eq!(other.action, Some(Action::Interrupt));
+        }
+        let mut policy = Mac::new(shortcut);
+        assert!(
+            !policy
+                .observe(
+                    MacEvent::FlagsChanged {
+                        code: shortcut.key_code(),
+                        held: shortcut.modifiers(flags | left_flag)
+                    },
+                    || true,
+                    now()
+                )
+                .starts()
+        );
+    }
+}
+#[test]
+fn mac_alternative_modifiers_preserve_quick_application_shortcuts() {
+    for shortcut in [
+        crate::MacShortcut::RightOption,
+        crate::MacShortcut::RightCommand,
+    ] {
+        for code in [MAC_S, MAC_W, MAC_A, MAC_SPACE] {
+            let mut policy = Mac::new(shortcut);
+            let held = FN_HELD;
+            let start = now();
+            policy.observe(
+                MacEvent::FlagsChanged {
+                    code: shortcut.key_code(),
+                    held,
+                },
+                || true,
+                start,
+            );
+            let decision = policy.observe(
+                key(code, true, held),
+                || true,
+                start + Duration::from_millis(100),
+            );
+            assert!(!decision.swallows());
+            assert_eq!(decision.action, Some(Action::Interrupt));
+            assert!(
+                !policy
+                    .observe(
+                        key(code, false, held),
+                        || true,
+                        start + Duration::from_millis(300)
+                    )
+                    .swallows()
+            );
+            assert_eq!(
+                policy
+                    .observe(
+                        key(code, true, held),
+                        || true,
+                        start + Duration::from_millis(500)
+                    )
+                    .action,
+                None
+            );
+        }
+    }
+}
+
 /// What a macOS key event's flags report with no modifier held.
 const NO_MODIFIERS: Modifiers = Modifiers {
     shift: false,

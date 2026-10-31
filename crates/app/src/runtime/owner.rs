@@ -11,17 +11,17 @@ use speakeasy_core::gesture::{Action, Gesture, State};
 use speakeasy_platform::{Input, InputSender, Inserted, Scope};
 use speakeasy_show::{Ending, NarrationLoss};
 use tokio::{
-    sync::watch,
+    sync::{mpsc, watch},
     task::{JoinError, JoinHandle},
 };
 
 use super::{
-    LOADING, Meter, ModelState, Phase, Recovery, Report, SHOW_COPIED, SHOW_GONE, Snapshot,
-    SnapshotEpoch, Wiring,
+    LOADING, Meter, ModelState, Phase, PracticeEvent, Recovery, Report, SHOW_COPIED, SHOW_GONE,
+    Snapshot, SnapshotEpoch, Wiring,
     device::Device,
     now,
     ports::{CaptureEvent, PUBLISH_STOPPED, Ports, Published, SessionId, ShowEvent, Unchosen},
-    session::{Delivered, Session},
+    session::{Delivered, Destination, Session},
     worker::{Completion, Worker},
 };
 use crate::{
@@ -62,6 +62,7 @@ const NO_AREA: &str = "No area was chosen, so the Show was cancelled.";
 enum Outcome {
     Idle,
     Done,
+    Practiced,
     /// The dictation is on the clipboard; the message says how to paste it.
     Copied(&'static str),
     /// The Show's summary is on the clipboard; how its screen recording ended and whether its
@@ -93,7 +94,7 @@ impl Outcome {
     const fn phase(&self) -> Phase {
         match self {
             Self::Idle => Phase::Idle,
-            Self::Done => Phase::Done,
+            Self::Done | Self::Practiced => Phase::Done,
             Self::Copied(_) | Self::ShowCopied { .. } => Phase::Copied,
             Self::ShowGone | Self::Recovered { .. } => Phase::Notice,
             Self::Empty => Phase::Empty,
@@ -151,6 +152,8 @@ enum Wake<W> {
     Abandoned(SessionId, Result<Delivered, JoinError>),
     Retired,
     Recover(Recovery),
+    Practice(mpsc::Sender<PracticeEvent>),
+    EndPractice,
     Timer,
 }
 
@@ -170,6 +173,8 @@ struct Owner<P: Ports> {
     inputs: Receiver<Input>,
     reports: Receiver<Report>,
     recoveries: Receiver<Recovery>,
+    practices: Receiver<mpsc::Sender<PracticeEvent>>,
+    practice: Option<mpsc::Sender<PracticeEvent>>,
     stopping: Receiver<Infallible>,
     capture_events: Sender<CaptureEvent>,
     captures: Receiver<CaptureEvent>,
@@ -216,6 +221,7 @@ impl<P: Ports> Owner<P> {
             inputs,
             reports,
             recoveries,
+            practices,
             snapshots,
             meter,
             permits,
@@ -236,6 +242,8 @@ impl<P: Ports> Owner<P> {
             inputs,
             reports,
             recoveries,
+            practices,
+            practice: None,
             stopping,
             capture_events,
             captures,
@@ -275,12 +283,15 @@ impl<P: Ports> Owner<P> {
                 .map(|at| tokio::time::sleep_until(at.into())),
         );
         let idle = self.session.is_none();
+        let practice_closed = or_pending(self.practice.as_ref().map(mpsc::Sender::closed));
         let delivered = or_pending(self.session.as_mut().map(Session::delivered));
         // Biased: stop outranks the input lane that `request_stop` closes beside it, so a pause
         // never reads as a shortcut failure.
         tokio::select! {
             biased;
             _ = self.stopping.recv() => Wake::Stop,
+            () = practice_closed => Wake::EndPractice,
+            Ok(practice) = self.practices.recv() => Wake::Practice(practice),
             input = self.inputs.recv() => Wake::Input(input),
             // Only `Runtime` sends reports and changes, and dropping it stops first.
             report = self.reports.recv() => report.map_or(Wake::Stop, Wake::Report),
@@ -318,6 +329,14 @@ impl<P: Ports> Owner<P> {
             Wake::Show(event) => self.handle_show(event),
             Wake::Retired => None,
             Wake::Recover(recovery) => return self.start_recovery(recovery),
+            Wake::Practice(practice) => {
+                self.arm_practice(practice);
+                None
+            },
+            Wake::EndPractice => {
+                self.end_practice();
+                None
+            },
             Wake::Worker(completion) => {
                 self.handle_worker(completion);
                 None
@@ -348,6 +367,7 @@ impl<P: Ports> Owner<P> {
             Input::StartShow(scope)
                 if self.desktop_ready && self.gesture.state() == State::Idle =>
             {
+                self.end_practice();
                 // The Show needs the session that starting creates, so the start applies here.
                 let start = self.gesture.toggle(now());
                 self.handle_action(start)?;
@@ -421,6 +441,7 @@ impl<P: Ports> Owner<P> {
     /// Applies changed settings, which end any session in progress: it shows cancelled, with its
     /// cue, so its speech never vanishes unannounced.
     fn configure(&mut self) {
+        self.practice = None;
         let next = self.changes.borrow_and_update().clone();
         let reload = self.config.change_to(&next) >= Change::Engine;
         self.config = next;
@@ -445,10 +466,16 @@ impl<P: Ports> Owner<P> {
 
     fn handle_capture(&mut self, event: CaptureEvent) {
         let gesture = self.gesture.state();
+        let stream_ready = matches!(self.worker, Worker::Ready(_));
         let Some(session) = self.current_capture_mut(event.session()) else {
             return;
         };
         match event {
+            CaptureEvent::Streaming(_, audio) => {
+                if stream_ready {
+                    session.stream(audio);
+                }
+            },
             CaptureEvent::Piece(_, number, audio) => session.piece(number, audio),
             CaptureEvent::CheckpointLost(_) => {
                 self.checkpoint_lost();
@@ -515,6 +542,12 @@ impl<P: Ports> Owner<P> {
 
     fn handle_worker(&mut self, completion: Completion<P::Speech>) {
         match completion {
+            Completion::Abandoned(ticket, worker) => {
+                self.worker = Worker::Ready(worker);
+                if let Some(session) = &mut self.session {
+                    session.failed(ticket);
+                }
+            },
             Completion::Loaded(Ok(worker)) => {
                 self.worker = Worker::Ready(worker);
                 if matches!(
@@ -599,6 +632,17 @@ impl<P: Ports> Owner<P> {
         };
         if text.is_empty() {
             self.end_session(Outcome::Empty);
+        } else if let Destination::Practice(receipt) = &session.destination {
+            let delivered = !receipt.is_closed()
+                && session.permit.commit()
+                && receipt
+                    .try_send(PracticeEvent::Text(zeroize::Zeroizing::new(text)))
+                    .is_ok();
+            self.end_session(if delivered {
+                Outcome::Practiced
+            } else {
+                Outcome::Cancelled
+            });
         } else {
             session.insert(|permit| self.ports.insert(text, permit, self.config.delivery()));
         }
@@ -827,8 +871,35 @@ impl<P: Ports> Owner<P> {
         };
         self.outcome = Outcome::Idle;
         self.notice = None;
-        self.session = Some(Session::new(id, permit, self.latest.started));
+        let mut session = Session::new(id, permit, self.latest.started);
+        if let Some(practice) = &self.practice {
+            session.destination = Destination::Practice(practice.clone());
+        }
+        self.session = Some(session);
         ControlFlow::Continue(())
+    }
+
+    fn arm_practice(&mut self, receipt: mpsc::Sender<PracticeEvent>) {
+        if self.session.is_some() {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A closed practice view no longer wants its rejection"
+            )]
+            let _ = receipt.try_send(PracticeEvent::Unavailable(
+                "Finish the current recording before trying dictation here.",
+            ));
+        } else if receipt.try_send(PracticeEvent::Ready).is_ok() {
+            self.practice = Some(receipt);
+        }
+    }
+
+    fn end_practice(&mut self) {
+        self.practice = None;
+        if self.session.as_ref().is_some_and(Session::is_practice) {
+            self.gesture.abandon();
+            self.discard();
+            self.cue(Cue::Cancel);
+        }
     }
 
     fn start_recovery(&mut self, recovery: Recovery) -> ControlFlow<()> {
@@ -926,7 +997,9 @@ impl<P: Ports> Owner<P> {
         if session.is_capturing() {
             self.microphone.retire();
         }
-        if session.is_transcribing() && self.worker.is_transcribing() {
+        if (session.is_transcribing() && self.worker.is_transcribing())
+            || self.worker.is_streaming(session.id)
+        {
             self.worker.recover(&self.ports, &self.config);
         }
         let id = session.id;
@@ -975,11 +1048,17 @@ impl<P: Ports> Owner<P> {
             return;
         };
         let microphone = self.config.microphone.as_deref();
-        let segmenting = !session.is_show() && self.config.engine == Engine::Parakeet;
+        let recognition = if session.is_show() || self.config.engine == Engine::Whisper {
+            super::ports::RecognitionMode::Whole
+        } else if self.config.uses_nemotron() {
+            super::ports::RecognitionMode::Streaming
+        } else {
+            super::ports::RecognitionMode::Segmented
+        };
         match self.ports.record_microphone(
             session.id,
             microphone,
-            segmenting,
+            recognition,
             self.capture_events.clone(),
         ) {
             Ok(recording) => {
@@ -1061,6 +1140,7 @@ impl<P: Ports> Owner<P> {
 
     fn message(&self) -> Cow<'_, str> {
         let message: Cow<'_, str> = match &self.outcome {
+            Outcome::Practiced => "Practice complete. Your words stay in Settings.".into(),
             Outcome::Failed(message) => message.into(),
             Outcome::Copied(message) => Cow::Borrowed(message),
             Outcome::ShowCopied {

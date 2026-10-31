@@ -13,8 +13,8 @@ use tokio::{
 
 use super::{
     ModelState,
-    ports::{Ports, STARTUP_CANCELLED, Speech},
-    recognition::{Detail, Request, Ticket, Transcript},
+    ports::{Ports, STARTUP_CANCELLED, SessionId, Speech},
+    recognition::{Detail, Part, Request, Source, Ticket, Transcript},
 };
 use crate::{
     config::Config,
@@ -59,6 +59,10 @@ impl<W: Speech> Worker<W> {
         matches!(self, Self::Transcribing { .. })
     }
 
+    pub(super) fn is_streaming(&self, session: SessionId) -> bool {
+        matches!(self, Self::Transcribing { ticket, .. } if ticket.session == session && ticket.part == Part::Stream)
+    }
+
     /// Pends unless a job is running; resolves once it finishes, leaving the worker unavailable
     /// until the owner stores the outcome. Cancel-safe: dropped early, it leaves the job running.
     pub(super) async fn completed(&mut self) -> Completion<W> {
@@ -70,6 +74,7 @@ impl<W: Speech> Worker<W> {
                 },
                 // Only a job moved out of observation is cancelled; its worker is sound anyway.
                 Ok((worker, Transcription::Cancelled)) => Completion::Loaded(Ok(worker)),
+                Ok((worker, Transcription::Abandoned)) => Completion::Abandoned(*ticket, worker),
                 Err(error) => Completion::Transcribed(*ticket, Err(error)),
             },
             Self::Unavailable | Self::Ready(_) => pending().await,
@@ -103,9 +108,11 @@ impl<W: Speech> Worker<W> {
     /// Keeps the worker of a cancelled transcription when it still responds; otherwise stops it and
     /// loads a replacement.
     pub(super) fn recover<P: Ports<Speech = W>>(&mut self, ports: &P, config: &Config) {
+        let streaming =
+            matches!(self, Self::Transcribing { ticket, .. } if ticket.part == Part::Stream);
         let previous = self.take_cancelled();
         // Engines serialize requests, and an abandoned CPU inference outlasts the probe bound.
-        let probe = config.use_gpu;
+        let probe = config.use_gpu || streaming;
         *self = Self::Loading(Job::spawn(|mut cancelled| {
             let load = ports.load(config.clone(), cancelled.clone());
             async move {
@@ -127,7 +134,7 @@ impl<W: Speech> Worker<W> {
                 return;
             },
         };
-        let Some(mut request) = next() else {
+        let Some(request) = next() else {
             *self = Self::Ready(worker);
             return;
         };
@@ -138,14 +145,20 @@ impl<W: Speech> Worker<W> {
             .to_owned();
         let fillers = config.fillers();
         let corrections = config.vocabulary.clone();
+        let terms = config.recognition_terms.clone();
         *self = Self::Transcribing {
             ticket: request.ticket,
             job: Job::spawn(|mut cancelled| async move {
                 let transcription = tokio::select! {
                     biased;
                     _ = cancelled.changed() => Ok(Transcription::Cancelled),
-                    result = transcript_of(&mut worker, mem::take(&mut request.audio.wav), &language, request.detail, fillers, &corrections) => {
-                        result.map(Transcription::Heard)
+                    result = async {
+                        match request.audio {
+                            Source::Wav(mut audio) => transcript_of(&mut worker, mem::take(&mut audio.wav), &language, request.detail, fillers, &corrections, &terms).await.map(Transcription::Heard),
+                            Source::Stream(audio) => worker.transcribe_stream(audio, &language, &terms).await.map(|text| text.map_or(Transcription::Abandoned, |text| Transcription::Heard(Transcript::Text(text)))),
+                        }
+                    } => {
+                        result
                     },
                 };
                 match transcription {
@@ -206,7 +219,13 @@ impl<W: Speech> Worker<W> {
             Self::Loading(job) => job.task.await.ok()?.ok().map(|worker| (worker, false)),
             Self::Transcribing { job, .. } => {
                 job.task.await.ok()?.ok().map(|(worker, transcription)| {
-                    (worker, matches!(transcription, Transcription::Heard(_)))
+                    (
+                        worker,
+                        matches!(
+                            transcription,
+                            Transcription::Heard(_) | Transcription::Abandoned
+                        ),
+                    )
                 })
             },
             Self::Unavailable => None,
@@ -215,6 +234,7 @@ impl<W: Speech> Worker<W> {
 }
 
 pub(super) enum Completion<W> {
+    Abandoned(Ticket, W),
     Loaded(anyhow::Result<W>),
     Transcribed(Ticket, anyhow::Result<(W, Transcript)>),
 }
@@ -222,6 +242,7 @@ pub(super) enum Completion<W> {
 /// How a transcription job ends: with its transcript, or cancelled once moved out of
 /// observation.
 pub(super) enum Transcription {
+    Abandoned,
     Heard(Transcript),
     Cancelled,
 }
@@ -261,12 +282,13 @@ async fn transcript_of<W: Speech>(
     detail: Detail,
     fillers: Fillers,
     corrections: &[Correction],
+    terms: &crate::recognition_terms::Terms,
 ) -> anyhow::Result<Transcript> {
     let vocabulary = Vocabulary::new(corrections);
     Ok(match detail {
-        Detail::Text => Transcript::Text(worker.transcribe(wav, language).await?),
+        Detail::Text => Transcript::Text(worker.transcribe(wav, language, terms).await?),
         Detail::Words => {
-            let narration = worker.transcribe_words(wav, language).await?;
+            let narration = worker.transcribe_words(wav, language, terms).await?;
             Transcript::Words(vocabulary.narration(transcript::for_show(narration, fillers)))
         },
     })

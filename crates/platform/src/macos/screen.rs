@@ -566,12 +566,12 @@ fn refused(error: &NSError) -> bool {
     *error.domain() == *domain && error.code() == SCStreamErrorCode::UserDeclined.0
 }
 
-pub(crate) fn pointer(display: Display) -> Option<PointerSample> {
+pub(crate) fn pointer(display: Display, shortcut: crate::MacShortcut) -> Option<PointerSample> {
     let at = Instant::now();
     Some(PointerSample {
         at,
         position: display.bounds.normalize(pointer_location()?)?,
-        drawing: super::modifiers().draws(),
+        drawing: super::modifiers_for(shortcut).draws(),
         pressed: CGEventSource::button_state(
             CGEventSourceStateID::CombinedSessionState,
             CGMouseButton::Left,

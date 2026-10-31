@@ -1,5 +1,5 @@
-//! Automatic setup installs the NeMo-Speech.cpp build that suits this machine and the Parakeet v3
-//! model. `Setup` runs it on an owned thread that cancels and joins on drop, and `Installation`
+//! Setup installs a compatible NeMo-Speech.cpp build and a pinned model. `Setup` runs it on an owned
+//! thread that cancels and joins on drop, and `Installation`
 //! holds the lock on its directory until its native child is reaped, so one setup installs there at
 //! a time.
 
@@ -32,12 +32,19 @@ use crate::{
     child::kill_and_reap,
     config::{Config, Engine},
     http::{Trust, client_builder},
+    models::Model,
 };
 
-const MODEL: Download<'static> = Download {
+const PARAKEET: Download<'static> = Download {
     url: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/parakeet-tdt-0.6b-v3.q8_0.gguf",
     size: 713_975_456,
     sha256: "e3880d0aaaaf2c308ea2c35016b2b895c423eb3fda924c1b463d1c19b7f4d32e",
+};
+
+const NEMOTRON: Download<'static> = Download {
+    url: "https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b/resolve/ea30d66debe3740a08b573244286791d423d6b3e/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
+    size: 742_090_464,
+    sha256: "3fc991d3badad7277c11030a7519832cddaf2057aafed6d4b25147e953a070b1",
 };
 
 /// What setup is doing; `done` and `total` count the bytes of the current step when it has a size.
@@ -66,6 +73,7 @@ impl Default for Progress {
 
 /// The engine and model a finished setup chose for this machine.
 pub(crate) struct Installed {
+    choice: Model,
     engine_executable: PathBuf,
     model: PathBuf,
     use_gpu: bool,
@@ -74,9 +82,13 @@ pub(crate) struct Installed {
 impl Installed {
     pub(crate) fn apply_to(self, config: &mut Config) {
         config.engine = Engine::Parakeet;
+        config.nemo_model = Some(self.choice);
+        if self.choice == Model::Nemotron {
+            config.language = crate::models::nemotron_language(&config.language).into();
+        }
         config.engine_executable = self.engine_executable;
         config.model = self.model;
-        config.use_gpu = self.use_gpu;
+        config.use_gpu &= self.use_gpu;
     }
 }
 
@@ -89,8 +101,13 @@ pub(crate) struct Setup {
 }
 
 impl Setup {
-    pub(crate) fn start() -> anyhow::Result<Self> {
-        Self::start_in(crate::paths::data_root()?, install)
+    pub(crate) fn start(choice: Model) -> anyhow::Result<Self> {
+        Self::start_in(
+            crate::paths::data_root()?,
+            async move |root, progress, installation| {
+                install(root, progress, installation, choice).await
+            },
+        )
     }
 
     fn start_in(
@@ -269,23 +286,29 @@ async fn install(
     root: &Path,
     progress: &watch::Sender<Progress>,
     installation: &mut Installation,
+    choice: Model,
 ) -> anyhow::Result<Installed> {
     let client = client_builder(Trust::System)?
         .connect_timeout(Duration::from_secs(15))
         .read_timeout(Duration::from_secs(30))
         .build()?;
     let engine = choose_engine(&client, root, progress, installation).await?;
+    let (download, step) = match choice {
+        Model::Parakeet => (&PARAKEET, "Downloading Parakeet v3"),
+        Model::Nemotron => (&NEMOTRON, "Downloading Nemotron 3.5"),
+    };
     let model = fetch(
         &client,
-        &MODEL,
-        &root.join("models"),
-        "Downloading the Parakeet model",
+        download,
+        &root.join("models").join(download.sha256),
+        step,
         progress,
     )
     .await?;
     let use_gpu = engine.use_gpu;
     Ok(Installed {
-        engine_executable: engine.keep(root)?,
+        choice,
+        engine_executable: engine.executable(),
         model,
         use_gpu,
     })

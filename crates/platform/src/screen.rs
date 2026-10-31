@@ -332,11 +332,15 @@ impl PointerMonitor {
     ///
     /// # Errors
     /// Fails when the thread cannot start.
-    pub fn start(display: Display, samples: Sender<PointerSample>) -> anyhow::Result<Self> {
+    pub fn start(
+        display: Display,
+        samples: Sender<PointerSample>,
+        shortcut: crate::MacShortcut,
+    ) -> anyhow::Result<Self> {
         let thread = StoppableThread::spawn("pointer", move |stopping| {
             let mut last: Option<PointerSample> = None;
             while !stopping.is_closed() && !samples.is_closed() {
-                if let Some(sample) = native::pointer(display.native)
+                if let Some(sample) = native::pointer(display.native, shortcut)
                     && last.is_none_or(|last| last.differs(&sample))
                     && samples.try_send(sample).is_ok()
                 {
@@ -416,7 +420,7 @@ mod unsupported {
     ) {
     }
 
-    pub(super) const fn pointer(_: Display) -> Option<PointerSample> {
+    pub(super) const fn pointer(_: Display, _: crate::MacShortcut) -> Option<PointerSample> {
         None
     }
 

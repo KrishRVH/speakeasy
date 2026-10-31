@@ -4,6 +4,24 @@ use anyhow::bail;
 
 use super::*;
 
+#[test]
+fn managed_model_identity_cannot_follow_a_different_file_and_hint_edits_keep_the_worker()
+-> anyhow::Result<()> {
+    let mut base = Config {
+        engine: Engine::Parakeet,
+        nemo_model: Some(Model::Nemotron),
+        model: Model::Nemotron.file_name().into(),
+        ..Config::default()
+    };
+    assert!(base.uses_nemotron());
+    let mut edited = base.clone();
+    edited.recognition_terms.add("Example Name")?;
+    assert_eq!(base.change_to(&edited), Change::Session);
+    base.model = Model::Parakeet.file_name().into();
+    assert!(!base.uses_nemotron());
+    Ok(())
+}
+
 fn saved(path: &Path) -> anyhow::Result<Value> {
     Ok(serde_json::from_slice(&fs::read(path)?)?)
 }

@@ -52,8 +52,7 @@ impl Presenter {
         self.status.set_text(&state.status.description);
         best_effort(self.icon.set_tooltip(Some(format!(
             "Speakeasy · {}\nHold {} to dictate",
-            state.status.description,
-            speakeasy_platform::SHORTCUT
+            state.status.description, state.shortcut
         ))));
         let TrayMenu {
             pause,

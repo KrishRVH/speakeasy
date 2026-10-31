@@ -10,6 +10,7 @@ publish.workspace = true
 anyhow.workspace = true
 async-channel.workspace = true
 raw-window-handle.workspace = true
+serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros", "process", "rt", "time"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -19,7 +20,6 @@ futures-util.workspace = true
 libloading.workspace = true
 x11rb = { workspace = true, features = ["allow-unsafe-code", "shape", "xinput", "xkb", "xtest"] }
 xkbcommon.workspace = true
-serde.workspace = true
 tempfile.workspace = true
 # `net` provides `tokio::io::unix::AsyncFd`, which waits on the X11, libei, and portal transfer
 # descriptors.
@@ -39,7 +39,7 @@ core-graphics.workspace = true
 objc2.workspace = true
 objc2-app-kit = { workspace = true, features = ["NSAccessibility", "NSAlert", "NSApplication", "NSEvent", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSScreen", "NSView", "NSWindow", "NSWorkspace", "libc"] }
 objc2-core-foundation = { workspace = true, features = ["CFArray", "CFDictionary", "CFNumber", "CFString"] }
-objc2-core-graphics = { workspace = true, features = ["CGColorSpace", "CGDirectDisplay", "CGError", "CGEvent", "CGEventSource", "CGEventTypes", "CGGeometry", "CGWindow"] }
+objc2-core-graphics = { workspace = true, features = ["CGColorSpace", "CGDirectDisplay", "CGError", "CGEvent", "CGEventSource", "CGEventTypes", "CGGeometry", "CGRemoteOperation", "CGWindow"] }
 objc2-core-media = { workspace = true, features = ["CMSampleBuffer", "objc2", "objc2-core-video"] }
 objc2-core-video = { workspace = true, features = ["CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVReturn"] }
 objc2-foundation.workspace = true

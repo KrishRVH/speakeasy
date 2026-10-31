@@ -10,7 +10,10 @@ use super::{
     ports::{Capturing, Listening, Pinning, Sealed, Speech},
     *,
 };
-use crate::local_speech::{self, LocalSpeech};
+use crate::{
+    local_speech::{self, LocalSpeech},
+    recognition_terms::Terms,
+};
 
 /// Outlasts both of the worker's startup bounds, one to serve and one to warm up.
 const STARTUP_TIMEOUT: Duration = local_speech::STARTUP_TIMEOUT
@@ -41,7 +44,7 @@ impl Ports for Fixture {
         &self,
         id: SessionId,
         _: Option<&str>,
-        segmenting: bool,
+        recognition: crate::runtime::ports::RecognitionMode,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<FixtureDevice> {
         let capture = self
@@ -51,7 +54,11 @@ impl Ports for Fixture {
                 crate::audio::fixture::replay(
                     id,
                     &self.wav,
-                    segmenting && replay.segmenting,
+                    if replay.segmenting {
+                        recognition
+                    } else {
+                        crate::runtime::ports::RecognitionMode::Whole
+                    },
                     replay.speed,
                     events.clone(),
                     replay.finished.clone(),
@@ -291,7 +298,21 @@ struct MeasuredSpeech {
 }
 
 impl Speech for MeasuredSpeech {
-    async fn transcribe(&mut self, wav: Vec<u8>, language: &str) -> anyhow::Result<String> {
+    async fn transcribe_stream(
+        &mut self,
+        audio: crate::runtime::ports::LiveAudio,
+        language: &str,
+        terms: &Terms,
+    ) -> anyhow::Result<Option<String>> {
+        self.worker.transcribe_stream(audio, language, terms).await
+    }
+
+    async fn transcribe(
+        &mut self,
+        wav: Vec<u8>,
+        language: &str,
+        terms: &Terms,
+    ) -> anyhow::Result<String> {
         let measurement = self.requests.as_ref().map(|_| {
             let rate = crate::audio::wav_sample_rate(&wav).unwrap_or(1).max(1);
             (
@@ -300,7 +321,7 @@ impl Speech for MeasuredSpeech {
             )
         });
         let started = Instant::now();
-        let text = self.worker.transcribe(wav, language).await?;
+        let text = self.worker.transcribe(wav, language, terms).await?;
         if let Some(((audio_ms, sha256), reports)) = measurement.zip(self.requests.as_ref()) {
             reports.try_send(Inference {
                 audio_ms,
@@ -315,8 +336,9 @@ impl Speech for MeasuredSpeech {
         &mut self,
         wav: Vec<u8>,
         language: &str,
+        terms: &Terms,
     ) -> anyhow::Result<speakeasy_show::Narration> {
-        self.worker.transcribe_words(wav, language).await
+        self.worker.transcribe_words(wav, language, terms).await
     }
 
     async fn probe_with_silence(&mut self) -> anyhow::Result<()> {
@@ -339,6 +361,7 @@ async fn profile_recording_dictation() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "1".into())
         .parse::<u32>()?;
     let segmenting = std::env::var("SPEAKEASY_FIXTURE_SEGMENT").is_ok_and(|value| value == "1");
+    let continuous = segmenting && config.uses_nemotron();
     let (loaded, ready) = async_channel::bounded(1);
     let (inserted, submitted) = async_channel::bounded(1);
     let (finished, ended) = async_channel::bounded(1);
@@ -385,6 +408,7 @@ async fn profile_recording_dictation() -> anyhow::Result<()> {
         "Recording fixture profile: {}",
         serde_json::json!({
             "segmenting": segmenting,
+            "continuous": continuous,
             "speed": speed,
             "stop_to_fake_insert_ms": inserted.saturating_duration_since(stopped).as_secs_f64() * 1000.0,
             "requests": requests,
@@ -394,7 +418,7 @@ async fn profile_recording_dictation() -> anyhow::Result<()> {
             "word_errors": word_errors,
             "formatting_word_errors": spelling_errors,
             "text_sha256": sha256(text.as_bytes()),
-            "total_inference_ms": requests.iter().map(|request| request.elapsed_ms).sum::<f64>(),
+            "total_inference_ms": (!continuous).then(|| requests.iter().map(|request| request.elapsed_ms).sum::<f64>()),
         })
     );
     Ok(())

@@ -41,12 +41,21 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                 );
                 let view = cx.new(|cx| Settings {
                     vocabulary: vocabulary::Editor::new(config.theme, cx),
+                    recognition: recognition::Editor::new(config.theme, cx),
+                    choosing_language: false,
+                    practice: practice::Practice::default(),
+                    update_check: None,
+                    available_update: None,
                     config,
                     presentation: Presentation {
                         indicator: Indicator::Paused,
                         shortcut: Arc::from(""),
                         cancel_shortcut: Arc::from(""),
                         message: String::new(),
+                        readiness: Readiness::new(
+                            &Snapshot::default(),
+                            crate::status::ServiceState::Paused,
+                        ),
                     },
                     notice: None,
                     microphones: Vec::new(),

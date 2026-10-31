@@ -36,8 +36,8 @@ use self::windows as native;
 pub use self::windows::login::{start_at_login, startup_approved};
 pub use self::{
     desktop::{
-        DesktopOptions, FileFilter, InputMonitor, LinuxPaste, NativeWindow, attach_stdio,
-        copy_text, prepare, reduced_motion, show_startup_error,
+        DesktopOptions, FileFilter, InputMonitor, LinuxPaste, MacShortcut, NativeWindow,
+        attach_stdio, copy_text, prepare, reduced_motion, show_startup_error,
     },
     input::{Input, InputSender, InsertPermit, Taps},
     insertion::{Delivery, Inserted, Inserter},

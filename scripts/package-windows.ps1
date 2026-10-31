@@ -37,4 +37,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Third-party notices failed' }
 Copy-Item 'crates/app/assets/JosefinSans-OFL.txt' $destination
 Copy-Item 'crates/show/NOTICE.md' $destination
 Compress-Archive -LiteralPath "$destination/speakeasy.exe", "$destination/speakeasy-cli.exe", "$destination/settings.example.json", "$destination/LICENSE", "$destination/THIRD-PARTY-NOTICES.txt", "$destination/JosefinSans-OFL.txt", "$destination/NOTICE.md" -DestinationPath 'artifacts/speakeasy-windows-x64.zip' -Force
+$iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+if (!$iscc) {
+    $iscc = (Get-Item "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe" -ErrorAction SilentlyContinue).FullName
+}
+if (!$iscc) { throw 'Install Inno Setup 6 to build the per-user installer. The portable ZIP has been built.' }
+$appVersion = $version.Trim().Substring('speakeasy '.Length)
+& $iscc "/DAppVersion=$appVersion" "/DPackageRoot=$destination" 'packaging/windows/installer.iss'
+if ($LASTEXITCODE -ne 0) { throw 'Windows installer compilation failed' }
 Write-Host "Built $destination"

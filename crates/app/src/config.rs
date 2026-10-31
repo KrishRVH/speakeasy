@@ -23,9 +23,11 @@ use anyhow::{Context as _, anyhow, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use serde_path_to_error::Segment;
-use speakeasy_platform::{Delivery, DesktopOptions, LinuxPaste};
+use speakeasy_platform::{Delivery, DesktopOptions, LinuxPaste, MacShortcut};
 
 use crate::{
+    models::Model,
+    recognition_terms::Terms,
     theme::Theme,
     transcript::{
         Fillers,
@@ -45,7 +47,7 @@ impl Engine {
     pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::Whisper => "Whisper",
-            Self::Parakeet => "Parakeet",
+            Self::Parakeet => "NeMo",
         }
     }
 
@@ -67,11 +69,15 @@ impl Engine {
 pub(crate) struct Config {
     #[serde(skip_serializing_if = "LinuxSettings::is_default")]
     pub linux: LinuxSettings,
+    pub mac_shortcut: MacShortcut,
     pub engine: Engine,
     pub microphone: Option<String>,
     pub engine_executable: PathBuf,
     pub model: PathBuf,
+    /// A managed `NeMo` model. Manual files retain conservative batch behavior when this is absent.
+    pub nemo_model: Option<Model>,
     pub language: String,
+    pub recognition_terms: Terms,
     pub remove_fillers: bool,
     pub vocabulary: Vec<Correction>,
     pub threads: u16,
@@ -88,11 +94,14 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             linux: LinuxSettings::default(),
+            mac_shortcut: MacShortcut::default(),
             engine: Engine::default(),
             microphone: None,
             engine_executable: PathBuf::new(),
             model: PathBuf::new(),
+            nemo_model: None,
             language: "en".into(),
+            recognition_terms: Terms::default(),
             remove_fillers: true,
             vocabulary: Vec::new(),
             threads: 4,
@@ -131,6 +140,7 @@ impl Default for LinuxSettings {
 impl From<DesktopOptions> for LinuxSettings {
     fn from(
         DesktopOptions {
+            mac_shortcut: _,
             shortcut,
             cancel,
             paste,
@@ -165,6 +175,7 @@ impl From<LinuxSettings> for DesktopOptions {
             LinuxPaste::Standard
         };
         Self {
+            mac_shortcut: MacShortcut::default(),
             shortcut,
             cancel,
             paste,
@@ -256,7 +267,21 @@ impl Config {
     /// for an explicit English request, because "um" is a word in languages such as German and
     /// Portuguese, and `auto` names no language to check.
     pub(crate) fn fillers_apply(&self) -> bool {
-        self.engine == Engine::Parakeet || self.language.eq_ignore_ascii_case("en")
+        (self.engine == Engine::Parakeet && !self.uses_nemotron())
+            || matches!(
+                self.language.to_ascii_lowercase().as_str(),
+                "en" | "en-us" | "en-gb"
+            )
+    }
+
+    pub(crate) fn uses_nemotron(&self) -> bool {
+        self.model_choice() == Some(Model::Nemotron)
+    }
+
+    pub(crate) fn model_choice(&self) -> Option<Model> {
+        self.nemo_model.filter(|choice| {
+            self.engine == Engine::Parakeet && Model::at(&self.model) == Some(*choice)
+        })
     }
 
     pub(crate) fn delivery(&self) -> Delivery {
@@ -274,7 +299,10 @@ impl Config {
     }
 
     pub(crate) fn desktop_options(&self) -> DesktopOptions {
-        self.linux.clone().into()
+        DesktopOptions {
+            mac_shortcut: self.mac_shortcut,
+            ..self.linux.clone().into()
+        }
     }
 
     pub(crate) fn read(path: &Path) -> anyhow::Result<Self> {
@@ -333,11 +361,14 @@ impl Config {
     pub(crate) fn change_to(&self, next: &Self) -> Change {
         let Self {
             linux,
+            mac_shortcut,
             engine,
             microphone,
             engine_executable,
             model,
+            nemo_model,
             language,
+            recognition_terms,
             remove_fillers,
             vocabulary,
             threads,
@@ -350,13 +381,15 @@ impl Config {
         } = next;
         [
             (
-                cfg!(target_os = "linux") && self.linux != *linux,
+                (cfg!(target_os = "linux") && self.linux != *linux)
+                    || (cfg!(target_os = "macos") && self.mac_shortcut != *mac_shortcut),
                 Change::Desktop,
             ),
             (
                 self.engine != *engine
                     || self.engine_executable != *engine_executable
                     || self.model != *model
+                    || self.nemo_model != *nemo_model
                     || self.threads != *threads
                     || self.use_gpu != *use_gpu,
                 Change::Engine,
@@ -366,6 +399,7 @@ impl Config {
             (self.language != *language, Change::Session),
             (
                 self.microphone != *microphone
+                    || self.recognition_terms != *recognition_terms
                     || self.remove_fillers != *remove_fillers
                     || self.vocabulary != *vocabulary
                     || self.preserve_clipboard != *preserve_clipboard,
@@ -391,6 +425,15 @@ impl Config {
     /// stays as the user wrote it.
     pub(crate) fn validated(&self, path: &Path) -> anyhow::Result<ValidConfig> {
         vocabulary::validate(&self.vocabulary)?;
+        self.recognition_terms.validate()?;
+        if self.uses_nemotron() {
+            ensure!(
+                crate::models::LANGUAGES
+                    .iter()
+                    .any(|(code, _)| *code == self.language),
+                "Choose a supported Nemotron language in Settings, or Automatic."
+            );
+        }
         let mut config = self.clone();
         let directory = path.parent().unwrap_or_else(|| Path::new("."));
         for file in [&mut config.engine_executable, &mut config.model] {

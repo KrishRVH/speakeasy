@@ -119,6 +119,8 @@ fn normalize_archive(staging: &Path) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use sha2::{Digest as _, Sha256};
+
     use super::*;
     use crate::http::{Trust, client_builder};
 
@@ -175,8 +177,8 @@ mod tests {
         let mut installation = Installation::acquire(root, &progress).await?;
         let archive = Download {
             url: "http://127.0.0.1:0/fixture.tar.gz",
-            size: 0,
-            sha256: "unused: replacement must fail before extraction",
+            size: 14,
+            sha256: &super::super::download::hex_digest(&Sha256::digest(b"unused archive")),
         };
         let client = client_builder(Trust::Nobody)?.build()?;
         let failure = unpack(&client, &archive, root, &progress, &mut installation)
@@ -236,10 +238,11 @@ mod tests {
         )?;
         let (progress, _) = watch::channel(Progress::default());
         let mut installation = Installation::acquire(root, &progress).await?;
+        let bytes = fs::read(root.join("downloads/fixture.tar"))?;
         let archive = Download {
             url: "http://127.0.0.1:0/fixture.tar",
-            size: 0,
-            sha256: "unused: the archive is already downloaded",
+            size: bytes.len() as u64,
+            sha256: &super::super::download::hex_digest(&Sha256::digest(&bytes)),
         };
         let client = client_builder(Trust::Nobody)?.build()?;
         let engine = unpack(&client, &archive, root, &progress, &mut installation).await?;

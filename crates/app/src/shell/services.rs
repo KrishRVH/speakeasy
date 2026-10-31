@@ -239,6 +239,18 @@ impl Services {
             .recover(interrupted)
     }
 
+    pub(super) fn practice(
+        &self,
+    ) -> Result<tokio::sync::mpsc::Receiver<runtime::PracticeEvent>, &'static str> {
+        if self.mode.is_demo() || self.is_quitting() {
+            return Err("Practice is unavailable in this preview or while quitting.");
+        }
+        self.runtime()
+            .filter(|runtime| runtime.is_running())
+            .ok_or("Resume dictation to try it here.")?
+            .practice()
+    }
+
     pub(super) fn can_copy_show(&self) -> bool {
         clipboard_free(&self.output.borrow(), self.service_state(), self.mode)
     }

@@ -456,6 +456,42 @@ impl Windows {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+impl crate::MacShortcut {
+    pub(super) const fn key_code(self) -> i64 {
+        match self {
+            Self::Function => Mac::FUNCTION,
+            Self::RightOption => Mac::RIGHT_OPTION,
+            Self::RightCommand => Mac::RIGHT_COMMAND,
+        }
+    }
+
+    /// IOLLEvent.h defines side-specific device bits alongside the aggregate `CGEvent` flags.
+    /// Exclude only the chosen right modifier: its left sibling must still interrupt a hold.
+    pub(super) const fn modifiers(self, flags: u64) -> Modifiers {
+        const SHIFT: u64 = 0x0002_0000;
+        const CONTROL: u64 = 0x0004_0000;
+        const OPTION: u64 = 0x0008_0000;
+        const COMMAND: u64 = 0x0010_0000;
+        const FUNCTION: u64 = 0x0080_0000;
+        let (talk_mask, own_group, opposite) = match self {
+            Self::Function => (FUNCTION, FUNCTION, 0),
+            Self::RightOption => (0x40, OPTION, 0x20),
+            Self::RightCommand => (0x10, COMMAND, 0x08),
+        };
+        let talk = flags & talk_mask != 0;
+        let others = CONTROL | OPTION | COMMAND | FUNCTION;
+        let other_shortcut = flags & (others & !own_group) != 0
+            || flags & opposite != 0
+            || (!talk && flags & own_group != 0);
+        Modifiers {
+            shift: flags & SHIFT != 0,
+            talk,
+            other_shortcut,
+        }
+    }
+}
+
 /// One event from the macOS keyboard event tap, with the modifiers its flags report held.
 #[cfg(any(target_os = "macos", test))]
 pub(super) enum MacEvent {
@@ -471,24 +507,28 @@ pub(super) enum MacEvent {
 
 #[cfg(any(target_os = "macos", test))]
 impl MacEvent {
-    /// Whether Fn was held just before this event. Fn's own flag change reports its new state, so
-    /// Fn was in the other state before. Another process may post any other event with whatever
-    /// flags it likes, so flags showing Fn up count only once `keyboard_fn` agrees.
-    fn fn_held_before(&self, keyboard_fn: impl FnOnce() -> bool) -> bool {
+    /// The shortcut modifier's own flag change reports its new state. Other events can carry
+    /// synthetic flags, so an apparent release needs confirmation from physical key state.
+    fn held_before(
+        &self,
+        shortcut: crate::MacShortcut,
+        keyboard_held: impl FnOnce() -> bool,
+    ) -> bool {
         match *self {
-            Self::FlagsChanged {
-                code: Mac::FUNCTION,
-                held,
-            } => !held.talk,
-            Self::Key { held, .. } | Self::FlagsChanged { held, .. } => held.talk || keyboard_fn(),
+            Self::FlagsChanged { code, held } if code == shortcut.key_code() => !held.talk,
+            Self::Key { held, .. } | Self::FlagsChanged { held, .. } => {
+                held.talk || keyboard_held()
+            },
         }
     }
 }
 
-/// Fn policy over virtual key codes from the macOS event tap.
+/// Shortcut policy over virtual key codes from the macOS event tap.
 #[cfg(any(target_os = "macos", test))]
 #[derive(Default)]
 pub(super) struct Mac {
+    shortcut: crate::MacShortcut,
+    pressed: Option<Instant>,
     chord: Chord,
     taps: ShiftTaps,
 }
@@ -508,7 +548,8 @@ impl Mac {
     const RIGHT_SHIFT: i64 = 60;
     const SCREEN: i64 = 1;
     /// Command, Option, and Control, which make Fn part of another shortcut.
-    const SHORTCUT_MODIFIERS: [i64; 6] = [
+    const SHORTCUT_MODIFIERS: [i64; 7] = [
+        Self::FUNCTION,
         Self::LEFT_COMMAND,
         Self::RIGHT_COMMAND,
         Self::LEFT_OPTION,
@@ -519,13 +560,20 @@ impl Mac {
     const SPACE: i64 = 49;
     const WINDOW: i64 = 13;
 
-    /// Interrupts the recording for a session change, then waits for Fn's release.
+    pub(super) fn new(shortcut: crate::MacShortcut) -> Self {
+        Self {
+            shortcut,
+            ..Self::default()
+        }
+    }
+
+    /// Interrupts the recording for a session change, then waits for the shortcut's release.
     pub(super) fn interrupt(&mut self, input: &InputSender) {
         self.chord.interrupt_recording(input);
     }
 
     /// Key events went by unseen while the tap was off, so no Shift tap pairs across the gap, and a
-    /// hold, whose edges the owner can no longer trust, ends and waits for Fn's release. A dictation
+    /// hold, whose edges the owner can no longer trust, ends and waits for the shortcut's release. A dictation
     /// already released needs no more key edges, so it keeps its paste.
     pub(super) fn missed_events(&mut self, input: &InputSender) {
         self.taps.interrupt();
@@ -534,30 +582,33 @@ impl Mac {
         }
     }
 
-    /// Decides one event-tap event at `at`, first ending a hold whose Fn release the tap missed, as
-    /// the event shows. `keyboard_fn` reports whether the keyboard itself holds Fn; it is asked only
-    /// during a hold, to confirm event flags that leave Fn out.
+    /// Ends a hold whose release the tap missed, confirming apparent releases against physical
+    /// key state before interpreting the next event.
     pub(super) fn observe(
         &mut self,
         event: MacEvent,
         keyboard_fn: impl FnOnce() -> bool,
         at: Instant,
     ) -> Decision {
-        let missed_release =
-            self.chord.awaits_release() && self.chord.reconcile(event.fn_held_before(keyboard_fn));
+        let missed_release = self.chord.awaits_release()
+            && self
+                .chord
+                .reconcile(event.held_before(self.shortcut, keyboard_fn));
         self.decide(event, at).after_missed_release(missed_release)
     }
 
     fn decide(&mut self, event: MacEvent, at: Instant) -> Decision {
         match event {
-            MacEvent::FlagsChanged {
-                code: Self::FUNCTION,
-                held,
-            } => Decision::pass(if held.talk {
-                self.chord.press()
-            } else {
-                self.chord.release()
-            }),
+            MacEvent::FlagsChanged { code, held } if code == self.shortcut.key_code() => {
+                self.pressed = held.talk.then_some(at);
+                Decision::pass(if held.talk && held.other_shortcut {
+                    None
+                } else if held.talk {
+                    self.chord.press()
+                } else {
+                    self.chord.release()
+                })
+            },
             MacEvent::FlagsChanged {
                 code: Self::LEFT_SHIFT | Self::RIGHT_SHIFT,
                 held,
@@ -578,6 +629,18 @@ impl Mac {
                 self.taps.interrupt();
                 match code {
                     Self::ESCAPE => Decision::pass(down.then_some(Action::Escape)),
+                    // A deliberate hold distinguishes Show and hands-free gestures from ordinary
+                    // Command+S/W/A/Space and Option characters. Key-up still follows Chord's
+                    // swallowed-key bookkeeping after an accepted gesture.
+                    Self::SPACE | Self::SCREEN | Self::WINDOW | Self::AREA
+                        if down
+                            && self.shortcut != crate::MacShortcut::Function
+                            && self.pressed.is_none_or(|pressed| {
+                                at.saturating_duration_since(pressed) < Duration::from_millis(250)
+                            }) =>
+                    {
+                        self.chord.other_key(true)
+                    },
                     Self::SPACE => self.chord.hold_key(HoldKey::Space, down),
                     Self::SCREEN => self.chord.hold_key(HoldKey::Show(Scope::Screen), down),
                     Self::WINDOW => self.chord.hold_key(HoldKey::Show(Scope::Window), down),

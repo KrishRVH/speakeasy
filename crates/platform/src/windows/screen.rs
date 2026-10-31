@@ -315,7 +315,7 @@ fn describe(
     })
 }
 
-pub(crate) fn pointer(display: Display) -> Option<PointerSample> {
+pub(crate) fn pointer(display: Display, _: crate::MacShortcut) -> Option<PointerSample> {
     let at = Instant::now();
     let POINT { x, y } = pointer_location()?;
     Some(PointerSample {

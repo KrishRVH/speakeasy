@@ -12,6 +12,38 @@ use anyhow::{Context as _, bail, ensure};
 use tokio::time::timeout;
 
 use super::*;
+
+#[test]
+fn model_installation_preserves_language_gpu_preference_and_unrelated_edits() {
+    for choice in [Model::Parakeet, Model::Nemotron] {
+        let mut config = Config {
+            language: "ja-JP".into(),
+            use_gpu: false,
+            threads: 8,
+            ..Config::default()
+        };
+        Installed {
+            choice,
+            engine_executable: "engine".into(),
+            model: choice.file_name().into(),
+            use_gpu: true,
+        }
+        .apply_to(&mut config);
+        assert_eq!(config.language, "ja-JP");
+        assert!(!config.use_gpu);
+        assert_eq!(config.threads, 8);
+    }
+    let mut config = Config::default();
+    Installed {
+        choice: Model::Nemotron,
+        engine_executable: "engine".into(),
+        model: Model::Nemotron.file_name().into(),
+        use_gpu: false,
+    }
+    .apply_to(&mut config);
+    assert_eq!(config.language, "auto");
+    assert!(!config.use_gpu);
+}
 use crate::{
     local_speech::LocalSpeech,
     runtime::ports::Speech,
@@ -93,6 +125,7 @@ fn setup_drop_reaps_its_child_and_releases_the_directory() -> anyhow::Result<()>
     let setup = Setup::start_in(root.clone(), async |root, _, installation| {
         installation.output(&mut fixture_child(root)?).await?;
         Ok(Installed {
+            choice: Model::Parakeet,
             engine_executable: PathBuf::new(),
             model: PathBuf::new(),
             use_gpu: false,
@@ -265,7 +298,7 @@ async fn install_chooses_an_engine_that_recognizes_fixture_speech() -> anyhow::R
     let (progress, _) = watch::channel(Progress::default());
     let (_cancel, cancelled) = async_channel::bounded::<Infallible>(1);
     let installed = Installation::run(root.path(), &progress, &cancelled, async |installation| {
-        install(root.path(), &progress, installation).await
+        install(root.path(), &progress, installation, Model::Parakeet).await
     })
     .await
     .context("Setup was cancelled")??;
@@ -278,7 +311,9 @@ async fn install_chooses_an_engine_that_recognizes_fixture_speech() -> anyhow::R
     installed.apply_to(&mut config);
     let (_cancel, cancelled) = watch::channel(false);
     let mut worker = LocalSpeech::start(config, cancelled).await?;
-    let result = worker.transcribe(wav, "en").await;
+    let result = worker
+        .transcribe(wav, "en", &crate::recognition_terms::Terms::default())
+        .await;
     worker.stop().await;
     // Never include the recognized text in failure output.
     assert!(

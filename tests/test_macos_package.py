@@ -32,7 +32,7 @@ def package(
     tools = tmp_path / "tools"
     tools.mkdir()
     script = """#!/usr/bin/env python3
-import json, os, sys
+import json, os, sys, shutil
 from pathlib import Path
 name = Path(sys.argv[0]).name
 with open("commands.jsonl", "a") as log:
@@ -42,11 +42,16 @@ if name == "uname":
 if name == "xcrun" and sys.argv[1] == "notarytool":
     print(json.dumps({"id": "synthetic-submission", "status": os.environ.get("STUB_NOTARY_STATUS", "Accepted")}))
 if name == "ditto":
-    Path(sys.argv[-1]).write_text("synthetic archive")
+    if "-c" in sys.argv:
+        Path(sys.argv[-1]).write_text("synthetic archive")
+    else:
+        shutil.copytree(sys.argv[-2], sys.argv[-1])
+if name == "hdiutil":
+    Path(sys.argv[-1]).write_text("synthetic disk image")
 if name == os.environ.get("STUB_FAIL_TOOL"):
     sys.exit(1)
 """
-    for name in ("uname", "cargo", "plutil", "codesign", "ditto", "xcrun", "spctl"):
+    for name in ("uname", "cargo", "plutil", "codesign", "ditto", "xcrun", "spctl", "hdiutil"):
         stub = tools / name
         stub.write_text(script)
         stub.chmod(0o755)
@@ -86,11 +91,12 @@ def test_archive_appears_only_after_signature_and_distribution_acceptance(
             ["notarytool", "submit"],
             ["stapler", "staple"],
             ["stapler", "validate"],
-        ]
-        assert commands[-2][0] == "spctl"
+        ] * 2
+        assert commands[-1][0] == "spctl"
     else:
         assert not notarization
-    assert commands[-1][-1] == "artifacts/speakeasy-macos.zip"
+    assert (tmp_path / "artifacts/speakeasy-macos.dmg").exists()
+    assert not list((tmp_path / "artifacts").glob(".macos-dmg.*"))
 
 
 @pytest.mark.parametrize(

@@ -50,7 +50,7 @@ impl Editor {
         }
     }
 
-    fn clear(&mut self, cx: &mut Context<'_, Settings>) {
+    pub(super) fn clear(&mut self, cx: &mut Context<'_, Settings>) {
         self.editing = None;
         for field in [&self.heard, &self.written] {
             field.update(cx, |field, cx| field.set(String::new(), cx));

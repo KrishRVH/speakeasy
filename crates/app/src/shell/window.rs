@@ -110,6 +110,7 @@ pub(super) fn open(cx: &mut App) -> anyhow::Result<()> {
         }
         cx.new(|cx| {
             let mut view = Settings::new(config, updates, cx);
+            Settings::watch_practice_focus(window, cx);
             if fresh_install {
                 view.start_setup(cx);
             }
@@ -167,6 +168,9 @@ fn window_options(cx: &App) -> WindowOptions {
 }
 
 fn set_visible(settings: WindowHandle<Settings>, visible: bool, cx: &mut App) {
+    if !visible {
+        settings.update_if_open(cx, |view, _, cx| view.end_practice(cx));
+    }
     let task = defer_native(settings.into(), WINDOW_NAME, cx, move |native, cx| {
         native.set_window_visible(visible);
         if visible {
@@ -179,9 +183,13 @@ fn set_visible(settings: WindowHandle<Settings>, visible: bool, cx: &mut App) {
     cx.global_mut::<Services>().visibility = Some(task);
 }
 
-fn hide_on_close(_: &mut Window, cx: &mut App) -> bool {
+fn hide_on_close(window: &mut Window, cx: &mut App) -> bool {
     if !cx.has_global::<Services>() {
         return true;
+    }
+    // The close callback already borrows this window, so the handle cannot update it recursively.
+    if let Some(Some(view)) = window.root::<Settings>() {
+        view.update(cx, Settings::end_practice);
     }
     // Without a working tray icon, nothing could bring a hidden Settings back.
     #[cfg(target_os = "linux")]

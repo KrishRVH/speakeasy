@@ -14,7 +14,14 @@ if [[ -z "$version" ]]; then
 fi
 package=$(realpath -- "$1")
 work=$(mktemp -d)
-trap 'rm -rf -- "$work"' EXIT
+mounted=
+cleanup() {
+  if [[ -n "$mounted" ]]; then
+    hdiutil detach -quiet "$mounted" || echo "Could not detach $mounted" >&2
+  fi
+  rm -rf -- "$work"
+}
+trap cleanup EXIT
 fail() {
   echo "$package: $*" >&2
   exit 1
@@ -29,6 +36,13 @@ case "$package" in
     ;;
   *-macos.zip)
     unzip -q "$package" || fail "cannot be unzipped"
+    app=./Speakeasy.app/Contents/MacOS/speakeasy
+    ;;
+  *-macos.dmg)
+    hdiutil attach -quiet -readonly -nobrowse -mountpoint "$work/mounted" "$package" || fail "cannot be mounted"
+    mounted="$work/mounted"
+    [[ -L "$mounted/Applications" && "$(readlink "$mounted/Applications")" == /Applications ]] || fail "has no Applications link"
+    ditto "$mounted/Speakeasy.app" "$work/Speakeasy.app" || fail "cannot be copied to a writable folder"
     app=./Speakeasy.app/Contents/MacOS/speakeasy
     ;;
   *.tar.gz)
