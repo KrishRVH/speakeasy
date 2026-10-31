@@ -40,10 +40,11 @@ a quarter-second before adding Space, S, W, or A; quick combinations keep their 
 Option and Left Command remain ordinary modifiers.
 
 For Fn, set **System Settings › Keyboard › Press 🌐 key to** to **Do Nothing** so Fn only dictates.
-**Remove um / uh** is on by default and removes standalone English hesitation words locally before
-insertion. Speech containing only these fillers sends nothing. Turn it off for non-English Parakeet
-dictation or literal transcription; Whisper removes fillers only when its language is set to
-English.
+**Remove um / uh** removes standalone English hesitation words locally when English is selected.
+Automatic and other languages preserve words. For Parakeet, choose **Cleanup language** in Settings;
+speech recognition still detects the language automatically. New installations start with Automatic.
+Turn the switch off for literal English transcription. Speech containing only removed fillers sends
+nothing.
 
 ### Reading the pill
 
@@ -585,7 +586,7 @@ settings file.
 </p>
 
 Settings shows the shortcuts and the engine and model in use, and lets you choose the microphone,
-Nemotron or Whisper's language, recognition hints, GPU use, filler removal, how text is delivered,
+speech or cleanup language, recognition hints, GPU use, filler removal, how text is delivered,
 reduced motion, sounds, theme, phrase corrections, and on Windows whether Speakeasy starts at login.
 The buttons and the status line stay at the bottom while the rest scrolls. The status says whether
 dictation is ready, or shows the latest error or notice; problems show in the attention color.

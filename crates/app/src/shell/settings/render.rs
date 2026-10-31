@@ -499,10 +499,16 @@ impl Settings {
                 div()
                     .text_size(TEXT)
                     .text_color(rgb(ui.palette.muted))
-                    .child(if self.config.fillers_apply(&self.config.language) {
-                        "English fillers. Turn off when dictating other languages."
+                    .child(if !self.config.remove_fillers {
+                        "Filler removal is off."
+                    } else if self.config.fillers(&self.config.language)
+                        == crate::transcript::Fillers::Remove
+                    {
+                        "Standalone English um / uh are removed."
+                    } else if self.config.language.eq_ignore_ascii_case("auto") {
+                        "Automatic preserves words. Select English to remove um / uh."
                     } else {
-                        "Select English to remove um / uh."
+                        "This language preserves words. Select English to remove um / uh."
                     }),
             )
             .when(
@@ -565,20 +571,18 @@ impl Settings {
     }
 
     fn language_control(&self, ui: &Ui<'_>) -> AnyElement {
-        if self.config.engine == Engine::Parakeet && !self.config.uses_nemotron() {
-            return div()
-                .py(CONTROL_PAD_Y)
-                .text_size(TEXT)
-                .child("Language: Automatic")
-                .into_any_element();
-        }
+        let cleanup = self.config.engine == Engine::Parakeet && !self.config.uses_nemotron();
         let languages = language::options(&self.config);
         let code = language::selected(&self.config);
         let name = languages
             .iter()
             .find_map(|&(language, name)| (language == code).then_some(name))
             .unwrap_or(code);
-        let label = format!("Language: {name}");
+        let label = if cleanup {
+            format!("Cleanup language: {name}")
+        } else {
+            format!("Language: {name}")
+        };
         div()
             .id("language-picker")
             .track_focus(&self.language.group)
@@ -593,6 +597,14 @@ impl Settings {
                     .track_focus(&self.language.button)
                     .on_click(|_, _, cx| cx.stop_propagation()),
             )
+            .when(cleanup, |column| {
+                column.child(
+                    div()
+                        .text_size(TEXT)
+                        .text_color(rgb(ui.palette.muted))
+                        .child("Parakeet detects speech automatically. This choice only controls English filler removal."),
+                )
+            })
             .when(self.language.cursor.is_some(), |column| {
                 column.child(
                     div()

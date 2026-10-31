@@ -5,42 +5,49 @@ use super::*;
 #[tokio::test(start_paused = true)]
 async fn recovery_uses_original_language_and_current_cleanup_without_capture_or_paste()
 -> anyhow::Result<()> {
-    let (_root, interrupted) = interrupted_with_audio(true).await?;
-    let config = Config {
-        language: "en".into(),
-        vocabulary: vec![crate::transcript::vocabulary::Correction {
-            heard: "synthetic".into(),
-            written: "corrected".into(),
-        }],
-        ..Config::default()
-    };
-    let mut h = Harness::with_ports(config, |_| {})?;
-    let receipt = h.runtime.recover(interrupted).map_err(anyhow::Error::msg)?;
-    let (language, reply) = receive(&h.jobs).await?;
-    assert_eq!(language, "fr");
-    answer(reply, "synthetic um recovered narration")?;
-    let saved = receive(&receipt).await?.map_err(anyhow::Error::msg)?;
-    h.phase(Phase::Notice).await?;
-    assert_eq!(
-        saved,
-        saved_show(&Narration::Text("corrected um recovered narration".into()))
-    );
-    assert_eq!(h.snapshot().last_show, Some(saved));
-    assert!(h.captures.try_recv().is_err());
-    assert!(h.shows.try_recv().is_err());
-    assert!(h.pasted.try_recv().is_err());
-    assert!(h.published.try_recv().is_err());
-    h.input(Input::Press);
-    h.phase(Phase::Recording).await?;
-    h.input(Input::Release);
-    let (language, reply) = receive(&h.jobs).await?;
-    assert_eq!(
-        language, "en",
-        "Recovery changed the configured dictation language"
-    );
-    answer(reply, "ordinary dictation")?;
-    h.phase(Phase::Done).await?;
-    h.close().await
+    for engine in [
+        crate::config::Engine::Whisper,
+        crate::config::Engine::Parakeet,
+    ] {
+        let (_root, interrupted) = interrupted_with_audio(true).await?;
+        let config = Config {
+            engine,
+            language: "en".into(),
+            vocabulary: vec![crate::transcript::vocabulary::Correction {
+                heard: "synthetic".into(),
+                written: "corrected".into(),
+            }],
+            ..Config::default()
+        };
+        let mut h = Harness::with_ports(config, |_| {})?;
+        let receipt = h.runtime.recover(interrupted).map_err(anyhow::Error::msg)?;
+        let (language, reply) = receive(&h.jobs).await?;
+        assert_eq!(language, "fr");
+        answer(reply, "synthetic um recovered narration")?;
+        let saved = receive(&receipt).await?.map_err(anyhow::Error::msg)?;
+        h.phase(Phase::Notice).await?;
+        assert_eq!(
+            saved,
+            saved_show(&Narration::Text("corrected um recovered narration".into()))
+        );
+        assert_eq!(h.snapshot().last_show, Some(saved));
+        assert!(h.captures.try_recv().is_err());
+        assert!(h.shows.try_recv().is_err());
+        assert!(h.pasted.try_recv().is_err());
+        assert!(h.published.try_recv().is_err());
+        h.input(Input::Press);
+        h.phase(Phase::Recording).await?;
+        h.input(Input::Release);
+        let (language, reply) = receive(&h.jobs).await?;
+        assert_eq!(
+            language, "en",
+            "Recovery changed the configured dictation language"
+        );
+        answer(reply, "ordinary dictation")?;
+        h.phase(Phase::Done).await?;
+        h.close().await?;
+    }
+    Ok(())
 }
 
 #[tokio::test(start_paused = true)]

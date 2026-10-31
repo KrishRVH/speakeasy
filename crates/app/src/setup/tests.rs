@@ -47,7 +47,10 @@ fn model_installation_preserves_language_gpu_preference_and_unrelated_edits() {
     }
     .apply_to(&mut config);
     assert_eq!(config.language, "en-US");
-    assert!(config.fillers_apply(&config.language));
+    assert_eq!(
+        config.fillers(&config.language),
+        crate::transcript::Fillers::Remove
+    );
     assert!(!config.use_gpu);
 }
 

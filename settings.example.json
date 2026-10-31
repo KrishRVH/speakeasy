@@ -4,7 +4,7 @@
   "model": "",
   "nemo_model": null,
   "mac_shortcut": "function",
-  "language": "en",
+  "language": "auto",
   "remove_fillers": true,
   "vocabulary": [],
   "presets": [],

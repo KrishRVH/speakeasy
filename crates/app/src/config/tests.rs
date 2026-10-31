@@ -149,12 +149,18 @@ fn filler_cleanup_follows_engine_language_and_switch() -> anyhow::Result<()> {
     for (engine, language, applies) in [
         (Engine::Whisper, "en", true),
         (Engine::Whisper, "EN", true),
+        (Engine::Whisper, "en-US", true),
+        (Engine::Whisper, "en-CA", true),
         (Engine::Whisper, "de", false),
         (Engine::Whisper, "auto", false),
         (Engine::Parakeet, "en", true),
         (Engine::Parakeet, "EN", true),
-        (Engine::Parakeet, "de", true),
-        (Engine::Parakeet, "auto", true),
+        (Engine::Parakeet, "en-GB", true),
+        (Engine::Parakeet, "en-AU", true),
+        (Engine::Parakeet, "EN-au", true),
+        (Engine::Parakeet, "de-en", false),
+        (Engine::Parakeet, "de", false),
+        (Engine::Parakeet, "auto", false),
     ] {
         for remove_fillers in [true, false] {
             let config = Config {
@@ -179,7 +185,7 @@ fn filler_cleanup_follows_engine_language_and_switch() -> anyhow::Result<()> {
     let without_switch: Config = serde_json::from_str(r#"{"engine":"parakeet","language":"de"}"#)?;
     assert_eq!(
         without_switch.fillers(&without_switch.language),
-        Fillers::Remove
+        Fillers::Preserve
     );
     Ok(())
 }

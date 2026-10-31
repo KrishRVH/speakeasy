@@ -256,24 +256,18 @@ impl Config {
         }
     }
 
-    /// Applies the user's filler preference to this request's language, including recovered audio.
+    /// Removes English hesitations only for an explicit English request, including recovered audio.
     pub(crate) fn fillers(&self, language: &str) -> Fillers {
-        if self.remove_fillers && self.fillers_apply(language) {
+        if self.remove_fillers
+            && language
+                .split('-')
+                .next()
+                .is_some_and(|code| code.eq_ignore_ascii_case("en"))
+        {
             Fillers::Remove
         } else {
             Fillers::Preserve
         }
-    }
-
-    /// Whether the engine and language let the switch remove English hesitations. Parakeet detects
-    /// the language without reporting it, so the user's switch decides. Whisper removes them only
-    /// for an explicit English request, because "um" is a word in languages such as German and
-    /// Portuguese, and `auto` names no language to check.
-    pub(crate) fn fillers_apply(&self, language: &str) -> bool {
-        (self.engine == Engine::Parakeet && !self.uses_nemotron())
-            || ["en", "en-us", "en-gb"]
-                .iter()
-                .any(|english| language.eq_ignore_ascii_case(english))
     }
 
     pub(crate) fn uses_nemotron(&self) -> bool {
@@ -338,6 +332,7 @@ impl Config {
     pub(crate) fn first_launch() -> Self {
         Self {
             engine: Engine::Parakeet,
+            language: "auto".into(),
             ..Self::default()
         }
     }

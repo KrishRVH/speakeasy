@@ -329,6 +329,29 @@ async fn copied_text_is_a_notice_that_carries_its_remedy_until_the_next_paste() 
 }
 
 #[tokio::test(start_paused = true)]
+async fn parakeet_preserves_non_english_words_in_dictation_and_shows() -> anyhow::Result<()> {
+    for language in ["de", "auto"] {
+        let config = Config {
+            engine: crate::config::Engine::Parakeet,
+            language: language.into(),
+            ..Config::default()
+        };
+        let mut h = Harness::with_ports(config, |_| {})?;
+        h.start().await?;
+        h.finish_as("Gehe um das Haus.").await?;
+        assert_eq!(receive(&h.pasted).await?, "Gehe um das Haus.");
+        h.phase(Phase::Done).await?;
+        start_show(&mut h).await?;
+        finish_show(&h);
+        h.transcribe_next_as("Gehe um das Haus.").await?;
+        let (_, narration) = receive(&h.published).await?;
+        assert_eq!(narration, Narration::Text("Gehe um das Haus.".into()));
+        h.close().await?;
+    }
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
 async fn saved_cleanup_opt_out_keeps_words_and_worker() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     receive(&h.loads).await?;

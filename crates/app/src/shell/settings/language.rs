@@ -4,7 +4,7 @@ use gpui::{Context, FocusHandle, KeyDownEvent, KeyUpEvent, ScrollHandle, Subscri
 
 use super::{Action, Settings};
 use crate::{
-    config::{Config, Engine},
+    config::Config,
     models::{LANGUAGES, WHISPER_LANGUAGES},
 };
 
@@ -32,18 +32,18 @@ impl Picker {
 }
 
 pub(super) fn options(config: &Config) -> &'static [(&'static str, &'static str)] {
-    if config.engine == Engine::Whisper {
-        WHISPER_LANGUAGES
-    } else {
+    if config.uses_nemotron() {
         LANGUAGES
+    } else {
+        WHISPER_LANGUAGES
     }
 }
 
 pub(super) fn selected(config: &Config) -> &str {
-    if config.engine == Engine::Whisper {
-        crate::models::whisper_language(&config.language)
-    } else {
+    if config.uses_nemotron() {
         &config.language
+    } else {
+        crate::models::whisper_language(&config.language)
     }
 }
 

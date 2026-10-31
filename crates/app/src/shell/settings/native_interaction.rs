@@ -48,6 +48,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 })?;
                 cx.update(|cx| cx.global_mut::<Services>().settings = Some(settings))?;
                 presets::native_tests::exercise(settings, cx).await?;
+                parakeet_cleanup_language(settings, cx).await?;
                 settings.update(cx, |view, window, _| view.language.button.focus(window))?;
                 key(settings, "enter", cx)?;
                 ensure!(
@@ -213,6 +214,81 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
     outcome
         .try_recv()
         .context("Native interaction acceptance did not complete")?
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "Owned Settings keyboard events run on GPUI's UI thread"
+)]
+async fn parakeet_cleanup_language(
+    settings: WindowHandle<Settings>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    let original = settings.read_with(cx, |view, _| view.config.clone())?;
+    settings.update(cx, |view, _, cx| {
+        view.config.engine = Engine::Parakeet;
+        view.config.language = "de-DE".into();
+        cx.notify();
+    })?;
+    Timer::after(Duration::from_millis(100)).await;
+    settings.update(cx, |view, window, _| view.language.button.focus(window))?;
+    key(settings, "enter", cx)?;
+    let english = settings.read_with(cx, |view, _| {
+        ensure!(
+            view.language.cursor.is_some(),
+            "Parakeet has no cleanup picker"
+        );
+        ensure!(
+            view.config.language == "de-DE",
+            "Opening rewrote the saved language"
+        );
+        ensure!(
+            language::selected(&view.config) == "de",
+            "The saved locale has no display selection"
+        );
+        language::options(&view.config)
+            .iter()
+            .position(|&(code, _)| code == "en")
+            .context("The cleanup picker has no English choice")
+    })??;
+    key(settings, "home", cx)?;
+    for _ in 0..english {
+        key(settings, "down", cx)?;
+    }
+    key(settings, "enter", cx)?;
+    settings.update(cx, |view, window, cx| {
+        ensure!(
+            view.config.language == "en",
+            "Keyboard selection missed English cleanup"
+        );
+        ensure!(
+            view.config.fillers(&view.config.language) == crate::transcript::Fillers::Remove,
+            "English cleanup remains disabled"
+        );
+        view.toggle_language(window, cx);
+        cx.notify();
+        anyhow::Ok(())
+    })??;
+    key(settings, "home", cx)?;
+    key(settings, "enter", cx)?;
+    settings.update(cx, |view, window, cx| {
+        ensure!(
+            view.config.language == "auto",
+            "Keyboard selection missed automatic cleanup"
+        );
+        ensure!(
+            view.config.fillers(&view.config.language) == crate::transcript::Fillers::Preserve,
+            "Automatic cleanup still removes words"
+        );
+        ensure!(
+            view.language.cursor.is_none() && view.language.button.is_focused(window),
+            "Cleanup selection lost picker focus"
+        );
+        view.config = original;
+        cx.notify();
+        anyhow::Ok(())
+    })??;
+    Ok(())
 }
 
 #[expect(
