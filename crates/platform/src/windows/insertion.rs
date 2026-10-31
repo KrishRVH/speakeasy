@@ -13,7 +13,7 @@ use windows_sys::Win32::UI::{
 };
 
 use super::{modifiers, press, release, send_input, type_unit, window_process};
-use crate::{Inserted, insertion::NativeInsert};
+use crate::{ClipboardContent, Inserted, clipboard, insertion::NativeInsert};
 
 /// Registered clipboard formats whose zero `DWORD` keeps Speakeasy's clipboard text out of Windows
 /// clipboard history and cloud sync. Apps still paste it, and it stays on the clipboard.
@@ -23,6 +23,56 @@ pub(crate) fn copy_text(text: &str) -> anyhow::Result<()> {
     let mut insert = Insert;
     let lease = insert.acquire()?;
     insert.write(lease, text)
+}
+
+pub(crate) fn copy_content(
+    content: &ClipboardContent,
+    authorized: impl FnOnce() -> bool,
+) -> anyhow::Result<bool> {
+    clipboard::copy_when(authorized, open_clipboard, |lease| {
+        write_clipboard(lease, &content.text, content.image.as_ref())
+    })
+}
+
+fn write_clipboard(
+    lease: clipboard_win::Clipboard,
+    text: &str,
+    image: Option<&clipboard::Image>,
+) -> anyhow::Result<()> {
+    let png = image
+        .map(|_| {
+            clipboard_win::raw::register_format("PNG")
+                .context("Cannot register the clipboard image format")
+        })
+        .transpose()?;
+    let write = || -> anyhow::Result<()> {
+        clipboard_win::raw::empty()?;
+        for name in PRIVATE_FORMATS {
+            let format = clipboard_win::raw::register_format(name)
+                .context("Cannot register a clipboard format")?;
+            clipboard_win::raw::set_without_clear(format.get(), &0_u32.to_ne_bytes())?;
+        }
+        if let Some((image, png)) = image.zip(png) {
+            clipboard_win::raw::set_without_clear(png.get(), &image.png)?;
+            clipboard_win::raw::set_without_clear(clipboard_win::formats::CF_DIBV5, &image.dib)?;
+        }
+        clipboard_win::raw::set_string_with(
+            &windows_line_endings(text),
+            clipboard_win::options::NoClear,
+        )?;
+        Ok(())
+    };
+    let result = match write() {
+        Ok(()) => Ok(()),
+        Err(error) => match clipboard_win::raw::empty() {
+            Ok(()) => Err(error),
+            Err(_) => Err(error.context(
+                "The clipboard may contain an incomplete copy; clear it before trying again",
+            )),
+        },
+    };
+    drop(lease);
+    result
 }
 
 /// The native steps of one Windows insertion, as [`NativeInsert`] defines them.
@@ -49,18 +99,7 @@ impl NativeInsert for Insert {
     /// Marks the clipboard private before the text arrives, so no failure leaves the text
     /// unmarked.
     fn write(&mut self, lease: clipboard_win::Clipboard, text: &str) -> anyhow::Result<()> {
-        clipboard_win::raw::empty()?;
-        for name in PRIVATE_FORMATS {
-            let format = clipboard_win::raw::register_format(name)
-                .context("Cannot register a clipboard format")?;
-            clipboard_win::raw::set_without_clear(format.get(), &0_u32.to_ne_bytes())?;
-        }
-        clipboard_win::raw::set_string_with(
-            &windows_line_endings(text),
-            clipboard_win::options::NoClear,
-        )?;
-        drop(lease);
-        Ok(())
+        write_clipboard(lease, text, None)
     }
 
     fn mark(&mut self) -> Option<NonZeroU32> {
@@ -226,6 +265,7 @@ mod tests {
             "The clipboard lost the text just written"
         );
         assert_private_text("the pasted text")?;
+        assert_private_image()?;
         copy_without_text()?;
         assert!(
             !insert.holds(TEXT, &mark)?,
@@ -236,6 +276,63 @@ mod tests {
         assert!(
             !insert.holds(TEXT, &mark)?,
             "A copy with no text must read as a change even under its own mark"
+        );
+        Ok(())
+    }
+
+    fn assert_private_image() -> anyhow::Result<()> {
+        let content = ClipboardContent::moment(
+            TEXT.into(),
+            2,
+            2,
+            vec![3, 2, 1, 255, 6, 5, 4, 255, 9, 8, 7, 255, 12, 11, 10, 255],
+        )?;
+        let before = clipboard_win::raw::seq_num();
+        assert!(!copy_content(&content, || false)?);
+        assert_eq!(
+            before,
+            clipboard_win::raw::seq_num(),
+            "A cancelled copy changed the clipboard"
+        );
+        assert!(copy_content(&content, || true)?);
+        assert_private_text("the image's context")?;
+        let image = content
+            .image
+            .as_ref()
+            .context("The fixture contains an image")?;
+        let _clipboard = open_clipboard()?;
+        let png_format = clipboard_win::raw::register_format("PNG").context("PNG format")?;
+        for (format, expected) in [
+            (png_format.get(), &image.png),
+            (clipboard_win::formats::CF_DIBV5, &image.dib),
+        ] {
+            let mut bytes = Vec::new();
+            clipboard_win::raw::get_vec(format, &mut bytes)?;
+            assert_eq!(
+                &bytes, expected,
+                "The native clipboard lost a visual representation"
+            );
+        }
+        // Ask Windows to synthesize the legacy bitmap format, as a native image consumer does.
+        // This checks that our DIB header is usable, beyond reading our own bytes back unchanged.
+        let mut bitmap = Vec::new();
+        clipboard_win::raw::get_bitmap(&mut bitmap)?;
+        let word = |at: usize| {
+            u32::from_le_bytes(bitmap[at..at.checked_add(4).unwrap()].try_into().unwrap())
+        };
+        assert_eq!((word(18), word(22)), (2, 2));
+        assert_eq!(u16::from_le_bytes(bitmap[28..30].try_into().unwrap()), 32);
+        let offset = usize::try_from(word(10))?;
+        let colors: Vec<_> = bitmap[offset..]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|pixel| &pixel[..3])
+            .collect();
+        assert_eq!(
+            colors,
+            [&[9, 8, 7][..], &[12, 11, 10], &[3, 2, 1], &[6, 5, 4]],
+            "Native bitmap conversion changed colors or orientation"
         );
         Ok(())
     }

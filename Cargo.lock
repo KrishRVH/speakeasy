@@ -5054,6 +5054,7 @@ dependencies = [
  "objc2-core-video",
  "objc2-foundation",
  "objc2-screen-capture-kit",
+ "png 0.18.1",
  "raw-window-handle",
  "serde",
  "tempfile",

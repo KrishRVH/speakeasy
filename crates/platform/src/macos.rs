@@ -3,8 +3,8 @@
 //!
 //! The tap's run-loop thread creates and removes every native resource its callbacks reach.
 
+mod clipboard;
 pub(crate) mod screen;
-
 use std::{
     cell::OnceCell,
     ffi::c_void,
@@ -19,6 +19,7 @@ use std::{
 
 use anyhow::{Context as _, anyhow, bail, ensure};
 use block2::RcBlock;
+pub(super) use clipboard::{copy_content, copy_text};
 use core_foundation::{
     base::{TCFType, kCFAllocatorDefault},
     mach_port::CFMachPort,
@@ -36,10 +37,9 @@ use core_graphics::{
 };
 use objc2::{MainThreadMarker, rc::Retained, runtime::ProtocolObject};
 use objc2_app_kit::{
-    NSAlert, NSEvent, NSFloatingWindowLevel, NSPasteboard, NSPasteboardContentsOptions,
-    NSPasteboardTypeString, NSScreen, NSView, NSWindow, NSWindowCollectionBehavior,
-    NSWindowStyleMask, NSWorkspace, NSWorkspaceSessionDidResignActiveNotification,
-    NSWorkspaceWillSleepNotification,
+    NSAlert, NSEvent, NSFloatingWindowLevel, NSPasteboard, NSScreen, NSView, NSWindow,
+    NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
+    NSWorkspaceSessionDidResignActiveNotification, NSWorkspaceWillSleepNotification,
 };
 use objc2_core_graphics as cg;
 use objc2_foundation::{
@@ -50,8 +50,7 @@ use raw_window_handle::{RawWindowHandle, WindowHandle};
 
 use super::{
     CANCEL_SHORTCUT, DesktopOptions, Input, InputSender, Inserted, Inserter, MacShortcut,
-    NativeWindow, OwnedThread, PILL_MARGIN, PILL_WIDTH,
-    insertion::{self, NativeInsert as _},
+    NativeWindow, OwnedThread, PILL_MARGIN, PILL_WIDTH, insertion,
     keyboard::{self, MacEvent, Modifiers},
     monitor::MonitorControl,
     screen::geometry::Bounds,
@@ -524,40 +523,24 @@ pub(super) fn modifiers_for(shortcut: MacShortcut) -> Modifiers {
         .modifiers(cg::CGEventSource::flags_state(cg::CGEventSourceStateID::CombinedSessionState).0)
 }
 
-pub(super) fn copy_text(text: &str) -> anyhow::Result<()> {
-    let mut insert = Insert;
-    let pasteboard = insert.acquire()?;
-    insert.write(pasteboard, text)
-}
-
 /// The native steps of one macOS insertion, as [`insertion::NativeInsert`] defines them.
 pub(super) struct Insert;
 
 impl insertion::NativeInsert for Insert {
     type Keys = Vec<CGEvent>;
-    type Lease = Retained<NSPasteboard>;
+    type Lease = clipboard::Lease;
     /// The pasteboard change count, which every change advances.
     type Mark = isize;
 
-    fn acquire(&mut self) -> anyhow::Result<Retained<NSPasteboard>> {
-        Ok(NSPasteboard::generalPasteboard())
+    fn acquire(&mut self) -> anyhow::Result<clipboard::Lease> {
+        clipboard::acquire()
     }
 
     /// Keeps the text on this Mac, out of Universal Clipboard, and marks it transient before it
     /// arrives, so clipboard managers that follow nspasteboard.org never see it unmarked. The mark
     /// asks them only not to record or display it; the text stays on the pasteboard to paste.
-    fn write(&mut self, pasteboard: Retained<NSPasteboard>, text: &str) -> anyhow::Result<()> {
-        pasteboard.prepareForNewContentsWithOptions(NSPasteboardContentsOptions::CurrentHostOnly);
-        // SAFETY: AppKit's exported pasteboard type is an immutable constant.
-        let string = unsafe { NSPasteboardTypeString };
-        ensure!(
-            pasteboard.setString_forType(
-                &NSString::new(),
-                &NSString::from_str("org.nspasteboard.TransientType")
-            ) && pasteboard.setString_forType(&NSString::from_str(text), string),
-            "Cannot place the text on the clipboard"
-        );
-        Ok(())
+    fn write(&mut self, lease: clipboard::Lease, text: &str) -> anyhow::Result<()> {
+        clipboard::write(lease, text)
     }
 
     fn mark(&mut self) -> isize {

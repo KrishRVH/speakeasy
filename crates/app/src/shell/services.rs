@@ -114,6 +114,7 @@ pub(crate) struct Services {
     pub(super) microphone_scan: Option<MicrophoneScan>,
     instance: Option<Instance>,
     pub(super) show_edits: crate::show::edits::Edits,
+    show_copies: crate::show::copy::Copies,
 }
 
 impl Global for Services {}
@@ -157,6 +158,7 @@ impl Services {
             microphone_scan: None,
             instance,
             show_edits: crate::show::edits::Edits::default(),
+            show_copies: crate::show::copy::Copies::default(),
         }
     }
 
@@ -253,6 +255,27 @@ impl Services {
 
     pub(super) fn can_copy_show(&self) -> bool {
         clipboard_free(&self.output.borrow(), self.service_state(), self.mode)
+            && !self.lifecycle.is_pausing()
+    }
+
+    pub(super) fn copy_show(
+        &mut self,
+        request: crate::show::copy::Request,
+    ) -> anyhow::Result<crate::show::copy::Receipt> {
+        anyhow::ensure!(
+            self.can_copy_show(),
+            "Finish the current operation before copying a Show."
+        );
+        let input =
+            self.runtime()
+                .filter(|runtime| runtime.is_running())
+                .map(|runtime| {
+                    runtime.input.idle().ok_or_else(|| {
+                        anyhow!("Finish the current recording before copying a Show.")
+                    })
+                })
+                .transpose()?;
+        self.show_copies.submit(request, input)
     }
 
     /// Shows `report`, such as a failure, unless a recording is under way, which it must not
@@ -284,6 +307,7 @@ impl Services {
         if !self.lifecycle.reconfigure() {
             return Ok(());
         }
+        self.show_copies.cancel();
         // A dead runtime or changed desktop options need fresh owners: pausing makes the queue
         // below restart with `config` once the current owners retire.
         if self.runtime().is_some_and(|runtime| {
@@ -310,6 +334,7 @@ impl Services {
     /// Starts owners for `config` as [`Lifecycle::start`] allows, ending any resume's check. A
     /// failure leaves the status paused rather than loading.
     fn start(&mut self, config: ValidConfig) -> anyhow::Result<()> {
+        self.show_copies.cancel();
         let Self {
             lifecycle,
             output,
@@ -412,6 +437,7 @@ impl Services {
         if self.is_quitting() {
             return;
         }
+        self.show_copies.cancel();
         self.validation = None;
         let started = self.lifecycle.pause();
         announce(
@@ -457,6 +483,7 @@ impl Services {
         if !self.lifecycle.quit() {
             return None;
         }
+        self.show_copies.cancel();
         self.validation = None;
         self.requests = None;
         self.visibility = None;
@@ -469,8 +496,10 @@ impl Services {
         let stopped = self.lifecycle.retiring().map(Owners::retire);
         let scanned = self.microphone_scan.as_ref().map(MicrophoneScan::exited);
         let edited = self.show_edits.drained();
+        let copied = self.show_copies.drained();
         Some(async move {
             edited.await;
+            copied.await;
             if let Some(stopped) = stopped {
                 stopped.await;
             }

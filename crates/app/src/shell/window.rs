@@ -62,6 +62,7 @@ pub(crate) fn reveal_shows(cx: &mut App) {
                 cx.try_global::<Services>()
                     .is_some_and(Services::can_copy_show)
             },
+            copy: |request, cx| cx.global_mut::<Services>().copy_show(request),
             recover: |show, cx| {
                 cx.try_global::<Services>()
                     .ok_or("Resume Speakeasy to recover this Show.")?

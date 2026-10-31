@@ -50,7 +50,7 @@ use windows_sys::{
 
 pub(crate) use self::{
     input::{Monitor, start},
-    insertion::{Insert, copy_text},
+    insertion::{Insert, copy_content, copy_text},
 };
 #[cfg(test)]
 use crate::NativeWindow;

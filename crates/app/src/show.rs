@@ -2,6 +2,7 @@
 //! through the command line or recalled from the tray.
 
 mod command;
+pub(crate) mod copy;
 pub(crate) mod edits;
 mod overlay;
 mod publish;

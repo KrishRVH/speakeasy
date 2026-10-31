@@ -21,11 +21,7 @@ pub(crate) enum LastShow {
 impl LastShow {
     pub(crate) fn run(self, cx: &mut App) {
         match self {
-            Self::Copy => recover(
-                |show| show.summary()?.map(|summary| copy(&summary)).transpose(),
-                |(), cx| cx.global::<Services>().report(Report::ShowCopied),
-                cx,
-            ),
+            Self::Copy => copy(cx),
             Self::Open => recover(
                 |show| Ok(show.folder()?.map(Path::to_owned)),
                 |folder, cx| cx.open_with_system(&folder),
@@ -35,14 +31,32 @@ impl LastShow {
     }
 }
 
-/// Puts the last Show's `summary` on the clipboard, saying what to do when another app holds it.
-fn copy(summary: &str) -> anyhow::Result<()> {
-    speakeasy_platform::copy_text(summary).map_err(|error| {
-        anyhow!(
-            "Cannot copy the last Show ({error:#}). Close any app holding the clipboard, then try \
-             again."
-        )
-    })
+/// Copy preparation and publication share one owned worker and the idle generation observed when
+/// the user asks. A late disk read cannot acquire fresh authority after a newer recording ends.
+fn copy(cx: &mut App) {
+    let services = cx.global_mut::<Services>();
+    let Some(show) = services.recallable_show(&services.output.borrow()).cloned() else {
+        return;
+    };
+    let receipt = match services.copy_show(crate::show::copy::Request::Saved(show.clone())) {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            cx.global::<Services>().report(&error);
+            return;
+        },
+    };
+    let copying = cx.spawn(async move |cx| {
+        let result = receipt.await;
+        cx.update_if_running(|cx| {
+            let services = cx.global::<Services>();
+            match result {
+                Ok(crate::show::copy::Outcome::Copied) => services.report(Report::ShowCopied),
+                Ok(crate::show::copy::Outcome::Missing) => services.report(Report::ShowGone(show)),
+                Err(error) => services.report(&anyhow!("{error}")),
+            }
+        });
+    });
+    cx.global_mut::<Services>().recovery = Some(copying);
 }
 
 /// Runs `work` off the UI thread on the Show the menu acts on, if it acts, replacing any recovery

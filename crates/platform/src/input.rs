@@ -143,6 +143,18 @@ impl InputSender {
         self.gate.is_authorized()
     }
 
+    /// Observes idle input without authorizing or revoking a recording. A later recording or
+    /// closed input invalidates this observation even if that recording has already finished.
+    #[must_use]
+    pub fn idle(&self) -> Option<IdleInput> {
+        let generation = self.gate.0.load(Ordering::Acquire);
+        (!self.is_closed() && generation & (Gate::AUTHORIZED | Gate::REVOKED) != Gate::AUTHORIZED)
+            .then(|| IdleInput {
+                input: self.clone(),
+                generation,
+            })
+    }
+
     /// Revokes the current recording without waiting for the owner, shielded or not.
     pub fn cancel(&self) {
         self.gate.revoke_current();
@@ -152,6 +164,22 @@ impl InputSender {
     pub fn close(&self) {
         self.sender.close();
         self.cancel();
+    }
+}
+
+/// An idle input generation observed before preparing an explicit clipboard copy. This does not
+/// authorize insertion; it only detects recordings or shutdown that supersede the observation.
+#[derive(Debug)]
+pub struct IdleInput {
+    input: InputSender,
+    generation: u64,
+}
+
+impl IdleInput {
+    /// Whether input is still idle in exactly the observed generation.
+    #[must_use]
+    pub fn is_current(&self) -> bool {
+        !self.input.is_closed() && self.input.gate.0.load(Ordering::Acquire) == self.generation
     }
 }
 

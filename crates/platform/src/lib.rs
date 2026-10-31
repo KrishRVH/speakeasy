@@ -7,6 +7,7 @@
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 compile_error!("Speakeasy supports Windows, macOS, and Linux.");
 
+mod clipboard;
 mod desktop;
 mod input;
 mod insertion;
@@ -36,11 +37,12 @@ use self::windows as native;
 #[cfg(target_os = "windows")]
 pub use self::windows::login::{start_at_login, startup_approved};
 pub use self::{
+    clipboard::{ClipboardContent, copy_content},
     desktop::{
         DesktopOptions, FileFilter, InputMonitor, LinuxPaste, MacShortcut, NativeWindow,
         attach_stdio, copy_text, prepare, reduced_motion, show_startup_error,
     },
-    input::{Input, InputSender, InsertPermit, Taps},
+    input::{IdleInput, Input, InputSender, InsertPermit, Taps},
     insertion::{Delivery, Inserted, Inserter},
     owned_thread::{OwnedThread, StoppableThread},
     permissions::{Permission, Permissions},

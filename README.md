@@ -170,10 +170,16 @@ any gap. Switching frame modes keeps that request; stepping through frames, choo
 or refreshing clears it. Words without timings remain readable. Missing and incomplete narration are
 labeled. This pane contains recorded speech, so edits to `summary.md` stay in Summary.
 
-**Copy moment** on Windows/Mac copies a reference to the displayed frame and, if one is active, the
-request that led there. It includes no transcript and leaves your summary alone. Both copy actions
-are available between recordings. Narration previews are bounded; `show.json` retains all recorded
-words.
+**Copy moment** on Windows/Mac copies the displayed image, plus plain-text context naming its actual
+timestamp and any request that led there. Windows offers PNG and a native bitmap; Mac offers PNG.
+The receiving app chooses which formats it accepts, so some apps paste only the image or only the
+context. Use **Copy summary** separately when the recipient also needs narration. Copy moment
+includes no transcript and leaves your summary alone. Both copy actions are available between
+recordings. Narration previews are bounded; `show.json` retains all recorded words.
+
+Copies carry the same clipboard-history and device-sync privacy markers as dictation. A new
+recording, closing the requesting window, or a settings/lifecycle change cancels a copy that has not
+replaced the clipboard. Quit waits for native clipboard work to finish.
 
 **Refresh** rereads the library; returning to the window rereads the selected summary and retention.
 **Open folder** reveals its files, and **Copy summary** on Windows/Mac copies the current file,
@@ -661,8 +667,9 @@ paused clock exercises gesture deadlines and the five-minute cap.
   Windows and Mac use their native desktop. It accesses no microphone, global hook, or clipboard.
 - `cargo test --locked -p speakeasy native_show_review_ -- --ignored --test-threads=1` on Windows,
   or with `xvfb-run -a` on Linux, checks synthetic Show navigation, damage, edited summaries,
-  expiry, and image cleanup on close. Linux also checks the owned window's rendered frame pixels. It
-  uses no microphone, global input, screen capture, or clipboard.
+  expiry, ZIP export, visual-copy requests through a fake, and image cleanup on close. Linux also
+  checks the owned window's rendered frame pixels. It uses no microphone, global input, screen
+  capture, or clipboard.
 - The same command with `native_phrase_editor_` checks Settings IME composition and save draining;
   with `native_settings_picker_` it checks language and page navigation, focus restoration,
   permission refresh using fake observations, and private practice cleanup. Run each filter

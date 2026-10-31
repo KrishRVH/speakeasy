@@ -10,6 +10,7 @@ publish.workspace = true
 anyhow.workspace = true
 async-channel.workspace = true
 raw-window-handle.workspace = true
+png.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros", "process", "rt", "time"] }
 
@@ -37,7 +38,7 @@ block2.workspace = true
 core-foundation.workspace = true
 core-graphics.workspace = true
 objc2.workspace = true
-objc2-app-kit = { workspace = true, features = ["NSAccessibility", "NSAlert", "NSApplication", "NSEvent", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSScreen", "NSView", "NSWindow", "NSWorkspace", "libc"] }
+objc2-app-kit = { workspace = true, features = ["NSAccessibility", "NSAlert", "NSApplication", "NSEvent", "NSPanel", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSRunningApplication", "NSScreen", "NSView", "NSWindow", "NSWorkspace", "libc"] }
 objc2-application-services = { workspace = true, features = ["AXUIElement", "HIServices"] }
 objc2-av-foundation = { workspace = true, features = ["AVCaptureDevice", "AVMediaFormat"] }
 objc2-core-foundation = { workspace = true, features = ["CFArray", "CFDictionary", "CFNumber", "CFString"] }

@@ -36,6 +36,12 @@ fn native_show_review_navigates_damage_and_releases_private_images() -> anyhow::
 struct TestEdits(super::super::edits::Edits);
 impl gpui::Global for TestEdits {}
 
+struct CopyProbe {
+    image: std::sync::Weak<RenderImage>,
+    received: bool,
+}
+impl gpui::Global for CopyProbe {}
+
 struct Keeper;
 impl Render for Keeper {
     fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
@@ -82,6 +88,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                             cx.global_mut::<TestEdits>().0.submit(edit, fixture)
                         },
                         can_copy: |_| false,
+                        copy: |_, _| anyhow::bail!("Synthetic review does not use the clipboard"),
                         recover: |_, _| {
                             let (done, receipt) = async_channel::bounded(1);
                             done.try_send(Err(
@@ -107,6 +114,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     pixels(window, cx).await?;
     export_selected(window, cx).await?;
+    copy_selected(window, cx).await?;
     // Focus starts on the root: Refresh, three Show rows, then Next (Previous is disabled).
     for _ in 0..5 {
         key(window, "tab", cx)?;
@@ -596,6 +604,63 @@ async fn export_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> any
     ensure!(
         summary == fs::read(directory.join("summary.md"))?,
         "Review export changed the saved summary"
+    );
+    Ok(())
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "The synthetic handoff drives the owned review view on its UI thread"
+)]
+async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    window.update(cx, |view, _, cx| {
+        let ImageState::Ready(image) = &view.image else {
+            anyhow::bail!("The copy fixture has no displayed image");
+        };
+        cx.set_global(CopyProbe {
+            image: Arc::downgrade(image),
+            received: false,
+        });
+        // Only the injected action can run. No real clipboard operation is reachable.
+        view.source = Source::Saved;
+        view.actions.can_copy = |_| true;
+        view.actions.copy = |request, cx| {
+            let super::super::copy::Request::Moment { text, image } = request else {
+                anyhow::bail!("Copy moment omitted its image");
+            };
+            let probe = cx.global_mut::<CopyProbe>();
+            let shown = probe
+                .image
+                .upgrade()
+                .context("The displayed image was dropped")?;
+            ensure!(
+                Arc::ptr_eq(&shown, &image),
+                "Copy moment did not retain the displayed pixels"
+            );
+            ensure!(
+                text.contains("Keyframe #") && text.contains("Show folder:"),
+                "Copy moment lost its textual context"
+            );
+            probe.received = true;
+            Ok(Box::pin(async { Ok(super::super::copy::Outcome::Copied) }))
+        };
+        view.copy(CopyKind::Moment, cx);
+        view.source = Source::Demo;
+        view.actions.can_copy = |_| false;
+        view.actions.copy = |_, _| anyhow::bail!("Synthetic review does not use the clipboard");
+        anyhow::Ok(())
+    })??;
+    wait_for(window, |view| view.copying.is_none(), cx).await?;
+    ensure!(
+        cx.read_global::<CopyProbe, _>(|probe, _| probe.received)?,
+        "The visual copy action did not run"
+    );
+    let copied = window.read_with(cx, |view, _| {
+        view.notice.as_deref() == Some("Copied moment image and context.")
+    })?;
+    ensure!(
+        copied,
+        "The review did not report the synthetic copy result"
     );
     Ok(())
 }

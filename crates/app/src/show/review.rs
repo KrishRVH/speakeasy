@@ -46,6 +46,7 @@ pub(crate) struct Actions {
         &mut App,
     ) -> anyhow::Result<super::edits::Receipt>,
     pub can_copy: fn(&App) -> bool,
+    pub copy: fn(super::copy::Request, &mut App) -> anyhow::Result<super::copy::Receipt>,
     pub recover:
         fn(crate::show::Interrupted, &App) -> Result<crate::runtime::RecoveryReceipt, &'static str>,
 }
@@ -494,58 +495,45 @@ impl Review {
         let Some(key) = self.library.selected.clone() else {
             return;
         };
-        let pointer = if kind == CopyKind::Moment {
+        let request = if kind == CopyKind::Moment {
             let Some(detail) = &self.detail else {
                 return;
             };
             let Some(frame) = detail.frames.get(key.frame) else {
                 return;
             };
-            if !matches!(self.image, ImageState::Ready(_)) {
+            let ImageState::Ready(image) = &self.image else {
                 return;
+            };
+            super::copy::Request::Moment {
+                text: navigation::pointer(&key.directory, frame, self.mode, self.request),
+                image: Arc::clone(image),
             }
-            Some(navigation::pointer(
-                &key.directory,
-                frame,
-                self.mode,
-                self.request,
-            ))
         } else {
-            None
+            super::copy::Request::Summary(key.directory.clone())
         };
-        let directory = key.directory.clone();
-        let read = cx.background_executor().spawn(async move {
-            pointer.map_or_else(
-                || {
-                    recall::summary(&directory)
-                        .map_err(|error| format!("Cannot read summary.md: {error}"))
-                },
-                Ok,
-            )
-        });
+        let receipt = match (self.actions.copy)(request, cx) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                self.notice = Some(format!("Cannot copy this Show: {error:#}"));
+                cx.notify();
+                return;
+            },
+        };
         self.notice = Some(format!("Copying {}…", kind.name()));
         self.copying = Some(cx.spawn(async move |view, cx| {
-            let summary = read.await;
-            // Changing Shows cancels this task. Frame navigation within the same Show does not
-            // invalidate an explicit copy or leave its progress notice stuck.
-            let allowed = view
-                .update(cx, |view, cx| {
-                    view.library.is_selected(&key.directory) && (view.actions.can_copy)(cx)
-                })
-                .unwrap_or(false);
-            let result = if allowed {
-                cx.background_executor()
-                    .spawn(async move { copy_text(summary, kind) })
-                    .await
-            } else {
-                Err("Finish the current recording before copying a Show.".into())
+            let result = receipt.await;
+            let notice = match result {
+                Ok(super::copy::Outcome::Copied) => format!("Copied {}.", kind.name()),
+                Ok(super::copy::Outcome::Missing) => {
+                    "This Show is no longer available. Refresh the library.".into()
+                },
+                Err(error) => error,
             };
             view.update_if_alive(cx, |view, cx| {
                 if view.library.is_selected(&key.directory) {
                     view.copying = None;
-                    view.notice = Some(
-                        result.map_or_else(|error| error, |()| format!("Copied {}.", kind.name())),
-                    );
+                    view.notice = Some(notice);
                     cx.notify();
                 }
             });
@@ -807,12 +795,6 @@ impl Review {
     }
 }
 
-fn copy_text(text: Result<String, String>, kind: CopyKind) -> Result<(), String> {
-    const REMEDY: &str = "Close any app holding the clipboard, then try again.";
-    speakeasy_platform::copy_text(&text?)
-        .map_err(|error| format!("Cannot copy {}: {error:#}. {REMEDY}", kind.name()))
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Pane {
     Summary,
@@ -829,7 +811,7 @@ impl CopyKind {
     fn name(self) -> &'static str {
         match self {
             Self::Summary => "summary",
-            Self::Moment => "moment",
+            Self::Moment => "moment image and context",
         }
     }
 }

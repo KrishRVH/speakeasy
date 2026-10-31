@@ -302,6 +302,13 @@ pub(crate) fn copy_text(_: &str) -> anyhow::Result<()> {
     bail!(SHOWS_UNSUPPORTED)
 }
 
+pub(crate) fn copy_content(
+    _: &crate::ClipboardContent,
+    _: impl FnOnce() -> bool,
+) -> anyhow::Result<bool> {
+    bail!(SHOWS_UNSUPPORTED)
+}
+
 pub(crate) fn attach_stdio() -> bool {
     true
 }

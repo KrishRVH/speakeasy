@@ -98,10 +98,17 @@ module unless a test file is named.
   [linux/ei.rs](../crates/platform/src/linux/ei.rs) own delivery, the permit commit, and clipboard
   checks. On Windows and macOS, `copy_text` writes a Show's summary through the paste's own
   clipboard write, so both carry the same private markers.
+  [clipboard.rs](../crates/platform/src/clipboard.rs) prepares bounded PNG/bitmap representations
+  from the displayed BGRA pixels and checks copy authorization after native acquisition.
+  [macos/clipboard.rs](../crates/platform/src/macos/clipboard.rs) serializes native writes with a
+  process-local lease because AppKit has no exclusive clipboard lease; one pasteboard item carries
+  every format. Windows holds its native lease through every format and removes partial writes on
+  failure. [clipboard/tests.rs](../crates/platform/src/clipboard/tests.rs) checks image channels,
+  orientation, transparency, bounds, failure reporting, and a newer recording during acquisition.
   [insertion/tests.rs](../crates/platform/src/insertion/tests.rs),
   [insertion/commit/tests.rs](../crates/platform/src/insertion/commit/tests.rs), and the input, X11,
   portal, and EI modules test them; an opt-in test in windows/insertion.rs checks pasted and copied
-  text on a private window station's clipboard.
+  text, images, and cancellation on a private window station's clipboard.
 - **Shortcuts and desktop adapters**: [keyboard.rs](../crates/platform/src/keyboard.rs),
   [desktop.rs](../crates/platform/src/desktop.rs), [monitor.rs](../crates/platform/src/monitor.rs),
   [owned_thread.rs](../crates/platform/src/owned_thread.rs),
@@ -214,6 +221,13 @@ module unless a test file is named.
   actions, stale completion notices, and cleanup on close. Retention writes run off the UI thread
   and stay bound to their original Show; activation rereads the summary and pin. The shell supplies
   copy availability and routes accepted writes and recovery while the view owns result receipts.
+  [copy.rs](../crates/app/src/show/copy.rs) owns explicit review/tray copies through native cleanup.
+  It retains the displayed image snapshot, reads or encodes off the UI thread, and rejects dropped
+  receipts, lifecycle cancellation, and any newer input generation before native replacement. Copies
+  made while paused are cancelled before an owner starts. Quit drains the worker, and a replacement
+  waits for its predecessor to finish. [copy/tests.rs](../crates/app/src/show/copy/tests.rs) checks
+  those races with fake native access; the owned-window review test checks the actual visual request
+  through an injected copy action without touching the clipboard.
 - **Show composition**: [crates/show/src](../crates/show/src), notably
   [locate.rs](../crates/show/src/locate.rs) resolves phrases and marks to exact recorded spans;
   [locate/evidence.rs](../crates/show/src/locate/evidence.rs) renders bounded source sheets and mark
