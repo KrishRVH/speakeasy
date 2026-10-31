@@ -36,6 +36,8 @@ use self::macos as native;
 #[cfg(target_os = "windows")]
 use self::windows as native;
 #[cfg(target_os = "windows")]
+pub use self::windows::installation::installed_directory;
+#[cfg(target_os = "windows")]
 pub use self::windows::login::{start_at_login, startup_approved};
 pub use self::{
     clipboard::{ClipboardContent, copy_content},

@@ -41,6 +41,14 @@ pub(crate) struct Edits {
 }
 
 impl Edits {
+    #[cfg(all(test, target_os = "windows"))]
+    pub(crate) fn held_until(&mut self, release: Receiver<()>) -> anyhow::Result<Receipt> {
+        self.start(move || {
+            release.recv_blocking()?;
+            Ok(Written::Discarded)
+        })
+    }
+
     pub(crate) fn submit(
         &mut self,
         edit: Edit,

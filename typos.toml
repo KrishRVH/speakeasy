@@ -5,6 +5,10 @@ locale = "en-us"
 # Emulated Input Server is the native portal/libei interface name.
 EIS = "EIS"
 
+[type.py.extend-words]
+# OpenSSL's password-input option.
+passin = "passin"
+
 [type.rust.extend-words]
 # ISO 639 language codes in the Whisper language catalog.
 ba = "ba"

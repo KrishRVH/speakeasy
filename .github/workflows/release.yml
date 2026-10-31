@@ -117,6 +117,17 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+      - name: Authenticate the Windows update
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          UPDATE_SIGNING_KEY: ${{ secrets.SPEAKEASY_UPDATE_PRIVATE_KEY }}
+        run: |
+          test -n "$UPDATE_SIGNING_KEY" || { echo "Configure the update signing key before publishing." >&2; exit 1; }
+          umask 077
+          key=$(mktemp)
+          trap 'rm -f "$key"' EXIT
+          printf '%s' "$UPDATE_SIGNING_KEY" > "$key"
+          python3 scripts/sign_update.py artifacts/speakeasy-windows-x64-setup.exe "$VERSION" --private-key "$key"
       - name: Publish the workspace version
         env:
           GH_TOKEN: ${{ github.token }}
@@ -126,7 +137,7 @@ jobs:
           notes="docs/release-notes.md"
           assets=(speakeasy-windows-x64.zip speakeasy-windows-x64-setup.exe speakeasy-macos.zip speakeasy-macos.dmg speakeasy-linux-x86_64.AppImage speakeasy-linux-x86_64.tar.gz)
           (cd artifacts && sha256sum "${assets[@]}" > SHA256SUMS)
-          assets=("${assets[@]/#/artifacts/}" artifacts/SHA256SUMS)
+          assets=("${assets[@]/#/artifacts/}" artifacts/SHA256SUMS artifacts/update.json artifacts/update.json.sig)
           # Git refuses to move an existing tag, so a version another commit claimed after the
           # version job fails here, before --clobber. A rejected push is fine only when the remote
           # tag, lightweight or annotated, already points at this commit.

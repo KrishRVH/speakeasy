@@ -176,11 +176,22 @@ module unless a test file is named.
   prompting; [settings/permissions.rs](../crates/app/src/shell/settings/permissions.rs) refreshes
   that separate observation on window activation. The native interaction test uses fake observations
   to check permission changes and preservation of unsaved settings.
-- **Update discovery**: [updates.rs](../crates/app/src/updates.rs) owns one cancellable check, with
-  system TLS, a deadline, no redirects, and bounded input. Only a numeric release version forms a
-  link to this repository; returned URLs are ignored. Settings starts it explicitly and shutdown
-  awaits its thread. [updates/tests.rs](../crates/app/src/updates/tests.rs) covers version ordering,
-  hostile tags, redirects, and oversized responses.
+- **Updates**: [updates.rs](../crates/app/src/updates.rs) owns cancellable discovery and Windows
+  preparation. Discovery uses system TLS, a deadline, no redirects, and bounded input; only a
+  numeric release version forms a repository link.
+  [install.rs](../crates/app/src/updates/install.rs) authenticates signed metadata before a bounded
+  download, restricts HTTPS redirects to release hosts, and retains a verified file that Windows
+  cannot write or replace. The per-user cache lease excludes other preparations; later explicit
+  preparation reclaims only abandoned known files.
+  [settings/updates.rs](../crates/app/src/shell/settings/updates.rs) owns the operation and requires
+  separate installation consent. Shutdown hands the installer to main only after work and saves
+  drain; main releases the instance and exits GPUI before launching it. The installer waits for that
+  process to exit, protects both running images, and relaunches only after success. Tests beside
+  discovery and preparation cover hostile metadata, signatures, replay, byte caps, corruption,
+  cancellation, and cache/file lifetime. Owned-window
+  [shutdown tests](../crates/app/src/shell/shutdown/native_tests.rs) hold an accepted Show write to
+  check graceful handoff and forced teardown. `scripts/check-installer.ps1` exercises installation
+  on disposable runners. [Build and verify](../README.md#build-and-verify) owns signing setup.
 - **Pause, reconfigure, quit, and saves**: [shell.rs](../crates/app/src/shell.rs),
   [services.rs](../crates/app/src/shell/services.rs),
   [lifecycle.rs](../crates/app/src/shell/lifecycle.rs),

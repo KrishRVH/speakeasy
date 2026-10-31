@@ -1,6 +1,11 @@
 name: Check
 on:
   workflow_dispatch:
+    inputs:
+      installer:
+        description: Build and test the Windows installer on the disposable runner
+        type: boolean
+        default: false
   push:
     branches: [main]
 
@@ -31,3 +36,19 @@ jobs:
           key: check-${{ matrix.os }}
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - run: mise run rust:test
+      - name: Build the Windows installer for acceptance
+        if: runner.os == 'Windows' && inputs.installer
+        shell: pwsh
+        run: |
+          mise install github:EmbarkStudios/cargo-about
+          ./scripts/package-windows.ps1
+      - name: Check the Windows update handoff
+        if: runner.os == 'Windows' && inputs.installer
+        shell: pwsh
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v0.6.0 --pattern speakeasy-windows-x64.zip --dir artifacts/previous
+          if ($LASTEXITCODE -ne 0) { throw 'Could not fetch the previous released app fixture.' }
+          ./scripts/check-installer.ps1 -Installer artifacts/speakeasy-windows-x64-setup.exe -PreviousArchive artifacts/previous/speakeasy-windows-x64.zip

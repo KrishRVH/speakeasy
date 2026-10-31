@@ -46,8 +46,7 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                     navigation: navigation::Navigation::new(cx),
                     practice: practice::Practice::default(),
                     permissions: None,
-                    update_check: None,
-                    available_update: None,
+                    update: Update::Idle,
                     config,
                     presentation: Presentation {
                         indicator: Indicator::Paused,

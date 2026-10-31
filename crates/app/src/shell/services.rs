@@ -85,11 +85,19 @@ impl Drop for Owners {
     }
 }
 
+#[cfg(target_os = "windows")]
+pub(super) enum Installation {
+    Waiting(crate::updates::Installer),
+    Ready(crate::updates::Installer),
+}
+
 pub(crate) struct Services {
     lifecycle: Lifecycle<Owners, Restart>,
     retirement: Option<Task<()>>,
     validation: Option<Task<()>>,
     pub(super) quit: Option<Task<()>>,
+    #[cfg(target_os = "windows")]
+    pub(super) installation: Option<Installation>,
     pub(super) path: PathBuf,
     /// Whether `path` is the default settings file, which a launch without `--config` opens. Only
     /// those settings own Windows' sign-in launch, and a desktop shortcut need not name them.
@@ -141,6 +149,8 @@ impl Services {
             retirement: None,
             validation: None,
             quit: None,
+            #[cfg(target_os = "windows")]
+            installation: None,
             path,
             default_settings,
             config,
@@ -167,6 +177,14 @@ impl Services {
     /// Releases every service, handing back the instance lock for the caller to drop last.
     pub(crate) fn into_instance(self) -> Option<Instance> {
         self.instance
+    }
+
+    #[cfg(target_os = "windows")]
+    pub(crate) fn take_installer(&mut self) -> Option<crate::updates::Installer> {
+        match self.installation.take() {
+            Some(Installation::Ready(installer)) => Some(installer),
+            Some(Installation::Waiting(_)) | None => None,
+        }
     }
 
     /// Whether dictation is on: live owners run, or a resume is checking the saved settings.

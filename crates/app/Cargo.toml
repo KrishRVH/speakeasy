@@ -25,6 +25,7 @@ gpui = { workspace = true, features = ["font-kit"] }
 image = { workspace = true, features = ["png"] }
 raw-window-handle.workspace = true
 reqwest = { workspace = true, features = ["multipart"] }
+ring.workspace = true
 rtrb.workspace = true
 serde = { workspace = true, features = ["derive"] }
 # Saves patch the user's file in place, so its keys keep their order.

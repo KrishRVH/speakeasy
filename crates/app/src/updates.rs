@@ -1,5 +1,4 @@
-//! Explicit release discovery. Only a parsed version can become a link to our release page;
-//! checking never downloads an executable, installs an update, or runs at startup.
+//! Explicit release discovery and authenticated update preparation.
 
 use std::{fmt, time::Duration};
 
@@ -14,6 +13,11 @@ use crate::http::{Trust, client_builder};
 const RELEASE: &str = "https://api.github.com/repos/KrishRVH/speakeasy/releases/latest";
 const FAILED: &str = "Cannot check for updates. Check your connection and try again.";
 const MAX_REPLY: usize = 2 * 1024 * 1024;
+
+#[cfg(any(target_os = "windows", test))]
+mod install;
+#[cfg(target_os = "windows")]
+pub(crate) use install::{Download, Installer};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Version([u32; 3]);
@@ -47,16 +51,24 @@ impl fmt::Display for Version {
     }
 }
 
-/// One check owns its cancellable thread until completion or shutdown acknowledges it.
-pub(crate) struct Check {
+/// One update operation owns its cancellable thread until completion or shutdown acknowledges it.
+pub(crate) struct Job<T> {
     thread: StoppableThread,
-    result: Receiver<anyhow::Result<Option<Version>>>,
+    result: Receiver<anyhow::Result<Option<T>>>,
 }
 
-impl Check {
-    pub(crate) fn start() -> anyhow::Result<Self> {
+pub(crate) type Check = Job<Version>;
+
+impl<T: Send + 'static> Job<T> {
+    fn spawn<F>(
+        name: &'static str,
+        work: impl FnOnce() -> F + Send + 'static,
+    ) -> anyhow::Result<Self>
+    where
+        F: Future<Output = anyhow::Result<Option<T>>>,
+    {
         let (completed, result) = async_channel::bounded(1);
-        let thread = StoppableThread::spawn("update-check", move |cancelled| {
+        let thread = StoppableThread::spawn(name, move |cancelled| {
             let result = (|| {
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -65,26 +77,26 @@ impl Check {
                     tokio::select! {
                         biased;
                         _ = cancelled.recv() => Ok(None),
-                        result = check() => result,
+                        result = work() => result,
                     }
                 })
             })();
             #[expect(
                 clippy::let_underscore_must_use,
-                reason = "Closing Settings can release the result while the owned check cancels"
+                reason = "Closing Settings can release the result while the owned update operation cancels"
             )]
             let _ = completed.try_send(result);
         })?;
         Ok(Self { thread, result })
     }
 
-    pub(crate) fn outcome(&self) -> impl Future<Output = anyhow::Result<Option<Version>>> + use<> {
+    pub(crate) fn outcome(&self) -> impl Future<Output = anyhow::Result<Option<T>>> + use<T> {
         let receipt = self.result.clone();
         let stopped = self.thread.stopped();
         async move {
             let result = receipt.recv().await.context(FAILED)?;
             stopped.await;
-            result.context(FAILED)
+            result
         }
     }
 
@@ -97,9 +109,15 @@ impl Check {
     }
 }
 
+impl Check {
+    pub(crate) fn start() -> anyhow::Result<Self> {
+        Self::spawn("update-check", check)
+    }
+}
+
 async fn check() -> anyhow::Result<Option<Version>> {
     let client = client(client_builder(Trust::System)?)?;
-    let body = fetch(&client, RELEASE).await?;
+    let body = fetch(&client, RELEASE, MAX_REPLY).await?;
     newer(&body, env!("CARGO_PKG_VERSION"))
 }
 
@@ -112,18 +130,18 @@ fn client(builder: reqwest::ClientBuilder) -> anyhow::Result<Client> {
         .context(FAILED)
 }
 
-async fn fetch(client: &Client, url: &str) -> anyhow::Result<Vec<u8>> {
+async fn fetch(client: &Client, url: &str, limit: usize) -> anyhow::Result<Vec<u8>> {
     let mut response = client.get(url).send().await.context(FAILED)?;
     ensure!(response.status().is_success(), FAILED);
     ensure!(
         response
             .content_length()
-            .is_none_or(|size| size <= MAX_REPLY as u64),
+            .is_none_or(|size| size <= limit as u64),
         FAILED
     );
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.context(FAILED)? {
-        ensure!(chunk.len() <= MAX_REPLY.saturating_sub(bytes.len()), FAILED);
+        ensure!(chunk.len() <= limit.saturating_sub(bytes.len()), FAILED);
         bytes.extend_from_slice(&chunk);
     }
     Ok(bytes)

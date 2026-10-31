@@ -77,7 +77,7 @@ async fn redirects_and_oversized_responses_are_not_followed_or_accepted() -> any
             }
         };
         let (result, response_sent) = timeout(Duration::from_secs(3), async {
-            tokio::join!(fetch(&client, &url), server)
+            tokio::join!(fetch(&client, &url, MAX_REPLY), server)
         })
         .await?;
         response_sent?;

@@ -151,15 +151,21 @@ fn run(mode: LaunchMode, settings: Option<PathBuf>) -> anyhow::Result<()> {
     } else {
         None
     };
-    launch(path, mode, acquired);
-    Ok(())
+    launch(path, mode, acquired)
 }
 
+#[cfg_attr(
+    not(target_os = "windows"),
+    expect(
+        clippy::unnecessary_wraps,
+        reason = "Windows reports installer handoff failures after the UI exits"
+    )
+)]
 fn launch(
     path: PathBuf,
     mode: LaunchMode,
     acquired: Option<(Instance, async_channel::Receiver<Request>)>,
-) {
+) -> anyhow::Result<()> {
     let (instance, requests) = acquired.unzip();
     let default_settings = settings_file(None).is_ok_and(|default| default == path);
     // A demo is simulated, so it never reads the user's settings.
@@ -176,6 +182,8 @@ fn launch(
     let (meter, levels) = watch::channel(Meter::default());
     let application = Application::new().with_assets(icons::Icons);
     application.on_reopen(shell::reveal);
+    #[cfg(target_os = "windows")]
+    let (handoff, ready) = std::sync::mpsc::channel();
     application.run(move |cx| {
         load_brand_font(cx);
         let pill = match pill::open(
@@ -214,6 +222,10 @@ fn launch(
                 services.listen_for_requests(requests, cx);
             });
         }
+        #[cfg(target_os = "windows")]
+        cx.on_app_quit(move |cx| release_services(cx, handoff.clone()))
+            .detach();
+        #[cfg(not(target_os = "windows"))]
         cx.on_app_quit(release_services).detach();
         if mode == LaunchMode::Live {
             show::attend_retention(
@@ -255,6 +267,11 @@ fn launch(
             shell::reveal_shows(cx);
         }
     });
+    #[cfg(target_os = "windows")]
+    if let Ok(installer) = ready.try_recv() {
+        installer.launch()?;
+    }
+    Ok(())
 }
 
 /// Ends a launch that cannot go on, once its error has been seen, and keeps `held`, such as the
@@ -412,14 +429,32 @@ fn load_brand_font(cx: &App) {
 
 /// Drops the tray before Services, since its tasks reach Services, and releases the instance lock
 /// last.
-fn release_services(cx: &mut App) -> impl Future<Output = ()> + use<> {
+fn release_services(
+    cx: &mut App,
+    #[cfg(target_os = "windows")] handoff: std::sync::mpsc::Sender<updates::Installer>,
+) -> impl Future<Output = ()> + use<> {
     if cx.has_global::<tray::Tray>() {
         drop(cx.remove_global::<tray::Tray>());
     }
-    let instance = cx.remove_global::<Services>().into_instance();
+    let services = cx.remove_global::<Services>();
+    #[cfg(target_os = "windows")]
+    let mut services = services;
+    #[cfg(target_os = "windows")]
+    let installer = services.take_installer();
+    let instance = services.into_instance();
     // GPUI closes every window, flushing Settings' final save, before polling this future, so a
     // relaunch cannot race that save for the instance lock.
-    async move { drop(instance) }
+    async move {
+        drop(instance);
+        #[cfg(target_os = "windows")]
+        if let Some(installer) = installer {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A departed composition root cannot install; dropping a refused handoff cleans its staging"
+            )]
+            let _ = handoff.send(installer);
+        }
+    }
 }
 
 #[cfg(test)]

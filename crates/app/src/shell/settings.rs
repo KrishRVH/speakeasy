@@ -9,6 +9,7 @@ mod practice;
 mod recognition;
 mod render;
 mod text_field;
+mod updates;
 mod vocabulary;
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -17,6 +18,7 @@ use async_channel::Receiver;
 use gpui::{App, BorrowAppContext, Context, SharedString, Task, Timer, Window};
 use speakeasy_platform::{FileFilter, Permissions};
 use tokio::sync::watch;
+use updates::Update;
 
 use super::{
     Services, demo,
@@ -55,8 +57,7 @@ pub(super) struct Settings {
     language: language::Picker,
     navigation: navigation::Navigation,
     practice: practice::Practice,
-    update_check: Option<(crate::updates::Check, Task<()>)>,
-    available_update: Option<crate::updates::Version>,
+    update: Update,
     _updates: Task<()>,
     /// Whether Windows' Startup apps page has turned off the sign-in launch, as last read when
     /// Settings came to the front; only a live Windows launch of the default settings reads it.
@@ -100,8 +101,7 @@ impl Settings {
             language: language::Picker::new(cx),
             navigation: navigation::Navigation::new(cx),
             practice: practice::Practice::default(),
-            update_check: None,
-            available_update: None,
+            update: Update::Idle,
             _updates: follow(updates, cx, Snapshot::clone, |view, snapshot, cx| {
                 view.apply_snapshot(&snapshot, cx);
             }),
@@ -196,10 +196,26 @@ impl Settings {
             Action::Practice => self.toggle_practice(cx),
             Action::CheckUpdates => self.check_updates(cx),
             Action::OpenUpdate => {
-                if let Some(version) = self.available_update {
+                if let Some(version) = self.update.version() {
                     cx.open_url(&version.release_url());
                 }
             },
+            #[cfg(target_os = "windows")]
+            Action::DownloadUpdate => self.download_update(cx),
+            #[cfg(target_os = "windows")]
+            Action::CancelUpdate => match &self.update {
+                Update::Downloading { .. } => {
+                    self.update.cancel();
+                    self.notice = Some(Notice::Note("Cancelling update download…".into()));
+                },
+                Update::Ready(installer) => {
+                    self.update = Update::Available(installer.version());
+                    self.notice = Some(Notice::Note("Update download cancelled.".into()));
+                },
+                _ => {},
+            },
+            #[cfg(target_os = "windows")]
+            Action::InstallUpdate => self.install_update(cx),
             Action::PermissionHelp(help) => cx.open_url(help.url()),
             Action::Shows => super::reveal_shows(cx),
             Action::Quit => request_quit(cx),
@@ -550,17 +566,12 @@ impl Settings {
         self.microphone_listing = None;
         self.preview = None;
         self.request_setup_stops();
-        if let Some((check, _)) = &self.update_check {
-            check.request_stop();
-        }
+        self.update.cancel();
     }
 
     /// Releases finished threads; returns whether setup, saves, and the update check have drained.
     pub(super) fn drain_finished(&mut self) -> bool {
-        self.update_check = self
-            .update_check
-            .take()
-            .filter(|(check, _)| !check.is_finished());
+        let update_drained = self.update.drained();
         self.setup = self
             .setup
             .take()
@@ -572,44 +583,13 @@ impl Settings {
         self.setup.is_none()
             && self.retiring_setup.is_none()
             && self.saves.is_idle()
-            && self.update_check.is_none()
-    }
-
-    fn check_updates(&mut self, cx: &Context<'_, Self>) {
-        if is_demo(cx) || self.update_check.is_some() {
-            return;
-        }
-        let Ok(check) = crate::updates::Check::start() else {
-            self.notice = Some(Notice::Problem(
-                "Cannot start the update check. Try again.".into(),
-            ));
-            return;
-        };
-        let outcome = check.outcome();
-        self.notice = Some(Notice::Note("Checking the latest GitHub release…".into()));
-        let follow = cx.spawn(async move |this, cx| {
-            let result = outcome.await;
-            this.update_if_alive(cx, |view, cx| {
-                view.update_check = None;
-                if cx.global::<Services>().is_quitting() {
-                    return;
-                }
-                view.notice = Some(match result {
-                    Ok(version) => {
-                        view.available_update = version;
-                        update_notice(version)
-                    },
-                    Err(error) => Notice::Problem(error.to_string().into()),
-                });
-                cx.notify();
-            });
-        });
-        self.update_check = Some((check, follow));
+            && update_drained
     }
 }
 
 impl Drop for Settings {
     fn drop(&mut self) {
+        self.update.cancel();
         self.request_setup_stops();
         // Quit may release this view before its save task sees a completion, so finish the writes
         // here, in order, before the setup fields join their threads.
@@ -626,8 +606,15 @@ enum Notice {
 }
 
 fn update_notice(version: Option<crate::updates::Version>) -> Notice {
+    let action = "Open release";
+    #[cfg(target_os = "windows")]
+    let action = if crate::updates::Download::available() {
+        "Download update"
+    } else {
+        action
+    };
     let message = match version {
-        Some(version) => format!("Speakeasy {version} is available. Choose Open release."),
+        Some(version) => format!("Speakeasy {version} is available. Choose {action}."),
         None => "No newer release is available.".into(),
     };
     Notice::Note(message.into())
@@ -683,6 +670,12 @@ enum Action {
     SelectLanguage(&'static str),
     CheckUpdates,
     OpenUpdate,
+    #[cfg(target_os = "windows")]
+    DownloadUpdate,
+    #[cfg(target_os = "windows")]
+    CancelUpdate,
+    #[cfg(target_os = "windows")]
+    InstallUpdate,
     Practice,
     PermissionHelp(permissions::Help),
     Shows,
@@ -718,6 +711,12 @@ impl Action {
             Self::SelectLanguage(code) => code,
             Self::CheckUpdates => "check-updates",
             Self::OpenUpdate => "open-update",
+            #[cfg(target_os = "windows")]
+            Self::DownloadUpdate => "download-update",
+            #[cfg(target_os = "windows")]
+            Self::CancelUpdate => "cancel-update",
+            #[cfg(target_os = "windows")]
+            Self::InstallUpdate => "install-update",
             Self::Practice => "practice",
             Self::PermissionHelp(permissions::Help::Microphone) => "microphone-help",
             #[cfg(target_os = "macos")]

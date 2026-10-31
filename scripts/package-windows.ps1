@@ -1,5 +1,27 @@
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
+$signingCertificate = $env:SPEAKEASY_WINDOWS_SIGN_CERT_SHA1
+$timestamp = $env:SPEAKEASY_WINDOWS_SIGN_TIMESTAMP
+$signer = $null
+if ($signingCertificate -or $timestamp) {
+    if ($signingCertificate -notmatch '^[0-9a-fA-F]{40}$' -or $timestamp -notmatch '^https://') {
+        throw 'Distribution requires SPEAKEASY_WINDOWS_SIGN_CERT_SHA1 and an HTTPS SPEAKEASY_WINDOWS_SIGN_TIMESTAMP endpoint.'
+    }
+    $certificate = Get-Item "Cert:\CurrentUser\My\$signingCertificate" -ErrorAction Stop
+    if (!$certificate.HasPrivateKey) { throw 'The signing certificate has no accessible private key.' }
+    $signer = Get-ChildItem "${env:ProgramFiles(x86)}/Windows Kits/10/bin/*/x64/signtool.exe" -ErrorAction SilentlyContinue |
+        Sort-Object FullName -Descending | Select-Object -First 1
+    if (!$signer) { throw 'Install the Windows SDK signing tools.' }
+}
+function Sign-PackageFile([string]$Path) {
+    if (!$signer) { return }
+    & $signer.FullName sign /sha1 $signingCertificate /s My /fd SHA256 /tr $timestamp /td SHA256 $Path
+    if ($LASTEXITCODE -ne 0) { throw 'Windows package signing failed.' }
+    $signature = Get-AuthenticodeSignature -LiteralPath $Path
+    if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $signingCertificate -or !$signature.TimeStamperCertificate) {
+        throw 'The Windows package does not have its expected valid timestamped publisher signature.'
+    }
+}
 # GPUI compiles its release shaders with the Windows SDK compiler.
 if (!$env:GPUI_FXC_PATH) {
     $compiler = Get-ChildItem "${env:ProgramFiles(x86)}/Windows Kits/10/bin/*/x64/fxc.exe" -ErrorAction SilentlyContinue |
@@ -25,6 +47,7 @@ foreach ($executable in @('speakeasy.exe', 'speakeasy-cli.exe')) {
     if ($image.IndexOf('VCRUNTIME140', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
         throw "$executable imports the Visual C++ runtime, which Windows does not include"
     }
+    Sign-PackageFile (Join-Path $destination $executable)
 }
 $version = & "$destination/speakeasy-cli.exe" --version
 if ($LASTEXITCODE -ne 0 -or $version -notmatch '^speakeasy \d+\.\d+\.\d+$') {
@@ -45,4 +68,5 @@ if (!$iscc) { throw 'Install Inno Setup 6 to build the per-user installer. The p
 $appVersion = $version.Trim().Substring('speakeasy '.Length)
 & $iscc "/DAppVersion=$appVersion" "/DPackageRoot=$destination" 'packaging/windows/installer.iss'
 if ($LASTEXITCODE -ne 0) { throw 'Windows installer compilation failed' }
+Sign-PackageFile (Join-Path (Get-Location) 'artifacts/speakeasy-windows-x64-setup.exe')
 Write-Host "Built $destination"

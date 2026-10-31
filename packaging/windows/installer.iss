@@ -41,24 +41,98 @@ Source: "{#PackageRoot}\NOTICE.md"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{autoprograms}\Speakeasy"; Filename: "{app}\speakeasy.exe"
 
 [Run]
-Filename: "{app}\speakeasy.exe"; Description: "Open Speakeasy"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\speakeasy.exe"; Description: "Open Speakeasy"; Flags: postinstall nowait skipifsilent; Check: IsManualInstall
+Filename: "{app}\speakeasy.exe"; Parameters: "{code:UpdateParameters}"; Flags: nowait dontlogparameters; Check: IsUpdateInstall
 
 [Code]
+var
+  UpdateInstall: Boolean;
+
+function UpdateOpenProcess(Access: LongWord; Inherit: Boolean; ProcessId: LongWord): UINT_PTR;
+  external 'OpenProcess@kernel32.dll stdcall';
+function UpdateWait(Process: UINT_PTR; Milliseconds: LongWord): LongWord;
+  external 'WaitForSingleObject@kernel32.dll stdcall';
+function UpdateClose(Process: UINT_PTR): Boolean;
+  external 'CloseHandle@kernel32.dll stdcall';
+
+function IsManualInstall: Boolean;
+begin
+  Result := not UpdateInstall;
+end;
+
+function IsUpdateInstall: Boolean;
+begin
+  Result := UpdateInstall;
+end;
+
+function UpdateParameters(Param: String): String;
+begin
+  Result := '--config ' + AddQuotes(ExpandConstant('{param:SPEAKEASYCONFIG|}'));
+  if ExpandConstant('{param:SPEAKEASYDEMO|0}') = '1' then
+    Result := '--demo-tray ' + Result;
+end;
+
+function InitializeSetup: Boolean;
+var
+  Parent: String;
+  ProcessId: Int64;
+  Process: UINT_PTR;
+  Waited: LongWord;
+begin
+  Parent := ExpandConstant('{param:SPEAKEASYPARENT|}');
+  UpdateInstall := Parent <> '';
+  Result := not UpdateInstall;
+  if Result then
+    Exit;
+  ProcessId := StrToInt64Def(Parent, 0);
+  if (ProcessId <= 0) or (ProcessId > 4294967295) or
+     (ExpandConstant('{param:SPEAKEASYCONFIG|}') = '') then
+  begin
+    SuppressibleMsgBox('The update handoff is incomplete. Reopen Speakeasy and try again.', mbError, MB_OK, IDOK);
+    Exit;
+  end;
+  Process := UpdateOpenProcess($00100000, False, ProcessId);
+  if Process = 0 then
+  begin
+    Result := DLLGetLastError = 87;
+  end
+  else
+  begin
+    try
+      Waited := UpdateWait(Process, 30000);
+      Result := Waited = 0;
+    finally
+      UpdateClose(Process);
+    end;
+  end;
+  if not Result then
+    SuppressibleMsgBox('Speakeasy has not finished closing, or Windows could not confirm it. Nothing was installed. Reopen Speakeasy and try the update again.', mbError, MB_OK, IDOK);
+end;
+
 function AppFilesAvailable: Boolean;
 var
   Image: TFileStream;
   Path: String;
+  Index: Integer;
 begin
   Result := True;
-  Path := ExpandConstant('{app}\speakeasy.exe');
-  if not FileExists(Path) then
-    Exit;
-  try
-    { Open without truncation, read/write with sharing. Windows refuses writing a running image. }
-    Image := TFileStream.Create(Path, $0042);
-    Image.Free;
-  except
-    Result := False;
+  for Index := 0 to 1 do
+  begin
+    if Index = 0 then
+      Path := ExpandConstant('{app}\speakeasy.exe')
+    else
+      Path := ExpandConstant('{app}\speakeasy-cli.exe');
+    if FileExists(Path) then
+    begin
+      try
+        { Open without truncation, read/write with sharing. Windows refuses writing a running image. }
+        Image := TFileStream.Create(Path, $0042);
+        Image.Free;
+      except
+        Result := False;
+        Exit;
+      end;
+    end;
   end;
 end;
 

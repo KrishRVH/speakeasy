@@ -431,6 +431,13 @@ into an editor; practice does not verify another app's input or clipboard behavi
 only when clicked. It sends no recordings, settings, or device details. **Open release** opens that
 version's official download page; checking never installs or runs an update.
 
+Windows builds with a configured update signing key also offer **Download update** for an installed
+copy. The download verifies the signed version and installer bytes before offering **Install and
+restart**. Save settings and finish or cancel recording first; installation waits for pending work
+and accepted saves to finish. It preserves the installation folder and selected settings file.
+Portable or moved copies use the release page. Downloading and installing always require separate
+actions. Builds without an embedded signing key offer the release page only.
+
 Downloads come from pinned GitHub and Hugging Face URLs and are checked against their SHA-256 before
 use. They live in `%LOCALAPPDATA%\speakeasy` on Windows and
 `~/Library/Application Support/speakeasy` on Mac. **Cancel** pauses setup, and the next attempt
@@ -675,8 +682,14 @@ paused clock exercises gesture deadlines and the five-minute cap.
   notices with the `cargo about` that `mise install` provides. Packages carry no engine or model;
   setup downloads them on first launch. Windows packaging also requires Inno Setup 6 and emits a
   per-user installer beside the portable ZIP. Mac packaging emits a drag-to-Applications DMG and
-  ZIP. The Mac bundle carries its microphone usage declaration and a local signature by default;
-  grant its permissions as [Get started](#get-started) describes. For distribution, set both
+  ZIP. For Windows publisher signing, provision a certificate and its private-key access in the
+  build user's `CurrentUser\My` certificate store, set `SPEAKEASY_WINDOWS_SIGN_CERT_SHA1` to its
+  thumbprint and `SPEAKEASY_WINDOWS_SIGN_TIMESTAMP` to an HTTPS RFC 3161 timestamp endpoint.
+  Packaging signs both executables before archiving and then signs the installer; it rejects a
+  failed signature, wrong signer, or missing timestamp. With neither setting it builds unsigned
+  local packages. Authenticode identifies the publisher; SmartScreen reputation is separate. The Mac
+  bundle carries its microphone usage declaration and a local signature by default; grant its
+  permissions as [Get started](#get-started) describes. For distribution, set both
   `SPEAKEASY_MAC_SIGN_IDENTITY` to a Developer ID Application identity already in the keychain and
   `SPEAKEASY_MAC_NOTARY_PROFILE` to a stored `notarytool` keychain profile. Packaging then signs
   with hardened runtime and the microphone entitlement, submits to Apple, staples the accepted
@@ -685,14 +698,25 @@ paused clock exercises gesture deadlines and the five-minute cap.
   credentials belong in the repository. Moving from a local signature to Developer ID can require
   granting microphone, Accessibility, and screen recording permissions again; check them after
   replacing the app.
+- Verified Windows updates use an Ed25519 key independently of publisher signing. Commit only the
+  32-byte public key as hexadecimal in `packaging/update-key.pub`; store its PKCS#8 PEM private key
+  as the repository's `SPEAKEASY_UPDATE_PRIVATE_KEY` Actions secret, with a maintainer-held backup.
+  `python3 scripts/sign_update.py artifacts/speakeasy-windows-x64-setup.exe <version> --private-key <local-key-file>`
+  binds the version, target, filename, size, and SHA-256 in `update.json` and signs its exact bytes
+  in `update.json.sig`. Release publication checks that the secret matches the embedded key and
+  fails before tagging if it is absent or wrong. Old builds cannot trust a replacement key: retain
+  the current key or distribute a new trusted build manually. Never commit a private key.
 - `bash scripts/check-package.sh <package>` unpacks a package and checks, with no display or model,
   that it prints its version and help, answers a mistyped option on stderr with status 2, and that
   `show demo` writes a bundle with its summary and contact sheet. It inspects the bundle, prints the
   embedded agent skill, and checks that a missing frame produces findings and a failure status. The
   release workflow runs it on the portable packages and Mac DMG before upload.
-  `scripts/check-installer.ps1 -Installer <setup.exe>` tests install, running-app protection,
-  upgrade, CLI launch, and uninstall on disposable GitHub Actions Windows runners. It opens an owned
-  `--demo-tray` copy without devices and preserves settings and other copies' sign-in entries.
+  `scripts/check-installer.ps1 -Installer <setup.exe>` tests both running executables, parent wait
+  and timeout, staged-file retention, upgrade/relaunch, and uninstall on disposable GitHub Actions
+  Windows runners. It uses owned demo windows without devices and preserves settings, model files,
+  edited Shows, and other copies' sign-in entries. The Check workflow's optional `installer` input
+  also packages the pinned v0.6.0 GUI alongside the current CLI as an older installed fixture and
+  upgrades it to the current build; the old release has no installer, CLI, or version query.
 - `scripts/check-demo-windows.ps1 -Executable <speakeasy.exe>` checks that the demo pill stays
   non-activating and passes clicks through, and that closing Shows keeps Settings open. It also
   checks Settings through Windows UI Automation with synthetic Unicode input: roles, selection,

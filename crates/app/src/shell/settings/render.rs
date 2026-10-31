@@ -175,22 +175,34 @@ impl Settings {
     }
 
     fn update_section(&self, ui: &Ui<'_>) -> impl IntoElement {
+        let controls = row()
+            .child(ui.button(
+                if self.update.busy() {
+                    "Working…"
+                } else {
+                    "Check for updates"
+                },
+                Action::CheckUpdates,
+            ))
+            .when(self.update.version().is_some(), |row| {
+                row.child(ui.button("Open release", Action::OpenUpdate))
+            });
+        #[cfg(target_os = "windows")]
+        let controls = match &self.update {
+            super::Update::Available(_) if crate::updates::Download::available() => {
+                controls.child(ui.button("Download update", Action::DownloadUpdate))
+            },
+            super::Update::Downloading {
+                cancelled: false, ..
+            } => controls.child(ui.button("Cancel download", Action::CancelUpdate)),
+            super::Update::Ready(_) => {
+                controls.child(ui.button("Install and restart", Action::InstallUpdate))
+            },
+            _ => controls,
+        };
         ui.section("UPDATES")
             .child(format!("Speakeasy {}", env!("CARGO_PKG_VERSION")))
-            .child(
-                row()
-                    .child(ui.button(
-                        if self.update_check.is_some() {
-                            "Checking…"
-                        } else {
-                            "Check for updates"
-                        },
-                        Action::CheckUpdates,
-                    ))
-                    .when(self.available_update.is_some(), |row| {
-                        row.child(ui.button("Open release", Action::OpenUpdate))
-                    }),
-            )
+            .child(controls)
             .child("Checks GitHub only when you ask. Installation stays in your control.")
     }
 

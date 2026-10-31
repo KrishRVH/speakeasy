@@ -10,6 +10,7 @@
 mod dialog;
 mod input;
 mod insertion;
+pub(crate) mod installation;
 pub(crate) mod login;
 mod movie;
 pub(crate) use movie::read::frame as read_movie_frame;

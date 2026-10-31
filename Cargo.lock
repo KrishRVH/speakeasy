@@ -5048,6 +5048,7 @@ dependencies = [
  "proptest",
  "raw-window-handle",
  "reqwest",
+ "ring",
  "rtrb",
  "rustls",
  "rustls-platform-verifier",
