@@ -18,12 +18,12 @@ async fn recovery_uses_original_language_and_current_cleanup_without_capture_or_
     let receipt = h.runtime.recover(interrupted).map_err(anyhow::Error::msg)?;
     let (language, reply) = receive(&h.jobs).await?;
     assert_eq!(language, "fr");
-    answer(reply, "synthetic recovered narration")?;
+    answer(reply, "synthetic um recovered narration")?;
     let saved = receive(&receipt).await?.map_err(anyhow::Error::msg)?;
     h.phase(Phase::Notice).await?;
     assert_eq!(
         saved,
-        saved_show(&Narration::Text("corrected recovered narration".into()))
+        saved_show(&Narration::Text("corrected um recovered narration".into()))
     );
     assert_eq!(h.snapshot().last_show, Some(saved));
     assert!(h.captures.try_recv().is_err());

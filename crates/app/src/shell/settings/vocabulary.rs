@@ -156,6 +156,8 @@ impl Settings {
         } else {
             "Add phrase"
         };
+        let detail = "Replace recurring misheard phrases locally in dictation and Show narration. \
+            Whole phrases only; spelling and capitalization follow what you write.";
         div()
             .flex()
             .flex_col()
@@ -165,14 +167,26 @@ impl Settings {
                 div()
                     .text_size(px(11.0))
                     .text_color(rgb(palette.muted))
-                    .child("Replace recurring misheard phrases locally in dictation and Show narration. Whole phrases only; spelling and capitalization follow what you write."),
+                    .child(detail),
             )
             .child(
                 div()
                     .flex()
                     .gap(px(12.0))
-                    .child(div().flex_1().min_w(px(0.0)).child("When I say").child(self.vocabulary.heard.clone()))
-                    .child(div().flex_1().min_w(px(0.0)).child("Write").child(self.vocabulary.written.clone())),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .child("When I say")
+                            .child(self.vocabulary.heard.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .child("Write")
+                            .child(self.vocabulary.written.clone()),
+                    ),
             )
             .child(
                 div()
@@ -180,7 +194,11 @@ impl Settings {
                     .gap(px(8.0))
                     .child(button("correction-add".into(), add_label, Edit::Add))
                     .when(self.vocabulary.pending(cx), |row| {
-                        row.child(button("correction-cancel".into(), "Cancel edit", Edit::Cancel))
+                        row.child(button(
+                            "correction-cancel".into(),
+                            "Cancel edit",
+                            Edit::Cancel,
+                        ))
                     }),
             )
             .child(
@@ -191,15 +209,34 @@ impl Settings {
                     .flex()
                     .flex_col()
                     .gap(px(6.0))
-                    .children(self.config.vocabulary.iter().enumerate().map(|(index, rule)| {
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.0))
-                            .child(div().flex_1().min_w(px(0.0)).child(format!("{} → {}", rule.heard, rule.written)))
-                            .child(button(format!("correction-edit-{index}").into(), "Edit", Edit::Modify(index)))
-                            .child(button(format!("correction-remove-{index}").into(), "Remove", Edit::Remove(index)))
-                    })),
+                    .children(
+                        self.config
+                            .vocabulary
+                            .iter()
+                            .enumerate()
+                            .map(|(index, rule)| {
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.0))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w(px(0.0))
+                                            .child(format!("{} → {}", rule.heard, rule.written)),
+                                    )
+                                    .child(button(
+                                        format!("correction-edit-{index}").into(),
+                                        "Edit",
+                                        Edit::Modify(index),
+                                    ))
+                                    .child(button(
+                                        format!("correction-remove-{index}").into(),
+                                        "Remove",
+                                        Edit::Remove(index),
+                                    ))
+                            }),
+                    ),
             )
     }
 }

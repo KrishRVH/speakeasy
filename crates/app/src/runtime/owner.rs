@@ -2,8 +2,8 @@
 //! are satisfied, then presents a projection of owned state.
 
 use std::{
-    borrow::Cow, convert::Infallible, future::poll_fn, mem, ops::ControlFlow, pin::Pin, sync::Arc,
-    task::Poll, time::Instant,
+    convert::Infallible, future::poll_fn, mem, ops::ControlFlow, pin::Pin, sync::Arc, task::Poll,
+    time::Instant,
 };
 
 use async_channel::{Receiver, RecvError, Sender};
@@ -33,30 +33,6 @@ use crate::{
 
 const INSERT_FAILED: &str =
     "Cannot submit the text. Check desktop permissions and clipboard access, then try again.";
-/// What a copied Show whose screen stopped recording early tells the user.
-const SHOW_SCREEN_STOPPED: &str = "Show copied, but the screen stopped recording early.";
-/// What a copied Show whose window closed while it recorded tells the user.
-const SHOW_WINDOW_CLOSED: &str = "Show copied, but the recorded window closed.";
-/// What a copied Show whose window went off screen while it recorded tells the user.
-const SHOW_WINDOW_OFF_SCREEN: &str = "Show copied, but the recorded window went off screen.";
-/// What a copied Show whose narration was lost tells the user, before the failure that cost it;
-/// its summary tells the agent why.
-const SHOW_UNNARRATED: &str = "Show copied without narration.";
-/// What a copied Show that lost its narration and whose screen stopped early tells the user. Each
-/// loss leaves a different gap, so the message names both, ahead of the failure.
-const SHOW_UNNARRATED_SCREEN_STOPPED: &str =
-    "Show copied without narration, and the screen stopped recording early.";
-/// What a copied Show that lost its narration and whose window closed tells the user.
-const SHOW_UNNARRATED_WINDOW_CLOSED: &str =
-    "Show copied without narration, and the recorded window closed.";
-/// What a copied Show that lost its narration and whose window went off screen tells the user.
-const SHOW_UNNARRATED_WINDOW_OFF_SCREEN: &str =
-    "Show copied without narration, and the recorded window went off screen.";
-/// What a window Show tells the user when no window it can record is under the pointer.
-const NO_WINDOW: &str = "No window to record under the pointer, so the Show was cancelled.";
-/// What an area Show tells the user when it finished, was clicked away, or could not shade its
-/// display before an area was dragged out.
-const NO_AREA: &str = "No area was chosen, so the Show was cancelled.";
 
 /// What the status shows while no session is active: the latest result or failure.
 enum Outcome {
@@ -91,6 +67,90 @@ enum Outcome {
 }
 
 impl Outcome {
+    fn message(&self, notice: Option<&Notice>) -> String {
+        let mut message = match self {
+            Self::Practiced => "Practice complete. Your words stay in Settings.".into(),
+            Self::Failed(message) => message.clone(),
+            Self::Copied(message) => (*message).into(),
+            Self::ShowCopied { ending, lost, .. } => {
+                let copied = match (ending, lost.is_some()) {
+                    (Ending::Finished, false) => SHOW_COPIED,
+                    (Ending::ScreenStopped, false) => {
+                        "Show copied, but the screen stopped recording early."
+                    },
+                    (Ending::WindowClosed, false) => "Show copied, but the recorded window closed.",
+                    (Ending::WindowOffScreen, false) => {
+                        "Show copied, but the recorded window went off screen."
+                    },
+                    (Ending::Finished, true) => "Show copied without narration.",
+                    (Ending::ScreenStopped, true) => {
+                        "Show copied without narration, and the screen stopped recording early."
+                    },
+                    (Ending::WindowClosed, true) => {
+                        "Show copied without narration, and the recorded window closed."
+                    },
+                    (Ending::WindowOffScreen, true) => {
+                        "Show copied without narration, and the recorded window went off screen."
+                    },
+                };
+                let mut message = copied.to_owned();
+                if lost.is_some()
+                    && let Some(failure) = notice.and_then(Notice::failure)
+                {
+                    message.push(' ');
+                    message.push_str(failure);
+                }
+                message
+            },
+            Self::Unchosen(Unchosen::Window) => {
+                "No window to record under the pointer, so the Show was cancelled.".into()
+            },
+            Self::Unchosen(Unchosen::Area) => {
+                "No area was chosen, so the Show was cancelled.".into()
+            },
+            Self::ShowGone => SHOW_GONE.into(),
+            Self::Recovered {
+                narrated_copy: true,
+                ..
+            } => "Narrated copy saved. The original Show is unchanged.".into(),
+            Self::Recovered {
+                lost: Some(NarrationLoss::NotTranscribed | NarrationLoss::AudioStopped),
+                ..
+            } => "Show recovered without narration. Find it in Shows.".into(),
+            Self::Recovered {
+                lost: Some(NarrationLoss::Incomplete),
+                ..
+            } => "Show recovered with incomplete narration. Find it in Shows.".into(),
+            Self::Recovered { lost: None, .. } => "Show recovered. Find it in Shows.".into(),
+            Self::Idle | Self::Done | Self::Empty | Self::Cancelled => {
+                notice.map_or("", Notice::text).into()
+            },
+        };
+        if let Self::ShowCopied {
+            audio_kept,
+            source_lost,
+            ..
+        }
+        | Self::Recovered {
+            audio_kept,
+            source_lost,
+            ..
+        } = self
+        {
+            if *audio_kept {
+                message.push_str(
+                    " Audio is kept privately for retry in Shows until its original seven-day expiry.",
+                );
+            }
+            if *source_lost {
+                message.push_str(
+                    " Retained source frames could not be saved; the selected keyframes are available.",
+                );
+            }
+        }
+        message
+    }
+
     const fn phase(&self) -> Phase {
         match self {
             Self::Idle => Phase::Idle,
@@ -584,23 +644,19 @@ impl<P: Ports> Owner<P> {
             Completion::Transcribed(ticket, Err(error)) => {
                 // The failed job has reaped its worker, even when its session no longer exists.
                 let replaced = self.worker.revive(&self.ports, &self.config);
-                if !self
+                let Some(session) = self
                     .session
-                    .as_ref()
-                    .is_some_and(|session| session.accepts(ticket))
-                {
+                    .as_mut()
+                    .filter(|session| session.accepts(ticket))
+                else {
                     return;
-                }
-                if replaced && self.session.as_ref().is_some_and(Session::is_transcribing) {
+                };
+                if replaced && session.is_transcribing() {
                     self.notice = Some(Notice::LoadingModel);
                 }
                 // A piece failure defers whole-recording fallback; a final request has one retry.
-                if !self
-                    .session
-                    .as_mut()
-                    .is_some_and(|session| session.failed(ticket))
-                {
-                    if self.session.as_mut().is_some_and(Session::not_transcribed) {
+                if !session.failed(ticket) {
+                    if session.not_transcribed() {
                         self.notice = Some(Notice::NarrationLost(error.to_string()));
                     } else {
                         self.fail(error.to_string());
@@ -621,8 +677,10 @@ impl<P: Ports> Owner<P> {
     /// The session admits only matching request tickets and assembles a complete transcript before
     /// cleanup. Corrections can therefore span piece boundaries without authorizing stale text.
     fn insert_transcript(&mut self, text: String) {
-        let text = Vocabulary::new(&self.config.vocabulary)
-            .text(&transcript::for_insertion(&text, self.config.fillers()));
+        let text = Vocabulary::new(&self.config.vocabulary).text(&transcript::for_insertion(
+            &text,
+            self.config.fillers(&self.config.language),
+        ));
         let Some(session) = self
             .session
             .as_mut()
@@ -689,13 +747,6 @@ impl<P: Ports> Owner<P> {
     /// failing partway does, finishes the Show with it. A Show whose scope found nothing to record
     /// is cancelled with its narration, since a Show never records more than its scope names.
     fn handle_show(&mut self, event: ShowEvent) -> Option<Action> {
-        if !self
-            .session
-            .as_ref()
-            .is_some_and(|session| session.id == event.session() && session.is_show())
-        {
-            return None;
-        }
         let session = self
             .session
             .as_mut()
@@ -1138,90 +1189,6 @@ impl<P: Ports> Owner<P> {
         }
     }
 
-    fn message(&self) -> Cow<'_, str> {
-        let message: Cow<'_, str> = match &self.outcome {
-            Outcome::Practiced => "Practice complete. Your words stay in Settings.".into(),
-            Outcome::Failed(message) => message.into(),
-            Outcome::Copied(message) => Cow::Borrowed(message),
-            Outcome::ShowCopied {
-                ending, lost: None, ..
-            } => match ending {
-                Ending::Finished => SHOW_COPIED,
-                Ending::ScreenStopped => SHOW_SCREEN_STOPPED,
-                Ending::WindowClosed => SHOW_WINDOW_CLOSED,
-                Ending::WindowOffScreen => SHOW_WINDOW_OFF_SCREEN,
-            }
-            .into(),
-            Outcome::ShowCopied {
-                ending,
-                lost: Some(_),
-                ..
-            } => {
-                let copied = match ending {
-                    Ending::Finished => SHOW_UNNARRATED,
-                    Ending::ScreenStopped => SHOW_UNNARRATED_SCREEN_STOPPED,
-                    Ending::WindowClosed => SHOW_UNNARRATED_WINDOW_CLOSED,
-                    Ending::WindowOffScreen => SHOW_UNNARRATED_WINDOW_OFF_SCREEN,
-                };
-                match self.notice.as_ref().and_then(Notice::failure) {
-                    Some(failure) => format!("{copied} {failure}").into(),
-                    None => copied.into(),
-                }
-            },
-            Outcome::Unchosen(Unchosen::Window) => NO_WINDOW.into(),
-            Outcome::Unchosen(Unchosen::Area) => NO_AREA.into(),
-            Outcome::ShowGone => SHOW_GONE.into(),
-            Outcome::Recovered {
-                narrated_copy: true,
-                ..
-            } => "Narrated copy saved. The original Show is unchanged.".into(),
-            Outcome::Recovered {
-                lost: Some(NarrationLoss::NotTranscribed | NarrationLoss::AudioStopped),
-                ..
-            } => "Show recovered without narration. Find it in Shows.".into(),
-            Outcome::Recovered {
-                lost: Some(NarrationLoss::Incomplete),
-                ..
-            } => "Show recovered with incomplete narration. Find it in Shows.".into(),
-            Outcome::Recovered { lost: None, .. } => "Show recovered. Find it in Shows.".into(),
-            Outcome::Idle | Outcome::Done | Outcome::Empty | Outcome::Cancelled => {
-                self.notice.as_ref().map_or("", Notice::text).into()
-            },
-        };
-        let message = if matches!(
-            self.outcome,
-            Outcome::ShowCopied {
-                audio_kept: true,
-                ..
-            } | Outcome::Recovered {
-                audio_kept: true,
-                ..
-            }
-        ) {
-            format!("{message} Audio is kept privately for retry in Shows until its original seven-day expiry.").into()
-        } else {
-            message
-        };
-        if matches!(
-            self.outcome,
-            Outcome::ShowCopied {
-                source_lost: true,
-                ..
-            } | Outcome::Recovered {
-                source_lost: true,
-                ..
-            }
-        ) {
-            format!(
-                "{message} Retained source frames could not be saved; \
-                 the selected keyframes are available."
-            )
-            .into()
-        } else {
-            message
-        }
-    }
-
     fn present(&self) {
         debug_assert_eq!(self.gesture.state() == State::Idle, self.session.is_none());
         let session = self.session.as_ref();
@@ -1241,7 +1208,7 @@ impl<P: Ports> Owner<P> {
             narration_lost,
             started: self.latest.started,
             last_show: self.last_show.clone(),
-            message: self.message().into_owned(),
+            message: self.outcome.message(self.notice.as_ref()),
             model: self.worker.model(),
             desktop_ready: self.desktop_ready,
             shortcut: Arc::clone(&self.shortcut),
@@ -1379,6 +1346,52 @@ mod tests {
             audio_kept: false,
             copied: Ok(()),
         }))
+    }
+
+    #[test]
+    fn saved_show_messages_report_retained_audio_and_lost_source_independently() {
+        for (audio_kept, source_lost, suffix) in [
+            (false, false, ""),
+            (
+                true,
+                false,
+                " Audio is kept privately for retry in Shows until its original seven-day expiry.",
+            ),
+            (
+                false,
+                true,
+                " Retained source frames could not be saved; the selected keyframes are available.",
+            ),
+            (
+                true,
+                true,
+                " Audio is kept privately for retry in Shows until its original seven-day expiry. \
+                 Retained source frames could not be saved; the selected keyframes are available.",
+            ),
+        ] {
+            for (outcome, prefix) in [
+                (
+                    Outcome::ShowCopied {
+                        ending: Ending::Finished,
+                        lost: None,
+                        audio_kept,
+                        source_lost,
+                    },
+                    SHOW_COPIED,
+                ),
+                (
+                    Outcome::Recovered {
+                        lost: None,
+                        narrated_copy: false,
+                        audio_kept,
+                        source_lost,
+                    },
+                    "Show recovered. Find it in Shows.",
+                ),
+            ] {
+                assert_eq!(outcome.message(None), format!("{prefix}{suffix}"));
+            }
+        }
     }
 
     #[test]

@@ -60,7 +60,10 @@ impl<W: Speech> Worker<W> {
     }
 
     pub(super) fn is_streaming(&self, session: SessionId) -> bool {
-        matches!(self, Self::Transcribing { ticket, .. } if ticket.session == session && ticket.part == Part::Stream)
+        let Self::Transcribing { ticket, .. } = self else {
+            return false;
+        };
+        ticket.session == session && ticket.part == Part::Stream
     }
 
     /// Pends unless a job is running; resolves once it finishes, leaving the worker unavailable
@@ -143,23 +146,37 @@ impl<W: Speech> Worker<W> {
             .as_deref()
             .unwrap_or(&config.language)
             .to_owned();
-        let fillers = config.fillers();
+        let fillers = config.fillers(&language);
         let corrections = config.vocabulary.clone();
         let terms = config.recognition_terms.clone();
         *self = Self::Transcribing {
             ticket: request.ticket,
             job: Job::spawn(|mut cancelled| async move {
+                let heard = async {
+                    match request.audio {
+                        Source::Wav(mut audio) => transcript_of(
+                            &mut worker,
+                            mem::take(&mut audio.wav),
+                            &language,
+                            request.detail,
+                            fillers,
+                            &corrections,
+                            &terms,
+                        )
+                        .await
+                        .map(Transcription::Heard),
+                        Source::Stream(audio) => {
+                            let text = worker.transcribe_stream(audio, &language, &terms).await?;
+                            Ok(text
+                                .map(Transcript::Text)
+                                .map_or(Transcription::Abandoned, Transcription::Heard))
+                        },
+                    }
+                };
                 let transcription = tokio::select! {
                     biased;
                     _ = cancelled.changed() => Ok(Transcription::Cancelled),
-                    result = async {
-                        match request.audio {
-                            Source::Wav(mut audio) => transcript_of(&mut worker, mem::take(&mut audio.wav), &language, request.detail, fillers, &corrections, &terms).await.map(Transcription::Heard),
-                            Source::Stream(audio) => worker.transcribe_stream(audio, &language, &terms).await.map(|text| text.map_or(Transcription::Abandoned, |text| Transcription::Heard(Transcript::Text(text)))),
-                        }
-                    } => {
-                        result
-                    },
+                    result = heard => result,
                 };
                 match transcription {
                     Ok(transcription) => Ok((worker, transcription)),
@@ -234,16 +251,17 @@ impl<W: Speech> Worker<W> {
 }
 
 pub(super) enum Completion<W> {
+    /// The stream ended without final text; reuse the worker for whole-recording fallback.
     Abandoned(Ticket, W),
     Loaded(anyhow::Result<W>),
     Transcribed(Ticket, anyhow::Result<(W, Transcript)>),
 }
 
-/// How a transcription job ends: with its transcript, or cancelled once moved out of
-/// observation.
 pub(super) enum Transcription {
+    /// A stream ended without final text; the worker remains reusable.
     Abandoned,
     Heard(Transcript),
+    /// The job was detached from observation and its request was cancelled.
     Cancelled,
 }
 
@@ -284,12 +302,13 @@ async fn transcript_of<W: Speech>(
     corrections: &[Correction],
     terms: &crate::recognition_terms::Terms,
 ) -> anyhow::Result<Transcript> {
-    let vocabulary = Vocabulary::new(corrections);
     Ok(match detail {
         Detail::Text => Transcript::Text(worker.transcribe(wav, language, terms).await?),
         Detail::Words => {
             let narration = worker.transcribe_words(wav, language, terms).await?;
-            Transcript::Words(vocabulary.narration(transcript::for_show(narration, fillers)))
+            Transcript::Words(
+                Vocabulary::new(corrections).narration(transcript::for_show(narration, fillers)),
+            )
         },
     })
 }

@@ -44,7 +44,7 @@ pub(super) struct Settings {
     microphone_listing: Option<Task<()>>,
     preview: Option<Task<()>>,
     setup: Option<(Setup, Task<()>, Config)>,
-    retiring_setups: Vec<(Setup, Task<()>)>,
+    retiring_setup: Option<(Setup, Task<()>)>,
     saving: Option<Task<()>>,
     saves: SaveQueue,
     vocabulary: vocabulary::Editor,
@@ -87,7 +87,7 @@ impl Settings {
             microphone_listing: None,
             preview: None,
             setup: None,
-            retiring_setups: Vec::new(),
+            retiring_setup: None,
             saving: None,
             saves,
             vocabulary,
@@ -376,7 +376,7 @@ impl Settings {
         if cx.global::<Services>().is_quitting()
             || is_demo(cx)
             || self.setup.is_some()
-            || !self.retiring_setups.is_empty()
+            || self.retiring_setup.is_some()
         {
             return;
         }
@@ -416,11 +416,10 @@ impl Settings {
         let retirement = cx.spawn(async move |this, cx| {
             stopped.await;
             this.update_if_alive(cx, |view, _| {
-                view.retiring_setups
-                    .retain(|(setup, _)| !setup.is_finished());
+                view.retiring_setup = None;
             });
         });
-        self.retiring_setups.push((setup, retirement));
+        self.retiring_setup = Some((setup, retirement));
         self.notice = Some(Notice::Note(
             "Setup paused. Downloads resume where they stopped.".into(),
         ));
@@ -464,7 +463,7 @@ impl Settings {
         if let Some((setup, _, _)) = &self.setup {
             setup.request_stop();
         }
-        for (setup, _) in &self.retiring_setups {
+        if let Some((setup, _)) = &self.retiring_setup {
             setup.request_stop();
         }
     }
@@ -555,7 +554,7 @@ impl Settings {
         }
     }
 
-    /// Releases setups whose threads have exited; returns whether no setup or save remains.
+    /// Releases finished threads; returns whether setup, saves, and the update check have drained.
     pub(super) fn drain_finished(&mut self) -> bool {
         self.update_check = self
             .update_check
@@ -565,10 +564,12 @@ impl Settings {
             .setup
             .take()
             .filter(|(setup, _, _)| !setup.is_finished());
-        self.retiring_setups
-            .retain(|(setup, _)| !setup.is_finished());
+        self.retiring_setup = self
+            .retiring_setup
+            .take()
+            .filter(|(setup, _)| !setup.is_finished());
         self.setup.is_none()
-            && self.retiring_setups.is_empty()
+            && self.retiring_setup.is_none()
             && self.saves.is_idle()
             && self.update_check.is_none()
     }

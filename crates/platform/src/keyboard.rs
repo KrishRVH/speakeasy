@@ -600,6 +600,7 @@ impl Mac {
     fn decide(&mut self, event: MacEvent, at: Instant) -> Decision {
         match event {
             MacEvent::FlagsChanged { code, held } if code == self.shortcut.key_code() => {
+                self.taps.interrupt();
                 self.pressed = held.talk.then_some(at);
                 Decision::pass(if held.talk && held.other_shortcut {
                     None

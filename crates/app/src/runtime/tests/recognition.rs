@@ -12,8 +12,8 @@ fn config() -> Config {
 }
 
 #[tokio::test(start_paused = true)]
-async fn segmentation_admits_only_parakeet_dictation_regardless_of_legacy_language()
--> anyhow::Result<()> {
+async fn segmentation_admits_only_parakeet_dictation_regardless_of_language() -> anyhow::Result<()>
+{
     for (engine, language, show, expected) in [
         (Engine::Parakeet, "en", false, true),
         (Engine::Parakeet, "auto", false, true),

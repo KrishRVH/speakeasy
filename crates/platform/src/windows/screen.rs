@@ -78,7 +78,7 @@ use windows_sys::Win32::{
 };
 
 use self::{
-    exclusion::{Exclusions, exclude_always, exclusion_supported},
+    exclusion::{Exclusions, exclude_always},
     readback::{Readback, device_for},
 };
 use super::{BASE_DPI, is_key_down, is_own_window, modifiers, ok_or_last_error};
@@ -366,9 +366,6 @@ fn record(
     stopping: &Receiver<Infallible>,
 ) -> Result<(), Failure> {
     join_lasting_apartment()?;
-    if !exclusion_supported() {
-        return Err(Failure::OldWindows);
-    }
     let mut exclusions = Exclusions::default();
     exclusions.refresh()?;
     let mut clean_from = clean_after_now();
@@ -697,8 +694,6 @@ fn join_lasting_apartment() -> windows::core::Result<()> {
 enum Failure {
     /// The recorded window can no longer be followed.
     Window(WindowGone),
-    /// Windows predates leaving windows out of capture.
-    OldWindows,
     /// A Speakeasy window could not be left out of capture.
     Exposed,
     /// The display was disconnected or turned off.
@@ -740,7 +735,6 @@ impl fmt::Display for Failure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Window(gone) => gone.fmt(f),
-            Self::OldWindows => f.write_str("Shows need Windows 10 version 2004 or later."),
             Self::Exposed => f.write_str(
                 "Cannot keep Speakeasy's windows out of the Show. Start the Show again.",
             ),

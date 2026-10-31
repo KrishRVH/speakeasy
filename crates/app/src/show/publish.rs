@@ -92,11 +92,9 @@ fn publish_with(
         Some(NarrationLoss::AudioStopped | NarrationLoss::NotTranscribed)
     );
     if transcribed && let Some(checkpoint) = &checkpoint {
-        // A failed save still has its audio or durable narration. Once a narrated bundle
-        // commits, discard retires the checkpoint even when cleanup must retry a blocked file.
         #[expect(
             clippy::let_underscore_must_use,
-            reason = "A successful narrated bundle is durable; discard marks its checkpoint for cleanup even if a file remains blocked"
+            reason = "A failed checkpoint write keeps recovery audio; this bundle still carries the narration"
         )]
         let _ = checkpoint.narrate(
             &recording.narration,

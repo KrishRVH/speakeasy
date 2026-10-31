@@ -252,10 +252,9 @@ impl Config {
         }
     }
 
-    /// Whether a request removes English hesitations: the user's switch, where
-    /// [`Config::fillers_apply`] allows it.
-    pub(crate) fn fillers(&self) -> Fillers {
-        if self.remove_fillers && self.fillers_apply() {
+    /// Applies the user's filler preference to this request's language, including recovered audio.
+    pub(crate) fn fillers(&self, language: &str) -> Fillers {
+        if self.remove_fillers && self.fillers_apply(language) {
             Fillers::Remove
         } else {
             Fillers::Preserve
@@ -266,12 +265,11 @@ impl Config {
     /// the language without reporting it, so the user's switch decides. Whisper removes them only
     /// for an explicit English request, because "um" is a word in languages such as German and
     /// Portuguese, and `auto` names no language to check.
-    pub(crate) fn fillers_apply(&self) -> bool {
+    pub(crate) fn fillers_apply(&self, language: &str) -> bool {
         (self.engine == Engine::Parakeet && !self.uses_nemotron())
-            || matches!(
-                self.language.to_ascii_lowercase().as_str(),
-                "en" | "en-us" | "en-gb"
-            )
+            || ["en", "en-us", "en-gb"]
+                .iter()
+                .any(|english| language.eq_ignore_ascii_case(english))
     }
 
     pub(crate) fn uses_nemotron(&self) -> bool {

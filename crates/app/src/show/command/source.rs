@@ -322,8 +322,7 @@ impl<'a> Report<'a> {
 
     fn write(&self, json: bool, out: &mut impl io::Write) -> anyhow::Result<()> {
         if json {
-            serde_json::to_writer_pretty(&mut *out, self)?;
-            writeln!(out)?;
+            super::output::json(self, out)?;
             return Ok(());
         }
         for (index, span) in self.focus.matches.iter().enumerate() {
@@ -386,8 +385,7 @@ fn coverage(
     out: &mut impl io::Write,
 ) -> anyhow::Result<()> {
     if json {
-        serde_json::to_writer_pretty(
-            &mut *out,
+        super::output::json(
             &Coverage {
                 path: directory.join(source::FILE),
                 duration_ms: index.duration().as_millis(),
@@ -398,8 +396,8 @@ fn coverage(
                 bytes: index.bytes(),
                 times_ms: index.moments().iter().map(|at| at.as_millis()).collect(),
             },
+            out,
         )?;
-        writeln!(out)?;
     } else {
         writeln!(
             out,

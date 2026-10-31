@@ -198,7 +198,7 @@ creating another copy. **Discard audio** removes its recovery checkpoint and lea
 alone. Discard always requires confirmation.
 
 An agent on the same machine can inspect a Show without launching the app or opening the microphone.
-New Shows name their local executable and exact ID in the summary when retained samples and a usable
+Shows name their local executable and exact ID in the summary when retained samples and a usable
 command are available. Quote that executable path for your shell; the app does not install it on
 PATH. In Windows PowerShell, use `& 'PATH\speakeasy-cli.exe' show …` for the commands below. If the
 package moves, use its new path. A moved Show uses its explicit folder path instead of its ID.
@@ -259,8 +259,8 @@ or an unsupported format, after printing its findings. A listing succeeds even w
 are damaged. An unreadable Shows folder fails the command; a missing one is an empty listing. The
 recording's `narrationLost` field is absent for complete narration, or `audioStopped`,
 `notTranscribed`, or `incomplete`. `incomplete` means recovery transcribed the surviving audio
-prefix; its text and timings cover only that prefix. Builds predating narration recovery do not read
-that new value.
+prefix; its text and timings cover only that prefix. Reading this value requires narration recovery
+support.
 
 Manifests are limited to 16 MiB and summaries to 1 MiB. Only format 2 is read; unknown fields are
 ignored.

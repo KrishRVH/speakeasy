@@ -70,8 +70,7 @@ const METAL: Download<'static> = Download {
     sha256: "5cb02ba7c04f0b5585ce5cde9c830be5f0b7dfb4c83083c500109c381b4f2da9",
 };
 
-/// The engine build setup chose, and whether it should run on the GPU. The other builds stay until
-/// the model is in place, so a setup paused before then resumes without downloading them again.
+/// The engine build setup chose, and whether it should run on the GPU.
 pub(super) struct ChosenEngine {
     directory: PathBuf,
     pub(super) use_gpu: bool,

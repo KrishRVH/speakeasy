@@ -428,6 +428,34 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         cx,
     )
     .await?;
+    let vanished = window
+        .read_with(cx, |view, _| {
+            view.library
+                .selected
+                .as_ref()
+                .map(|key| key.directory.clone())
+        })?
+        .context("The loaded preview selected a Show")?;
+    fs::remove_dir_all(&vanished)?;
+    window.update(cx, |view, window, cx| view.act(Action::Keep, window, cx))?;
+    wait_for(window, |view| view.keeping.is_none(), cx).await?;
+    window.read_with(cx, |view, _| {
+        assert!(view.library.gone && view.library.selected.is_none());
+        assert!(view.detail.is_none() && matches!(view.image, ImageState::Empty));
+        assert!(
+            view.library
+                .rows
+                .iter()
+                .all(|row| row.directory != vanished)
+        );
+    })?;
+    window.update(cx, |view, window, cx| view.act(Action::Show(0), window, cx))?;
+    wait_for(
+        window,
+        |view| matches!(view.image, ImageState::Ready(_)),
+        cx,
+    )
+    .await?;
     let (checkpoint, writer) = super::super::Keeper::fixture(
         &root,
         SystemTime::now(),

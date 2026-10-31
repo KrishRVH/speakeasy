@@ -303,20 +303,17 @@ async fn capture_stills(
             Place::Unknown => None,
         };
         match still {
-            Some(frame) => {
-                // A window gone while its still was taken has left its place to whatever is
-                // behind it, which the still may show.
-                if let Place::Covers(_) = place(target)? {
-                    last_frame = frame.at;
-                    #[expect(
-                        clippy::let_underscore_must_use,
-                        reason = "A frame the lane has no room for is dropped, and a closed lane ends capture"
-                    )]
-                    let _ = events.try_send(ScreenEvent::Frame(frame));
-                }
+            // A window lost during capture may expose what was behind it; that still is a miss.
+            Some(frame) if matches!(place(target)?, Place::Covers(_)) => {
+                last_frame = frame.at;
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "A frame the lane has no room for is dropped, and a closed lane ends capture"
+                )]
+                let _ = events.try_send(ScreenEvent::Frame(frame));
             },
-            None if last_frame.elapsed() >= PATIENCE => return Err(Failure::Stalled),
-            None => {},
+            _ if last_frame.elapsed() >= PATIENCE => return Err(Failure::Stalled),
+            _ => {},
         }
         // Waiting a whole interval after each answer keeps frames an interval apart, however long
         // ScreenCaptureKit takes to deliver them.
@@ -538,7 +535,7 @@ impl<'a> Locked<'a> {
         // SAFETY: the buffer is alive, and `Drop` releases this lock with the same flags.
         let status =
             unsafe { CVPixelBufferLockBaseAddress(buffer, CVPixelBufferLockFlags::ReadOnly) };
-        (status == kCVReturnSuccess).then_some(Self(buffer))
+        (status == kCVReturnSuccess).then(|| Self(buffer))
     }
 
     /// The buffer's memory: `height` rows of `bytesPerRow` bytes each.

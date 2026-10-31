@@ -1,6 +1,6 @@
 //! All application-owned Quit routes drain native work and requested saves while the foreground
 //! executor continues rendering. Cleanup has no timeout: audio driver teardown, a microphone scan,
-//! process reaping, insertion, setup, and saves must acknowledge. A stuck native owner keeps
+//! process reaping, insertion, setup, update checks, and saves must acknowledge. A stuck native owner keeps
 //! Quitting visible and the UI responsive; forced native termination retains synchronous Drop as
 //! the emergency fallback.
 
@@ -44,8 +44,7 @@ pub(crate) fn request_quit(cx: &mut App) {
     cx.global_mut::<Services>().quit = Some(task);
 }
 
-/// Whether Settings, if still open, has no setup or save left: save tasks drain their queue, and
-/// Quitting stops setup from queuing another.
+/// Settings drains accepted saves and acknowledges setup and update-check cancellation.
 fn drained(settings: Option<WindowHandle<Settings>>, cx: &mut AsyncApp) -> bool {
     settings.is_none_or(|settings| {
         settings

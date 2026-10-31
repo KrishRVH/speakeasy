@@ -845,10 +845,9 @@ proptest! {
     }
 }
 
-/// Sequences the property once shrank failures to, kept as cases of their own because any change
-/// to the strategy changes what a saved seed generates.
+/// Concrete failure sequences stay stable when strategy changes alter what saved seeds generate.
 #[test]
-fn the_sequences_that_once_stranded_the_owner_come_to_rest() -> anyhow::Result<()> {
+fn concrete_failure_sequences_release_every_owner() -> anyhow::Result<()> {
     let show = || Step::Inputs(SHOW_GESTURE.to_vec());
     let keys = |keys: &[Key]| Step::Inputs(keys.to_vec());
     let at_once = Releases {

@@ -169,7 +169,7 @@ fn filler_cleanup_follows_engine_language_and_switch() -> anyhow::Result<()> {
                 Fillers::Preserve
             };
             assert_eq!(
-                config.fillers(),
+                config.fillers(&config.language),
                 expected,
                 "{} with {language}, switch {remove_fillers}",
                 engine.label()
@@ -177,7 +177,10 @@ fn filler_cleanup_follows_engine_language_and_switch() -> anyhow::Result<()> {
         }
     }
     let without_switch: Config = serde_json::from_str(r#"{"engine":"parakeet","language":"de"}"#)?;
-    assert_eq!(without_switch.fillers(), Fillers::Remove);
+    assert_eq!(
+        without_switch.fillers(&without_switch.language),
+        Fillers::Remove
+    );
     Ok(())
 }
 

@@ -63,7 +63,7 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                     microphone_listing: None,
                     preview: None,
                     setup: None,
-                    retiring_setups: Vec::new(),
+                    retiring_setup: None,
                     saving: None,
                     saves,
                     _updates: Task::ready(()),

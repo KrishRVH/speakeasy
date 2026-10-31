@@ -232,18 +232,20 @@ fn the_embedded_skill_is_emitted_verbatim_and_its_commands_are_accepted() -> any
     Ok(())
 }
 
+pub(super) struct Closed;
+
+impl io::Write for Closed {
+    fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+        Err(io::ErrorKind::BrokenPipe.into())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 #[test]
 fn closing_the_output_pipe_preserves_the_io_error_kind() {
-    struct Closed;
-    impl io::Write for Closed {
-        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
-            Err(io::ErrorKind::BrokenPipe.into())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
     for json in [false, true] {
         let error = output::list(std::iter::empty(), None, json, &mut Closed).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);

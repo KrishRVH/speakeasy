@@ -3,12 +3,10 @@
 //! A capture leaves out every window of this process while it runs and shows them to capture again
 //! when it ends, except the overlay, which `configure_overlay` leaves out for good.
 
-use anyhow::{Context as _, ensure};
+use anyhow::Context as _;
 use windows_sys::{
-    Wdk::System::SystemServices::RtlGetVersion,
     Win32::{
         Foundation::{FALSE, HWND, LPARAM, LRESULT, TRUE, WPARAM},
-        System::SystemInformation::OSVERSIONINFOW,
         UI::{
             Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
             WindowsAndMessaging::{
@@ -24,8 +22,6 @@ use windows_sys::{
 use super::Failure;
 use crate::windows::{is_own_window, ok_or_last_error};
 
-/// The first build that leaves excluded windows out of capture; earlier builds black them out.
-const EXCLUSION_BUILD: u32 = 19_041;
 /// Marks a window `configure_overlay` left out of all screen capture, so that a capture ending
 /// never shows it to capture again.
 const ALWAYS_EXCLUDED: PCWSTR = w!("SpeakeasyAlwaysExcluded");
@@ -100,7 +96,6 @@ pub(super) fn affinity(window: HWND) -> Option<u32> {
 
 /// Leaves `hwnd` out of all screen capture for good, marked so no capture ending restores it.
 pub(super) fn exclude_always(hwnd: HWND) -> anyhow::Result<()> {
-    ensure!(exclusion_supported(), Failure::OldWindows);
     // SAFETY: each call takes the handle by value and fails for one that names no window. Installing
     // the subclass, which carries no reference data, also fails for a window another thread owns,
     // so the mark is set only once the subclass is in place to remove it before the window is
@@ -136,23 +131,6 @@ unsafe extern "system" fn always_excluded(
         }
         DefSubclassProc(hwnd, message, wparam, lparam)
     }
-}
-
-/// Whether this Windows build leaves excluded windows out of capture rather than blacking them out.
-pub(super) fn exclusion_supported() -> bool {
-    windows_build().is_some_and(|build| build >= EXCLUSION_BUILD)
-}
-
-/// The running Windows build, read from the kernel: the documented version APIs report Windows 8
-/// to executables whose manifests list no newer version.
-fn windows_build() -> Option<u32> {
-    let mut version = OSVERSIONINFOW {
-        dwOSVersionInfoSize: u32::try_from(size_of::<OSVERSIONINFOW>()).ok()?,
-        ..Default::default()
-    };
-    // SAFETY: RtlGetVersion fills this live structure, whose size field it checks.
-    let status = unsafe { RtlGetVersion(&raw mut version) };
-    (status >= 0).then_some(version.dwBuildNumber)
 }
 
 #[cfg(test)]

@@ -559,6 +559,70 @@ fn shift_taps_pin_beside_the_held_talk_shortcut() {
 }
 
 #[test]
+fn mac_shift_pairs_require_the_talk_modifier_to_stay_unchanged() {
+    use crate::MacShortcut;
+
+    let start = now();
+    let at = |millis| start + Duration::from_millis(millis);
+    for shortcut in [
+        MacShortcut::Function,
+        MacShortcut::RightOption,
+        MacShortcut::RightCommand,
+    ] {
+        for (held_before, transition) in [(true, None), (false, Some(true)), (true, Some(false))] {
+            let mut policy = Mac::new(shortcut);
+            let before = Modifiers {
+                talk: held_before,
+                ..NO_MODIFIERS
+            };
+            if held_before {
+                policy.observe(
+                    MacEvent::FlagsChanged {
+                        code: shortcut.key_code(),
+                        held: before,
+                    },
+                    keyboard_fn_up,
+                    at(0),
+                );
+            }
+            policy.observe(shift(true, before), keyboard_fn_up, at(100));
+            assert_eq!(
+                policy
+                    .observe(shift(false, before), keyboard_fn_up, at(180))
+                    .action,
+                None
+            );
+            let after = transition.map_or(before, |talk| Modifiers {
+                talk,
+                ..NO_MODIFIERS
+            });
+            if transition.is_some() {
+                policy.observe(
+                    MacEvent::FlagsChanged {
+                        code: shortcut.key_code(),
+                        held: after,
+                    },
+                    keyboard_fn_up,
+                    at(220),
+                );
+            }
+            policy.observe(shift(true, after), keyboard_fn_up, at(300));
+            assert_eq!(
+                policy
+                    .observe(shift(false, after), keyboard_fn_up, at(380))
+                    .action,
+                transition.is_none().then_some(Action::Pin(Taps {
+                    pressed: at(100),
+                    released: at(380)
+                })),
+                "{shortcut:?}, talk modifier {held_before} → {}",
+                after.talk
+            );
+        }
+    }
+}
+
+#[test]
 fn shift_taps_inside_another_shortcut_never_pin() {
     let start = now();
     let at = |millis: u64| start + Duration::from_millis(millis);

@@ -203,11 +203,10 @@ impl Command {
                 let interrupted = store::checkpoint::resolve(&store::directory()?, &directory)?;
                 interrupted.lock()?.discard()?;
                 if json {
-                    serde_json::to_writer(
-                        &mut *out,
+                    output::json(
                         &serde_json::json!({"id": interrupted.id(), "discarded": true}),
+                        out,
                     )?;
-                    writeln!(out)?;
                 } else {
                     writeln!(out, "Discarded {}", interrupted.id())?;
                 }

@@ -17,9 +17,13 @@ if [[ -n "$signing_identity" || -n "$notary_profile" ]]; then
     exit 1
   fi
 fi
+mkdir -p artifacts
+rm -f artifacts/speakeasy-macos.zip artifacts/speakeasy-macos.dmg
+staging=$(mktemp -d artifacts/.macos-package.XXXXXX)
+trap 'rm -rf -- "$staging"' EXIT
 MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release --locked -p speakeasy
 bundle="artifacts/Speakeasy.app"
-rm -rf "$bundle" artifacts/speakeasy-macos.zip
+rm -rf "$bundle"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp target/release/speakeasy "$bundle/Contents/MacOS/speakeasy"
 cp packaging/macos/Info.plist "$bundle/Contents/Info.plist"
@@ -48,19 +52,16 @@ if [[ -n "$signing_identity" ]]; then
   codesign --force --sign "$signing_identity" --options runtime --timestamp \
     --entitlements packaging/macos/Entitlements.plist "$bundle"
   codesign --verify --strict "$bundle"
-  # Notarize a temporary upload; the distribution ZIP appears only after acceptance and stapling.
-  notary_directory=$(mktemp -d artifacts/.macos-notary.XXXXXX)
-  trap 'rm -rf -- "$notary_directory"' EXIT
-  ditto -c -k --keepParent "$bundle" "$notary_directory/upload.zip"
-  xcrun notarytool submit "$notary_directory/upload.zip" --keychain-profile "$notary_profile" \
-    --wait --output-format json > "$notary_directory/result.json"
+  ditto -c -k --keepParent "$bundle" "$staging/upload.zip"
+  xcrun notarytool submit "$staging/upload.zip" --keychain-profile "$notary_profile" \
+    --wait --output-format json > "$staging/result.json"
   if ! python3 -c '
 import json, sys
 result = json.load(sys.stdin)
 if result.get("status") != "Accepted":
     print("Notarization submission:", result.get("id", "unavailable"), file=sys.stderr)
     sys.exit(1)
-' < "$notary_directory/result.json"; then
+' < "$staging/result.json"; then
     echo "Apple did not accept notarization. Check this submission with notarytool before distributing." >&2
     exit 1
   fi
@@ -71,20 +72,20 @@ else
   codesign --force --sign - "$bundle"
   codesign --verify --strict "$bundle"
 fi
-ditto -c -k --keepParent "$bundle" artifacts/speakeasy-macos.zip
-# Keep the ZIP for direct downloads and create the familiar drag-to-Applications installation.
-dmg_directory=$(mktemp -d artifacts/.macos-dmg.XXXXXX)
-trap 'rm -rf -- "$dmg_directory" "${notary_directory:-}"' EXIT
+ditto -c -k --keepParent "$bundle" "$staging/speakeasy-macos.zip"
+dmg_directory="$staging/dmg"
+mkdir "$dmg_directory"
 ditto "$bundle" "$dmg_directory/Speakeasy.app"
 ln -s /Applications "$dmg_directory/Applications"
-hdiutil create -quiet -ov -format UDZO -volname Speakeasy -srcfolder "$dmg_directory" artifacts/speakeasy-macos.dmg
+hdiutil create -quiet -ov -format UDZO -volname Speakeasy -srcfolder "$dmg_directory" "$staging/speakeasy-macos.dmg"
 if [[ -n "$signing_identity" ]]; then
-  codesign --sign "$signing_identity" --timestamp artifacts/speakeasy-macos.dmg
-  xcrun notarytool submit artifacts/speakeasy-macos.dmg --keychain-profile "$notary_profile" \
+  codesign --sign "$signing_identity" --timestamp "$staging/speakeasy-macos.dmg"
+  xcrun notarytool submit "$staging/speakeasy-macos.dmg" --keychain-profile "$notary_profile" \
     --wait --output-format json > "$dmg_directory/result.json"
   python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("status") == "Accepted" else "Disk image notarization was rejected.")' < "$dmg_directory/result.json"
-  xcrun stapler staple artifacts/speakeasy-macos.dmg
-  xcrun stapler validate artifacts/speakeasy-macos.dmg
-  spctl --assess --type open --context context:primary-signature artifacts/speakeasy-macos.dmg
+  xcrun stapler staple "$staging/speakeasy-macos.dmg"
+  xcrun stapler validate "$staging/speakeasy-macos.dmg"
+  spctl --assess --type open --context context:primary-signature "$staging/speakeasy-macos.dmg"
 fi
+mv "$staging/speakeasy-macos.zip" "$staging/speakeasy-macos.dmg" artifacts/
 echo "Built $bundle"

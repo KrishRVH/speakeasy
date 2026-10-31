@@ -435,7 +435,13 @@ impl Review {
                     .recv()
                     .await
                     .map_err(io::Error::other)
-                    .and_then(|result| result.map_err(io::Error::other))
+                    .and_then(|result| {
+                        result.map_err(|error| {
+                            error
+                                .downcast::<io::Error>()
+                                .unwrap_or_else(io::Error::other)
+                        })
+                    })
                     .and_then(|retention| {
                         retention
                             .ok_or_else(|| io::Error::other("Retention write returned no result"))

@@ -79,12 +79,12 @@ impl Presenter {
         if self.drawn == Some((indicator, theme)) {
             return Ok(());
         }
-        self.drawn = Some((indicator, theme));
         let image = draw_icon(indicator, theme)?;
         #[cfg(target_os = "macos")]
         self.icon.set_icon_templated(Some(image))?;
         #[cfg(target_os = "windows")]
         self.icon.set_icon(Some(image))?;
+        self.drawn = Some((indicator, theme));
         Ok(())
     }
 }

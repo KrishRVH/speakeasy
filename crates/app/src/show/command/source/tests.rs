@@ -63,6 +63,21 @@ fn exported_frame_reports_actual_time_without_overwriting_or_printing_content() 
         Ok(())
     })?;
     fs::write(directory.join(source::FILE), encoded)?;
+    for focus in [None, Some(Query::At(Moment::from_millis(750)))] {
+        let command = Command::Read(Request {
+            directory: directory.clone(),
+            focus,
+            output: Output::List,
+            around: 1000,
+            most: 6,
+            json: true,
+        });
+        let error = command.write(&mut super::super::tests::Closed).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<io::Error>().map(io::Error::kind),
+            Some(io::ErrorKind::BrokenPipe)
+        );
+    }
     let destination = root.path().join("export.png");
     let command = || {
         Command::Read(Request {

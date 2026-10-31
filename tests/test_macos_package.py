@@ -40,7 +40,9 @@ with open("commands.jsonl", "a") as log:
 if name == "uname":
     print("Darwin")
 if name == "xcrun" and sys.argv[1] == "notarytool":
-    print(json.dumps({"id": "synthetic-submission", "status": os.environ.get("STUB_NOTARY_STATUS", "Accepted")}))
+    rejected = sys.argv[3].endswith(os.environ.get("STUB_NOTARY_SUFFIX", ""))
+    status = os.environ.get("STUB_NOTARY_STATUS", "Accepted") if rejected else "Accepted"
+    print(json.dumps({"id": "synthetic-submission", "status": status}))
 if name == "ditto":
     if "-c" in sys.argv:
         Path(sys.argv[-1]).write_text("synthetic archive")
@@ -48,7 +50,7 @@ if name == "ditto":
         shutil.copytree(sys.argv[-2], sys.argv[-1])
 if name == "hdiutil":
     Path(sys.argv[-1]).write_text("synthetic disk image")
-if name == os.environ.get("STUB_FAIL_TOOL"):
+if name == os.environ.get("STUB_FAIL_TOOL") and sys.argv[-1].endswith(os.environ.get("STUB_FAIL_SUFFIX", "")):
     sys.exit(1)
 """
     for name in ("uname", "cargo", "plutil", "codesign", "ditto", "xcrun", "spctl", "hdiutil"):
@@ -96,16 +98,29 @@ def test_archive_appears_only_after_signature_and_distribution_acceptance(
     else:
         assert not notarization
     assert (tmp_path / "artifacts/speakeasy-macos.dmg").exists()
-    assert not list((tmp_path / "artifacts").glob(".macos-dmg.*"))
+    assert not list((tmp_path / "artifacts").glob(".macos-package.*"))
 
 
 @pytest.mark.parametrize(
     "failure",
-    [{"STUB_NOTARY_STATUS": "Invalid"}, {"STUB_FAIL_TOOL": "xcrun"}, {"STUB_FAIL_TOOL": "spctl"}],
+    [
+        {"STUB_NOTARY_STATUS": "Invalid"},
+        {"STUB_FAIL_TOOL": "cargo"},
+        {"STUB_FAIL_TOOL": "xcrun"},
+        {"STUB_FAIL_TOOL": "spctl"},
+        {"STUB_FAIL_TOOL": "hdiutil"},
+        {"STUB_NOTARY_STATUS": "Invalid", "STUB_NOTARY_SUFFIX": ".dmg"},
+        {"STUB_FAIL_TOOL": "xcrun", "STUB_FAIL_SUFFIX": ".dmg"},
+        {"STUB_FAIL_TOOL": "spctl", "STUB_FAIL_SUFFIX": ".dmg"},
+    ],
 )
 def test_failed_distribution_never_emits_a_release_archive(
     tmp_path: Path, failure: dict[str, str]
 ) -> None:
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    for name in ["speakeasy-macos.zip", "speakeasy-macos.dmg"]:
+        (artifacts / name).write_text("stale archive")
     result, _ = package(
         tmp_path,
         {
@@ -116,9 +131,10 @@ def test_failed_distribution_never_emits_a_release_archive(
     )
     assert result.returncode != 0
     assert not (tmp_path / "artifacts/speakeasy-macos.zip").exists()
-    assert not list((tmp_path / "artifacts").glob(".macos-notary.*"))
+    assert not (artifacts / "speakeasy-macos.dmg").exists()
+    assert not list(artifacts.glob(".macos-package.*"))
     if "STUB_NOTARY_STATUS" in failure:
-        assert "synthetic-submission" in result.stderr
+        assert "notarization" in result.stderr.lower()
 
 
 def test_partial_distribution_configuration_fails_before_building(tmp_path: Path) -> None:

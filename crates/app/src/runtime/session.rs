@@ -50,8 +50,10 @@ struct Show {
     frames: Option<FrameLog>,
     checkpoint: Option<Checkpointing>,
     finished: bool,
+    /// An unchosen or failed screen target discards its checkpoint, even after finishing.
     forfeited: bool,
     origin: Origin,
+    /// Recovery retained only an audio prefix, so its narration must remain marked incomplete.
     incomplete: bool,
 }
 
@@ -451,15 +453,15 @@ impl Session {
     /// already revoked keeps the session dictation, which the revoking cancel or settings change
     /// then discards.
     pub(super) fn turn_into_show(&mut self, scope: Scope) -> bool {
-        let turns = !self.is_practice()
-            && !self.is_show()
-            && (self.is_queued() || self.is_capturing())
-            && self.permit.shield();
-        if turns {
-            self.recognition.whole();
-            self.show = Some(Show::new(Screen::Queued(scope)));
+        if self.is_practice() || self.is_show() || !(self.is_queued() || self.is_capturing()) {
+            return false;
         }
-        turns
+        if !self.permit.shield() {
+            return false;
+        }
+        self.recognition.whole();
+        self.show = Some(Show::new(Screen::Queued(scope)));
+        true
     }
 
     /// The Show's queued screen recorder opened.

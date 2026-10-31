@@ -330,11 +330,10 @@ impl Recognition {
         if !self.accepts(ticket) {
             return true;
         }
+        self.whole();
         if matches!(ticket.part, Part::Piece(_) | Part::Stream) {
-            self.whole();
             return true;
         }
-        self.whole();
         if let Some(final_part) = &mut self.final_part
             && !final_part.retried
         {
