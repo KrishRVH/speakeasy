@@ -19,7 +19,7 @@ struct Fixture {
 
 impl Render for Fixture {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let resize = cx.listener(|fixture, _: &(), _, cx| {
+        let resize = cx.listener(|fixture, (): &(), _, cx| {
             fixture.narrow = !fixture.narrow;
             cx.notify();
         });
@@ -36,7 +36,7 @@ impl Render for Fixture {
                     .role(gpui::Role::Button)
                     .aria_label("Resize field")
                     .on_a11y_action(gpui::accesskit::Action::Click, move |_, window, cx| {
-                        resize(&(), window, cx)
+                        resize(&(), window, cx);
                     })
                     .child("Resize field"),
             )
