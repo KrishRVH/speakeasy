@@ -450,6 +450,8 @@ impl Settings {
             .unwrap_or(code);
         let label = format!("Language: {name}");
         div()
+            .id("language-picker")
+            .track_focus(&self.language.group)
             .flex()
             .flex_col()
             .gap(ROW_GAP)

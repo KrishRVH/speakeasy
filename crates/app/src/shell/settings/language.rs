@@ -9,22 +9,24 @@ use crate::{
 };
 
 pub(super) struct Picker {
+    pub(super) group: FocusHandle,
     pub(super) button: FocusHandle,
     pub(super) menu: FocusHandle,
     pub(super) scroll: ScrollHandle,
     pub(super) cursor: Option<usize>,
     // Opening binds focus cleanup to the popup's window; Settings owns that subscription.
-    blur: Option<Subscription>,
+    focus_out: Option<Subscription>,
 }
 
 impl Picker {
     pub(super) fn new(cx: &Context<'_, Settings>) -> Self {
         Self {
+            group: cx.focus_handle(),
             button: cx.focus_handle().tab_stop(true),
             menu: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             cursor: None,
-            blur: None,
+            focus_out: None,
         }
     }
 }
@@ -50,14 +52,17 @@ impl Settings {
         if self.language.cursor.is_some() {
             self.close_language(window);
         } else {
-            self.language.blur =
-                Some(cx.on_blur(&self.language.menu, window, |view, window, cx| {
-                    if (!window.is_window_active() || !view.language.menu.is_focused(window))
-                        && view.language.cursor.take().is_some()
-                    {
-                        cx.notify();
-                    }
-                }));
+            self.language.focus_out =
+                Some(
+                    cx.on_focus_out(&self.language.group, window, |view, _, window, cx| {
+                        if (!window.is_window_active()
+                            || !view.language.group.contains_focused(window, cx))
+                            && view.language.cursor.take().is_some()
+                        {
+                            cx.notify();
+                        }
+                    }),
+                );
             let cursor = options(&self.config)
                 .iter()
                 .position(|&(code, _)| code == selected(&self.config))

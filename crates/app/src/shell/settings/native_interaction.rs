@@ -106,6 +106,19 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     anyhow::Ok(())
                 })??;
                 Timer::after(Duration::from_millis(100)).await;
+                key(settings, "space", cx)?;
+                settings.update(cx, |view, window, cx| {
+                    ensure!(
+                        view.language.cursor.is_none(),
+                        "Returning to the toggle reopened the picker"
+                    );
+                    view.toggle_language(window, cx);
+                    cx.notify();
+                    anyhow::Ok(())
+                })??;
+                Timer::after(Duration::from_millis(100)).await;
+                settings.update(cx, |_, window, _| window.blur())?;
+                Timer::after(Duration::from_millis(100)).await;
                 settings.update(cx, |view, _, _| {
                     ensure!(
                         view.language.cursor.is_none(),
