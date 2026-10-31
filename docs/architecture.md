@@ -371,20 +371,27 @@ module unless a test file is named.
   not authenticate MP4 bytes. A damaged journal retains geometry only through the last complete
   change’s first sample, clipping against surviving video after computing this bound. Missing
   geometry preserves uncropped video. ZIP export also copies the validated handle and metadata
-  snapshot. The viewer offers Windows video scrubbing and opens playback in the system player; its
-  marks and narration remain separate from the video pixels. Explicit `show frame --video` queries
-  use the [native reader](../crates/platform/src/windows/movie/read.rs) on Windows. Validation and
-  decoding share one open file with writes denied. The synchronous reader releases its decoder and
-  native I/O before returning; cancellation is checked between native calls. It checks canvas and
-  buffer bounds and returns top-down opaque BGRA with the actual decoded timestamp. The
-  [video command](../crates/app/src/show/command/source/video.rs) reports session-relative time and
-  separate annotation coverage, including recovered tails. It refuses crops unless the actual
-  decoded sample’s saved source rectangle matches the mark’s coordinate proof. Crops expand within
-  the fitted content, with output coordinates reported in the full canvas. Legacy videos remain
-  available uncropped. Opt-in synthetic checks cover seek direction, orientation, cancellation, file
-  replacement, and exports beyond the annotation journal. Synthetic encoder checks decode irregular
-  captures sample by sample, reject future images, and exercise quiet fragments, same-tick
-  coalescing, cancellation, and partial progress after a stall.
+  snapshot. The viewer offers Windows video scrubbing, switchable saved annotations, and playback in
+  the system player. [draw/video.rs](../crates/show/src/draw/video.rs) renders only observed ink
+  prefixes, completed marks, and completed actions whose coordinate proofs match the decoded sample.
+  Pins retain their actual observation time; action proofs include the release position. Missing
+  legacy proofs are omitted. Continuous cut segments expire together. This saved-view policy does
+  not reconstruct live overlay fades. A text-free immutable annotation snapshot serves repeated
+  previews; completed pixels carry their rendering status through seeks and toggles. Explicit
+  `show frame --video` queries use the [native reader](../crates/platform/src/windows/movie/read.rs)
+  on Windows. Validation and decoding share one open file with writes denied. The synchronous reader
+  releases its decoder and native I/O before returning; cancellation is checked between native
+  calls. It checks canvas and buffer bounds and returns top-down opaque BGRA with the actual decoded
+  timestamp. The [video command](../crates/app/src/show/command/source/video.rs) reports
+  session-relative time and separate annotation coverage, including recovered tails. `--annotated`
+  shares the preview renderer at the exact decoded session time, reports omitted primitives, and
+  refuses samples without geometry or annotation coverage. Annotation rendering precedes cropping.
+  It refuses crops unless the actual decoded sample’s saved source rectangle matches the mark’s
+  coordinate proof. Crops expand within the fitted content, with output coordinates reported in the
+  full canvas. Legacy videos remain available uncropped. Opt-in synthetic checks cover seek
+  direction, orientation, cancellation, file replacement, and exports beyond the annotation journal.
+  Synthetic encoder checks decode irregular captures sample by sample, reject future images, and
+  exercise quiet fragments, same-tick coalescing, cancellation, and partial progress after a stall.
 - **Scripts and packaging**: [scripts/](../scripts) and [packaging/](../packaging) profile, check,
   package, and launch the app, [app/build.rs](../crates/app/build.rs) embeds the Windows resources,
   and `mise run hygiene` runs [check_repository.py](../scripts/check_repository.py).

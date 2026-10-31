@@ -69,6 +69,7 @@ pub(crate) struct Review {
     directory: Option<PathBuf>,
     detail: Option<Detail>,
     mode: Mode,
+    annotated: bool,
     timeline: timeline::Timeline,
     pane: Pane,
     request: Option<Request>,
@@ -147,6 +148,7 @@ impl Review {
             directory: None,
             detail: None,
             mode: Mode::Keyframes,
+            annotated: true,
             timeline: timeline::Timeline::default(),
             pane: Pane::Summary,
             request: None,
@@ -304,6 +306,7 @@ impl Review {
             directory: key.directory.clone(),
             content: frame.file.clone(),
             at: frame.at,
+            annotated: self.annotated,
             fixture: self.fixture.clone(),
         };
         let work = match (self.actions.preview)(request, cx) {
@@ -541,6 +544,7 @@ impl Review {
                     self.mode,
                     self.request,
                     decoded.at,
+                    decoded.annotations,
                 ),
                 image: Arc::clone(&decoded.image),
             }
@@ -693,6 +697,15 @@ impl Review {
 
     fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<'_, Self>) {
         match action {
+            Action::Annotations => {
+                if self.mode == Mode::Video
+                    && let Some(current) = self.library.selected.clone()
+                {
+                    self.annotated = !self.annotated;
+                    let key = self.library.select(current.directory, current.frame);
+                    self.load_frame(key, Some(window), cx);
+                }
+            },
             Action::Pane(pane) => self.pane = pane,
             Action::Clause(index) => {
                 if let Some(clause) = self
@@ -863,6 +876,7 @@ impl CopyKind {
 
 #[derive(Clone, Copy)]
 enum Action {
+    Annotations,
     Pane(Pane),
     Clause(usize),
     Mark(usize),

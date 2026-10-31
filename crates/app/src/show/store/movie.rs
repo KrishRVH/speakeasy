@@ -1,18 +1,19 @@
 //! Silent movie storage and original-session timing. The container supplies surviving coverage;
 //! checkpoint metadata supplies only its origin, completion receipt, and annotation horizon.
 
+mod frame;
 pub(in crate::show::store) mod geometry;
-
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read as _, Seek as _, Write as _},
     path::Path,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use anyhow::Context as _;
+pub(crate) use frame::{AnnotationState, Crop, decoder_time};
 use serde::{Deserialize, Serialize};
-use speakeasy_show::{Image, Moment, MoviePrefix, Rect, locate::PixelRect};
+use speakeasy_show::{Moment, MoviePrefix};
 
 use super::{checkpoint, recall};
 
@@ -179,22 +180,6 @@ pub(crate) struct Reading {
     pub movie: Inspected,
 }
 
-pub(crate) struct Frame {
-    pub at: Moment,
-    pub image: Image,
-    pub crop_px: Option<PixelRect>,
-}
-
-pub(crate) struct Crop {
-    pub bounds: Rect,
-    pub part: Rect,
-}
-
-pub(crate) fn decoder_time(at: Duration) -> Duration {
-    // Windows video decoding reports sample times in 100 ns units.
-    at.saturating_sub(Duration::from_nanos(u64::from(at.subsec_nanos() % 100)))
-}
-
 impl Reading {
     pub(crate) fn open(directory: &Path, annotations: Moment) -> anyhow::Result<Self> {
         Self::optional(directory, annotations)?
@@ -233,71 +218,6 @@ impl Reading {
         anyhow::ensure!(copied == bytes, "Movie changed during publication");
         Ok(copied)
     }
-
-    pub(crate) fn frame(
-        self,
-        at: Moment,
-        crop: Option<Crop>,
-        cancelled: impl Fn() -> bool,
-    ) -> anyhow::Result<Option<Frame>> {
-        let metadata = &self.movie.metadata;
-        let coverage = metadata
-            .coverage
-            .as_ref()
-            .context("Movie has no published coverage")?;
-        anyhow::ensure!(
-            (metadata.origin_ms..=coverage.end_ms).contains(&at.as_millis()),
-            "Requested time is outside the retained video coverage"
-        );
-        let requested = Duration::from_millis(at.as_millis().saturating_sub(metadata.origin_ms));
-        let origin = metadata.origin_ms;
-        let Some(frame) = decode(self.file, &self.movie, requested, cancelled)? else {
-            return Ok(None);
-        };
-        let sampled = frame.at;
-        let (image, crop_px) = geometry::crop(&self.movie, frame, crop)?;
-        Ok(Some(Frame {
-            at: Moment::from_millis(origin.saturating_add(u64::try_from(sampled.as_millis())?)),
-            image,
-            crop_px,
-        }))
-    }
-
-    /// Reads a precise movie-relative sample; UI stepping preserves submillisecond timestamps.
-    pub(crate) fn sample(
-        self,
-        at: Duration,
-        cancelled: impl Fn() -> bool,
-    ) -> anyhow::Result<Option<speakeasy_platform::MovieFrame>> {
-        decode(self.file, &self.movie, at, cancelled)
-    }
-}
-
-fn decode(
-    file: File,
-    movie: &Inspected,
-    at: Duration,
-    cancelled: impl Fn() -> bool,
-) -> anyhow::Result<Option<speakeasy_platform::MovieFrame>> {
-    anyhow::ensure!(
-        at <= movie.prefix.duration,
-        "Requested time is outside the retained video coverage"
-    );
-    let Some(frame) = speakeasy_platform::read_movie_frame(
-        file,
-        movie.prefix.bytes,
-        movie.metadata.size,
-        at,
-        cancelled,
-    )?
-    else {
-        return Ok(None);
-    };
-    anyhow::ensure!(
-        frame.at < movie.prefix.duration,
-        "Decoded video sample exceeds its retained coverage"
-    );
-    Ok(Some(frame))
 }
 
 pub(super) enum CheckpointMovie {

@@ -37,6 +37,49 @@ fn delayed_pins_follow_the_point_used_instead_of_the_tap_timestamp() {
     let recording = tracker.finish(ms(150));
     assert_eq!(recording.mark_part(&mark), Some(RESIZED));
     assert_eq!(recording.pins[0].point, Point::new(0.6, 0.7));
+    assert_eq!(recording.spaces.pins[0].unwrap().observed, Some(ms(120)));
+}
+
+#[test]
+fn legacy_pin_proofs_keep_geometry_without_inventing_timing_or_action_proofs() {
+    let mut spaces: Spaces = serde_json::from_value(serde_json::json!({
+        "strokes":[], "pins":[{"generation":1,"part":[0,0,1,1]}]
+    }))
+    .unwrap();
+    assert!(spaces.valid(0, 1, 3, ms(100)));
+    assert_eq!(spaces.pins[0].unwrap().observed, None);
+    spaces.pins[0].as_mut().unwrap().observed = Some(ms(101));
+    assert!(!spaces.valid(0, 1, 3, ms(100)));
+    spaces.pins[0].as_mut().unwrap().observed = Some(ms(100));
+    spaces.actions = vec![None];
+    assert!(!spaces.valid(0, 1, 3, ms(100)));
+}
+
+#[test]
+fn actions_include_the_release_space_but_finalization_uses_the_stored_endpoint() {
+    for release in [true, false] {
+        let mut tracker = tracker();
+        assert!(tracker.locate(Some(WHOLE)));
+        tracker.observe(ms(10), Point::new(0.2, 0.3), false, true);
+        assert!(tracker.locate(Some(RESIZED)));
+        if release {
+            tracker.observe(ms(20), Point::new(0.6, 0.7), false, false);
+        }
+        let recording = tracker.finish(ms(30));
+        assert_eq!(recording.actions.len(), 1);
+        assert_eq!(
+            recording.spaces.actions[0].map(|space| space.part),
+            (!release).then_some(WHOLE)
+        );
+    }
+    let mut tracker = tracker();
+    assert!(tracker.locate(Some(WHOLE)));
+    tracker.observe(ms(10), Point::new(0.2, 0.3), false, true);
+    assert!(tracker.locate(Some(RESIZED)));
+    tracker.observe(ms(20), Point::new(0.4, 0.3), false, true);
+    assert!(tracker.locate(Some(WHOLE)));
+    tracker.observe(ms(30), Point::new(0.6, 0.3), false, false);
+    assert_eq!(tracker.finish(ms(40)).spaces.actions, [None]);
 }
 
 #[test]
@@ -113,15 +156,16 @@ fn mixed_strokes_and_unbound_proof_vectors_never_supply_crop_coordinates()
     let mut recording = tracker.finish(ms(40));
     assert_eq!(recording.mark_part(&mark), None);
     recording.spaces.strokes.push(None);
-    assert!(
-        !recording
-            .spaces
-            .valid(recording.strokes.len(), recording.pins.len())
-    );
+    assert!(!recording.spaces.valid(
+        recording.strokes.len(),
+        recording.pins.len(),
+        recording.actions.len(),
+        recording.duration
+    ));
     assert_eq!(recording.mark_part(&mark), None);
     let bad: Spaces = serde_json::from_value(
         serde_json::json!({"strokes":[{"generation":1,"part":[0,0,2,1]}],"pins":[]}),
     )?;
-    assert!(!bad.valid(1, 0));
+    assert!(!bad.valid(1, 0, 0, ms(40)));
     Ok(())
 }

@@ -44,7 +44,12 @@ impl Recording {
     #[must_use]
     pub fn mark_part(&self, mark: &crate::Mark) -> Option<crate::Rect> {
         self.spaces
-            .valid(self.strokes.len(), self.pins.len())
+            .valid(
+                self.strokes.len(),
+                self.pins.len(),
+                self.actions.len(),
+                self.duration,
+            )
             .then_some(())?;
         self.spaces.mark(mark, &self.pins)
     }

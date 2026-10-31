@@ -31,10 +31,24 @@ fn source_arguments_reject_ambiguous_times_and_missing_destinations() -> anyhow:
         vec!["show", "--out", "x"],
         vec!["show", "--at", "1", "--at", "2", "--out", "x"],
         vec!["show", "--at", "1", "--out", "--video"],
+        vec!["show", "--at", "1", "--out", "x", "--annotated"],
+        vec![
+            "show",
+            "--at",
+            "1",
+            "--out",
+            "x",
+            "--video",
+            "--annotated",
+            "--annotated",
+        ],
     ] {
         assert!(Command::parse(true, args.into_iter().map(OsString::from)).is_err());
     }
     assert!(Command::parse(false, ["show", "--at", "1"].into_iter().map(OsString::from)).is_ok());
+    let args = ["show", "--at", "1", "--out", "x", "--annotated", "--video"];
+    assert!(Command::parse(true, args.into_iter().map(OsString::from)).is_ok());
+    assert!(Command::parse(false, args.into_iter().map(OsString::from)).is_err());
     Ok(())
 }
 
@@ -72,6 +86,7 @@ fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> an
             most: 6,
             json: true,
             video: false,
+            annotated: false,
         });
         let error = command.write(&mut super::super::tests::Closed).unwrap_err();
         assert_eq!(
@@ -92,6 +107,7 @@ fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> an
             most: 6,
             json: true,
             video: false,
+            annotated: false,
         })
     };
     let mut output = Vec::new();
@@ -112,6 +128,7 @@ fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> an
         output: Output::List,
         json: true,
         video: false,
+        annotated: false,
     })
     .write(&mut output)?;
     let value: serde_json::Value = serde_json::from_slice(&output)?;

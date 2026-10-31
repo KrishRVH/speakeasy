@@ -5,7 +5,7 @@ use std::{fs::File, io::Write as _, path::Path};
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use speakeasy_show::{
-    Image, Rect,
+    Image, Rect, VideoViewport,
     locate::{self, PixelRect},
 };
 
@@ -70,31 +70,49 @@ impl Geometry {
     }
 }
 
-pub(super) fn crop(
-    movie: &super::Inspected,
-    frame: speakeasy_platform::MovieFrame,
-    crop: Option<super::Crop>,
-) -> anyhow::Result<(Image, Option<PixelRect>)> {
-    let image = Image::from_bgra(frame.size[0], frame.size[1], frame.bgra)?;
-    let Some(crop) = crop else {
-        return Ok((image, None));
-    };
+pub(super) fn viewport(movie: &super::Inspected, at: std::time::Duration) -> Option<VideoViewport> {
     let sample = movie
         .prefix
         .samples()
-        .binary_search_by_key(&frame.at, |at| super::decoder_time(*at))
-        .map_err(|_absent| anyhow::anyhow!("Decoded video time has no saved crop geometry"))?;
+        .binary_search_by_key(&at, |at| super::decoder_time(*at))
+        .ok()?;
     let layout = movie
         .metadata
         .geometry
-        .as_ref()
-        .and_then(|geometry| geometry.at(u32::try_from(sample).ok()?))
+        .as_ref()?
+        .at(u32::try_from(sample).ok()?)?;
+    let [left, top, width, height] = layout.content;
+    Some(VideoViewport {
+        content: PixelRect {
+            left,
+            top,
+            width,
+            height,
+        },
+        source: Rect::from(layout.part),
+    })
+}
+
+pub(super) fn crop(
+    image: Image,
+    viewport: Option<VideoViewport>,
+    crop: Option<super::Crop>,
+) -> anyhow::Result<(Image, Option<PixelRect>)> {
+    let Some(crop) = crop else {
+        return Ok((image, None));
+    };
+    let layout = viewport
         .context("This video frame has no saved crop geometry; export it without --crop")?;
     anyhow::ensure!(
-        crop.part == Rect::from(layout.part),
+        crop.part == layout.source,
         "The mark and video frame have different or unknown geometry; export without --crop"
     );
-    let [left, top, width, height] = layout.content;
+    let PixelRect {
+        left,
+        top,
+        width,
+        height,
+    } = layout.content;
     let content = image.cropped(left, top, width, height)?;
     let (image, crop) = locate::crop_image(content, Some(crop.bounds))?;
     let mut crop = crop.context("The selected mark has no crop")?;

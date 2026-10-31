@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use speakeasy_show::Span;
+use speakeasy_show::{Annotations, Span};
 
 use super::*;
 use crate::show::store::movie;
@@ -14,6 +14,7 @@ pub(super) struct Coverage {
     pub span: Span,
     #[serde(rename = "annotationsThroughMs")]
     pub annotations: Moment,
+    pub rendering: movie::AnnotationState,
 }
 
 pub(super) fn write(
@@ -65,6 +66,7 @@ pub(super) fn write(
             Moment::from_millis(coverage.end_ms),
         ),
         annotations: Moment::from_millis(coverage.annotations_through_ms),
+        rendering: movie::AnnotationState::Off,
     });
     let crop = if let Some(bounds) = crop_bounds(&manifest, query, crop)? {
         let Query::Mark(number) = query else {
@@ -83,13 +85,26 @@ pub(super) fn write(
     } else {
         None
     };
+    let scene = request
+        .annotated
+        .then(|| Annotations::new(manifest.recording(), manifest.marks()))
+        .transpose()?;
     let served = reading
-        .frame(at, crop, || false)?
+        .frame(at, crop, scene.as_ref(), || false)?
         .context("Video frame export was cancelled")?;
+    anyhow::ensure!(
+        !request.annotated || served.annotations.painted(),
+        "Annotations are unavailable at this video sample; export without --annotated"
+    );
+    if let Some(video) = &mut report.video {
+        video.rendering = served.annotations;
+    }
+    let sampled_ms =
+        u64::try_from(served.at.as_millis()).context("Video sample time is too large")?;
     report.requested_ms = Some(at.as_millis());
-    report.sampled_ms = Some(served.at.as_millis());
+    report.sampled_ms = Some(sampled_ms);
     report.cells.push(locate::Cell {
-        sampled_ms: served.at.as_millis(),
+        sampled_ms,
         crop_px: served.crop_px,
     });
     report.path = Some(export(destination, &served.image)?);

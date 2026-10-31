@@ -75,6 +75,7 @@ async fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> 
             directory: rows[2].directory.clone(),
             content: frame.file.clone(),
             at: frame.at,
+            annotated: false,
             fixture: root.fixture.clone(),
         })?;
         let crate::show::preview::Work::Reading(receipt) = work else {

@@ -1,6 +1,6 @@
 //! Bounded preview decoding keeps private pixels out of GPUI's persistent asset cache.
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use gpui::RenderImage;
 
@@ -14,6 +14,7 @@ pub(super) fn read(request: Request, cancelled: &dyn Fn() -> bool) -> Result<Dec
         directory,
         content,
         at,
+        annotated,
         fixture: _fixture,
     } = request;
     if cancelled() {
@@ -29,20 +30,44 @@ pub(super) fn read(request: Request, cancelled: &dyn Fn() -> bool) -> Result<Dec
         Content::Source { index, at } => source::frame(&directory, &index, at)
             .and_then(|frame| frame.image.encode_png().map_err(anyhow::Error::from))
             .map_err(|error| format!("Cannot read source frame: {error:#}"))?,
-        Content::Video { span, annotations } => {
+        Content::Video {
+            span,
+            annotations,
+            scene,
+        } => {
             let decode = || -> anyhow::Result<Decoded> {
                 use anyhow::Context as _;
                 let reading = movie::Reading::open(&directory, annotations)?;
-                let origin = reading.movie.metadata.origin_ms;
                 let frame = reading
                     .sample(span.start, cancelled)?
                     .context("Preview cancelled")?;
-                let at = Duration::from_millis(origin).saturating_add(frame.at);
-                let pixels = image::RgbaImage::from_raw(frame.size[0], frame.size[1], frame.bgra)
+                let at = frame.at;
+                let size = frame.size;
+                let (pixels, annotations) = if annotated {
+                    match scene {
+                        Some(scene) => {
+                            let rendered = frame
+                                .render(Some(&scene), None, cancelled)?
+                                .context("Preview cancelled")?;
+                            (rendered.image.into_bgra(), rendered.annotations)
+                        },
+                        None => (frame.bgra, movie::AnnotationState::Unavailable),
+                    }
+                } else {
+                    (frame.bgra, movie::AnnotationState::Off)
+                };
+                if cancelled() {
+                    anyhow::bail!("Preview cancelled");
+                }
+                let pixels = image::RgbaImage::from_raw(size[0], size[1], pixels)
                     .context("Video frame dimensions are invalid")?;
                 // GPUI's RenderImage stores BGRA in image::Frame's byte buffer.
                 let image = Arc::new(RenderImage::new([image::Frame::new(pixels)]));
-                Ok(Decoded { image, at })
+                Ok(Decoded {
+                    image,
+                    at,
+                    annotations,
+                })
             };
             return decode().map_err(|error| format!("Cannot read video frame: {error:#}"));
         },
@@ -60,6 +85,7 @@ pub(super) fn read(request: Request, cancelled: &dyn Fn() -> bool) -> Result<Dec
     Ok(Decoded {
         image,
         at: at.since(speakeasy_show::Moment::START),
+        annotations: movie::AnnotationState::Off,
     })
 }
 

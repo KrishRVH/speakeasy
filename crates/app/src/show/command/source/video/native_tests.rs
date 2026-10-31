@@ -4,6 +4,8 @@ use std::{fs, os::windows::fs::OpenOptionsExt as _};
 
 use super::*;
 
+mod annotations;
+
 #[test]
 #[ignore = "Opt in: native video decoder; set SPEAKEASY_MOVIE_GEOMETRY_DIRECTORY to synthetic geometry fixtures"]
 fn native_mark_crops_match_presented_pixels_and_refuse_incompatible_spaces() -> anyhow::Result<()> {
@@ -44,7 +46,7 @@ fn native_mark_crops_match_presented_pixels_and_refuse_incompatible_spaces() -> 
             serde_json::json!({"left":left,"top":top,"width":width,"height":height})
         );
         let raw = movie::Reading::open(&show, Moment::from_millis(1000))?
-            .frame(Moment::from_millis(at), None, || false)?
+            .frame(Moment::from_millis(at), None, None, || false)?
             .unwrap();
         assert_eq!(
             fs::read(directory.path().join(name))?,
@@ -125,7 +127,7 @@ fn native_video_export_reports_real_samples_after_the_annotation_journal_ends() 
     fs::rename(&movie_path, show.join("validated.mp4"))?;
     fs::write(&movie_path, vec![0; original.len()])?;
     let served = reading
-        .frame(Moment::from_millis(3755), None, || false)?
+        .frame(Moment::from_millis(3755), None, None, || false)?
         .unwrap();
     assert_eq!(
         served.at.as_millis(),

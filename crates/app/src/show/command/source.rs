@@ -30,6 +30,7 @@ pub(crate) struct Request {
     output: Output,
     json: bool,
     video: bool,
+    annotated: bool,
 }
 
 impl std::fmt::Debug for Request {
@@ -53,11 +54,13 @@ impl Command {
         let (mut directory, mut focus, mut destination, mut json) = (None, None, None, false);
         let (mut around, mut most, mut occurrence, mut crop) = (None, None, None, false);
         let mut video = false;
+        let mut annotated = false;
         while let Some(arg) = args.next() {
             match arg.to_str() {
                 Some("--help" | "-h") => return Ok(Self::Help),
                 Some("--json") if !json => json = true,
                 Some("--video") if !video => video = true,
+                Some("--annotated") if !annotated => annotated = true,
                 Some("--at" | "--mark" | "--phrase") if focus.is_none() => {
                     let value = value(&mut args)?;
                     focus = Some(match arg.to_str() {
@@ -106,6 +109,7 @@ impl Command {
             }
         }
         anyhow::ensure!(!video || single, "--video supports show frame");
+        anyhow::ensure!(!annotated || video, "--annotated requires --video");
         anyhow::ensure!(
             occurrence.is_none() || matches!(focus, Some(Query::Phrase(_))),
             "--match requires --phrase"
@@ -143,6 +147,7 @@ impl Command {
             output,
             json,
             video,
+            annotated,
         }))
     }
 
@@ -364,10 +369,11 @@ impl<'a> Report<'a> {
         if let Some(video) = &self.video {
             writeln!(
                 out,
-                "Video {}–{} ms · annotations through {} ms",
+                "Video {}–{} ms · annotations through {} ms · {}",
                 video.span.start().as_millis(),
                 video.span.end().as_millis(),
-                video.annotations.as_millis()
+                video.annotations.as_millis(),
+                video.rendering.caption()
             )?;
         }
         if let Some(path) = &self.path {

@@ -26,7 +26,7 @@ pub struct Tracker {
     last_drawn_space: Option<crate::recording::spaces::Space>,
     spaces: crate::Spaces,
     /// Where the pointer was last seen.
-    pointer: Option<Point>,
+    pointer: Option<InkPoint>,
     drawing: Vec<InkPoint>,
     /// Whether the stroke being drawn has spanned enough to be ink.
     deliberate: bool,
@@ -49,6 +49,7 @@ struct Press {
     from: Point,
     /// Where the pointer is now.
     to: Point,
+    space: Option<crate::recording::spaces::Space>,
     /// The farthest the pointer has moved from `from`, in pixels.
     reach: f32,
     /// Whether Shift was held to draw at any point in the press, which then records no click or
@@ -76,6 +77,7 @@ impl Tracker {
             spaces: crate::Spaces {
                 strokes: Vec::new(),
                 pins: Vec::new(),
+                actions: Vec::new(),
             },
             pointer: None,
             drawing: Vec::new(),
@@ -130,7 +132,7 @@ impl Tracker {
         {
             *gap = (*gap).max(at);
         }
-        self.pointer = Some(point);
+        self.pointer = Some(InkPoint { point, at });
         self.shift_down = drawing.then(|| self.shift_down.unwrap_or(at));
         if drawing && pressed {
             self.use_shift(at);
@@ -147,16 +149,20 @@ impl Tracker {
                     at,
                     from: point,
                     to: point,
+                    space: self.space,
                     reach: 0.0,
                     drawing,
                 });
             },
             (Button::Down(press), true) => {
                 press.to = point;
+                if press.space != self.space {
+                    press.space = None;
+                }
                 press.reach = press.reach.max(pixels(self.surface, press.from, point));
                 press.drawing |= drawing;
             },
-            (Button::Down(_), false) => self.release(at, point),
+            (Button::Down(_), false) => self.release(at, point, self.space),
             (Button::Unknown, false) => self.press = Button::Up,
             (Button::Up | Button::Unknown, _) => {},
         }
@@ -191,14 +197,22 @@ impl Tracker {
         if !used
             && !pinned
             && self.pin_after.is_none_or(|gap| taps.start() > gap)
-            && let Some(point) = self.pointer
+            && let Some(InkPoint {
+                point,
+                at: observed,
+            }) = self.pointer
             && inside(point)
         {
             self.pins.push(Pin {
                 at: taps.end(),
                 point,
             });
-            self.spaces.pins.push(self.space);
+            self.spaces
+                .pins
+                .push(self.space.map(|space| crate::recording::spaces::PinSpace {
+                    space,
+                    observed: Some(observed),
+                }));
             true
         } else {
             false
@@ -218,7 +232,7 @@ impl Tracker {
     pub fn finish(mut self, at: Moment) -> Recording {
         self.lift();
         if let Button::Down(press) = self.press {
-            self.release(at, press.to);
+            self.release(at, press.to, press.space);
         }
         Recording {
             duration: at,
@@ -293,13 +307,21 @@ impl Tracker {
         }
     }
 
-    fn release(&mut self, at: Moment, point: Point) {
+    fn release(
+        &mut self,
+        at: Moment,
+        point: Point,
+        space: Option<crate::recording::spaces::Space>,
+    ) {
         let Button::Down(press) = mem::replace(&mut self.press, Button::Up) else {
             return;
         };
         if press.drawing {
             return;
         }
+        self.spaces
+            .actions
+            .push(press.space.filter(|proof| Some(*proof) == space));
         let reach = press.reach.max(pixels(self.surface, press.from, point));
         self.actions.push(if reach < DRAG_PIXELS {
             Action::Click {

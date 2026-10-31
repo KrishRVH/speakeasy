@@ -41,6 +41,7 @@ pub use crate::{
     align::{TimedClause, timed_clauses},
     bundle::{Bundle, File, Manifest, Retrieval, Unreadable, compose},
     demo::Demo,
+    draw::video::{AnnotationReport, Annotations, VideoViewport},
     error::Error,
     geometry::{Point, Rect},
     image::Image,

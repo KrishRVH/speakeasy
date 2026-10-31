@@ -104,6 +104,7 @@ pub(super) fn pointer(
     mode: Mode,
     request: Option<Request>,
     sampled: Duration,
+    annotations: crate::show::store::movie::AnnotationState,
 ) -> String {
     let sample = match mode {
         Mode::Keyframes => format!(
@@ -119,10 +120,16 @@ pub(super) fn pointer(
             Stamp(frame.at)
         ),
         Mode::Video => {
-            let command = video_query(frame, sampled).map_or_else(String::new, |at| format!("\nUse the installed Speakeasy command with `show frame SHOW --video --at {} --out NEW.png --json`; pass this folder as SHOW.", Stamp(at)));
+            let flag = if annotations.painted() {
+                " --annotated"
+            } else {
+                ""
+            };
+            let command = video_query(frame, sampled).map_or_else(String::new, |at| format!("\nUse the installed Speakeasy command with `show frame SHOW --video{flag} --at {} --out NEW.png --json`; pass this folder as SHOW.", Stamp(at)));
             format!(
-                "Video sample at {} (no drawn annotations).{command}",
-                Stamp(sampled.into())
+                "Video sample at {} · {}.{command}",
+                Stamp(sampled.into()),
+                annotations.caption()
             )
         },
     };

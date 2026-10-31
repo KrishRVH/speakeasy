@@ -59,7 +59,8 @@ fn navigation_reports_exact_earlier_and_first_later_samples_and_never_infers_tex
                 &detail.frames[0],
                 mode,
                 Some(early),
-                detail.frames[0].at.since(speakeasy_show::Moment::START)
+                detail.frames[0].at.since(speakeasy_show::Moment::START),
+                crate::show::store::movie::AnnotationState::Off,
             )
             .contains("first available")
         );
@@ -71,6 +72,7 @@ fn navigation_reports_exact_earlier_and_first_later_samples_and_never_infers_tex
             mode,
             Some(request),
             detail.frames[2].at.since(speakeasy_show::Moment::START),
+            crate::show::store::movie::AnnotationState::Off,
         );
         assert!(!text.contains("PRIVATE"));
         assert!(text.contains("0:20.000") && text.contains("0:01.500"));
@@ -153,6 +155,7 @@ fn a_video_reference_requests_inside_the_displayed_sample_instead_of_rounding_in
         file: crate::show::preview::Content::Video {
             span: Duration::from_nanos(33_333_333)..Duration::from_nanos(66_666_666),
             annotations: Moment::from_millis(1000),
+            scene: None,
         },
     };
     let at = Duration::from_nanos(283_333_300);
@@ -162,6 +165,7 @@ fn a_video_reference_requests_inside_the_displayed_sample_instead_of_rounding_in
         Mode::Video,
         None,
         at,
+        crate::show::store::movie::AnnotationState::Off,
     );
     assert!(text.contains("sample at 0:00.283"));
     assert!(text.contains("--video --at 0:00.284"));
@@ -171,7 +175,8 @@ fn a_video_reference_requests_inside_the_displayed_sample_instead_of_rounding_in
             &frame,
             Mode::Video,
             None,
-            Duration::from_millis(300)
+            Duration::from_millis(300),
+            crate::show::store::movie::AnnotationState::Off,
         )
         .contains("--at")
     );
@@ -184,7 +189,8 @@ fn a_video_reference_requests_inside_the_displayed_sample_instead_of_rounding_in
             &frame,
             Mode::Video,
             None,
-            at
+            at,
+            crate::show::store::movie::AnnotationState::Off,
         )
         .contains("--at")
     );
@@ -192,6 +198,7 @@ fn a_video_reference_requests_inside_the_displayed_sample_instead_of_rounding_in
     frame.file = crate::show::preview::Content::Video {
         span: Duration::from_micros(99_500)..Duration::from_nanos(100_000_033),
         annotations: Moment::from_millis(1000),
+        scene: None,
     };
     assert!(
         !pointer(
@@ -199,7 +206,8 @@ fn a_video_reference_requests_inside_the_displayed_sample_instead_of_rounding_in
             &frame,
             Mode::Video,
             None,
-            Duration::from_micros(99_500)
+            Duration::from_micros(99_500),
+            crate::show::store::movie::AnnotationState::Off,
         )
         .contains("--at"),
         "A query at the decoder's next sample boundary selected the wrong frame"
@@ -223,6 +231,7 @@ fn video_seeking_and_request_captions_preserve_submillisecond_order() -> anyhow:
                 file: crate::show::preview::Content::Video {
                     span: at..at.saturating_add(Duration::from_nanos(33_333_300)),
                     annotations: Moment::from_millis(1000),
+                    scene: None,
                 },
             }
         })
@@ -247,6 +256,7 @@ fn video_seeking_and_request_captions_preserve_submillisecond_order() -> anyhow:
     detail.frames[1].file = crate::show::preview::Content::Video {
         span: Duration::from_nanos(34_000_033)..Duration::from_millis(50),
         annotations: Moment::from_millis(1000),
+        scene: None,
     };
     assert_eq!(
         detail.locate(Moment::from_millis(284)),

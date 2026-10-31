@@ -1,5 +1,7 @@
 //! Ink, numbered labels, click ripples, and badges drawn onto keyframes.
 
+pub(crate) mod video;
+
 use std::time::Duration;
 
 use tiny_skia::{FillRule, Paint, Path, PathBuilder, PixmapMut, Transform};

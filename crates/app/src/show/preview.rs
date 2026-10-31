@@ -19,6 +19,7 @@ pub(crate) enum Content {
     Video {
         span: std::ops::Range<Duration>,
         annotations: Moment,
+        scene: Option<Arc<speakeasy_show::Annotations>>,
     },
 }
 
@@ -26,12 +27,14 @@ pub(crate) struct Request {
     pub directory: PathBuf,
     pub content: Content,
     pub at: Moment,
+    pub annotated: bool,
     pub fixture: Option<Arc<tempfile::TempDir>>,
 }
 
 pub(crate) struct Decoded {
     pub image: Arc<RenderImage>,
     pub at: Duration,
+    pub annotations: super::store::movie::AnnotationState,
 }
 
 pub(crate) type Receipt = Pin<Box<dyn Future<Output = Result<Decoded, String>> + Send>>;

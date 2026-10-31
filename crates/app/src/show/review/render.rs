@@ -385,6 +385,18 @@ impl Review {
                                 )
                                 .child("Video"),
                             )
+                        })
+                        .when(self.mode == Mode::Video, |bar| {
+                            bar.child(
+                                button(
+                                    Action::Annotations,
+                                    palette,
+                                    !detail.frames.is_empty(),
+                                    self.annotated,
+                                    cx,
+                                )
+                                .child("Annotations"),
+                            )
                         }),
                 )
                 .child(
@@ -884,6 +896,7 @@ fn button(
         Action::Mode(Mode::Keyframes) => "show-keyframes".into(),
         Action::Mode(Mode::Source) => "show-source-frames".into(),
         Action::Mode(Mode::Video) => "show-video-frames".into(),
+        Action::Annotations => "show-video-annotations".into(),
         Action::Keep => "keep-show".into(),
         Action::Previous => "previous-frame".into(),
         Action::Next => "next-frame".into(),

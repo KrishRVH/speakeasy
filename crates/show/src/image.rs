@@ -149,6 +149,26 @@ impl Image {
         Ok(png)
     }
 
+    /// Consumes the image into tightly packed, straight-alpha BGRA rows for a native renderer.
+    /// Opaque images reuse their pixel allocation; translucent pixels are unpremultiplied first.
+    #[must_use]
+    pub fn into_bgra(self) -> Vec<u8> {
+        let mut bytes = if self
+            .pixmap
+            .pixels()
+            .iter()
+            .all(PremultipliedColorU8::is_opaque)
+        {
+            self.pixmap.take()
+        } else {
+            self.straight_rgba().into_owned()
+        };
+        for [red, _, blue, _] in bytes.as_chunks_mut::<4>().0 {
+            std::mem::swap(red, blue);
+        }
+        bytes
+    }
+
     /// The pixels as straight-alpha RGBA8 rows, borrowed when every pixel is opaque.
     fn straight_rgba(&self) -> Cow<'_, [u8]> {
         let pixels = self.pixmap.pixels();
@@ -296,6 +316,14 @@ mod tests {
         assert_eq!(pixels(&decoded)[1], [128, 0, 0, 128]);
         let opaque = Image::filled(3, 2, [9, 8, 7]).unwrap();
         assert_eq!(Image::decode_png(&opaque.encode_png().unwrap()), opaque);
+    }
+
+    #[test]
+    fn preview_bytes_preserve_channels_and_straight_alpha() {
+        let translucent = Image::from_rgba(2, 1, vec![200, 100, 50, 255, 255, 0, 0, 128]).unwrap();
+        assert_eq!(translucent.into_bgra(), [50, 100, 200, 255, 0, 0, 255, 128]);
+        let opaque = Image::from_bgra(1, 1, vec![7, 8, 9, 0]).unwrap();
+        assert_eq!(opaque.into_bgra(), [7, 8, 9, 255]);
     }
 
     #[test]

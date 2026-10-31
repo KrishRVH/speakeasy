@@ -1,5 +1,7 @@
 //! Native video review uses recovered synthetic movies and dispatches events only to its owned window.
 
+mod annotations;
+
 use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput};
 
 use super::*;
@@ -109,7 +111,14 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
             .and_then(|detail| detail.frames.get(1))
             .context("Missing indexed video frame")?;
         Ok((
-            navigation::pointer(&directory, frame, Mode::Video, None, decoded.at),
+            navigation::pointer(
+                &directory,
+                frame,
+                Mode::Video,
+                None,
+                decoded.at,
+                decoded.annotations,
+            ),
             Arc::clone(&decoded.image),
         ))
     })??;
@@ -121,6 +130,7 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
         .spawn(async move {
             movie::Reading::open(&path, speakeasy_show::Moment::from_millis(1000))?.frame(
                 speakeasy_show::Moment::from_millis(284),
+                None,
                 None,
                 || false,
             )
@@ -275,6 +285,7 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
         );
         Ok(Arc::downgrade(&decoded.image))
     })??;
+    annotations::exercise(window, &directory, cx).await?;
     window.update(cx, |view, window, cx| {
         view.act(Action::Frame(1), window, cx);
         window.remove_window();

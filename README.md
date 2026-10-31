@@ -177,8 +177,9 @@ the selected keyframes still save and Speakeasy reports the loss.
 On Windows, choose **Video** to scrub the recorded timeline or step through its actual samples.
 Numbered marks and timed narration jump to their recorded times. The displayed timestamp belongs to
 the decoded frame; recovered video can extend past the annotation journal. Rapid seeks replace the
-pending request while the previous decoder closes, and Copy moment waits for the selected frame.
-**Play video** opens the MP4 in your system player. Video has no drawn annotations or narration
+pending request while the previous decoder closes, and Copy moment waits for the selected frame. The
+**Annotations** switch controls saved ink and marks; the caption explains missing annotations.
+**Play video** opens the original MP4 in your system player, without drawn annotations or narration
 audio. Its 30 Hz timeline holds the latest captured image during quiet periods. A long encoder stall
 stops video and keeps its completed prefix; sampled frames continue recording.
 
@@ -285,9 +286,14 @@ decoded sample and includes video coverage and the separate annotation horizon. 
 extend beyond the sampled-frame journal. Add `--crop` with `--mark` to focus on a mark with
 surrounding context. The crop uses the actual decoded frame’s content rectangle and requires a
 matching saved coordinate space for every point in the mark. Older, mixed, missing, or mismatched
-geometry refuses the crop; the uncropped video remains available. Video frames have no drawn
-annotations, and video contact sheets are not supported. Other platforms can open the movie in their
-system player.
+geometry refuses the crop; the uncropped video remains available. Add `--annotated` to draw saved
+ink progressively, label completed marks, and show completed pointer actions. The viewer's
+Annotations switch uses the same rendering, and Copy moment includes the setting in its retrieval
+command. Drawn pixels stay within the captured content; crops follow annotation rendering. Unknown
+or incompatible marks are omitted and counted in the report. Explicit annotated exports require
+video geometry and annotation coverage; the viewer explains when it shows original video instead.
+These saved annotations do not reproduce live overlay fades. Video contact sheets are not supported.
+Other platforms can open the movie in their system player.
 
 `keep` accepts an ID or an explicit path directly inside Speakeasy's Shows folder. `--off` allows
 expiry at the original date; it does not grant another seven days. These actions never recreate a

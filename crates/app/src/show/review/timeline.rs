@@ -168,14 +168,16 @@ impl Review {
         match &self.image {
             ImageState::Ready(decoded) if self.loading.is_some() => {
                 format!(
-                    "Seeking… · displayed sample at {}",
-                    Stamp(decoded.at.into())
+                    "Loading… · displayed sample at {} · {}",
+                    Stamp(decoded.at.into()),
+                    decoded.annotations.caption()
                 )
             },
             ImageState::Ready(decoded) => format!(
-                "Video sample at {} · {} ms",
+                "Video sample at {} · {} ms · {}",
                 Stamp(decoded.at.into()),
-                decoded.at.as_millis()
+                decoded.at.as_millis(),
+                decoded.annotations.caption()
             ),
             _ => "Seeking video frame…".into(),
         }

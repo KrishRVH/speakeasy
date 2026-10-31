@@ -195,6 +195,7 @@ impl Detail {
         let mut marks = Vec::new();
         let mut narration = Narration::Unavailable;
         let mut movie = None;
+        let mut scene = None;
         match entry.show {
             Err(ReadError::Manifest(Unreadable::Unsupported(version))) => warnings.push(format!(
                 "This Show uses format {version}. Update Speakeasy to view its frames. Its summary may still be readable."
@@ -206,6 +207,12 @@ impl Detail {
                 movie = show.movie;
                 let manifest = show.manifest;
                 let recording = manifest.recording();
+                if mode == Mode::Video {
+                    match speakeasy_show::Annotations::new(recording, manifest.marks()) {
+                        Ok(annotations) => scene = Some(Arc::new(annotations)),
+                        Err(error) => warnings.push(format!("Video annotations are unavailable: {error}")),
+                    }
+                }
                 narration = Narration::from_recording(recording);
                 let duration = recording.duration;
                 match recording.ending {
@@ -330,11 +337,12 @@ impl Detail {
                                         .copied()
                                         .unwrap_or(inspected.prefix.duration),
                                     annotations,
+                                    scene: scene.clone(),
                                 },
                             })
                             .collect();
                         coverage = format!(
-                            "{} video samples · annotations through {} · video has no drawn annotations",
+                            "{} video samples · annotation record through {}",
                             frames.len(),
                             super::navigation::Stamp(annotations)
                         );
