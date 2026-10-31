@@ -245,10 +245,14 @@ module unless a test file is named.
   summary edits. Explicit clause and mark requests keep their timestamp across frame modes and clear
   on manual navigation, refresh, or another Show.
   [navigation.rs](../crates/app/src/show/review/navigation.rs) describes earlier/later samples
-  honestly and formats Copy moment without transcript text. Selection revisions reject stale Show
-  and frame results. The [preview owner](../crates/app/src/show/preview.rs) retains one blocking
-  reader through native cleanup; a replacement waits for that acknowledgement, and the view keeps
-  only its latest pending seek. Closing cancels its receipt; Quit cancels and drains the owner.
+  honestly and formats the retrieval pointer without transcript text.
+  [handoff.rs](../crates/app/src/show/review/handoff.rs) combines that pointer, the displayed
+  summary, and bounded original narration for an explicit evidence copy, keeping their meanings
+  separate. A labeled summary excerpt keeps the combined text inside the clipboard byte limit
+  without dropping narration or changing the bundle. Selection revisions reject stale Show and frame
+  results. The [preview owner](../crates/app/src/show/preview.rs) retains one blocking reader
+  through native cleanup; a replacement waits for that acknowledgement, and the view keeps only its
+  latest pending seek. Closing cancels its receipt; Quit cancels and drains the owner.
   [preview/frame.rs](../crates/app/src/show/preview/frame.rs) caps PNG files at 32 MiB and
   dimensions at 4096 pixels per side. It decodes off the UI thread, leaves private pixels out of
   GPUI's asset cache, and passes decoded video BGRA directly to the renderer. Decoder errors never
@@ -258,7 +262,7 @@ module unless a test file is named.
   publication stage through a bounded request lane, without microphone, inference, or clipboard
   work. The [video timeline](../crates/app/src/show/review/timeline.rs) uses complete fragment
   sample times for stepping and seeking. Lookups and captions preserve the decoder's 100 ns clock;
-  Copy moment emits a retrieval query only when a whole millisecond lies inside the displayed
+  Evidence copying emits a retrieval query only when a whole millisecond lies inside the displayed
   sample. During seeking, the previous video image stays visible and copying is disabled.
   [review/tests.rs](../crates/app/src/show/review/tests.rs) checks navigation, damage, and private
   text boundaries. Opt-in [native_tests.rs](../crates/app/src/show/review/native_tests.rs) exercises

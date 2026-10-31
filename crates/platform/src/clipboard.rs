@@ -3,7 +3,6 @@
 
 use anyhow::{Context as _, ensure};
 
-const TEXT_LIMIT: usize = 1 << 20;
 const EDGE_LIMIT: u32 = 4096;
 
 /// Text and, for a visual moment, matching lossless image representations. Prepare this off the
@@ -33,12 +32,18 @@ impl std::fmt::Debug for ClipboardContent {
 }
 
 impl ClipboardContent {
+    /// Maximum UTF-8 text size, including any accompanying context or labels.
+    pub const MAX_TEXT_BYTES: usize = 1 << 20;
+
     /// Prepares plain text without changing the clipboard.
     ///
     /// # Errors
     /// Refuses text larger than 1 MiB or containing NUL, which native text formats truncate.
     pub fn text(text: String) -> anyhow::Result<Self> {
-        ensure!(text.len() <= TEXT_LIMIT, "Clipboard text exceeds 1 MiB");
+        ensure!(
+            text.len() <= Self::MAX_TEXT_BYTES,
+            "Clipboard text exceeds 1 MiB"
+        );
         ensure!(
             !text.contains('\0'),
             "Clipboard text contains a NUL character"

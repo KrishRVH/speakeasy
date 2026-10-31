@@ -177,7 +177,7 @@ the selected keyframes still save and Speakeasy reports the loss.
 On Windows, choose **Video** to scrub the recorded timeline or step through its actual samples.
 Numbered marks and timed narration jump to their recorded times. The displayed timestamp belongs to
 the decoded frame; recovered video can extend past the annotation journal. Rapid seeks replace the
-pending request while the previous decoder closes, and Copy moment waits for the selected frame. The
+pending request while the previous decoder closes, and copying waits for the selected frame. The
 **Annotations** switch controls saved ink and marks; the caption explains missing annotations.
 **Play video** opens the original MP4 in your system player, without drawn annotations or narration
 audio. Its 30 Hz timeline holds the latest captured image during quiet periods. A long encoder stall
@@ -189,12 +189,15 @@ any gap. Switching frame modes keeps that request; stepping through frames, choo
 or refreshing clears it. Words without timings remain readable. Missing and incomplete narration are
 labeled. This pane contains recorded speech, so edits to `summary.md` stay in Summary.
 
-**Copy moment** on Windows/Mac copies the displayed image, plus plain-text context naming its actual
-timestamp and any request that led there. Windows offers PNG and a native bitmap; Mac offers PNG.
-The receiving app chooses which formats it accepts, so some apps paste only the image or only the
-context. Use **Copy summary** separately when the recipient also needs narration. Copy moment
-includes no transcript and leaves your summary alone. Both copy actions are available between
-recordings. Narration previews are bounded; `show.json` retains all recorded words.
+**Copy image + summary + narration** on Windows/Mac copies the displayed image with its actual
+timestamp, retrieval context, edited summary, and recorded words. Summary edits and original
+narration remain separate sections. Untimed, missing, incomplete, and truncated narration are
+labeled; `show.json` retains all recorded words. If the combined text would exceed the clipboard
+limit, the summary becomes a labeled excerpt; the complete edit remains in `summary.md`. **Copy
+summary** shares only your edited summary. Copying preserves the bundle and is available between
+recordings. Windows offers PNG and a native bitmap; Mac offers PNG. The receiving app chooses which
+formats it accepts, so some apps paste only the image or only the text. Receiving both still depends
+on that app.
 
 Copies carry the same clipboard-history and device-sync privacy markers as dictation. A new
 recording, closing the requesting window, or a settings/lifecycle change cancels a copy that has not
@@ -288,12 +291,12 @@ surrounding context. The crop uses the actual decoded frame’s content rectangl
 matching saved coordinate space for every point in the mark. Older, mixed, missing, or mismatched
 geometry refuses the crop; the uncropped video remains available. Add `--annotated` to draw saved
 ink progressively, label completed marks, and show completed pointer actions. The viewer's
-Annotations switch uses the same rendering, and Copy moment includes the setting in its retrieval
-command. Drawn pixels stay within the captured content; crops follow annotation rendering. Unknown
-or incompatible marks are omitted and counted in the report. Explicit annotated exports require
-video geometry and annotation coverage; the viewer explains when it shows original video instead.
-These saved annotations do not reproduce live overlay fades. Video contact sheets are not supported.
-Other platforms can open the movie in their system player.
+Annotations switch uses the same rendering, and copied evidence includes the setting in its
+retrieval command. Drawn pixels stay within the captured content; crops follow annotation rendering.
+Unknown or incompatible marks are omitted and counted in the report. Explicit annotated exports
+require video geometry and annotation coverage; the viewer explains when it shows original video
+instead. These saved annotations do not reproduce live overlay fades. Video contact sheets are not
+supported. Other platforms can open the movie in their system player.
 
 `keep` accepts an ID or an explicit path directly inside Speakeasy's Shows folder. `--off` allows
 expiry at the original date; it does not grant another seven days. These actions never recreate a
@@ -781,8 +784,8 @@ paused clock exercises gesture deadlines and the five-minute cap.
 - With the same Windows fixtures, run
   `cargo test --locked -p speakeasy native_show_video_review_ -- --ignored --test-threads=1`. It
   checks the owned review window's rapid seeks, scrubber, keyboard and narration navigation, exact
-  Copy moment retrieval, and cleanup on close. It injects events into that window without installing
-  hooks, recording the screen, or touching the clipboard.
+  copied evidence retrieval, and cleanup on close. It injects events into that window without
+  installing hooks, recording the screen, or touching the clipboard.
 
 Live microphone, editor, and screen acceptance is tracked under
 [verification](docs/architecture.md#verification).

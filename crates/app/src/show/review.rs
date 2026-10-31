@@ -7,6 +7,7 @@ const DISCARD_SHOW: &str = "This permanently removes the interrupted Show's reco
                            including kept audio. Any saved copies stay.";
 
 mod export;
+mod handoff;
 mod library;
 mod narration;
 mod navigation;
@@ -520,14 +521,14 @@ impl Review {
         if self.source == Source::Demo
             || !(self.actions.can_copy)(cx)
             || self.copying.is_some()
-            || (kind == CopyKind::Moment && self.loading.is_some())
+            || (kind == CopyKind::Evidence && self.loading.is_some())
         {
             return;
         }
         let Some(key) = self.library.selected.clone() else {
             return;
         };
-        let request = if kind == CopyKind::Moment {
+        let request = if kind == CopyKind::Evidence {
             let Some(detail) = &self.detail else {
                 return;
             };
@@ -537,8 +538,8 @@ impl Review {
             let ImageState::Ready(decoded) = &self.image else {
                 return;
             };
-            super::copy::Request::Moment {
-                text: navigation::pointer(
+            let text = match handoff::text(
+                navigation::pointer(
                     &key.directory,
                     frame,
                     self.mode,
@@ -546,6 +547,18 @@ impl Review {
                     decoded.at,
                     decoded.annotations,
                 ),
+                detail.summary.as_deref().ok(),
+                &detail.narration,
+            ) {
+                Ok(text) => text,
+                Err(error) => {
+                    self.notice = Some(format!("Cannot copy this Show: {error:#}"));
+                    cx.notify();
+                    return;
+                },
+            };
+            super::copy::Request::Moment {
+                text,
                 image: Arc::clone(&decoded.image),
             }
         } else {
@@ -862,14 +875,14 @@ enum Pane {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CopyKind {
     Summary,
-    Moment,
+    Evidence,
 }
 
 impl CopyKind {
     fn name(self) -> &'static str {
         match self {
             Self::Summary => "summary",
-            Self::Moment => "moment image and context",
+            Self::Evidence => "image, summary, and narration",
         }
     }
 }

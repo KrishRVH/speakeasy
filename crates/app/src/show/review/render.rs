@@ -805,7 +805,7 @@ impl Review {
                 )
                 .child(
                     button(
-                        Action::Copy(CopyKind::Moment),
+                        Action::Copy(CopyKind::Evidence),
                         palette,
                         can_copy
                             && self.loading.is_none()
@@ -813,7 +813,7 @@ impl Review {
                         false,
                         cx,
                     )
-                    .child("Copy moment"),
+                    .child("Copy image + summary + narration"),
                 )
             })
             .child(button(Action::Folder, palette, true, false, cx).child("Open folder"))
@@ -902,7 +902,7 @@ fn button(
         Action::Next => "next-frame".into(),
         Action::Refresh => "shows-refresh".into(),
         Action::Copy(CopyKind::Summary) => "shows-copy".into(),
-        Action::Copy(CopyKind::Moment) => "shows-copy-moment".into(),
+        Action::Copy(CopyKind::Evidence) => "shows-copy-evidence".into(),
         Action::Pane(Pane::Summary) => "show-summary-tab".into(),
         Action::Pane(Pane::Narration) => "show-narration-tab".into(),
         Action::Clause(index) => SharedString::from(format!("show-clause-{index}")).into(),

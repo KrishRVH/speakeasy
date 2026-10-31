@@ -44,6 +44,8 @@ impl gpui::Global for TestEdits {}
 
 struct CopyProbe {
     image: std::sync::Weak<RenderImage>,
+    summary: String,
+    narration: String,
     received: bool,
 }
 impl gpui::Global for CopyProbe {}
@@ -219,7 +221,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                 )
                 .contains("retained sample")
         );
-        view.copy(CopyKind::Moment, cx);
+        view.copy(CopyKind::Evidence, cx);
         assert!(
             view.copying.is_none(),
             "Preview copied to the real clipboard"
@@ -630,8 +632,26 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
         let ImageState::Ready(decoded) = &view.image else {
             anyhow::bail!("The copy fixture has no displayed image");
         };
+        let detail = view
+            .detail
+            .as_ref()
+            .context("The copy fixture has no selected Show")?;
+        let summary = detail
+            .summary
+            .as_ref()
+            .map_err(|_error| anyhow::anyhow!("The fixture has no summary"))?
+            .clone();
+        let narration = detail
+            .narration
+            .clauses()
+            .first()
+            .context("The fixture has no recorded clause")?
+            .text
+            .clone();
         cx.set_global(CopyProbe {
             image: Arc::downgrade(&decoded.image),
+            summary,
+            narration,
             received: false,
         });
         // Only the injected action can run. No real clipboard operation is reachable.
@@ -654,10 +674,14 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
                 text.contains("Keyframe #") && text.contains("Show folder:"),
                 "Copy moment lost its textual context"
             );
+            ensure!(
+                text.contains(&probe.summary) && text.contains(&probe.narration),
+                "Evidence copy omitted the displayed summary or recorded narration"
+            );
             probe.received = true;
             Ok(Box::pin(async { Ok(super::super::copy::Outcome::Copied) }))
         };
-        view.copy(CopyKind::Moment, cx);
+        view.copy(CopyKind::Evidence, cx);
         view.source = Source::Demo;
         view.actions.can_copy = |_| false;
         view.actions.copy = |_, _| anyhow::bail!("Synthetic review does not use the clipboard");
@@ -669,7 +693,7 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
         "The visual copy action did not run"
     );
     let copied = window.read_with(cx, |view, _| {
-        view.notice.as_deref() == Some("Copied moment image and context.")
+        view.notice.as_deref() == Some("Copied image, summary, and narration.")
     })?;
     ensure!(
         copied,

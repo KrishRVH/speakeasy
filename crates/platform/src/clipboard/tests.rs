@@ -40,7 +40,7 @@ fn invalid_payloads_fail_before_native_access() {
     ] {
         assert!(ClipboardContent::moment("context".into(), width, height, pixels).is_err());
     }
-    assert!(ClipboardContent::text("x".repeat(TEXT_LIMIT + 1)).is_err());
+    assert!(ClipboardContent::text("x".repeat(ClipboardContent::MAX_TEXT_BYTES + 1)).is_err());
     assert!(ClipboardContent::text("PRIVATE\0CONTEXT".into()).is_err());
 }
 

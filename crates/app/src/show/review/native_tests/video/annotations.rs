@@ -54,7 +54,7 @@ pub(super) async fn exercise(
         );
         Ok(Arc::clone(&decoded.image))
     })??;
-    window.update(cx, |view, _, cx| view.copy(CopyKind::Moment, cx))?;
+    window.update(cx, |view, _, cx| view.copy(CopyKind::Evidence, cx))?;
     wait_for(window, |view| view.copying.is_none(), cx).await?;
     let copied = cx
         .update(|cx| cx.global_mut::<Copies>().0.pop())?
@@ -64,7 +64,15 @@ pub(super) async fn exercise(
     };
     assert!(Arc::ptr_eq(&image, &annotated));
     assert!(text.contains("--video --annotated --at 0:00.284"));
-    assert!(!text.contains("PRIVATE"));
+    ensure!(
+        text.contains("## Edited summary\n\nSynthetic video review")
+            && text.contains("## Recorded narration\n\n[0:00.500] PRIVATE_PHRASE"),
+        "Video evidence copy omitted the edited summary or original narration"
+    );
+    ensure!(
+        !text.contains("PRIVATE_EVENT"),
+        "Video evidence copy included unrelated event metadata"
+    );
     drop(image);
     let output = directory.join("annotated.png");
     let args = [
@@ -94,7 +102,7 @@ pub(super) async fn exercise(
         assert_ne!(view.library.selected, selected);
         assert!(view.loading.is_some());
         assert!(view.video_caption().contains("Annotations on"));
-        view.copy(CopyKind::Moment, cx);
+        view.copy(CopyKind::Evidence, cx);
         assert!(cx.global::<Copies>().0.is_empty());
     })?;
     wait_for(window, ready, cx).await?;
