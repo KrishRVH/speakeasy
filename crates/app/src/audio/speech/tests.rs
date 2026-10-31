@@ -195,32 +195,40 @@ fn only_what_sounds_beyond_a_cues_span_counts_toward_the_gate() {
 
 #[test]
 fn a_voice_beneath_a_cue_still_counts() {
-    let quiet = audio(&[(SECOND * 2, 0)]);
-    let both = encode(
-        decode(&tone(SECOND / 5, 150.0, 3_000.0))
-            .zip(decode(&tone(SECOND / 5, 1_000.0, 20_000.0)))
-            .map(|(voice, cue)| voice.saturating_add(cue))
-            .chain(decode(&quiet)),
-    );
-    let mut speech = Audibility::new(RATE);
-    speech.expect_cue(&[]);
-    speech.complete(&both);
-    assert!(speech.retained(both.len()).is_some());
+    for amplitude in [500.0, 3_000.0] {
+        let quiet = audio(&[(SECOND * 2, 0)]);
+        let both = encode(
+            decode(&tone(SECOND / 5, 150.0, amplitude))
+                .zip(decode(&tone(SECOND / 5, 1_000.0, 20_000.0)))
+                .map(|(voice, cue)| voice.saturating_add(cue))
+                .chain(decode(&quiet)),
+        );
+        let mut speech = Audibility::new(RATE);
+        speech.expect_cue(&[]);
+        speech.complete(&both);
+        assert!(speech.retained(both.len()).is_some());
+    }
 }
 
 #[test]
 fn the_cues_a_recording_hears_stay_out_of_the_voice_band_even_at_full_scale() {
     for cue in [Cue::Start, Cue::Show] {
         let peak = decode(cue.pcm()).map(i16::unsigned_abs).max().unwrap();
-        let loudest = encode(
-            decode(cue.pcm())
-                .map(|sample| i16::try_from(i32::from(sample) * 32_767 / i32::from(peak)).unwrap())
-                .chain(iter::repeat_n(0, 48_000)),
-        );
-        let mut speech = Audibility::new(48_000);
-        speech.expect_cue(&[]);
-        speech.complete(&loudest);
-        assert_eq!(speech.audible, 0, "{cue:?}");
+        for loudest in [327, 3276, 32_767] {
+            for delay in [0, 48, 480, 912] {
+                let recording = encode(
+                    iter::repeat_n(0, delay)
+                        .chain(decode(cue.pcm()).map(|sample| {
+                            i16::try_from(i32::from(sample) * loudest / i32::from(peak)).unwrap()
+                        }))
+                        .chain(iter::repeat_n(0, 48_000)),
+                );
+                let mut speech = Audibility::new(48_000);
+                speech.expect_cue(&[]);
+                speech.complete(&recording);
+                assert_eq!(speech.audible, 0, "{cue:?}, peak {loudest}, delay {delay}");
+            }
+        }
     }
 }
 
@@ -257,11 +265,29 @@ fn speech_after_a_cue_trims_the_quiet_before_it_cue_and_all() {
 fn silence_and_clicks_never_count_as_speech() {
     for recording in [
         audio(&[(SECOND, 0)]),
+        encode(iter::repeat_n([1_i16, -1], 16_000).flatten()),
         audio(&[(SECOND / 20, 3000), (SECOND * 2, 0)]),
     ] {
         let mut speech = Audibility::new(RATE);
         speech.extend(&recording);
         speech.complete(&recording);
         assert_eq!(speech.retained(recording.len()), None);
+    }
+}
+
+#[test]
+fn soft_voice_survives_the_gate_with_and_without_a_cue_notice() {
+    let recording = tone(SECOND / 5, 150.0, 20.0);
+    for cue in [false, true] {
+        let mut speech = Audibility::new(RATE);
+        if cue {
+            speech.expect_cue(&[]);
+        }
+        speech.complete(&recording);
+        assert_eq!(
+            speech.retained(recording.len()),
+            Some(0..recording.len()),
+            "Soft voice was discarded with cue notice {cue}"
+        );
     }
 }

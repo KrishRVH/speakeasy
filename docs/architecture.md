@@ -61,13 +61,17 @@ module unless a test file is named.
   [microphones.rs](../crates/app/src/audio/microphones.rs) lists the input devices Settings offers.
   [audio/tests.rs](../crates/app/src/audio/tests.rs) and
   [stream/tests.rs](../crates/app/src/audio/stream/tests.rs) use synthetic samples; microphones.rs
-  checks that a scan the driver blocks serves the next request.
+  checks that a scan the driver blocks serves the next request. The energy gate retains audio after
+  100 ms of audible windows, with a floor near −70 dBFS for quiet microphones. PCM stays unchanged.
+  Background noise above the floor can also qualify.
 - **Sound cues**: [sounds.rs](../crates/app/src/sounds.rs) plays the cues the owner asks for through
   `Ports::cue` on an owned output thread, which `Ports::hold_cues` keeps open through each session.
   A recording may overhear a cue, so [speech.rs](../crates/app/src/audio/speech.rs) hears only the
-  voice band beneath it, through [lowpass.rs](../crates/app/src/lowpass.rs).
-  [sounds/tests.rs](../crates/app/src/sounds/tests.rs) drives the player against a fake device and,
-  opt-in, plays every cue on the default output;
+  voice band beneath it, through [lowpass.rs](../crates/app/src/lowpass.rs). Strong voice-band
+  energy qualifies directly; quieter voice must also contribute at least one percent of the
+  whole-band energy. Both bands must exceed the quiet floor, so filter ringing alone cannot qualify
+  through that relative test. [sounds/tests.rs](../crates/app/src/sounds/tests.rs) drives the player
+  against a fake device and, opt-in, plays every cue on the default output;
   [speech/tests.rs](../crates/app/src/audio/speech/tests.rs) runs the real cues through the gate at
   full scale; [runtime/tests/cues.rs](../crates/app/src/runtime/tests/cues.rs) checks which moments
   sound and when the output is held.

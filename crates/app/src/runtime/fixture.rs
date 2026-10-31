@@ -195,7 +195,11 @@ impl Listening for FixtureDevice {
         true
     }
 
-    fn expect_cue(&self) {}
+    fn expect_cue(&self) {
+        if let Some(capture) = &self.capture {
+            capture.expect_cue();
+        }
+    }
 }
 
 /// No fixture device records a Show, so none takes a pin.

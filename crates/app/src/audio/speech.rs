@@ -14,7 +14,9 @@ const MINIMUM_AUDIBLE: Duration = Duration::from_millis(100);
 const QUIET_EDGE: Duration = Duration::from_secs(1);
 /// Quiet kept on each side of speech, so soft word edges survive trimming.
 const PADDING: Duration = Duration::from_millis(500);
-const AUDIBLE_RMS: f64 = 0.003;
+const AUDIBLE_RMS: f64 = 0.0003;
+const CUE_VOICE_RMS: f64 = 0.003;
+const MINIMUM_VOICE_FRACTION: f64 = 0.01;
 /// The top of the voice band in hertz. A voice's fundamental and lowest harmonics lie beneath it,
 /// while the cues a recording can hear are high-passed at 400 Hz, leaving it nearly empty.
 const VOICE_BAND: f64 = 300.0;
@@ -97,14 +99,16 @@ impl Audibility {
             whole += sample * sample;
             voice += low * low;
         }
-        let energy = if self.scanned < self.cue_until {
-            voice
+        let samples = (window.len() / SAMPLE_BYTES) as f64;
+        let minimum = AUDIBLE_RMS.powi(2) * samples;
+        let audible = if self.scanned < self.cue_until {
+            voice >= CUE_VOICE_RMS.powi(2) * samples
+                || (whole >= minimum && voice >= minimum && voice >= whole * MINIMUM_VOICE_FRACTION)
         } else {
-            whole
+            whole >= minimum
         };
-        let samples = window.len() / SAMPLE_BYTES;
         let end = self.scanned.saturating_add(window.len());
-        if energy >= AUDIBLE_RMS.powi(2) * samples as f64 {
+        if audible {
             self.speech.get_or_insert(self.scanned..end).end = end;
             self.audible = self.audible.saturating_add(window.len());
         }
