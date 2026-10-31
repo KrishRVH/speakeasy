@@ -100,6 +100,7 @@ impl Ports for ModelPorts {
         &self,
         id: SessionId,
         _: Option<&str>,
+        _: bool,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<ModelDevice> {
         self.log
@@ -228,6 +229,8 @@ impl Capturing for ModelDevice {
 }
 
 impl Listening for ModelDevice {
+    fn whole(&self) {}
+
     fn keep(&self, _: crate::show::AudioLog, _: Duration, _: &str) -> bool {
         true
     }
@@ -373,6 +376,7 @@ enum Step {
     Advance(Duration),
     /// The latest microphone's capture ends, whether or not it was asked to finish.
     Audio(Heard),
+    Piece,
     /// The latest screen's recording ends: complete once asked to finish, failed or with nothing
     /// to record at any time.
     Footage(Seen),
@@ -417,6 +421,7 @@ fn step() -> impl Strategy<Value = Step> {
         4 => inputs.prop_map(Step::Inputs),
         2 => advance.prop_map(Step::Advance),
         2 => heard.prop_map(Step::Audio),
+        1 => Just(Step::Piece),
         2 => seen.prop_map(Step::Footage),
         2 => said.prop_map(Step::Answer),
         1 => setting.prop_map(Step::Configure),
@@ -439,10 +444,11 @@ fn releases() -> impl Strategy<Value = Releases> {
 type Job = (Vec<u8>, Reply);
 
 /// Speech whose WAV names the session that spoke it, so its transcript can.
-fn spoken_by(id: SessionId) -> Sealed {
+fn spoken_by(id: SessionId, pieces: u32) -> Sealed {
     Sealed {
         wav: u64::from(id).to_le_bytes().to_vec(),
         trimmed: Duration::ZERO,
+        partition: (pieces > 0).then_some(ports::Partition { pieces, tail: 8..8 }),
     }
 }
 
@@ -489,6 +495,7 @@ struct Model {
     /// Transcription requests not yet answered, oldest first, with the transcript of their speech.
     replies: VecDeque<(String, Reply)>,
     microphone: Option<(SessionId, Sender<CaptureEvent>)>,
+    pieces: u32,
     screen: Option<(SessionId, Sender<ShowEvent>)>,
     open: HashMap<Source, Open>,
     finished: Vec<Ending>,
@@ -521,6 +528,7 @@ impl Model {
             jobs: requested,
             replies: VecDeque::new(),
             microphone: None,
+            pieces: 0,
             screen: None,
             open: HashMap::new(),
             finished: Vec::new(),
@@ -536,10 +544,16 @@ impl Model {
                 }
             },
             Step::Advance(by) => tokio::time::advance(*by).await,
+            Step::Piece => {
+                if let Some((id, events)) = &self.microphone {
+                    events.try_send(CaptureEvent::Piece(*id, self.pieces, spoken_by(*id, 0)))?;
+                    self.pieces = self.pieces.saturating_add(1);
+                }
+            },
             Step::Audio(heard) => {
                 if let Some((id, events)) = &self.microphone {
                     let outcome = match heard {
-                        Heard::Speech => Ok(Some(spoken_by(*id))),
+                        Heard::Speech => Ok(Some(spoken_by(*id, self.pieces))),
                         Heard::Silence => Ok(None),
                         Heard::Failure => Err(anyhow!("Model microphone failed")),
                     };
@@ -623,7 +637,10 @@ impl Model {
     fn complete(&mut self, source: Source, id: SessionId) -> anyhow::Result<()> {
         match (source, &self.microphone, &self.screen) {
             (Source::Microphone, Some((_, events)), _) => {
-                events.try_send(CaptureEvent::Finished(id, Ok(Some(spoken_by(id)))))?;
+                events.try_send(CaptureEvent::Finished(
+                    id,
+                    Ok(Some(spoken_by(id, self.pieces))),
+                ))?;
             },
             (Source::Screen, _, Some((_, events))) => {
                 events.try_send(ShowEvent::Finished(id, Ok(footage())))?;
@@ -656,6 +673,7 @@ impl Model {
                 Log::MicrophoneOpened(id, events) => {
                     self.opened(Source::Microphone, id)?;
                     self.microphone = Some((id, events));
+                    self.pieces = 0;
                 },
                 Log::ScreenOpened(id, events) => {
                     self.opened(Source::Screen, id)?;
@@ -687,7 +705,10 @@ impl Model {
                     "Screen {id:?} took a pin while not recording a Show"
                 ),
                 Log::Inserted { text, latest } => ensure!(
-                    text == latest.to_string(),
+                    !text.is_empty()
+                        && text
+                            .split_whitespace()
+                            .all(|part| part == latest.to_string()),
                     "Session {text}'s text was inserted after session {latest} began"
                 ),
                 Log::Loaded => {

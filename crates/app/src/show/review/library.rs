@@ -147,6 +147,7 @@ pub(super) struct Frame {
 /// The only private text retained is the user's current summary. Never derive Debug for it.
 pub(super) struct Detail {
     pub frames: Vec<Frame>,
+    pub marks: Vec<(usize, Moment)>,
     pub warnings: Vec<String>,
     pub summary: Result<String, String>,
     pub source_available: bool,
@@ -166,6 +167,7 @@ impl Detail {
             recall::summary(directory).map_err(|error| format!("Cannot read summary.md: {error}"));
         let mut warnings = Vec::new();
         let mut frames = Vec::new();
+        let mut marks = Vec::new();
         match entry.show {
             Err(ReadError::Manifest(Unreadable::Unsupported(version))) => warnings.push(format!(
                 "This Show uses format {version}. Update Speakeasy to view its frames. Its summary may still be readable."
@@ -205,6 +207,11 @@ impl Detail {
                         .map(|problem| format!("{}: {}", problem.name, problem.reason)),
                 );
                 for (index, mark) in manifest.marks().iter().enumerate() {
+                    if let Ok(spans) = manifest.locate(speakeasy_show::locate::Focus::Mark(mark.number))
+                        && let Some(span) = spans.first()
+                    {
+                        marks.push((mark.number, span.start()));
+                    }
                     if !manifest
                         .keyframes()
                         .iter()
@@ -265,6 +272,7 @@ impl Detail {
         }
         Ok(Self {
             frames,
+            marks,
             warnings,
             summary,
             source_available,

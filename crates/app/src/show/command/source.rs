@@ -1,47 +1,87 @@
-//! Explicit source inspection and PNG export. Output contains coverage and paths, never pixels.
+//! Explicit source queries and PNG exports. Reports contain provenance, never private text.
 
-use std::{ffi::OsString, io, path::PathBuf};
+mod query;
+
+use std::{ffi::OsString, io, path::PathBuf, time::Duration};
 
 use anyhow::Context as _;
+use query::Query;
 use serde::Serialize;
-use speakeasy_show::Moment;
+use speakeasy_show::{
+    Manifest, Moment, Rect, Typeface,
+    locate::{self, Evidence},
+};
 
-use crate::show::store::{self, address, source};
+use crate::show::store::{self, address, recall, source};
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Command {
     Help,
-    Frames {
-        directory: PathBuf,
-        json: bool,
-    },
-    Frame {
-        directory: PathBuf,
-        at: Moment,
-        destination: PathBuf,
-        json: bool,
-    },
+    Read(Request),
+}
+
+#[derive(PartialEq, Eq)]
+pub(crate) struct Request {
+    directory: PathBuf,
+    focus: Option<Query>,
+    around: u64,
+    most: usize,
+    output: Output,
+    json: bool,
+}
+
+impl std::fmt::Debug for Request {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.debug_struct("SourceRequest").finish_non_exhaustive()
+    }
+}
+
+#[derive(PartialEq, Eq)]
+enum Output {
+    List,
+    Frame { destination: PathBuf, crop: bool },
+    Sheet { destination: PathBuf, crop: bool },
 }
 
 impl Command {
     pub(super) fn parse(
-        export: bool,
+        single: bool,
         mut args: impl Iterator<Item = OsString>,
     ) -> anyhow::Result<Self> {
-        let (mut directory, mut at, mut destination, mut json) = (None, None, None, false);
+        let (mut directory, mut focus, mut destination, mut json) = (None, None, None, false);
+        let (mut around, mut most, mut occurrence, mut crop) = (None, None, None, false);
         while let Some(arg) = args.next() {
             match arg.to_str() {
                 Some("--help" | "-h") => return Ok(Self::Help),
                 Some("--json") if !json => json = true,
-                Some("--at") if export && at.is_none() => {
-                    at = Some(time(
-                        args.next()
-                            .as_deref()
-                            .and_then(std::ffi::OsStr::to_str)
-                            .context("--at needs a time such as 0:12.500")?,
-                    )?);
+                Some("--at" | "--mark" | "--phrase") if focus.is_none() => {
+                    let value = value(&mut args)?;
+                    focus = Some(match arg.to_str() {
+                        Some("--at") => Query::At(query::time(&value)?),
+                        Some("--mark") => Query::Mark(positive(&value)?),
+                        _ => Query::Phrase(value),
+                    });
                 },
-                Some("--out") if export && destination.is_none() => {
+                Some("--match") if occurrence.is_none() => {
+                    occurrence = Some(positive(&value(&mut args)?)?);
+                },
+                Some("--around") if !single && around.is_none() => {
+                    let parsed = value(&mut args)?
+                        .parse::<u64>()
+                        .context("--around needs milliseconds from 0 to 10000")?;
+                    anyhow::ensure!(
+                        parsed <= 10_000,
+                        "--around accepts at most 10000 milliseconds"
+                    );
+                    around = Some(parsed);
+                },
+                Some("--most") if !single && most.is_none() => {
+                    let parsed = positive(&value(&mut args)?)?;
+                    anyhow::ensure!(parsed <= 12, "--most accepts at most 12 frames");
+                    most = Some(parsed);
+                },
+                Some("--crop") if !crop => crop = true,
+                Some("--out") if destination.is_none() => {
                     destination = Some(PathBuf::from(
                         args.next()
                             .filter(|arg| !arg.is_empty())
@@ -54,100 +94,273 @@ impl Command {
                 {
                     directory = Some(PathBuf::from(arg));
                 },
-                _ => {
-                    anyhow::bail!("Unknown or repeated source argument; see speakeasy show --help")
-                },
+                _ => anyhow::bail!(
+                    "Unknown, repeated, or conflicting source argument; see speakeasy show --help"
+                ),
             }
         }
-        let directory = directory.context("Source inspection needs an exact Show ID or path")?;
-        Ok(if export {
-            Self::Frame {
-                directory,
-                at: at.context("show frame needs --at M:SS.mmm")?,
-                destination: destination.context("show frame needs --out NEW.png")?,
-                json,
-            }
-        } else {
-            Self::Frames { directory, json }
-        })
+        anyhow::ensure!(
+            occurrence.is_none() || matches!(focus, Some(Query::Phrase(_))),
+            "--match requires --phrase"
+        );
+        if let (Some(Query::Phrase(phrase)), Some(occurrence)) = (&focus, occurrence) {
+            focus = Some(Query::Match {
+                phrase: phrase.clone(),
+                occurrence,
+            });
+        }
+        anyhow::ensure!(
+            !crop || matches!(focus, Some(Query::Mark(_))),
+            "--crop requires --mark"
+        );
+        anyhow::ensure!(
+            focus.is_some()
+                || (!single && destination.is_none() && around.is_none() && most.is_none()),
+            "Choose exactly one focus: --at, --mark, or --phrase"
+        );
+        anyhow::ensure!(
+            destination.is_some() || (most.is_none() && !crop),
+            "--most and --crop require --out NEW.png"
+        );
+        let output = match (single, destination) {
+            (true, Some(destination)) => Output::Frame { destination, crop },
+            (false, Some(destination)) => Output::Sheet { destination, crop },
+            (false, None) => Output::List,
+            (true, None) => anyhow::bail!("show frame needs a focus and --out NEW.png"),
+        };
+        Ok(Self::Read(Request {
+            directory: directory.context("Source inspection needs an exact Show ID or path")?,
+            focus,
+            around: around.unwrap_or(1_000),
+            most: most.unwrap_or(6),
+            output,
+            json,
+        }))
     }
 
     pub(super) fn write(self, out: &mut impl io::Write) -> anyhow::Result<()> {
-        let (path, json) = match &self {
-            Self::Help => return super::Command::Help.write(out),
-            Self::Frames { directory, json }
-            | Self::Frame {
-                directory, json, ..
-            } => (directory, *json),
+        let Self::Read(request) = self else {
+            return super::Command::Help.write(out);
         };
-        let directory = address::resolve(path, || store::directory().map_err(io::Error::other))?;
+        request.write(out)
+    }
+}
+
+fn value(args: &mut impl Iterator<Item = OsString>) -> anyhow::Result<String> {
+    args.next()
+        .and_then(|arg| arg.into_string().ok())
+        .filter(|arg| !arg.is_empty())
+        .context("The source option needs a nonempty UTF-8 value")
+}
+
+fn positive(value: &str) -> anyhow::Result<usize> {
+    value
+        .parse()
+        .ok()
+        .filter(|number| *number > 0)
+        .context("Use a positive whole number")
+}
+
+impl Request {
+    fn write(self, out: &mut impl io::Write) -> anyhow::Result<()> {
+        let directory = address::resolve(&self.directory, || {
+            store::directory().map_err(io::Error::other)
+        })?;
         anyhow::ensure!(
             source::size(&directory)?.is_some(),
             "This Show has no retained source frames. Its selected keyframes may still be available through show inspect."
         );
         let index = source::inspect(&directory)?;
-        match self {
-            Self::Help => {},
-            Self::Frames { .. } => {
-                let coverage = Coverage {
-                    path: directory.join(source::FILE),
-                    duration_ms: index.duration().as_millis(),
-                    arrivals: index.arrivals(),
-                    retained: index.moments().len(),
-                    stride: index.stride(),
-                    longest_gap_ms: source::longest_gap(&index),
-                    bytes: index.bytes(),
-                    times_ms: index.moments().iter().map(|at| at.as_millis()).collect(),
-                };
-                if json {
-                    serde_json::to_writer_pretty(&mut *out, &coverage)?;
-                    writeln!(out)?;
+        let Some(query) = &self.focus else {
+            return coverage(&directory, &index, self.json, out);
+        };
+        let manifest = recall::Entry::open(&directory)?.show?.manifest;
+        anyhow::ensure!(
+            index.duration() == manifest.recording().duration,
+            "Source and Show timelines differ; inspect the bundle before exporting"
+        );
+        let found = query.resolve(&manifest)?;
+        let mut report = Report::new(&manifest, &found);
+        let Some(span) = found.selected else {
+            anyhow::ensure!(
+                matches!(self.output, Output::List),
+                "The phrase has several matches; list them with show frames, then choose --match N"
+            );
+            return report.write(self.json, out);
+        };
+        let window = locate::window(span, Duration::from_millis(self.around), index.duration());
+        let crop_window = match self.output {
+            Output::Frame { crop: true, .. } => Some(span),
+            Output::Sheet { crop: true, .. } => Some(window),
+            _ => None,
+        };
+        anyhow::ensure!(
+            crop_window.is_none_or(|window| index.stable_geometry(window)),
+            "The captured surface resized in this window; export uncropped frames instead"
+        );
+        let most = match self.output {
+            Output::Sheet { .. } => self.most,
+            Output::List | Output::Frame { .. } => index.moments().len(),
+        };
+        let samples = locate::pick(index.moments(), window, span.start(), most);
+        report.window_ms = Some([window.start().as_millis(), window.end().as_millis()]);
+        report.carried_in_ms = samples.carried_in.map(Moment::as_millis);
+        report.longest_gap_ms =
+            Some(u64::try_from(samples.longest_gap.as_millis()).unwrap_or(u64::MAX));
+        report.times_ms = samples.times.iter().map(|at| at.as_millis()).collect();
+        report.keyframes = manifest
+            .keyframes()
+            .iter()
+            .filter(|frame| window.contains(frame.at))
+            .map(|frame| frame.index)
+            .collect();
+        report.marks = manifest
+            .marks()
+            .iter()
+            .filter(|mark| mark.span.start() <= window.end() && mark.span.end() >= window.start())
+            .map(|mark| mark.number)
+            .collect();
+        match self.output {
+            Output::List => {},
+            Output::Frame { destination, crop } => {
+                let served = source::frame(&directory, &index, span.start())?;
+                let (image, crop_px) =
+                    locate::crop_image(served.image, crop_bounds(&manifest, query, crop)?)?;
+                report.requested_ms = Some(span.start().as_millis());
+                report.sampled_ms = Some(served.at.as_millis());
+                report.cells.push(locate::Cell {
+                    sampled_ms: served.at.as_millis(),
+                    crop_px,
+                });
+                report.path = Some(export(destination, &image)?);
+            },
+            Output::Sheet { destination, crop } => {
+                let evidence = Evidence::compose(
+                    &samples.times,
+                    crop_bounds(&manifest, query, crop)?,
+                    |at| source::frame(&directory, &index, at),
+                    &Typeface::parse(crate::BRAND_FONT_FILE)?,
+                )?;
+                report.cells = evidence.cells;
+                report.path = Some(export(destination, &evidence.image)?);
+            },
+        }
+        report.write(self.json, out)
+    }
+}
+
+fn crop_bounds(manifest: &Manifest, query: &Query, crop: bool) -> anyhow::Result<Option<Rect>> {
+    if !crop {
+        return Ok(None);
+    }
+    let Query::Mark(number) = query else {
+        anyhow::bail!("--crop requires --mark");
+    };
+    manifest
+        .marks()
+        .iter()
+        .find(|mark| mark.number == *number)
+        .map(|mark| Some(mark.bounds))
+        .context("The selected mark is unavailable")
+}
+
+fn export(destination: PathBuf, image: &speakeasy_show::Image) -> anyhow::Result<PathBuf> {
+    let destination = std::path::absolute(destination)?;
+    source::export(&destination, &image.encode_png()?)
+        .context("Cannot create the export; choose a new writable PNG path")?;
+    Ok(destination)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Report<'a> {
+    focus: &'a query::Found,
+    window_ms: Option<[u64; 2]>,
+    carried_in_ms: Option<u64>,
+    times_ms: Vec<u64>,
+    longest_gap_ms: Option<u64>,
+    keyframes: Vec<usize>,
+    marks: Vec<usize>,
+    narration: &'static str,
+    cells: Vec<locate::Cell>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requested_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sampled_ms: Option<u64>,
+}
+
+impl<'a> Report<'a> {
+    fn new(manifest: &Manifest, focus: &'a query::Found) -> Self {
+        let narration = match &manifest.recording().narration {
+            speakeasy_show::Narration::Words(words) if words.is_empty() => "absent",
+            speakeasy_show::Narration::Words(_) => {
+                if manifest.recording().narration_lost.is_some() {
+                    "incomplete"
                 } else {
-                    writeln!(
-                        out,
-                        "{} retained frames from {} arrivals · stride {} · longest gap {} ms · {} bytes",
-                        coverage.retained,
-                        coverage.arrivals,
-                        coverage.stride,
-                        coverage.longest_gap_ms,
-                        coverage.bytes
-                    )?;
-                    for at in index.moments() {
-                        writeln!(out, "{at} ({} ms)", at.as_millis())?;
-                    }
+                    "timed"
                 }
             },
-            Self::Frame {
-                at, destination, ..
-            } => {
-                let served = source::frame(&directory, &index, at)?;
-                let destination = std::path::absolute(destination)?;
-                source::export(&destination, &served.image.encode_png()?).with_context(|| {
-                    format!(
-                        "Cannot create {}; choose a new writable PNG path",
-                        destination.display()
-                    )
-                })?;
-                if json {
-                    serde_json::to_writer_pretty(
-                        &mut *out,
-                        &Export {
-                            path: destination,
-                            requested_ms: at.as_millis(),
-                            sampled_ms: served.at.as_millis(),
-                        },
-                    )?;
-                    writeln!(out)?;
-                } else {
-                    writeln!(
+            speakeasy_show::Narration::Text(_) => "untimed",
+        };
+        Self {
+            focus,
+            window_ms: None,
+            carried_in_ms: None,
+            times_ms: Vec::new(),
+            longest_gap_ms: None,
+            keyframes: Vec::new(),
+            marks: Vec::new(),
+            narration,
+            cells: Vec::new(),
+            path: None,
+            requested_ms: None,
+            sampled_ms: None,
+        }
+    }
+
+    fn write(&self, json: bool, out: &mut impl io::Write) -> anyhow::Result<()> {
+        if json {
+            serde_json::to_writer_pretty(&mut *out, self)?;
+            writeln!(out)?;
+            return Ok(());
+        }
+        for (index, span) in self.focus.matches.iter().enumerate() {
+            writeln!(
+                out,
+                "Match {} · {}–{} ms",
+                index.saturating_add(1),
+                span.start().as_millis(),
+                span.end().as_millis()
+            )?;
+        }
+        if self.focus.selected.is_none() {
+            writeln!(out, "Choose --match N to inspect one location.")?;
+        }
+        if let Some([start, end]) = self.window_ms {
+            writeln!(
+                out,
+                "Window {start}–{end} ms · longest unsampled gap {} ms",
+                self.longest_gap_ms.unwrap_or(0)
+            )?;
+            for at in &self.times_ms {
+                writeln!(out, "Sampled {at} ms")?;
+            }
+        }
+        if let Some(path) = &self.path {
+            writeln!(out, "{}", path.display())?;
+            for cell in &self.cells {
+                write!(out, "Sampled {} ms", cell.sampled_ms)?;
+                if let Some(crop) = cell.crop_px {
+                    write!(
                         out,
-                        "{} · requested {} ms · sampled {} ms",
-                        destination.display(),
-                        at.as_millis(),
-                        served.at.as_millis()
+                        " · crop {} × {} px at {}, {}",
+                        crop.width, crop.height, crop.left, crop.top
                     )?;
                 }
-            },
+                writeln!(out)?;
+            }
         }
         Ok(())
     }
@@ -166,49 +379,42 @@ struct Coverage {
     times_ms: Vec<u64>,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Export {
-    path: PathBuf,
-    requested_ms: u64,
-    sampled_ms: u64,
-}
-
-fn time(value: &str) -> anyhow::Result<Moment> {
-    let number = |part: &str| -> anyhow::Result<u64> {
-        anyhow::ensure!(
-            !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()),
-            "Time must be seconds or M:SS, with up to three decimal places"
-        );
-        Ok(part.parse()?)
-    };
-    let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
-    anyhow::ensure!(
-        fraction.len() <= 3 && (!value.contains('.') || !fraction.is_empty()),
-        "Time accepts one to three decimal places"
-    );
-    let seconds = if let Some((minutes, seconds)) = whole.split_once(':') {
-        let seconds = number(seconds)?;
-        anyhow::ensure!(seconds < 60, "Seconds after ':' must be less than 60");
-        number(minutes)?
-            .checked_mul(60)
-            .and_then(|minutes| minutes.checked_add(seconds))
+fn coverage(
+    directory: &std::path::Path,
+    index: &speakeasy_show::Source,
+    json: bool,
+    out: &mut impl io::Write,
+) -> anyhow::Result<()> {
+    if json {
+        serde_json::to_writer_pretty(
+            &mut *out,
+            &Coverage {
+                path: directory.join(source::FILE),
+                duration_ms: index.duration().as_millis(),
+                arrivals: index.arrivals(),
+                retained: index.moments().len(),
+                stride: index.stride(),
+                longest_gap_ms: source::longest_gap(index),
+                bytes: index.bytes(),
+                times_ms: index.moments().iter().map(|at| at.as_millis()).collect(),
+            },
+        )?;
+        writeln!(out)?;
     } else {
-        Some(number(whole)?)
+        writeln!(
+            out,
+            "{} retained frames from {} arrivals · stride {} · longest gap {} ms · {} bytes",
+            index.moments().len(),
+            index.arrivals(),
+            index.stride(),
+            source::longest_gap(index),
+            index.bytes()
+        )?;
+        for at in index.moments() {
+            writeln!(out, "{at} ({} ms)", at.as_millis())?;
+        }
     }
-    .context("Time is too large")?;
-    let millis = if fraction.is_empty() {
-        0
-    } else {
-        number(fraction)?
-            .saturating_mul(10_u64.pow(3_u32.saturating_sub(u32::try_from(fraction.len())?)))
-    };
-    Ok(Moment::from_millis(
-        seconds
-            .checked_mul(1_000)
-            .and_then(|seconds| seconds.checked_add(millis))
-            .context("Time is too large")?,
-    ))
+    Ok(())
 }
 
 #[cfg(test)]

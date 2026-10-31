@@ -52,6 +52,9 @@ pub(crate) enum CaptureEvent {
     CheckpointLost(SessionId),
     /// The latest microphone level, for the pill's meter.
     Level(SessionId, f32),
+    /// An abutting piece of ordinary dictation, numbered from zero. The final WAV still keeps all
+    /// audio, so a missing or failed piece can fall back to whole-recording recognition.
+    Piece(SessionId, u32, Sealed),
     /// Capture ended; `None` when the recording was too short or held too little speech to seal.
     Finished(SessionId, anyhow::Result<Option<Sealed>>),
 }
@@ -62,18 +65,27 @@ impl CaptureEvent {
             Self::Ready(session)
             | Self::CheckpointLost(session)
             | Self::Level(session, _)
+            | Self::Piece(session, _, _)
             | Self::Finished(session, _) => *session,
         }
     }
 }
 
-/// Speech sealed for transcription: a WAV, and how much leading quiet was trimmed before it, which
-/// places times the recognizer reports back on the recording's clock. The WAV is zeroed on drop
-/// wherever the audio is discarded; transcription sends copies.
+/// Speech prepared for recognition. Leading quiet trimmed from the whole recording places the
+/// recognizer's times on its clock. Pieces move into the worker; the whole recording stays available
+/// for fallback. Dropping this value zeroes any WAV it still owns.
 #[derive(Default)]
 pub(crate) struct Sealed {
     pub wav: Vec<u8>,
     pub trimmed: Duration,
+    pub partition: Option<Partition>,
+}
+
+/// Pieces already sent by capture, followed by the tail within the final WAV's PCM payload.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Partition {
+    pub pieces: u32,
+    pub tail: std::ops::Range<usize>,
 }
 
 impl Drop for Sealed {
@@ -158,6 +170,8 @@ pub(crate) trait Capturing: Send + 'static {
 
 /// The microphone, which can hear Speakeasy's own cues.
 pub(crate) trait Listening: Capturing {
+    /// Disables further pieces after Show promotion; its full audio stays available for timing.
+    fn whole(&self);
     /// A cue is about to sound: until it has passed, only a voice beneath it counts as speech, so
     /// a recording of nothing but the cue stays silent.
     fn expect_cue(&self);
@@ -211,6 +225,7 @@ pub(crate) trait Ports: Send + 'static {
         &self,
         id: SessionId,
         microphone: Option<&str>,
+        segmenting: bool,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<Self::Microphone>;
 

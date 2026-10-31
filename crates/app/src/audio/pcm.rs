@@ -98,7 +98,24 @@ impl Pcm16 {
         self.retain_audio(range);
         self.release_excess_capacity();
         let wav = self.into_wav(rate)?;
-        Ok(Some(Sealed { wav, trimmed }))
+        Ok(Some(Sealed {
+            wav,
+            trimmed,
+            partition: None,
+        }))
+    }
+
+    /// Encodes one offered piece; the original buffer remains available for Shows and fallback.
+    pub(super) fn excerpt(&self, range: Range<usize>, rate: u32) -> anyhow::Result<Sealed> {
+        let audio = self
+            .audio()
+            .get(range.clone())
+            .ok_or_else(|| anyhow::anyhow!(INCOMPLETE_HEADER))?;
+        Ok(Sealed {
+            wav: encode(audio, rate)?,
+            trimmed: duration_of(range.start, rate),
+            partition: None,
+        })
     }
 
     /// Drops the audio and keeps the header and allocation, so a profile can reuse the buffer.
@@ -143,6 +160,24 @@ impl Drop for Pcm16 {
     fn drop(&mut self) {
         self.bytes.zeroize();
     }
+}
+
+fn encode(audio: &[u8], rate: u32) -> anyhow::Result<Vec<u8>> {
+    let header = wav_header(audio.len(), rate).ok_or_else(|| anyhow::anyhow!(INCOMPLETE_HEADER))?;
+    let mut wav = Vec::with_capacity(WAV_HEADER_BYTES.saturating_add(audio.len()));
+    wav.extend_from_slice(&header);
+    wav.extend_from_slice(audio);
+    Ok(wav)
+}
+
+/// Copies a tail of a canonical capture WAV, with a header describing only that tail.
+pub(crate) fn wav_tail(wav: &[u8], range: Range<usize>) -> anyhow::Result<Vec<u8>> {
+    let audio = wav
+        .get(WAV_HEADER_BYTES..)
+        .filter(|audio| range.end == audio.len())
+        .and_then(|audio| audio.get(range))
+        .ok_or_else(|| anyhow::anyhow!(INCOMPLETE_HEADER))?;
+    encode(audio, wav_sample_rate(wav)?)
 }
 
 /// The canonical header for `data_bytes` of mono PCM16, if they can be described.

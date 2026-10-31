@@ -35,10 +35,22 @@ Speech recognition can mishear names; prefer the spelling visible on screen. A f
 timestamp, not every moment until the next frame. For a missing moment, run
 `speakeasy show frames "BUNDLE_PATH" --json` to inspect available source times and coverage. Then
 use `speakeasy show frame "BUNDLE_PATH" --at 0:12.500 --out NEW.png --json` to export a relevant
-image to a new local file. Export requires an explicit time and never overwrites; cite the actual
-`sampleMs`, which can precede `requestedMs`. Source images have no ink or marks. Sampling can leave
-gaps, and older Shows may have no source frames. Neither nearby images nor a successful structural
-inspection prove the missing moment. No command replays video or retries lost narration.
+image to a new local file. Cite the actual `sampledMs`, which can precede `requestedMs`. For a
+spoken phrase, run `speakeasy show frames "BUNDLE_PATH" --phrase "save button" --json`. It searches
+timed recorded narration, not summary edits. Several matches require an explicit `--match N`; choose
+from the returned spans rather than assuming the first. Untimed narration requires a mark or time
+instead. Phrase arguments may be visible in local process listings.
+
+For context around a mark, use
+`speakeasy show frames "BUNDLE_PATH" --mark 2 --crop --out NEW.png --json`. The sheet shows at most
+six samples by default (`--most` accepts 1–12), widened by `--around` milliseconds on each side
+(default 1000, maximum 10000). Omit `--crop` for the full surface; `frame` exports one source image.
+Inspect `windowMs`, `carriedInMs`, `longestGapMs`, and each cell's `sampledMs` and `cropPx` before
+describing the sequence. A carried-in sample can be much older than the requested window. Crops
+refuse a surface resize. Exports require a new local path and preserve the saved bundle. Source
+images have no ink or marks. Sampling can leave gaps, and older Shows may have no source frames.
+Neither nearby images nor a successful structural inspection prove the missing moment. No command
+replays video or retries lost narration.
 
 `speakeasy show list --json` lists saved and interrupted Shows without narration. Use it to find a
 recording only when the user asks; select an explicit ID or path rather than guessing from recency.

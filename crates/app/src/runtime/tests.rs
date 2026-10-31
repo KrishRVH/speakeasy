@@ -77,6 +77,8 @@ struct FakePorts {
     delayed_finish: bool,
     load_results: Option<Receiver<anyhow::Result<()>>>,
     recovery: Option<Receiver<anyhow::Result<()>>>,
+    recorded_requests: Option<Sender<Vec<u8>>>,
+    segmentation: Option<Sender<bool>>,
     retirement: Option<Gate<()>>,
     stop: Option<Gate<()>>,
     insertion: Option<Gate<InsertPermit>>,
@@ -133,6 +135,8 @@ impl FakePorts {
             delayed_finish: false,
             load_results: None,
             recovery: None,
+            recorded_requests: None,
+            segmentation: None,
             retirement: None,
             stop: None,
             insertion: None,
@@ -203,10 +207,14 @@ impl Ports for FakePorts {
         &self,
         id: SessionId,
         _: Option<&str>,
+        segmenting: bool,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<FakeMicrophone> {
         if let Some(error) = self.microphone_error {
             bail!(error);
+        }
+        if let Some(segmentation) = &self.segmentation {
+            segmentation.try_send(segmenting)?;
         }
         self.captures.try_send((id, events.clone()))?;
         events.try_send(CaptureEvent::Ready(id))?;
@@ -330,6 +338,7 @@ impl Ports for FakePorts {
             jobs: self.jobs.clone(),
             stop: self.stop.clone(),
             recovery: self.recovery.clone(),
+            recorded_requests: self.recorded_requests.clone(),
         };
         let loads = self.loads.clone();
         async move {
@@ -410,6 +419,8 @@ impl Capturing for FakeMicrophone {
 }
 
 impl Listening for FakeMicrophone {
+    fn whole(&self) {}
+
     fn keep(&self, _: crate::show::AudioLog, _: Duration, _: &str) -> bool {
         true
     }
@@ -461,6 +472,7 @@ fn sealed() -> Sealed {
     Sealed {
         wav: vec![1, 2],
         trimmed: Duration::ZERO,
+        partition: None,
     }
 }
 
@@ -497,10 +509,14 @@ struct FakeSpeech {
     jobs: Sender<TranscriptionJob>,
     stop: Option<Gate<()>>,
     recovery: Option<Receiver<anyhow::Result<()>>>,
+    recorded_requests: Option<Sender<Vec<u8>>>,
 }
 
 impl Speech for FakeSpeech {
-    async fn transcribe(&mut self, _: Vec<u8>, language: &str) -> anyhow::Result<String> {
+    async fn transcribe(&mut self, wav: Vec<u8>, language: &str) -> anyhow::Result<String> {
+        if let Some(requests) = &self.recorded_requests {
+            requests.try_send(wav)?;
+        }
         let (reply, result) = oneshot::channel();
         self.jobs.send((language.to_owned(), reply)).await?;
         result.await?
@@ -824,4 +840,5 @@ mod last_show;
 mod model;
 mod shows;
 
+mod recognition;
 mod recovery;

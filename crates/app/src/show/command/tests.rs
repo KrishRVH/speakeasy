@@ -209,10 +209,17 @@ fn the_embedded_skill_is_emitted_verbatim_and_its_commands_are_accepted() -> any
     let mut commands = 0;
     for span in skill.split('`').skip(1).step_by(2) {
         if let Some(args) = span.strip_prefix("speakeasy show ") {
-            // The skill's one quoted placeholder is a single, space-free bundle argument.
+            // Examples use double quotes for paths and phrases, without shell expansions.
             let args: Vec<_> = args
-                .split_whitespace()
-                .map(|arg| arg.trim_matches('"'))
+                .split('"')
+                .enumerate()
+                .flat_map(|(index, part)| {
+                    if index.is_multiple_of(2) {
+                        part.split_whitespace().collect::<Vec<_>>()
+                    } else {
+                        vec![part]
+                    }
+                })
                 .collect();
             parse(&args)?;
             commands += 1;

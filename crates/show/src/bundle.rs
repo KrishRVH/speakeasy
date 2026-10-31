@@ -114,7 +114,15 @@ pub fn compose<E: From<Error> + Send>(
         .collect::<Result<Vec<(Image, Corner)>, E>>()?;
         sheets.push(File {
             name: sheet_file(number),
-            contents: sheet::render(page, &annotated, typeface)?.encode_png()?,
+            contents: sheet::render(
+                &page
+                    .iter()
+                    .map(|frame| (frame.index, frame.at.to_string()))
+                    .collect::<Vec<_>>(),
+                &annotated,
+                typeface,
+            )?
+            .encode_png()?,
         });
         let badged: Vec<(&Keyframe, Image)> = page
             .iter()

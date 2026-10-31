@@ -5,10 +5,14 @@
 
 mod checkpoint;
 mod control;
+mod cuts;
 mod microphones;
 mod pcm;
 mod speech;
 mod stream;
+
+#[cfg(test)]
+pub(crate) mod fixture;
 
 use std::{
     panic::{self, AssertUnwindSafe},
@@ -27,11 +31,12 @@ use speakeasy_platform::OwnedThread;
 pub(crate) use self::{
     checkpoint::seal_kept,
     microphones::{InputDevice, MicrophoneScan},
-    pcm::{silent_wav, wav_sample_rate},
+    pcm::{silent_wav, wav_sample_rate, wav_tail},
     stream::MAX_SAMPLE_RATE,
 };
 use self::{
     control::{Control, Mode},
+    cuts::Cuts,
     pcm::{Pcm16, samples_in},
     speech::Audibility,
     stream::{CallbackState, build_stream, capture_failure, microphone_error, rate_and_channels},
@@ -55,6 +60,7 @@ pub(crate) struct Capture {
     /// Each message says a cue is starting, so the speech gate listens beneath it.
     cues: Sender<()>,
     keep: Sender<checkpoint::Keep>,
+    whole: Sender<()>,
     /// Exits once it has reported `Finished` and torn down its stream.
     thread: OwnedThread,
 }
@@ -63,12 +69,34 @@ impl Capture {
     pub(crate) fn start(
         id: SessionId,
         microphone: Option<&str>,
+        segmenting: bool,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<Self> {
         let microphone = microphone.map(str::to_owned);
-        Self::spawn(id, events, move |events, control, cues, keep| {
-            record(id, microphone.as_deref(), events, control, cues, keep)
-        })
+        Self::spawn(
+            id,
+            events,
+            move |events, control, cues, keep, whole| match Recorder::open(
+                microphone.as_deref(),
+                segmenting,
+                events,
+                control,
+            ) {
+                Ok(recorder) => {
+                    let Captured { outcome, device } =
+                        recorder.record(id, events, control, cues, keep, whole);
+                    Ok(Captured {
+                        outcome,
+                        device: Some(device),
+                    })
+                },
+                Err(Startup::Stopped) => Ok(Captured {
+                    outcome: Ok(None),
+                    device: None,
+                }),
+                Err(Startup::Failed(error)) => Err(error),
+            },
+        )
     }
 
     fn spawn<D: 'static>(
@@ -79,6 +107,7 @@ impl Capture {
             &Arc<Control>,
             &Receiver<()>,
             &Receiver<checkpoint::Keep>,
+            &Receiver<()>,
         ) -> anyhow::Result<Captured<D>>
         + Send
         + 'static,
@@ -86,12 +115,13 @@ impl Capture {
         let control = Arc::new(Control::default());
         let (cues, heard) = async_channel::unbounded();
         let (keep, kept) = async_channel::bounded(1);
+        let (whole, entire) = async_channel::bounded(1);
         let thread = OwnedThread::spawn("audio-capture", {
             let control = Arc::clone(&control);
             move || {
                 // A panicked capture's state is discarded; only its event lane is used afterwards.
                 let ran = panic::catch_unwind(AssertUnwindSafe(|| {
-                    work(&events, &control, &heard, &kept)
+                    work(&events, &control, &heard, &kept, &entire)
                 }));
                 kept.close();
                 drop(kept);
@@ -118,6 +148,7 @@ impl Capture {
             signal,
             cues,
             keep,
+            whole,
             thread,
         })
     }
@@ -136,6 +167,15 @@ impl Capturing for Capture {
 }
 
 impl Listening for Capture {
+    fn whole(&self) {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "One stop request is enough; a full or closed lane already prevents further work"
+        )]
+        let _ = self.whole.try_send(());
+        self.signal.thread.unpark();
+    }
+
     fn keep(&self, log: crate::show::AudioLog, start: Duration, language: &str) -> bool {
         let accepted = self
             .keep
@@ -206,19 +246,23 @@ struct LiveStream {
 }
 
 /// A playing stream and the audio it has delivered so far. Unsealed PCM is erased on drop.
-struct Recorder {
+struct Recorder<D = LiveStream> {
     pcm: Pcm16,
     speech: Audibility,
-    device: LiveStream,
+    device: D,
     ring: Consumer<f32>,
     errors: Receiver<cpal::Error>,
     started: Instant,
     rate: u32,
+    cuts: Option<Cuts>,
+    #[cfg(test)]
+    profile: Option<fixture::Profile>,
 }
 
 impl Recorder {
     fn open(
         microphone: Option<&str>,
+        segmenting: bool,
         events: &Sender<CaptureEvent>,
         control: &Arc<Control>,
     ) -> Result<Self, Startup> {
@@ -268,9 +312,14 @@ impl Recorder {
             errors: stream_errors,
             started,
             rate,
+            cuts: segmenting.then(|| Cuts::new(rate)),
+            #[cfg(test)]
+            profile: None,
         })
     }
+}
 
+impl<D> Recorder<D> {
     fn record(
         mut self,
         id: SessionId,
@@ -278,9 +327,10 @@ impl Recorder {
         control: &Control,
         cues: &Receiver<()>,
         keep: &Receiver<checkpoint::Keep>,
-    ) -> Captured<LiveStream> {
+        whole: &Receiver<()>,
+    ) -> Captured<D> {
         let mut keeping = checkpoint::Keeping::new(keep);
-        let drained = self.drain(id, events, control, cues, &mut keeping);
+        let drained = self.drain(id, events, control, cues, &mut keeping, whole);
         if !abandoned(control, events) && !keeping.finish(self.pcm.audio(), self.rate) {
             keeping.warn(id, events);
         }
@@ -289,10 +339,11 @@ impl Recorder {
         control.quiesce();
         let Self {
             pcm,
-            speech,
+            mut speech,
             device,
             errors,
             rate,
+            cuts,
             ..
         } = self;
         let outcome = drained.and_then(|()| {
@@ -301,7 +352,13 @@ impl Recorder {
             }
             // A callback may have failed between the last poll and quiescence.
             capture_failure(control, &errors)?;
-            pcm.seal(speech, rate)
+            speech.complete(pcm.audio());
+            let partition = cuts.and_then(|cuts| cuts.finish(&speech, pcm.audio().len()));
+            let mut sealed = pcm.seal(speech, rate)?;
+            if let Some(sealed) = &mut sealed {
+                sealed.partition = partition;
+            }
+            Ok(sealed)
         });
         Captured { outcome, device }
     }
@@ -315,12 +372,20 @@ impl Recorder {
         control: &Control,
         cues: &Receiver<()>,
         keeping: &mut checkpoint::Keeping<'_>,
+        whole: &Receiver<()>,
     ) -> anyhow::Result<()> {
         let mut meter = LevelMeter::new();
         let mut ready = false;
         loop {
+            #[cfg(test)]
+            if let Some(profile) = &mut self.profile {
+                profile.polled();
+            }
             if abandoned(control, events) {
                 return Ok(());
+            }
+            if whole.try_recv().is_ok() {
+                self.cuts = None;
             }
             capture_failure(control, &self.errors)?;
             let stopping = control.mode() == Mode::Finishing
@@ -342,6 +407,10 @@ impl Recorder {
                 keeping.warn(id, events);
             }
             if let Some(level) = meter.take_level() {
+                #[cfg(test)]
+                if let Some(profile) = &mut self.profile {
+                    profile.metered();
+                }
                 #[expect(
                     clippy::let_underscore_must_use,
                     reason = "Meter updates are expendable presentation; a full or closed event lane must not interrupt audio capture"
@@ -350,6 +419,22 @@ impl Recorder {
             }
             if stopping {
                 return Ok(());
+            }
+            if !events.is_full()
+                && let Some(cuts) = &mut self.cuts
+                && let Some(range) = cuts.offer(&self.speech, self.pcm.audio().len())
+            {
+                let end = range.end;
+                let Ok(piece) = self.pcm.excerpt(range, self.rate) else {
+                    self.cuts = None;
+                    continue;
+                };
+                if events
+                    .try_send(CaptureEvent::Piece(id, cuts.number(), piece))
+                    .is_ok()
+                {
+                    cuts.sent(end);
+                }
             }
             // Finish and cancel unpark this thread at once, and an unpark that lands before the
             // wait is not lost; the timeout only paces draining of the ring.
@@ -390,30 +475,6 @@ impl LevelMeter {
         let rms = (self.energy / f64::from(self.samples.max(1))).sqrt() as f32;
         *self = Self::new();
         Some(speech_meter_level(rms))
-    }
-}
-
-fn record(
-    id: SessionId,
-    microphone: Option<&str>,
-    events: &Sender<CaptureEvent>,
-    control: &Arc<Control>,
-    cues: &Receiver<()>,
-    keep: &Receiver<checkpoint::Keep>,
-) -> anyhow::Result<Captured<Option<LiveStream>>> {
-    match Recorder::open(microphone, events, control) {
-        Ok(recorder) => {
-            let Captured { outcome, device } = recorder.record(id, events, control, cues, keep);
-            Ok(Captured {
-                outcome,
-                device: Some(device),
-            })
-        },
-        Err(Startup::Stopped) => Ok(Captured {
-            outcome: Ok(None),
-            device: None,
-        }),
-        Err(Startup::Failed(error)) => Err(error),
     }
 }
 

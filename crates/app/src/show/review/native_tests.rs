@@ -168,13 +168,30 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         assert!(detail.is_some_and(|detail| detail.coverage.contains("28500 ms")));
     })?;
     window.update(cx, |view, window, cx| {
+        let detail = view.detail.as_ref().context("The preview has loaded")?;
+        let (number, at) = *detail
+            .marks
+            .first()
+            .context("The preview contains a mark")?;
+        let expected = detail.frame_at(at);
+        view.act(Action::Mark(number), window, cx);
+        assert_eq!(
+            view.library.selected.as_ref().map(|key| key.frame),
+            Some(expected)
+        );
+        assert!(
+            view.notice
+                .as_ref()
+                .is_some_and(|notice| notice.contains("retained sample"))
+        );
         view.act(Action::Frame(2), window, cx);
         view.act(Action::Jump(true), window, cx);
         assert_eq!(view.library.selected.as_ref().map(|key| key.frame), Some(3));
         view.act(Action::Jump(false), window, cx);
         assert_eq!(view.library.selected.as_ref().map(|key| key.frame), Some(2));
         view.act(Action::Mode(Mode::Keyframes), window, cx);
-    })?;
+        anyhow::Ok(())
+    })??;
     wait_for(
         window,
         |view| view.opening.is_none() && matches!(view.image, ImageState::Ready(_)),

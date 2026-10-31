@@ -8,7 +8,7 @@ use super::{
     record::{Cursor, emit_record, payload, require},
     tiles,
 };
-use crate::{Image, Moment};
+use crate::{Image, Moment, Span};
 
 const MAGIC: &[u8; 8] = b"SPKSRC01";
 const FOOTER: &[u8; 8] = b"SPKIDX01";
@@ -230,6 +230,33 @@ impl Source {
     #[must_use]
     pub const fn bytes(&self) -> u64 {
         self.bytes
+    }
+
+    /// Whether every retained sample in `window`, including its carried-in frame, has the same
+    /// dimensions. Reads only the index, so thinning an export cannot hide a surface resize.
+    #[must_use]
+    pub fn stable_geometry(&self, window: Span) -> bool {
+        let first = self
+            .moments
+            .partition_point(|at| *at <= window.start())
+            .saturating_sub(1);
+        let last = self
+            .moments
+            .partition_point(|at| *at <= window.end())
+            .saturating_sub(1);
+        let segment = self
+            .segments
+            .partition_point(|segment| segment.first <= first)
+            .saturating_sub(1);
+        let mut size = None;
+        self.segments
+            .iter()
+            .skip(segment)
+            .take_while(|segment| segment.first <= last)
+            .all(|segment| {
+                size.replace((segment.width, segment.height))
+                    .is_none_or(|previous| previous == (segment.width, segment.height))
+            })
     }
 
     /// Reconstructs the latest held frame at or before `at`, or the first if `at` precedes it.

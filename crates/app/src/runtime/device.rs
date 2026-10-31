@@ -68,6 +68,12 @@ impl<R: Capturing> Device<R> {
 }
 
 impl<R: Listening> Device<R> {
+    pub(super) fn whole(&self) {
+        if let Self::Open(recording) = self {
+            recording.whole();
+        }
+    }
+
     pub(super) fn keep(
         &self,
         log: crate::show::AudioLog,

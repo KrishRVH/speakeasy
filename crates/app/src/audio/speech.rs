@@ -39,6 +39,14 @@ pub(super) struct Audibility {
 }
 
 impl Audibility {
+    /// A stable kept range after a full quiet edge, leaving padding on both sides of a cut.
+    pub(super) fn paused(&self, length: usize) -> Option<Range<usize>> {
+        let speech = self.speech.as_ref()?;
+        (length.saturating_sub(speech.end) >= self.quiet_edge)
+            .then(|| self.retained(length))
+            .flatten()
+    }
+
     /// A classifier for audio sampled at `rate` hertz.
     pub(super) fn new(rate: u32) -> Self {
         Self {

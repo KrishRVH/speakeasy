@@ -380,6 +380,31 @@ impl Review {
             })
             .child(self.canvas(palette))
             .child(self.navigation(key.frame, palette, cx))
+            .when(self.mode == Mode::Source, |body| {
+                body.child(
+                    div()
+                        .id("show-marks")
+                        .max_h(px(72.0))
+                        .overflow_y_scroll()
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(6.0))
+                        .children(self.detail.iter().flat_map(|detail| &detail.marks).map(
+                            |&(number, _)| {
+                                button(
+                                    Action::Mark(number),
+                                    palette,
+                                    self.detail
+                                        .as_ref()
+                                        .is_some_and(|detail| !detail.frames.is_empty()),
+                                    false,
+                                    cx,
+                                )
+                                .child(format!("Mark #{number}"))
+                            },
+                        )),
+                )
+            })
             .child(
                 div()
                     .text_size(px(11.0))
@@ -445,8 +470,11 @@ impl Review {
             || "No saved frame available".into(),
             |frame| {
                 format!(
-                    "#{} of {count} · {}{}",
-                    frame.number, frame.at, frame.marker
+                    "#{} of {count} · {} · {} ms{}",
+                    frame.number,
+                    frame.at,
+                    frame.at.as_millis(),
+                    frame.marker
                 )
             },
         );
@@ -627,6 +655,7 @@ fn button(
     cx: &Context<'_, Review>,
 ) -> gpui::Stateful<Div> {
     let id: ElementId = match action {
+        Action::Mark(number) => SharedString::from(format!("show-mark-{number}")).into(),
         Action::Recover => "recover-show".into(),
         Action::Discard => "discard-show".into(),
         Action::ConfirmDiscard => "confirm-discard-show".into(),

@@ -5,7 +5,7 @@ use std::ops::Range;
 use tiny_skia::{PixmapPaint, Transform};
 
 use crate::{
-    Error, Image, Keyframe, Point, Rect, Typeface, convert,
+    Error, Image, Point, Rect, Typeface, convert,
     draw::{self, Corner},
     parallel,
 };
@@ -101,7 +101,7 @@ pub(crate) fn pages<T>(keyframes: &[T]) -> impl Iterator<Item = &[T]> {
 
 /// Lays the keyframes out in justified rows and draws them, badged, on one image.
 pub(crate) fn render(
-    keyframes: &[Keyframe],
+    labels: &[(usize, String)],
     frames: &[(Image, Corner)],
     typeface: &Typeface,
 ) -> Result<Image, Error> {
@@ -133,8 +133,7 @@ pub(crate) fn render(
         image.resized(*width, *height)
     });
     let mut canvas = sheet.as_mut();
-    for (((keyframe, (_, corner)), cell), scaled) in
-        keyframes.iter().zip(frames).zip(&cells).zip(scaled)
+    for (((label, (_, corner)), cell), scaled) in labels.iter().zip(frames).zip(&cells).zip(scaled)
     {
         if let Some(scaled) = scaled {
             let (left, top) = cell.centered_origin(scaled.width(), scaled.height());
@@ -150,7 +149,7 @@ pub(crate) fn render(
         draw::badge(
             &mut canvas,
             cell.bounds(),
-            keyframe,
+            label,
             badge_scale,
             *corner,
             typeface,

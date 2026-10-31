@@ -9,25 +9,26 @@ use std::{
 use async_channel::{Receiver, RecvError, Sender};
 use speakeasy_core::gesture::{Action, Gesture, State};
 use speakeasy_platform::{Input, InputSender, Inserted, Scope};
-use speakeasy_show::{Ending, Narration, NarrationLoss};
+use speakeasy_show::{Ending, NarrationLoss};
 use tokio::{
     sync::watch,
     task::{JoinError, JoinHandle},
 };
 
 use super::{
-    LOADING, Meter, Phase, Recovery, Report, SHOW_COPIED, SHOW_GONE, Snapshot, SnapshotEpoch,
-    Wiring,
+    LOADING, Meter, ModelState, Phase, Recovery, Report, SHOW_COPIED, SHOW_GONE, Snapshot,
+    SnapshotEpoch, Wiring,
     device::Device,
     now,
     ports::{CaptureEvent, PUBLISH_STOPPED, Ports, Published, SessionId, ShowEvent, Unchosen},
     session::{Delivered, Session},
-    worker::{Completion, Detail, Transcript, Worker},
+    worker::{Completion, Worker},
 };
 use crate::{
-    config::{Change, Config},
+    config::{Change, Config, Engine},
     show::SavedShow,
     sounds::Cue,
+    transcript::{self, vocabulary::Vocabulary},
 };
 
 const INSERT_FAILED: &str =
@@ -435,7 +436,7 @@ impl<P: Ports> Owner<P> {
         } else {
             Outcome::Idle
         };
-        self.notice = Some(if self.worker.is_ready() {
+        self.notice = Some(if self.worker.model() == ModelState::Ready {
             Notice::SettingsApplied
         } else {
             Notice::LoadingModel
@@ -448,6 +449,7 @@ impl<P: Ports> Owner<P> {
             return;
         };
         match event {
+            CaptureEvent::Piece(_, number, audio) => session.piece(number, audio),
             CaptureEvent::CheckpointLost(_) => {
                 self.checkpoint_lost();
             },
@@ -536,23 +538,40 @@ impl<P: Ports> Owner<P> {
                     self.fail(error.to_string());
                 }
             },
-            Completion::Transcribed(Ok((worker, transcript))) => {
+            Completion::Transcribed(ticket, Ok((worker, transcript))) => {
                 self.worker = Worker::Ready(worker);
-                match transcript {
-                    Transcript::Text(text) => self.insert_transcript(text),
-                    Transcript::Words(narration) => self.narrate(narration),
+                if let Some(text) = self
+                    .session
+                    .as_mut()
+                    .and_then(|session| session.heard(ticket, transcript))
+                {
+                    self.insert_transcript(text);
                 }
             },
-            Completion::Transcribed(Err(error)) => {
-                // The session still holds its speech, which `advance` resends once a fresh worker
-                // loads. After that one retry, a Show goes on without narration.
-                if !self.session.as_mut().is_some_and(Session::retry) {
+            Completion::Transcribed(ticket, Err(error)) => {
+                // The failed job has reaped its worker, even when its session no longer exists.
+                let replaced = self.worker.revive(&self.ports, &self.config);
+                if !self
+                    .session
+                    .as_ref()
+                    .is_some_and(|session| session.accepts(ticket))
+                {
+                    return;
+                }
+                if replaced && self.session.as_ref().is_some_and(Session::is_transcribing) {
+                    self.notice = Some(Notice::LoadingModel);
+                }
+                // A piece failure defers whole-recording fallback; a final request has one retry.
+                if !self
+                    .session
+                    .as_mut()
+                    .is_some_and(|session| session.failed(ticket))
+                {
                     if self.session.as_mut().is_some_and(Session::not_transcribed) {
                         self.notice = Some(Notice::NarrationLost(error.to_string()));
                     } else {
                         self.fail(error.to_string());
                     }
-                    self.worker.revive(&self.ports, &self.config);
                 }
             },
         }
@@ -566,13 +585,15 @@ impl<P: Ports> Owner<P> {
             .is_some_and(|session| !session.awaits_worker())
     }
 
-    /// Only the current job's transcript arrives here: abandoning a session first moves its job out
-    /// of observation, so stale text can never be inserted.
+    /// The session admits only matching request tickets and assembles a complete transcript before
+    /// cleanup. Corrections can therefore span piece boundaries without authorizing stale text.
     fn insert_transcript(&mut self, text: String) {
+        let text = Vocabulary::new(&self.config.vocabulary)
+            .text(&transcript::for_insertion(&text, self.config.fillers()));
         let Some(session) = self
             .session
             .as_mut()
-            .filter(|session| session.is_transcribing())
+            .filter(|session| session.is_recognizing())
         else {
             return;
         };
@@ -580,13 +601,6 @@ impl<P: Ports> Owner<P> {
             self.end_session(Outcome::Empty);
         } else {
             session.insert(|permit| self.ports.insert(text, permit, self.config.delivery()));
-        }
-    }
-
-    /// Only the current Show's narration arrives here, for the same reason as a transcript.
-    fn narrate(&mut self, narration: Narration) {
-        if let Some(session) = &mut self.session {
-            session.narrate(narration);
         }
     }
 
@@ -603,6 +617,7 @@ impl<P: Ports> Owner<P> {
         if !held || !session.turn_into_show(scope) {
             return;
         }
+        self.microphone.whole();
         let recorded = std::time::SystemTime::now()
             .checked_sub(now().saturating_duration_since(session.started))
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
@@ -960,10 +975,13 @@ impl<P: Ports> Owner<P> {
             return;
         };
         let microphone = self.config.microphone.as_deref();
-        match self
-            .ports
-            .record_microphone(session.id, microphone, self.capture_events.clone())
-        {
+        let segmenting = !session.is_show() && self.config.engine == Engine::Parakeet;
+        match self.ports.record_microphone(
+            session.id,
+            microphone,
+            segmenting,
+            self.capture_events.clone(),
+        ) {
             Ok(recording) => {
                 self.microphone.open(recording, self.gesture.state());
                 session.opened();
@@ -1004,24 +1022,16 @@ impl<P: Ports> Owner<P> {
     }
 
     fn start_transcription(&mut self) {
-        let Some(session) = self
-            .session
-            .as_mut()
-            .filter(|session| session.awaits_worker())
-        else {
+        if let Some(text) = self.session.as_mut().and_then(Session::complete) {
+            self.insert_transcript(text);
+        }
+        let Some(session) = self.session.as_mut() else {
             return;
         };
-        let detail = if session.is_show() {
-            Detail::Words
-        } else {
-            Detail::Text
-        };
-        if self.worker.revive(&self.ports, &self.config) {
+        if session.awaits_worker() && self.worker.revive(&self.ports, &self.config) {
             self.notice = Some(Notice::LoadingModel);
         }
-        session.transcribe(|wav, language| {
-            self.worker.transcribe(wav, detail, &self.config, language)
-        });
+        self.worker.transcribe(&self.config, || session.request());
     }
 
     /// Publishes a Show once its narration and screen recording are both in.

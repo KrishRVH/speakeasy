@@ -14,9 +14,14 @@ enum Kind {
     Manifest(serde_json::Error),
     Png(png::EncodingError),
     Typeface,
+    Evidence(&'static str),
 }
 
 impl Error {
+    pub(crate) const fn evidence(reason: &'static str) -> Self {
+        Self(Kind::Evidence(reason))
+    }
+
     pub(crate) const fn dimensions(width: u32, height: u32) -> Self {
         Self(Kind::Dimensions { width, height })
     }
@@ -49,6 +54,7 @@ impl fmt::Display for Error {
             Kind::Manifest(_) => f.write_str("the manifest could not be encoded"),
             Kind::Png(_) => f.write_str("the PNG could not be encoded"),
             Kind::Typeface => f.write_str("the badge typeface could not be read"),
+            Kind::Evidence(reason) => f.write_str(reason),
         }
     }
 }
@@ -58,7 +64,7 @@ impl std::error::Error for Error {
         match &self.0 {
             Kind::Manifest(error) => Some(error),
             Kind::Png(error) => Some(error),
-            Kind::Dimensions { .. } | Kind::Unsampled | Kind::Typeface => None,
+            Kind::Dimensions { .. } | Kind::Unsampled | Kind::Typeface | Kind::Evidence(_) => None,
         }
     }
 }

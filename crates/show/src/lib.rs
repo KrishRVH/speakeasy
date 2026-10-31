@@ -24,6 +24,7 @@ mod geometry;
 mod image;
 pub mod ink;
 mod journal;
+pub mod locate;
 mod marks;
 mod moment;
 mod parallel;

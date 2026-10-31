@@ -16,6 +16,7 @@ use tokio::task::{JoinError, JoinHandle};
 use super::{
     Phase,
     ports::{Footage, Published, Sealed, SessionId},
+    recognition::{Detail, Recognition, Request, Ticket, Transcript},
 };
 use crate::show::{
     AudioLog, Checkpointing, FrameLog, Kept, Origin, Publication, Reopened, SavedShow,
@@ -27,6 +28,7 @@ pub(super) struct Session {
     /// When the session began; a Show's timeline counts from here.
     pub started: Instant,
     stage: Stage,
+    recognition: Recognition,
     /// The screen side of a Show; `None` while the session is plain dictation.
     show: Option<Show>,
     receipt: Option<async_channel::Sender<Result<SavedShow, String>>>,
@@ -84,10 +86,8 @@ enum Stage {
     Stopping {
         audio: Duration,
     },
-    /// Sealed speech awaits a ready worker.
-    AwaitingWorker(Speech),
-    /// The worker transcribes a copy of the speech, which stays here until a transcript arrives.
-    Transcribing(Speech),
+    /// Capture sealed; recognition owns its pieces, fallback audio, and request tickets.
+    Recognizing,
     /// A Show's narration, placed on its timeline, waits for its screen recording to finish; `lost`
     /// says why it holds nothing the user said, when audio capture or transcription failed.
     AwaitingFootage {
@@ -96,16 +96,6 @@ enum Stage {
     },
     /// Dictated text is being inserted, or a Show composed, written, and copied.
     Delivering(JoinHandle<Delivered>),
-}
-
-/// Sealed speech, starting at `start` on the session's timeline.
-#[derive(Default)]
-struct Speech {
-    sealed: Sealed,
-    start: Duration,
-    /// Whether a failed transcription already sent it back for a fresh worker.
-    retried: bool,
-    language: Option<Box<str>>,
 }
 
 /// What a session's last task returns: how its dictated text was inserted, or its Show
@@ -124,6 +114,7 @@ impl Session {
             permit,
             started,
             stage: Stage::Queued,
+            recognition: Recognition::new(id),
             show: None,
             receipt: None,
         }
@@ -169,12 +160,13 @@ impl Session {
         self.stage = match speech {
             Some(speech) => {
                 show.incomplete = speech.incomplete;
-                Stage::AwaitingWorker(Speech {
-                    sealed: speech.sealed,
-                    start: speech.start,
-                    retried: false,
-                    language: Some(speech.language),
-                })
+                self.recognition.seal(
+                    speech.sealed,
+                    speech.start,
+                    Some(speech.language),
+                    Detail::Words,
+                );
+                Stage::Recognizing
             },
             None => Stage::AwaitingFootage {
                 narration: mem::take(&mut footage.recording.narration),
@@ -216,8 +208,7 @@ impl Session {
             Stage::Recording { .. } => Phase::Recording,
             Stage::Stopping { .. } => Phase::Stopping,
             Stage::Reopening(_)
-            | Stage::AwaitingWorker(_)
-            | Stage::Transcribing(_)
+            | Stage::Recognizing
             | Stage::AwaitingFootage { .. }
             | Stage::Delivering(_) => Phase::Processing,
         }
@@ -244,12 +235,16 @@ impl Session {
         )
     }
 
-    pub(super) const fn awaits_worker(&self) -> bool {
-        matches!(self.stage, Stage::AwaitingWorker(_))
+    pub(super) fn awaits_worker(&self) -> bool {
+        self.is_recognizing() && self.recognition.waiting()
     }
 
-    pub(super) const fn is_transcribing(&self) -> bool {
-        matches!(self.stage, Stage::Transcribing(_))
+    pub(super) fn is_transcribing(&self) -> bool {
+        self.is_recognizing() && self.recognition.in_flight()
+    }
+
+    pub(super) const fn is_recognizing(&self) -> bool {
+        matches!(self.stage, Stage::Recognizing)
     }
 
     /// What the Show's screen recorder, queued behind the previous one, is to record.
@@ -305,12 +300,13 @@ impl Session {
         self.stage = match (&self.stage, sealed) {
             (Stage::Recording { audio } | Stage::Stopping { audio }, Some(sealed)) => {
                 let start = audio.saturating_add(sealed.trimmed);
-                Stage::AwaitingWorker(Speech {
-                    sealed,
-                    start,
-                    retried: false,
-                    language: None,
-                })
+                let detail = if self.is_show() {
+                    Detail::Words
+                } else {
+                    Detail::Text
+                };
+                self.recognition.seal(sealed, start, None, detail);
+                Stage::Recognizing
             },
             _ if self.is_show() => Stage::AwaitingFootage {
                 narration: Narration::default(),
@@ -321,32 +317,57 @@ impl Session {
         true
     }
 
-    /// Offers the sealed WAV to `transcribe`, which reports whether a worker took a copy.
-    pub(super) fn transcribe(&mut self, transcribe: impl FnOnce(&[u8], Option<&str>) -> bool) {
-        if let Stage::AwaitingWorker(speech) = &mut self.stage
-            && transcribe(&speech.sealed.wav, speech.language.as_deref())
-        {
-            self.stage = Stage::Transcribing(mem::take(speech));
+    pub(super) fn piece(&mut self, number: u32, audio: Sealed) {
+        if self.is_capturing() && !self.is_show() {
+            self.recognition.piece(number, audio);
         }
     }
 
-    /// Sends speech whose first transcription failed back to await a fresh worker; returns whether
-    /// it did.
-    pub(super) fn retry(&mut self) -> bool {
-        let Stage::Transcribing(speech @ Speech { retried: false, .. }) = &mut self.stage else {
-            return false;
-        };
-        self.stage = Stage::AwaitingWorker(Speech {
-            retried: true,
-            ..mem::take(speech)
-        });
-        true
+    /// A ready worker may pull a piece during capture, or final audio after capture seals.
+    pub(super) fn request(&mut self) -> Option<Request> {
+        if self.is_capturing() || self.is_recognizing() {
+            self.recognition.request()
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn accepts(&self, ticket: Ticket) -> bool {
+        (self.is_capturing() || self.is_recognizing()) && self.recognition.accepts(ticket)
+    }
+
+    pub(super) fn heard(&mut self, ticket: Ticket, transcript: Transcript) -> Option<String> {
+        if !self.accepts(ticket) {
+            return None;
+        }
+        match self.recognition.heard(ticket, transcript)? {
+            Transcript::Text(text) => Some(text),
+            Transcript::Words(narration) => {
+                self.narrate(narration);
+                None
+            },
+        }
+    }
+
+    pub(super) fn complete(&mut self) -> Option<String> {
+        if self.is_recognizing() {
+            self.recognition.complete()
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn failed(&mut self, ticket: Ticket) -> bool {
+        !self.accepts(ticket) || self.recognition.failed(ticket)
     }
 
     /// Places a transcribed Show's narration, timed from the start of its WAV, onto the Show's
     /// timeline, then waits for the footage. Any other stage ignores it.
     pub(super) fn narrate(&mut self, narration: Narration) {
-        if let Stage::Transcribing(Speech { start, .. }) = self.stage {
+        if self.is_recognizing()
+            && let Some(start) = self.recognition.start()
+        {
+            self.recognition = Recognition::new(self.id);
             self.stage = Stage::AwaitingFootage {
                 narration: narration.delayed(start),
                 lost: self
@@ -375,11 +396,8 @@ impl Session {
     /// failed again on its one retry, on to its footage without narration, dropping the speech;
     /// returns whether it did.
     pub(super) fn not_transcribed(&mut self) -> bool {
-        let given_up = self.is_show()
-            && matches!(
-                self.stage,
-                Stage::AwaitingWorker(_) | Stage::Transcribing(Speech { retried: true, .. })
-            );
+        let given_up =
+            self.is_show() && self.is_recognizing() && self.recognition.may_lose_narration();
         if given_up {
             self.go_on_without_narration(NarrationLoss::NotTranscribed);
         }
@@ -387,6 +405,7 @@ impl Session {
     }
 
     fn go_on_without_narration(&mut self, lost: NarrationLoss) {
+        self.recognition = Recognition::new(self.id);
         self.stage = Stage::AwaitingFootage {
             narration: Narration::default(),
             lost: Some(lost),
@@ -398,6 +417,7 @@ impl Session {
     where
         F: Future<Output = anyhow::Result<Inserted>> + Send + 'static,
     {
+        self.recognition = Recognition::new(self.id);
         let insertion = insert(self.permit.clone());
         self.deliver(async move { Delivered::Inserted(insertion.await) });
     }
@@ -413,6 +433,7 @@ impl Session {
         let turns =
             !self.is_show() && (self.is_queued() || self.is_capturing()) && self.permit.shield();
         if turns {
+            self.recognition.whole();
             self.show = Some(Show::new(Screen::Queued(scope)));
         }
         turns
@@ -556,9 +577,10 @@ mod tests {
         let sealed = Sealed {
             wav: vec![1, 2],
             trimmed: Duration::from_millis(500),
+            partition: None,
         };
         assert!(session.captured(Some(sealed)));
-        session.transcribe(|_, _| true);
+        assert!(session.request().is_some());
         let word = |at| Word {
             span: Span::new(Moment::from_millis(at), Moment::from_millis(at + 200)),
             text: "here".into(),
@@ -613,10 +635,13 @@ mod tests {
         show.finish();
         assert!(show.captured(Some(Sealed::default())));
         assert!(!show.audio_stopped(), "Sealed audio can no longer stop");
-        show.transcribe(|_, _| true);
+        assert!(show.request().is_some());
         assert!(!show.not_transcribed(), "Speech keeps its one retry");
-        assert!(show.retry());
-        show.transcribe(|_, _| true);
+        assert!(show.failed(Ticket {
+            session: show.id,
+            part: super::super::recognition::Part::Final
+        }));
+        assert!(show.request().is_some());
         assert!(show.not_transcribed());
         assert_eq!(lost(&show), Some(NarrationLoss::NotTranscribed));
     }

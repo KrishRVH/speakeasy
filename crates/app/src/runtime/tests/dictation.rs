@@ -453,12 +453,18 @@ async fn levels_after_a_capture_ends_never_reach_the_meter() -> anyhow::Result<(
 
 #[tokio::test(start_paused = true)]
 async fn failed_transcription_retries_its_speech_on_a_fresh_worker() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
+    let (results, loading) = async_channel::bounded(2);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.load_results = Some(loading);
+    })?;
     receive(&h.loads).await?;
+    results.send(Ok(())).await?;
     h.start().await?;
     let reply = h.finish().await?;
     assert!(reply.send(Err(anyhow!("Engine exited"))).is_ok());
     receive(&h.loads).await?;
+    h.observe(|snapshot| snapshot.message == LOADING).await?;
+    results.send(Ok(())).await?;
     h.transcribe_next_as("kept").await?;
     assert_eq!(receive(&h.pasted).await?, "kept");
     h.phase(Phase::Done).await?;

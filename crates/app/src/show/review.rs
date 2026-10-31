@@ -612,6 +612,22 @@ impl Review {
 
     fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<'_, Self>) {
         match action {
+            Action::Mark(number) => {
+                if self.mode == Mode::Source
+                    && let Some(detail) = &self.detail
+                    && let Some((_, at)) = detail.marks.iter().find(|(mark, _)| *mark == number)
+                    && let Some(frame) = detail.frames.get(detail.frame_at(*at))
+                {
+                    let index = detail.frame_at(*at);
+                    let notice = format!(
+                        "Mark #{number} starts at {} ms. Jumped to the retained sample at {} ms.",
+                        at.as_millis(),
+                        frame.at.as_millis()
+                    );
+                    self.act(Action::Frame(index), window, cx);
+                    self.notice = Some(notice);
+                }
+            },
             Action::Previous | Action::Next => {
                 if let Some(key) = &self.library.selected {
                     let frame = if matches!(action, Action::Previous) {
@@ -717,6 +733,7 @@ fn copy_summary(summary: io::Result<String>) -> Result<(), String> {
 
 #[derive(Clone, Copy)]
 enum Action {
+    Mark(usize),
     Recover,
     Discard,
     ConfirmDiscard,

@@ -195,13 +195,13 @@ fn disc(canvas: &mut PixmapMut<'_>, center: Point, radius: f32, inner: f32) {
 pub(crate) fn badge(
     canvas: &mut PixmapMut<'_>,
     cell: Rect,
-    keyframe: &Keyframe,
+    label: &(usize, String),
     scale: f32,
     corner: Corner,
     typeface: &Typeface,
 ) {
-    let number = format!("#{}", keyframe.index);
-    let time = keyframe.at.to_string();
+    let number = format!("#{}", label.0);
+    let time = &label.1;
     let (number_size, time_size) = (15.5 * scale, 12.5 * scale);
     let height = 28.0 * scale;
     let radius = 8.5 * scale;
@@ -209,7 +209,7 @@ pub(crate) fn badge(
     let keycap_height = height - 2.0 * inset;
     let number_width = typeface.width(&number, number_size);
     let keycap_width = (number_width + 12.0 * scale).max(keycap_height);
-    let time_width = typeface.width(&time, time_size);
+    let time_width = typeface.width(time, time_size);
     let gap = 7.0 * scale;
     let width = inset + keycap_width + gap + time_width + 9.0 * scale;
     let margin = 7.0 * scale;
@@ -264,7 +264,7 @@ pub(crate) fn badge(
     );
     fill(
         canvas,
-        typeface.path(&time, time_size, time_origin),
+        typeface.path(time, time_size, time_origin),
         [236, 238, 244, 255],
     );
 }
@@ -282,7 +282,7 @@ pub(crate) fn badge_frame(
     badge(
         &mut image.as_mut(),
         whole,
-        keyframe,
+        &(keyframe.index, keyframe.at.to_string()),
         scale,
         corner,
         typeface,

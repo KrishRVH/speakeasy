@@ -68,7 +68,7 @@ where
 
 /// The callback pair for one capture, independent of any device so tests can replay native callback
 /// ordering without opening a microphone.
-fn capture_callbacks<T>(
+pub(super) fn capture_callbacks<T>(
     state: CallbackState,
 ) -> (
     impl FnMut(&[T]) + Send + 'static,

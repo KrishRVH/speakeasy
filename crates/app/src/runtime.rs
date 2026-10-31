@@ -4,6 +4,7 @@
 mod device;
 mod owner;
 pub(crate) mod ports;
+mod recognition;
 mod session;
 mod worker;
 
@@ -408,9 +409,10 @@ impl Ports for Desktop {
         &self,
         id: SessionId,
         microphone: Option<&str>,
+        segmenting: bool,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<Capture> {
-        Capture::start(id, microphone, events)
+        Capture::start(id, microphone, segmenting, events)
     }
 
     fn keep(&self, recorded: std::time::SystemTime) -> anyhow::Result<Option<show::Kept>> {

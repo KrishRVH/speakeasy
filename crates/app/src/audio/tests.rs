@@ -27,17 +27,10 @@ fn speech_meter_spans_sixty_to_six_dbfs() {
 fn stopped_startup_returns_without_audio() -> anyhow::Result<()> {
     let records_nothing =
         |events: &Sender<CaptureEvent>, control: &Arc<Control>| -> anyhow::Result<bool> {
-            let no_cues = async_channel::unbounded().1;
-            Ok(record(
-                SessionId::FIRST,
-                None,
-                events,
-                control,
-                &no_cues,
-                &async_channel::bounded(1).1,
-            )?
-            .outcome?
-            .is_none())
+            Ok(matches!(
+                Recorder::open(None, false, events, control),
+                Err(Startup::Stopped)
+            ))
         };
     for stop in [Control::finish, Control::cancel] {
         let control = Arc::new(Control::default());
@@ -82,11 +75,12 @@ async fn sealed_audio_is_reported_before_device_teardown_and_retirement_waits() 
     let (events, audio) = async_channel::bounded(1);
     let (entered, teardown) = async_channel::bounded(1);
     let (release, waiting) = async_channel::bounded(1);
-    let capture = Capture::spawn(SessionId::FIRST, events, move |_, _, _, _| {
+    let capture = Capture::spawn(SessionId::FIRST, events, move |_, _, _, _, _| {
         Ok(Captured {
             outcome: Ok(Some(Sealed {
                 wav: vec![1, 2],
                 trimmed: Duration::ZERO,
+                partition: None,
             })),
             device: Device {
                 entered,
@@ -110,7 +104,7 @@ async fn capture_retirement_signals_cancel_and_waits_for_teardown() -> anyhow::R
     let (events, _audio) = async_channel::bounded(1);
     let (started, starting) = async_channel::bounded(1);
     let (release, waiting) = async_channel::bounded(1);
-    let capture = Capture::spawn(SessionId::FIRST, events, move |_, control, _, _| {
+    let capture = Capture::spawn(SessionId::FIRST, events, move |_, control, _, _, _| {
         started.send_blocking(Arc::clone(control))?;
         waiting.recv_blocking()?;
         Ok(Captured {
@@ -158,7 +152,7 @@ async fn consumer_wakes(cancel: bool, wake_before_park: bool) -> anyhow::Result<
     let (armed, arming) = async_channel::bounded(1);
     let gate = Arc::new((Mutex::new(!wake_before_park), Condvar::new()));
     let waiting = Arc::clone(&gate);
-    let capture = Capture::spawn(SessionId::FIRST, events, move |_, control, _, _| {
+    let capture = Capture::spawn(SessionId::FIRST, events, move |_, control, _, _, _| {
         // Arm after reading the control, so a lost notification cannot pass by finishing before
         // the thread enters its wait.
         ensure!(control.mode() == Mode::Recording);
@@ -218,7 +212,7 @@ async fn consumer_wakes(cancel: bool, wake_before_park: bool) -> anyhow::Result<
 async fn closing_audio_events_unblocks_owned_capture_retirement() -> anyhow::Result<()> {
     let (events, audio) = async_channel::bounded(1);
     events.try_send(CaptureEvent::Ready(SessionId::FIRST))?;
-    let capture = Capture::spawn(SessionId::FIRST, events, |_, _, _, _| {
+    let capture = Capture::spawn(SessionId::FIRST, events, |_, _, _, _, _| {
         Ok(Captured {
             outcome: Ok(None),
             device: (),
@@ -238,7 +232,7 @@ async fn a_panicked_capture_reports_failure_and_still_retires() -> anyhow::Resul
     let capture = Capture::spawn(
         SessionId::FIRST,
         events,
-        |_, _, _, _| -> anyhow::Result<Captured<()>> {
+        |_, _, _, _, _| -> anyhow::Result<Captured<()>> {
             panic::resume_unwind(Box::new(()));
         },
     )?;

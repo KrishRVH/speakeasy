@@ -254,3 +254,23 @@ fn writing_rejects_a_tile_that_a_reader_cannot_accept() {
             .is_err()
     );
 }
+
+#[test]
+fn crop_geometry_checks_intermediate_samples_without_reading_pixels() {
+    let mut journal = Journal::new();
+    for (at, width) in [(100, 100), (1000, 200), (2000, 100)] {
+        journal.admit().unwrap().record(
+            Moment::from_millis(at),
+            Image::filled(width, 100, [1, 2, 3]).unwrap(),
+        );
+    }
+    let source = open(&encode(&journal, Moment::from_millis(3000))).unwrap();
+    let span = |start, end| Span::new(Moment::from_millis(start), Moment::from_millis(end));
+    assert!(source.stable_geometry(span(0, 999)));
+    assert!(!source.stable_geometry(span(500, 2500)));
+    assert!(
+        !source.stable_geometry(span(1500, 2500)),
+        "The carried-in frame is a different size"
+    );
+    assert!(source.stable_geometry(span(2000, 3000)));
+}

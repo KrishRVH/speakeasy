@@ -6,14 +6,23 @@ when the full interaction remains correct.
 
 ## Implementation constraints
 
-- Recognize the whole recording. Whisper retains full audio context and default timestamp decoding;
-  returned text contains no timecodes. Chunking or changing decoding needs paired accuracy and
-  punctuation checks before adoption.
+- Parakeet dictation recognizes pieces during recording, on CPU and GPU. A piece contains at least
+  twenty seconds and ends in a pause of at least a second, keeping half a second after speech.
+  Pieces abut without overlapping or losing PCM; the full recording remains available for fallback.
+  Whisper and Show narration retain full audio context.
+- Splitting a recording adds fixed request costs. A short recording on a fast GPU can spend a few
+  tens of milliseconds more in total inference in exchange for less work after release. Changing
+  request boundaries needs at least three paired real-time runs checking accuracy, punctuation,
+  release latency, and total inference. Median total inference must stay within 10% of whole-clip
+  work or 25 ms per added request, whichever allows more. Accelerated replays check quality and
+  capture pressure, not latency.
 - The session owner receives completion messages and owns capture, inference, insertion,
   cancellation, and replacement. Native cleanup acknowledges before replacements open; Pause and
   application-owned Quit keep the UI responsive.
-- GPU cancellation reuses a worker only after it transcribes a second of silence within two seconds.
-  Failed checks and cancelled CPU inference retire the worker. A retained worker may keep its
+- Cancelling or promoting dictation to a Show discards piece results while their worker finishes; no
+  partial text reaches insertion. The next session can wait behind that one piece. Cancelling final
+  inference on GPU reuses a worker only after it transcribes a second of silence within two seconds.
+  Failed checks and cancelled final CPU inference retire the worker. A retained worker may keep its
   largest model buffers until Pause releases it.
 - The audio callback allocates nothing and writes to a bounded single-producer, single-consumer
   ring. Consumer-side PCM starts with a ten-second reservation and cannot grow past five minutes.
@@ -44,20 +53,24 @@ a measurement speaks only for the revision it ran on.
 Record hardware, model and runtime, sample rate, request boundaries, warmup, and competing load.
 Compare paired runs and check word accuracy and formatting as well as latency. The opt-in tests
 `profile_fixture_dictation` and `profile_ready_text_latency` exercise the real session owner with
-public audio or fake devices; [verification](architecture.md#verification) names the fixture
-variables. The synthetic `profile_audio_pipeline` probe times callback/downmix/consumer work;
-`profile_audio_seal` times sealing a five-minute recording, classified for speech while recording.
-Sealing includes the remaining window, range selection, trimming, capacity reclamation, and WAV
-encoding; it excludes microphone teardown, inference, and insertion. The synthetic
-`profile_show_pipeline` probe measures the recorder's per-frame fingerprint and journal costs on
-2560 × 1440 desktops that stay still, type, scroll, open a dialog, or play video, with journal
-megabytes per frame. It also measures checkpoint queuing, final storage acknowledgement, log size,
-and replay. Publication of a one-minute Show measures selection, page composition (including
-keyframe rebuilding and PNG encoding), file assembly, and the private write including retained
-source frames. `profile_real_screen_recording` records the real screen for ten seconds on Windows or
-Mac, keeping no pixels; on Windows, run the test binary directly and sample its process, not
-Cargo's, with `profile-windows.ps1`. Use ordinary native profilers rather than a permanent benchmark
-suite.
+public audio or fake devices. `profile_recording_dictation` replays public PCM through the actual
+callback, ring, drain, and pause cutter while the local worker recognizes it, with fake insertion.
+It reports request hashes and durations, word and formatting errors against a public reference,
+total inference work, release latency, and drain and meter cadence. Pair segmented and whole runs at
+real time for latency and capture load; accelerated playback is only a quality check.
+[Verification](architecture.md#verification) names the fixture variables. The synthetic
+`profile_audio_pipeline` probe times callback/downmix/consumer work; `profile_audio_seal` times
+sealing a five-minute recording, classified for speech while recording. Sealing includes the
+remaining window, range selection, trimming, capacity reclamation, and WAV encoding; it excludes
+microphone teardown, inference, and insertion. The synthetic `profile_show_pipeline` probe measures
+the recorder's per-frame fingerprint and journal costs on 2560 × 1440 desktops that stay still,
+type, scroll, open a dialog, or play video, with journal megabytes per frame. It also measures
+checkpoint queuing, final storage acknowledgement, log size, and replay. Publication of a one-minute
+Show measures selection, page composition (including keyframe rebuilding and PNG encoding), file
+assembly, and the private write including retained source frames. `profile_real_screen_recording`
+records the real screen for ten seconds on Windows or Mac, keeping no pixels; on Windows, run the
+test binary directly and sample its process, not Cargo's, with `profile-windows.ps1`. Use ordinary
+native profilers rather than a permanent benchmark suite.
 
 ## Native process sampling
 

@@ -136,8 +136,8 @@ pill says why. If screen capture stops before you finish, or the window closes o
 the Show ends there with what it recorded: the pill says why, and the summary's second line says why
 and when. A microphone that stops after it starts listening ends the Show there too. Then, or when
 your speech can't be transcribed, the Show is saved without narration rather than lost: the pill
-says **Show copied without narration** and what went wrong, the summary tells your agent why, and no
-audio is kept to try again.
+says **Show copied without narration** and what went wrong. The summary tells your agent why; when
+recovery audio survived, **Transcribe narration** in Shows can save a narrated copy.
 
 On Windows and Mac, the menu's **Copy last Show** copies the latest Show's `summary.md` again as it
 reads now, edits included, and **Open last Show** opens its folder. Speakeasy remembers only that
@@ -156,8 +156,9 @@ or is deleted. Choose **All retained frames** to inspect moments outside the sel
 Coverage shows the sample count and longest gap; the journal thins frames under memory pressure, so
 this is sampled evidence rather than video. Switching modes keeps the nearest frame at or before the
 current time. Source images have no annotations. Older Shows still offer their selected keyframes.
-If retained frames cannot be saved, the selected keyframes still save and Speakeasy reports the
-loss.
+In **All retained frames**, numbered mark buttons jump to the sample at or before the mark. The
+viewer reports both the mark time and the actual sample time. If retained frames cannot be saved,
+the selected keyframes still save and Speakeasy reports the loss.
 
 **Refresh** rereads the library; returning to the window rereads the selected summary and retention.
 **Open folder** reveals its files, and **Copy summary** on Windows/Mac copies the current file,
@@ -189,6 +190,8 @@ speakeasy show inspect "PATH_TO_SHOW" --json
 speakeasy show inspect 20261020T143205Z --json
 speakeasy show frames 20261020T143205Z --json
 speakeasy show frame 20261020T143205Z --at 0:12.500 --out /path/to/new-frame.png --json
+speakeasy show frames 20261020T143205Z --phrase "save button" --json
+speakeasy show frames 20261020T143205Z --mark 2 --crop --out /path/to/new-sheet.png --json
 speakeasy show keep 20261020T143205Z
 speakeasy show keep 20261020T143205Z --off --json
 speakeasy show skill
@@ -201,6 +204,16 @@ suffix such as `-2`, is an exact Show ID in Speakeasy's Shows folder. IDs never 
 folder or a partial name; use `./ID` to force a relative path. These commands also work without a
 desktop on Linux. `list` and `inspect` leave files, edits, permissions, and retention unchanged.
 There is no implicit latest Show.
+
+`frames` accepts a time, mark, or spoken phrase to locate surrounding evidence. Phrases match
+recorded narration after corrections, ignoring case and punctuation; summary edits are separate.
+Repeated phrases return all matching spans. Choose `--match N` before exporting one occurrence;
+untimed narration cannot locate a phrase. Phrase arguments can be visible in local process listings.
+`--around` widens the span by 1000 ms on each side by default, up to 10000 ms. A sheet exports at
+most six distinct samples by default (`--most` accepts 1–12), with millisecond sample times on each
+cell. `--crop` focuses on a numbered mark with surrounding context, and refuses sheets spanning a
+surface resize. Reports include the requested window, carried-in sample, sampling gaps, actual
+times, and source crop pixels. Exports require new paths and preserve the saved bundle.
 
 `keep` accepts an ID or an explicit path directly inside Speakeasy's Shows folder. `--off` allows
 expiry at the original date; it does not grant another seven days. These actions never recreate a
@@ -404,6 +417,10 @@ GPU** switches between the GPU and the CPU. After a five-minute recording the GP
 3.8 GB of memory until **Pause** releases it. The model is by NVIDIA, under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
+Long Parakeet dictation starts recognition at pauses while you keep speaking, reducing the work left
+after release. Text still arrives once, when you finish, with phrase corrections applied across the
+whole dictation. Whisper and Show narration use whole-recording recognition.
+
 **Whisper** runs a local whisper.cpp server with a GGML model. Switch the engine under **Local
 speech**, choose its executable and model, and save; switching is always explicit. The known-good
 Windows build is [whisper.cpp b5130](https://github.com/ggml-org/whisper.cpp/releases/tag/b5130):
@@ -413,8 +430,9 @@ machines, prefer Parakeet: other accounts can read Whisper's
 [request route](docs/architecture.md#local-recognition-and-privacy).
 
 The worker stays warm on loopback. With a GPU, one silent request initializes its kernels before the
-first dictation; Linux CPU workers also validate inference before readiness. Cancelling GPU work
-keeps a healthy worker and replaces it if a two-second recovery check fails. Cancelling active CPU
+first dictation; Linux CPU workers also validate inference before readiness. Cancelling before final
+recognition discards early results while their worker finishes. Cancelling final GPU inference keeps
+a healthy worker and replaces it if a two-second recovery check fails; cancelling final CPU
 inference replaces the worker. On Mac and Linux, force-quitting Speakeasy can leave the worker
 running; quit from its menu instead. Relative engine and model paths resolve beside the settings
 file.

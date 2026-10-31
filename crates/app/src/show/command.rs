@@ -17,8 +17,9 @@ const DEMO_SIZE: (u32, u32) = (1_440, 900);
 
 const HELP: &str = "speakeasy show list [--json]
 speakeasy show inspect SHOW [--json]
-speakeasy show frames SHOW [--json]
-speakeasy show frame SHOW --at M:SS.mmm --out NEW.png [--json]
+speakeasy show frames SHOW [FOCUS] [--around MS] [--json]
+speakeasy show frames SHOW FOCUS --out NEW.png [--most N] [--around MS] [--crop] [--json]
+speakeasy show frame SHOW FOCUS --out NEW.png [--crop] [--json]
 speakeasy show keep SHOW [--off] [--json]
 speakeasy show discard INTERRUPTED_SHOW [--json]
 speakeasy show skill
@@ -29,6 +30,13 @@ inspect checks an explicit bundle and maps its sheets, keyframes and marks.
 Both print metadata and current absolute paths, never narration or screen content.
 Images are checked as files, not decoded. Missing files are reported, not repaired.
 frames lists retained source times and sampling coverage, without reading pixels.
+FOCUS is exactly one of --at M:SS.mmm, --mark N, or --phrase TEXT [--match K].
+Phrase queries search recorded words, not summary edits, and require word timings.
+With several phrase matches, frames lists locations; choose --match before exporting.
+--around widens the focus span by milliseconds on each side (default 1000, maximum 10000).
+frames --out exports a source contact sheet (--most defaults to 6, maximum 12).
+Each cell reports its actual sample time; carried-in frames may precede the window.
+--crop requires --mark and keeps surrounding context; source images have no ink.
 frame exports the retained image at or before a time, or the first image before capture began.
 It reports the actual sample time, excludes annotations, and never overwrites a file.
 Source frames are available only in Shows saved by versions that retain them.

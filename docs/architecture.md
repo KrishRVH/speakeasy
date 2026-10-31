@@ -11,7 +11,7 @@ remaining checks.
 flowchart LR
     Shortcut[Native shortcut] --> Session[Session owner]
     Session --> Capture[CPAL capture]
-    Capture --> Audio[In-memory WAV]
+    Capture --> Audio[In-memory WAV and pieces]
     Audio --> Worker[Owned local speech worker]
     Worker --> Session
     Session --> Insert[Native insertion]
@@ -41,18 +41,20 @@ module unless a test file is named.
   [runtime/owner.rs](../crates/app/src/runtime/owner.rs),
   [session.rs](../crates/app/src/runtime/session.rs),
   [device.rs](../crates/app/src/runtime/device.rs),
-  [worker.rs](../crates/app/src/runtime/worker.rs), and the
+  [worker.rs](../crates/app/src/runtime/worker.rs),
+  [recognition.rs](../crates/app/src/runtime/recognition.rs), and the
   [ports.rs](../crates/app/src/runtime/ports.rs) seam own a session's authority, devices, and
   worker. [runtime/tests.rs](../crates/app/src/runtime/tests.rs) hosts the owner on fakes;
   [tests/model.rs](../crates/app/src/runtime/tests/model.rs) checks device and worker release, and
   that text reaches only the session that spoke it, over generated input, settings changes and
-  engine faults included.
+  engine faults included. [tests/recognition.rs](../crates/app/src/runtime/tests/recognition.rs)
+  checks early recognition, stale piece results, Show promotion, and cleanup across boundaries.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
-  [pcm.rs](../crates/app/src/audio/pcm.rs), and [speech.rs](../crates/app/src/audio/speech.rs)
-  capture, meter, and seal a trimmed WAV before driver teardown;
-  [microphones.rs](../crates/app/src/audio/microphones.rs) lists the input devices Settings offers.
-  [audio/tests.rs](../crates/app/src/audio/tests.rs) and
+  [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs), and
+  [cuts.rs](../crates/app/src/audio/cuts.rs) capture, meter, and seal a trimmed WAV before driver
+  teardown; [microphones.rs](../crates/app/src/audio/microphones.rs) lists the input devices
+  Settings offers. [audio/tests.rs](../crates/app/src/audio/tests.rs) and
   [stream/tests.rs](../crates/app/src/audio/stream/tests.rs) use synthetic samples; microphones.rs
   checks that a scan the driver blocks serves the next request.
 - **Sound cues**: [sounds.rs](../crates/app/src/sounds.rs) plays the cues the owner asks for through
@@ -169,7 +171,13 @@ module unless a test file is named.
   and stay bound to their original Show; activation rereads the summary and pin. The shell supplies
   copy availability and routes accepted writes and recovery while the view owns result receipts.
 - **Show composition**: [crates/show/src](../crates/show/src), notably
-  [select.rs](../crates/show/src/select.rs) and [select/](../crates/show/src/select),
+  [locate.rs](../crates/show/src/locate.rs) resolves phrases and marks to exact recorded spans;
+  [locate/evidence.rs](../crates/show/src/locate/evidence.rs) renders bounded source sheets and mark
+  crops with actual sample times. The source CLI and native mark navigation share this lookup. Query
+  properties, sampling gaps, private output, crops, and export ownership are checked in
+  [locate/tests.rs](../crates/show/src/locate/tests.rs) and
+  [command/source/tests.rs](../crates/app/src/show/command/source/tests.rs). Composition also
+  includes [select.rs](../crates/show/src/select.rs) and [select/](../crates/show/src/select),
   [journal.rs](../crates/show/src/journal.rs), [tracker.rs](../crates/show/src/tracker.rs),
   [marks.rs](../crates/show/src/marks.rs) and [marks/](../crates/show/src/marks),
   [align.rs](../crates/show/src/align.rs), [sheet.rs](../crates/show/src/sheet.rs), and
@@ -268,6 +276,13 @@ No single module owns these rules; a change to any party keeps them.
   session first detaches its transcription or delivery from it; at most, a late result makes the
   Show it saved the last Show, so a late callback cannot stop a newer recording, overwrite its
   state, or deliver stale text.
+- **Pieces are disposable; the recording is authoritative.** Pause-aligned Parakeet pieces carry
+  both session and piece identity, including failures. The session keeps at most one queued piece
+  and never starts a worker merely to recognize early. Missing, failed, or overloaded pieces fall
+  back to the full sealed audio; any failed worker is replaced, including a detached piece's. A
+  failed final request retries that audio once. Raw text joins before filler removal and phrase
+  correction, and insertion waits for capture to seal. Promotion discards pieces and uses
+  whole-recording timed narration without changing its clock.
 - **Retire before reopening.** A microphone, screen recorder, worker, insertion thread, or desktop
   service acknowledges native teardown before its replacement opens. Retiring work stays owned until
   then, and abandoning a session never waits for it.
@@ -332,27 +347,27 @@ stateDiagram-v2
     state "AwaitingFootage(Narration, loss)" as AwaitingFootage
     [*] --> Queued
     [*] --> Reopening: idle owner accepts recovery
-    Reopening --> AwaitingWorker: recovered audio
+    Reopening --> Recognizing: recovered audio
     Reopening --> AwaitingFootage: stored narration or no recoverable audio
     Queued --> Opening: microphone free
     Opening --> Recording: first samples
     Opening --> Stopping: first samples after finish
+    Recording --> Recording: recognize pause-aligned pieces; retain whole audio
     Recording --> Stopping: release / next press / limit
-    Stopping --> AwaitingWorker: audio sealed; retire microphone
+    Stopping --> Recognizing: audio sealed; retire microphone
     Stopping --> [*]: no speech
-    AwaitingWorker --> Transcribing: worker ready
-    Transcribing --> Delivering: dictation text; insert
-    Transcribing --> [*]: no speech
+    Recognizing --> Recognizing: await worker / pieces / final request / retry
+    Recognizing --> Delivering: complete dictation text; insert
+    Recognizing --> [*]: no speech
     Stopping --> AwaitingFootage: silent Show; empty narration
-    Transcribing --> AwaitingFootage: Show narration
+    Recognizing --> AwaitingFootage: Show narration
     Recording --> AwaitingFootage: Show audio stops; narration lost
     Stopping --> AwaitingFootage: Show audio stops; narration lost
-    AwaitingWorker --> AwaitingFootage: Show model fails to load; narration lost
-    Transcribing --> AwaitingFootage: Show retry fails; narration lost
+    Recognizing --> AwaitingFootage: Show model or retry fails; narration lost
     AwaitingFootage --> Delivering: footage recorded; publish
     Delivering --> [*]: Done / Copied / Cancelled / Error
-    Recording --> [*]: cancel; revoke permit and retire
-    Transcribing --> [*]: cancel; revoke permit and recover worker
+    Recording --> [*]: cancel; retire microphone and discard pieces
+    Recognizing --> [*]: cancel; revoke permit and recover active final request
 ```
 
 ## Local recognition and privacy
@@ -390,7 +405,11 @@ Opt-in checks are `#[ignore = "..."]` tests whose reason says what each touches,
 screen on Windows and macOS, opens windows on Linux's current display, and with
 `SPEAKEASY_FIXTURE_WAV` set downloads about 0.8 GB. Fixture tests read `SPEAKEASY_FIXTURE_CONFIG`, a
 settings file, and `SPEAKEASY_FIXTURE_WAV`, public audio such as whisper.cpp's `samples/jfk.wav`.
-The [README](../README.md#build-and-verify) lists packaging scripts and native checks.
+`profile_recording_dictation` also reads `SPEAKEASY_FIXTURE_REFERENCE`, a public reference text
+file, and requires a canonical mono PCM16 WAV. `SPEAKEASY_FIXTURE_SEGMENT=1` admits segmentation for
+Parakeet; otherwise it measures whole-clip inference. `SPEAKEASY_FIXTURE_SPEED` defaults to one
+(real time); larger integers accelerate quality replays. The [README](../README.md#build-and-verify)
+lists packaging scripts and native checks.
 
 Default checks cannot establish live microphone, screen capture, overlay placement, hooks, clipboard
 and editor acceptance, compositor behavior, or mixed-display frame pacing.

@@ -93,6 +93,32 @@ impl Image {
         self.width() as f32 / self.height() as f32
     }
 
+    /// Copies an exact rectangle of source pixels without scaling.
+    ///
+    /// # Errors
+    /// Rejects empty rectangles and rectangles extending outside the image.
+    pub fn cropped(&self, left: u32, top: u32, width: u32, height: u32) -> Result<Self, Error> {
+        let rectangle = left
+            .checked_add(width)
+            .filter(|right| *right <= self.width())
+            .zip(
+                top.checked_add(height)
+                    .filter(|bottom| *bottom <= self.height()),
+            )
+            .and_then(|_| {
+                tiny_skia::IntRect::from_xywh(
+                    i32::try_from(left).ok()?,
+                    i32::try_from(top).ok()?,
+                    width,
+                    height,
+                )
+            });
+        rectangle
+            .and_then(|rectangle| self.pixmap.clone_rect(rectangle))
+            .map(|pixmap| Self { pixmap })
+            .ok_or_else(|| Error::dimensions(width, height))
+    }
+
     /// Decodes an RGBA PNG as [`Image::encode_png`] writes it.
     #[cfg(test)]
     pub(crate) fn decode_png(bytes: &[u8]) -> Self {
