@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::Context as _;
 use gpui::App;
-use speakeasy_show::Bundle;
+use speakeasy_show::{Bundle, Journal, Moment, Retrieval};
 
 /// How long an unpinned Show is kept.
 const KEPT_FOR: Duration = Duration::from_hours(7 * 24);
@@ -85,20 +85,10 @@ pub(super) struct Staged {
     directory: PathBuf,
     /// The summary written in the bundle, naming its files where it appears.
     summary: String,
+    pub source_lost: bool,
 }
 
 impl Staged {
-    /// Adds the retained source to this private staging directory. A failed source write leaves
-    /// the staging owner responsible for cleanup; the visible bundle is never partial.
-    pub(super) fn write_source(
-        &self,
-        journal: &speakeasy_show::Journal,
-        duration: speakeasy_show::Moment,
-    ) -> anyhow::Result<()> {
-        source::write(self.staging.path(), journal, duration)
-            .context("Cannot save the Show's source frames")
-    }
-
     /// Moves the bundle into place and returns the saved Show with the summary written in it.
     pub(super) fn persist(mut self) -> anyhow::Result<(SavedShow, String)> {
         let parent = self.directory.parent().unwrap_or(&self.directory);
@@ -114,6 +104,14 @@ impl Staged {
         }
         Ok((SavedShow(self.directory.into()), self.summary))
     }
+}
+
+/// Optional retained evidence. A source failure preserves the selected keyframes, reports the
+/// loss, and omits the retrieval note; an unavailable command omits only the note.
+pub(super) struct Retained<'a> {
+    pub journal: &'a Journal,
+    pub duration: Moment,
+    pub command: Option<&'a Path>,
 }
 
 /// A Show whose bundle was persisted, known only by its folder: no transcript or summary text
@@ -150,7 +148,11 @@ fn cannot_save(parent: &Path) -> impl FnOnce(io::Error) -> anyhow::Error {
 /// Writes `bundle` beside `directory`, which must not exist yet, with a summary naming its files
 /// there. On Unix the bundle is the user's alone; on Windows it takes its parent's access, which
 /// for the Shows folder is the user's alone (see [`private_directory`]).
-pub(super) fn stage(directory: &Path, bundle: Bundle) -> anyhow::Result<Staged> {
+pub(super) fn stage(
+    directory: &Path,
+    bundle: Bundle,
+    retained: Option<Retained<'_>>,
+) -> anyhow::Result<Staged> {
     anyhow::ensure!(
         !directory.exists(),
         "{} already exists, and a Show never replaces one",
@@ -159,7 +161,6 @@ pub(super) fn stage(directory: &Path, bundle: Bundle) -> anyhow::Result<Staged> 
     let parent = directory
         .parent()
         .context("A Show's directory needs a parent")?;
-    let (summary, files) = bundle.into_files(directory)?;
     fs::create_dir_all(parent).map_err(cannot_save(parent))?;
     let mut builder = tempfile::Builder::new();
     builder.prefix(STAGING_PREFIX);
@@ -169,6 +170,16 @@ pub(super) fn stage(directory: &Path, bundle: Bundle) -> anyhow::Result<Staged> 
         builder.permissions(fs::Permissions::from_mode(0o700));
     }
     let staging = builder.tempdir_in(parent).map_err(cannot_save(parent))?;
+    let source_lost = retained.as_ref().is_some_and(|retained| {
+        source::write(staging.path(), retained.journal, retained.duration).is_err()
+    });
+    let retrieval = retained.filter(|_| !source_lost).and_then(|retained| {
+        Some(Retrieval {
+            command: retained.command?,
+            id: directory.file_name()?.to_str()?,
+        })
+    });
+    let (summary, files) = bundle.into_files(directory, retrieval)?;
     let folders: BTreeSet<PathBuf> = files
         .iter()
         .filter_map(|file| Some(staging.path().join(&file.name).parent()?.to_owned()))
@@ -192,6 +203,7 @@ pub(super) fn stage(directory: &Path, bundle: Bundle) -> anyhow::Result<Staged> 
         staging,
         directory: directory.to_path_buf(),
         summary,
+        source_lost,
     })
 }
 

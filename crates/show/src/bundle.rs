@@ -66,6 +66,16 @@ pub struct Bundle {
     images: Vec<File>,
 }
 
+/// A local command and managed Show ID for retrieving retained samples. The caller supplies this
+/// only after saving those samples and finding a usable executable; formatting performs no I/O.
+#[derive(Clone, Copy, Debug)]
+pub struct Retrieval<'a> {
+    /// The installed command, named as a path rather than assumed to be on PATH.
+    pub command: &'a Path,
+    /// The exact managed folder name, including any same-second suffix.
+    pub id: &'a str,
+}
+
 /// One file of a bundle, named by its path within the bundle's directory.
 #[derive(Clone, PartialEq, Eq)]
 pub struct File {
@@ -168,6 +178,7 @@ pub fn compose<E: From<Error> + Send>(
 struct Summary<'a> {
     manifest: &'a Manifest,
     directory: &'a Path,
+    retrieval: Option<Retrieval<'a>>,
 }
 
 impl fmt::Display for Summary<'_> {
@@ -175,6 +186,7 @@ impl fmt::Display for Summary<'_> {
         let Self {
             manifest,
             directory,
+            retrieval,
         } = *self;
         let Manifest {
             recording,
@@ -284,7 +296,22 @@ impl fmt::Display for Summary<'_> {
                 file(&first.file()),
                 file(&last.file())
             ),
+        }?;
+        if let Some(Retrieval { command, id }) = retrieval {
+            writeln!(
+                f,
+                "Screen samples between keyframes are retained. Local command: {} (a path, not shell syntax; quote it for your shell).",
+                Code(command.display())
+            )?;
+            writeln!(
+                f,
+                "Use {inspect} to check this Show and {frames} for sample times; add --at M:SS.mmm, --phrase TEXT, or --mark N to focus. {skill} explains image exports and sampling gaps. If the ID does not resolve, pass the folder above as one SHOW argument. If the command has moved, read the bundle files directly.",
+                inspect = Code(format!("show inspect {id} --json")),
+                frames = Code(format!("show frames {id} --json")),
+                skill = Code("show skill"),
+            )?;
         }
+        Ok(())
     }
 }
 
@@ -319,10 +346,15 @@ impl Bundle {
     ///
     /// # Errors
     /// Fails when the manifest cannot be encoded, which valid input never causes.
-    pub fn into_files(self, directory: &Path) -> Result<(String, Vec<File>), Error> {
+    pub fn into_files(
+        self,
+        directory: &Path,
+        retrieval: Option<Retrieval<'_>>,
+    ) -> Result<(String, Vec<File>), Error> {
         let summary = Summary {
             manifest: &self.manifest,
             directory,
+            retrieval,
         }
         .to_string();
         let mut files = self.images;

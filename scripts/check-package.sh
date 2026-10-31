@@ -25,7 +25,7 @@ cd "$work"
 case "$package" in
   *-windows-x64.zip)
     unzip -q "$package" || fail "cannot be unzipped"
-    app=./speakeasy.exe
+    app=./speakeasy-cli.exe
     ;;
   *-macos.zip)
     unzip -q "$package" || fail "cannot be unzipped"

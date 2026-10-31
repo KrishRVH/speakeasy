@@ -349,7 +349,7 @@ fn print_help() -> io::Result<()> {
     )?;
     writeln!(
         out,
-        "speakeasy --version prints the version.\nspeakeasy show --help lists the Show commands: list, inspect, skill, and demo."
+        "speakeasy --version prints the version.\nspeakeasy show --help lists the Show commands."
     )
 }
 

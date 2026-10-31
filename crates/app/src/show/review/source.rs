@@ -45,7 +45,7 @@ fn fixture() -> anyhow::Result<Root> {
             .checked_sub(Duration::from_secs(days.saturating_mul(86_400)))
             .unwrap_or(SystemTime::UNIX_EPOCH);
         let destination = store::fresh_directory(&directory, at)?;
-        store::stage(&destination, bundle.clone())?.persist()?;
+        store::stage(&destination, bundle.clone(), None)?.persist()?;
         match days {
             0 => fs::write(destination.join(".pinned"), b"")?,
             1 => {

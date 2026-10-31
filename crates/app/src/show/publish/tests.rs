@@ -190,6 +190,7 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
     let (_input, permit) = permit();
     let mut clipboard = None;
     let published = publish_with(
+        None,
         narrated(footage, narration.clone(), None),
         None,
         Origin::Live,
@@ -272,6 +273,7 @@ fn a_show_that_cannot_be_copied_stays_saved() -> anyhow::Result<()> {
     let (_input, permit) = permit();
     let (footage, narration) = rehearse(32, 20);
     let published = publish_with(
+        None,
         narrated(footage, narration, None),
         None,
         Origin::Live,
@@ -307,6 +309,7 @@ fn a_cancelled_show_never_reaches_the_disk() -> anyhow::Result<()> {
     let unprepared = || bail!("A cancelled Show never prepares its folder");
     let (footage, narration) = rehearse(32, 20);
     let published = publish_with(
+        None,
         narrated(footage, narration, None),
         None,
         Origin::Live,
@@ -332,6 +335,7 @@ fn a_show_cancelled_before_staging_never_writes_its_files() -> anyhow::Result<()
     };
     let (footage, narration) = rehearse(32, 20);
     let published = publish_with(
+        None,
         narrated(footage, narration, None),
         None,
         Origin::Live,
@@ -351,6 +355,7 @@ fn a_show_that_lost_its_narration_says_why_in_its_files() -> anyhow::Result<()> 
     let lost = NarrationLoss::AudioStopped;
     let mut clipboard = None;
     let published = publish_with(
+        None,
         narrated(footage, Narration::default(), Some(lost)),
         None,
         Origin::Live,
@@ -496,8 +501,16 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     let composed = started.elapsed();
     let root = tempfile::tempdir()?;
     let directory = root.path().join("show");
-    let staged = store::stage(&directory, bundle)?;
-    staged.write_source(&journal, Moment::from_millis(60_000))?;
+    let staged = store::stage(
+        &directory,
+        bundle,
+        Some(store::Retained {
+            journal: &journal,
+            duration: Moment::from_millis(60_000),
+            command: None,
+        }),
+    )?;
+    assert!(!staged.source_lost);
     staged.persist()?;
     let written = started.elapsed();
     let bytes = bytes_under(&directory)?;
@@ -514,6 +527,51 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
 }
 
 mod recovery;
+
+#[test]
+fn retrieval_is_advertised_only_when_both_source_and_command_are_available() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let command = root.path().join("Apps ü & `tools`").join("speakeasy-cli");
+    for (available, source_ok) in [(true, true), (false, true), (true, false)] {
+        let (mut footage, narration) = rehearse(80, 60);
+        if !source_ok {
+            footage.recording.duration = Moment::from_millis(360_001);
+        }
+        let (_input, permit) = permit();
+        let mut copied = String::new();
+        let published = publish_with(
+            available.then_some(command.as_path()),
+            narrated(footage, narration, None),
+            None,
+            Origin::Live,
+            &permit,
+            || Ok(root.path().join("shows")),
+            |summary| {
+                summary.clone_into(&mut copied);
+                Ok(())
+            },
+        )?;
+        let Published::Saved {
+            show, source_lost, ..
+        } = published
+        else {
+            bail!("Expected a saved Show");
+        };
+        assert_eq!(source_lost, !source_ok);
+        assert_eq!(
+            copied,
+            fs::read_to_string(show.directory().join("summary.md"))?
+        );
+        assert_eq!(copied.contains("Local command:"), available && source_ok);
+        if available && source_ok {
+            let id = show.directory().file_name().unwrap().to_str().unwrap();
+            assert!(copied.contains(&format!("show frames {id} --json")));
+            assert!(copied.contains(&format!("``{}``", command.display())));
+        }
+        assert_eq!(store::source::size(show.directory())?.is_some(), source_ok);
+    }
+    Ok(())
+}
 
 fn narrated(mut footage: Footage, narration: Narration, lost: Option<NarrationLoss>) -> Footage {
     footage.recording.narration = narration;

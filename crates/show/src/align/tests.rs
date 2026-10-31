@@ -6,6 +6,8 @@ use serde::Deserialize;
 use super::*;
 use crate::{Mark, recording::tests::words};
 
+mod clauses;
+
 fn at(anchors: &[u64]) -> Vec<Moment> {
     anchors.iter().copied().map(Moment::from_millis).collect()
 }

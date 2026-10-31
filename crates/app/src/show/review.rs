@@ -8,6 +8,8 @@ const DISCARD_SHOW: &str = "This permanently removes the interrupted Show's reco
 
 mod frame;
 mod library;
+mod narration;
+mod navigation;
 mod render;
 mod source;
 
@@ -24,6 +26,7 @@ use gpui::{
     TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, px, size,
 };
 use library::{Detail, Key, Kind, Library, Mode};
+use navigation::{Origin, Request};
 use source::Root;
 pub(crate) use source::Source;
 use tokio::sync::watch;
@@ -63,6 +66,8 @@ pub(crate) struct Review {
     directory: Option<PathBuf>,
     detail: Option<Detail>,
     mode: Mode,
+    pane: Pane,
+    request: Option<Request>,
     image: ImageState,
     notice: Option<String>,
     listing: Option<Task<()>>,
@@ -137,6 +142,8 @@ impl Review {
             directory: None,
             detail: None,
             mode: Mode::Keyframes,
+            pane: Pane::Summary,
+            request: None,
             image: ImageState::Empty,
             notice: None,
             listing: None,
@@ -187,6 +194,7 @@ impl Review {
             return;
         }
         self.notice = None;
+        self.request = None;
         let source = self.source;
         let existing = self.directory.clone();
         let work = cx.background_executor().spawn(async move {
@@ -259,7 +267,10 @@ impl Review {
                     },
                 };
                 let key = match seek {
-                    Some(at) => view.library.select(key.directory, detail.frame_at(at)),
+                    Some(at) => view.library.select(
+                        key.directory,
+                        detail.locate(at).map_or(0, |(index, _)| index),
+                    ),
                     None => key,
                 };
                 view.detail = Some(detail);
@@ -316,6 +327,7 @@ impl Review {
         self.copying = None;
         self.checking = None;
         self.detail = None;
+        self.request = None;
         self.confirm_discard = false;
         self.notice = None;
         self.replace_image(ImageState::Empty, window, cx);
@@ -466,18 +478,43 @@ impl Review {
         }
     }
 
-    fn copy(&mut self, cx: &mut Context<'_, Self>) {
+    fn copy(&mut self, kind: CopyKind, cx: &mut Context<'_, Self>) {
         if self.source == Source::Demo || !(self.actions.can_copy)(cx) || self.copying.is_some() {
             return;
         }
         let Some(key) = self.library.selected.clone() else {
             return;
         };
+        let pointer = if kind == CopyKind::Moment {
+            let Some(detail) = &self.detail else {
+                return;
+            };
+            let Some(frame) = detail.frames.get(key.frame) else {
+                return;
+            };
+            if !matches!(self.image, ImageState::Ready(_)) {
+                return;
+            }
+            Some(navigation::pointer(
+                &key.directory,
+                frame,
+                self.mode,
+                self.request,
+            ))
+        } else {
+            None
+        };
         let directory = key.directory.clone();
-        let read = cx
-            .background_executor()
-            .spawn(async move { recall::summary(&directory) });
-        self.notice = Some("Copying summary…".into());
+        let read = cx.background_executor().spawn(async move {
+            pointer.map_or_else(
+                || {
+                    recall::summary(&directory)
+                        .map_err(|error| format!("Cannot read summary.md: {error}"))
+                },
+                Ok,
+            )
+        });
+        self.notice = Some(format!("Copying {}…", kind.name()));
         self.copying = Some(cx.spawn(async move |view, cx| {
             let summary = read.await;
             // Changing Shows cancels this task. Frame navigation within the same Show does not
@@ -489,7 +526,7 @@ impl Review {
                 .unwrap_or(false);
             let result = if allowed {
                 cx.background_executor()
-                    .spawn(async move { copy_summary(summary) })
+                    .spawn(async move { copy_text(summary, kind) })
                     .await
             } else {
                 Err("Finish the current recording before copying a Show.".into())
@@ -497,8 +534,9 @@ impl Review {
             view.update_if_alive(cx, |view, cx| {
                 if view.library.is_selected(&key.directory) {
                     view.copying = None;
-                    view.notice =
-                        Some(result.map_or_else(|error| error, |()| "Summary copied.".into()));
+                    view.notice = Some(
+                        result.map_or_else(|error| error, |()| format!("Copied {}.", kind.name())),
+                    );
                     cx.notify();
                 }
             });
@@ -610,22 +648,51 @@ impl Review {
         }));
     }
 
+    fn seek(&mut self, request: Request, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if let Some((index, _)) = self
+            .detail
+            .as_ref()
+            .and_then(|detail| detail.locate(request.at))
+        {
+            self.act(Action::Frame(index), window, cx);
+            self.request = Some(request);
+        }
+    }
+
     fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<'_, Self>) {
         match action {
+            Action::Pane(pane) => self.pane = pane,
+            Action::Clause(index) => {
+                if let Some(clause) = self
+                    .detail
+                    .as_ref()
+                    .and_then(|detail| detail.narration.clauses().get(index))
+                {
+                    self.seek(
+                        Request {
+                            at: clause.at,
+                            origin: Origin::Clause(index),
+                        },
+                        window,
+                        cx,
+                    );
+                }
+            },
             Action::Mark(number) => {
                 if self.mode == Mode::Source
-                    && let Some(detail) = &self.detail
-                    && let Some((_, at)) = detail.marks.iter().find(|(mark, _)| *mark == number)
-                    && let Some(frame) = detail.frames.get(detail.frame_at(*at))
+                    && let Some((_, at)) = self
+                        .detail
+                        .as_ref()
+                        .and_then(|detail| detail.marks.iter().find(|(mark, _)| *mark == number))
                 {
-                    let index = detail.frame_at(*at);
-                    let notice = format!(
-                        "Mark #{number} starts at {} ms. Jumped to the retained sample at {} ms.",
-                        at.as_millis(),
-                        frame.at.as_millis()
+                    self.seek(
+                        Request {
+                            at: *at,
+                            origin: Origin::Mark(number),
+                        },
+                        window,
+                        cx,
                     );
-                    self.act(Action::Frame(index), window, cx);
-                    self.notice = Some(notice);
                 }
             },
             Action::Previous | Action::Next => {
@@ -643,14 +710,17 @@ impl Review {
                 if self.mode != mode
                     && let Some(current) = self.library.selected.clone()
                 {
-                    let at = self
-                        .detail
-                        .as_ref()
-                        .and_then(|detail| detail.frames.get(current.frame))
-                        .map(|frame| frame.at);
+                    let request = self.request;
+                    let at = request.map(|request| request.at).or_else(|| {
+                        self.detail
+                            .as_ref()
+                            .and_then(|detail| detail.frames.get(current.frame))
+                            .map(|frame| frame.at)
+                    });
                     self.mode = mode;
                     let key = self.library.select(current.directory, 0);
                     self.open_selected(key, at, Some(window), cx);
+                    self.request = request;
                 }
             },
             Action::Show(index) => {
@@ -663,6 +733,7 @@ impl Review {
                 }
             },
             Action::Frame(index) => {
+                self.request = None;
                 if self
                     .detail
                     .as_ref()
@@ -702,7 +773,9 @@ impl Review {
                     } else {
                         frame.at.as_millis().saturating_sub(10_000)
                     };
-                    let target = detail.frame_at(speakeasy_show::Moment::from_millis(ms));
+                    let target = detail
+                        .locate(speakeasy_show::Moment::from_millis(ms))
+                        .map_or(current.frame, |(index, _)| index);
                     let index = if forward {
                         target.max(current.frame.saturating_add(1))
                     } else {
@@ -712,7 +785,7 @@ impl Review {
                     self.act(Action::Frame(index), window, cx);
                 }
             },
-            Action::Copy => self.copy(cx),
+            Action::Copy(kind) => self.copy(kind, cx),
             Action::Keep => self.keep(cx),
             Action::Folder => {
                 if let Some(key) = &self.library.selected {
@@ -724,15 +797,37 @@ impl Review {
     }
 }
 
-fn copy_summary(summary: io::Result<String>) -> Result<(), String> {
+fn copy_text(text: Result<String, String>, kind: CopyKind) -> Result<(), String> {
     const REMEDY: &str = "Close any app holding the clipboard, then try again.";
-    let text = summary.map_err(|error| format!("Cannot read summary.md: {error}"))?;
-    speakeasy_platform::copy_text(&text)
-        .map_err(|error| format!("Cannot copy the summary: {error:#}. {REMEDY}"))
+    speakeasy_platform::copy_text(&text?)
+        .map_err(|error| format!("Cannot copy {}: {error:#}. {REMEDY}", kind.name()))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pane {
+    Summary,
+    Narration,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CopyKind {
+    Summary,
+    Moment,
+}
+
+impl CopyKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Summary => "summary",
+            Self::Moment => "moment",
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
 enum Action {
+    Pane(Pane),
+    Clause(usize),
     Mark(usize),
     Recover,
     Discard,
@@ -745,7 +840,7 @@ enum Action {
     Refresh,
     Show(usize),
     Frame(usize),
-    Copy,
+    Copy(CopyKind),
     Keep,
     Folder,
 }

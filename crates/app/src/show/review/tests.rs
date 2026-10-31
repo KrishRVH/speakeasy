@@ -8,6 +8,8 @@ use super::{
 };
 use crate::show::store::recall::Health;
 
+mod narration;
+
 fn row(name: &str) -> Row {
     Row {
         kind: library::Kind::Saved,

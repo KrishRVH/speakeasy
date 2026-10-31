@@ -473,7 +473,7 @@ mod tests {
         let bundle = Demo::new(typeface()).bundle((720, 450)).unwrap();
         let expected = bundle.manifest.clone();
         let directory = Path::new("shows").join("demo");
-        let (summary, files) = bundle.into_files(&directory).unwrap();
+        let (summary, files) = bundle.into_files(&directory, None).unwrap();
         assert_eq!(
             summary,
             format!(

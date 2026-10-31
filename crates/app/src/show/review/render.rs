@@ -7,7 +7,11 @@ use gpui::{
     px, rgb,
 };
 
-use super::{Action, ImageState, Kind, Mode, Review, Source};
+use super::{
+    Action, CopyKind, ImageState, Kind, Mode, Pane, Review, Source,
+    narration::Narration,
+    navigation::{Origin, Stamp},
+};
 use crate::{
     BRAND_FONT,
     show::store::{recall::Health, retention::Retention},
@@ -379,6 +383,22 @@ impl Review {
                 )
             })
             .child(self.canvas(palette))
+            .when_some(
+                self.request.and_then(|request| {
+                    self.detail
+                        .as_ref()
+                        .and_then(|detail| detail.frames.get(key.frame))
+                        .map(|frame| request.caption(frame, self.mode))
+                }),
+                |body, caption| {
+                    body.child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(palette.muted))
+                            .child(caption),
+                    )
+                },
+            )
             .child(self.navigation(key.frame, palette, cx))
             .when(self.mode == Mode::Source, |body| {
                 body.child(
@@ -413,12 +433,33 @@ impl Review {
             )
             .child(
                 div()
-                    .text_size(px(11.0))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(rgb(palette.muted))
-                    .child("SUMMARY"),
+                    .flex()
+                    .gap(px(6.0))
+                    .child(
+                        button(
+                            Action::Pane(Pane::Summary),
+                            palette,
+                            true,
+                            self.pane == Pane::Summary,
+                            cx,
+                        )
+                        .child("Summary"),
+                    )
+                    .child(
+                        button(
+                            Action::Pane(Pane::Narration),
+                            palette,
+                            true,
+                            self.pane == Pane::Narration,
+                            cx,
+                        )
+                        .child("Narration"),
+                    ),
             )
-            .child(self.summary(palette))
+            .child(match self.pane {
+                Pane::Summary => self.summary(palette).into_any_element(),
+                Pane::Narration => self.narration(palette, cx).into_any_element(),
+            })
             .child(self.commands(palette, now, cx))
             .into_any_element()
     }
@@ -569,6 +610,117 @@ impl Review {
             .child(text)
     }
 
+    fn narration(&self, palette: &Palette, cx: &Context<'_, Self>) -> impl IntoElement {
+        let narration = self.detail.as_ref().map(|detail| &detail.narration);
+        let incomplete = matches!(
+            narration,
+            Some(
+                Narration::Timed {
+                    incomplete: true,
+                    ..
+                } | Narration::Untimed {
+                    incomplete: true,
+                    ..
+                }
+            )
+        );
+        let truncated = matches!(
+            narration,
+            Some(
+                Narration::Timed {
+                    truncated: true,
+                    ..
+                } | Narration::Untimed {
+                    truncated: true,
+                    ..
+                }
+            )
+        );
+        let text = match narration {
+            Some(Narration::Timed { clauses, .. }) => div()
+                .flex()
+                .flex_col()
+                .gap(px(6.0))
+                .children(clauses.iter().enumerate().map(|(index, clause)| {
+                    button(
+                        Action::Clause(index),
+                        palette,
+                        self.detail
+                            .as_ref()
+                            .is_some_and(|detail| !detail.frames.is_empty()),
+                        self.request
+                            .is_some_and(|request| request.origin == Origin::Clause(index)),
+                        cx,
+                    )
+                    .w_full()
+                    .flex()
+                    .items_start()
+                    .gap(px(10.0))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(rgb(palette.muted))
+                            .child(Stamp(clause.at).to_string()),
+                    )
+                    .child(div().flex_1().min_w(px(0.0)).child(clause.text.clone()))
+                })),
+            Some(Narration::Untimed { text, .. }) => div()
+                .child(
+                    div()
+                        .text_color(rgb(palette.muted))
+                        .child("These words have no timings and cannot point to frames."),
+                )
+                .child(div().mt(px(8.0)).child(text.clone())),
+            Some(Narration::Silent) => div().child("No speech was recorded."),
+            Some(Narration::Lost(loss)) => div().text_color(rgb(palette.warn)).child(match loss {
+                speakeasy_show::NarrationLoss::Incomplete => {
+                    "Only part of the audio was recovered; it contains no recognized words."
+                },
+                speakeasy_show::NarrationLoss::AudioStopped => {
+                    "The microphone stopped. Narration is missing."
+                },
+                speakeasy_show::NarrationLoss::NotTranscribed => {
+                    "Speech could not be transcribed. Narration is missing."
+                },
+            }),
+            Some(Narration::Unavailable) => div()
+                .child("Recorded narration is unavailable because show.json could not be read."),
+            None => div().child("Loading narration…"),
+        };
+        div()
+            .id("show-narration")
+            .h(px(180.0))
+            .flex_none()
+            .overflow_y_scroll()
+            .p(px(12.0))
+            .rounded(px(4.0))
+            .bg(rgb(palette.room))
+            .line_height(px(19.0))
+            .child(
+                div()
+                    .mb(px(8.0))
+                    .text_color(rgb(palette.muted))
+                    .child("Recorded words; summary edits don't appear here."),
+            )
+            .when(incomplete, |body| {
+                body.child(
+                    div()
+                        .mb(px(8.0))
+                        .text_color(rgb(palette.warn))
+                        .child("Narration is incomplete."),
+                )
+            })
+            .child(text)
+            .when(truncated, |body| {
+                body.child(
+                    div()
+                        .mt(px(8.0))
+                        .text_color(rgb(palette.warn))
+                        .child("The rest of the recorded words are in show.json."),
+                )
+            })
+    }
+
     fn commands(
         &self,
         palette: &Palette,
@@ -605,7 +757,26 @@ impl Review {
             .items_center()
             .gap(px(8.0))
             .when(!cfg!(target_os = "linux"), |bar| {
-                bar.child(button(Action::Copy, palette, can_copy, false, cx).child("Copy summary"))
+                bar.child(
+                    button(
+                        Action::Copy(CopyKind::Summary),
+                        palette,
+                        can_copy,
+                        false,
+                        cx,
+                    )
+                    .child("Copy summary"),
+                )
+                .child(
+                    button(
+                        Action::Copy(CopyKind::Moment),
+                        palette,
+                        can_copy && matches!(self.image, ImageState::Ready(_)),
+                        false,
+                        cx,
+                    )
+                    .child("Copy moment"),
+                )
             })
             .child(button(Action::Folder, palette, true, false, cx).child("Open folder"))
             .child(
@@ -668,7 +839,11 @@ fn button(
         Action::Previous => "previous-frame".into(),
         Action::Next => "next-frame".into(),
         Action::Refresh => "shows-refresh".into(),
-        Action::Copy => "shows-copy".into(),
+        Action::Copy(CopyKind::Summary) => "shows-copy".into(),
+        Action::Copy(CopyKind::Moment) => "shows-copy-moment".into(),
+        Action::Pane(Pane::Summary) => "show-summary-tab".into(),
+        Action::Pane(Pane::Narration) => "show-narration-tab".into(),
+        Action::Clause(index) => SharedString::from(format!("show-clause-{index}")).into(),
         Action::Folder => "shows-folder".into(),
         Action::Show(index) => SharedString::from(format!("show-{index}")).into(),
         Action::Frame(index) => SharedString::from(format!("frame-{index}")).into(),

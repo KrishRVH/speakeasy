@@ -167,22 +167,106 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         );
         assert!(detail.is_some_and(|detail| detail.coverage.contains("28500 ms")));
     })?;
+    let request = window.update(cx, |view, window, cx| {
+        view.act(Action::Pane(Pane::Narration), window, cx);
+        view.act(Action::Clause(0), window, cx);
+        let request = view.request.context("Narration did not select a frame")?;
+        let detail = view
+            .detail
+            .as_ref()
+            .context("Narration detail was dropped")?;
+        let index = view
+            .library
+            .selected
+            .as_ref()
+            .context("Narration selection was dropped")?
+            .frame;
+        assert_eq!(request.origin, Origin::Clause(0));
+        assert_eq!(
+            Some(index),
+            detail.locate(request.at).map(|(index, _)| index)
+        );
+        assert!(
+            request
+                .caption(
+                    detail
+                        .frames
+                        .get(index)
+                        .context("Narration selected a missing frame")?,
+                    view.mode
+                )
+                .contains("retained sample")
+        );
+        view.copy(CopyKind::Moment, cx);
+        assert!(
+            view.copying.is_none(),
+            "Preview copied to the real clipboard"
+        );
+        view.act(Action::Mode(Mode::Keyframes), window, cx);
+        anyhow::Ok(request)
+    })??;
+    wait_for(
+        window,
+        |view| view.opening.is_none() && matches!(view.image, ImageState::Ready(_)),
+        cx,
+    )
+    .await?;
+    window.update(cx, |view, window, cx| {
+        assert_eq!(view.request, Some(request));
+        assert_eq!(
+            view.library.selected.as_ref().map(|key| key.frame),
+            view.detail
+                .as_ref()
+                .and_then(|detail| detail.locate(request.at))
+                .map(|(index, _)| index)
+        );
+        view.act(Action::Mode(Mode::Source), window, cx);
+    })?;
+    wait_for(
+        window,
+        |view| view.opening.is_none() && matches!(view.image, ImageState::Ready(_)),
+        cx,
+    )
+    .await?;
+    window.update(cx, |view, window, cx| {
+        assert_eq!(view.request, Some(request));
+        view.act(Action::Next, window, cx);
+        assert!(
+            view.request.is_none(),
+            "Frame navigation kept a stale narration request"
+        );
+        view.act(Action::Clause(0), window, cx);
+        view.act(Action::Refresh, window, cx);
+        assert!(
+            view.request.is_none(),
+            "Refresh kept a stale narration request"
+        );
+    })?;
+    wait_for(
+        window,
+        |view| {
+            view.listing.is_none()
+                && view.opening.is_none()
+                && matches!(view.image, ImageState::Ready(_))
+        },
+        cx,
+    )
+    .await?;
     window.update(cx, |view, window, cx| {
         let detail = view.detail.as_ref().context("The preview has loaded")?;
         let (number, at) = *detail
             .marks
             .first()
             .context("The preview contains a mark")?;
-        let expected = detail.frame_at(at);
+        let expected = detail.locate(at).context("Mark has no frame")?.0;
         view.act(Action::Mark(number), window, cx);
         assert_eq!(
             view.library.selected.as_ref().map(|key| key.frame),
             Some(expected)
         );
-        assert!(
-            view.notice
-                .as_ref()
-                .is_some_and(|notice| notice.contains("retained sample"))
+        assert_eq!(
+            view.request.map(|request| request.origin),
+            Some(Origin::Mark(number))
         );
         view.act(Action::Frame(2), window, cx);
         view.act(Action::Jump(true), window, cx);
@@ -207,7 +291,8 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             view.library.selected.as_ref().map(|key| key.frame),
             view.detail
                 .as_ref()
-                .map(|detail| detail.frame_at(speakeasy_show::Moment::from_millis(1_500)))
+                .and_then(|detail| detail.locate(speakeasy_show::Moment::from_millis(1_500)))
+                .map(|(index, _)| index)
         );
     })?;
     window.update(cx, |view, window, cx| {

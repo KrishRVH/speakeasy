@@ -19,10 +19,16 @@ try {
 }
 $destination = Join-Path (Get-Location) 'artifacts/windows'
 New-Item -ItemType Directory -Force -Path $destination | Out-Null
-Copy-Item 'target/x86_64-pc-windows-msvc/release/speakeasy.exe' $destination
-$image = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes("$destination/speakeasy.exe"))
-if ($image.IndexOf('VCRUNTIME140', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
-    throw 'speakeasy.exe imports the Visual C++ runtime, which Windows does not include'
+foreach ($executable in @('speakeasy.exe', 'speakeasy-cli.exe')) {
+    Copy-Item "target/x86_64-pc-windows-msvc/release/$executable" $destination
+    $image = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes("$destination/$executable"))
+    if ($image.IndexOf('VCRUNTIME140', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        throw "$executable imports the Visual C++ runtime, which Windows does not include"
+    }
+}
+$version = & "$destination/speakeasy-cli.exe" --version
+if ($LASTEXITCODE -ne 0 -or $version -notmatch '^speakeasy \d+\.\d+\.\d+$') {
+    throw 'The console entry did not return its version and exit status to PowerShell'
 }
 Copy-Item 'settings.example.json' $destination
 Copy-Item 'LICENSE' $destination
@@ -30,5 +36,5 @@ cargo about generate --locked --fail -c packaging/about.toml --target x86_64-pc-
 if ($LASTEXITCODE -ne 0) { throw 'Third-party notices failed' }
 Copy-Item 'crates/app/assets/JosefinSans-OFL.txt' $destination
 Copy-Item 'crates/show/NOTICE.md' $destination
-Compress-Archive -LiteralPath "$destination/speakeasy.exe", "$destination/settings.example.json", "$destination/LICENSE", "$destination/THIRD-PARTY-NOTICES.txt", "$destination/JosefinSans-OFL.txt", "$destination/NOTICE.md" -DestinationPath 'artifacts/speakeasy-windows-x64.zip' -Force
+Compress-Archive -LiteralPath "$destination/speakeasy.exe", "$destination/speakeasy-cli.exe", "$destination/settings.example.json", "$destination/LICENSE", "$destination/THIRD-PARTY-NOTICES.txt", "$destination/JosefinSans-OFL.txt", "$destination/NOTICE.md" -DestinationPath 'artifacts/speakeasy-windows-x64.zip' -Force
 Write-Host "Built $destination"

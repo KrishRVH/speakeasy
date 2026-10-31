@@ -9,6 +9,7 @@ use std::{
 
 use speakeasy_show::{Ending, Moment, NarrationLoss, Unreadable};
 
+use super::{narration::Narration, navigation::Relation};
 use crate::show::store::{
     age, checkpoint, pinned,
     recall::{self, Entry, Health, ReadError},
@@ -144,21 +145,24 @@ pub(super) struct Frame {
     pub file: super::frame::Content,
 }
 
-/// The only private text retained is the user's current summary. Never derive Debug for it.
+/// Only the selected Show's summary and bounded recorded clauses remain in memory. No Debug.
 pub(super) struct Detail {
     pub frames: Vec<Frame>,
     pub marks: Vec<(usize, Moment)>,
     pub warnings: Vec<String>,
     pub summary: Result<String, String>,
+    pub narration: Narration,
     pub source_available: bool,
     pub coverage: String,
 }
 
 impl Detail {
-    pub(super) fn frame_at(&self, at: Moment) -> usize {
-        self.frames
+    pub(super) fn locate(&self, at: Moment) -> Option<(usize, Relation)> {
+        let index = self
+            .frames
             .partition_point(|frame| frame.at <= at)
-            .saturating_sub(1)
+            .saturating_sub(1);
+        Some((index, Relation::between(at, self.frames.get(index)?.at)))
     }
 
     pub(super) fn open(directory: &Path, mode: Mode) -> io::Result<Self> {
@@ -168,6 +172,7 @@ impl Detail {
         let mut warnings = Vec::new();
         let mut frames = Vec::new();
         let mut marks = Vec::new();
+        let mut narration = Narration::Unavailable;
         match entry.show {
             Err(ReadError::Manifest(Unreadable::Unsupported(version))) => warnings.push(format!(
                 "This Show uses format {version}. Update Speakeasy to view its frames. Its summary may still be readable."
@@ -178,6 +183,7 @@ impl Detail {
             Ok(show) => {
                 let manifest = show.manifest;
                 let recording = manifest.recording();
+                narration = Narration::from_recording(recording);
                 let duration = recording.duration;
                 match recording.ending {
                     Ending::Finished => {},
@@ -275,6 +281,7 @@ impl Detail {
             marks,
             warnings,
             summary,
+            narration,
             source_available,
             coverage,
         })

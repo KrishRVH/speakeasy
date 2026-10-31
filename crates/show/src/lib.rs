@@ -37,7 +37,8 @@ mod tracker;
 mod typeface;
 
 pub use crate::{
-    bundle::{Bundle, File, Manifest, Unreadable, compose},
+    align::{TimedClause, timed_clauses},
+    bundle::{Bundle, File, Manifest, Retrieval, Unreadable, compose},
     demo::Demo,
     error::Error,
     geometry::{Point, Rect},

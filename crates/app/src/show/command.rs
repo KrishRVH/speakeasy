@@ -232,7 +232,7 @@ fn demo(directory: Option<PathBuf>, out: &mut impl io::Write) -> anyhow::Result<
         Some(directory) => directory,
         None => store::fresh_directory(&store::private_directory()?, SystemTime::now())?,
     };
-    let (_, summary) = store::stage(&directory, bundle)?.persist()?;
+    let (_, summary) = store::stage(&directory, bundle, None)?.persist()?;
     write!(out, "{summary}")?;
     Ok(())
 }

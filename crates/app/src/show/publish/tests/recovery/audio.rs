@@ -39,6 +39,7 @@ async fn narration_survives_a_failed_save_before_audio_is_erased() -> anyhow::Re
     let (_input, permit) = permit();
     assert!(
         publish_with(
+            None,
             captured,
             Some(checkpoint),
             Origin::Live,
@@ -81,6 +82,7 @@ async fn pending_retry_preserves_edits_and_failure_does_not_publish_another_copy
         audio_kept: true,
         ..
     } = publish_with(
+        None,
         captured,
         Some(checkpoint),
         Origin::Live,
@@ -111,6 +113,7 @@ async fn pending_retry_preserves_edits_and_failure_does_not_publish_another_copy
     let (_input, retry) = permit();
     assert!(
         publish_with(
+            None,
             captured,
             Some(reopened.checkpoint),
             Origin::Recovered { pending: true },
@@ -134,6 +137,7 @@ async fn pending_retry_preserves_edits_and_failure_does_not_publish_another_copy
         audio_kept: false,
         ..
     } = publish_with(
+        None,
         captured,
         Some(reopened.checkpoint),
         Origin::Recovered { pending: true },
@@ -174,6 +178,7 @@ async fn kept_bundle_cannot_extend_audio_expiry_and_discard_audio_leaves_it_unto
             audio_kept: true,
             ..
         } = publish_with(
+            None,
             captured,
             Some(checkpoint),
             Origin::Live,

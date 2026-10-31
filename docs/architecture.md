@@ -141,7 +141,11 @@ module unless a test file is named.
   including exact managed IDs and expiry dates. `show keep` changes retention for one explicit
   managed Show; inspection stays read-only.
   [command/tests.rs](../crates/app/src/show/command/tests.rs) inspects simulated Shows, checks
-  failure output, and exercises the embedded [agent skill](../skills/speakeasy-show/SKILL.md).
+  failure output, and exercises the embedded [agent skill](../skills/speakeasy-show/SKILL.md). The
+  Windows package's [console entry](../crates/app/src/bin/speakeasy-cli.rs) relays only Show
+  commands and version requests to the sibling app, with inherited handles, arguments, and working
+  directory, and waits for its exit. [cli.rs](../crates/app/tests/cli.rs) checks the process
+  boundary without opening devices or the app. Help and refused launch options never spawn a child.
   [check-package.sh](../scripts/check-package.sh) launches every release package before upload.
 - **Show recording and publication**: [show.rs](../crates/app/src/show.rs),
   [show/recorder.rs](../crates/app/src/show/recorder.rs),
@@ -156,9 +160,15 @@ module unless a test file is named.
 - **Show review**: [show/review.rs](../crates/app/src/show/review.rs) owns the native library view,
   selection, background reads, and one decoded frame. Its
   [library.rs](../crates/app/src/show/review/library.rs) projects content-free rows through the
-  shared store reader, without CLI output types; only the selected summary remains in memory.
-  Selection revisions reject stale Show and frame results. Closing cancels reads and releases the
-  image directly, bypassing GPUI's asset cache. Services owns accepted Keep/Discard writes through
+  shared store reader, without CLI output types; only the selected summary and bounded recorded
+  clauses remain in memory. [narration.rs](../crates/app/src/show/review/narration.rs) distinguishes
+  timed, untimed, silent, lost, and unavailable narration. The Summary/Narration switch preserves
+  summary edits. Explicit clause and mark requests keep their timestamp across frame modes and clear
+  on manual navigation, refresh, or another Show.
+  [navigation.rs](../crates/app/src/show/review/navigation.rs) describes earlier/later samples
+  honestly and formats Copy moment without transcript text. Selection revisions reject stale Show
+  and frame results. Closing cancels reads and releases the image directly, bypassing GPUI's asset
+  cache. Services owns accepted Keep/Discard writes through
   [edits.rs](../crates/app/src/show/edits.rs); Quit awaits them, and an immutable fixture lease
   keeps preview storage alive until completion. Recovery enters the session owner's shielded
   publication stage through a bounded request lane, without microphone, inference, or clipboard
@@ -186,11 +196,17 @@ module unless a test file is named.
   [marks/tests.rs](../crates/show/src/marks/tests.rs), and
   [journal/tests.rs](../crates/show/src/journal/tests.rs); `speakeasy show demo` writes a bundle to
   view. [align/tests.rs](../crates/show/src/align/tests.rs) also replays narration from Scrawl's
-  public recordings, trimmed beside it to timed words and marks in `show.json`'s shape.
+  public recordings, trimmed beside it to timed words and marks in `show.json`'s shape. Timed
+  narration rows reuse alignment's clause boundaries with ten-second display splits; they expose the
+  first word's reported onset, never alignment's inferred silence intervals.
 - **Show bundle format**: [bundle.rs](../crates/show/src/bundle.rs) and
   [describe.rs](../crates/show/src/describe.rs).
   [bundle/tests.rs](../crates/show/src/bundle/tests.rs) checks paginated sheets and pins
-  `show.json`; the demo's summary in demo.rs pins what agents read.
+  `show.json`; the demo's summary in demo.rs pins what agents read. Retrieval notes take an explicit
+  command and ID. The store writes source frames before rendering the summary, so a failed optional
+  source write never advertises retrieval. [paths.rs](../crates/app/src/paths.rs) finds the console
+  sibling on Windows, the original AppImage on Linux, or a durable app executable; temporary mounts
+  and unavailable commands are omitted. Existing summaries are never regenerated.
   [bundle/read.rs](../crates/show/src/bundle/read.rs) validates format versions and references
   without I/O, exposes sheet membership, and strips private decoder messages from failures. Its
   [tests](../crates/show/src/bundle/read/tests.rs) reject broken references and exercise generated

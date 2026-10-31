@@ -4,7 +4,7 @@
 use std::{
     ffi::OsString,
     io::{self, ErrorKind},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use anyhow::Context as _;
@@ -17,6 +17,50 @@ pub(crate) fn settings_file() -> anyhow::Result<PathBuf> {
 /// Engines, models, and Shows are machine-local, so they stay out of roaming settings.
 pub(crate) fn data_root() -> anyhow::Result<PathBuf> {
     user_folder(UserFolder::Data, std::env::var_os)
+}
+
+/// A durable local entry for headless commands, if available. Resolve off the UI thread: checking
+/// the installed file can block. Temporary application mounts never go into saved handoffs.
+pub(crate) fn command() -> Option<PathBuf> {
+    command_at(
+        std::env::current_exe().ok()?,
+        std::env::var_os("APPIMAGE").map(PathBuf::from),
+        std::env::var_os("APPDIR").map(PathBuf::from),
+        Path::is_file,
+    )
+}
+
+fn command_at(
+    exe: PathBuf,
+    appimage: Option<PathBuf>,
+    appdir: Option<PathBuf>,
+    is_file: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    let path = if cfg!(target_os = "windows") {
+        exe.with_file_name("speakeasy-cli.exe")
+    } else if cfg!(target_os = "linux") {
+        // AppImage variables are inherited by unrelated programs started beneath it. Only name
+        // that image when this executable actually belongs to its mounted or extracted directory.
+        if appdir.is_some_and(|dir| dir.is_absolute() && exe.starts_with(dir)) {
+            // An extracted AppImage also disappears after exit; a missing original has no
+            // durable fallback to its internal executable.
+            appimage?
+        } else {
+            exe
+        }
+    } else {
+        exe
+    };
+    // Missing or mismatched AppImage environment can still leave a temporary executable, as can
+    // macOS App Translocation. Neither belongs in a saved handoff.
+    let temporary = path.components().any(|part| {
+        part.as_os_str().to_str().is_some_and(|part| {
+            part == "AppTranslocation"
+                || part.starts_with(".mount_")
+                || part.starts_with("appimage_extracted_")
+        })
+    });
+    (path.is_absolute() && path.to_str().is_some() && !temporary && is_file(&path)).then_some(path)
 }
 
 /// What to do when a file operation fails, for a message that names its path: free space on a
@@ -87,6 +131,103 @@ fn user_folder(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn handoffs_require_a_present_durable_command() {
+        let root = tempfile::tempdir().unwrap();
+        let exe = root.path().join("speakeasy");
+        let expected = if cfg!(target_os = "windows") {
+            exe.with_file_name("speakeasy-cli.exe")
+        } else {
+            exe.clone()
+        };
+        assert_eq!(command_at(exe.clone(), None, None, |_| false), None);
+        assert_eq!(
+            command_at(exe, None, None, |path| path == expected),
+            Some(expected)
+        );
+        for folder in [
+            "AppTranslocation",
+            ".mount_Speakeasy",
+            "appimage_extracted_Speakeasy",
+        ] {
+            assert_eq!(
+                command_at(
+                    root.path().join(folder).join("speakeasy"),
+                    None,
+                    None,
+                    |_| true
+                ),
+                None
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn appimages_name_the_original_file_instead_of_the_temporary_mount() {
+        let exe = PathBuf::from("/tmp/.mount_Speakeasy/usr/bin/speakeasy");
+        let image = PathBuf::from("/home/user/Apps/Speakeasy.AppImage");
+        assert_eq!(
+            command_at(
+                exe.clone(),
+                Some(image.clone()),
+                Some("/tmp/.mount_Speakeasy".into()),
+                |_| true
+            ),
+            Some(image)
+        );
+        assert_eq!(
+            command_at(
+                exe.clone(),
+                Some("relative.AppImage".into()),
+                Some("/tmp/.mount_Speakeasy".into()),
+                |_| true
+            ),
+            None
+        );
+        assert_eq!(
+            command_at(
+                exe,
+                Some("/missing.AppImage".into()),
+                Some("/tmp/.mount_Speakeasy".into()),
+                |path| path.starts_with("/tmp")
+            ),
+            None
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn inherited_appimage_variables_cannot_route_a_handoff_to_another_program() {
+        let exe = PathBuf::from("/opt/speakeasy/usr/bin/speakeasy");
+        for appdir in [
+            None,
+            Some("relative".into()),
+            Some("/tmp/.mount_Other".into()),
+        ] {
+            assert_eq!(
+                command_at(
+                    exe.clone(),
+                    Some("/home/user/Other.AppImage".into()),
+                    appdir,
+                    |_| true
+                ),
+                Some(exe.clone())
+            );
+        }
+        let extracted = PathBuf::from("/tmp/appimage_extracted_X/usr/bin/speakeasy");
+        let appdir = Some(PathBuf::from("/tmp/appimage_extracted_X"));
+        assert_eq!(
+            command_at(extracted.clone(), None, appdir.clone(), |_| true),
+            None
+        );
+        let image = PathBuf::from("/home/user/Speakeasy.AppImage");
+        assert_eq!(
+            command_at(extracted, Some(image.clone()), appdir, |_| true),
+            Some(image)
+        );
+    }
 
     fn lookup(vars: &[(&'static str, &'static str)]) -> impl Fn(&str) -> Option<OsString> {
         let vars = vars.to_vec();

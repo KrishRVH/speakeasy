@@ -199,6 +199,7 @@ fn the_summary_says_how_to_read_every_sheet_and_sets_each_full_path_apart() {
     };
     let directory = Path::new("My Shows").join("show 1");
     let summary = Summary {
+        retrieval: None,
         manifest: &manifest,
         directory: &directory,
     }
@@ -272,7 +273,7 @@ fn summary_and_manifest(recording: Recording) -> (String, serde_json::Value) {
         &typeface(),
     )
     .unwrap();
-    let (summary, files) = bundle.into_files(Path::new("show")).unwrap();
+    let (summary, files) = bundle.into_files(Path::new("show"), None).unwrap();
     let manifest = files
         .iter()
         .find(|file| file.name == Manifest::FILE)
@@ -465,7 +466,7 @@ fn contact_sheets_cover_every_frame_once_in_readable_pages() {
             .iter()
             .map(Keyframe::file)
             .collect();
-        let (summary, files) = bundle.into_files(directory).unwrap();
+        let (summary, files) = bundle.into_files(directory, None).unwrap();
         let sheets: Vec<&File> = files
             .iter()
             .filter(|file| file.name.starts_with("contact-sheet"))

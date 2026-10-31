@@ -1,6 +1,6 @@
 //! Dividing the narration among keyframes.
 
-use std::{slice, time::Duration};
+use std::{fmt, slice, time::Duration};
 
 use crate::{
     Moment, Span,
@@ -27,6 +27,68 @@ const ONSET_TOLERANCE: Duration = Duration::from_millis(50);
 /// the thought it opens.
 const COMMA_CLAUSE_WORDS: usize = 3;
 
+/// A readable group of timed words, starting at its first word's reported onset. It makes no
+/// claim about how long the words or a nearby frame remained in progress.
+#[derive(Clone, PartialEq, Eq)]
+pub struct TimedClause {
+    /// The first word's reported start.
+    pub at: Moment,
+    /// Recognized words with their punctuation, never summary edits.
+    pub text: String,
+}
+
+impl fmt::Debug for TimedClause {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TimedClause")
+            .field("at", &self.at)
+            .field("bytes", &self.text.len())
+            .finish()
+    }
+}
+
+/// Groups words using the keyframe alignment's clause boundaries, in stable onset order.
+///
+/// Empty words are omitted and punctuation stays with its word. A spoken word starting ten seconds or
+/// more after the row began starts another row, without changing keyframe alignment.
+#[must_use]
+pub fn timed_clauses(words: &[Word]) -> Vec<TimedClause> {
+    let words = ordered(words);
+    let clauses = clauses(&words);
+    let mut boundaries = clauses.iter().map(|clause| clause.first).peekable();
+    let mut rows: Vec<TimedClause> = Vec::new();
+    let mut boundary = false;
+    for (index, word) in words.into_iter().enumerate() {
+        boundary |= boundaries.next_if_eq(&index).is_some();
+        let text = word.text.trim();
+        let new_row = rows.last().is_none_or(|row| {
+            !attaches(text)
+                && (boundary || word.span.start().since(row.at) >= Duration::from_secs(10))
+        });
+        if !attaches(text) {
+            boundary = false;
+        }
+        if new_row {
+            rows.push(TimedClause {
+                at: word.span.start(),
+                text: String::new(),
+            });
+        }
+        if let Some(row) = rows.last_mut() {
+            append(&mut row.text, text);
+        }
+    }
+    rows
+}
+
+fn ordered(words: &[Word]) -> Vec<&Word> {
+    let mut words: Vec<_> = words
+        .iter()
+        .filter(|word| !word.text.trim().is_empty())
+        .collect();
+    words.sort_by_key(|word| word.span.start());
+    words
+}
+
 /// The words said for each keyframe, given each keyframe's anchor in keyframe order: the moment
 /// its story begins, such as when its ink or action began or its cue was spoken.
 ///
@@ -49,11 +111,7 @@ pub(crate) fn align(anchors: &[Moment], narration: &Narration) -> Vec<Option<Str
             }
         },
         Narration::Words(words) => {
-            let mut words: Vec<&Word> = words
-                .iter()
-                .filter(|word| !word.text.trim().is_empty())
-                .collect();
-            words.sort_by_key(|word| word.span.start());
+            let words = ordered(words);
             let starts = text_starts(anchors, &clauses(&words));
             let mut owner = 0;
             for word in words {
@@ -78,6 +136,7 @@ pub(crate) fn align(anchors: &[Moment], narration: &Narration) -> Vec<Option<Str
 
 /// Words read as one clause.
 struct Clause {
+    first: usize,
     /// From the clause's first word until it is over.
     span: Span,
     /// Whether the clause resumes the one before it, which was left hanging.
@@ -89,7 +148,7 @@ fn clauses(words: &[&Word]) -> Vec<Clause> {
     let mut clauses: Vec<Clause> = Vec::new();
     let mut clause_words = 0;
     let mut previous: Option<&Word> = None;
-    for &word in words {
+    for (index, &word) in words.iter().enumerate() {
         let start = word.span.start();
         let hanging_since = previous
             .replace(word)
@@ -115,6 +174,7 @@ fn clauses(words: &[&Word]) -> Vec<Clause> {
             _ => false,
         };
         clauses.push(Clause {
+            first: index,
             span: reach,
             resumes,
         });

@@ -1,7 +1,10 @@
 //! Publishing a finished Show: choosing and composing its keyframes, writing its bundle, and
 //! copying its summary for the agent.
 
-use std::{path::PathBuf, time::SystemTime};
+use std::{
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
 
 use anyhow::{Context as _, anyhow};
 use speakeasy_platform::InsertPermit;
@@ -59,6 +62,7 @@ pub(crate) async fn publish(
     };
     tokio::task::spawn_blocking(move || {
         publish_with(
+            crate::paths::command().as_deref(),
             footage,
             checkpoint,
             origin,
@@ -72,6 +76,7 @@ pub(crate) async fn publish(
 }
 
 fn publish_with(
+    command: Option<&Path>,
     footage: Footage,
     checkpoint: Option<Checkpoint>,
     origin: Origin,
@@ -110,7 +115,14 @@ fn publish_with(
         && checkpoint
             .as_ref()
             .is_some_and(|checkpoint| checkpoint.has_audio().unwrap_or(true));
-    let result = persist(recording, journal, checkpoint.as_ref(), permit, parent);
+    let result = persist(
+        command,
+        recording,
+        journal,
+        checkpoint.as_ref(),
+        permit,
+        parent,
+    );
     match result {
         Ok(Some(Persisted {
             show,
@@ -213,6 +225,7 @@ struct Persisted {
 }
 
 fn persist(
+    command: Option<&Path>,
     recording: Recording,
     journal: Journal,
     checkpoint: Option<&Checkpoint>,
@@ -247,8 +260,16 @@ fn persist(
     if cancelled() {
         return Ok(None);
     }
-    let staged = store::stage(&directory, bundle)?;
-    let source_lost = staged.write_source(&journal, duration).is_err();
+    let staged = store::stage(
+        &directory,
+        bundle,
+        Some(store::Retained {
+            journal: &journal,
+            duration,
+            command,
+        }),
+    )?;
+    let source_lost = staged.source_lost;
     drop(journal);
     if !permit.commit() {
         return Ok(None);

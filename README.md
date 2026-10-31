@@ -160,6 +160,17 @@ In **All retained frames**, numbered mark buttons jump to the sample at or befor
 viewer reports both the mark time and the actual sample time. If retained frames cannot be saved,
 the selected keyframes still save and Speakeasy reports the loss.
 
+Choose **Narration** beside **Summary** to read the recorded words. Click a timed clause to jump to
+a frame; the caption gives both the clause's time and the displayed frame's actual time, including
+any gap. Switching frame modes keeps that request; stepping through frames, choosing another Show,
+or refreshing clears it. Words without timings remain readable. Missing and incomplete narration are
+labeled. This pane contains recorded speech, so edits to `summary.md` stay in Summary.
+
+**Copy moment** on Windows/Mac copies a reference to the displayed frame and, if one is active, the
+request that led there. It includes no transcript and leaves your summary alone. Both copy actions
+are available between recordings. Narration previews are bounded; `show.json` retains all recorded
+words.
+
 **Refresh** rereads the library; returning to the window rereads the selected summary and retention.
 **Open folder** reveals its files, and **Copy summary** on Windows/Mac copies the current file,
 including your edits, between recordings. Summary text is plain text; its links do not execute. The
@@ -182,7 +193,11 @@ narrated copy without changing your earlier Show or edits. A failed retry keeps 
 creating another copy. **Discard audio** removes its recovery checkpoint and leaves the saved Show
 alone. Discard always requires confirmation.
 
-An agent on the same machine can inspect a Show without launching the app or opening the microphone:
+An agent on the same machine can inspect a Show without launching the app or opening the microphone.
+New Shows name their local executable and exact ID in the summary when retained samples and a usable
+command are available. Quote that executable path for your shell; the app does not install it on
+PATH. In Windows PowerShell, use `& 'PATH\speakeasy-cli.exe' show …` for the commands below. If the
+package moves, use its new path. A moved Show uses its explicit folder path instead of its ID.
 
 ```sh
 speakeasy show list --json
@@ -297,6 +312,10 @@ its next pass.
 Download the Windows or Mac zip from the
 [latest release](https://github.com/KrishRVH/speakeasy/releases/latest), unzip it, and open
 Speakeasy. Linux's experimental AppImage and tar packages are described below.
+
+Keep the Windows package together: `speakeasy.exe` opens the app, and `speakeasy-cli.exe` runs Show
+commands from a terminal or agent, returning output and exit status to the caller. The CLI accepts
+`show`, `--version`, and `--help`; launching it without arguments prints help.
 
 On a Mac, allow Microphone and Accessibility access when asked, and Screen & System Audio Recording
 for Shows. If macOS says it cannot verify Speakeasy, open **System Settings › Privacy & Security**

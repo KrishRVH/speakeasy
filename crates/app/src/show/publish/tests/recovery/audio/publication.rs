@@ -15,6 +15,7 @@ async fn failed_or_cancelled_narrated_copy_keeps_new_narration_recoverable() -> 
         let (_input, active) = permit();
         assert!(matches!(
             publish_with(
+                None,
                 captured,
                 Some(checkpoint),
                 Origin::Live,
@@ -38,6 +39,7 @@ async fn failed_or_cancelled_narrated_copy_keeps_new_narration_recoverable() -> 
             input.cancel();
         }
         let result = publish_with(
+            None,
             captured,
             Some(reopened.checkpoint),
             Origin::Recovered { pending: true },
@@ -79,6 +81,7 @@ async fn a_saved_narrated_bundle_retires_audio_even_if_checkpoint_narration_cann
     let (_input, active) = permit();
     assert!(matches!(
         publish_with(
+            None,
             captured,
             Some(checkpoint),
             Origin::Live,
