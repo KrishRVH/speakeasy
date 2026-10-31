@@ -3,6 +3,7 @@
 
 use std::{path::PathBuf, time::Duration};
 
+use anyhow::Context as _;
 use speakeasy_platform::{Delivery, InsertPermit, Inserted, Taps};
 use tokio::time::timeout;
 
@@ -14,6 +15,10 @@ use crate::{
     local_speech::{self, LocalSpeech},
     recognition_terms::Terms,
 };
+
+mod corpus;
+
+use corpus::{Clip, Score};
 
 /// Outlasts both of the worker's startup bounds, one to serve and one to warm up.
 const STARTUP_TIMEOUT: Duration = local_speech::STARTUP_TIMEOUT
@@ -131,12 +136,6 @@ impl Ports for Fixture {
     ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static {
         let inserted = self.inserted.clone();
         async move {
-            if !text.to_lowercase().contains("ask not what your country") {
-                return Ok(Inserted::Unavailable("Fixture phrase missing"));
-            }
-            if text.contains(['\r', '\n']) {
-                return Ok(Inserted::Unavailable("Segment layout reached insertion"));
-            }
             if !permit.commit() {
                 return Ok(Inserted::Unavailable("Fixture insertion was cancelled"));
             }
@@ -351,17 +350,79 @@ impl Speech for MeasuredSpeech {
 }
 
 #[tokio::test]
-#[ignore = "Public PCM replay with real inference; requires fixture config, canonical WAV, and a public reference text file"]
+#[ignore = "Public PCM replay with real inference; requires fixture config and a corpus or canonical WAV/reference"]
 async fn profile_recording_dictation() -> anyhow::Result<()> {
     let path = PathBuf::from(std::env::var("SPEAKEASY_FIXTURE_CONFIG")?);
     let config = Config::read(&path)?.validated(&path)?.into_inner();
-    let wav = std::fs::read(std::env::var("SPEAKEASY_FIXTURE_WAV")?)?;
-    let reference = std::fs::read_to_string(std::env::var("SPEAKEASY_FIXTURE_REFERENCE")?)?;
     let speed = std::env::var("SPEAKEASY_FIXTURE_SPEED")
         .unwrap_or_else(|_| "1".into())
         .parse::<u32>()?;
+    anyhow::ensure!(speed > 0, "Fixture replay speed must be positive");
     let segmenting = std::env::var("SPEAKEASY_FIXTURE_SEGMENT").is_ok_and(|value| value == "1");
+    if let Some(path) = std::env::var_os("SPEAKEASY_FIXTURE_CORPUS") {
+        let path = PathBuf::from(path);
+        let corpus = corpus::Corpus::read(&path)?;
+        let mut results = Vec::new();
+        for case in &corpus.clips {
+            let clip = case.load(path.parent().context("Corpus has no parent directory")?)?;
+            let report = recording(config.clone(), clip, speed, segmenting).await?;
+            eprintln!(
+                "Recording fixture case: {}",
+                serde_json::json!({
+                    "id": case.id, "tags": case.tags, "report": report,
+                })
+            );
+            results.push(report);
+        }
+        eprintln!(
+            "Recording fixture corpus: {}",
+            serde_json::json!({
+                "corpus_sha256": corpus.sha256,
+                "word_scoring": corpus::WORD_SCORING,
+                "speed": speed, "segmenting": segmenting,
+                "summary": corpus.summarize(&results),
+            })
+        );
+    } else {
+        let clip = Clip::read(
+            &PathBuf::from(std::env::var("SPEAKEASY_FIXTURE_WAV")?),
+            &PathBuf::from(std::env::var("SPEAKEASY_FIXTURE_REFERENCE")?),
+        )?;
+        let report = recording(config, clip, speed, segmenting).await?;
+        eprintln!(
+            "Recording fixture profile: {}",
+            serde_json::to_string(&report)?
+        );
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct Report {
+    segmenting: bool,
+    continuous: bool,
+    speed: u32,
+    startup_ms: f64,
+    shutdown_ms: f64,
+    stop_to_fake_insert_ms: Option<f64>,
+    wav_sha256: String,
+    reference_sha256: String,
+    requests: Vec<Inference>,
+    capture: crate::audio::fixture::Statistics,
+    #[serde(flatten)]
+    score: Score,
+    total_inference_ms: Option<f64>,
+}
+
+async fn recording(
+    config: Config,
+    clip: Clip,
+    speed: u32,
+    segmenting: bool,
+) -> anyhow::Result<Report> {
     let continuous = segmenting && config.uses_nemotron();
+    let wav_sha256 = sha256(&clip.wav);
+    let reference_sha256 = sha256(clip.reference.as_bytes());
     let (loaded, ready) = async_channel::bounded(1);
     let (inserted, submitted) = async_channel::bounded(1);
     let (finished, ended) = async_channel::bounded(1);
@@ -370,7 +431,7 @@ async fn profile_recording_dictation() -> anyhow::Result<()> {
     let (output, mut updates) = watch::channel(Snapshot::default());
     let (meter, _) = watch::channel(Meter::default());
     let fixture = Fixture {
-        wav,
+        wav: clip.wav,
         loaded,
         inserted,
         replay: Some(Replay {
@@ -381,47 +442,61 @@ async fn profile_recording_dictation() -> anyhow::Result<()> {
         }),
         requests: Some(requests),
     };
+    let started = Instant::now();
     let runtime = Runtime::start_with(config, output, meter, fixture)?;
-    wait_for_signal(&ready, &mut updates, STARTUP_TIMEOUT).await?;
-    runtime.input.deliver(Input::Toggle);
-    let stopped = wait_for_signal(&ended, &mut updates, Duration::from_secs(310)).await?;
-    let (inserted, text) = wait_for_signal(&submitted, &mut updates, REQUEST_TIMEOUT).await?;
-    let stats = timeout(PHASE_TIMEOUT, drained.recv()).await??;
-    wait_for_phase(&mut updates, Phase::Done).await?;
+    // Every case starts and warms its own worker. A failed case must also acknowledge teardown
+    // before the caller returns; otherwise a later measurement could inherit competing work.
+    let result = async {
+        wait_for_signal(&ready, &mut updates, STARTUP_TIMEOUT).await?;
+        let startup_ms = started.elapsed().as_secs_f64() * 1000.0;
+        runtime.input.deliver(Input::Toggle);
+        let stopped = wait_for_signal(&ended, &mut updates, Duration::from_secs(310)).await?;
+        let phase = timeout(
+            REQUEST_TIMEOUT,
+            updates.wait_for(|snapshot| {
+                matches!(snapshot.phase, Phase::Done | Phase::Empty | Phase::Error)
+            }),
+        )
+        .await??
+        .phase;
+        anyhow::ensure!(
+            phase != Phase::Error,
+            "Fixture owner failed: {}",
+            updates.borrow().message
+        );
+        let (inserted, text) = if phase == Phase::Empty {
+            (None, String::new())
+        } else {
+            let (at, text) = submitted.try_recv()?;
+            (Some(at), text)
+        };
+        let stats = timeout(PHASE_TIMEOUT, drained.recv()).await??;
+        Ok::<_, anyhow::Error>((startup_ms, stopped, inserted, text, stats))
+    }
+    .await;
+    let shutdown = Instant::now();
     runtime.request_stop();
     timeout(SHUTDOWN_TIMEOUT, runtime.stopped()).await?;
+    let shutdown_ms = shutdown.elapsed().as_secs_f64() * 1000.0;
+    let (startup_ms, stopped, inserted, text, capture) = result?;
     let requests: Vec<_> = std::iter::from_fn(|| measurements.try_recv().ok()).collect();
-    let words = |text: &str| {
-        text.split(|c: char| !c.is_alphanumeric())
-            .filter(|s| !s.is_empty())
-            .map(str::to_lowercase)
-            .collect::<Vec<_>>()
-    };
-    let expected = words(&reference);
-    let heard = words(&text);
-    let word_errors = distance(&expected, &heard);
-    let spelling_errors = distance(
-        &reference.split_whitespace().collect::<Vec<_>>(),
-        &text.split_whitespace().collect::<Vec<_>>(),
-    );
-    eprintln!(
-        "Recording fixture profile: {}",
-        serde_json::json!({
-            "segmenting": segmenting,
-            "continuous": continuous,
-            "speed": speed,
-            "stop_to_fake_insert_ms": inserted.saturating_duration_since(stopped).as_secs_f64() * 1000.0,
-            "requests": requests,
-            "capture": stats,
-            "reference_words": expected.len(),
-            "heard_words": heard.len(),
-            "word_errors": word_errors,
-            "formatting_word_errors": spelling_errors,
-            "text_sha256": sha256(text.as_bytes()),
-            "total_inference_ms": (!continuous).then(|| requests.iter().map(|request| request.elapsed_ms).sum::<f64>()),
-        })
-    );
-    Ok(())
+    let total_inference_ms =
+        (!continuous).then(|| requests.iter().map(|request| request.elapsed_ms).sum());
+    Ok(Report {
+        segmenting,
+        continuous,
+        speed,
+        startup_ms,
+        shutdown_ms,
+        stop_to_fake_insert_ms: inserted
+            .map(|at| at.saturating_duration_since(stopped).as_secs_f64() * 1000.0),
+        wav_sha256,
+        reference_sha256,
+        requests,
+        capture,
+        score: Score::new(&clip.reference, &text),
+        total_inference_ms,
+    })
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -434,25 +509,4 @@ fn sha256(bytes: &[u8]) -> String {
             write!(hex, "{byte:02x}").expect("String formatting cannot fail");
             hex
         })
-}
-
-fn distance<T: PartialEq>(expected: &[T], heard: &[T]) -> usize {
-    let mut row: Vec<_> = (0..=heard.len()).collect();
-    for (i, word) in expected.iter().enumerate() {
-        let mut previous = row.first().copied().unwrap_or(0);
-        if let Some(first) = row.first_mut() {
-            *first = i.saturating_add(1);
-        }
-        let mut left = i.saturating_add(1);
-        for (cell, actual) in row.iter_mut().skip(1).zip(heard) {
-            let above = *cell;
-            *cell = above
-                .saturating_add(1)
-                .min(left.saturating_add(1))
-                .min(previous.saturating_add(usize::from(word != actual)));
-            previous = above;
-            left = *cell;
-        }
-    }
-    row.last().copied().unwrap_or(expected.len())
 }

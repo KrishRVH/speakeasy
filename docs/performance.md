@@ -72,6 +72,60 @@ records the real screen for ten seconds on Windows or Mac, keeping no pixels; on
 test binary directly and sample its process, not Cargo's, with `profile-windows.ps1`. Use ordinary
 native profilers rather than a permanent benchmark suite.
 
+## Public corpus replay
+
+The same `profile_recording_dictation` test accepts `SPEAKEASY_FIXTURE_CORPUS`, a local JSON file
+with 1 to 256 public clips. Paths resolve beside the manifest; each audio and reference hash must
+match before that case starts. IDs and tags use up to 80 ASCII letters, digits, underscores or
+hyphens. IDs must be unique. For example, replace the two hash placeholders with the files' SHA-256:
+
+```json
+{
+  "clips": [
+    {
+      "id": "speaker-01-short",
+      "tags": ["english", "short"],
+      "wav": "speaker-01.wav",
+      "reference": "speaker-01.txt",
+      "wav_sha256": "SHA256_OF_WAV_BYTES",
+      "reference_sha256": "SHA256_OF_UTF8_REFERENCE_BYTES"
+    }
+  ]
+}
+```
+
+Keep recordings, manifests, references and results in ignored `.scratch/` or `artifacts/`. Record
+the source, license, selection rule, any audio transformations, model/runtime identities and
+hardware alongside the results. Do not put private recordings in this fixture.
+
+```sh
+SPEAKEASY_FIXTURE_CONFIG=.scratch/public-speech/config.json \
+  SPEAKEASY_FIXTURE_CORPUS=.scratch/public-speech/corpus.json \
+  SPEAKEASY_FIXTURE_SPEED=1 SPEAKEASY_FIXTURE_SEGMENT=1 \
+  cargo test -p speakeasy --release --locked runtime::fixture::profile_recording_dictation \
+  -- --exact --ignored --nocapture --test-threads=1
+```
+
+Each case starts and warms a fresh worker, reports startup separately, replays audio through the
+capture pipeline and waits for worker teardown. It uses fake insertion and no microphone or hooks.
+Output contains hashes and counts, never reference or recognized text. A failed case stops the run;
+there is no aggregate success report for an incomplete corpus. Empty recognition counts as word
+deletions and has no insertion latency. The final JSON gives overall and per-tag results: total word
+errors divided by total reference words, insertion counts, and nearest-rank p50/p95 release latency
+for real-time insertions only. Accelerated replays retain quality results but have no aggregate
+latency percentiles. Report sample counts; a small corpus cannot establish a stable tail latency.
+
+Word scoring is an alphanumeric-token proxy, identified in output as
+`lowercase-alphanumeric-runs-v1`. It lowercases tokens and splits at punctuation and combining
+marks; it does not normalize Unicode or numbers, expand contractions or segment languages without
+word boundaries. Do not compare its rates across languages. The separate formatting score uses
+whitespace tokens with case and punctuation intact. Neither measures human correction effort. Use
+references with intended formatting for that score; uppercase audiobook transcripts cannot establish
+punctuation quality. Preserve silence cases' insertion counts and raw error totals even when their
+zero reference words make an error rate undefined. Compare the same pinned corpus and normalization
+across products, and evaluate conversational speech, accents, names, numbers and languages
+separately before drawing product-wide conclusions.
+
 ## Native process sampling
 
 `profile_linux.py` reads numeric `/proc` metadata, including CPU time, RSS, PSS, private resident

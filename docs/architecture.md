@@ -489,10 +489,12 @@ screen on Windows and macOS, opens windows on Linux's current display, and with
 `SPEAKEASY_FIXTURE_WAV` set downloads about 0.8 GB. Fixture tests read `SPEAKEASY_FIXTURE_CONFIG`, a
 settings file, and `SPEAKEASY_FIXTURE_WAV`, public audio such as whisper.cpp's `samples/jfk.wav`.
 `profile_recording_dictation` also reads `SPEAKEASY_FIXTURE_REFERENCE`, a public reference text
-file, and requires a canonical mono PCM16 WAV. `SPEAKEASY_FIXTURE_SEGMENT=1` admits segmentation for
-Parakeet; otherwise it measures whole-clip inference. `SPEAKEASY_FIXTURE_SPEED` defaults to one
-(real time); larger integers accelerate quality replays. The [README](../README.md#build-and-verify)
-lists packaging scripts and native checks.
+file, and requires a canonical mono PCM16 WAV. Alternatively, `SPEAKEASY_FIXTURE_CORPUS` names a
+[public corpus manifest](performance.md#public-corpus-replay); it replaces the WAV/reference
+variables. `SPEAKEASY_FIXTURE_SEGMENT=1` admits segmentation for Parakeet; otherwise it measures
+whole-clip inference. `SPEAKEASY_FIXTURE_SPEED` defaults to one (real time); larger integers
+accelerate quality replays. The [README](../README.md#build-and-verify) lists packaging scripts and
+native checks.
 
 Default checks cannot establish live microphone, screen capture, overlay placement, hooks, clipboard
 and editor acceptance, compositor behavior, or mixed-display frame pacing.
