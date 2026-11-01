@@ -13,9 +13,16 @@ const LINE_LIMIT: usize = 64 << 10;
 const RESPONSE_LIMIT: usize = 12 << 20;
 
 #[derive(Default)]
+enum Phase {
+    #[default]
+    New,
+    Initializing,
+    Ready,
+}
+
+#[derive(Default)]
 struct Protocol {
-    initialized: bool,
-    ready: bool,
+    phase: Phase,
 }
 
 pub(super) fn serve(
@@ -132,8 +139,8 @@ impl Protocol {
         }
         let method = method?;
         if id.is_none() {
-            if method == "notifications/initialized" && self.initialized {
-                self.ready = true;
+            if method == "notifications/initialized" && !matches!(self.phase, Phase::New) {
+                self.phase = Phase::Ready;
             }
             return None;
         }
@@ -157,8 +164,8 @@ impl Protocol {
         let modern = params.get("_meta").is_some_and(|meta| {
             meta.get(VERSION_META).is_some() || meta.get(CAPABILITIES_META).is_some()
         });
-        if modern || !self.ready || method == "server/discover" {
-            if method == "ping" && self.initialized && !modern {
+        if modern || !matches!(self.phase, Phase::Ready) || method == "server/discover" {
+            if method == "ping" && !matches!(self.phase, Phase::New) && !modern {
                 return Some(success(id, json!({}), false));
             }
             if let Err(failure) = metadata(params) {
@@ -186,23 +193,23 @@ impl Protocol {
                 let Some(name) = params.get("name").and_then(Value::as_str) else {
                     return Some(error(id, -32602, "A tool name is required", None));
                 };
-                if !tools::known(name) {
+                let Some(tool) = tools::Tool::parse(name) else {
                     return Some(error(id, -32602, "Unknown tool", None));
-                }
+                };
                 let arguments = params
                     .get("arguments")
                     .cloned()
                     .unwrap_or_else(|| json!({}));
-                tools::call(roots, name, arguments)
+                tools::call(roots, tool, arguments)
             },
-            "ping" if !modern && self.ready => json!({}),
+            "ping" if !modern && matches!(self.phase, Phase::Ready) => json!({}),
             _ => return Some(error(id, -32601, "Method not found", None)),
         };
         Some(success(id, result, modern))
     }
 
     fn initialize(&mut self, id: Value, params: &Map<String, Value>) -> Value {
-        if self.initialized {
+        if !matches!(self.phase, Phase::New) {
             return error(
                 id,
                 -32600,
@@ -224,7 +231,7 @@ impl Protocol {
                 None,
             );
         }
-        self.initialized = true;
+        self.phase = Phase::Initializing;
         success(
             id,
             json!({"protocolVersion": LEGACY, "capabilities": {"tools": {}}, "serverInfo": server_info(), "instructions": DISCLOSURE}),

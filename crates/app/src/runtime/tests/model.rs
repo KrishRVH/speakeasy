@@ -514,7 +514,7 @@ impl Model {
             Step::Piece => {
                 if let Some((id, events)) = &self.microphone {
                     events.try_send(CaptureEvent::Piece(*id, self.pieces, spoken_by(*id, 0)))?;
-                    self.pieces = self.pieces.saturating_add(1);
+                    self.pieces = self.pieces.checked_add(1).unwrap();
                 }
             },
             Step::Audio(heard) => {

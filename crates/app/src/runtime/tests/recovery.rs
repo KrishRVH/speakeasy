@@ -1,3 +1,5 @@
+use anyhow::Context as _;
+
 use super::*;
 
 async fn interrupted() -> anyhow::Result<(tempfile::TempDir, crate::show::Interrupted)> {
@@ -40,7 +42,10 @@ async fn interrupted_with_audio(
     })?;
     assert!(frames.send(event));
     assert!(frames.close().await);
-    let checkpoint = keeper.close().await?;
+    let checkpoint = keeper
+        .close()
+        .await?
+        .context("Fixture checkpoint is missing")?;
     let interrupted = checkpoint.interrupted()?;
     Ok((root, interrupted))
 }

@@ -20,47 +20,69 @@ fn desktop(width: u32, height: u32, scroll: u32, typed: u32, dialog: bool) -> Im
     Image::from_bgra(width, height, pixels).unwrap()
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "Pixel geometry of frames up to 2560 × 1440; debug overflow checks fail the test"
-)]
 fn video(width: u32, height: u32, seed: u32) -> Image {
     const PLAYER: (u32, u32) = (1_280, 720);
     let mut pixels = desktop_pixels(width, height, 0, 0, false);
     let left = width.saturating_sub(PLAYER.0) / 2;
     let top = height.saturating_sub(PLAYER.1) / 2;
     let mut state = seed.wrapping_mul(2_654_435_761) | 1;
-    for y in top..(top + PLAYER.1).min(height) {
-        for x in left..(left + PLAYER.0).min(width) {
+    for row in pixels
+        .as_chunks_mut::<4>()
+        .0
+        .chunks_exact_mut(usize::try_from(width).expect("Fixture row width fits usize"))
+        .skip(usize::try_from(top).expect("Fixture top fits usize"))
+        .take(usize::try_from(PLAYER.1).expect("Player height fits usize"))
+    {
+        for pixel in row
+            .iter_mut()
+            .skip(usize::try_from(left).expect("Fixture left fits usize"))
+            .take(usize::try_from(PLAYER.0).expect("Player width fits usize"))
+        {
             state ^= state << 13;
             state ^= state >> 17;
             state ^= state << 5;
-            let at = usize::try_from((y * width + x) * 4).unwrap();
-            pixels[at..at + 3].copy_from_slice(&state.to_le_bytes()[..3]);
+            pixel[..3].copy_from_slice(&state.to_le_bytes()[..3]);
         }
     }
     Image::from_bgra(width, height, pixels).unwrap()
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "Pixel geometry of frames up to 2560 × 1440; debug overflow checks fail the test"
-)]
 fn desktop_pixels(width: u32, height: u32, scroll: u32, typed: u32, dialog: bool) -> Vec<u8> {
     const CELL_WIDTH: u32 = 9;
     const CELL_HEIGHT: u32 = 18;
-    let mut pixels = Vec::with_capacity(usize::try_from(width * height * 4).unwrap());
+    let capacity = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .expect("Synthetic desktop pixel bytes fit u32");
+    let panel_x = width / 3
+        ..width
+            .checked_mul(2)
+            .expect("Synthetic desktop width fits doubled")
+            / 3;
+    let panel_y = height / 3
+        ..height
+            .checked_mul(2)
+            .expect("Synthetic desktop height fits doubled")
+            / 3;
+    let mut pixels = Vec::with_capacity(
+        usize::try_from(capacity).expect("Synthetic desktop pixel bytes fit usize"),
+    );
     for y in 0..height {
-        let line = (y + scroll) / CELL_HEIGHT;
+        let scrolled = y.checked_add(scroll).expect("Synthetic scroll fits u32");
+        let line = scrolled / CELL_HEIGHT;
         for x in 0..width {
             let column = x / CELL_WIDTH;
-            let panel = dialog
-                && (width / 3..width * 2 / 3).contains(&x)
-                && (height / 3..height * 2 / 3).contains(&y);
-            let glyphs = if line == 0 { 60 + typed } else { 60 };
+            let panel = dialog && panel_x.contains(&x) && panel_y.contains(&y);
+            let glyphs = if line == 0 {
+                typed
+                    .checked_add(60)
+                    .expect("Synthetic glyph count fits u32")
+            } else {
+                60
+            };
             let written =
                 column < glyphs && line.wrapping_mul(2_654_435_761).wrapping_add(column) % 7 != 0;
-            let (inside_x, inside_y) = (x % CELL_WIDTH, (y + scroll) % CELL_HEIGHT);
+            let (inside_x, inside_y) = (x % CELL_WIDTH, scrolled % CELL_HEIGHT);
             let ink = written
                 && (1..CELL_WIDTH - 2).contains(&inside_x)
                 && (4..CELL_HEIGHT - 4).contains(&inside_y)
@@ -75,16 +97,15 @@ fn desktop_pixels(width: u32, height: u32, scroll: u32, typed: u32, dialog: bool
     pixels
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "Word ends 300 ms after literal starts; debug overflow checks fail the test"
-)]
 fn words(spoken: &[(u64, &str)]) -> Narration {
     Narration::Words(
         spoken
             .iter()
             .map(|&(at, text)| Word {
-                span: Span::new(Moment::from_millis(at), Moment::from_millis(at + 300)),
+                span: Span::new(
+                    Moment::from_millis(at),
+                    Moment::from_millis(at.checked_add(300).expect("Synthetic word end fits u64")),
+                ),
                 text: text.into(),
             })
             .collect(),
@@ -159,6 +180,116 @@ fn png_size(bytes: &[u8]) -> (u32, u32) {
     assert_eq!(bytes.get(..8), Some(&b"\x89PNG\r\n\x1a\n"[..]));
     let field = |at: usize| u32::from_be_bytes(*bytes[at..].first_chunk().unwrap());
     (field(16), field(20))
+}
+
+#[tokio::test]
+async fn unknown_checkpoint_state_precedes_composition_and_respects_cancellation()
+-> anyhow::Result<()> {
+    for cancelled in [false, true] {
+        let crate::show::Kept {
+            keeper,
+            frames,
+            audio,
+        } = crate::show::Keeper::start(
+            || panic!("Synthetic keeper interruption"),
+            SystemTime::now(),
+        )?;
+        drop(frames);
+        drop(audio);
+        let (input, permit) = permit();
+        if cancelled {
+            input.cancel();
+        }
+        let result = publish(
+            Publication {
+                footage: Rehearsal::new(80, 60).finish(500),
+                checkpoint: Some(crate::show::Checkpointing::Writing(keeper)),
+                origin: Origin::Live,
+            },
+            permit,
+        )
+        .await;
+        if cancelled {
+            assert!(matches!(result, Ok(Published::Cancelled)));
+        } else {
+            let error = result.err().context("Checkpoint failure was ignored")?;
+            assert_eq!(
+                error.to_string(),
+                "The Show could not be saved because its checkpoint failed. Check Shows for recoverable footage."
+            );
+            assert!(
+                error.chain().any(|cause| cause.to_string()
+                    == "Show checkpoint stopped before returning its files")
+            );
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn unavailable_checkpoint_preserves_in_memory_publication_and_cancellation()
+-> anyhow::Result<()> {
+    for (fail_parent, cancelled) in [(false, false), (false, true), (true, false), (true, true)] {
+        let root = tempfile::tempdir()?;
+        let blocked = root.path().join("blocked");
+        fs::write(&blocked, b"fixture")?;
+        let crate::show::Kept {
+            keeper,
+            frames,
+            audio,
+        } = crate::show::Keeper::start(
+            move || {
+                if fail_parent {
+                    bail!("Synthetic checkpoint parent failure");
+                }
+                Ok(blocked)
+            },
+            SystemTime::now(),
+        )?;
+        drop(frames);
+        drop(audio);
+        let checkpoint = crate::show::Checkpointing::Writing(keeper).close().await?;
+        assert!(checkpoint.is_none());
+        let (input, permit) = permit();
+        if cancelled {
+            input.cancel();
+        }
+        let (footage, narration) = rehearse(80, 60);
+        let mut copied = false;
+        let result = publish_with(
+            None,
+            narrated(footage, narration.clone(), None),
+            checkpoint,
+            Origin::Live,
+            &permit,
+            || Ok(root.path().to_owned()),
+            |_| {
+                copied = true;
+                Ok(())
+            },
+        )?;
+        if cancelled {
+            assert!(matches!(result, Published::Cancelled));
+            assert!(!copied);
+            assert_eq!(fs::read_dir(root.path())?.count(), 1);
+        } else {
+            let Published::Saved {
+                show, copied: copy, ..
+            } = result
+            else {
+                bail!("In-memory footage was not published");
+            };
+            assert!(copied && copy.is_ok());
+            let manifest = Manifest::parse(&fs::read(show.directory().join(Manifest::FILE))?)?;
+            assert_eq!(manifest.recording().narration, narration);
+            assert!(store::source::inspect(show.directory())?.moments().len() >= 2);
+        }
+        assert_eq!(
+            store::checkpoint::list(root.path(), SystemTime::now()).shows,
+            []
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -437,7 +568,9 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
         }
         let started = Instant::now();
         assert!(runtime.block_on(writer.close()));
-        let checkpoint = runtime.block_on(checkpoint.close())?;
+        let checkpoint = runtime
+            .block_on(checkpoint.close())?
+            .context("Fixture checkpoint is missing")?;
         let flushed_ms = started.elapsed().as_secs_f64() * 1000.0;
         let started = Instant::now();
         let replayed = checkpoint.replay()?;

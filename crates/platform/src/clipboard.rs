@@ -97,7 +97,6 @@ pub fn copy_content(
     crate::native::copy_content(content, authorized)
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos", test))]
 pub(crate) fn copy_when<L>(
     authorized: impl FnOnce() -> bool,
     acquire: impl FnOnce() -> anyhow::Result<L>,

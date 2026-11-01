@@ -5,7 +5,13 @@ fn pointer_geometry_does_not_wait_for_a_still_or_rewind_when_one_arrives() -> an
     let started = Instant::now();
     let at = |ms| started.checked_add(Duration::from_millis(ms)).unwrap();
     let (canvas, _) = watch::channel(Canvas::default());
-    let mut take = Take::new(started, [1_000.0, 500.0], Part::WHOLE, &canvas);
+    let mut take = Take::new(
+        started,
+        [1_000.0, 500.0],
+        Part::WHOLE,
+        &canvas,
+        (SessionId::FIRST, async_channel::bounded(1).0),
+    );
     let part = Part::between([0.25, 0.25], [0.75, 0.75]);
     for (ms, pressed) in [(300, true), (320, false)] {
         take.pointer(PointerSample::Observed {
@@ -43,7 +49,13 @@ fn later_frames_do_not_change_queued_pointer_distance_thresholds() -> anyhow::Re
     let started = Instant::now();
     let at = |ms| started.checked_add(Duration::from_millis(ms)).unwrap();
     let (canvas, _) = watch::channel(Canvas::default());
-    let mut take = Take::new(started, [1_000.0, 500.0], Part::WHOLE, &canvas);
+    let mut take = Take::new(
+        started,
+        [1_000.0, 500.0],
+        Part::WHOLE,
+        &canvas,
+        (SessionId::FIRST, async_channel::bounded(1).0),
+    );
     take.frame(Frame {
         at: at(500),
         width: 4,

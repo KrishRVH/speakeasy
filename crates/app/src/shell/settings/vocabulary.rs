@@ -74,6 +74,9 @@ enum Edit {
 
 impl Settings {
     pub(super) fn add_correction(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        if cx.global::<super::Services>().is_quitting() {
+            return false;
+        }
         let correction = Correction {
             heard: self.vocabulary.heard.read(cx).text().trim().to_owned(),
             written: self.vocabulary.written.read(cx).text().trim().to_owned(),
@@ -141,8 +144,20 @@ impl Settings {
     pub(super) fn vocabulary_section(&self, cx: &Context<'_, Self>) -> impl IntoElement {
         let palette = self.config.theme.palette();
         let button = |id: SharedString, label: &'static str, action: Edit| {
+            let accessible: SharedString = match action {
+                Edit::Modify(index) | Edit::Remove(index) => {
+                    self.config.vocabulary.get(index).map_or_else(
+                        || label.into(),
+                        |rule| format!("{label} correction {}", rule.heard).into(),
+                    )
+                },
+                Edit::Cancel => "Cancel phrase correction edit".into(),
+                Edit::Add => label.into(),
+            };
             div()
                 .id(id)
+                .role(gpui::Role::Button)
+                .aria_label(accessible)
                 .focusable()
                 .tab_stop(true)
                 .cursor_pointer()

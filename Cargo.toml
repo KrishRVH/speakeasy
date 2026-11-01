@@ -121,10 +121,10 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 
 # Production code handles failure explicitly. Tests may assert established
-# invariants through the four clippy.toml `allow-*-in-tests` settings.
-# Arithmetic has no such setting, though clippy skips `#[test]` bodies: fixture
-# helpers and `proptest!` bodies use plain operators under a reasoned expect,
-# and the wraps a fixture relies on stay explicit.
+# invariants through the clippy.toml `allow-*-in-tests` settings.
+# Arithmetic has no test setting. Where Clippy checks fixture helpers and
+# properties, use checked arithmetic; only operator tests expect the lint.
+# Wrapping and saturation remain explicit when the domain requires them.
 arithmetic_side_effects = "deny"
 dbg_macro = "deny"
 exit = "deny"

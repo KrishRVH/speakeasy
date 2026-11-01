@@ -797,6 +797,26 @@ async fn receive<T>(receiver: &Receiver<T>) -> anyhow::Result<T> {
     Ok(timeout(PATIENCE, receiver.recv()).await??)
 }
 
+async fn arm_practice<Host: Sync>(
+    h: &Harness<Host>,
+) -> anyhow::Result<tokio::sync::mpsc::Receiver<PracticeEvent>> {
+    let mut receipt = h.runtime.practice().map_err(anyhow::Error::msg)?;
+    assert!(matches!(
+        timeout(PATIENCE, receipt.recv()).await?,
+        Some(PracticeEvent::Ready)
+    ));
+    Ok(receipt)
+}
+
+async fn practice_text(
+    receipt: &mut tokio::sync::mpsc::Receiver<PracticeEvent>,
+) -> anyhow::Result<Zeroizing<String>> {
+    let Some(PracticeEvent::Text(text)) = timeout(PATIENCE, receipt.recv()).await? else {
+        bail!("Practice did not receive its transcript");
+    };
+    Ok(text)
+}
+
 fn answer(reply: Reply, text: &str) -> anyhow::Result<()> {
     ensure!(
         reply.send(Ok(text.to_owned())).is_ok(),

@@ -76,7 +76,7 @@ impl Settings {
             cx.notify();
             return false;
         }
-        let replacing = match replacing {
+        let (name, replacing) = match replacing {
             Some(name) => {
                 let Some(index) = self
                     .config
@@ -86,23 +86,15 @@ impl Settings {
                 else {
                     return false;
                 };
-                Some(index)
+                (name.to_owned(), Some(index))
             },
-            None => None,
+            None => (self.presets.name.read(cx).text().to_owned(), None),
         };
         if (self.vocabulary.pending(cx) && !self.add_correction(cx))
             || (self.recognition.pending(cx) && !self.add_recognition_term(cx))
         {
             return false;
         }
-        let name = if let Some(index) = replacing {
-            let Some(preset) = self.config.presets.get(index) else {
-                return false;
-            };
-            preset.name().to_owned()
-        } else {
-            self.presets.name.read(cx).text().to_owned()
-        };
         let result = (|| {
             let preset = Preset::capture(name, &self.config)?;
             let mut presets = self.config.presets.clone();

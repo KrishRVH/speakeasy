@@ -72,13 +72,19 @@ pub(super) fn capture(
         report(events, failure);
     }
     let ended = Instant::now();
-    if let Err(failure) = stream.stop()
-        && outcome.is_ok()
-    {
-        report(events, failure);
+    match stream.stop() {
+        Ok(()) => {
+            drop(stream);
+            movie.stop(ended);
+        },
+        Err(failure) => {
+            if outcome.is_ok() {
+                report(events, failure);
+            }
+            movie.stop(ended);
+            drop(stream);
+        },
     }
-    drop(stream);
-    movie.stop(ended);
     Ok(())
 }
 

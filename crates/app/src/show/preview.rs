@@ -12,7 +12,6 @@ pub(crate) enum Content {
     Png(String),
     Source {
         index: Arc<speakeasy_show::Source>,
-        at: Moment,
     },
     Video {
         span: std::ops::Range<Duration>,

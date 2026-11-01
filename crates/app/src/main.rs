@@ -139,17 +139,17 @@ fn main() -> ExitCode {
         },
         Invocation::Show(command) => in_terminal(|| command.run()),
         Invocation::Control(invocation) => {
-            let mut code = 2;
-            let written = in_terminal(|| {
-                let reply =
-                    Instance::control(&settings_file(invocation.settings)?, invocation.command);
-                code = reply.exit_code();
-                reply.write(&mut io::stdout().lock())
-            });
-            if written == ExitCode::SUCCESS {
-                ExitCode::from(code)
+            let path = match settings_file(invocation.settings) {
+                Ok(path) => path,
+                Err(error) => return in_terminal(|| Err(error)),
+            };
+            let reply = Instance::control(&path, invocation.command);
+            let code = reply.exit_code();
+            let written = in_terminal(|| reply.write(&mut io::stdout().lock()));
+            if written != ExitCode::SUCCESS && reply.result != control::Disposition::Refused {
+                ExitCode::from(2)
             } else {
-                written
+                ExitCode::from(code)
             }
         },
     }
@@ -444,7 +444,9 @@ fn release_services(
     let instance = services.into_instance();
 
     async move {
-        drop(instance);
+        if let Some(instance) = instance {
+            instance.close().await;
+        }
         #[cfg(target_os = "windows")]
         if let Some(installer) = installer {
             #[expect(

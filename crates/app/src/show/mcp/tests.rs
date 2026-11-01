@@ -72,6 +72,32 @@ fn startup_requires_roots_and_setup_does_not_create_them() -> anyhow::Result<()>
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn non_utf8_requested_and_canonical_roots_are_refused_without_private_paths() -> anyhow::Result<()>
+{
+    use std::os::unix::{ffi::OsStringExt as _, fs::symlink};
+
+    let temp = tempfile::tempdir()?;
+    let private = temp
+        .path()
+        .join(OsString::from_vec(b"PRIVATE_ROOT_\xff".to_vec()));
+    fs::create_dir_all(private.join("shows"))?;
+    let public = temp.path().join("public");
+    fs::create_dir_all(public.join("shows"))?;
+    let alias = temp.path().join("alias");
+    symlink(&private, &alias)?;
+    let private_alias = temp
+        .path()
+        .join(OsString::from_vec(b"PRIVATE_ALIAS_\xff".to_vec()));
+    symlink(&public, &private_alias)?;
+    for path in [private, alias.join("shows"), private_alias.join("shows")] {
+        let error = Roots::open(vec![path]).err().unwrap();
+        assert_eq!(error, "An MCP root path must be valid UTF-8");
+    }
+    Ok(())
+}
+
 #[test]
 fn roots_refuse_outside_sibling_prefix_parent_steps_and_ambiguous_names() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;

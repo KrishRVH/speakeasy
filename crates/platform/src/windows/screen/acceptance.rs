@@ -575,33 +575,37 @@ struct Crop {
 }
 
 impl Crop {
-    #[expect(
-        clippy::arithmetic_side_effects,
-        reason = "Offsets within one captured display, bounded by indexing"
-    )]
     fn of(frame: Frame, display: Display, area: RECT) -> anyhow::Result<Self> {
         let [display_left, display_top, ..] = display.edges;
         let extent = display.extent().map(i32::cast_unsigned);
         let [left, top, right, bottom] = pixel_box(frame.part, extent).map(u32::cast_signed);
-        let [width, height] = [right - left, bottom - top];
-        let [left, top] = [display_left + left, display_top + top];
-        let scale = width / frame.width.cast_signed();
+        let [width, height] = [
+            right.checked_sub(left).unwrap(),
+            bottom.checked_sub(top).unwrap(),
+        ];
+        let [left, top] = [
+            display_left.checked_add(left).unwrap(),
+            display_top.checked_add(top).unwrap(),
+        ];
+        let scale = width.checked_div(frame.width.cast_signed()).unwrap();
         ensure!(
-            scale > 0 && frame.height.cast_signed() * scale == height,
+            scale > 0 && frame.height.cast_signed().checked_mul(scale).unwrap() == height,
             "The frame does not match its part of the display"
         );
-        let frame_pixels = |physical: i32| (physical / scale).cast_unsigned() as usize;
-        let column = frame_pixels(area.left - left);
-        let row = frame_pixels(area.top - top);
-        let crop_width = frame_pixels(area.right - area.left);
-        let crop_height = frame_pixels(area.bottom - area.top);
+        let frame_pixels =
+            |physical: i32| physical.checked_div(scale).unwrap().cast_unsigned() as usize;
+        let column = frame_pixels(area.left.checked_sub(left).unwrap());
+        let row = frame_pixels(area.top.checked_sub(top).unwrap());
+        let crop_width = frame_pixels(area.right.checked_sub(area.left).unwrap());
+        let crop_height = frame_pixels(area.bottom.checked_sub(area.top).unwrap());
+        let end_column = column.checked_add(crop_width).unwrap();
         let frame_width = frame.width as usize;
         let (pixels, _) = frame.bgra.as_chunks::<BYTES_PER_PIXEL>();
         let bgra = pixels
             .chunks_exact(frame_width)
             .skip(row)
             .take(crop_height)
-            .flat_map(|line| &line[column..column + crop_width])
+            .flat_map(|line| &line[column..end_column])
             .copied()
             .collect();
         Ok(Self {
@@ -807,33 +811,44 @@ struct Layout {
 }
 
 impl Layout {
-    #[expect(
-        clippy::arithmetic_side_effects,
-        reason = "Centers a small window inside one display's bounds"
-    )]
     fn centered_on(display: Display) -> Self {
         let [left, top, right, bottom] = display.edges;
         let [width, height] = [PATTERN_WIDTH + 2 * MARGIN, PATTERN_HEIGHT + 2 * MARGIN];
 
-        let x = left + (((right - left - width) / 2) & !1);
-        let y = top + (((bottom - top - height) / 2) & !1);
-        let [pattern_x, pattern_y] = [x + MARGIN, y + MARGIN];
+        let offset_x = right.checked_sub(left).unwrap().checked_sub(width).unwrap() / 2;
+        let offset_y = bottom
+            .checked_sub(top)
+            .unwrap()
+            .checked_sub(height)
+            .unwrap()
+            / 2;
+        let x = left.checked_add(offset_x & !1).unwrap();
+        let y = top.checked_add(offset_y & !1).unwrap();
+        let [pattern_x, pattern_y] = [
+            x.checked_add(MARGIN).unwrap(),
+            y.checked_add(MARGIN).unwrap(),
+        ];
         let [overlay_left, overlay_top, overlay_right, overlay_bottom] = OVERLAY;
         Self {
-            backdrop: [x, y, x + width, y + height],
+            backdrop: [
+                x,
+                y,
+                x.checked_add(width).unwrap(),
+                y.checked_add(height).unwrap(),
+            ],
             pattern: [
                 pattern_x,
                 pattern_y,
-                pattern_x + PATTERN_WIDTH,
-                pattern_y + PATTERN_HEIGHT,
+                pattern_x.checked_add(PATTERN_WIDTH).unwrap(),
+                pattern_y.checked_add(PATTERN_HEIGHT).unwrap(),
             ],
             overlay: Display {
                 monitor: display.monitor,
                 edges: [
-                    pattern_x + overlay_left,
-                    pattern_y + overlay_top,
-                    pattern_x + overlay_right,
-                    pattern_y + overlay_bottom,
+                    pattern_x.checked_add(overlay_left).unwrap(),
+                    pattern_y.checked_add(overlay_top).unwrap(),
+                    pattern_x.checked_add(overlay_right).unwrap(),
+                    pattern_y.checked_add(overlay_bottom).unwrap(),
                 ],
             },
         }

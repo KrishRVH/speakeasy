@@ -22,7 +22,9 @@ fn native_movie_color_interoperability() -> anyhow::Result<()> {
     encoder.finish()?;
     for index in [119_usize, 0, 1, 45, 2] {
         let at = Duration::from_nanos(u64::try_from(index)? * 10_000_000 / 30 * 100);
-        let frame = read::frame(std::fs::File::open(&path)?, [320, 240], at, &|| false)?
+        let file = std::fs::File::open(&path)?;
+        let bytes = file.metadata()?.len();
+        let frame = read::frame(file, bytes, [320, 240], at, &|| false)?
             .ok_or_else(|| anyhow::anyhow!("Synthetic color frame cancelled"))?;
         assert_eq!(frame.at, at);
         crate::movie::tests::check_colors(&frame, index);
@@ -43,7 +45,9 @@ fn native_movie_color_interoperability() -> anyhow::Result<()> {
     encoder.finish()?;
     for index in [1_usize, 0] {
         let at = Duration::from_nanos(u64::try_from(index)? * 10_000_000 / 30 * 100);
-        let frame = read::frame(std::fs::File::open(&path)?, [1280, 720], at, &|| false)?
+        let file = std::fs::File::open(&path)?;
+        let bytes = file.metadata()?.len();
+        let frame = read::frame(file, bytes, [1280, 720], at, &|| false)?
             .ok_or_else(|| anyhow::anyhow!("Synthetic HD frame cancelled"))?;
         assert_eq!(frame.at, at);
         crate::movie::tests::check_colors(&frame, index);
@@ -58,7 +62,9 @@ fn native_untagged_movie_keeps_legacy_colors() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Choose the untagged synthetic color fixture"))?;
     for index in [0_usize, 1, 119] {
         let at = Duration::from_nanos(u64::try_from(index)? * 10_000_000 / 30 * 100);
-        let frame = read::frame(std::fs::File::open(&path)?, [320, 240], at, &|| false)?
+        let file = std::fs::File::open(&path)?;
+        let bytes = file.metadata()?.len();
+        let frame = read::frame(file, bytes, [320, 240], at, &|| false)?
             .ok_or_else(|| anyhow::anyhow!("Synthetic legacy color frame cancelled"))?;
         crate::movie::tests::check_colors(&frame, index);
     }
@@ -80,7 +86,8 @@ fn native_mac_movies_preserve_colors_and_timestamps() -> anyhow::Result<()> {
         for index in [count - 1, 0, count / 2] {
             let at = Duration::from_nanos(u64::try_from(index)? * 10_000_000 / 30 * 100);
             let file = std::fs::File::open(directory.join(format!("{name}.mp4")))?;
-            let frame = read::frame(file, size, at, &|| false)?
+            let bytes = file.metadata()?.len();
+            let frame = read::frame(file, bytes, size, at, &|| false)?
                 .ok_or_else(|| anyhow::anyhow!("Synthetic Mac frame cancelled"))?;
             assert_eq!(frame.at, at);
             crate::movie::tests::check_colors(&frame, index);

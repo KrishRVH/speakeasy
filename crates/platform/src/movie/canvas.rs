@@ -43,7 +43,7 @@ impl Canvas {
         self.part
     }
 
-    pub(crate) fn paint(&mut self, frame: &Frame) -> anyhow::Result<&[u8]> {
+    pub(crate) fn paint(&mut self, frame: &Frame) -> anyhow::Result<()> {
         let source = [frame.width, frame.height];
         ensure!(
             source.into_iter().all(|edge| (1..=EDGE).contains(&edge))
@@ -58,7 +58,7 @@ impl Canvas {
             self.content = fit(&frame.bgra, source, &mut self.pixels, self.size)?;
         }
         self.part = frame.part;
-        Ok(&self.pixels)
+        Ok(())
     }
 }
 

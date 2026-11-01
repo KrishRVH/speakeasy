@@ -38,13 +38,24 @@ impl OwnedThread {
         self.exit.is_closed()
     }
 
-    pub async fn join(self) {
+    pub async fn join(self) -> io::Result<()> {
+        let runtime = tokio::runtime::Handle::try_current().map_err(|_runtime_unavailable| {
+            io::Error::other("Joining a worker requires an active Tokio runtime")
+        })?;
         self.exited().await;
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "Dropping the thread discards its panic, and a runtime shutting down drops the closure, which joins in place"
-        )]
-        let _ = tokio::task::spawn_blocking(move || drop(self)).await;
+        runtime
+            .spawn_blocking(move || self.join_blocking())
+            .await
+            .map_err(|_join_failed| io::Error::other("The worker join task did not finish"))?
+    }
+
+    fn join_blocking(mut self) -> io::Result<()> {
+        if let Some(handle) = self.handle.take() {
+            handle
+                .join()
+                .map_err(|_private_panic| io::Error::other("The worker thread panicked"))?;
+        }
+        Ok(())
     }
 }
 
@@ -121,6 +132,9 @@ mod tests {
         let thread = OwnedThread::spawn("panics", || panic!("owned thread test panic"))?;
         tokio::time::timeout(PATIENCE, thread.exited()).await?;
         assert!(thread.is_finished());
+        let error = thread.join().await.unwrap_err();
+        assert_eq!(error.to_string(), "The worker thread panicked");
+        assert!(!format!("{error:?}").contains("owned thread test panic"));
         Ok(())
     }
 
@@ -132,8 +146,65 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(30)).await;
         let early = joined.is_finished();
         release.send(()).await?;
-        tokio::time::timeout(PATIENCE, joined).await??;
+        tokio::time::timeout(PATIENCE, joined).await???;
         assert!(!early, "Joining resolved while the body still ran");
+        Ok(())
+    }
+
+    #[test]
+    fn joining_without_a_runtime_reports_failure_after_cleanup() -> anyhow::Result<()> {
+        use std::task::{Context, Poll, Waker};
+
+        let (finished, observed) = mpsc::channel();
+        let thread = OwnedThread::spawn("joins without runtime", move || {
+            finished.send(()).unwrap();
+        })?;
+        let mut joining = std::pin::pin!(thread.join());
+        let Poll::Ready(Err(error)) = joining
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+        else {
+            panic!("Joining without a runtime did not return an error");
+        };
+        assert_eq!(
+            error.to_string(),
+            "Joining a worker requires an active Tokio runtime"
+        );
+        assert_eq!(observed.try_recv(), Ok(()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_join_keeps_ownership_until_the_body_finishes() -> anyhow::Result<()> {
+        use std::task::{Context, Waker};
+
+        let (release, released) = mpsc::channel();
+        let (finished, observed) = mpsc::channel();
+        let thread = OwnedThread::spawn("cancelled join", move || {
+            released.recv().unwrap();
+            finished.send(()).unwrap();
+        })?;
+        let mut joining = Box::pin(thread.join());
+        assert!(
+            joining
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending()
+        );
+        let (dropping, started) = mpsc::channel();
+        let (dropped, done) = mpsc::channel();
+        let cleanup = thread::spawn(move || {
+            dropping.send(()).unwrap();
+            drop(joining);
+            dropped.send(observed.try_recv()).unwrap();
+        });
+        started.recv_timeout(PATIENCE)?;
+        let early = done.recv_timeout(Duration::from_millis(30));
+        release.send(())?;
+        let completed = done.recv_timeout(PATIENCE);
+        cleanup.join().unwrap();
+        assert!(matches!(early, Err(mpsc::RecvTimeoutError::Timeout)));
+        assert_eq!(completed, Ok(Ok(())));
         Ok(())
     }
 

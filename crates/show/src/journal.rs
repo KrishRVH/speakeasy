@@ -323,7 +323,7 @@ impl Segment {
             let shown = versions
                 .partition_point(|version| version.first <= index)
                 .saturating_sub(1);
-            versions.get(shown)?.restore(tile, stride, &mut rgba)?;
+            restore_tile(&versions.get(shown)?.data, tile, stride, &mut rgba)?;
         }
         Image::from_premultiplied(
             u32::try_from(self.width).ok()?,
@@ -355,34 +355,33 @@ impl Version {
             data: fdeflate::compress_to_vec(&filtered).into(),
         }
     }
+}
 
-    fn restore(&self, tile: Tile, stride: usize, rgba: &mut [u8]) -> Option<()> {
-        let columns = tile.columns();
-        let row_bytes = columns.len();
-        let filtered =
-            fdeflate::decompress_to_vec_bounded(&self.data, row_bytes.saturating_mul(tile.height))
-                .ok()?;
-        if filtered.len() != row_bytes.checked_mul(tile.height)? {
-            return None;
-        }
-        let rows = rgba.chunks_exact_mut(stride.max(1)).skip(tile.top);
-        for (row, filtered_row) in rows.zip(filtered.chunks_exact(row_bytes.max(1))) {
-            let mut left = [0_u8; PIXEL];
-            for (pixel, deltas) in row
-                .get_mut(columns.clone())?
-                .as_chunks_mut::<PIXEL>()
-                .0
-                .iter_mut()
-                .zip(filtered_row.as_chunks::<PIXEL>().0)
-            {
-                for ((byte, delta), before) in pixel.iter_mut().zip(deltas).zip(left) {
-                    *byte = delta.wrapping_add(before);
-                }
-                left = *pixel;
-            }
-        }
-        Some(())
+fn restore_tile(data: &[u8], tile: Tile, stride: usize, rgba: &mut [u8]) -> Option<()> {
+    let columns = tile.columns();
+    let row_bytes = columns.len();
+    let filtered =
+        fdeflate::decompress_to_vec_bounded(data, row_bytes.saturating_mul(tile.height)).ok()?;
+    if filtered.len() != row_bytes.checked_mul(tile.height)? {
+        return None;
     }
+    let rows = rgba.chunks_exact_mut(stride.max(1)).skip(tile.top);
+    for (row, filtered_row) in rows.zip(filtered.chunks_exact(row_bytes.max(1))) {
+        let mut left = [0_u8; PIXEL];
+        for (pixel, deltas) in row
+            .get_mut(columns.clone())?
+            .as_chunks_mut::<PIXEL>()
+            .0
+            .iter_mut()
+            .zip(filtered_row.as_chunks::<PIXEL>().0)
+        {
+            for ((byte, delta), before) in pixel.iter_mut().zip(deltas).zip(left) {
+                *byte = delta.wrapping_add(before);
+            }
+            left = *pixel;
+        }
+    }
+    Some(())
 }
 
 fn with_ends<T>(

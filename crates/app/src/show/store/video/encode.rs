@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -231,19 +232,21 @@ async fn frames(
             current = Some(sample.at);
         }
         let sample = current.context("The saved video has no frames")?;
-        let mut image = Image::from_bgra(width, height, pixels.clone())?;
-        if let Some(viewport) =
+        let frame = if let Some(viewport) =
             movie::geometry::viewport(movie, movie::decoder_time(sample)).filter(|_| at <= through)
         {
+            let mut image = Image::from_bgra(width, height, pixels.clone())?;
             let painted = scene
                 .paint(&mut image, at, viewport, &typeface, cancelled)?
                 .context("Video export cancelled")?;
             stats.omitted = stats.omitted.max(painted.omitted);
+            Cow::Owned(image.into_bgra())
         } else {
             stats.unpainted = stats.unpainted.saturating_add(1);
-        }
+            Cow::Borrowed(pixels.as_slice())
+        };
         output
-            .write_all(&image.into_bgra())
+            .write_all(&frame)
             .await
             .context("FFmpeg stopped accepting video; check free space and H.264 support")?;
     }

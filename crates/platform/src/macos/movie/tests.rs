@@ -1,7 +1,8 @@
 use std::{
     cell::Cell,
     io::{Read as _, Seek as _},
-    os::fd::AsRawFd as _,
+    mem::MaybeUninit,
+    os::{fd::AsRawFd as _, unix::fs::MetadataExt as _},
     path::Path,
     time::Instant,
 };
@@ -29,14 +30,23 @@ fn read(
     cancelled: impl Fn() -> bool,
 ) -> anyhow::Result<Option<MovieFrame>> {
     let (file, prefix) = validated(path)?;
-    assert_eq!(prefix.bytes, file.metadata()?.len());
+    let metadata = file.metadata()?;
+    assert_eq!(prefix.bytes, metadata.len());
     assert!(!prefix.truncated);
     let sample = prefix.samples()[index];
     let descriptor = file.as_raw_fd();
     let frame = crate::read_movie_frame(file, &prefix, sample.at, cancelled)?;
 
-    let descriptor_status = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
-    assert_eq!(descriptor_status, -1, "Movie retained its input");
+    let mut current = MaybeUninit::<libc::stat>::uninit();
+    let status = unsafe { libc::fstat(descriptor, current.as_mut_ptr()) };
+    if status == 0 {
+        let current = unsafe { current.assume_init() };
+        assert!(
+            u64::try_from(current.st_dev).ok() != Some(metadata.dev())
+                || current.st_ino != metadata.ino(),
+            "Movie retained its input"
+        );
+    }
     Ok(frame)
 }
 

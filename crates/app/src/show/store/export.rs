@@ -53,26 +53,40 @@ pub(crate) fn write(directory: &Path, destination: &Path) -> anyhow::Result<Expo
             .context("Cannot flush the Show export")?;
         Ok((files, retained, staging.as_file().metadata()?.len()))
     });
-    let (files, retained_frames, bytes) = match result {
-        Ok(result) => result,
-        Err(error) => return Err(failed(staging, error)),
-    };
-    let _published = match staging.persist_noclobber(&destination) {
-        Ok(file) => file,
-        Err(error) => {
-            return Err(failed(
-                error.file,
-                anyhow::Error::from(error.error)
-                    .context("Cannot save the export; choose a new ZIP path and check free space"),
-            ));
-        },
-    };
+    let (files, retained_frames, bytes) = complete(
+        staging,
+        &destination,
+        result,
+        "Cannot save the export; choose a new ZIP path and check free space",
+    )?;
     Ok(Exported {
         path: destination,
         files,
         bytes,
         retained_frames,
     })
+}
+
+pub(super) fn complete<T>(
+    staging: tempfile::NamedTempFile,
+    destination: &Path,
+    result: anyhow::Result<T>,
+    publish_error: &'static str,
+) -> anyhow::Result<T> {
+    let result = match result {
+        Ok(result) => result,
+        Err(error) => return Err(failed(staging, error)),
+    };
+    let _published = match staging.persist_noclobber(destination) {
+        Ok(file) => file,
+        Err(error) => {
+            return Err(failed(
+                error.file,
+                anyhow::Error::from(error.error).context(publish_error),
+            ));
+        },
+    };
+    Ok(result)
 }
 
 fn failed(staging: tempfile::NamedTempFile, error: anyhow::Error) -> anyhow::Error {

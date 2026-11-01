@@ -145,6 +145,44 @@ impl Ports for Fixture {
     fn hold_cues(&self, _: bool) {}
 }
 
+#[tokio::test]
+async fn fake_insertion_accepts_unrelated_speech_but_never_a_cancelled_permit() -> anyhow::Result<()>
+{
+    let (loaded, _ready) = async_channel::bounded(1);
+    let (inserted, submitted) = async_channel::bounded(1);
+    let fixture = Fixture {
+        wav: Vec::new(),
+        loaded,
+        inserted,
+        replay: None,
+        requests: None,
+    };
+    let (sender, _events) = async_channel::bounded(1);
+    let input = speakeasy_platform::InputSender::new(sender);
+    let text = "Different public speech.\nNext line.";
+    assert!(matches!(
+        fixture
+            .insert(
+                text.into(),
+                input.begin().unwrap(),
+                speakeasy_platform::Delivery::Paste
+            )
+            .await?,
+        speakeasy_platform::Inserted::Sent
+    ));
+    assert_eq!(submitted.recv().await?.1, text);
+    let permit = input.begin().unwrap();
+    input.cancel();
+    assert!(matches!(
+        fixture
+            .insert(text.into(), permit, speakeasy_platform::Delivery::Paste)
+            .await?,
+        speakeasy_platform::Inserted::Unavailable(_)
+    ));
+    assert!(submitted.is_empty());
+    Ok(())
+}
+
 struct FixtureDevice {
     capture: Option<crate::audio::Capture>,
     id: SessionId,
@@ -261,8 +299,7 @@ async fn profile_fixture_dictation() -> anyhow::Result<()> {
         wait_for_phase(&mut updates, Phase::Recording).await?;
         let requested = Instant::now();
         runtime.input.deliver(Input::Toggle);
-        let (_inserted_at, _checked_text) =
-            wait_for_signal(&submitted, &mut updates, REQUEST_TIMEOUT).await?;
+        wait_for_signal(&submitted, &mut updates, REQUEST_TIMEOUT).await?;
         requests_ms.push(requested.elapsed().as_secs_f64() * 1000.0);
         wait_for_phase(&mut updates, Phase::Done).await?;
     }
@@ -315,13 +352,16 @@ impl Speech for MeasuredSpeech {
         language: &str,
         terms: &Terms,
     ) -> anyhow::Result<String> {
-        let measurement = self.requests.as_ref().map(|_| {
-            let rate = crate::audio::wav_sample_rate(&wav).unwrap_or(1).max(1);
-            (
-                wav.len().saturating_sub(44) as f64 * 500.0 / f64::from(rate),
-                sha256(&wav),
-            )
-        });
+        let measurement = self
+            .requests
+            .as_ref()
+            .map(|_| {
+                Ok::<_, anyhow::Error>((
+                    crate::audio::wav_duration(&wav)?.as_secs_f64() * 1000.0,
+                    sha256(&wav),
+                ))
+            })
+            .transpose()?;
         let started = Instant::now();
         let text = self.worker.transcribe(wav, language, terms).await?;
         if let Some(((audio_ms, sha256), reports)) = measurement.zip(self.requests.as_ref()) {

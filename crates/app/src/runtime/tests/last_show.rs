@@ -237,6 +237,27 @@ async fn a_show_found_gone_is_a_notice_that_forgets_only_that_show() -> anyhow::
     h.close().await
 }
 
+#[tokio::test(start_paused = true)]
+async fn queued_reports_preserve_a_gone_show_on_either_side_of_a_failure() -> anyhow::Result<()> {
+    for gone_first in [false, true] {
+        let mut h = Harness::remembering(saved("first"), |_| {})?;
+        let gone = Report::ShowGone(saved("first"));
+        let failed = Report::Failed("Public fixture failure".into());
+        let reports = if gone_first {
+            [gone, failed]
+        } else {
+            [failed, gone]
+        };
+        for report in reports {
+            h.report(report)?;
+        }
+        h.observe(|snapshot| snapshot.reported == 2).await?;
+        assert!(h.snapshot().last_show.is_none());
+        h.close().await?;
+    }
+    Ok(())
+}
+
 #[test]
 fn without_an_owner_a_report_shows_while_idle_and_forgets_only_the_show_found_gone() {
     let mut paused = Snapshot {

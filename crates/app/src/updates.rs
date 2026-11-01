@@ -91,7 +91,10 @@ impl<T: Send + 'static> Job<T> {
         let receipt = self.result.clone();
         let stopped = self.thread.stopped();
         async move {
-            let result = receipt.recv().await.context(FAILED)?;
+            let result = receipt
+                .recv()
+                .await
+                .context("Update work stopped unexpectedly. Try again.")?;
             stopped.await;
             result
         }

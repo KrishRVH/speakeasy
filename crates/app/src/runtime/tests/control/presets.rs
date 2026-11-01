@@ -37,7 +37,7 @@ async fn preset_adoption_is_idle_and_does_not_reload_for_text_choices() -> anyho
     answer(reply, "Fixture.")?;
     receive(&h.pasted).await?;
     h.phase(Phase::Done).await?;
-    config.threads = config.threads.saturating_add(1);
+    config.threads += 1;
     let (call, receipt) = Call::new(Command::Preset {
         name: "Faster".into(),
     });

@@ -167,13 +167,16 @@ fn a_fresh_clipboard_owns_its_first_copy() -> anyhow::Result<()> {
         )?
         .check()?;
     let selection = intern(&connection, b"CLIPBOARD")?;
+    let (events, _received) = async_channel::bounded(1);
+    let input = InputSender::new(events);
+    let permit = input.begin().context("Clipboard recording")?;
 
     for _ in 0..100 {
         connection
             .set_selection_owner(other, selection, x11rb::CURRENT_TIME)?
             .check()?;
         ensure!(
-            Clipboard::open()?.set_text("fixture")?.is_some(),
+            Clipboard::open()?.set_text("fixture", &permit)?.is_some(),
             "A first copy was refused as changed before paste"
         );
     }

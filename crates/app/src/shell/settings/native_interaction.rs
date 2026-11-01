@@ -56,11 +56,12 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 key(settings, "end", cx)?;
                 Timer::after(Duration::from_millis(100)).await;
                 settings.update(cx, |view, _, _| {
-                    assert!(
+                    ensure!(
                         view.language.scroll.offset().y < gpui::px(0.0),
                         "The last language remained off screen"
                     );
-                })?;
+                    anyhow::Ok(())
+                })??;
                 key(settings, "enter", cx)?;
                 settings.update(cx, |view, window, cx| {
                     ensure!(
@@ -91,12 +92,19 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 })??;
                 key(settings, "escape", cx)?;
                 settings.update(cx, |view, window, cx| {
-                    assert!(view.language.cursor.is_none());
-                    assert!(view.language.button.is_focused(window));
+                    ensure!(
+                        view.language.cursor.is_none(),
+                        "Escape left the picker open"
+                    );
+                    ensure!(
+                        view.language.button.is_focused(window),
+                        "Escape lost picker focus"
+                    );
                     window.activate_window();
                     view.toggle_language(window, cx);
                     cx.notify();
-                })?;
+                    anyhow::Ok(())
+                })??;
                 Timer::after(Duration::from_millis(100)).await;
                 settings.update(cx, |view, window, _| {
                     ensure!(
@@ -195,10 +203,17 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
 
                 cx.update(|cx| close(settings, cx))??;
                 settings.update(cx, |view, _, _| {
-                    assert!(view.practice.text.is_empty());
-                    assert!(!view.practice.ready);
-                    assert!(view.practice.task.is_none());
-                })?;
+                    ensure!(
+                        view.practice.text.is_empty(),
+                        "Closing retained private practice text"
+                    );
+                    ensure!(!view.practice.ready, "Closing retained practice readiness");
+                    ensure!(
+                        view.practice.task.is_none(),
+                        "Closing retained the practice task"
+                    );
+                    anyhow::Ok(())
+                })??;
                 anyhow::Ok(())
             }
             .await;

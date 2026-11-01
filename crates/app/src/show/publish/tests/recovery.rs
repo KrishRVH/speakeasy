@@ -22,7 +22,10 @@ async fn checkpoint(parent: &Path) -> anyhow::Result<Checkpoint> {
         ending: Ending::Finished
     }));
     assert!(writer.close().await);
-    checkpoint.close().await
+    checkpoint
+        .close()
+        .await?
+        .context("Fixture checkpoint is missing")
 }
 
 fn footage(checkpoint: &Checkpoint) -> anyhow::Result<Footage> {

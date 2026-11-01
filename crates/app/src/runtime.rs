@@ -334,7 +334,7 @@ impl<Host> Runtime<Host> {
         getrandom::fill(&mut incarnation)?;
         let (commands, directed) = async_channel::bounded(8);
 
-        let (reports, reported) = async_channel::bounded(1);
+        let (reports, reported) = async_channel::unbounded();
         let (stop, stopping) = async_channel::bounded(1);
         let (recoveries, recovering) = async_channel::bounded(1);
         let (practices, practicing) = async_channel::bounded(1);
@@ -369,10 +369,9 @@ impl<Host> Runtime<Host> {
     }
 
     pub(crate) fn report(&self, report: Report) -> Result<(), Report> {
-        match self.reports.try_send(report) {
-            Ok(()) | Err(TrySendError::Full(_)) => Ok(()),
-            Err(TrySendError::Closed(report)) => Err(report),
-        }
+        self.reports
+            .try_send(report)
+            .map_err(TrySendError::into_inner)
     }
 
     pub(crate) fn recover(

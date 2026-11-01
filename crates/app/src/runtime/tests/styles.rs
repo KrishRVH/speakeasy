@@ -25,13 +25,10 @@ async fn style_is_fixed_when_recording_starts_and_replay_never_reformats() -> an
 async fn verbatim_preserves_fillers_and_practice_uses_the_selected_style() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     h.styles.send_replace(Style::Verbatim);
-    let mut practice = h.runtime.practice().map_err(anyhow::Error::msg)?;
-    assert!(matches!(practice.recv().await, Some(PracticeEvent::Ready)));
+    let mut practice = arm_practice(&h).await?;
     h.start().await?;
     h.finish_as("Um, keep uh these.").await?;
-    let Some(PracticeEvent::Text(text)) = practice.recv().await else {
-        bail!("Practice did not deliver its text");
-    };
+    let text = practice_text(&mut practice).await?;
     assert_eq!(&*text, "Um, keep uh these.");
     h.phase(Phase::Done).await?;
     assert!(!h.snapshot().last_dictation);

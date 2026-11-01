@@ -62,8 +62,14 @@ impl<W: Speech> Worker<W> {
 
     pub(super) async fn completed(&mut self) -> Completion<W> {
         let completion = match self {
-            Self::Loading(job) => Completion::Loaded(joined((&mut job.task).await)),
-            Self::Transcribing { ticket, job } => match joined((&mut job.task).await) {
+            Self::Loading(job) => Completion::Loaded(joined(
+                (&mut job.task).await,
+                "Loading the local model stopped unexpectedly. Try again.",
+            )),
+            Self::Transcribing { ticket, job } => match joined(
+                (&mut job.task).await,
+                "Transcription stopped unexpectedly. Try again.",
+            ) {
                 Ok((worker, Transcription::Heard(transcript))) => {
                     Completion::Transcribed(*ticket, Ok((worker, transcript)))
                 },
@@ -265,8 +271,11 @@ impl<T: Send + 'static> Job<T> {
     }
 }
 
-fn joined<T>(result: Result<anyhow::Result<T>, JoinError>) -> anyhow::Result<T> {
-    result.unwrap_or_else(|_| Err(anyhow!("Transcription stopped unexpectedly. Try again.")))
+fn joined<T>(
+    result: Result<anyhow::Result<T>, JoinError>,
+    message: &'static str,
+) -> anyhow::Result<T> {
+    result.unwrap_or_else(|_private_panic| Err(anyhow!(message)))
 }
 
 async fn transcript_of<W: Speech>(

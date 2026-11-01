@@ -69,7 +69,11 @@ proptest! {
 
     #[test]
     fn arbitrary_records_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..20_000)) {
-        let _result = Log::decode(&bytes);
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "The property requires arbitrary bytes to return without panicking, whether decoding succeeds or fails"
+        )]
+        let _ = Log::decode(&bytes);
     }
 }
 

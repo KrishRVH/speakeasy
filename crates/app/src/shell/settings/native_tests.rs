@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use anyhow::Context as _;
+use anyhow::{Context as _, ensure};
 use gpui::{
     AppContext as _, Application, Bounds, EntityInputHandler as _, WindowBounds, WindowOptions,
     point, px, size,
@@ -21,12 +21,13 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                 let path = directory.path().join("settings.json");
                 let config = valid_config(directory.path())?;
                 let mut saves = SaveQueue::new(path.clone(), config.clone());
-                assert!(
+                ensure!(
                     saves
                         .submit(config.clone(), ConfigEpoch::default())
-                        .is_some()
+                        .is_some(),
+                    "The first settings save did not start"
                 );
-                assert!(
+                ensure!(
                     saves
                         .submit(
                             Config {
@@ -35,7 +36,8 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                             },
                             ConfigEpoch::default()
                         )
-                        .is_none()
+                        .is_none(),
+                    "The pending settings save started before the first finished"
                 );
                 let view = cx.new(|cx| Settings {
                     vocabulary: vocabulary::Editor::new(config.theme, cx),
@@ -72,10 +74,13 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                     desktop_command: SharedString::default(),
                     #[cfg(target_os = "windows")]
                     minimize_to_tray: None,
-                });
+                })?;
                 drop(view);
                 cx.update(|_| {})?;
-                assert_eq!(Config::read(&path)?.threads, 8);
+                ensure!(
+                    Config::read(&path)?.threads == 8,
+                    "Settings drop lost the queued save"
+                );
                 let input = cx.new(|cx| {
                     text_field::TextField::new("Synthetic field", Theme::default(), cx)
                 })?;
@@ -92,11 +97,19 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                 window.update(cx, |field, window, cx| {
                     field.set("🦀 café ".into(), cx);
                     field.replace_and_mark_text_in_range(None, "日本", Some(1..2), window, cx);
-                    let selection = field.selected_text_range(false, window, cx).unwrap();
-                    assert_eq!(selection.range, 9..10);
-                    composition_keys(field, window, cx);
+                    let selection = field
+                        .selected_text_range(false, window, cx)
+                        .context("The marked composition has no selection")?;
+                    ensure!(
+                        selection.range == (9..10),
+                        "The marked composition has the wrong selection"
+                    );
+                    composition_keys(field, window, cx)?;
                     field.replace_text_in_range(None, "日本語", window, cx);
-                    assert_eq!(field.text(), "🦀 café 日本語");
+                    ensure!(
+                        field.text() == "🦀 café 日本語",
+                        "Committing the composition changed its text"
+                    );
                     field.select_accessible(
                         gpui::AccessibleTextSelection {
                             anchor: field.text().len(),
@@ -105,16 +118,26 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                         window,
                         cx,
                     );
-                    let selected = field.selected_text_range(false, window, cx).unwrap();
-                    assert!(selected.reversed);
-                    assert_eq!(selected.range, 2..11);
-                })?;
+                    let selected = field
+                        .selected_text_range(false, window, cx)
+                        .context("The accessible selection was lost")?;
+                    ensure!(
+                        selected.reversed,
+                        "The accessible selection lost its direction"
+                    );
+                    ensure!(
+                        selected.range == (2..11),
+                        "The accessible selection has the wrong range"
+                    );
+                    anyhow::Ok(())
+                })??;
                 gpui::Timer::after(Duration::from_millis(100)).await;
                 window.update(cx, |field, window, cx| {
                     let bounds = field.bounds_for_range(8..11, Bounds::default(), window, cx);
-                    assert!(bounds.is_some(), "The field did not shape its text");
+                    ensure!(bounds.is_some(), "The field did not shape its text");
                     window.remove_window();
-                })?;
+                    anyhow::Ok(())
+                })??;
                 anyhow::Ok(())
             }
             .await;
@@ -128,15 +151,11 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
         .context("Phrase editor acceptance did not complete")?
 }
 
-#[expect(
-    clippy::unwrap_used,
-    reason = "The fixture uses known keystrokes and establishes the composition's selection before this helper"
-)]
 fn composition_keys(
     field: &mut text_field::TextField,
     window: &mut gpui::Window,
     cx: &mut gpui::Context<'_, text_field::TextField>,
-) {
+) -> anyhow::Result<()> {
     field.select_accessible(
         gpui::AccessibleTextSelection {
             anchor: 0,
@@ -148,17 +167,27 @@ fn composition_keys(
     for key in ["backspace", "delete", "left", "right", "enter"] {
         field.key_down(
             &gpui::KeyDownEvent {
-                keystroke: gpui::Keystroke::parse(key).unwrap(),
+                keystroke: gpui::Keystroke::parse(key)?,
                 is_held: false,
             },
             window,
             cx,
         );
-        assert_eq!(field.text(), "🦀 café 日本");
-        assert_eq!(field.marked_text_range(window, cx), Some(8..10));
-        assert_eq!(
-            field.selected_text_range(false, window, cx).unwrap().range,
-            9..10
+        ensure!(
+            field.text() == "🦀 café 日本",
+            "A key changed the active composition text"
+        );
+        ensure!(
+            field.marked_text_range(window, cx) == Some(8..10),
+            "A key changed the marked composition range"
+        );
+        let selected = field
+            .selected_text_range(false, window, cx)
+            .context("A key removed the composition selection")?;
+        ensure!(
+            selected.range == (9..10),
+            "A key changed the composition selection"
         );
     }
+    Ok(())
 }

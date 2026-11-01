@@ -21,7 +21,10 @@ async fn capture(parent: &Path, at: SystemTime) -> anyhow::Result<Checkpoint> {
         ending: speakeasy_show::Ending::Finished
     }));
     assert!(writer.close().await);
-    let checkpoint = checkpoint.close().await?;
+    let checkpoint = checkpoint
+        .close()
+        .await?
+        .context("Fixture checkpoint is missing")?;
     Ok(checkpoint)
 }
 

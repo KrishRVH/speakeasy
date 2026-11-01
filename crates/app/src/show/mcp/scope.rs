@@ -43,6 +43,9 @@ impl Root {
         let canonical = inspected
             .canonicalize()
             .map_err(|_private| "Cannot resolve that Show")?;
+        if canonical.to_str().is_none() {
+            return Err("The Show path must be valid UTF-8");
+        }
         Ok(canonical.starts_with(&self.directory).then_some(canonical))
     }
 }
@@ -61,6 +64,9 @@ impl Roots {
             let directory = root
                 .canonicalize()
                 .map_err(|_private| "Cannot resolve an MCP root folder")?;
+            if requested.to_str().is_none() || directory.to_str().is_none() {
+                return Err("An MCP root path must be valid UTF-8");
+            }
             canonical.push(Root {
                 directory,
                 requested,

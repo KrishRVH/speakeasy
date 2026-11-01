@@ -62,8 +62,7 @@ enum Access {
     clippy::disallowed_types,
     reason = "Media Foundation reads and seeks on its own I/O threads; those callbacks must share the validated file's cursor"
 )]
-pub(super) fn read(mut file: File) -> anyhow::Result<ReadStream> {
-    let limit = file.metadata()?.len();
+pub(super) fn read(mut file: File, limit: u64) -> anyhow::Result<ReadStream> {
     file.rewind()?;
     let (released, closed) = async_channel::bounded(1);
     let stream: IStream = CappedFile {
@@ -166,21 +165,22 @@ impl ISequentialStream_Impl for CappedFile_Impl {
             if destination.is_null() {
                 return Err(Error::from_hresult(E_POINTER));
             }
-            let count = usize::try_from(count)
+            let mut file = self.file()?;
+            let available = match self.access {
+                Access::Read => self
+                    .limit
+                    .saturating_sub(file.stream_position().map_err(io_error(STG_E_READFAULT))?),
+                Access::Write => u64::from(count),
+            };
+            let length = usize::try_from(u64::from(count).min(available))
                 .map_err(|_invalid_count| Error::from_hresult(STG_E_READFAULT))?;
 
-            let bytes = unsafe { std::slice::from_raw_parts_mut(destination.cast(), count) };
-            let read_bytes = self
-                .file()?
-                .read(bytes)
-                .map_err(io_error(STG_E_READFAULT))?;
+            let bytes = unsafe { std::slice::from_raw_parts_mut(destination.cast(), length) };
+            let read_bytes = u32::try_from(file.read(bytes).map_err(io_error(STG_E_READFAULT))?)
+                .map_err(|_invalid_count| Error::from_hresult(STG_E_READFAULT))?;
+            drop(file);
             if !read.is_null() {
-                unsafe {
-                    read.write(
-                        u32::try_from(read_bytes)
-                            .map_err(|_invalid_count| Error::from_hresult(STG_E_READFAULT))?,
-                    );
-                };
+                unsafe { read.write(read_bytes) };
             }
             Ok(if read_bytes == count { S_OK } else { S_FALSE })
         })();
@@ -230,6 +230,7 @@ impl IStream_Impl for CappedFile_Impl {
         let base = match origin {
             STREAM_SEEK_SET => 0,
             STREAM_SEEK_CUR => file.stream_position().map_err(io_error(STG_E_READFAULT))?,
+            STREAM_SEEK_END if self.access == Access::Read => self.limit,
             STREAM_SEEK_END => file.metadata().map_err(io_error(STG_E_READFAULT))?.len(),
             _ => return Err(Error::from_hresult(STG_E_INVALIDFUNCTION)),
         };
@@ -269,11 +270,14 @@ impl IStream_Impl for CappedFile_Impl {
         if output.is_null() {
             return Err(Error::from_hresult(E_POINTER));
         }
-        let size = self
-            .file()?
-            .metadata()
-            .map_err(io_error(STG_E_READFAULT))?
-            .len();
+        let size = match self.access {
+            Access::Read => self.limit,
+            Access::Write => self
+                .file()?
+                .metadata()
+                .map_err(io_error(STG_E_READFAULT))?
+                .len(),
+        };
 
         unsafe {
             output.write(STATSTG {
@@ -312,6 +316,8 @@ impl IStream_Impl for CappedFile_Impl {
 
 #[cfg(test)]
 mod tests {
+    use windows::Win32::System::Com::STATFLAG_NONAME;
+
     use super::*;
 
     #[test]
@@ -319,6 +325,7 @@ mod tests {
         let mut file = tempfile::tempfile()?;
         file.write_all(&[1, 2, 3, 4])?;
         file.rewind()?;
+        let mut growing = file.try_clone()?;
         let (released, closed) = async_channel::bounded(1);
         #[expect(
             clippy::disallowed_types,
@@ -331,10 +338,14 @@ mod tests {
             _released: released,
         }
         .into();
+        growing.seek(SeekFrom::End(0))?;
+        growing.write_all(&[5, 6, 7, 8])?;
+        drop(growing);
         let mut bytes = [0_u8; 4];
         let mut count = 0;
 
         unsafe {
+            stream.Seek(0, STREAM_SEEK_SET, None)?;
             assert_eq!(
                 stream.Write(bytes.as_ptr().cast(), 4, Some(&raw mut count)),
                 STG_E_ACCESSDENIED
@@ -347,6 +358,26 @@ mod tests {
                 .ok()?;
             assert_eq!(bytes, [1, 2, 3, 4]);
             assert_eq!(count, 4);
+            bytes.fill(0xFF);
+            assert_eq!(
+                stream.Read(bytes.as_mut_ptr().cast(), 4, Some(&raw mut count)),
+                S_FALSE
+            );
+            assert_eq!(count, 0);
+            assert_eq!(bytes, [0xFF; 4]);
+            stream.Seek(2, STREAM_SEEK_SET, None)?;
+            assert_eq!(
+                stream.Read(bytes.as_mut_ptr().cast(), 4, Some(&raw mut count)),
+                S_FALSE
+            );
+            assert_eq!(count, 2);
+            assert_eq!(bytes, [3, 4, 0xFF, 0xFF]);
+            let mut metadata = STATSTG::default();
+            stream.Stat(&raw mut metadata, STATFLAG_NONAME)?;
+            assert_eq!(metadata.cbSize, 4);
+            let mut end = 0;
+            stream.Seek(0, STREAM_SEEK_END, Some(&raw mut end))?;
+            assert_eq!(end, 4);
         }
         drop(stream);
         assert!(closed.is_closed());

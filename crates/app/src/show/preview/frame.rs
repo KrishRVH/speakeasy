@@ -22,7 +22,7 @@ pub(super) fn read(request: Request, cancelled: &dyn Fn() -> bool) -> Result<Dec
         Content::Png(name) => {
             let bytes = recall::read_file(&directory, &name, recall::IMAGE_LIMIT)
                 .map_err(|error| format!("Cannot open {name}: {error}"))?;
-            check_header(&bytes).map_err(str::to_owned)?;
+            check_header(&bytes)?;
             if cancelled() {
                 return Err("Preview cancelled".into());
             }
@@ -36,7 +36,7 @@ pub(super) fn read(request: Request, cancelled: &dyn Fn() -> bool) -> Result<Dec
             }
             pixels
         },
-        Content::Source { index, at } => {
+        Content::Source { index } => {
             let image = source::frame(&directory, &index, at)
                 .map_err(|error| format!("Cannot read source frame: {error:#}"))?
                 .image;
@@ -96,9 +96,10 @@ pub(super) fn read(request: Request, cancelled: &dyn Fn() -> bool) -> Result<Dec
     })
 }
 
-fn check_header(bytes: &[u8]) -> Result<(), &'static str> {
+fn check_header(bytes: &[u8]) -> Result<(), String> {
+    let invalid = "This frame has an invalid or truncated PNG header.";
     if bytes.get(..16) != Some(&b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR"[..]) || bytes.len() < 33 {
-        return Err("This frame has an invalid or truncated PNG header.");
+        return Err(invalid.into());
     }
     let dimension = |range| {
         bytes
@@ -106,13 +107,15 @@ fn check_header(bytes: &[u8]) -> Result<(), &'static str> {
             .and_then(|bytes: &[u8]| bytes.try_into().ok())
             .map(u32::from_be_bytes)
     };
-    match (dimension(16..20), dimension(20..24)) {
-        (Some(width), Some(height))
-            if (1..=LONGEST_EDGE).contains(&width) && (1..=LONGEST_EDGE).contains(&height) =>
-        {
-            Ok(())
-        },
-        _ => Err("This frame is too large to display (maximum 4096 pixels per side)."),
+    let (Some(width @ 1..), Some(height @ 1..)) = (dimension(16..20), dimension(20..24)) else {
+        return Err(invalid.into());
+    };
+    if width > LONGEST_EDGE || height > LONGEST_EDGE {
+        Err(format!(
+            "This frame is too large to display (maximum {LONGEST_EDGE} pixels per side)."
+        ))
+    } else {
+        Ok(())
     }
 }
 
@@ -141,10 +144,7 @@ mod tests {
         std::fs::write(directory.path().join(source::FILE), source_bytes)?;
         let index = Arc::new(source::inspect(directory.path())?);
         let at = Moment::from_millis(200);
-        for content in [
-            Content::Source { index, at },
-            Content::Png("frame.png".into()),
-        ] {
+        for content in [Content::Source { index }, Content::Png("frame.png".into())] {
             let decoded = read(
                 Request {
                     directory: directory.path().to_owned(),
@@ -173,8 +173,28 @@ mod tests {
         for length in 0..33 {
             assert!(check_header(&header[..length]).is_err());
         }
-        header[16..20].copy_from_slice(&4_097_u32.to_be_bytes());
-        assert!(check_header(&header).is_err());
+        for (width, height, expected) in [
+            (
+                0_u32,
+                1_u32,
+                "This frame has an invalid or truncated PNG header.",
+            ),
+            (1, 0, "This frame has an invalid or truncated PNG header."),
+            (
+                4_097,
+                1,
+                "This frame is too large to display (maximum 4096 pixels per side).",
+            ),
+            (
+                1,
+                4_097,
+                "This frame is too large to display (maximum 4096 pixels per side).",
+            ),
+        ] {
+            header[16..20].copy_from_slice(&width.to_be_bytes());
+            header[20..24].copy_from_slice(&height.to_be_bytes());
+            assert_eq!(check_header(&header).unwrap_err(), expected);
+        }
         assert!(
             check_header(b"PRIVATE_SCREEN_CONTENT")
                 .unwrap_err()

@@ -345,6 +345,36 @@ fn synthetic_ffmpeg_export_preserves_voice_ink_captions_and_clip_timing() -> any
         (prelude.start_ms, prelude.end_ms, prelude.frames),
         (0, 2250, 68)
     );
+    let header = fs::read(directory.join(movie::HEADER))?;
+    let mut metadata: movie::Metadata = serde_json::from_slice(&header)?;
+    metadata.geometry = Some(movie::geometry::Geometry::default());
+    fs::write(
+        directory.join(movie::HEADER),
+        serde_json::to_vec(&metadata)?,
+    )?;
+    let unpainted = root.path().join("unpainted.mp4");
+    let report = write_with(
+        &directory,
+        &unpainted,
+        Options::default(),
+        || false,
+        || Ok(scratch.clone()),
+    )?;
+    assert_eq!(report.frames_without_annotations, report.frames);
+    assert_eq!(report.omitted_annotations, 0);
+    let pixels = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(&unpainted)
+        .args([
+            "-map", "0:v:0", "-f", "rawvideo", "-pix_fmt", "bgra", "pipe:1",
+        ])
+        .output()?;
+    assert!(pixels.status.success());
+    let (frames, tail) = pixels.stdout.as_chunks::<{ 160 * 100 * 4 }>();
+    assert_eq!(tail, b"");
+    assert_eq!(u64::try_from(frames.len())?, report.frames);
+    assert!(frames.iter().all(|frame| bright(frame) == 0));
+    fs::write(directory.join(movie::HEADER), header)?;
     let (calls, checks) = async_channel::bounded(2);
     calls.send_blocking(())?;
     calls.send_blocking(())?;

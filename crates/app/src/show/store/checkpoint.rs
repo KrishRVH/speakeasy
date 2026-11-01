@@ -205,7 +205,7 @@ impl Checkpoint {
         let bytes = zeroize::Zeroizing::new(
             serde_json::to_vec(&StoredNarration {
                 version: 1,
-                narration: narration.clone(),
+                narration,
                 incomplete,
             })
             .map_err(|_private_content| anyhow::anyhow!("Cannot encode recovered narration"))?,
@@ -233,7 +233,7 @@ impl Checkpoint {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         };
-        let saved: StoredNarration =
+        let saved: StoredNarration<Narration> =
             serde_json::from_slice(&bytes).map_err(|_private_content| {
                 anyhow::anyhow!("The saved Show narration is damaged or unsupported")
             })?;
@@ -556,9 +556,9 @@ fn lock(directory: &Path) -> io::Result<Option<Checkpoint>> {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct StoredNarration {
+struct StoredNarration<N> {
     version: u32,
-    narration: Narration,
+    narration: N,
     incomplete: bool,
 }
 
@@ -576,10 +576,10 @@ pub(crate) enum Checkpointing {
 }
 
 impl Checkpointing {
-    pub(crate) async fn close(self) -> anyhow::Result<Checkpoint> {
+    pub(crate) async fn close(self) -> anyhow::Result<Option<Checkpoint>> {
         match self {
             Self::Writing(keeper) => keeper.close().await,
-            Self::Held(checkpoint) => Ok(checkpoint),
+            Self::Held(checkpoint) => Ok(Some(checkpoint)),
         }
     }
 
@@ -588,7 +588,9 @@ impl Checkpointing {
         keep: bool,
         narration: Option<(Narration, bool)>,
     ) -> anyhow::Result<()> {
-        let checkpoint = self.close().await?;
+        let Some(checkpoint) = self.close().await? else {
+            return Ok(());
+        };
         tokio::task::spawn_blocking(move || {
             if !keep {
                 return checkpoint.discard();

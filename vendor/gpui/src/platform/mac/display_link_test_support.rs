@@ -202,7 +202,7 @@ fn a_source_can_be_dropped_before_its_first_subscription() -> anyhow::Result<()>
     let _serial = serialized()?;
     let links = LINKS_CREATED.load(Ordering::Relaxed);
     let released = SOURCES_RELEASED.load(Ordering::Relaxed);
-    let window = super::WindowFrameSource::new(std::ptr::null_mut(), frame);
+    let window = unsafe { super::WindowFrameSource::new(std::ptr::null_mut(), frame) };
     drop(window);
     assert_eq!(LINKS_CREATED.load(Ordering::Relaxed), links);
     assert_eq!(SOURCES_RELEASED.load(Ordering::Relaxed) - released, 1);
@@ -216,7 +216,7 @@ fn repeated_visibility_and_screen_changes_reuse_links_and_one_source() -> anyhow
     let links = LINKS_CREATED.load(Ordering::Relaxed);
     let sources = SOURCES_CREATED.load(Ordering::Relaxed);
     let released = SOURCES_RELEASED.load(Ordering::Relaxed);
-    let mut window = super::WindowFrameSource::new(std::ptr::null_mut(), frame);
+    let mut window = unsafe { super::WindowFrameSource::new(std::ptr::null_mut(), frame) };
     for _ in 0..100 {
         window.start(1_001)?;
         tick(1_001);
@@ -240,8 +240,8 @@ fn display_ticks_fan_out_only_to_live_subscribers() -> anyhow::Result<()> {
     let _serial = serialized()?;
     let starts = LINKS_STARTED.load(Ordering::Relaxed);
     let stops = LINKS_STOPPED.load(Ordering::Relaxed);
-    let mut first = super::WindowFrameSource::new(std::ptr::null_mut(), frame);
-    let mut second = super::WindowFrameSource::new(std::ptr::null_mut(), frame);
+    let mut first = unsafe { super::WindowFrameSource::new(std::ptr::null_mut(), frame) };
+    let mut second = unsafe { super::WindowFrameSource::new(std::ptr::null_mut(), frame) };
     first.start(2_001)?;
     second.start(2_001)?;
     assert_eq!(LINKS_STARTED.load(Ordering::Relaxed) - starts, 1);
@@ -275,7 +275,7 @@ fn display_ticks_fan_out_only_to_live_subscribers() -> anyhow::Result<()> {
 fn failed_start_rolls_back_subscription_and_retry_reuses_the_link() -> anyhow::Result<()> {
     let _serial = serialized()?;
     let links = LINKS_CREATED.load(Ordering::Relaxed);
-    let mut window = super::WindowFrameSource::new(std::ptr::null_mut(), frame);
+    let mut window = unsafe { super::WindowFrameSource::new(std::ptr::null_mut(), frame) };
     FAIL_NEXT_START.store(true, Ordering::Relaxed);
     assert!(window.start(3_001).is_err());
     assert!(window.registration.is_none());

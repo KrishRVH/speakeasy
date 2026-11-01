@@ -10,7 +10,10 @@ async fn audio_checkpoint(parent: &Path) -> anyhow::Result<Checkpoint> {
     drop(frames);
     assert!(audio.begin(8_000, std::time::Duration::ZERO, "en".into()));
     assert!(audio.finish(&[1, 0, 2, 0], &[]));
-    keeper.close().await
+    keeper
+        .close()
+        .await?
+        .context("Fixture checkpoint is missing")
 }
 
 #[tokio::test]

@@ -22,7 +22,10 @@ async fn with_audio(parent: &Path) -> anyhow::Result<Checkpoint> {
     assert!(audio.begin(8_000, Duration::from_millis(125), "fr".into()));
     assert!(audio.finish(&[0xB8, 0x0B].repeat(8_000), &[]));
     assert!(frames.close().await);
-    keeper.close().await
+    keeper
+        .close()
+        .await?
+        .context("Fixture checkpoint is missing")
 }
 
 #[tokio::test]

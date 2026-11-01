@@ -66,20 +66,15 @@ pub(super) fn write(
         annotations: Moment::from_millis(coverage.annotations_through_ms),
         rendering: movie::AnnotationState::Off,
     });
-    let crop = if let Some(bounds) = crop_bounds(&manifest, query, crop)? {
-        let Query::Mark(number) = query else {
-            anyhow::bail!("--crop requires --mark");
-        };
-        let mark = manifest
-            .marks()
-            .iter()
-            .find(|mark| mark.number == *number)
-            .context("The selected mark is unavailable")?;
+    let crop = if let Some(mark) = crop_mark(&manifest, crop)? {
         let part = manifest
             .recording()
             .mark_part(mark)
             .context("This mark has mixed or unknown geometry; export without --crop")?;
-        Some(movie::Crop { bounds, part })
+        Some(movie::Crop {
+            bounds: mark.bounds,
+            part,
+        })
     } else {
         None
     };

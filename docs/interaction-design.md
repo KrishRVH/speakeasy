@@ -209,10 +209,10 @@ original seven-day schedule even when the saved bundle is kept.
   Cancel Show discards it. An interruption, which is another shortcut, a session change such as
   locking the screen, or a macOS key-tap outage, discards dictation but finishes a recording Show as
   the shortcut would. Once a Show finishes, neither Escape, the tray, nor an interruption discards
-  it while it is saved; Pause, Quit, and a settings change that ends a recording still do, though a
-  Show already committed to disk stays saved, its summary copied if the clipboard allows. Linux uses
-  a reserved Ctrl+Super+Escape chord or an explicit command binding; bare Escape is not globally
-  captured. Animation never delays cancellation or owns the microphone lifetime.
+  it while it is saved. Pause, Quit, and a settings change can stop pending work, but preserve the
+  finished Show's checkpoint for recovery. A committed Show stays saved. Linux uses a reserved
+  Ctrl+Super+Escape chord or an explicit command binding; bare Escape is not globally captured.
+  Animation never delays cancellation or owns the microphone lifetime.
 - Readiness follows the first captured buffer. Startup feedback does not imply that speech before
   that buffer can be recovered.
 - Insertion does not steal focus. OS submission is the observable result; success in every editor

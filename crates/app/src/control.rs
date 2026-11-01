@@ -10,7 +10,7 @@ use anyhow::{Context as _, bail, ensure};
 use async_channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 
-use crate::transcript::style::Style;
+use crate::{config::presets::validate_name, transcript::style::Style};
 
 pub(crate) const VERSION: u8 = 1;
 pub(crate) const MAX_BYTES: usize = 4096;
@@ -243,7 +243,7 @@ impl Command {
     pub(super) fn encode(&self) -> Result<Vec<u8>, &'static str> {
         let valid = match self {
             Self::Stop { session } | Self::Cancel { session } => valid_token(session),
-            Self::Preset { name } => valid_name(name),
+            Self::Preset { name } => validate_name(name).is_ok(),
             Self::Status | Self::Start { .. } | Self::PasteLast | Self::Style { .. } => true,
         };
         if !valid {
@@ -284,7 +284,9 @@ impl Command {
             ("style", None, Some(name), None) => Style::parse(&name)
                 .map(|name| Self::Style { name })
                 .ok_or("Unknown dictation style."),
-            ("preset", None, Some(name), None) if valid_name(&name) => Ok(Self::Preset { name }),
+            ("preset", None, Some(name), None) if validate_name(&name).is_ok() => {
+                Ok(Self::Preset { name })
+            },
             _ => Err("Invalid control command arguments."),
         }
     }
@@ -296,13 +298,6 @@ fn valid_token(token: &str) -> bool {
         && !token
             .chars()
             .any(|character| character.is_whitespace() || character.is_control())
-}
-
-fn valid_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.trim() == name
-        && name.chars().count() <= 48
-        && !name.chars().any(char::is_control)
 }
 
 pub(crate) struct Invocation {
@@ -353,7 +348,7 @@ impl Invocation {
             ["style", name] => Command::Style {
                 name: Style::parse(name).context("Unknown dictation style.")?,
             },
-            ["preset", name] if valid_name(name) => Command::Preset {
+            ["preset", name] if validate_name(name).is_ok() => Command::Preset {
                 name: (*name).into(),
             },
             _ => bail!(

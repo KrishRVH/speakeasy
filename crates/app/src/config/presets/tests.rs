@@ -105,7 +105,7 @@ fn old_files_need_no_presets_and_invalid_libraries_are_rejected_even_without_an_
     assert_eq!(Config::read(&path)?.presets, Vec::<Preset>::new());
     let preset = serde_json::to_value(Preset::capture("PRIVATE_NAME".into(), &Config::default())?)?;
     for invalid in [
-        serde_json::json!({"presets": vec![preset.clone(); LIMIT.saturating_add(1)]}),
+        serde_json::json!({"presets": vec![preset.clone(); LIMIT + 1]}),
         serde_json::json!({"presets": [preset, preset]}),
         {
             let mut invalid = preset.clone();

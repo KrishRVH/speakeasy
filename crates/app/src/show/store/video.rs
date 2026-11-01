@@ -3,7 +3,7 @@ mod timeline;
 
 use std::{
     fs::File,
-    io::{self, Write as _},
+    io,
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
@@ -12,7 +12,7 @@ use anyhow::Context as _;
 use serde::Serialize;
 use speakeasy_show::{Annotations, Manifest, Span};
 
-use super::{movie, recall, voice};
+use super::{export, movie, recall, voice};
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Options {
@@ -110,7 +110,6 @@ fn write_with(
     )?;
     let mut source = File::create_new(work.path().join("source.mp4"))?;
     reading.copy_to(&mut source, speakeasy_show::MoviePrefix::FILE_LIMIT)?;
-    source.flush()?;
     anyhow::ensure!(!cancelled(), "Video export cancelled");
     let rate = audio.map(|audio| audio.rate);
     if let Some(audio) = audio {
@@ -131,32 +130,35 @@ fn write_with(
     } else {
         0
     };
-    let mut staging = tempfile::Builder::new()
+    let staging = tempfile::Builder::new()
         .prefix(".speakeasy-video-")
         .tempfile_in(parent)?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
-    let stats = runtime.block_on(encode::run(
-        encode::Inputs {
-            work: work.path(),
-            output: staging.path(),
-            movie: &reading.movie,
-            scene: &scene,
-            timing: &timing,
-            rate,
-            captions: captions > 0,
-        },
-        &cancelled,
-    ))?;
-    anyhow::ensure!(!cancelled(), "Video export cancelled");
-    staging.as_file_mut().flush()?;
-    staging.as_file().sync_all()?;
-    let bytes = staging.as_file().metadata()?.len();
-    let _published = staging
-        .persist_noclobber(&destination)
-        .map_err(|error| error.error)
-        .context("Cannot publish the video; choose a new MP4 path and check free space")?;
+    let result = (|| {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let stats = runtime.block_on(encode::run(
+            encode::Inputs {
+                work: work.path(),
+                output: staging.path(),
+                movie: &reading.movie,
+                scene: &scene,
+                timing: &timing,
+                rate,
+                captions: captions > 0,
+            },
+            &cancelled,
+        ))?;
+        anyhow::ensure!(!cancelled(), "Video export cancelled");
+        staging.as_file().sync_all()?;
+        Ok((stats, staging.as_file().metadata()?.len()))
+    })();
+    let (stats, bytes) = export::complete(
+        staging,
+        &destination,
+        result,
+        "Cannot publish the video; choose a new MP4 path and check free space",
+    )?;
     Ok(Exported {
         path: destination,
         bytes,

@@ -51,7 +51,7 @@ async fn redirects_and_oversized_responses_are_not_followed_or_accepted() -> any
         "HTTP/1.1 200 OK\r\nContent-Length: 2097153\r\nConnection: close\r\n\r\n".into(),
         format!(
             "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n200001\r\n{}\r\n0\r\n\r\n",
-            "x".repeat(MAX_REPLY.saturating_add(1))
+            "x".repeat(MAX_REPLY + 1)
         ),
     ] {
         let listener = TcpListener::bind("127.0.0.1:0").await?;

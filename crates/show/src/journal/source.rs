@@ -1,9 +1,9 @@
 use std::{fmt, ops::Range};
 
 use super::{
-    Journal, PIXEL, Version,
+    Journal, PIXEL,
     record::{Cursor, emit_record, payload, require},
-    tiles,
+    restore_tile, tiles,
 };
 use crate::{Image, Moment, Span};
 
@@ -274,12 +274,7 @@ impl Source {
                     == Some(location.record.end.saturating_sub(location.record.start)),
                 "source tile is truncated",
             )?;
-            let version = Version {
-                first: 0,
-                data: payload(&encoded, TILE_RECORD)?.into(),
-            };
-            version
-                .restore(tile, stride, &mut rgba)
+            restore_tile(payload(&encoded, TILE_RECORD)?, tile, stride, &mut rgba)
                 .ok_or(SourceError("source tile is damaged"))?;
         }
         let image = Image::from_premultiplied(segment.width, segment.height, rgba)

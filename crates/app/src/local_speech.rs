@@ -240,7 +240,9 @@ impl Speech for LocalSpeech {
             .await
             .unwrap_or(None);
         if text.is_none() {
-            timeout(CONNECT_TIMEOUT, self.probe_with_silence()).await??;
+            timeout(CONNECT_TIMEOUT, self.probe_with_silence())
+                .await
+                .context(STOPPED)??;
         }
         Ok(text)
     }

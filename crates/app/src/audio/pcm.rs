@@ -19,15 +19,11 @@ pub(super) struct Pcm16 {
 }
 
 impl Pcm16 {
-    pub(super) fn from_kept(mut audio: zeroize::Zeroizing<Vec<u8>>) -> Self {
+    pub(super) fn from_kept(audio: zeroize::Zeroizing<Vec<u8>>) -> Self {
         let samples = audio.len() / SAMPLE_BYTES;
-        let mut bytes = mem::take(&mut *audio);
-        let length = bytes.len();
-        bytes.resize(length.saturating_add(WAV_HEADER_BYTES), 0);
-        bytes.copy_within(..length, WAV_HEADER_BYTES);
-        if let Some(header) = bytes.get_mut(..WAV_HEADER_BYTES) {
-            header.fill(0);
-        }
+        let mut bytes = Vec::with_capacity(audio.len().saturating_add(WAV_HEADER_BYTES));
+        bytes.resize(WAV_HEADER_BYTES, 0);
+        bytes.extend_from_slice(&audio);
         Self {
             bytes,
             limit: samples,
@@ -60,11 +56,16 @@ impl Pcm16 {
     }
 
     pub(super) fn push(&mut self, sample: i16) {
-        if self.bytes.len().saturating_add(SAMPLE_BYTES) > self.bytes.capacity() {
+        let required = self.bytes.len().saturating_add(SAMPLE_BYTES);
+        if required > self.bytes.capacity() {
             let full = WAV_HEADER_BYTES.saturating_add(bytes_in(self.limit));
-            let capacity = self.bytes.capacity().saturating_mul(2).min(full);
-            self.bytes
-                .reserve_exact(capacity.saturating_sub(self.bytes.len()));
+            let capacity = self
+                .bytes
+                .capacity()
+                .saturating_mul(2)
+                .min(full)
+                .max(required);
+            self.reallocate(capacity);
         }
         self.bytes.extend_from_slice(&sample.to_le_bytes());
     }
@@ -121,8 +122,15 @@ impl Pcm16 {
         if capacity.saturating_sub(self.bytes.len()) >= RECLAIM_SLACK_BYTES
             && capacity / 4 >= self.bytes.len()
         {
-            self.bytes.shrink_to_fit();
+            self.reallocate(self.bytes.len());
         }
+    }
+
+    fn reallocate(&mut self, capacity: usize) {
+        let mut replacement = Vec::with_capacity(capacity);
+        replacement.extend_from_slice(&self.bytes);
+        self.bytes.zeroize();
+        self.bytes = replacement;
     }
 
     fn into_wav(mut self, rate: u32) -> anyhow::Result<Vec<u8>> {
@@ -201,6 +209,19 @@ pub(crate) fn wav_sample_rate(wav: &[u8]) -> anyhow::Result<u32> {
         bail!(INCOMPLETE_HEADER);
     };
     Ok(u32::from_le_bytes(*field))
+}
+
+#[cfg(test)]
+pub(crate) fn wav_duration(wav: &[u8]) -> anyhow::Result<Duration> {
+    let rate = wav_sample_rate(wav)?;
+    let audio = wav
+        .get(WAV_HEADER_BYTES..)
+        .ok_or_else(|| anyhow::anyhow!(INCOMPLETE_HEADER))?;
+    anyhow::ensure!(
+        rate > 0 && audio.len().is_multiple_of(SAMPLE_BYTES),
+        "The fixture needs a positive rate and complete PCM16 samples"
+    );
+    Ok(duration_of(audio.len(), rate))
 }
 
 pub(crate) fn silent_wav(rate: u32, duration: Duration) -> anyhow::Result<Vec<u8>> {
@@ -292,6 +313,24 @@ mod tests {
             wav_sample_rate(&silence[..27]).map_err(|error| error.to_string()),
             Err(INCOMPLETE_HEADER.to_owned())
         );
+        Ok(())
+    }
+
+    #[test]
+    fn profiling_duration_rejects_incomplete_audio_and_zero_rate() -> anyhow::Result<()> {
+        let duration = Duration::from_millis(500);
+        let wav = silent_wav(16_000, duration)?;
+        assert_eq!(wav_duration(&wav)?, duration);
+        let mut zero_rate = wav.clone();
+        zero_rate[SAMPLE_RATE_OFFSET..SAMPLE_RATE_OFFSET + 4].fill(0);
+        for invalid in [
+            &wav[..27],
+            &wav[..WAV_HEADER_BYTES - 1],
+            &wav[..wav.len() - 1],
+            &zero_rate,
+        ] {
+            assert!(wav_duration(invalid).is_err());
+        }
         Ok(())
     }
 

@@ -64,6 +64,7 @@ fn commands_require_explicit_paths_and_accept_only_their_options() -> anyhow::Re
         &["list", "--out", "here"],
         &["demo", "--json"],
         &["demo", "--out"],
+        &["demo", "--out", "--json"],
         &["skill", "extra"],
         &["record"],
         &["keep"],
@@ -319,7 +320,10 @@ async fn interrupted_listing_has_distinct_identity_and_original_expiry_without_r
         },
     )?;
     assert!(writer.close().await);
-    let checkpoint = checkpoint.close().await?;
+    let checkpoint = checkpoint
+        .close()
+        .await?
+        .context("Fixture checkpoint is missing")?;
     let interrupted = checkpoint.interrupted()?;
 
     let mut bytes = Vec::new();
@@ -387,7 +391,10 @@ async fn checkpoint_damage_is_reported_beside_readable_saved_shows() -> anyhow::
         },
     )?;
     assert!(writer.close().await);
-    let checkpoint = checkpoint.close().await?;
+    let checkpoint = checkpoint
+        .close()
+        .await?
+        .context("Fixture checkpoint is missing")?;
     let interrupted = checkpoint.interrupted()?;
     fs::write(interrupted.directory().join("published"), b"invalid marker")?;
     let mut bytes = Vec::new();

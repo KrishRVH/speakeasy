@@ -1,5 +1,4 @@
 use super::*;
-use crate::runtime::{Ports as _, fixture::Fixture};
 
 fn report(reference: &str, text: &str, latency: Option<f64>, speed: u32) -> Report {
     Report {
@@ -113,43 +112,5 @@ fn corpus_verifies_both_files_and_rejects_duplicate_cases() -> anyhow::Result<()
             .to_string()
             .contains("unique")
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn fake_insertion_accepts_unrelated_speech_but_never_a_cancelled_permit() -> anyhow::Result<()>
-{
-    let (loaded, _ready) = async_channel::bounded(1);
-    let (inserted, submitted) = async_channel::bounded(1);
-    let fixture = Fixture {
-        wav: Vec::new(),
-        loaded,
-        inserted,
-        replay: None,
-        requests: None,
-    };
-    let (sender, _events) = async_channel::bounded(1);
-    let input = speakeasy_platform::InputSender::new(sender);
-    let text = "Different public speech.\nNext line.";
-    assert!(matches!(
-        fixture
-            .insert(
-                text.into(),
-                input.begin().unwrap(),
-                speakeasy_platform::Delivery::Paste
-            )
-            .await?,
-        speakeasy_platform::Inserted::Sent
-    ));
-    assert_eq!(submitted.recv().await?.1, text);
-    let permit = input.begin().unwrap();
-    input.cancel();
-    assert!(matches!(
-        fixture
-            .insert(text.into(), permit, speakeasy_platform::Delivery::Paste)
-            .await?,
-        speakeasy_platform::Inserted::Unavailable(_)
-    ));
-    assert!(submitted.is_empty());
     Ok(())
 }

@@ -176,8 +176,9 @@ async fn download(
     file.sync_all().context(DOWNLOAD_FAILED)?;
     drop(file);
     let mut file = open_verified(&path)?;
+    let metadata = file.metadata().context(DOWNLOAD_FAILED)?;
     ensure!(
-        file.metadata()?.is_file() && file.metadata()?.len() == artifact.size,
+        metadata.is_file() && metadata.len() == artifact.size,
         INVALID_FILE
     );
     progress.send_replace(Progress {
@@ -186,18 +187,20 @@ async fn download(
         total: artifact.size,
     });
     let mut hash = Sha256::new();
+    let mut hashed = 0_u64;
     let mut buffer = vec![0; 1024 * 1024];
     loop {
         let read = file.read(&mut buffer).context(DOWNLOAD_FAILED)?;
         if read == 0 {
             break;
         }
-        ensure!(
-            read as u64 <= artifact.size.saturating_sub(progress.borrow().done),
-            INVALID_FILE
-        );
+        let length = u64::try_from(read).context(INVALID_FILE)?;
+        hashed = hashed
+            .checked_add(length)
+            .filter(|&total| total <= artifact.size)
+            .context(INVALID_FILE)?;
         hash.update(buffer.get(..read).context(INVALID_FILE)?);
-        progress.send_modify(|progress| progress.done = progress.done.saturating_add(read as u64));
+        progress.send_modify(|progress| progress.done = hashed);
         tokio::task::yield_now().await;
     }
     ensure!(

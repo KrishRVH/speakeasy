@@ -209,3 +209,72 @@ fn console_control_verbs_reach_the_app_and_preserve_json_exit_status_without_a_d
     assert!(fs::read_dir(root.path())?.next().is_none());
     Ok(())
 }
+
+#[test]
+fn a_closed_control_stdout_never_claims_an_acknowledged_action_was_refused() -> anyhow::Result<()> {
+    use std::{
+        io::Read as _,
+        net::{Ipv4Addr, TcpListener},
+        thread,
+        time::{Duration, Instant},
+    };
+
+    for (result, expected) in [("ok", 2), ("refused", 1), ("unknown", 2)] {
+        let root = tempfile::tempdir()?;
+        let settings = root.path().join("settings.json");
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        listener.set_nonblocking(true)?;
+        fs::write(
+            root.path().join("instance.port"),
+            format!("{} {:032x}", listener.local_addr()?.port(), 1_u128),
+        )?;
+        let (closed, stdout_closed) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || -> anyhow::Result<()> {
+            let deadline = Instant::now().checked_add(Duration::from_secs(5)).unwrap();
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        anyhow::ensure!(
+                            Instant::now() < deadline,
+                            "Fixture caller did not connect"
+                        );
+                        thread::sleep(Duration::from_millis(10));
+                    },
+                    Err(error) => return Err(error.into()),
+                }
+            };
+            stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+            stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+            let mut nonce = [0; 16];
+            stream.read_exact(&mut nonce)?;
+            assert_eq!(u128::from_le_bytes(nonce), 1);
+            stream.write_all(&[0x06])?;
+            let mut header = [0; 3];
+            stream.read_exact(&mut header)?;
+            assert_eq!(header[0], 3);
+            let mut request = vec![0; usize::from(u16::from_be_bytes([header[1], header[2]]))];
+            stream.read_exact(&mut request)?;
+            let request: Value = serde_json::from_slice(&request)?;
+            assert_eq!(request["op"], "start");
+            stdout_closed.recv_timeout(Duration::from_secs(5))?;
+            let reply = serde_json::to_vec(&json!({"v": 1, "result": result}))?;
+            stream.write_all(&u16::try_from(reply.len())?.to_be_bytes())?;
+            stream.write_all(&reply)?;
+            Ok(())
+        });
+        let mut child = Command::new(APP)
+            .args(["dictation", "start", "--config"])
+            .arg(&settings)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        drop(child.stdout.take());
+        closed.send(())?;
+        let output = child.wait_with_output()?;
+        server.join().unwrap()?;
+        assert_eq!(output.status.code(), Some(expected), "{result}");
+        assert!(output.stderr.starts_with(b"speakeasy: "));
+    }
+    Ok(())
+}

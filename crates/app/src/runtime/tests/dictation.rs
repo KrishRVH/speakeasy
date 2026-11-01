@@ -99,7 +99,7 @@ async fn owner_finishes_capture_at_the_five_minute_deadline() -> anyhow::Result<
     h.start().await?;
     let limit = Duration::from_secs(300);
     let deadline = tokio::time::Instant::now() + limit;
-    tokio::time::advance(limit.saturating_sub(Duration::from_millis(1))).await;
+    tokio::time::advance(limit.checked_sub(Duration::from_millis(1)).unwrap()).await;
     assert!(h.jobs.try_recv().is_err());
     tokio::time::advance(Duration::from_millis(1)).await;
     receive(&h.jobs).await?;

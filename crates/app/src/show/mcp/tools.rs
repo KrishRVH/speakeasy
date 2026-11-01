@@ -16,8 +16,21 @@ const TEXT_LIMIT: usize = 64 << 10;
 const WORD_LIMIT: usize = 512;
 const IMAGE_LIMIT: u64 = 8 << 20;
 
-pub(super) fn known(name: &str) -> bool {
-    matches!(name, "show_list" | "show_read" | "show_image")
+pub(super) enum Tool {
+    List,
+    Read,
+    Image,
+}
+
+impl Tool {
+    pub(super) fn parse(name: &str) -> Option<Self> {
+        match name {
+            "show_list" => Some(Self::List),
+            "show_read" => Some(Self::Read),
+            "show_image" => Some(Self::Image),
+            _ => None,
+        }
+    }
 }
 
 pub(super) fn definitions() -> Value {
@@ -36,12 +49,11 @@ pub(super) fn definitions() -> Value {
     ])
 }
 
-pub(super) fn call(roots: &Roots, name: &str, arguments: Value) -> Value {
-    let result = match name {
-        "show_list" => list(roots, arguments),
-        "show_read" => read(roots, arguments),
-        "show_image" => image(roots, arguments),
-        _ => Err("Unknown Show tool".to_owned()),
+pub(super) fn call(roots: &Roots, tool: Tool, arguments: Value) -> Value {
+    let result = match tool {
+        Tool::List => list(roots, arguments),
+        Tool::Read => read(roots, arguments),
+        Tool::Image => image(roots, arguments),
     };
     match result {
         Ok(content) => json!({"content": content, "isError": false}),

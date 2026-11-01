@@ -156,7 +156,7 @@ impl Paster {
                 "The clipboard changed while your shortcut keys were held. Release them before pasting.",
             )));
         }
-        let Some(owner) = self.clipboard.set_text(&request.text)? else {
+        let Some(owner) = self.clipboard.set_text(&request.text, &request.permit)? else {
             return Ok(ControlFlow::Break(if request.permit.active() {
                 CLIPBOARD_CHANGED
             } else {

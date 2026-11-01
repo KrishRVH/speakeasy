@@ -86,7 +86,13 @@ async fn record_with(
         samples,
         stop: async { tokio::time::sleep(TEARDOWN).await },
     };
-    let mut take = Take::new(start.into_std(), [1_000.0, 500.0], Part::WHOLE, &canvas);
+    let mut take = Take::new(
+        start.into_std(),
+        [1_000.0, 500.0],
+        Part::WHOLE,
+        &canvas,
+        (SessionId::FIRST, async_channel::bounded(1).0),
+    );
     prepare(&mut take);
     let run = async {
         let recorded = take.run(&lanes, sources).await;
@@ -382,19 +388,20 @@ fn a_recording_that_unwinds_hides_the_overlay_and_reports_a_fixed_failure() -> a
 #[test]
 fn a_recording_that_found_nothing_to_record_says_so_unless_the_owner_cancelled_it()
 -> anyhow::Result<()> {
-    let (events, reported) = async_channel::bounded(1);
+    let (events, reported) = async_channel::bounded(2);
     let (canvas, overlay) = watch::channel(Canvas::default());
     let (finish, _pins, lanes) = lanes(&canvas);
-    let report = |outcome| {
-        let mut report = Report::new(SessionId::FIRST, events.clone(), &lanes);
-        report.outcome = outcome;
-    };
+    let report = |outcome| Report::new(SessionId::FIRST, events.clone(), &lanes).deliver(outcome);
     report(Ok(Ended::Unchosen(Unchosen::Area)));
     assert!(overlay.has_changed()?, "The overlay was told to hide");
     let ShowEvent::Unchosen(id, unchosen) = reported.try_recv()? else {
         anyhow::bail!("An area left unchosen is reported as such");
     };
     assert_eq!((id, unchosen), (SessionId::FIRST, Unchosen::Area));
+    assert!(
+        reported.is_empty(),
+        "Normal delivery reports its outcome once"
+    );
     report(Ok(Ended::Cancelled));
     assert!(reported.is_empty(), "A cancelled recording reports nothing");
     finish.close();

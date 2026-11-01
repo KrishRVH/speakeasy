@@ -1,5 +1,7 @@
 use std::time::SystemTime;
 
+use anyhow::Context as _;
+
 use super::*;
 use crate::{
     show::{Keeper, Kept},
@@ -56,7 +58,10 @@ async fn promotion_keeps_buffered_audio_and_cues_and_replays_the_live_speech_gat
         keeping.classify(&mut speech, &pcm, &heard);
         assert!(keeping.finish(&pcm, 48_000));
         assert!(incoming.is_closed());
-        let checkpoint = keeper.close().await?;
+        let checkpoint = keeper
+            .close()
+            .await?
+            .context("Fixture checkpoint is missing")?;
         let audio = checkpoint.audio()?.unwrap();
         assert!(*audio.pcm == pcm, "Checkpoint changed synthetic PCM");
         assert!(audio.complete);

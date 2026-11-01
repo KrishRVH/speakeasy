@@ -825,23 +825,21 @@ impl Review {
                 self.confirm_discard = false;
                 self.notice = None;
             },
-            Action::Jump(forward) => {
+            Action::Jump(direction) => {
                 if let Some((detail, current)) =
                     self.detail.as_ref().zip(self.library.selected.as_ref())
                     && let Some(frame) = detail.frames.get(current.frame)
                 {
-                    let ms = if forward {
-                        frame.at.as_millis().saturating_add(10_000)
-                    } else {
-                        frame.at.as_millis().saturating_sub(10_000)
+                    let ms = match direction {
+                        Direction::Forward => frame.at.as_millis().saturating_add(10_000),
+                        Direction::Back => frame.at.as_millis().saturating_sub(10_000),
                     };
                     let target = detail
                         .locate(speakeasy_show::Moment::from_millis(ms))
                         .map_or(current.frame, |(index, _)| index);
-                    let index = if forward {
-                        target.max(current.frame.saturating_add(1))
-                    } else {
-                        target.min(current.frame.saturating_sub(1))
+                    let index = match direction {
+                        Direction::Forward => target.max(current.frame.saturating_add(1)),
+                        Direction::Back => target.min(current.frame.saturating_sub(1)),
                     }
                     .min(detail.frames.len().saturating_sub(1));
                     self.act(Action::Frame(index), window, cx);
@@ -898,6 +896,12 @@ impl CopyKind {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Direction {
+    Back,
+    Forward,
+}
+
 #[derive(Clone)]
 enum Action {
     OpenCode,
@@ -911,7 +915,7 @@ enum Action {
     Discard,
     ConfirmDiscard,
     CancelDiscard,
-    Jump(bool),
+    Jump(Direction),
     Mode(Mode),
     Previous,
     Next,

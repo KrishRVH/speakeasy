@@ -107,7 +107,7 @@ fn native_video_export_reports_real_samples_after_the_annotation_journal_ends() 
     ] {
         let report = run(option, value, name)?;
         let actual = report["sampledMs"].as_u64().unwrap();
-        assert!(actual <= requested && requested - actual < 34);
+        assert!(requested.checked_sub(actual).is_some_and(|gap| gap < 34));
     }
     for value in ["0.249", "4.251"] {
         assert!(run("--at", value, "invalid.png").is_err());

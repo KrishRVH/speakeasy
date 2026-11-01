@@ -90,10 +90,11 @@ impl Presenter {
             .map(|(name, _)| name)
             .eq(state.presets.iter())
         {
-            for (_, item) in &self.preset_items {
+            while let Some((_, item)) = self.preset_items.last() {
                 self.presets.remove(item)?;
+                self.preset_items
+                    .truncate(self.preset_items.len().saturating_sub(1));
             }
-            self.preset_items.clear();
             for name in &state.presets {
                 let item =
                     CheckMenuItem::with_id(format!("{PRESET_ID}{name}"), name, true, false, None);
@@ -104,9 +105,7 @@ impl Presenter {
         self.presets.set_enabled(!self.preset_items.is_empty());
         for (name, item) in &self.preset_items {
             item.set_checked(state.preset.as_ref() == Some(name));
-            item.set_enabled(
-                state.menu.toggle.enabled && state.menu.toggle.label == "Start dictation",
-            );
+            item.set_enabled(state.menu.show_screen.enabled);
         }
         Ok(())
     }

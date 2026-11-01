@@ -32,16 +32,16 @@ fn reads_preserve_edits_and_every_file_and_only_explicitly_expose_content() -> a
     let directory = fixture(root.path(), "exact")?;
     let before = snapshot(root.path())?;
     let roots = Roots::open(vec![root.path().to_owned()]).map_err(anyhow::Error::msg)?;
-    let listed = call(&roots, "show_list", json!({}));
+    let listed = call(&roots, Tool::List, json!({}));
     assert_eq!(content(&listed)?["shows"].as_array().unwrap().len(), 1);
     assert!(!serde_json::to_string(&listed)?.contains("PRIVATE_"));
-    let read = content(&call(&roots, "show_read", json!({"show": "exact"})))?;
+    let read = content(&call(&roots, Tool::Read, json!({"show": "exact"})))?;
     assert_eq!(read["summary"]["text"], "PRIVATE_EDITED_SUMMARY");
     assert!(read["narration"].is_null());
     assert!(!serde_json::to_string(&read)?.contains("PRIVATE_NARRATION"));
     let read = content(&call(
         &roots,
-        "show_read",
+        Tool::Read,
         json!({"show": directory, "narration": true, "phrase": "PRIVATE_NARRATION"}),
     ))?;
     assert_eq!(read["narration"]["kind"], "timed");
@@ -62,7 +62,7 @@ fn image_returns_exact_saved_bytes_and_never_falls_back_from_missing_source() ->
         ("sheet", "contact-sheet.png"),
         ("keyframe", "frames/frame-01.png"),
     ] {
-        let response = call(&roots, "show_image", json!({"show": "exact", selector: 1}));
+        let response = call(&roots, Tool::Image, json!({"show": "exact", selector: 1}));
         assert_eq!(content(&response)?[selector], 1);
         let image = &response["content"][1];
         assert_eq!(image["type"], "image");
@@ -74,7 +74,7 @@ fn image_returns_exact_saved_bytes_and_never_falls_back_from_missing_source() ->
     }
     let source = content(&call(
         &roots,
-        "show_image",
+        Tool::Image,
         json!({"show": "exact", "at": "0.75"}),
     ))?;
     assert_eq!(source["sampleAtMs"], 100);
@@ -82,7 +82,7 @@ fn image_returns_exact_saved_bytes_and_never_falls_back_from_missing_source() ->
     assert_eq!(source["annotations"], false);
     let mark = content(&call(
         &roots,
-        "show_image",
+        Tool::Image,
         json!({"show": "exact", "mark": 1}),
     ))?;
     assert_eq!(mark["location"]["number"], 1);
@@ -90,24 +90,24 @@ fn image_returns_exact_saved_bytes_and_never_falls_back_from_missing_source() ->
     assert_eq!(
         call(
             &roots,
-            "show_image",
+            Tool::Image,
             json!({"show": "exact", "phrase": "PRIVATE_NARRATION"})
         )["isError"],
         true
     );
     let phrase = content(&call(
         &roots,
-        "show_image",
+        Tool::Image,
         json!({"show": "exact", "phrase": "PRIVATE_NARRATION", "match": 2}),
     ))?;
     assert_eq!(phrase["requestedAtMs"], 600);
     fs::remove_file(directory.join("source.frames"))?;
     assert_eq!(
-        call(&roots, "show_image", json!({"show": "exact", "at": "0.75"}))["isError"],
+        call(&roots, Tool::Image, json!({"show": "exact", "at": "0.75"}))["isError"],
         true
     );
     assert_eq!(
-        call(&roots, "show_image", json!({"show": "exact", "sheet": 1}))["isError"],
+        call(&roots, Tool::Image, json!({"show": "exact", "sheet": 1}))["isError"],
         false
     );
     Ok(())
@@ -125,7 +125,7 @@ fn truncation_is_truthful_and_untimed_or_lost_narration_is_not_timed() -> anyhow
     fs::write(directory.join("show.json"), serde_json::to_vec(&manifest)?)?;
     let response = content(&call(
         &roots,
-        "show_read",
+        Tool::Read,
         json!({"show": "exact", "narration": true}),
     ))?;
     assert_eq!(response["summary"]["truncated"], true);
@@ -137,7 +137,7 @@ fn truncation_is_truthful_and_untimed_or_lost_narration_is_not_timed() -> anyhow
     assert_eq!(response["narration"]["kind"], "untimed");
     assert_eq!(response["narration"]["excerpt"]["truncated"], true);
     assert_eq!(
-        call(&roots, "show_read", json!({"show": "exact", "phrase": "é"}))["isError"],
+        call(&roots, Tool::Read, json!({"show": "exact", "phrase": "é"}))["isError"],
         true
     );
     manifest["narration"] = json!({"words": []});
@@ -145,7 +145,7 @@ fn truncation_is_truthful_and_untimed_or_lost_narration_is_not_timed() -> anyhow
     fs::write(directory.join("show.json"), serde_json::to_vec(&manifest)?)?;
     let response = content(&call(
         &roots,
-        "show_read",
+        Tool::Read,
         json!({"show": "exact", "narration": true}),
     ))?;
     assert_eq!(response["narration"]["kind"], "lost");
@@ -165,7 +165,7 @@ fn invalid_selectors_unknown_properties_damage_and_oversize_do_not_leak_content(
         json!({"show": "exact", "sheet": 1, "file": "PRIVATE_PATH"}),
         json!({"show": "exact", "mark": 1, "match": 1}),
     ] {
-        let response = call(&roots, "show_image", arguments);
+        let response = call(&roots, Tool::Image, arguments);
         assert_eq!(response["isError"], true);
         assert!(!serde_json::to_string(&response)?.contains("PRIVATE_"));
     }
@@ -173,7 +173,7 @@ fn invalid_selectors_unknown_properties_damage_and_oversize_do_not_leak_content(
     for broken in [b"\x89PNG\r\n\x1a\n".as_slice(), png.get(..33).unwrap()] {
         fs::write(directory.join("contact-sheet.png"), broken)?;
         assert_eq!(
-            call(&roots, "show_image", json!({"show": "exact", "sheet": 1}))["isError"],
+            call(&roots, Tool::Image, json!({"show": "exact", "sheet": 1}))["isError"],
             true
         );
     }
@@ -182,16 +182,16 @@ fn invalid_selectors_unknown_properties_damage_and_oversize_do_not_leak_content(
         .open(directory.join("contact-sheet.png"))?
         .set_len(IMAGE_LIMIT + 1)?;
     assert_eq!(
-        call(&roots, "show_image", json!({"show": "exact", "sheet": 1}))["isError"],
+        call(&roots, Tool::Image, json!({"show": "exact", "sheet": 1}))["isError"],
         true
     );
     fs::write(directory.join("summary.md"), [0xFF, 0xFE])?;
     assert_eq!(
-        call(&roots, "show_read", json!({"show": "exact"}))["isError"],
+        call(&roots, Tool::Read, json!({"show": "exact"}))["isError"],
         true
     );
     fs::write(directory.join("show.json"), b"PRIVATE_BAD_MANIFEST")?;
-    let response = call(&roots, "show_read", json!({"show": "exact"}));
+    let response = call(&roots, Tool::Read, json!({"show": "exact"}));
     assert_eq!(response["isError"], true);
     assert!(!serde_json::to_string(&response)?.contains("PRIVATE_"));
     Ok(())
@@ -207,18 +207,18 @@ fn linked_content_cannot_escape_an_allowed_bundle() -> anyhow::Result<()> {
     fs::write(outside.path(), b"PRIVATE_OUTSIDE")?;
     let roots = Roots::open(vec![root.path().to_owned()]).map_err(anyhow::Error::msg)?;
     for (name, tool, arguments) in [
-        ("summary.md", "show_read", json!({"show": "exact"})),
+        ("summary.md", Tool::Read, json!({"show": "exact"})),
         (
             "contact-sheet.png",
-            "show_image",
+            Tool::Image,
             json!({"show": "exact", "sheet": 1}),
         ),
         (
             "source.frames",
-            "show_image",
+            Tool::Image,
             json!({"show": "exact", "at": "0.5"}),
         ),
-        ("show.json", "show_read", json!({"show": "exact"})),
+        ("show.json", Tool::Read, json!({"show": "exact"})),
     ] {
         fs::remove_file(directory.join(name))?;
         symlink(outside.path(), directory.join(name))?;

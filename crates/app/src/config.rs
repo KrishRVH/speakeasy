@@ -512,6 +512,15 @@ fn parse(contents: &[u8], path: &Path) -> anyhow::Result<(Config, Map<String, Va
 fn from_json<'de, T: Deserialize<'de>>(contents: &'de [u8]) -> anyhow::Result<T> {
     let mut json = serde_json::Deserializer::from_slice(contents);
     let value = serde_path_to_error::deserialize(&mut json).map_err(|error| {
+        if let Some(Segment::Map { key }) = error.path().iter().next()
+            && matches!(key.as_str(), "vocabulary" | "recognition_terms" | "presets")
+        {
+            return anyhow!(
+                "{key}: invalid private setting at line {} column {}",
+                error.inner().line(),
+                error.inner().column()
+            );
+        }
         let key = error
             .path()
             .iter()

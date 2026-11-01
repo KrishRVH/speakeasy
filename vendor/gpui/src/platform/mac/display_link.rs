@@ -228,7 +228,10 @@ pub struct WindowFrameSource {
 }
 
 impl WindowFrameSource {
-    pub fn new(data: *mut c_void, callback: extern "C" fn(*mut c_void)) -> Self {
+    /// # Safety
+    /// Create, operate, and drop this source on the main queue. The callback must
+    /// accept `data`; anything it accesses must stay valid until the source is dropped.
+    pub unsafe fn new(data: *mut c_void, callback: extern "C" fn(*mut c_void)) -> Self {
         // SAFETY: This source uses the process-owned main queue. The caller keeps
         // its native view alive until Drop cancels delivery on that same queue.
         // Resume exactly once so its RAII release never sees a suspended source.

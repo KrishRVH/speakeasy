@@ -39,7 +39,9 @@ fn irregular_captures_never_appear_before_their_capture_time() -> anyhow::Result
     writeln!(log, "pts100ns,duration100ns,source,sourceMs")?;
     for (ticks, duration) in encoder::sample_times(&path)? {
         let at = Duration::from_nanos(u64::try_from(ticks)?.saturating_mul(100));
-        let decoded = read::frame(std::fs::File::open(&path)?, [320, 240], at, &|| false)?
+        let file = std::fs::File::open(&path)?;
+        let bytes = file.metadata()?.len();
+        let decoded = read::frame(file, bytes, [320, 240], at, &|| false)?
             .ok_or_else(|| anyhow::anyhow!("Synthetic read was cancelled"))?;
         let shade = decoded.bgra[(120 * 320 + 160) * 4];
         let source = inputs
@@ -109,8 +111,11 @@ fn pending_images_and_quiet_output_keep_capture_and_presentation_distinct() -> a
             assert_eq!(encoder.coverage().unwrap().frames, 2);
         }
         encoder.finish()?;
+        let file = std::fs::File::open(&path)?;
+        let bytes = file.metadata()?.len();
         let decoded = read::frame(
-            std::fs::File::open(&path)?,
+            file,
+            bytes,
             [320, 240],
             Duration::from_millis(if stop { 32 } else { 34 }),
             &|| false,
@@ -155,12 +160,11 @@ fn pending_images_and_quiet_output_keep_capture_and_presentation_distinct() -> a
         );
         std::thread::sleep(Duration::from_millis(25));
     }
-    let decoded = read::frame(
-        std::fs::File::open(&interrupted)?,
-        [320, 240],
-        Duration::from_millis(500),
-        &|| false,
-    )?
+    let file = std::fs::File::open(&interrupted)?;
+    let bytes = file.metadata()?.len();
+    let decoded = read::frame(file, bytes, [320, 240], Duration::from_millis(500), &|| {
+        false
+    })?
     .unwrap();
     assert!(decoded.bgra[0].abs_diff(80) <= 8);
     encoder.finish()?;
@@ -228,7 +232,7 @@ async fn a_stalled_writer_reports_the_held_prefix_even_without_a_new_capture() -
     };
     assert_eq!(sample, 0);
     accepted.send(true).await?;
-    native.join().await;
+    native.join().await?;
     let Some(crate::MovieEvent::Finished {
         last,
         through,

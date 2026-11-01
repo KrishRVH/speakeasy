@@ -33,7 +33,7 @@ fn replay(
         }
         speech.extend(pcm.audio());
         if let Some(range) = cuts.offer(&speech, pcm.audio().len()) {
-            attempted = attempted.saturating_add(1);
+            attempted = attempted.checked_add(1).unwrap();
             if fail_every == 0 || !attempted.is_multiple_of(fail_every) {
                 minimum = minimum.min(range.len());
                 pieces.extend_from_slice(&pcm.audio()[range.clone()]);
@@ -45,7 +45,8 @@ fn replay(
     let partition = cuts.finish(&speech, pcm.audio().len());
     let sealed = pcm.seal(speech, 1000).unwrap().unwrap();
     if let Some(partition) = &partition {
-        pieces.extend_from_slice(&sealed.wav[44_usize.saturating_add(partition.tail.start)..]);
+        pieces
+            .extend_from_slice(&sealed.wav[44_usize.checked_add(partition.tail.start).unwrap()..]);
     }
     (sealed.wav.clone(), pieces, partition, minimum)
 }

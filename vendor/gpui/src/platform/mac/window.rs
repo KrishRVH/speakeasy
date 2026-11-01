@@ -487,7 +487,11 @@ impl MacWindowState {
         let display_id = unsafe { display_id_for_screen(self.native_window.screen()) };
         let data = self.native_view.as_ptr() as *mut c_void;
         self.frame_source
-            .get_or_insert_with(|| WindowFrameSource::new(data, step))
+            .get_or_insert_with(|| {
+                // SAFETY: The main-thread window drops its frame source before
+                // releasing the native view passed to step.
+                unsafe { WindowFrameSource::new(data, step) }
+            })
             .start(display_id)
             .log_err();
     }

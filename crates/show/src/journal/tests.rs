@@ -16,15 +16,11 @@ fn admitted(journal: &mut Journal) -> Admission<'_> {
         .expect("A journal without a budget admits every arrival")
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "A quadrant index under 4; debug overflow checks fail the test"
-)]
 fn quadrants(shade: [u8; 4], small: bool) -> Image {
     let (width, height) = if small { (70, 70) } else { (150, 90) };
     frame(width, height, move |x, y| {
-        let quadrant = usize::from(x >= 64) + usize::from(y >= 64) * 2;
-        let value = *shade.get(quadrant).unwrap();
+        let rows = shade.as_chunks::<2>().0;
+        let value = rows[usize::from(y >= 64)][usize::from(x >= 64)];
         [value, value, value, 255]
     })
 }
@@ -160,10 +156,6 @@ fn debugging_a_journal_never_prints_its_frames() {
 }
 
 proptest! {
-    #[expect(
-        clippy::arithmetic_side_effects,
-        reason = "Moments and indices of at most 24 frames; debug overflow checks fail the test"
-    )]
     #[test]
     fn thinning_keeps_every_other_frame_exact(
         changes in prop::collection::vec((0_u8..4, small()), 1..24),
@@ -177,7 +169,7 @@ proptest! {
                 *value = value.wrapping_add(40);
             }
             let image = quadrants(shade, small);
-            let moment = Moment::from_millis(u64::try_from(index).unwrap() * 100);
+            let moment = Moment::from_millis(u64::try_from(index).unwrap().checked_mul(100).unwrap());
             admitted(&mut journal).record(moment, image.clone());
             recorded.push((moment, image));
         }
@@ -188,7 +180,7 @@ proptest! {
             recorded = recorded
                 .into_iter()
                 .enumerate()
-                .filter(|(index, _)| index.is_multiple_of(2) || index + 1 == count)
+                .filter(|(index, _)| index.is_multiple_of(2) || index.checked_add(1).unwrap() == count)
                 .map(|(_, frame)| frame)
                 .collect();
             prop_assert!(journal.bytes() <= before);
@@ -245,10 +237,6 @@ proptest! {
         prop_assert_eq!(journal.frame_at(samples.last().unwrap().at), last);
     }
 
-    #[expect(
-        clippy::arithmetic_side_effects,
-        reason = "Noise mixed from coordinates under 150; debug overflow checks fail the test"
-    )]
     #[test]
     fn rebuilding_is_lossless_for_any_size(
         width in 1_u32..150,
@@ -256,7 +244,13 @@ proptest! {
         seed in 0_u8..=255,
     ) {
         let noise = move |x: usize, y: usize| {
-            let mixed = x * 31 + y * 17 + usize::from(seed);
+            let mixed = x
+                .checked_mul(31)
+                .unwrap()
+                .checked_add(y.checked_mul(17).unwrap())
+                .unwrap()
+                .checked_add(usize::from(seed))
+                .unwrap();
             let value = u8::try_from(mixed % 251).unwrap();
             [value, value.wrapping_mul(3), seed, 255]
         };

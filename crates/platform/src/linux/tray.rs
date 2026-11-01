@@ -1,4 +1,4 @@
-use std::{collections::HashMap, convert::Infallible, fmt, time::Duration};
+use std::{collections::HashMap, fmt, time::Duration};
 
 use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
@@ -73,7 +73,13 @@ impl NativeTray {
                     clippy::let_underscore_must_use,
                     reason = "Tray failure is reported by the following availability event; the application remains usable without a tray host"
                 )]
-                let _ = runtime.block_on(serve(incoming, &actions, &stopping));
+                let _ = runtime.block_on(async {
+                    tokio::select! {
+                        biased;
+                        _ = stopping.recv() => Ok(()),
+                        result = serve(incoming, &actions) => result,
+                    }
+                });
             }
             offer(&actions, TrayAction::Available(false));
         })?;
@@ -425,12 +431,8 @@ fn offer(events: &Sender<TrayAction>, action: TrayAction) {
 async fn serve(
     updates: Receiver<TrayPresentation>,
     events: &Sender<TrayAction>,
-    stopping: &Receiver<Infallible>,
 ) -> anyhow::Result<()> {
-    let connection = tokio::select! {
-        _ = stopping.recv() => return Ok(()),
-        connection = Connection::session() => connection?,
-    };
+    let connection = Connection::session().await?;
     let item = Item {
         title: "Speakeasy".into(),
         icon: Vec::new(),
@@ -452,7 +454,6 @@ async fn serve(
     loop {
         tokio::select! {
             biased;
-            _ = stopping.recv() => break,
             signal = host_changes.next() => {
                 if is_host_change(&signal.context("Tray connection closed")??) {
                     available = refresh_availability(&connection, events, available).await;

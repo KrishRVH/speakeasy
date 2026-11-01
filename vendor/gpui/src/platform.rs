@@ -465,8 +465,6 @@ pub struct A11yCallbacks {
     pub activation: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
     /// Called when an action is requested by the screen reader.
     pub action: Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>,
-    /// Called when the adapter is deactivated (screen reader disconnects).
-    pub deactivation: Box<dyn Fn() + Send + 'static>,
     /// Revoke queued actions when the native window hides or minimizes.
     pub invalidate: Box<dyn Fn() + Send + 'static>,
 }
@@ -574,9 +572,6 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn a11y_is_visible(&self) -> bool {
         true
     }
-
-    /// Inform the adapter of updated window bounds.
-    fn a11y_update_window_bounds(&self) {}
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {

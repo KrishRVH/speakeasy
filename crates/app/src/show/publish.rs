@@ -52,7 +52,15 @@ pub(crate) async fn publish(
     } = publication;
 
     let checkpoint = match checkpoint {
-        Some(checkpoint) => checkpoint.close().await.ok(),
+        Some(checkpoint) => match checkpoint.close().await {
+            Ok(checkpoint) => checkpoint,
+            Err(_cancelled) if !permit.active() => return Ok(Published::Cancelled),
+            Err(error) => {
+                return Err(error.context(
+                    "The Show could not be saved because its checkpoint failed. Check Shows for recoverable footage.",
+                ));
+            },
+        },
         None => None,
     };
     tokio::task::spawn_blocking(move || {

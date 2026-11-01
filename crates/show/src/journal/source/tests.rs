@@ -142,11 +142,8 @@ fn short_but_validly_compressed_tiles_cannot_fill_missing_pixels_with_black() {
         width: 2,
         height: 2,
     };
-    let short = Version {
-        first: 0,
-        data: fdeflate::compress_to_vec(&[0; 4]).into(),
-    };
-    assert!(short.restore(tile, 8, &mut [0; 16]).is_none());
+    let short = fdeflate::compress_to_vec(&[0; 4]);
+    assert!(restore_tile(&short, tile, 8, &mut [0; 16]).is_none());
 }
 
 proptest! {

@@ -7,7 +7,7 @@ use anyhow::Context as _;
 use query::Query;
 use serde::Serialize;
 use speakeasy_show::{
-    Manifest, Moment, Rect, Typeface,
+    Manifest, Mark, Moment, Typeface,
     locate::{self, Evidence},
 };
 
@@ -40,8 +40,14 @@ impl std::fmt::Debug for Request {
 #[derive(PartialEq, Eq)]
 enum Output {
     List,
-    Frame { destination: PathBuf, crop: bool },
-    Sheet { destination: PathBuf, crop: bool },
+    Frame {
+        destination: PathBuf,
+        crop: Option<usize>,
+    },
+    Sheet {
+        destination: PathBuf,
+        crop: Option<usize>,
+    },
 }
 
 impl Command {
@@ -108,27 +114,25 @@ impl Command {
         }
         anyhow::ensure!(!video || single, "--video supports show frame");
         anyhow::ensure!(!annotated || video, "--annotated requires --video");
-        anyhow::ensure!(
-            occurrence.is_none() || matches!(focus, Some(Query::Phrase(_))),
-            "--match requires --phrase"
-        );
-        if let (Some(Query::Phrase(phrase)), Some(occurrence)) = (&focus, occurrence) {
-            focus = Some(Query::Match {
-                phrase: phrase.clone(),
-                occurrence,
-            });
-        }
-        anyhow::ensure!(
-            !crop || matches!(focus, Some(Query::Mark(_))),
-            "--crop requires --mark"
-        );
+        let focus = match (focus, occurrence) {
+            (Some(Query::Phrase(phrase)), Some(occurrence)) => {
+                Some(Query::Match { phrase, occurrence })
+            },
+            (focus, None) => focus,
+            (_, Some(_)) => anyhow::bail!("--match requires --phrase"),
+        };
+        let crop = match (crop, &focus) {
+            (true, Some(Query::Mark(number))) => Some(*number),
+            (true, _) => anyhow::bail!("--crop requires --mark"),
+            (false, _) => None,
+        };
         anyhow::ensure!(
             focus.is_some()
                 || (!single && destination.is_none() && around.is_none() && most.is_none()),
             "Choose exactly one focus: --at, --mark, or --phrase"
         );
         anyhow::ensure!(
-            destination.is_some() || (most.is_none() && !crop),
+            destination.is_some() || (most.is_none() && crop.is_none()),
             "--most and --crop require --out NEW.png"
         );
         let output = match (single, destination) {
@@ -204,8 +208,8 @@ impl Request {
         };
         let window = locate::window(span, Duration::from_millis(self.around), index.duration());
         let crop_window = match self.output {
-            Output::Frame { crop: true, .. } => Some(span),
-            Output::Sheet { crop: true, .. } => Some(window),
+            Output::Frame { crop: Some(_), .. } => Some(span),
+            Output::Sheet { crop: Some(_), .. } => Some(window),
             _ => None,
         };
         anyhow::ensure!(
@@ -238,8 +242,10 @@ impl Request {
             Output::List => {},
             Output::Frame { destination, crop } => {
                 let served = source::frame(&directory, &index, span.start())?;
-                let (image, crop_px) =
-                    locate::crop_image(served.image, crop_bounds(&manifest, query, crop)?)?;
+                let (image, crop_px) = locate::crop_image(
+                    served.image,
+                    crop_mark(&manifest, crop)?.map(|mark| mark.bounds),
+                )?;
                 report.requested_ms = Some(span.start().as_millis());
                 report.sampled_ms = Some(served.at.as_millis());
                 report.cells.push(locate::Cell {
@@ -251,7 +257,7 @@ impl Request {
             Output::Sheet { destination, crop } => {
                 let evidence = Evidence::compose(
                     &samples.times,
-                    crop_bounds(&manifest, query, crop)?,
+                    crop_mark(&manifest, crop)?.map(|mark| mark.bounds),
                     |at| source::frame(&directory, &index, at),
                     &Typeface::parse(crate::BRAND_FONT_FILE)?,
                 )?;
@@ -263,19 +269,16 @@ impl Request {
     }
 }
 
-fn crop_bounds(manifest: &Manifest, query: &Query, crop: bool) -> anyhow::Result<Option<Rect>> {
-    if !crop {
-        return Ok(None);
-    }
-    let Query::Mark(number) = query else {
-        anyhow::bail!("--crop requires --mark");
-    };
-    manifest
-        .marks()
-        .iter()
-        .find(|mark| mark.number == *number)
-        .map(|mark| Some(mark.bounds))
-        .context("The selected mark is unavailable")
+fn crop_mark(manifest: &Manifest, number: Option<usize>) -> anyhow::Result<Option<&Mark>> {
+    number
+        .map(|number| {
+            manifest
+                .marks()
+                .iter()
+                .find(|mark| mark.number == number)
+                .context("The selected mark is unavailable")
+        })
+        .transpose()
 }
 
 fn export(destination: PathBuf, image: &speakeasy_show::Image) -> anyhow::Result<PathBuf> {

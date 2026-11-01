@@ -8,6 +8,8 @@ use anyhow::Context as _;
 
 use super::manifest::NAME;
 
+const CACHE_ACCESS: &str = "Cannot access the update cache. Check free space and folder access.";
+
 pub(super) fn acquire(root: &Path) -> anyhow::Result<File> {
     fs::create_dir_all(root)
         .context("Cannot create the update cache. Check free space and folder access.")?;
@@ -16,11 +18,16 @@ pub(super) fn acquire(root: &Path) -> anyhow::Result<File> {
         .write(true)
         .create(true)
         .truncate(false)
-        .open(root.join(".lock"))?;
+        .open(root.join(".lock"))
+        .context(CACHE_ACCESS)?;
 
-    lock.try_lock().context(
-        "Another Speakeasy copy is preparing an update. Finish or cancel its update first.",
-    )?;
+    match lock.try_lock() {
+        Ok(()) => {},
+        Err(fs::TryLockError::WouldBlock) => anyhow::bail!(
+            "Another Speakeasy copy is preparing an update. Finish or cancel its update first."
+        ),
+        Err(fs::TryLockError::Error(error)) => return Err(error).context(CACHE_ACCESS),
+    }
     clean(root)
         .context("Cannot clean the update cache. Close old installers and check folder access.")?;
     Ok(lock)

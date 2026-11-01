@@ -95,7 +95,9 @@ fn receipts_describe_presented_layouts_and_exclude_superseded_inputs() -> anyhow
     }
     for (index, (ticks, _)) in encoder::sample_times(&path)?.into_iter().enumerate() {
         let at = Duration::from_nanos(u64::try_from(ticks)? * 100);
-        let frame = read::frame(std::fs::File::open(&path)?, [320, 240], at, &|| false)?.unwrap();
+        let file = std::fs::File::open(&path)?;
+        let bytes = file.metadata()?.len();
+        let frame = read::frame(file, bytes, [320, 240], at, &|| false)?.unwrap();
         let [left, top, width, height] = receipts
             .0
             .iter()
@@ -163,7 +165,7 @@ async fn rejected_and_cancelled_geometry_never_submit_the_unacknowledged_layout(
         } else {
             control.request_stop();
         }
-        native.join().await;
+        native.join().await?;
         let Some(crate::MovieEvent::Finished {
             frames, finalized, ..
         }) = control.next().await

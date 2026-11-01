@@ -120,15 +120,14 @@ async fn cancelled_text_never_replaces_recall_and_settings_preserve_it() -> anyh
 #[tokio::test(start_paused = true)]
 async fn practice_cannot_populate_or_replay_recall() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
-    let mut practice = h.runtime.practice().map_err(anyhow::Error::msg)?;
-    assert!(matches!(practice.recv().await, Some(PracticeEvent::Ready)));
+    let mut practice = arm_practice(&h).await?;
     h.input(Input::PasteLast);
     h.start().await?;
     h.finish_as("Private practice fixture.").await?;
-    assert!(matches!(
-        practice.recv().await,
-        Some(PracticeEvent::Text(_))
-    ));
+    assert_eq!(
+        &*practice_text(&mut practice).await?,
+        "Private practice fixture."
+    );
     h.phase(Phase::Done).await?;
     assert!(!h.snapshot().last_dictation);
     assert!(h.pasted.try_recv().is_err());

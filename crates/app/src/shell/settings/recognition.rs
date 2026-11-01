@@ -71,8 +71,16 @@ impl Settings {
     pub(super) fn recognition_section(&self, cx: &Context<'_, Self>) -> impl IntoElement {
         let palette = self.config.theme.palette();
         let button = |id: gpui::SharedString, label: &'static str, remove: Option<usize>| {
+            let accessible: gpui::SharedString = remove
+                .and_then(|index| self.config.recognition_terms.phrases().get(index))
+                .map_or_else(
+                    || label.into(),
+                    |phrase| format!("{label} hint {phrase}").into(),
+                );
             div()
                 .id(id)
+                .role(gpui::Role::Button)
+                .aria_label(accessible)
                 .focusable()
                 .tab_stop(true)
                 .cursor_pointer()

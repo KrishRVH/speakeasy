@@ -12,10 +12,17 @@ Owners: `crates/platform/src/owned_thread.rs`, `input.rs`, `insertion.rs`, `inse
 
 `OwnedThread` owns exactly one join handle. Its exit lane closes after the body returns or unwinds;
 thread-local destructors can still run afterward. Async join therefore performs the final OS join on
-Tokio's blocking pool, while Drop always joins synchronously. `OwnedThread::join` requires an active
-Tokio runtime when polled; awaiting it outside one panics. `StoppableThread` closes its stop lane
+Tokio's blocking pool, while Drop always joins synchronously. The blocking closure owns the whole
+thread owner, so cancelling a join cannot detach native cleanup. `OwnedThread::join` reports a
+worker panic, a missing Tokio runtime, or a failed join task without exposing panic content. A
+missing runtime still triggers the synchronous fallback. `StoppableThread` closes its stop lane
 before joining. Stop requests do not acknowledge cleanup. Owners that depend on thread-local
 destruction await the full join before opening replacements.
+
+The Show recorder explicitly delivers its terminal outcome on its dedicated native thread. Its guard
+delivers an unwind failure only if normal delivery has not started. Both paths hide the canvas and
+respect session cancellation. The fallback may wait for the owner to drain the bounded event lane;
+dropping that final event could leave the session waiting forever.
 
 Insertion authority is a generation-tagged atomic commit gate shared with native cancellation
 callbacks. An old permit cannot revoke or commit a newer recording. Final authorization checks occur
@@ -192,9 +199,10 @@ on every result path.
 
 The COM file adapter serializes cursor operations and caps actual writes, seeks and SetSize. Foreign
 pointers and optional result pointers obey IStream's caller-owned buffer contract. It maps failures
-to content-free HRESULTs. Explicit IMFByteStream Close cancels I/O, but the Closed receipt waits for
-the last underlying IStream/file owner. A writer's extra File handle exists only to sync after
-Finalize closes the native byte stream, and drops before that receipt.
+to content-free HRESULTs. Reads, reported size and end-relative seeks stay within the validated
+prefix even if the underlying file grows. Explicit IMFByteStream Close cancels I/O, but the Closed
+receipt waits for the last underlying IStream/file owner. A writer's extra File handle exists only
+to sync after Finalize closes the native byte stream, and drops before that receipt.
 
 Decoding uses the same validated open File, never reopens a path. Media-type-change notifications
 revalidate dimensions/color format and associate stride with the returned sample. Flat and 2D native

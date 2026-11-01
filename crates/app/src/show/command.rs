@@ -171,7 +171,9 @@ impl Command {
                 Some("--out") if verb == "demo" && path.is_none() => {
                     path = Some(PathBuf::from(
                         args.next()
-                            .filter(|path| !path.is_empty())
+                            .filter(|path| {
+                                !path.is_empty() && !path.to_string_lossy().starts_with('-')
+                            })
                             .context("--out needs a new directory")?,
                     ));
                 },

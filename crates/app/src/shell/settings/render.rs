@@ -596,6 +596,8 @@ impl Settings {
                 column.child(
                     div()
                         .id("language-choices")
+                        .role(gpui::Role::ListBox)
+                        .aria_label("Languages")
                         .max_h(px(200.0))
                         .overflow_y_scroll()
                         .flex()
@@ -606,6 +608,9 @@ impl Settings {
                             |(index, &(language, name))| {
                                 div()
                                     .id(SharedString::from(format!("language-option-{language}")))
+                                    .role(gpui::Role::ListBoxOption)
+                                    .aria_label(name)
+                                    .aria_selected(self.language.cursor == Some(index))
                                     .px(px(12.0))
                                     .py(CONTROL_PAD_Y)
                                     .cursor_pointer()

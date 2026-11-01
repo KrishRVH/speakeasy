@@ -82,11 +82,7 @@ async fn abandoning_stream_for_show_keeps_the_worker_and_whole_narration() -> an
 #[tokio::test(start_paused = true)]
 async fn stream_output_waits_for_seal_and_keeps_practice_private() -> anyhow::Result<()> {
     let mut h = Harness::with_ports(config(), |ports| ports.delayed_finish = true)?;
-    let mut practice = h.runtime.practice().map_err(anyhow::Error::msg)?;
-    assert!(matches!(
-        timeout(PATIENCE, practice.recv()).await?,
-        Some(PracticeEvent::Ready)
-    ));
+    let mut practice = arm_practice(&h).await?;
     let (id, events) = h.start().await?;
     let (feed, audio) = live();
     events.send(CaptureEvent::Streaming(id, audio)).await?;
@@ -97,9 +93,7 @@ async fn stream_output_waits_for_seal_and_keeps_practice_private() -> anyhow::Re
     events
         .send(CaptureEvent::Finished(id, Ok(Some(sealed()))))
         .await?;
-    let Some(PracticeEvent::Text(text)) = timeout(PATIENCE, practice.recv()).await? else {
-        panic!("Missing practice result")
-    };
+    let text = practice_text(&mut practice).await?;
     assert_eq!(&*text, "Private streamed result");
     h.phase(Phase::Done).await?;
     assert!(h.jobs.try_recv().is_err());

@@ -129,20 +129,87 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     copy_selected(window, cx).await?;
     handoff::exercise(window, cx).await?;
 
-    for _ in 0..5 {
-        key(window, "tab", cx)?;
-    }
-
-    for stroke in ["enter", "space"] {
+    window.update(cx, |view, window, cx| {
+        view.act(Action::Mode(Mode::Keyframes), window, cx);
+        view.act(Action::Frame(0), window, cx);
+    })?;
+    wait_for(
+        window,
+        |view| matches!(view.image, ImageState::Ready(_)),
+        cx,
+    )
+    .await?;
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())?;
+    let next = window.update(cx, |view, window, cx| {
+        let detail = view
+            .detail
+            .as_ref()
+            .context("The key fixture has no frames")?;
+        ensure!(
+            detail.frames.len() >= 3,
+            "Next needs at least three fixture frames"
+        );
+        let tabs = view
+            .library
+            .rows
+            .len()
+            .checked_add(3)
+            .and_then(|tabs| tabs.checked_add(usize::from(detail.source_available)))
+            .and_then(|tabs| {
+                tabs.checked_add(usize::from(
+                    cfg!(any(target_os = "windows", target_os = "macos")) && detail.movie.is_some(),
+                ))
+            })
+            .context("The fixture's tab stops fit usize")?;
+        view.focus.focus(window);
+        for _ in 0..tabs {
+            window.focus_next();
+        }
+        window
+            .focused(cx)
+            .context("Next did not receive keyboard focus")
+    })??;
+    for (stroke, before, after) in [("enter", 0, 1), ("space", 1, 2)] {
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())?;
+        window.update(cx, |_, window, _| {
+            ensure!(
+                next.is_focused(window),
+                "Next lost focus between activations"
+            );
+            anyhow::Ok(())
+        })??;
         key(window, stroke, cx)?;
         let frame = window.read_with(cx, |view, _| {
             view.library.selected.as_ref().map(|key| key.frame)
         })?;
         ensure!(
-            frame == Some(0),
-            "A key-down duplicated GPUI's key-up activation"
+            frame == Some(before),
+            "Key-down activated Next before key-up"
+        );
+        let keystroke = gpui::Keystroke::parse(stroke)?;
+        cx.update_window(window.into(), |_, window, cx| {
+            window.dispatch_event(
+                gpui::PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke }),
+                cx,
+            );
+        })?;
+        let frame = window.read_with(cx, |view, _| {
+            view.library.selected.as_ref().map(|key| key.frame)
+        })?;
+        ensure!(
+            frame == Some(after),
+            "Next did not activate exactly once on key-up"
         );
     }
+    window.update(cx, |view, window, cx| {
+        view.act(Action::Frame(0), window, cx);
+    })?;
+    wait_for(
+        window,
+        |view| matches!(view.image, ImageState::Ready(_)),
+        cx,
+    )
+    .await?;
     let root = window
         .read_with(cx, |view, _| view.directory.clone())?
         .context("The loaded preview has a directory")?;
@@ -296,9 +363,9 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             Some(Origin::Mark(number))
         );
         view.act(Action::Frame(2), window, cx);
-        view.act(Action::Jump(true), window, cx);
+        view.act(Action::Jump(Direction::Forward), window, cx);
         assert_eq!(view.library.selected.as_ref().map(|key| key.frame), Some(3));
-        view.act(Action::Jump(false), window, cx);
+        view.act(Action::Jump(Direction::Back), window, cx);
         assert_eq!(view.library.selected.as_ref().map(|key| key.frame), Some(2));
         view.act(Action::Mode(Mode::Keyframes), window, cx);
         anyhow::Ok(())
@@ -493,7 +560,10 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         },
     )?;
     ensure!(writer.close().await, "Synthetic checkpoint did not close");
-    let checkpoint = checkpoint.close().await?;
+    let checkpoint = checkpoint
+        .close()
+        .await?
+        .context("Fixture checkpoint is missing")?;
     let interrupted = checkpoint.interrupted()?;
     window.update(cx, |view, _, cx| view.refresh(cx))?;
     wait_for(window, |view| view.listing.is_none(), cx).await?;
@@ -557,18 +627,19 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         (fixture, directory)
     })?;
     let kept_directory = kept_directory.context("The closing window selected a Show")?;
-    let deadline = Instant::now()
-        .checked_add(Duration::from_secs(5))
-        .context("A short deadline fits")?;
-    while !kept_directory.join(".pinned").exists() && Instant::now() < deadline {
-        Timer::after(Duration::from_millis(10)).await;
-    }
+    let (edits, reads) = cx.update(|cx| {
+        (
+            cx.global::<TestEdits>().0.drained(),
+            cx.global::<TestReads>().0.drained(),
+        )
+    })?;
+    edits.await;
+    reads.await;
     ensure!(
         kept_directory.join(".pinned").is_file(),
         "Closing review cancelled an accepted Keep action"
     );
     drop(fixture);
-    Timer::after(Duration::from_millis(100)).await;
     ensure!(
         pixels.upgrade().is_none(),
         "Closing review retained its image in memory"

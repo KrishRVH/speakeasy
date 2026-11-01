@@ -18,19 +18,22 @@ fn next_request(requests: &Receiver<Event>) -> anyhow::Result<Request> {
     }
 }
 
-fn occupy_server_with_pending_requests(instance: &Instance, path: &Path) -> anyhow::Result<()> {
+fn occupy_server_with_pending_requests(path: &Path) -> anyhow::Result<()> {
     Instance::send(path, Request::Toggle)?;
     Instance::send(path, Request::Cancel)?;
     let endpoint = Endpoint::read(&path.with_file_name(PORT_FILE))?;
-    let mut next = TcpStream::connect_timeout(&instance.address, PATIENCE)?;
+    let mut next = TcpStream::connect_timeout(
+        &SocketAddr::from((Ipv4Addr::LOCALHOST, endpoint.port)),
+        PATIENCE,
+    )?;
     next.set_read_timeout(Some(IO_TIMEOUT))?;
     next.write_all(&endpoint.nonce.to_le_bytes())?;
     assert!(next.read_exact(&mut [0]).is_err());
     Ok(())
 }
 
-#[test]
-fn relaunch_requests_settings_and_shutdown_releases_the_lock() -> anyhow::Result<()> {
+#[tokio::test]
+async fn relaunch_requests_settings_and_shutdown_releases_the_lock() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let (instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
@@ -40,7 +43,7 @@ fn relaunch_requests_settings_and_shutdown_releases_the_lock() -> anyhow::Result
         Instance::send(&path, request)?;
         assert_eq!(next_request(&requests)?, request);
     }
-    drop(instance);
+    instance.close().await;
     assert!(requests.is_closed());
     assert!(!directory.path().join(PORT_FILE).exists());
     assert!(Instance::acquire(&path)?.is_some());
@@ -51,9 +54,12 @@ fn relaunch_requests_settings_and_shutdown_releases_the_lock() -> anyhow::Result
 fn requests_without_the_secret_are_never_delivered() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
-    let (instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
+    let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
     let endpoint = Endpoint::read(&path.with_file_name(PORT_FILE))?;
-    let mut forged = TcpStream::connect_timeout(&instance.address, PATIENCE)?;
+    let mut forged = TcpStream::connect_timeout(
+        &SocketAddr::from((Ipv4Addr::LOCALHOST, endpoint.port)),
+        PATIENCE,
+    )?;
     forged.set_read_timeout(Some(PATIENCE))?;
     forged.write_all(&(endpoint.nonce ^ 1).to_le_bytes())?;
     forged.write_all(&[Request::Cancel as u8])?;
@@ -70,9 +76,12 @@ fn requests_without_the_secret_are_never_delivered() -> anyhow::Result<()> {
 fn a_secret_trickled_past_the_timeout_is_never_acknowledged() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
-    let (instance, _requests) = Instance::acquire(&path)?.context("First owner missing")?;
+    let (_instance, _requests) = Instance::acquire(&path)?.context("First owner missing")?;
     let endpoint = Endpoint::read(&path.with_file_name(PORT_FILE))?;
-    let mut slow = TcpStream::connect_timeout(&instance.address, PATIENCE)?;
+    let mut slow = TcpStream::connect_timeout(
+        &SocketAddr::from((Ipv4Addr::LOCALHOST, endpoint.port)),
+        PATIENCE,
+    )?;
 
     slow.set_nodelay(true)?;
     slow.set_read_timeout(Some(PATIENCE))?;
@@ -130,7 +139,7 @@ fn pending_commands_wait_for_the_ui_instead_of_disappearing() -> anyhow::Result<
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let (instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
-    occupy_server_with_pending_requests(&instance, &path)?;
+    occupy_server_with_pending_requests(&path)?;
     for expected in [Request::Toggle, Request::Cancel] {
         assert_eq!(next_request(&requests)?, expected);
     }
@@ -191,7 +200,7 @@ fn shutdown_wakes_a_server_waiting_for_the_ui() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let (instance, _requests) = Instance::acquire(&path)?.context("First owner missing")?;
-    occupy_server_with_pending_requests(&instance, &path)?;
+    occupy_server_with_pending_requests(&path)?;
     let (finished, completion) = std::sync::mpsc::channel();
     let cleanup = thread::spawn(move || {
         drop(instance);

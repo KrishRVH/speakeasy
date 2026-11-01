@@ -45,7 +45,7 @@ async fn closing_frames_flushes_them_without_waiting_for_audio_or_releasing_the_
     );
     assert!(audio.begin(8_000, Duration::from_millis(100), "en".into()));
     assert!(audio.finish(&[3, 0, 4, 0], &[(0, 0)]));
-    let checkpoint = closing.await?;
+    let checkpoint = closing.await?.context("Fixture checkpoint is missing")?;
     assert!(checkpoint.replay()?.ended());
     let kept = audio::read(File::open(checkpoint.directory.join(audio::FILE))?)?;
     assert_eq!(&*kept.pcm, &[3, 0, 4, 0]);
@@ -66,7 +66,10 @@ async fn a_frame_failure_does_not_stop_the_audio_stream() -> anyhow::Result<()> 
     assert!(!frames.close().await);
     assert!(audio.begin(8_000, Duration::ZERO, "en".into()));
     assert!(audio.finish(&[5, 0], &[]));
-    let checkpoint = keeper.close().await?;
+    let checkpoint = keeper
+        .close()
+        .await?
+        .context("Fixture checkpoint is missing")?;
     let kept = audio::read(File::open(checkpoint.directory.join(audio::FILE))?)?;
     assert_eq!(&*kept.pcm, &[5, 0]);
     checkpoint.discard()?;
@@ -108,7 +111,10 @@ async fn an_audio_failure_does_not_stop_frames_or_release_the_owner() -> anyhow:
     assert!(audio.finish(&[1, 0], &[]));
     record_frame(&mut frames)?;
     assert!(frames.close().await);
-    let checkpoint = keeper.close().await?;
+    let checkpoint = keeper
+        .close()
+        .await?
+        .context("Fixture checkpoint is missing")?;
     assert!(checkpoint.replay()?.ended());
     assert!(checkpoint.audio().is_err());
     checkpoint.discard()?;
@@ -137,7 +143,9 @@ async fn failed_frame_and_closed_audio_lanes_cannot_unlock_a_native_movie() -> a
     let cancelled = target.cancelled();
     let unlocked = super::super::list(root.path(), SystemTime::now()).shows;
     drop(target);
-    let checkpoint = tokio::time::timeout(crate::testing::PATIENCE, closing).await??;
+    let checkpoint = tokio::time::timeout(crate::testing::PATIENCE, closing)
+        .await??
+        .context("Fixture checkpoint is missing")?;
     assert!(waiting);
     assert!(!cancelled, "An unrelated frame failure stopped the movie");
     assert_eq!(unlocked, []);
@@ -179,5 +187,36 @@ async fn emergency_drop_cancels_but_waits_for_the_native_movie_file_lease() -> a
             .len(),
         1
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lost_completion_stays_an_error_after_checkpoint_files_are_written() -> anyhow::Result<()>
+{
+    let root = tempfile::tempdir()?;
+    let Kept {
+        keeper,
+        mut frames,
+        audio,
+    } = begin(root.path())?;
+    record_frame(&mut frames)?;
+    assert!(frames.close().await);
+    drop(audio);
+    let checkpoint = tokio::time::timeout(crate::testing::PATIENCE, keeper.closed.recv())
+        .await???
+        .context("Fixture checkpoint is missing")?;
+    let interrupted = checkpoint.interrupted()?;
+    let error = keeper
+        .close()
+        .await
+        .err()
+        .context("A lost receipt was ignored")?;
+    assert_eq!(
+        error.to_string(),
+        "Show checkpoint stopped before returning its files"
+    );
+    let recovered = interrupted.lock()?;
+    assert!(recovered.replay()?.ended());
+    recovered.discard()?;
     Ok(())
 }

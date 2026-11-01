@@ -140,7 +140,25 @@ fn unconfirmed_calls_expire_without_being_retried() -> anyhow::Result<()> {
     };
     let reply = client.join().unwrap();
     assert_eq!(reply.result, Disposition::Unknown);
+    assert_eq!(reply.reason.as_deref(), Some(UNCONFIRMED));
     assert!(!call.is_live());
+    assert!(requests.try_recv().is_err());
+    Ok(())
+}
+
+#[test]
+fn an_abandoned_receipt_is_unknown_without_claiming_an_old_server() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
+    let client = thread::spawn(move || Instance::control(&path, Command::Start { style: None }));
+    let Event::Control(call) = requests.recv_blocking()? else {
+        panic!("Control request became a legacy action");
+    };
+    drop(call);
+    let reply = client.join().unwrap();
+    assert_eq!(reply.result, Disposition::Unknown);
+    assert_eq!(reply.reason.as_deref(), Some(UNCONFIRMED));
     assert!(requests.try_recv().is_err());
     Ok(())
 }

@@ -292,7 +292,6 @@ impl Detail {
                                 marker: String::new(),
                                 file: crate::show::preview::Content::Source {
                                     index: Arc::clone(&source),
-                                    at,
                                 },
                             })
                             .collect();

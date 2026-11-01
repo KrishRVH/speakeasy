@@ -1024,7 +1024,6 @@ impl Window {
                 focus: ROOT_NODE_ID,
             };
             let (activation_sender, activation_receiver) = async_channel::bounded::<()>(1);
-            let (deactivation_sender, deactivation_receiver) = async_channel::bounded::<()>(1);
             let (action_sender, action_receiver) = async_channel::bounded::<a11y::Request>(64);
 
             platform_window.a11y_init(crate::A11yCallbacks {
@@ -1056,17 +1055,7 @@ impl Window {
                         }
                     })
                 },
-                deactivation: {
-                    let active_flag = a11y_active_flag.clone();
-                    Box::new(move || {
-                        log::info!("Accessibility deactivated");
-                        active_flag.store(false, SeqCst);
-                        // Coalesced notifications are represented by the atomic flag.
-                        let _ = deactivation_sender.try_send(());
-                    })
-                },
             });
-            platform_window.a11y_update_window_bounds();
 
             // A11y can be activated at any time, and so we cannot compute a
             // correct `TreeUpdate` on-demand. When this happens, we return a
@@ -1076,15 +1065,6 @@ impl Window {
             let mut async_cx = cx.to_async();
             a11y_tasks.push(cx.foreground_executor().spawn(async move {
                 while activation_receiver.recv().await.is_ok() {
-                    handle
-                        .update(&mut async_cx, |_, window, _| window.refresh())
-                        .log_err();
-                }
-            }));
-
-            let mut async_cx = cx.to_async();
-            a11y_tasks.push(cx.foreground_executor().spawn(async move {
-                while deactivation_receiver.recv().await.is_ok() {
                     handle
                         .update(&mut async_cx, |_, window, _| window.refresh())
                         .log_err();
@@ -1776,7 +1756,6 @@ impl Window {
     }
 
     fn bounds_changed(&mut self, cx: &mut App) {
-        self.platform_window.a11y_update_window_bounds();
         self.scale_factor = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
         self.display_id = self.platform_window.display().map(|display| display.id());
@@ -2193,7 +2172,7 @@ impl Window {
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector_hitbox(cx);
 
-        // a11y may have been activated/deactivated halfway through the frame
+        // Accessibility may have been activated halfway through the frame.
         let a11y_active_start_of_frame = self.a11y.is_active();
         self.a11y.sync_active_flag();
         let a11y_active_end_of_frame = self.a11y.is_active();

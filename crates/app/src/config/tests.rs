@@ -1,3 +1,5 @@
+mod privacy;
+
 use anyhow::bail;
 
 use super::*;

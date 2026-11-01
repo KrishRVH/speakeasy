@@ -57,7 +57,7 @@ async fn a_cancelled_active_movie_releases_its_file_without_a_new_frame() -> any
     wrote.recv().await?;
     control.request_stop();
     poll.send(()).await?;
-    native.join().await;
+    native.join().await?;
     assert!(matches!(
         control.next().await,
         Some(crate::MovieEvent::Finished {

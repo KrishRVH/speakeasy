@@ -1,5 +1,4 @@
 use std::{
-    mem,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -70,8 +69,9 @@ impl ScreenRecorder {
                 pinned,
                 canvas: &canvas,
             };
-            let mut report = Report::new(id, events.clone(), &lanes);
-            report.outcome = record(started, scope, &lanes, id, events, log, shortcut);
+            let report = Report::new(id, events.clone(), &lanes);
+            let outcome = record(started, scope, &lanes, id, events, log, shortcut);
+            report.deliver(outcome);
         })?;
         Ok(Self {
             finish,
@@ -93,7 +93,13 @@ impl Capturing for ScreenRecorder {
     fn retire(self) -> impl Future<Output = ()> + Send + 'static {
         let Self { finish, thread, .. } = self;
         finish.close();
-        thread.join()
+        async move {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "The recorder report carries the outcome; retirement waits for all native cleanup even after a panic"
+            )]
+            let _ = thread.join().await;
+        }
     }
 }
 
@@ -117,7 +123,7 @@ struct Report<'a> {
     id: SessionId,
     events: Sender<ShowEvent>,
     lanes: &'a Lanes<'a>,
-    outcome: anyhow::Result<Ended>,
+    armed: bool,
 }
 
 impl<'a> Report<'a> {
@@ -126,15 +132,18 @@ impl<'a> Report<'a> {
             id,
             events,
             lanes,
-            outcome: Err(anyhow!(Unwound)),
+            armed: true,
         }
     }
-}
 
-impl Drop for Report<'_> {
-    fn drop(&mut self) {
+    fn deliver(mut self, outcome: anyhow::Result<Ended>) {
+        self.armed = false;
+        self.send(outcome);
+    }
+
+    fn send(&self, outcome: anyhow::Result<Ended>) {
         self.lanes.canvas.send_replace(Canvas::Hidden);
-        let event = match mem::replace(&mut self.outcome, Ok(Ended::Cancelled)) {
+        let event = match outcome {
             Ok(Ended::Recorded(footage)) => ShowEvent::Finished(self.id, Ok(footage)),
             Ok(Ended::Unchosen(unchosen)) => ShowEvent::Unchosen(self.id, unchosen),
             Ok(Ended::Cancelled) => return,
@@ -146,9 +155,17 @@ impl Drop for Report<'_> {
         }
         #[expect(
             clippy::let_underscore_must_use,
-            reason = "A departed session owns checkpoint cleanup; this report contains only in-memory footage"
+            reason = "The dedicated recorder thread retains its terminal outcome until the owner receives it; a closed lane means that owner has left"
         )]
         let _ = self.events.send_blocking(event);
+    }
+}
+
+impl Drop for Report<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.send(Err(anyhow!(Unwound)));
+        }
     }
 }
 
@@ -179,8 +196,7 @@ fn record(
             let display = target.display();
             let part = target.part();
             lanes.canvas.send_replace(Canvas::covering(display, part));
-            let mut take = Take::new(started, display.size, part, lanes.canvas);
-            take.notices = Some((id, events));
+            let mut take = Take::new(started, display.size, part, lanes.canvas, (id, events));
             if let Some(writer) = &mut log
                 && !writer.begin(JOURNAL_BUDGET, surface(display.size, part))
             {
@@ -271,7 +287,7 @@ struct Take<'a> {
     placed_at: Instant,
     state: speakeasy_show::Take,
     log: Option<FrameLog>,
-    notices: Option<(SessionId, Sender<ShowEvent>)>,
+    notices: (SessionId, Sender<ShowEvent>),
     checkpoint_warned: bool,
 }
 
@@ -281,6 +297,7 @@ impl<'a> Take<'a> {
         size: [f32; 2],
         part: Part,
         canvas: &'a watch::Sender<Canvas>,
+        notices: (SessionId, Sender<ShowEvent>),
     ) -> Self {
         Self {
             started,
@@ -290,7 +307,7 @@ impl<'a> Take<'a> {
             placed_at: started,
             state: speakeasy_show::Take::new(JOURNAL_BUDGET, surface(size, part)),
             log: None,
-            notices: None,
+            notices,
             checkpoint_warned: false,
         }
     }
@@ -340,10 +357,9 @@ impl<'a> Take<'a> {
                             (Ending::ScreenStopped, anyhow!(message))
                         },
                         Ok(ScreenEvent::MovieStopped) => {
-                            if let Some((id, events)) = &self.notices {
-                                #[expect(clippy::let_underscore_must_use, reason = "A departed session no longer observes this capture's status")]
-                                let _ = events.try_send(ShowEvent::MovieStopped(*id));
-                            }
+                            let (id, events) = &self.notices;
+                            #[expect(clippy::let_underscore_must_use, reason = "A departed session no longer observes this capture's status")]
+                            let _ = events.try_send(ShowEvent::MovieStopped(*id));
                             continue;
                         },
                         Err(_) => (Ending::ScreenStopped, anyhow!(CAPTURE_STOPPED)),
@@ -401,13 +417,12 @@ impl<'a> Take<'a> {
             return;
         }
         self.checkpoint_warned = true;
-        if let Some((id, events)) = &self.notices {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "A departed owner cannot receive notices; a full lane must not stall screen capture"
-            )]
-            let _ = events.try_send(ShowEvent::CheckpointLost(*id));
-        }
+        let (id, events) = &self.notices;
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "A departed owner cannot receive notices; a full lane must not stall screen capture"
+        )]
+        let _ = events.try_send(ShowEvent::CheckpointLost(*id));
     }
 
     fn log(&mut self, event: TakeEvent) {

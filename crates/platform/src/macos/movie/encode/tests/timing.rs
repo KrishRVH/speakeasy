@@ -21,10 +21,6 @@ impl Observer for Geometry {
     }
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "Fourteen synthetic samples and fixed 320 by 240 pixel coordinates fit every calculation"
-)]
 pub(super) fn verify(directory: &Path) -> anyhow::Result<()> {
     let path = directory.join("timing.mp4");
     let mut encoder = Encoder::<Codec>::open(&path, Canvas::new([320, 240])?, 384 << 20)?;
@@ -71,7 +67,8 @@ pub(super) fn verify(directory: &Path) -> anyhow::Result<()> {
     assert_eq!(prefix.frames, 14);
     assert!(!prefix.truncated);
     for (index, sample) in prefix.samples().iter().enumerate() {
-        let expected = Duration::from_nanos(u64::try_from(index)? * 1_000_000_000 / 30);
+        let expected =
+            Duration::from_nanos(u64::try_from(index)?.checked_mul(1_000_000_000).unwrap() / 30);
         assert_eq!(sample.at, expected);
         let frame =
             crate::read_movie_frame(File::open(&path)?, &prefix, expected, || false)?.unwrap();
@@ -84,9 +81,9 @@ pub(super) fn verify(directory: &Path) -> anyhow::Result<()> {
                 (310, 230, [0, 0, 0]),
                 (160, 120, [90, 140, 200]),
             ] {
-                let offset = (y * 320 + x) * 4;
+                let offset = 320_usize.checked_mul(y).unwrap().checked_add(x).unwrap();
                 assert!(
-                    frame.bgra[offset..offset + 3]
+                    frame.bgra.as_chunks::<4>().0[offset][..3]
                         .iter()
                         .zip(expected)
                         .all(|(actual, expected)| actual.abs_diff(expected) < 12)

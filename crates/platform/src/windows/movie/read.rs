@@ -29,11 +29,12 @@ const STREAM: u32 = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0.cast_unsigned();
 
 pub(crate) fn frame(
     file: File,
+    bytes: u64,
     size: [u32; 2],
     at: Duration,
     cancelled: &dyn Fn() -> bool,
 ) -> anyhow::Result<Option<MovieFrame>> {
-    decode(file, size, at, cancelled).map_err(|error| {
+    decode(file, bytes, size, at, cancelled).map_err(|error| {
         if let Some(native) = error.downcast_ref::<windows::core::Error>() {
             anyhow::anyhow!("Windows could not decode this video ({:?})", native.code())
         } else {
@@ -44,12 +45,13 @@ pub(crate) fn frame(
 
 fn decode(
     file: File,
+    bytes: u64,
     size: [u32; 2],
     at: Duration,
     cancelled: &dyn Fn() -> bool,
 ) -> anyhow::Result<Option<MovieFrame>> {
     let _foundation = Foundation::start()?;
-    let stream = file::read(file)?;
+    let stream = file::read(file, bytes)?;
     let reader = reader(&stream)?;
     if cancelled() {
         return Ok(None);

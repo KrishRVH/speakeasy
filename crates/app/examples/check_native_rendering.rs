@@ -73,6 +73,19 @@ fn main() -> anyhow::Result<()> {
     Application::new().with_assets(icons::Icons).run(move |cx| {
         cx.spawn(async move |cx| {
             let result = exercise(cx).await;
+            #[cfg(target_os = "macos")]
+            if let Err(error) = &result {
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "A closed stderr cannot carry the diagnostic, but the check must still exit with failure"
+                )]
+                let _ = writeln!(io::stderr().lock(), "{error:#}");
+                #[expect(
+                    clippy::exit,
+                    reason = "NSApplication termination exits before run returns, so a failed native check must set its status here"
+                )]
+                std::process::exit(1);
+            }
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "A closed acceptance result lane has no caller; quitting still disposes all owned windows"

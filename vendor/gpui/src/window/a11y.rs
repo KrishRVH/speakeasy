@@ -21,8 +21,7 @@
 //! - Allowing the system to interact with the UI by dispatching actions to
 //!   nodes. Note that AccessKit has its own [`Action`] type, which is not the
 //!   [`crate::Action`] trait.
-//! - Activate and deactivate accessibility features when requested by the
-//!   system.
+//! - Activate accessibility features when requested by the system.
 //!
 //! The state for both lives in the [`A11y`] struct in this module.
 //!
@@ -51,10 +50,8 @@
 //!
 //! ### Responding to actions
 //!
-//! On adapter creation, we provide a callback to the adapter, which can be used
-//! to dispatch actions. This callback forwards to [`A11y::action_listeners`], a
-//! mapping from [`NodeId`]s to action handlers (basically just `Box<dyn
-//! Fn()>`).
+//! Native callbacks queue revision-stamped requests. [`A11y::accepts`] rejects
+//! stale or retired targets before dispatch through [`A11y::action_listeners`].
 //!
 //! This is populated in:
 //! - [`Window::on_a11y_action`], which is called by:
@@ -96,15 +93,15 @@ pub(crate) struct ElementKey(pub(crate) u64);
 pub(crate) type A11yActionListener =
     Box<dyn FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App) + 'static>;
 
-/// Per-window accessibility state.
-///
-/// Manages the AccessKit tree that is built each frame and the mappings
-/// needed to dispatch incoming action requests back to the right elements.
 pub(crate) struct Request {
     pub(crate) revision: u64,
     pub(crate) action: accesskit::ActionRequest,
 }
 
+/// Per-window accessibility state.
+///
+/// Manages the AccessKit tree that is built each frame and the mappings
+/// needed to dispatch incoming action requests back to the right elements.
 pub(crate) struct A11y {
     revision: Arc<AtomicU64>,
     last_revision: u64,
@@ -179,13 +176,13 @@ impl A11y {
         self.nodes.begin_frame(viewport, scale);
     }
 
-    /// Finalize the tree and produce a [`TreeUpdate`] for the platform adapter.
     pub(crate) fn rollback(&mut self, checkpoint: Checkpoint) {
         self.nodes.rollback(checkpoint);
         self.focus_ids
             .retain(|id, _| self.nodes.contains_native(*id));
     }
 
+    /// Finalize the tree and produce a [`TreeUpdate`] for the platform adapter.
     pub(crate) fn end_frame(&mut self) -> TreeUpdate {
         for (target, action, listener) in self.nodes.finish_text() {
             self.action_listeners

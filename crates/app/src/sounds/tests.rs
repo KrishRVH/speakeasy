@@ -42,7 +42,7 @@ fn player(broken: fn(u8) -> bool) -> (Sender<Ask>, Receiver<Event>, thread::Join
     let thread = thread::spawn(move || {
         let mut opened = 0_u8;
         play(&asked, BRIEF_LINGER, || {
-            opened = opened.saturating_add(1);
+            opened = opened.checked_add(1).unwrap();
             events.send(Event::Opened(opened)).unwrap();
             Some(FakeSink {
                 id: opened,
@@ -224,7 +224,7 @@ fn a_callback_is_heard_once_the_devices_latency_has_passed() {
         callback: called,
         playback: playing,
     };
-    let expected = now.checked_add(Duration::from_millis(40)).unwrap();
+    let expected = now + Duration::from_millis(40);
     assert_eq!(heard(now, latency), expected);
 
     let backwards = cpal::OutputStreamTimestamp {

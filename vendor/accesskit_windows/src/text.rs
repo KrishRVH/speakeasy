@@ -601,7 +601,10 @@ impl ITextRangeProvider_Impl for PlatformRange_Impl {
 
     fn Select(&self) -> Result<()> {
         self.do_action(|range, tree| {
-            let (target_node, target_tree) = tree.state().locate_node(range.node().id()).unwrap();
+            let (target_node, target_tree) = tree
+                .state()
+                .locate_node(range.node().id())
+                .ok_or_else(element_not_available)?;
             Ok(ActionRequest {
                 action: Action::SetTextSelection,
                 target_tree,

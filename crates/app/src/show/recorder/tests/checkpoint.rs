@@ -9,7 +9,7 @@ async fn a_movie_failure_keeps_stills_and_reports_after_a_checkpoint_warning() -
     let (events, notices) = async_channel::bounded(4);
     let (recorded, _) = record_with(
         |take| {
-            take.notices = Some((SessionId::FIRST, events));
+            take.notices = (SessionId::FIRST, events);
             take.warn_checkpoint();
         },
         async |feed| {
@@ -59,7 +59,10 @@ async fn capture_finish_flushes_end_before_handoff() -> anyhow::Result<()> {
     )
     .await;
     assert!(footage?.is_some());
-    let checkpoint = keeper.close().await?;
+    let checkpoint = keeper
+        .close()
+        .await?
+        .context("Fixture checkpoint is missing")?;
     assert!(checkpoint.replay()?.ended());
     checkpoint.discard()?;
     Ok(())
@@ -95,6 +98,7 @@ async fn invalid_late_events_keep_the_frames_and_checkpoint_already_recorded() -
         checkpoint
             .close()
             .await?
+            .context("Fixture checkpoint is missing")?
             .replay()?
             .journal()
             .samples()
@@ -119,7 +123,7 @@ async fn a_failed_writer_warns_once_and_keeps_recording_in_memory() -> anyhow::R
     let (recorded, _) = record_with(
         |take| {
             take.log = Some(writer);
-            take.notices = Some((SessionId::FIRST, events));
+            take.notices = (SessionId::FIRST, events);
         },
         async |feed| {
             let deadline = Instant::now() + Duration::from_secs(2);
@@ -141,7 +145,7 @@ async fn a_failed_writer_warns_once_and_keeps_recording_in_memory() -> anyhow::R
         },
     )
     .await;
-    assert!(keeper.close().await.is_err());
+    assert!(keeper.close().await?.is_none());
     let footage = recorded?.context("Recording survives checkpoint failure")?;
     assert!(footage.journal.samples().len() >= 2);
     assert_eq!(footage.recording.ending, Ending::Finished);

@@ -11,7 +11,7 @@ fn main() -> anyhow::Result<()> {
 #[cfg(target_os = "macos")]
 mod native {
     use std::{
-        io::{BufRead as _, BufReader, Write as _},
+        io::{self, BufRead as _, BufReader, Write as _},
         process::{Child, Command, Stdio},
         sync::mpsc,
         time::{Duration, Instant},
@@ -43,19 +43,19 @@ mod native {
         if mode == "--source" {
             return source(main);
         }
-        let mut source = Source(
+        let mut source = Source(Some(
             Command::new(std::env::current_exe()?)
                 .arg("--source")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
                 .spawn()?,
-        );
+        ));
         let mut ready = String::new();
         BufReader::new(
             source
                 .0
-                .stdout
-                .take()
+                .as_mut()
+                .and_then(|child| child.stdout.take())
                 .context("Synthetic source has no readiness lane")?,
         )
         .read_line(&mut ready)?;
@@ -122,6 +122,9 @@ mod native {
         drop(worker);
         overlay.close();
         result?;
+        source
+            .stop()
+            .context("Cannot stop the synthetic capture source")?;
         writeln!(
             std::io::stdout().lock(),
             "Owned Mac capture passed: changing pixels, exclusion, timestamps, stop and restart"
@@ -275,20 +278,34 @@ mod native {
         Ok(())
     }
 
-    struct Source(Child);
+    struct Source(Option<Child>);
+
+    impl Source {
+        fn stop(mut self) -> io::Result<()> {
+            if let Some(child) = &mut self.0 {
+                child.kill()?;
+                child.wait().map(|_status| ())?;
+                self.0 = None;
+            }
+            Ok(())
+        }
+    }
 
     impl Drop for Source {
         fn drop(&mut self) {
+            let Some(child) = &mut self.0 else {
+                return;
+            };
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "The owned fixture may already have exited; wait still reaps its process"
             )]
-            let _ = self.0.kill();
+            let _ = child.kill();
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "The fixture's lifetime is bounded by the parent even after acceptance fails"
             )]
-            let _ = self.0.wait();
+            let _ = child.wait();
         }
     }
 }

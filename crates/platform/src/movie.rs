@@ -54,7 +54,7 @@ pub fn read_movie_frame(
     }
     #[cfg(target_os = "windows")]
     {
-        crate::windows::read_movie_frame(file, prefix.size, at, &cancelled)
+        crate::windows::read_movie_frame(file, prefix.bytes, prefix.size, at, &cancelled)
     }
     #[cfg(target_os = "macos")]
     {
@@ -271,18 +271,18 @@ pub(crate) mod tests {
     use super::*;
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]
-    #[expect(
-        clippy::arithmetic_side_effects,
-        reason = "Fixture dimensions are fixed to SD, HD, or a bounded large canvas and all coordinates fit usize"
-    )]
     pub(crate) fn color_frame(index: usize, size: [u32; 2]) -> crate::Frame {
         assert!(matches!(size, [320, 240] | [1280, 720] | [2560, 1440]));
         let [width, height] = size.map(|edge| usize::try_from(edge).unwrap());
-        let mut bgra = Vec::with_capacity(width * height * 4);
+        let mut bgra =
+            Vec::with_capacity(width.checked_mul(height).unwrap().checked_mul(4).unwrap());
         let blue = if index.is_multiple_of(2) { 20 } else { 230 };
         for row in 0..height {
             for column in 0..width {
-                let (x, y) = (column * 320 / width, row * 240 / height);
+                let (x, y) = (
+                    column.checked_mul(320).unwrap().checked_div(width).unwrap(),
+                    row.checked_mul(240).unwrap().checked_div(height).unwrap(),
+                );
                 let color = if (100..220).contains(&x) && (80..160).contains(&y) {
                     [blue, 80, 150]
                 } else {
@@ -312,25 +312,16 @@ pub(crate) mod tests {
     }
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]
-    #[expect(
-        clippy::arithmetic_side_effects,
-        reason = "Synthetic fixture coordinates and dimensions are fixed and fit usize"
-    )]
     pub(crate) fn check_colors(frame: &MovieFrame, index: usize) {
         assert!(matches!(
             frame.size,
             [320, 240] | [1280, 720] | [2560, 1440]
         ));
         let [width, height] = frame.size.map(|edge| usize::try_from(edge).unwrap());
-        assert_eq!(frame.bgra.len(), width * height * 4);
-        assert!(
-            frame
-                .bgra
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .all(|pixel| pixel[3] == 255)
-        );
+        let (pixels, remainder) = frame.bgra.as_chunks::<4>();
+        assert_eq!(remainder, b"");
+        assert_eq!(pixels.len(), width.checked_mul(height).unwrap());
+        assert!(pixels.iter().all(|pixel| pixel[3] == 255));
         for (x, y, expected) in [
             (20, 20, [20, 30, 230]),
             (300, 20, [30, 220, 20]),
@@ -342,9 +333,11 @@ pub(crate) mod tests {
                 [if index.is_multiple_of(2) { 20 } else { 230 }, 80, 150],
             ),
         ] {
-            let start = ((y * height / 240) * width + x * width / 320) * 4;
+            let row = height.checked_mul(y).unwrap() / 240;
+            let column = width.checked_mul(x).unwrap() / 320;
+            let offset = row.checked_mul(width).unwrap().checked_add(column).unwrap();
             assert!(
-                frame.bgra[start..start + 3]
+                pixels[offset][..3]
                     .iter()
                     .zip(expected)
                     .all(|(actual, expected)| actual.abs_diff(expected) < 12),
@@ -353,9 +346,11 @@ pub(crate) mod tests {
         }
         if frame.size == [1280, 720] {
             for (x, shade) in [(200, 64_u8), (250, 128)] {
-                let start = ((200 * height / 240) * width + x * width / 320) * 4;
+                let row = height.checked_mul(200).unwrap() / 240;
+                let column = width.checked_mul(x).unwrap() / 320;
+                let offset = row.checked_mul(width).unwrap().checked_add(column).unwrap();
                 assert!(
-                    frame.bgra[start..start + 3]
+                    pixels[offset][..3]
                         .iter()
                         .all(|value| value.abs_diff(shade) < 12),
                     "HD neutral midtone changed its transfer or range"
@@ -422,7 +417,7 @@ pub(crate) mod tests {
             let exited = tokio::time::timeout(crate::PATIENCE, native.exited()).await;
 
             drop(accepted);
-            native.join().await;
+            native.join().await?;
             assert!(
                 exited.is_ok(),
                 "Cancellation waited for checkpoint approval"

@@ -6,7 +6,7 @@ use gpui::{
 };
 
 use super::{
-    Action, CopyKind, ExportKind, ImageState, Kind, Mode, Pane, Review, Source,
+    Action, CopyKind, Direction, ExportKind, ImageState, Kind, Mode, Pane, Review, Source,
     narration::Narration,
     navigation::{Origin, Stamp},
 };
@@ -964,8 +964,8 @@ fn button(
         Action::Discard => "discard-show".into(),
         Action::ConfirmDiscard => "confirm-discard-show".into(),
         Action::CancelDiscard => "cancel-discard-show".into(),
-        Action::Jump(true) => "forward-show".into(),
-        Action::Jump(false) => "rewind-show".into(),
+        Action::Jump(Direction::Forward) => "forward-show".into(),
+        Action::Jump(Direction::Back) => "rewind-show".into(),
         Action::Mode(Mode::Keyframes) => "show-keyframes".into(),
         Action::Mode(Mode::Source) => "show-source-frames".into(),
         Action::Mode(Mode::Video) => "show-video-frames".into(),
@@ -1052,8 +1052,8 @@ impl Review {
             "down" => Some(Action::Show(row.map_or(0, |row| row.saturating_add(1)))),
             "left" => Some(Action::Frame(frame.saturating_sub(1))),
             "right" => Some(Action::Frame(frame.saturating_add(1))),
-            "pageup" => Some(Action::Jump(false)),
-            "pagedown" => Some(Action::Jump(true)),
+            "pageup" => Some(Action::Jump(Direction::Back)),
+            "pagedown" => Some(Action::Jump(Direction::Forward)),
             "home" => Some(Action::Frame(0)),
             "end" => Some(Action::Frame(last)),
             _ => None,

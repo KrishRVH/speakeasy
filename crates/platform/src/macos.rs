@@ -121,7 +121,6 @@ impl RunLoopReady<'_> {
     }
 }
 
-#[derive(Default)]
 struct SharedPolicy {
     shortcut: MacShortcut,
     #[expect(

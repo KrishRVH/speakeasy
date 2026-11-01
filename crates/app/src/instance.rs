@@ -64,8 +64,7 @@ pub(crate) enum Event {
 
 pub(crate) struct Instance {
     requests: Sender<Event>,
-    address: SocketAddr,
-    _server: OwnedThread,
+    server: OwnedThread,
     _port_file: PortFile,
     _lock: File,
 }
@@ -101,8 +100,7 @@ impl Instance {
         })?;
         let instance = Self {
             requests,
-            address,
-            _server: server,
+            server,
             _port_file: port_file,
             _lock: lock,
         };
@@ -154,16 +152,16 @@ impl Instance {
             Err(_) => Reply::unknown(UNCONFIRMED),
         }
     }
+
+    pub(crate) async fn close(self) {
+        self.requests.close();
+        self.server.exited().await;
+    }
 }
 
 impl Drop for Instance {
     fn drop(&mut self) {
         self.requests.close();
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "A server that has already exited may refuse the wake connection; its owned thread is still joined"
-        )]
-        let _ = TcpStream::connect_timeout(&self.address, IO_TIMEOUT);
     }
 }
 
@@ -391,11 +389,11 @@ async fn serve_control(
         Err(error) if error.kind() == io::ErrorKind::WouldBlock => {},
         Err(error) => return Err(error),
     }
-    let (reply, deadline) = match command {
+    let reply = match command {
         Ok(command) => {
             let (call, receipt) = Call::new(command);
             let deadline = call.deadline;
-            let reply = match requests.try_send(Event::Control(call)) {
+            match requests.try_send(Event::Control(call)) {
                 Ok(()) => {
                     let mut extra = [0];
                     let received = tokio::select! {
@@ -405,7 +403,7 @@ async fn serve_control(
                     };
                     match received {
                         Ok(Ok(reply)) => reply,
-                        Ok(Err(_)) | Err(_) => return Ok(()),
+                        Ok(Err(_)) | Err(_) => Reply::unknown(UNCONFIRMED),
                     }
                 },
                 Err(async_channel::TrySendError::Full(_)) => Reply::refused(
@@ -414,16 +412,9 @@ async fn serve_control(
                 Err(async_channel::TrySendError::Closed(_)) => {
                     Reply::refused("Speakeasy is stopping.")
                 },
-            };
-            (reply, deadline)
+            }
         },
-        Err(reason) => {
-            let now = Instant::now();
-            (
-                Reply::refused(reason),
-                now.checked_add(IO_TIMEOUT).unwrap_or(now),
-            )
-        },
+        Err(reason) => Reply::refused(reason),
     };
     let bytes = reply
         .encode()
@@ -434,7 +425,7 @@ async fn serve_control(
         stream.write_all(&length.to_be_bytes()).await?;
         stream.write_all(&bytes).await
     };
-    tokio::time::timeout_at(deadline.into(), write)
+    tokio::time::timeout(IO_TIMEOUT, write)
         .await
         .map_err(|_error| io::ErrorKind::TimedOut)?
 }

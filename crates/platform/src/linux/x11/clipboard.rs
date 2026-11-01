@@ -8,6 +8,7 @@ use x11rb::{
 use super::{connect, has_external_target, intern};
 use crate::{
     InputSender, InsertPermit, OwnedThread,
+    clipboard::copy_when,
     insertion::{Reply, holds_text},
     linux::HostSession,
 };
@@ -106,7 +107,10 @@ impl ClipboardWorker {
         stopped: &'static str,
     ) -> anyhow::Result<T> {
         let (reply, answer) = Reply::channel();
-        self.requests.send(request(reply)).await?;
+        self.requests
+            .send(request(reply))
+            .await
+            .map_err(|_closed| anyhow::anyhow!(stopped))?;
         answer.recv().await.context(stopped)?
     }
 }
@@ -152,7 +156,7 @@ impl ClipboardRequest {
                 reply,
             } => {
                 let owner = if permit.active() {
-                    clipboard.set_text(&text)
+                    clipboard.set_text(&text, &permit)
                 } else {
                     Ok(None)
                 };
@@ -176,7 +180,7 @@ impl ClipboardRequest {
 
 pub(super) trait ClipboardAccess {
     fn external_target(&self, host: HostSession) -> anyhow::Result<bool>;
-    fn set_text(&mut self, text: &str) -> anyhow::Result<Option<Window>>;
+    fn set_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<Option<Window>>;
     fn owns(&self, owner: Window) -> anyhow::Result<bool>;
 }
 
@@ -218,11 +222,13 @@ impl ClipboardAccess for Clipboard {
         has_external_target(&self.connection, host)
     }
 
-    fn set_text(&mut self, text: &str) -> anyhow::Result<Option<Window>> {
-        let native = self.native()?;
-        native.set_text(text)?;
-
-        if !holds_text(native.get_text(), text)? {
+    fn set_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<Option<Window>> {
+        if !copy_when(
+            || permit.active(),
+            || self.native(),
+            |native| Ok(native.set_text(text)?),
+        )? || !holds_text(self.native()?.get_text(), text)?
+        {
             return Ok(None);
         }
 
@@ -269,7 +275,7 @@ mod tests {
                 Ok(false)
             }
 
-            fn set_text(&mut self, _: &str) -> anyhow::Result<Option<Window>> {
+            fn set_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<Option<Window>> {
                 bail!("Focus accessed clipboard contents")
             }
 
@@ -315,7 +321,7 @@ mod tests {
                 Ok(false)
             }
 
-            fn set_text(&mut self, _: &str) -> anyhow::Result<Option<Window>> {
+            fn set_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<Option<Window>> {
                 self.0.send(())?;
                 Ok(Some(7))
             }

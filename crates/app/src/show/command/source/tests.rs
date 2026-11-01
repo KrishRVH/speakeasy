@@ -99,7 +99,7 @@ fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> an
             focus: Some(Query::At(Moment::from_millis(750))),
             output: Output::Frame {
                 destination: destination.clone(),
-                crop: false,
+                crop: None,
             },
             around: 1000,
             most: 6,

@@ -172,8 +172,7 @@ async fn ordinary_control_cannot_finish_a_show_or_start_over_practice() -> anyho
     );
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
-    let mut practice = h.runtime.practice().map_err(anyhow::Error::msg)?;
-    assert!(matches!(practice.recv().await, Some(PracticeEvent::Ready)));
+    let _practice = arm_practice(&h).await?;
     assert_eq!(
         control(&h, Command::Start { style: None }).await?.result,
         Disposition::Refused

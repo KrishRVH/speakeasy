@@ -33,7 +33,7 @@ pub(crate) struct Kept {
 
 pub(crate) struct Keeper {
     thread: StoppableThread,
-    closed: Receiver<anyhow::Result<Checkpoint>>,
+    closed: Receiver<anyhow::Result<Option<Checkpoint>>>,
 }
 
 impl Keeper {
@@ -67,7 +67,11 @@ impl Keeper {
         let (returned, closed) = async_channel::bounded(1);
         let thread = StoppableThread::spawn("show-checkpoint", move |stopping| {
             let outcome = (|| {
-                let checkpoint = Checkpoint::create(&parent()?, recorded)?;
+                let checkpoint =
+                    match parent().and_then(|parent| Checkpoint::create(&parent, recorded)) {
+                        Ok(checkpoint) => checkpoint,
+                        Err(_unavailable) => return Ok(None),
+                    };
                 tokio::runtime::Builder::new_current_thread()
                     .build()?
                     .block_on(write(
@@ -76,7 +80,7 @@ impl Keeper {
                         audio_input,
                         stopping,
                     ));
-                anyhow::Ok(checkpoint)
+                anyhow::Ok(Some(checkpoint))
             })();
             #[expect(
                 clippy::let_underscore_must_use,
@@ -91,7 +95,7 @@ impl Keeper {
         })
     }
 
-    pub(crate) async fn close(self) -> anyhow::Result<Checkpoint> {
+    pub(crate) async fn close(self) -> anyhow::Result<Option<Checkpoint>> {
         self.thread.stopped().await;
         tokio::task::spawn_blocking(move || {
             let Self { thread, closed } = self;

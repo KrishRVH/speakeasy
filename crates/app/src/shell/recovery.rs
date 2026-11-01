@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use anyhow::anyhow;
 use gpui::{App, BorrowAppContext as _};
 
 use super::Services;
@@ -40,7 +39,7 @@ fn copy(cx: &mut App) {
             match result {
                 Ok(crate::show::copy::Outcome::Copied) => services.report(Report::ShowCopied),
                 Ok(crate::show::copy::Outcome::Missing) => services.report(Report::ShowGone(show)),
-                Err(error) => services.report(&anyhow!("{error}")),
+                Err(error) => services.report(Report::Failed(error)),
             }
         });
     });

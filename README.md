@@ -662,12 +662,6 @@ settings file.
 
 ### Settings
 
-<p align="center">
-  <img src="docs/assets/settings.png"
-    alt="Settings: shortcut hints, the Parakeet engine and model, microphone, preferences, Ready · Parakeet"
-    width="500">
-</p>
-
 Settings shows the shortcuts and the engine and model in use, and lets you choose the microphone,
 speech or cleanup language, recognition hints, GPU use, filler removal, how text is delivered,
 reduced motion, sounds, theme, phrase corrections, and on Windows whether Speakeasy starts at login.

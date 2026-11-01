@@ -435,7 +435,9 @@ module unless a test file is named.
   atomically written and synced while audio remains recoverable. Successful transcription copies
   voice into the staged bundle before checkpoint retirement. Publication binds durable checkpoint
   and bundle markers before rename; the marker distinguishes narrated publication so a crash before
-  checkpoint deletion cannot offer duplicate recovery. Untranscribed audio keeps a published
+  checkpoint deletion cannot offer duplicate recovery. If checkpoint storage never opens, in-memory
+  footage remains publishable. A lost checkpoint completion stops publication; an unknown checkpoint
+  state cannot become an apparently complete bundle. Untranscribed audio keeps a published
   checkpoint visible as Narration pending. A retry creates a new bundle. Unfinished cancellation
   records discard before deletion; private audio, narration, frame, and movie files are removed
   before the lock, so blocked deletion remains available to cleanup. Audio retains the original
@@ -509,35 +511,37 @@ module unless a test file is named.
   rechecks display geometry before admitting each queued frame. Native screen output has no audio or
   cursor. A separate terminal lane reports failure before cleanup waits; successful stop, an
   already-stopped native error, or the native stopped notification must acknowledge termination
-  before output removal and callback-queue drainage. The movie lease stays owned through this
-  cleanup and codec finalization. The Mac codec receives no file URL: its delegate serializes
-  complete segment writes within the file cap, syncs each segment, and latches failures before
-  releasing the output lock. [show/src/movie.rs](../crates/show/src/movie.rs) validates bounded,
-  single-track fragment metadata and returns only the complete prefix. It checks sample byte ranges
-  and timing, not compressed picture decoding. Inspection also identifies Media Foundation's
-  undeclared fragment-header padding. Publication, ZIP export, and Mac reads declare that zero word
-  as a default size only when every affected sample has an explicit size and no later header field
-  can change meaning. This changes one flag byte per affected fragment; picture bytes, timestamps,
-  offsets, and the source file stay intact. Legacy bundles receive the same correction during Mac
-  reads without an on-disk migration. [store/movie.rs](../crates/app/src/show/store/movie.rs) copies
-  that prefix from the validated handle before publication commits, records the separate annotation
-  horizon, and checks finalized native timing against the fragments. Failed copy or sync preserves
-  the checkpoint. A missing or incomplete first fragment permits still-only publication with an
-  explicit video-loss notice; other damaged video stays recoverable with a concrete manual remedy.
-  Saved-bundle inspection and export remain strict. A sparse geometry table is published inside
-  versioned movie metadata; the bounded checkpoint journal stays private. A random identifier pairs
-  the header with that journal; it does not authenticate MP4 bytes. A damaged journal retains
-  geometry only through the last complete change’s first sample, clipping against surviving video
-  after computing this bound. Missing geometry preserves uncropped video. ZIP export also copies the
-  validated handle and metadata snapshot. The viewer offers Windows and macOS video scrubbing,
-  switchable saved annotations, and playback in the system player.
-  [draw/video.rs](../crates/show/src/draw/video.rs) renders only observed ink prefixes, completed
-  marks, and completed actions whose coordinate proofs match the decoded sample. Pins retain their
-  actual observation time; action proofs include the release position. Missing legacy proofs are
-  omitted. Continuous cut segments expire together. This saved-view policy does not reconstruct live
-  overlay fades. A text-free immutable annotation snapshot serves repeated previews; completed
-  pixels carry their rendering status through seeks and toggles. Explicit `show frame --video`
-  queries use the [native reader](../crates/platform/src/windows/movie/read.rs) on Windows and the
+  before output removal and callback-queue drainage. After an acknowledged stop, the movie lease
+  stays owned through that cleanup and codec finalization. If stop fails, codec finalization
+  releases the movie lease before the stream retries stop and drains its callbacks. The Mac codec
+  receives no file URL: its delegate serializes complete segment writes within the file cap, syncs
+  each segment, and latches failures before releasing the output lock.
+  [show/src/movie.rs](../crates/show/src/movie.rs) validates bounded, single-track fragment metadata
+  and returns only the complete prefix. It checks sample byte ranges and timing, not compressed
+  picture decoding. Inspection also identifies Media Foundation's undeclared fragment-header
+  padding. Publication, ZIP export, and Mac reads declare that zero word as a default size only when
+  every affected sample has an explicit size and no later header field can change meaning. This
+  changes one flag byte per affected fragment; picture bytes, timestamps, offsets, and the source
+  file stay intact. Legacy bundles receive the same correction during Mac reads without an on-disk
+  migration. [store/movie.rs](../crates/app/src/show/store/movie.rs) copies that prefix from the
+  validated handle before publication commits, records the separate annotation horizon, and checks
+  finalized native timing against the fragments. Failed copy or sync preserves the checkpoint. A
+  missing or incomplete first fragment permits still-only publication with an explicit video-loss
+  notice; other damaged video stays recoverable with a concrete manual remedy. Saved-bundle
+  inspection and export remain strict. A sparse geometry table is published inside versioned movie
+  metadata; the bounded checkpoint journal stays private. A random identifier pairs the header with
+  that journal; it does not authenticate MP4 bytes. A damaged journal retains geometry only through
+  the last complete change’s first sample, clipping against surviving video after computing this
+  bound. Missing geometry preserves uncropped video. ZIP export also copies the validated handle and
+  metadata snapshot. The viewer offers Windows and macOS video scrubbing, switchable saved
+  annotations, and playback in the system player. [draw/video.rs](../crates/show/src/draw/video.rs)
+  renders only observed ink prefixes, completed marks, and completed actions whose coordinate proofs
+  match the decoded sample. Pins retain their actual observation time; action proofs include the
+  release position. Missing legacy proofs are omitted. Continuous cut segments expire together. This
+  saved-view policy does not reconstruct live overlay fades. A text-free immutable annotation
+  snapshot serves repeated previews; completed pixels carry their rendering status through seeks and
+  toggles. Explicit `show frame --video` queries use the
+  [native reader](../crates/platform/src/windows/movie/read.rs) on Windows and the
   [Mac image generator](../crates/platform/src/macos/movie.rs) on macOS. Validation and decoding
   share one open file; Windows also denies other writers. Mac reads that handle through a private
   resource loader, rejects external references, and closes the lease after active reads finish. The
@@ -613,9 +617,10 @@ No single module owns these rules; a change to any party keeps them.
   Settings writer.
 - **Reports go through the owner.** Background failures, such as a failed retention sweep, and the
   menu's notices about the last Show reach a running owner's report lane and never interrupt a
-  recording; without an owner, Services shows them while idle. Each report shown advances the
-  snapshot's report count, so one that repeats the last still shows again, except a recurring
-  failure, such as each sweep's, which shows again only when it changes.
+  recording; without an owner, Services shows them while idle. This low-volume event lane queues
+  reports without coalescing: a later notice cannot erase a missing Show's state repair. Each report
+  shown advances the snapshot's report count, so one that repeats the last still shows again, except
+  a recurring failure, such as each sweep's, which shows again only when it changes.
 - **A Show appears only after commit.** Publishing composes and stages the bundle off the owner's
   thread in a private `.partial-*` directory. The bundle appears and its summary is copied only once
   the permit commits; a Show cancelled first leaves no bundle and no clipboard change. A saved Show
@@ -695,8 +700,8 @@ Field order carries resource lifetime in these owners:
   thread joins; a finish message seals footage, while channel closure cancels it.
 - `LocalSpeech.group` terminates the process group before `child` drops. Setup's emergency child
   cleanup runs before its directory lock releases; the normal asynchronous path reaps the child.
-- `Instance` joins its server, removes its port file, then releases the lock, so an exiting instance
-  cannot delete a successor's port file.
+- `Instance::close` closes the request lane and awaits its server body before the final join removes
+  its port file and releases the lock. An exiting instance cannot delete a successor's port file.
 - Settings requests setup/update cancellation and flushes accepted saves before those fields join.
   `Owners` requests both runtime and monitor stop before either joins.
 
