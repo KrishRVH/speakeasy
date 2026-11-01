@@ -116,16 +116,16 @@ Mac, but not on Linux. On Windows, streaming and screen-sharing apps such as Sun
 video-call app don't see Speakeasy's windows or ink while a Show records; the keyframes still carry
 the ink.
 
-Windows Shows and Mac screen and area Shows also save silent H.264 video in `recording.mp4`,
-targeting 30 frames per second at up to 2560 pixels per edge. Windows video follows the chosen
-screen, window, or area; Mac video uses a fixed display region. Both follow the original five-minute
-limit. Resized windows fit inside a fixed canvas; a quiet ending holds the last image. The video has
-no audio or drawn annotations. Its timing file, `recording.json`, records the session origin,
-surviving video coverage, timed content rectangles, and the separate horizon of marks and narration.
-Changing the display size, position, or scale ends capture; start a new Show. Capture or disk
-failure can shorten video coverage. Recovery retains only complete fragments; if none were written,
-the stills save with a video-loss notice. A failed copy of surviving video keeps the checkpoint for
-recovery. Mac window Shows currently retain sampled frames only.
+Windows and Mac Shows also save silent H.264 video in `recording.mp4`, targeting 30 frames per
+second at up to 2560 pixels per edge. Video follows the chosen screen, window, or area; Mac window
+video requires macOS 14.2 or later. Both follow the original five-minute limit. Resized windows fit
+inside a fixed canvas; a quiet ending holds the last image. The video has no audio or drawn
+annotations. Its timing file, `recording.json`, records the session origin, surviving video
+coverage, timed content rectangles, and the separate horizon of marks and narration. Changing the
+display size, position, or scale ends capture; start a new Show. Capture or disk failure can shorten
+video coverage. Recovery retains only complete fragments; if none were written, the stills save with
+a video-loss notice. A failed copy of surviving video keeps the checkpoint for recovery. On macOS
+14.0 and 14.1, window Shows retain sampled frames only.
 
 <p align="center">
   <img src="docs/assets/show-sheet.png"
@@ -790,8 +790,10 @@ paused clock exercises gesture deadlines and the five-minute cap.
   into Mac screen capture on a host with one active display. Two owned processes show a changing
   synthetic window and an overlapping excluded window. It checks their pixels in memory,
   presentation timestamps, and stop/restart; it writes no pixels and accesses no microphone,
-  clipboard, or input hooks. The optional `screen` workflow input runs it alongside a `movie` check
-  on the disposable Mac runner. Screen Recording permission is required.
+  clipboard, or input hooks. With `--features native-acceptance`, `--owned-window` selects the exact
+  helper PID and window ID, then checks movement, resizing, spatial landmarks, and a brief child
+  window. The optional `screen` workflow input runs both checks on the disposable Mac runner. Screen
+  Recording permission is required.
 - On Windows, set `SPEAKEASY_MOVIE_PROBE_DIRECTORY` to an empty artifact directory and run
   `cargo test --locked -p speakeasy-platform encode_synthetic_movie_fragments --release -- --ignored --test-threads=1`.
   It exercises the native movie adapter with generated pixels, checks motion and quiet-tail timing

@@ -19,8 +19,9 @@ use objc2_core_media::{CMClock, CMSampleBuffer, CMTime, CMTimeFlags};
 use objc2_core_video::{CVPixelBufferGetHeight, CVPixelBufferGetWidth};
 use objc2_foundation::{NSError, NSObject, NSObjectProtocol, NSString};
 use objc2_screen_capture_kit::{
-    SCFrameStatus, SCStream, SCStreamDelegate, SCStreamFrameInfoDisplayTime,
-    SCStreamFrameInfoScreenRect, SCStreamFrameInfoStatus, SCStreamOutput, SCStreamOutputType,
+    SCFrameStatus, SCStream, SCStreamDelegate, SCStreamFrameInfoBoundingRect,
+    SCStreamFrameInfoContentRect, SCStreamFrameInfoDisplayTime, SCStreamFrameInfoScreenRect,
+    SCStreamFrameInfoStatus, SCStreamOutput, SCStreamOutputType,
 };
 
 use super::super::{Failure, frame, refused};
@@ -146,8 +147,20 @@ impl Output {
             return Err(Failure::DisplayLost);
         }
         let part = if let Some(display) = self.ivars().display {
-            #[cfg(feature = "native-acceptance")]
-            diagnose(&info, size);
+            // SAFETY: these process-lifetime keys describe content in this sample's surface.
+            let (content, bounds) = unsafe {
+                (
+                    rectangle(&info, SCStreamFrameInfoContentRect),
+                    rectangle(&info, SCStreamFrameInfoBoundingRect),
+                )
+            };
+            let content = content.ok_or(Failure::Stalled)?;
+            let bounds = bounds.ok_or(Failure::Stalled)?;
+            // A window can move before its crop update takes effect. Such a surface contains
+            // clipped pixels and background, so it cannot represent a complete window frame.
+            if !fills_crop(content.into(), bounds.into()) {
+                return Ok(());
+            }
             // SAFETY: this process-lifetime key describes the captured sample, including frames
             // queued before a crop update. No latest-window observation labels its pixels.
             let rectangle =
@@ -177,37 +190,13 @@ impl Output {
     }
 }
 
-#[cfg(feature = "native-acceptance")]
-fn diagnose(info: &CFDictionary<CFString, CFType>, size: [usize; 2]) {
-    use std::io::Write as _;
-
-    use objc2_screen_capture_kit::{
-        SCStreamFrameInfoBoundingRect, SCStreamFrameInfoContentRect, SCStreamFrameInfoContentScale,
-        SCStreamFrameInfoScaleFactor,
-    };
-    let real = |key: &NSString| {
-        // SAFETY: these immutable framework string keys are toll-free bridged.
-        let key = unsafe { &*std::ptr::from_ref(key).cast::<CFString>() };
-        info.get(key)?.downcast::<CFNumber>().ok()?.as_f64()
-    };
-    // SAFETY: only numeric metadata from the explicitly owned-window acceptance is inspected.
-    let values = unsafe {
-        (
-            rectangle(info, SCStreamFrameInfoScreenRect),
-            rectangle(info, SCStreamFrameInfoContentRect),
-            rectangle(info, SCStreamFrameInfoBoundingRect),
-            real(SCStreamFrameInfoScaleFactor),
-            real(SCStreamFrameInfoContentScale),
-        )
-    };
-    #[expect(
-        clippy::let_underscore_must_use,
-        reason = "A closed diagnostic output cannot affect the owned capture result"
-    )]
-    let _ = writeln!(
-        std::io::stderr().lock(),
-        "Owned capture geometry: {size:?} {values:?}"
-    );
+fn fills_crop(content: Bounds, bounds: Bounds) -> bool {
+    content
+        .origin
+        .into_iter()
+        .chain(content.size)
+        .zip(bounds.origin.into_iter().chain(bounds.size))
+        .all(|(expected, actual)| (expected - actual).abs() < 0.5)
 }
 
 fn number(info: &CFDictionary<CFString, CFType>, key: &NSString) -> Option<i64> {

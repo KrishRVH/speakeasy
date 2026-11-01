@@ -419,43 +419,47 @@ module unless a test file is named.
   for the still lane. Cancellation is checked between submissions, and a catch-up burst stops after
   60 samples instead of monopolizing the capture thread. A failure retains the committed output
   count and presentation horizon separately from the last capture time. Finalization adds no
-  samples. The original session deadline bounds capture and held output. Windows Shows and Mac
-  screen and area Shows save video beside their sampled lossless frames; Mac window Shows retain
-  sampled frames only. The [Mac stream](../crates/platform/src/macos/screen/stream.rs) keeps an
-  immutable display crop, excludes Speakeasy's application, and copies complete BGRA frames into a
-  two-slot lane. It maps native display timestamps through a bounded host-clock calibration and
-  rechecks display geometry before admitting each queued frame. Native screen output has no audio or
-  cursor. A separate terminal lane reports failure before cleanup waits; successful stop, an
-  already-stopped native error, or the native stopped notification must acknowledge termination
-  before output removal and callback-queue drainage. The movie lease stays owned through this
-  cleanup and codec finalization. The Mac codec receives no file URL: its delegate serializes
-  complete segment writes within the file cap, syncs each segment, and latches failures before
-  releasing the output lock. [show/src/movie.rs](../crates/show/src/movie.rs) validates bounded,
-  single-track fragment metadata and returns only the complete prefix. It checks sample byte ranges
-  and timing, not compressed picture decoding. Inspection also identifies Media Foundation's
-  undeclared fragment-header padding. Publication, ZIP export, and Mac reads declare that zero word
-  as a default size only when every affected sample has an explicit size and no later header field
-  can change meaning. This changes one flag byte per affected fragment; picture bytes, timestamps,
-  offsets, and the source file stay intact. Legacy bundles receive the same correction during Mac
-  reads without an on-disk migration. [store/movie.rs](../crates/app/src/show/store/movie.rs) copies
-  that prefix from the validated handle before publication commits, records the separate annotation
-  horizon, and checks finalized native timing against the fragments. Failed copy or sync preserves
-  the checkpoint. A missing or incomplete first fragment permits still-only publication with an
-  explicit video-loss notice; other damaged video stays recoverable with a concrete manual remedy.
-  Saved-bundle inspection and export remain strict. A sparse geometry table is published inside
-  versioned movie metadata; the bounded checkpoint journal stays private. A random identifier pairs
-  the header with that journal; it does not authenticate MP4 bytes. A damaged journal retains
-  geometry only through the last complete change’s first sample, clipping against surviving video
-  after computing this bound. Missing geometry preserves uncropped video. ZIP export also copies the
-  validated handle and metadata snapshot. The viewer offers Windows and macOS video scrubbing,
-  switchable saved annotations, and playback in the system player.
-  [draw/video.rs](../crates/show/src/draw/video.rs) renders only observed ink prefixes, completed
-  marks, and completed actions whose coordinate proofs match the decoded sample. Pins retain their
-  actual observation time; action proofs include the release position. Missing legacy proofs are
-  omitted. Continuous cut segments expire together. This saved-view policy does not reconstruct live
-  overlay fades. A text-free immutable annotation snapshot serves repeated previews; completed
-  pixels carry their rendering status through seeks and toggles. Explicit `show frame --video`
-  queries use the [native reader](../crates/platform/src/windows/movie/read.rs) on Windows and the
+  samples. The original session deadline bounds capture and held output. Windows and Mac Shows save
+  video beside their sampled lossless frames; Mac window video requires 14.2's child-window capture
+  API, with sampled stills on 14.0 and 14.1. The
+  [Mac stream](../crates/platform/src/macos/screen/stream.rs) excludes Speakeasy's application from
+  fixed display crops. Window streams include only the selected external window and its children;
+  the target carries its process identity so a recycled native window number cannot select another
+  application. Crop updates follow window movement, while each queued frame carries its own native
+  source rectangle. Complete BGRA frames cross a two-slot lane. The stream maps native display
+  timestamps through a bounded host-clock calibration and rechecks display geometry before admitting
+  each queued frame. Native screen output has no audio or cursor. A separate terminal lane reports
+  failure before cleanup waits; successful stop, an already-stopped native error, or the native
+  stopped notification must acknowledge termination before output removal and callback-queue
+  drainage. The movie lease stays owned through this cleanup and codec finalization. The Mac codec
+  receives no file URL: its delegate serializes complete segment writes within the file cap, syncs
+  each segment, and latches failures before releasing the output lock.
+  [show/src/movie.rs](../crates/show/src/movie.rs) validates bounded, single-track fragment metadata
+  and returns only the complete prefix. It checks sample byte ranges and timing, not compressed
+  picture decoding. Inspection also identifies Media Foundation's undeclared fragment-header
+  padding. Publication, ZIP export, and Mac reads declare that zero word as a default size only when
+  every affected sample has an explicit size and no later header field can change meaning. This
+  changes one flag byte per affected fragment; picture bytes, timestamps, offsets, and the source
+  file stay intact. Legacy bundles receive the same correction during Mac reads without an on-disk
+  migration. [store/movie.rs](../crates/app/src/show/store/movie.rs) copies that prefix from the
+  validated handle before publication commits, records the separate annotation horizon, and checks
+  finalized native timing against the fragments. Failed copy or sync preserves the checkpoint. A
+  missing or incomplete first fragment permits still-only publication with an explicit video-loss
+  notice; other damaged video stays recoverable with a concrete manual remedy. Saved-bundle
+  inspection and export remain strict. A sparse geometry table is published inside versioned movie
+  metadata; the bounded checkpoint journal stays private. A random identifier pairs the header with
+  that journal; it does not authenticate MP4 bytes. A damaged journal retains geometry only through
+  the last complete change’s first sample, clipping against surviving video after computing this
+  bound. Missing geometry preserves uncropped video. ZIP export also copies the validated handle and
+  metadata snapshot. The viewer offers Windows and macOS video scrubbing, switchable saved
+  annotations, and playback in the system player. [draw/video.rs](../crates/show/src/draw/video.rs)
+  renders only observed ink prefixes, completed marks, and completed actions whose coordinate proofs
+  match the decoded sample. Pins retain their actual observation time; action proofs include the
+  release position. Missing legacy proofs are omitted. Continuous cut segments expire together. This
+  saved-view policy does not reconstruct live overlay fades. A text-free immutable annotation
+  snapshot serves repeated previews; completed pixels carry their rendering status through seeks and
+  toggles. Explicit `show frame --video` queries use the
+  [native reader](../crates/platform/src/windows/movie/read.rs) on Windows and the
   [Mac image generator](../crates/platform/src/macos/movie.rs) on macOS. Validation and decoding
   share one open file; Windows also denies other writers. Mac reads that handle through a private
   resource loader, rejects external references, and closes the lease after active reads finish. The
