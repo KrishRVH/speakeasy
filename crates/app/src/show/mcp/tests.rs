@@ -133,3 +133,30 @@ fn listing_is_bounded_and_a_cursor_does_not_skip_the_next_show() -> anyhow::Resu
     );
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn explicit_root_ancestor_alias_is_fixed_at_launch_but_child_links_are_refused()
+-> anyhow::Result<()> {
+    use std::os::unix::fs::symlink;
+    let temp = tempfile::tempdir()?;
+    let actual = temp.path().join("actual");
+    let directory = fixture(&actual.join("shows"), "exact")?;
+    let alias = temp.path().join("alias");
+    symlink(&actual, &alias)?;
+    let roots = Roots::open(vec![alias.join("shows")]).map_err(anyhow::Error::msg)?;
+    assert_eq!(
+        roots
+            .resolve(alias.join("shows/exact").to_str().unwrap())
+            .unwrap(),
+        directory.canonicalize()?
+    );
+    let child = actual.join("shows/link");
+    symlink(&directory, &child)?;
+    assert!(
+        roots
+            .resolve(alias.join("shows/link").to_str().unwrap())
+            .is_err()
+    );
+    Ok(())
+}

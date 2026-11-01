@@ -10,7 +10,12 @@ use crate::show::{
     store::{address::ShowId, recall::Entry},
 };
 
-pub(super) struct Roots(Vec<PathBuf>);
+pub(super) struct Roots(Vec<Root>);
+
+struct Root {
+    directory: PathBuf,
+    requested: PathBuf,
+}
 
 impl Roots {
     pub(super) fn open(roots: Vec<PathBuf>) -> Result<Self, &'static str> {
@@ -21,12 +26,15 @@ impl Roots {
             if !metadata.is_dir() || metadata.file_type().is_symlink() {
                 return Err("An MCP root must be an existing directory, not a symlink");
             }
-            let root = root
+            let requested = std::path::absolute(&root)
+                .map_err(|_private| "Cannot resolve an MCP root folder")?;
+            let directory = root
                 .canonicalize()
                 .map_err(|_private| "Cannot resolve an MCP root folder")?;
-            if !canonical.contains(&root) {
-                canonical.push(root);
-            }
+            canonical.push(Root {
+                directory,
+                requested,
+            });
         }
         if canonical.is_empty() {
             return Err("MCP needs at least one explicit root");
@@ -53,7 +61,8 @@ impl Roots {
             return Err("Use an absolute Show path or an exact folder name");
         }
         let mut found = None;
-        for root in &self.0 {
+        for configured in &self.0 {
+            let root = &configured.directory;
             let candidate =
                 if root.file_name() == path.file_name() && root.join(Manifest::FILE).exists() {
                     root.clone()
@@ -75,10 +84,13 @@ impl Roots {
 
     fn check(&self, path: &Path) -> Result<PathBuf, &'static str> {
         for root in &self.0 {
-            let Ok(relative) = path.strip_prefix(root) else {
+            let Ok(relative) = path
+                .strip_prefix(&root.directory)
+                .or_else(|_outside| path.strip_prefix(&root.requested))
+            else {
                 continue;
             };
-            let mut inspected = root.clone();
+            let mut inspected = root.directory.clone();
             let parts = std::iter::once(None).chain(relative.components().map(Some));
             for part in parts {
                 if let Some(part) = part {
@@ -93,10 +105,10 @@ impl Roots {
                     return Err("Show paths must stay in directories, without symlinks");
                 }
             }
-            let canonical = path
+            let canonical = inspected
                 .canonicalize()
                 .map_err(|_private| "Cannot resolve that Show")?;
-            if canonical.starts_with(root) {
+            if canonical.starts_with(&root.directory) {
                 return Ok(canonical);
             }
         }
@@ -110,7 +122,7 @@ impl Roots {
         let after = cursor.map(PathBuf::from);
         if let Some(after) = &after
             && (!after.is_absolute()
-                || !self.0.iter().any(|root| after.starts_with(root))
+                || !self.0.iter().any(|root| after.starts_with(&root.directory))
                 || after
                     .components()
                     .any(|part| matches!(part, Component::ParentDir)))
@@ -118,7 +130,8 @@ impl Roots {
             return Err("Invalid Show list cursor");
         }
         let mut paths = Vec::new();
-        for root in &self.0 {
+        for configured in &self.0 {
+            let root = &configured.directory;
             self.check(root)?;
             if root.join(Manifest::FILE).symlink_metadata().is_ok() {
                 retain(&mut paths, root.clone(), after.as_deref());
