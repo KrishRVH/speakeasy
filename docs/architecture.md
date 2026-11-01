@@ -353,6 +353,21 @@ module unless a test file is named.
   exports use the app's [edit owner](../crates/app/src/show/edits.rs), so closing review cannot
   cancel them. [export/tests.rs](../crates/app/src/show/store/export/tests.rs) checks portability,
   source retrieval after moving, exclusions, links, size limits, and failure cleanup.
+  [store/video.rs](../crates/app/src/show/store/video.rs) composes a separate MP4 through local
+  FFmpeg. It copies the validated source prefix into private staging, checks decoded frame count,
+  paints annotations at 30 Hz output ticks using each source frame's geometry, and aligns original
+  PCM and optional subtitles to the selected session interval. Full exports preserve voice before
+  screen promotion and after the last captured image by holding the boundary frame. Clipped captions
+  contain only intersecting words. Missing voice and annotation coverage are reported. CLI and
+  Review share this exporter; cancellation kills and reaps both FFmpeg children before staging is
+  removed. The CLI registers Ctrl-C before staging and awaits its blocking export worker on
+  cancellation. Review owns its cancel sender; closing cancels video export, while Quit drains the
+  edit owner. FFmpeg diagnostics are never exposed. Output is synced and published without
+  overwriting. [video/tests.rs](../crates/app/src/show/store/video/tests.rs) checks timing and
+  refusal; its opt-in FFmpeg fixture verifies actual ink, voice and subtitle tracks without devices.
+  [voice.rs](../crates/app/src/show/store/voice.rs) retains checksummed audio with an immutable
+  original expiry, refuses expired reads, and erases expired voice under the retention lock even
+  when the Show is kept. Moving the folder does not reset its voice deadline.
   [store/tests.rs](../crates/app/src/show/store/tests.rs) checks publication, expiry, and edited
   summaries; [recall/tests.rs](../crates/app/src/show/store/recall/tests.rs) checks discovery, read
   limits, damage, links, and moved bundles. [age.rs](../crates/app/src/show/store/age.rs) parses the
@@ -377,13 +392,15 @@ module unless a test file is named.
   MiB and its checksummed PCM log caps at 128 MiB; a backlog stays in capture's existing PCM buffer.
   [Audio checkpointing](../crates/app/src/audio/checkpoint.rs) preserves cue boundaries before and
   after promotion, so recovery seals through the same speech gate and trimming. Narration is
-  atomically written and synced before audio deletion. Publication binds durable checkpoint and
-  bundle markers before rename; untranscribed audio keeps a published checkpoint visible as
-  Narration pending. A retry creates a new bundle. Unfinished cancellation records discard before
-  deletion; private audio, narration, frame, and movie files are removed before the lock, so blocked
-  deletion remains available to cleanup. Audio retains the original seven-day expiry regardless of a
-  saved bundle's Keep marker. Discovery isolates damaged checkpoints so healthy entries remain
-  visible and saved bundles still expire.
+  atomically written and synced while audio remains recoverable. Successful transcription copies
+  voice into the staged bundle before checkpoint retirement. Publication binds durable checkpoint
+  and bundle markers before rename; the marker distinguishes narrated publication so a crash before
+  checkpoint deletion cannot offer duplicate recovery. Untranscribed audio keeps a published
+  checkpoint visible as Narration pending. A retry creates a new bundle. Unfinished cancellation
+  records discard before deletion; private audio, narration, frame, and movie files are removed
+  before the lock, so blocked deletion remains available to cleanup. Audio retains the original
+  seven-day expiry regardless of a saved bundle's Keep marker. Discovery isolates damaged
+  checkpoints so healthy entries remain visible and saved bundles still expire.
   [checkpoint/tests.rs](../crates/app/src/show/store/checkpoint/tests.rs) exercises damaged
   siblings, expiry, lock ownership, and durable discard/publication markers.
   [journal/log.rs](../crates/show/src/journal/log.rs) shares live/replay admission, thinning, and

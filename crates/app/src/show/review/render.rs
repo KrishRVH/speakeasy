@@ -824,8 +824,23 @@ impl Review {
                     .is_some_and(|detail| detail.movie.is_some()),
                 |bar| {
                     bar.child(button(Action::Movie, palette, true, false, cx).child("Play video"))
+                        .child(
+                            button(
+                                Action::ExportVideo,
+                                palette,
+                                self.exporting.is_none(),
+                                false,
+                                cx,
+                            )
+                            .child("Export video…"),
+                        )
                 },
             )
+            .when(self.export_cancel.is_some(), |bar| {
+                bar.child(
+                    button(Action::CancelExport, palette, true, false, cx).child("Cancel export"),
+                )
+            })
             .child(
                 button(
                     Action::Export,
@@ -910,6 +925,8 @@ fn button(
         Action::Folder => "shows-folder".into(),
         Action::Movie => "shows-movie".into(),
         Action::Export => "shows-export".into(),
+        Action::ExportVideo => "shows-export-video".into(),
+        Action::CancelExport => "shows-cancel-export".into(),
         Action::Show(index) => SharedString::from(format!("show-{index}")).into(),
         Action::Frame(index) => SharedString::from(format!("frame-{index}")).into(),
     };

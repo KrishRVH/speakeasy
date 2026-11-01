@@ -14,8 +14,8 @@ const MAX_START_MS: u64 = 360_000;
 pub(super) const MAX_RECORDS: usize = 8_192;
 pub(crate) const MAX_CUES: usize = 4_096;
 const LANGUAGE_BYTES: usize = 32;
-pub(super) const FILE: &str = "audio.log";
-pub(super) const FILE_LIMIT: u64 = 128 << 20;
+pub(in crate::show::store) const FILE: &str = "audio.log";
+pub(in crate::show::store) const FILE_LIMIT: u64 = 128 << 20;
 pub(super) const CHUNK_BYTES: usize = 1 << 20;
 const RECORD_LIMIT: usize = CHUNK_BYTES + 9;
 const DAMAGED: &str =
@@ -104,7 +104,7 @@ impl Record {
     }
 }
 
-pub(super) fn read(file: File) -> anyhow::Result<KeptAudio> {
+pub(in crate::show::store) fn read(file: File) -> anyhow::Result<KeptAudio> {
     let bytes = file.metadata()?.len();
     ensure!(bytes <= FILE_LIMIT, DAMAGED);
     decode(BufReader::new(file), usize::try_from(bytes)?)

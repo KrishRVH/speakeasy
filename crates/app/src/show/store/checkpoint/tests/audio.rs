@@ -14,7 +14,7 @@ async fn audio_checkpoint(parent: &Path) -> anyhow::Result<Checkpoint> {
 }
 
 #[tokio::test]
-async fn narration_write_failure_keeps_audio_and_unlink_failure_keeps_durable_narration()
+async fn narration_write_failure_keeps_audio_and_success_keeps_it_until_bundle_publication()
 -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let checkpoint = audio_checkpoint(root.path()).await?;
@@ -27,12 +27,12 @@ async fn narration_write_failure_keeps_audio_and_unlink_failure_keeps_durable_na
     fs::rename(path.join(super::super::audio::FILE), &held)?;
     fs::create_dir(path.join(super::super::audio::FILE))?;
     let narration = Narration::Text("synthetic successful transcription".into());
-    assert!(checkpoint.narrate(&narration, true).is_err());
+    checkpoint.narrate(&narration, true)?;
     assert_eq!(checkpoint.narration()?, Some((narration, true)));
     fs::remove_dir(path.join(super::super::audio::FILE))?;
     fs::rename(held, path.join(super::super::audio::FILE))?;
     checkpoint.narrate(&Narration::default(), false)?;
-    assert!(!checkpoint.has_audio()?);
+    assert!(checkpoint.has_audio()?);
     Ok(())
 }
 

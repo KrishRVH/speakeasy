@@ -1,5 +1,7 @@
 mod output;
+mod query;
 mod source;
+mod video;
 
 use std::{ffi::OsString, io, path::PathBuf, time::SystemTime};
 
@@ -19,8 +21,9 @@ speakeasy show frames SHOW FOCUS --out NEW.png [--most N] [--around MS] [--crop]
 speakeasy show frame SHOW FOCUS --out NEW.png [--crop] [--video [--annotated]] [--json]
 speakeasy show keep SHOW [--off] [--json]
 speakeasy show export SHOW --out NEW.zip [--json]
+speakeasy show video SHOW --out NEW.mp4 [FOCUS [--around MS]] [--captions] [--json]
 speakeasy show discard INTERRUPTED_SHOW [--json]
-speakeasy show skill
+speakeasy show skill [--install DIR]
 speakeasy show demo [--out NEW_DIR]
 
 list discovers interrupted and saved Shows, including damaged bundles.
@@ -50,10 +53,15 @@ An overdue Show then expires at the next cleanup. Only managed Shows can be kept
 export writes a new ZIP with saved images, narration, retained samples, and a relative reading guide.
 It preserves summary edits, excludes recovery audio and unrelated files, and never overwrites.
 Exported copies do not expire automatically. Reports print paths and sizes, never private text.
+video uses FFmpeg from PATH to export timed annotations and original voice, when available.
+Voice expires seven days after recording even for kept Shows; older Shows export silently.
+--captions adds a selectable subtitle track from timed narration. Video reports missing coverage.
+Focus selects an interval; without FOCUS the entire retained video is exported.
 discard permanently removes an explicit interrupted:ID or checkpoint path from list,
 including pending audio. Saved Show bundles are unchanged.
 Recover interrupted Shows in the Shows window; recovery leaves the clipboard untouched.
 skill prints the agent reading guide for this installed version.
+--install DIR writes DIR/speakeasy-show/SKILL.md; identical content is unchanged and edits are never overwritten.
 demo writes a simulated Show and prints its summary.
 All commands work without a display, microphone, speech engine or running app.";
 
@@ -68,6 +76,7 @@ pub(crate) enum Command {
         json: bool,
     },
     Source(source::Command),
+    Video(video::Command),
     Export {
         directory: PathBuf,
         destination: PathBuf,
@@ -82,7 +91,9 @@ pub(crate) enum Command {
         directory: PathBuf,
         json: bool,
     },
-    Skill,
+    Skill {
+        install: Option<PathBuf>,
+    },
     Demo {
         out: Option<PathBuf>,
     },
@@ -98,6 +109,9 @@ impl Command {
         }
         if verb == "frames" || verb == "frame" {
             return source::Command::parse(verb == "frame", args).map(Self::Source);
+        }
+        if verb == "video" {
+            return video::Command::parse(args).map(Self::Video);
         }
         let mut json = false;
         let mut off = false;
@@ -117,6 +131,15 @@ impl Command {
                     json = true;
                 },
                 Some("--off") if verb == "keep" && !off => off = true,
+                Some("--install") if verb == "skill" && path.is_none() => {
+                    path = Some(PathBuf::from(
+                        args.next()
+                            .filter(|arg| {
+                                !arg.is_empty() && !arg.to_string_lossy().starts_with('-')
+                            })
+                            .context("--install needs the agent's skills directory")?,
+                    ));
+                },
                 Some("--out") if verb == "export" && destination.is_none() => {
                     destination = Some(PathBuf::from(
                         args.next()
@@ -169,7 +192,7 @@ impl Command {
                     .context("show discard needs an explicit interrupted Show ID or path")?,
                 json,
             }),
-            Some("skill") => Ok(Self::Skill),
+            Some("skill") => Ok(Self::Skill { install: path }),
             Some("demo") => Ok(Self::Demo { out: path }),
             _ => anyhow::bail!("Unknown show command; speakeasy show --help lists the commands"),
         }
@@ -191,8 +214,15 @@ impl Command {
     fn write(self, out: &mut impl io::Write) -> anyhow::Result<()> {
         match self {
             Self::Help => writeln!(out, "{HELP}")?,
-            Self::Skill => write!(out, "{SKILL}")?,
+            Self::Skill { install: None } => write!(out, "{SKILL}")?,
+            Self::Skill {
+                install: Some(directory),
+            } => {
+                let path = install_skill(&directory)?;
+                writeln!(out, "Show skill available at {}", path.display())?;
+            },
             Self::Source(command) => command.write(out)?,
+            Self::Video(command) => command.write(out)?,
             Self::Export {
                 directory,
                 destination,
@@ -263,6 +293,28 @@ impl Command {
         }
         Ok(())
     }
+}
+
+fn install_skill(directory: &std::path::Path) -> anyhow::Result<PathBuf> {
+    let directory = std::path::absolute(directory)?.join("speakeasy-show");
+    std::fs::create_dir_all(&directory).context("Cannot create the agent's skill directory")?;
+    let path = directory.join("SKILL.md");
+    match std::fs::read(&path) {
+        Ok(existing) if existing == SKILL.as_bytes() => return Ok(path),
+        Ok(_) => anyhow::bail!(
+            "The installed Show skill differs; choose a new skills directory or preserve your edits before replacing it"
+        ),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {},
+        Err(error) => return Err(error).context("Cannot read the existing Show skill"),
+    }
+    let mut file = tempfile::NamedTempFile::new_in(&directory)?;
+    io::Write::write_all(&mut file, SKILL.as_bytes())?;
+    file.as_file().sync_all()?;
+    let _installed = file
+        .persist_noclobber(&path)
+        .map_err(|error| error.error)
+        .context("Cannot install the Show skill without replacing an existing file")?;
+    Ok(path)
 }
 
 fn demo(directory: Option<PathBuf>, out: &mut impl io::Write) -> anyhow::Result<()> {

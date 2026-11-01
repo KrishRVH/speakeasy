@@ -50,7 +50,7 @@ async fn narration_survives_a_failed_save_before_audio_is_erased() -> anyhow::Re
     let interrupted = store::checkpoint::list(root.path(), SystemTime::now())
         .shows
         .remove(0);
-    assert!(!interrupted.directory().join("audio.log").exists());
+    assert!(interrupted.directory().join("audio.log").exists());
     let reopened = reopen_with(interrupted)?;
     assert!(
         reopened.speech.is_none(),

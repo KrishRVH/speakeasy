@@ -223,6 +223,14 @@ another machine. Recovery audio, retention markers, and unrelated files are excl
 not upload anything, and exported copies do not expire automatically. Closing the window leaves an
 accepted export running; Quit waits for it.
 
+**Export video…** creates a new MP4 with timed ink, marks, original voice when available, and a
+selectable caption track when narration has word timings. Install FFmpeg with H.264 and AAC support
+and put `ffmpeg` on PATH to use this export. It runs locally on all platforms with retained video.
+The original recording stays unchanged. **Cancel export** or closing the window cancels the video
+export; Quit waits for cleanup. Voice expires seven days after recording even when you keep the
+Show. Older Shows without saved voice and Shows whose voice has expired export silently, with a
+notice. Explicitly exported videos do not expire automatically.
+
 An **Interrupted Show** offers **Recover Show** and **Discard**. Recovery restores checkpointed
 frames, ink, marks, and narration into a new bundle, using your configured local speech engine and
 the original language. It waits for any active recording to finish, opens no microphone, and leaves
@@ -254,6 +262,9 @@ speakeasy show frames 20261020T143205Z --mark 2 --crop --out /path/to/new-sheet.
 speakeasy show keep 20261020T143205Z
 speakeasy show keep 20261020T143205Z --off --json
 speakeasy show export 20261020T143205Z --out /path/to/new-show.zip --json
+speakeasy show video 20261020T143205Z --out /path/to/new-show.mp4 --captions --json
+speakeasy show video 20261020T143205Z --phrase "save button" --around 2000 --out /path/to/clip.mp4
+speakeasy show skill --install /path/to/agent/skills
 speakeasy show skill
 ```
 
@@ -273,8 +284,14 @@ into a private temporary file, then publishes the complete archive without overw
 path. JSON output contains the export path, file count, byte count, and whether retained samples are
 included; it contains no private text.
 
-Video exports include `recording.mp4`, `recording.json`, and relative playback links in the guide.
-Inspection validates complete fragment ranges and their timing; it does not decode compressed video.
+ZIP exports include `recording.mp4`, `recording.json`, and relative playback links in the guide.
+They exclude saved voice. `show video` composes a separate 30 fps H.264 MP4 with AAC voice and
+optional selectable subtitles (`--captions`). It accepts the same focus queries as frame export;
+without a focus it exports the entire retained video and available voice, holding the first or last
+image where voice extends beyond screen coverage. Reports describe the selected session interval,
+voice availability, caption count, and missing annotation coverage. It never overwrites an existing
+file. Inspection validates complete fragment ranges and their timing; it does not decode compressed
+video.
 
 `frames` accepts a time, mark, or spoken phrase to locate surrounding evidence. Phrases match
 recorded narration after corrections, ignoring case and punctuation; summary edits are separate.
@@ -350,14 +367,14 @@ During an explicit Show, a private checkpoint records frames, pointer events, an
 background writer. Promotion to a Show includes the narration already buffered since the press.
 Recovery uses the last complete event; a crash, storage failure, or a full bounded write queue can
 leave a shorter recording. Recording continues in memory if checkpointing stops, with a local
-notice. Recognized narration is saved durably before its audio is deleted. A save failure leaves the
-checkpoint available for recovery; a copy failure leaves the saved bundle available in the library.
-Cancelling, quitting, pausing, changing settings, or losing desktop input during an unfinished
-recording discards its checkpoint. Once you finish a Show, those interruptions leave its checkpoint
-recoverable, including while capture stops, the checkpoint flushes, narration transcribes, or
-publication saves the bundle. Hidden incomplete saves are removed once they are at least an hour
-old. Cleanup hides expired Shows before deleting their files and retries interrupted deletions on
-its next pass.
+notice. Recognized narration and export voice are saved durably before the checkpoint is retired. A
+save failure leaves the checkpoint available for recovery; a copy failure leaves the saved bundle
+available in the library. Cancelling, quitting, pausing, changing settings, or losing desktop input
+during an unfinished recording discards its checkpoint. Once you finish a Show, those interruptions
+leave its checkpoint recoverable, including while capture stops, the checkpoint flushes, narration
+transcribes, or publication saves the bundle. Hidden incomplete saves are removed once they are at
+least an hour old. Cleanup hides expired Shows before deleting their files and retries interrupted
+deletions on its next pass.
 
 ## What's said here stays here
 
@@ -369,10 +386,12 @@ its next pass.
   Show is written to the `shows` folder beside the engine and model, readable only by you. Speakeasy
   deletes Shows and interrupted checkpoints over seven days old when it starts and hourly while it
   runs; a file named `.pinned` in a saved Show's folder keeps it. A checkpoint holds up to 1 GiB of
-  frames and pointer events plus 128 MiB of audio. Show audio stays private until transcription
-  succeeds, you cancel or discard it, or its original seven-day expiry; keeping a saved Show does
-  not extend audio retention. Ordinary dictation stays in memory. Saved bundles contain no audio and
-  can include up to 512 MiB of retained source frames in addition to their selected images.
+  frames and pointer events plus 128 MiB of audio. After transcription, saved Shows retain private
+  voice for explicit video export until seven days after the original recording. Keeping a Show does
+  not extend voice retention. Export refuses expired voice even before cleanup runs; cleanup deletes
+  voice from kept Shows too. Pending recovery audio is removed on cancellation, discard, or expiry.
+  Ordinary dictation stays in memory. Saved bundles can include up to 512 MiB of retained source
+  frames in addition to their selected images and private voice.
 - Windows clipboard history and cloud clipboard skip what Speakeasy puts on the clipboard, pasted
   dictation and Show summaries alike, as do Universal Clipboard and Mac clipboard managers that
   honor transient data.

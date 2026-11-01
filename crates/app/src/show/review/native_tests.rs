@@ -602,7 +602,7 @@ async fn export_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> any
         })?
         .context("The export fixture has a selected Show")?;
     window.update(cx, |view, _, cx| {
-        view.export_to(directory.clone(), destination.clone(), cx);
+        view.export_to(directory.clone(), destination.clone(), false, cx);
     })?;
     wait_for(window, |view| view.exporting.is_none(), cx).await?;
     let success = window.read_with(cx, |view, _| {

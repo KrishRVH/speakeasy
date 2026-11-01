@@ -67,7 +67,10 @@ impl Geometry {
     }
 }
 
-pub(super) fn viewport(movie: &super::Inspected, at: std::time::Duration) -> Option<VideoViewport> {
+pub(in crate::show::store) fn viewport(
+    movie: &super::Inspected,
+    at: std::time::Duration,
+) -> Option<VideoViewport> {
     let sample = movie
         .prefix
         .samples()

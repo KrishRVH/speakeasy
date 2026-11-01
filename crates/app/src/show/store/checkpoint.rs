@@ -1,4 +1,4 @@
-mod audio;
+pub(in crate::show::store) mod audio;
 mod keeper;
 
 use std::{
@@ -159,7 +159,7 @@ impl Checkpoint {
         })
     }
 
-    pub(in crate::show) fn commit(&self, staged: &Staged) -> anyhow::Result<()> {
+    pub(in crate::show) fn commit(&self, staged: &Staged, narrated: bool) -> anyhow::Result<()> {
         let id = self
             .directory
             .file_name()
@@ -174,6 +174,9 @@ impl Checkpoint {
         sync_directory(staged.staging.path())?;
         let mut marker = tempfile::NamedTempFile::new_in(&self.directory)?;
         marker.write_all(target.as_bytes())?;
+        if narrated {
+            marker.write_all(b"\nnarrated")?;
+        }
         marker.as_file().sync_all()?;
         marker
             .persist(self.directory.join(PUBLISHED))
@@ -188,6 +191,10 @@ impl Checkpoint {
         annotations: speakeasy_show::Moment,
     ) -> anyhow::Result<bool> {
         staged.retain_movie(&self.directory, annotations)
+    }
+
+    pub(in crate::show) fn retain_voice(&self, staged: &Staged) -> anyhow::Result<()> {
+        super::voice::retain(&self.directory, staged, self.recorded()?)
     }
 
     pub(crate) fn narrate(&self, narration: &Narration, incomplete: bool) -> anyhow::Result<()> {
@@ -212,8 +219,6 @@ impl Checkpoint {
         sync_directory(&self.directory)?;
 
         remove(&self.directory.join(PUBLISHED))?;
-        sync_directory(&self.directory)?;
-        remove(&self.directory.join(audio::FILE))?;
         sync_directory(&self.directory)?;
         Ok(())
     }
@@ -262,7 +267,10 @@ impl Checkpoint {
             .file_name()
             .and_then(|name| name.to_str())
             .context("Checkpoint has no ID")?;
-        Ok(published(parent, &self.directory, id)? && self.has_audio()?)
+        Ok(
+            published(parent, &self.directory, id)? == Some(Publication::Pending)
+                && self.has_audio()?,
+        )
     }
 
     pub(crate) fn replay(&self) -> anyhow::Result<Take> {
@@ -469,31 +477,48 @@ fn retired(parent: &Path, checkpoint: &Checkpoint, now: SystemTime) -> anyhow::R
     };
     Ok(discarded
         || age::expires_at(name).is_none_or(|expiry| expiry <= now)
-        || (published(parent, directory, name)? && !checkpoint.has_audio()?))
+        || match published(parent, directory, name)? {
+            Some(Publication::Narrated) => true,
+            Some(Publication::Pending) => !checkpoint.has_audio()?,
+            None => false,
+        })
 }
 
-fn published(parent: &Path, directory: &Path, id: &str) -> anyhow::Result<bool> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Publication {
+    Pending,
+    Narrated,
+}
+
+fn published(parent: &Path, directory: &Path, id: &str) -> anyhow::Result<Option<Publication>> {
     let marker = match recall::read_file(directory, PUBLISHED, 128) {
         Ok(bytes) => bytes,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    let target = std::str::from_utf8(&marker)
+    let marker = std::str::from_utf8(&marker)
         .ok()
+        .context("Checkpoint publication marker is invalid")?;
+    let (target, publication) = marker
+        .strip_suffix("\nnarrated")
+        .map_or((marker, Publication::Pending), |target| {
+            (target, Publication::Narrated)
+        });
+    let target = Some(target)
         .filter(|name| age::recorded_at(name).is_some())
         .context("Checkpoint publication marker is invalid")?;
     let target = parent.join(target);
     let metadata = match fs::symlink_metadata(&target) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Ok(false);
+        return Ok(None);
     }
     match recall::read_file(&target, PROVENANCE, 128) {
-        Ok(bytes) => Ok(bytes == id.as_bytes()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Ok(bytes) => Ok((bytes == id.as_bytes()).then_some(publication)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.into()),
     }
 }

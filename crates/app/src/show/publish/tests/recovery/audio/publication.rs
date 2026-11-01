@@ -1,6 +1,42 @@
 use super::*;
 
 #[tokio::test]
+async fn durable_voiced_publication_retires_checkpoint_after_a_crash_before_discard()
+-> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let checkpoint = with_audio(root.path()).await?;
+    let captured = narrated(
+        footage(&checkpoint)?,
+        Narration::Text("synthetic narration".into()),
+        None,
+    );
+    let (_input, active) = permit();
+    let saved = persist(
+        None,
+        captured.recording,
+        captured.journal,
+        Some(&checkpoint),
+        &active,
+        || Ok(root.path().to_owned()),
+    )?
+    .unwrap();
+    assert!(checkpoint.has_audio()?);
+    assert!(!checkpoint.pending()?);
+    let path = checkpoint.interrupted()?.directory().to_owned();
+    assert_eq!(
+        store::checkpoint::list(root.path(), SystemTime::now()).shows,
+        []
+    );
+    let (status, voice) = store::voice::read(saved.show.directory(), SystemTime::now())?;
+    assert!(matches!(status, store::voice::Status::Available));
+    assert_eq!(voice.unwrap().pcm.len(), 16_000);
+    store::sweep(root.path(), SystemTime::now())?;
+    assert!(!path.exists());
+    assert!(saved.show.directory().join("voice.log").exists());
+    Ok(())
+}
+
+#[tokio::test]
 async fn failed_or_cancelled_narrated_copy_keeps_new_narration_recoverable() -> anyhow::Result<()> {
     for cancelled in [false, true] {
         let root = tempfile::tempdir()?;
@@ -62,7 +98,7 @@ async fn failed_or_cancelled_narrated_copy_keeps_new_narration_recoverable() -> 
         let reopened = reopen_with(listing.shows.remove(0))?;
         assert!(reopened.speech.is_none());
         assert_eq!(reopened.footage.recording.narration, narration);
-        assert!(!reopened.checkpoint.has_audio()?);
+        assert!(reopened.checkpoint.has_audio()?);
     }
     Ok(())
 }

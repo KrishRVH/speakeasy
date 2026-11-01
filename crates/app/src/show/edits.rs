@@ -8,6 +8,7 @@ use super::{
     store::{
         export,
         retention::{self, Retention},
+        video,
     },
 };
 
@@ -22,12 +23,18 @@ pub(crate) enum Edit {
         directory: PathBuf,
         destination: PathBuf,
     },
+    Video {
+        directory: PathBuf,
+        destination: PathBuf,
+        cancel: Receiver<()>,
+    },
 }
 
 pub(crate) enum Written {
     Retention(Retention),
     Discarded,
     Exported(export::Exported),
+    Video(video::Exported),
 }
 
 pub(crate) type Receipt = Receiver<anyhow::Result<Written>>;
@@ -71,6 +78,20 @@ impl Edits {
                     directory,
                     destination,
                 } => export::write(&directory, &destination).map(Written::Exported),
+                Edit::Video {
+                    directory,
+                    destination,
+                    cancel,
+                } => video::write(
+                    &directory,
+                    &destination,
+                    video::Options {
+                        captions: true,
+                        ..video::Options::default()
+                    },
+                    || cancel.is_closed(),
+                )
+                .map(Written::Video),
             }
         })
     }

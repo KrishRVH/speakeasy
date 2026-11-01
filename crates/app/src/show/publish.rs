@@ -229,6 +229,10 @@ fn persist(
         return Ok(None);
     }
     let duration = recording.duration;
+    let retain_voice = !matches!(
+        recording.narration_lost,
+        Some(NarrationLoss::AudioStopped | NarrationLoss::NotTranscribed)
+    );
     let selection = select(&recording, journal.samples()).context(NOTHING_RECORDED)?;
     let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;
     let bundle = compose(
@@ -265,13 +269,16 @@ fn persist(
         Some(checkpoint) => checkpoint.retain_movie(&mut staged, duration)?,
         None => false,
     };
+    if retain_voice && let Some(checkpoint) = checkpoint {
+        checkpoint.retain_voice(&staged)?;
+    }
     let source_lost = staged.source_lost;
     drop(journal);
     if !permit.commit() {
         return Ok(None);
     }
     if let Some(checkpoint) = checkpoint {
-        checkpoint.commit(&staged)?;
+        checkpoint.commit(&staged, retain_voice)?;
     }
     let (show, summary) = staged.persist()?;
     Ok(Some(Persisted {

@@ -291,6 +291,9 @@ fn retire_expired(
     now: SystemTime,
 ) -> io::Result<Cleanup> {
     let _lock = retention::lock(parent)?;
+    if entry.file_type()?.is_dir() {
+        voice::expire(&entry.path(), now)?;
+    }
     if !expired(entry, cutoff, now)? {
         return Ok(Cleanup::Keep);
     }
@@ -416,3 +419,5 @@ pub(super) mod retention;
 pub(super) mod source;
 #[cfg(test)]
 mod tests;
+pub(super) mod video;
+pub(super) mod voice;

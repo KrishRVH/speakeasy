@@ -87,9 +87,9 @@ UTC date a managed Show becomes eligible for cleanup; null can mean kept, unmana
 
 When the user asks for a portable copy, run
 `speakeasy show export "BUNDLE_PATH" --out NEW.zip --json` with their chosen new destination. It
-includes saved visual evidence and narration, preserves edits, and excludes recovery audio. The
-report contains metadata only. Exporting makes a local copy; sending that copy requires the user's
-instruction to send it.
+includes saved visual evidence and narration, preserves edits, and excludes recovery and saved voice
+audio. The report contains metadata only. Exporting makes a local copy; sending that copy requires
+the user's instruction to send it.
 
 When the user asks to keep a managed Show, run `speakeasy show keep "BUNDLE_PATH" --json`. When they
 ask to restore expiry, use `speakeasy show keep "BUNDLE_PATH" --off --json`. Restoring expiry uses
@@ -103,9 +103,20 @@ through the configured local engine, without clipboard changes. `narrationLost: 
 only the surviving audio prefix was recovered; treat its narration as partial. A `narrationPending`
 entry offers **Transcribe narration**, which saves a new narrated copy and preserves earlier edits.
 Audio expires seven days after recording even if the saved Show is kept; successful transcription
-erases it. When the user explicitly asks to discard it, run
-`speakeasy show discard "interrupted:ID" --json`; an exact checkpoint path from `list` also works.
-Discard is permanent; discarding pending audio leaves its saved Show. A saved Show ID never selects
-a checkpoint with the same timestamp.
+retains private voice in the new bundle for explicit video export. When the user explicitly asks to
+discard pending audio, run `speakeasy show discard "interrupted:ID" --json`; an exact checkpoint
+path from `list` also works. Discard is permanent; discarding pending audio leaves its saved Show. A
+saved Show ID never selects a checkpoint with the same timestamp.
 
 `speakeasy show --help` describes the installed commands. `speakeasy show skill` prints this guide.
+`speakeasy show skill --install AGENT_SKILLS_DIR` installs this version under `speakeasy-show/`;
+identical content is unchanged, and a differing installed guide is never overwritten.
+
+When the user requests a narrated or annotated video, use
+`speakeasy show video "BUNDLE_PATH" --out NEW.mp4 --captions --json`. It requires local FFmpeg with
+H.264 and AAC support. To export a focused clip, add `--at`, `--mark`, or `--phrase` with optional
+`--around MS` and `--match K` as above. It preserves the original bundle and refuses existing output
+paths. Read the report: absent or expired voice produces a silent video, incomplete voice and
+annotation gaps remain explicit, and captions require timed narration. Exported videos include
+private screen content and voice and do not expire automatically; sending them requires the user's
+instruction.

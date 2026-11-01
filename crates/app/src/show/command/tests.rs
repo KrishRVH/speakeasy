@@ -10,6 +10,18 @@ fn parse(args: &[&str]) -> anyhow::Result<Command> {
 }
 
 #[test]
+fn skill_installation_is_repeatable_and_preserves_existing_edits() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let path = install_skill(root.path())?;
+    assert_eq!(fs::read_to_string(&path)?, SKILL);
+    assert_eq!(install_skill(root.path())?, path);
+    fs::write(&path, "user's skill edits")?;
+    assert!(install_skill(root.path()).is_err());
+    assert_eq!(fs::read_to_string(path)?, "user's skill edits");
+    Ok(())
+}
+
+#[test]
 fn commands_require_explicit_paths_and_accept_only_their_options() -> anyhow::Result<()> {
     assert_eq!(parse(&[])?, Command::Help);
     assert_eq!(parse(&["--help"])?, Command::Help);
@@ -21,7 +33,7 @@ fn commands_require_explicit_paths_and_accept_only_their_options() -> anyhow::Re
             json: true
         }
     );
-    assert_eq!(parse(&["skill"])?, Command::Skill);
+    assert_eq!(parse(&["skill"])?, Command::Skill { install: None });
     assert_eq!(
         parse(&["export", "a show", "--out", "share.zip", "--json"])?,
         Command::Export {
@@ -245,7 +257,7 @@ fn inspection_reports_damage_before_failing_and_does_not_repair_it() -> anyhow::
 #[test]
 fn the_embedded_skill_is_emitted_verbatim_and_its_commands_are_accepted() -> anyhow::Result<()> {
     let mut output = Vec::new();
-    Command::Skill.write(&mut output)?;
+    Command::Skill { install: None }.write(&mut output)?;
     let skill = String::from_utf8(output)?;
     let mut commands = 0;
     for span in skill.split('`').skip(1).step_by(2) {

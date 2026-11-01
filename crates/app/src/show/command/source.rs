@@ -1,4 +1,4 @@
-mod query;
+use super::query;
 mod video;
 
 use std::{ffi::OsString, io, path::PathBuf, time::Duration};

@@ -77,6 +77,7 @@ pub(crate) struct Review {
     loading: Option<Task<()>>,
     copying: Option<Task<()>>,
     exporting: Option<Task<()>>,
+    export_cancel: Option<async_channel::Sender<()>>,
     checking: Option<Task<()>>,
     keeping: Option<(PathBuf, Task<()>)>,
     recovering: Option<Task<()>>,
@@ -155,6 +156,7 @@ impl Review {
             loading: None,
             copying: None,
             exporting: None,
+            export_cancel: None,
             checking: None,
             keeping: None,
             recovering: None,
@@ -839,7 +841,12 @@ impl Review {
                 }
             },
             Action::Copy(kind) => self.copy(kind, cx),
-            Action::Export => self.export(cx),
+            Action::Export => self.export(false, cx),
+            Action::ExportVideo => self.export(true, cx),
+            Action::CancelExport => {
+                self.export_cancel = None;
+                self.notice = Some("Cancelling video export…".into());
+            },
             Action::Keep => self.keep(cx),
             Action::Folder => {
                 if let Some(key) = &self.library.selected {
@@ -901,6 +908,8 @@ enum Action {
     Frame(usize),
     Copy(CopyKind),
     Export,
+    ExportVideo,
+    CancelExport,
     Keep,
     Folder,
     Movie,
