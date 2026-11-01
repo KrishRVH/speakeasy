@@ -465,18 +465,21 @@ impl Settings {
             )))
     }
 
-    fn microphone_section(&self, ui: &Ui<'_>) -> impl IntoElement {
-        let microphone: SharedString = match &self.config.microphone {
+    fn microphone_name(&self) -> SharedString {
+        match &self.config.microphone {
             None => "System default".into(),
             Some(id) => match self.microphones.iter().find(|device| device.id == *id) {
                 Some(device) => device.name.clone().into(),
                 None if self.microphone_listing.is_some() => "Checking microphones…".into(),
                 None => "Unavailable · Choose another".into(),
             },
-        };
+        }
+    }
+
+    fn microphone_section(&self, ui: &Ui<'_>) -> impl IntoElement {
         ui.section("MICROPHONE").child(
             row()
-                .child(ui.button(microphone, Action::Microphone))
+                .child(ui.button(self.microphone_name(), Action::Microphone))
                 .child(ui.button("Refresh", Action::Refresh)),
         )
     }
@@ -687,6 +690,15 @@ impl Settings {
 
 impl Ui<'_> {
     fn button(&self, label: impl Into<SharedString>, action: Action) -> gpui::Stateful<Div> {
+        self.button_enabled(label, action, true)
+    }
+
+    fn button_enabled(
+        &self,
+        label: impl Into<SharedString>,
+        action: Action,
+        enabled: bool,
+    ) -> gpui::Stateful<Div> {
         let palette = self.palette;
         let label = label.into();
         div()
@@ -694,7 +706,8 @@ impl Ui<'_> {
             .role(gpui::Role::Button)
             .aria_label(label.clone())
             .focusable()
-            .tab_stop(true)
+            .tab_stop(enabled)
+            .aria_disabled(!enabled)
             .px(px(12.0))
             .max_w(px(390.0))
             .overflow_hidden()
@@ -705,13 +718,20 @@ impl Ui<'_> {
             .border_color(rgb(mix(palette.raise, palette.ink, 0.14)))
             .bg(rgb(palette.raise))
             .text_size(TEXT)
-            .hover(|style| style.bg(rgb(mix(palette.raise, palette.ink, 0.08))))
+            .when(enabled, |button| {
+                button.hover(|style| {
+                    style
+                        .bg(rgb(mix(palette.raise, palette.ink, 0.08)))
+                        .text_color(rgb(palette.ink))
+                })
+            })
             .focus(|style| style.border_color(rgb(palette.lamp)))
-            .cursor_pointer()
-            .on_click(
-                self.cx
-                    .listener(move |view, _, window, cx| view.act(action, window, cx)),
-            )
+            .when(enabled, |button| {
+                button.cursor_pointer().on_click(
+                    self.cx
+                        .listener(move |view, _, window, cx| view.act(action, window, cx)),
+                )
+            })
             .child(label)
     }
 

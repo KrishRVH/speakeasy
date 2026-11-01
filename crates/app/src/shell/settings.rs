@@ -433,8 +433,9 @@ impl Settings {
         let stopped = setup.stopped();
         let retirement = cx.spawn(async move |this, cx| {
             stopped.await;
-            this.update_if_alive(cx, |view, _| {
+            this.update_if_alive(cx, |view, cx| {
                 view.retiring_setup = None;
+                cx.notify();
             });
         });
         self.retiring_setup = Some((setup, retirement));

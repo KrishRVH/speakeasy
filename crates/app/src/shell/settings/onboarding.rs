@@ -18,7 +18,8 @@ impl Step {
     pub(super) const fn heading(self) -> &'static str {
         match self {
             Self::Prepare => "Prepare local speech",
-            Self::Permissions => "Enable dictation",
+            Self::Permissions if cfg!(target_os = "macos") => "Enable dictation",
+            Self::Permissions => "Before you try it",
             Self::Practice => "Try your shortcut",
             Self::Ready => "You're ready",
         }
