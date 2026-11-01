@@ -147,6 +147,22 @@ impl Target {
         )
     }
 
+    /// Selects the exact external fixture window owned by `process`, without reading or moving input.
+    ///
+    /// Available only in opt-in native acceptance builds. The caller owns the helper process and
+    /// keeps it alive until capture stops. Native capture revalidates the window's process identity.
+    ///
+    /// # Errors
+    /// Fails if the window is missing, off screen, owned by another process, or Speakeasy's own.
+    #[cfg(all(target_os = "macos", feature = "native-acceptance"))]
+    pub fn owned_mac_window(display: Display, number: u32, process: u32) -> anyhow::Result<Self> {
+        let (window, part) = native::owned_window(display.native, number, process)?;
+        Ok(Self {
+            display,
+            region: Region::Window(window, part),
+        })
+    }
+
     /// The `part` of `display`.
     #[must_use]
     pub const fn area(display: Display, part: Part) -> Self {

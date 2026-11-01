@@ -126,7 +126,10 @@ pub(crate) struct Display {
 
 /// A window by its number in Core Graphics' window list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Window(CGWindowID);
+pub(crate) struct Window {
+    number: CGWindowID,
+    owner: i64,
+}
 
 /// One window as Core Graphics' window list describes it.
 struct Described {
@@ -155,8 +158,39 @@ pub(crate) fn window_under_pointer(display: Display) -> anyhow::Result<Option<(W
         .filter(|window| !super::is_own_process(window.owner))
         .and_then(|front| {
             let part = display.bounds.part_covered_by(front.bounds)?;
-            Some((Window(front.number), part))
+            Some((
+                Window {
+                    number: front.number,
+                    owner: front.owner,
+                },
+                part,
+            ))
         }))
+}
+
+#[cfg(feature = "native-acceptance")]
+pub(crate) fn owned_window(
+    display: Display,
+    number: u32,
+    owner: u32,
+) -> anyhow::Result<(Window, Part)> {
+    let owner = i64::from(owner);
+    let listed = windows(CGWindowListOption::OptionIncludingWindow, number)
+        .context("Cannot find the owned fixture window")?;
+    let described = listed
+        .into_iter()
+        .find(|window| {
+            window.number == number
+                && window.owner == owner
+                && window.on_screen
+                && !super::is_own_process(owner)
+        })
+        .context("The fixture window is absent or belongs to another process")?;
+    let part = display
+        .bounds
+        .part_covered_by(described.bounds)
+        .context("The owned fixture window is off screen")?;
+    Ok((Window { number, owner }, part))
 }
 
 /// Where a target lies on its display, as far as Core Graphics can tell.
@@ -173,12 +207,12 @@ fn place(target: Target) -> Result<Place, WindowGone> {
     let Region::Window(window, _) = target.region else {
         return Ok(Place::Covers(target.part()));
     };
-    let Some(listed) = windows(CGWindowListOption::OptionIncludingWindow, window.0) else {
+    let Some(listed) = windows(CGWindowListOption::OptionIncludingWindow, window.number) else {
         return Ok(Place::Unknown);
     };
     let described = listed
         .into_iter()
-        .find(|described| described.number == window.0)
+        .find(|described| described.number == window.number && described.owner == window.owner)
         .ok_or(WindowGone::Closed)?;
     if !described.on_screen {
         return Err(WindowGone::OffScreen);
@@ -424,12 +458,12 @@ impl Source {
                 let selected = content
                     .windows()
                     .iter()
-                    .find(|candidate| candidate.windowID() == window.0)
+                    .find(|candidate| candidate.windowID() == window.number)
                     .ok_or(Failure::Window(WindowGone::Closed))?;
-                if selected
-                    .owningApplication()
-                    .is_none_or(|application| super::is_own_process(application.processID().into()))
-                {
+                if selected.owningApplication().is_none_or(|application| {
+                    i64::from(application.processID()) != window.owner
+                        || super::is_own_process(application.processID().into())
+                }) {
                     return Err(Failure::Exposed);
                 }
                 SCContentFilter::initWithDisplay_includingWindows(

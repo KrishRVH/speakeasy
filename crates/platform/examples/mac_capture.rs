@@ -1,5 +1,9 @@
 //! Explicit owned-window screen acceptance. It neither saves pixels nor accesses audio or input hooks.
 
+#[cfg(target_os = "macos")]
+#[path = "mac_capture/pattern.rs"]
+mod pattern;
+
 #[cfg(not(target_os = "macos"))]
 fn main() -> anyhow::Result<()> {
     anyhow::bail!("This owned-window check requires macOS")
@@ -69,10 +73,11 @@ mod native {
                 .context("Synthetic source has no readiness lane")?,
         )
         .read_line(&mut ready)?;
-        ensure!(
-            ready.trim() == "ready",
-            "Synthetic window did not become ready"
-        );
+        let number: u32 = ready
+            .trim()
+            .strip_prefix("ready ")
+            .context("Synthetic window did not become ready")?
+            .parse()?;
         let mut displays = [0; 2];
         let mut count = 0;
         // SAFETY: the two-element display array and count output are writable for this query.
@@ -84,10 +89,7 @@ mod native {
         let bounds = CGDisplayBounds(CGMainDisplayID());
         let display = Display::under_pointer()?;
         let target = if moving {
-            Some(
-                Target::window_under_pointer()?
-                    .context("The owned source is not under the pointer")?,
-            )
+            Some(owned_target(display, number, source.0.id())?)
         } else {
             None
         };
@@ -163,6 +165,9 @@ mod native {
             [100.0, 100.0, 400.0, 300.0]
         };
         let window = window(main, initial, if moving { 0 } else { 100 })?;
+        if moving {
+            super::pattern::attach(&window, main)?;
+        }
         let popup = if moving {
             let popup = self::window(main, [160.0, 150.0, 80.0, 60.0], 1)?;
             popup.setBackgroundColor(Some(&color([220, 220, 20])));
@@ -184,7 +189,7 @@ mod native {
         for _ in 0..5 {
             pump();
         }
-        writeln!(std::io::stdout().lock(), "ready")?;
+        writeln!(std::io::stdout().lock(), "ready {}", window.windowNumber())?;
         std::io::stdout().lock().flush()?;
         let started = Instant::now();
         let mut previous = 0;
@@ -200,6 +205,9 @@ mod native {
                 } else {
                     [20, 220, 30]
                 })));
+                if let Some(view) = window.contentView() {
+                    view.setNeedsDisplay(true);
+                }
                 window.display();
                 previous = phase;
             }
@@ -225,6 +233,16 @@ mod native {
             NSRect::new(NSPoint::new(x, y), NSSize::new(width, height)),
             true,
         );
+    }
+
+    #[cfg(feature = "native-acceptance")]
+    fn owned_target(display: Display, number: u32, process: u32) -> anyhow::Result<Target> {
+        Target::owned_mac_window(display, number, process)
+    }
+
+    #[cfg(not(feature = "native-acceptance"))]
+    fn owned_target(_: Display, _: u32, _: u32) -> anyhow::Result<Target> {
+        anyhow::bail!("Build with --features native-acceptance for owned-window selection")
     }
 
     fn show_menu(popup: &NSWindow, visible: bool) {
@@ -374,12 +392,13 @@ mod native {
             }
             let patterns = [[20, 30, 230], [30, 220, 20]];
             if moving.is_some() {
+                landmarks(&frame)?;
                 for pixel in frame.bgra.as_chunks::<4>().0 {
                     let matches = |pattern| matches_pixel(*pixel, pattern);
                     let menu = matches([20, 220, 220]);
                     saw_menu |= menu;
                     ensure!(
-                        menu || patterns.into_iter().any(matches),
+                        !matches([230, 20, 20]) && pixel[..3].iter().any(|channel| *channel > 10),
                         "The window stream contains pixels outside its owned source or includes the excluded window"
                     );
                 }
@@ -430,6 +449,29 @@ mod native {
             .iter()
             .zip(pattern)
             .all(|(actual, expected)| actual.abs_diff(expected) <= 3)
+    }
+
+    fn landmarks(frame: &speakeasy_platform::Frame) -> anyhow::Result<()> {
+        for ([x, y], expected) in [([20, 75], [240, 240, 240]), ([78, 30], [220, 20, 220])] {
+            let x = frame.width.saturating_mul(x) / 100;
+            let y = frame.height.saturating_mul(y) / 100;
+            let offset = usize::try_from(
+                u64::from(y)
+                    .saturating_mul(u64::from(frame.width))
+                    .saturating_add(u64::from(x))
+                    .saturating_mul(4),
+            )?;
+            let pixel = frame
+                .bgra
+                .get(offset..offset.saturating_add(4))
+                .and_then(|bytes| bytes.try_into().ok())
+                .context("Owned landmark lies outside the captured frame")?;
+            ensure!(
+                matches_pixel(pixel, expected),
+                "A captured landmark shifted or stretched during a window change"
+            );
+        }
+        Ok(())
     }
 
     impl Drop for Source {

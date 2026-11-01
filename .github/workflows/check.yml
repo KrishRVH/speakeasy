@@ -57,7 +57,7 @@ jobs:
         timeout-minutes: 2
         run: |
           cargo run --locked -p speakeasy-platform --example mac_capture -- --owned-screen
-          cargo run --locked -p speakeasy-platform --example mac_capture -- --owned-window
+          cargo run --locked -p speakeasy-platform --features native-acceptance --example mac_capture -- --owned-window
       - name: Check macOS movie playback
         if: runner.os == 'macOS' && inputs.movie
         timeout-minutes: 10
