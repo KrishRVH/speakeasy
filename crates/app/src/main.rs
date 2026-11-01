@@ -197,6 +197,7 @@ fn launch(
     let sign_in = sign_in_launch(mode, default_settings, &startup, &config);
     let (valid, snapshot) = split_startup(startup);
     let configured = valid.is_some();
+    let onboarding = !mode.is_demo() && shell::onboarding_pending(&path);
     let (output, updates) = watch::channel(snapshot);
     let (meter, levels) = watch::channel(Meter::default());
     let application = Application::new().with_assets(icons::Icons);
@@ -278,7 +279,11 @@ fn launch(
             return;
         }
 
-        if !configured || !cx.global::<Services>().is_running() || cfg!(target_os = "linux") {
+        if onboarding
+            || !configured
+            || !cx.global::<Services>().is_running()
+            || cfg!(target_os = "linux")
+        {
             shell::reveal(cx);
         }
         if !mode.is_resident() {

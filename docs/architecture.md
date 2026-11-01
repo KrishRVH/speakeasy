@@ -239,6 +239,19 @@ module unless a test file is named.
   [services.rs](../crates/app/src/shell/services.rs) registers each save of the default settings.
   Login.rs's tests quote the command and decode the approval on Windows, and an opt-in test
   exercises both through a scratch key under `HKCU\Software\Speakeasy-tests`.
+- **First run**: [settings/onboarding.rs](../crates/app/src/shell/settings/onboarding.rs) owns the
+  guide's four steps; [its view](../crates/app/src/shell/settings/render/onboarding.rs) presents
+  local setup, dictation permissions, private practice, and completion. Saved model configuration
+  unlocks permission assistance even when native shortcut access prevents the runtime from starting.
+  A nonblank private result unlocks completion; leaving practice clears its receipt and text. The
+  guide never asks for Show permissions or claims to verify external text delivery. Skip and Finish
+  write an empty `.onboarded` marker beside the selected settings file on an owned worker, without
+  saving or replacing settings. Failed writes remain visible and retryable; shutdown drains an
+  accepted write. Startup opens an unfinished guide even after automatic model setup saved a valid
+  configuration. Replay preserves settings and requires pending edits to be saved or reverted. Demo
+  replay uses synthetic text without microphone access or a completion write. State and file tests
+  cover blocked transitions and marker failures; the Settings native interaction test walks the
+  simulated guide and checks text cleanup and preservation of edits.
 - **Setup**: [setup.rs](../crates/app/src/setup.rs) and [setup/](../crates/app/src/setup) choose,
   download, verify, and unpack engines; a full install is opt-in.
 - **Tray and status**: [tray.rs](../crates/app/src/tray.rs), [tray/](../crates/app/src/tray),

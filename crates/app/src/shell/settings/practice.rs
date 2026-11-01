@@ -2,12 +2,18 @@ use gpui::{Context, Task, Window};
 use zeroize::Zeroizing;
 
 use super::{Notice, Settings};
-use crate::{gpui_ext::EntityUpdate as _, runtime::PracticeEvent, shell::Services};
+use crate::{
+    gpui_ext::{EntityUpdate as _, follow},
+    runtime::PracticeEvent,
+    shell::Services,
+};
 
 #[derive(Default)]
 pub(super) struct Practice {
     pub(super) task: Option<Task<()>>,
     pub(super) ready: bool,
+    pub(super) level: f32,
+    levels: Option<Task<()>>,
     pub(super) text: Zeroizing<String>,
 }
 
@@ -15,6 +21,8 @@ impl Practice {
     pub(super) fn stop(&mut self) {
         self.task = None;
         self.ready = false;
+        self.levels = None;
+        self.level = 0.0;
         self.text = Zeroizing::default();
     }
 }
@@ -35,6 +43,10 @@ impl Settings {
     }
 
     pub(super) fn toggle_practice(&mut self, cx: &mut Context<'_, Self>) {
+        if super::is_demo(cx) && self.onboarding == Some(super::onboarding::Step::Practice) {
+            self.practice.text = Zeroizing::new("A little practice goes a long way.".into());
+            return;
+        }
         if self.practice.task.is_some() {
             self.end_practice(cx);
             return;
@@ -55,6 +67,17 @@ impl Settings {
         };
         self.practice.stop();
         self.notice = None;
+        self.practice.levels = Some(follow(
+            cx.global::<Services>().meter.subscribe(),
+            cx,
+            |meter| meter.level.clamp(0.0, 1.0),
+            |view, level, cx| {
+                view.practice.level = level;
+                if view.onboarding.is_some() {
+                    cx.notify();
+                }
+            },
+        ));
         self.practice.task = Some(cx.spawn(async move |this, cx| {
             while let Some(event) = receipt.recv().await {
                 let current = this

@@ -1,3 +1,5 @@
+mod onboarding;
+
 use std::path::Path;
 
 use gpui::{
@@ -34,6 +36,9 @@ impl Render for Settings {
         self.presets.theme(self.config.theme, cx);
         let palette = self.config.theme.palette();
         let ui = Ui { palette, cx };
+        if let Some(step) = self.onboarding {
+            return self.onboarding_view(step, &ui);
+        }
         let unconfigured = !is_demo(cx) && self.config.needs_engine();
         let unsaved = self.unsaved(cx);
         let compact = window.viewport_size().height < px(600.0);
@@ -166,7 +171,11 @@ impl Settings {
                     page.child(self.linux_section(ui))
                 })
                 .child(self.gesture_hints(ui, true))
-                .child(self.update_section(ui)),
+                .child(self.update_section(ui))
+                .child(ui.button(
+                    "Replay setup",
+                    Action::Onboarding(super::onboarding::Action::Replay),
+                )),
         }
     }
 

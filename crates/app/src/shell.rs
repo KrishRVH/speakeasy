@@ -9,6 +9,7 @@ mod settings;
 mod shutdown;
 mod window;
 
+pub(crate) use settings::onboarding::pending as onboarding_pending;
 #[cfg(all(feature = "native-acceptance", target_os = "macos"))]
 pub(crate) use shutdown::mac_acceptance::native_quit_check;
 

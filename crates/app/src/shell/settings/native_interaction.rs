@@ -44,6 +44,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     cx.new(|cx| Settings::new(config, updates, cx))
                 })?;
                 cx.update(|cx| cx.global_mut::<Services>().settings = Some(settings))?;
+                onboarding::native_tests::exercise(settings, cx).await?;
                 presets::native_tests::exercise(settings, cx).await?;
                 parakeet_cleanup_language(settings, cx).await?;
                 settings.update(cx, |view, window, _| view.language.button.focus(window))?;

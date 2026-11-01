@@ -1,5 +1,6 @@
 mod language;
 mod navigation;
+pub(super) mod onboarding;
 mod permissions;
 mod practice;
 mod presets;
@@ -55,6 +56,9 @@ pub(super) struct Settings {
     language: language::Picker,
     navigation: navigation::Navigation,
     practice: practice::Practice,
+    onboarding: Option<onboarding::Step>,
+    onboarding_focus: gpui::FocusHandle,
+    onboarding_completion: Option<onboarding::Completion>,
     update: Update,
     _updates: Task<()>,
     startup_apps_off: bool,
@@ -75,6 +79,8 @@ impl Settings {
         let saves = SaveQueue::new(services.path.clone(), config.clone());
         #[cfg(target_os = "linux")]
         let desktop_command = desktop_command(&services.path, services.default_settings).into();
+        let onboarding = (!services.mode.is_demo() && onboarding::pending(&services.path))
+            .then_some(onboarding::Step::Prepare);
         let vocabulary = vocabulary::Editor::new(config.theme, cx);
         let recognition = recognition::Editor::new(config.theme, cx);
         let presets = presets::Editor::new(config.theme, cx);
@@ -97,6 +103,9 @@ impl Settings {
             language: language::Picker::new(cx),
             navigation: navigation::Navigation::new(cx),
             practice: practice::Practice::default(),
+            onboarding,
+            onboarding_focus: cx.focus_handle(),
+            onboarding_completion: None,
             update: Update::Idle,
             _updates: follow(updates, cx, Snapshot::clone, |view, snapshot, cx| {
                 view.apply_snapshot(&snapshot, cx);
@@ -142,6 +151,7 @@ impl Settings {
             self.practice.stop();
         }
         match action {
+            Action::Onboarding(action) => self.onboarding_action(action, window, cx),
             Action::Page(page) => self.open_page(page, window),
             Action::Setup => self.toggle_setup(cx),
             Action::Install(model) => self.install_model(model, cx),
@@ -575,6 +585,7 @@ impl Settings {
             .filter(|(setup, _)| !setup.is_finished());
         self.setup.is_none()
             && self.retiring_setup.is_none()
+            && self.onboarding_completion.is_none()
             && self.saves.is_idle()
             && update_drained
     }
@@ -649,6 +660,7 @@ impl Presentation {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
+    Onboarding(onboarding::Action),
     Page(navigation::Page),
     Revert,
     #[cfg(target_os = "macos")]
@@ -685,6 +697,10 @@ enum Action {
 impl Action {
     const fn element_id(self) -> &'static str {
         match self {
+            Self::Onboarding(onboarding::Action::Replay) => "replay-setup",
+            Self::Onboarding(onboarding::Action::Next) => "onboarding-next",
+            Self::Onboarding(onboarding::Action::Back) => "onboarding-back",
+            Self::Onboarding(onboarding::Action::Finish) => "onboarding-finish",
             Self::Page(navigation::Page::Dictation) => "page-dictation",
             Self::Page(navigation::Page::Words) => "page-words",
             Self::Page(navigation::Page::Advanced) => "page-advanced",

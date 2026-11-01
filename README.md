@@ -483,7 +483,8 @@ and choose **Open Anyway**. Check permissions after replacing the app: locally s
 require Accessibility and Screen & System Audio Recording grants again. If either stops working,
 remove Speakeasy from that list with − and add it again.
 
-The first launch sets everything up. Speakeasy checks the machine, downloads the matching
+The first launch guides you through local speech setup, dictation access, private practice, and a
+ready screen. Speakeasy checks the machine, downloads the matching
 [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) build and NVIDIA's Parakeet v3 model,
 about 0.8 GB in all, and turns dictation on:
 
@@ -494,6 +495,13 @@ about 0.8 GB in all, and turns dictation on:
 | Any other Windows PC                            | Vulkan, or CPU without a Vulkan driver          | CPU            |
 | Mac with Apple silicon                          | Metal                                           | GPU            |
 | Linux x86_64                                    | CUDA, Vulkan, or CPU after compatibility checks | GPU or CPU     |
+
+The guide shows your configured shortcut and microphone activity, then waits for recognized words
+before offering the ready screen. Practice stays private; the final screen explains how to check
+text delivery in your own editor. **Skip setup** returns to Settings without stopping an active
+download. Unfinished setup opens again on launch; **Advanced → Replay setup** brings the guide back
+without resetting your settings. In `--demo`, replay uses simulated words and never opens a
+microphone.
 
 Then hold <kbd>Ctrl</kbd> + <kbd>Win</kbd> (Windows), <kbd>Fn</kbd> (Mac), or <kbd>Ctrl</kbd> +
 <kbd>Super</kbd> + <kbd>Space</kbd> (Linux) in an editor and speak.
@@ -851,8 +859,9 @@ paused clock exercises gesture deadlines and the five-minute cap.
   capture, or clipboard.
 - The same command with `native_phrase_editor_` checks Settings IME composition and save draining;
   with `native_settings_picker_` it checks language and page navigation, focus restoration,
-  permission refresh using fake observations, and private practice cleanup. Run each filter
-  separately so each process owns one GPUI application.
+  permission refresh using fake observations, private practice cleanup, and the simulated onboarding
+  journey, including Skip, Replay, and recognition before completion. Run each filter separately so
+  each process owns one GPUI application.
 - On macOS with FFmpeg installed, `bash scripts/check-movie-macos.sh` generates synthetic silent
   movies and checks native frame timestamps, pixels, cancellation, file ownership, and a seek near
   the five-minute limit. It accesses no microphone, screen, input, or clipboard. The Check
