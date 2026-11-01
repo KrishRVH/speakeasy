@@ -67,7 +67,7 @@ async fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> 
     assert!(rows[1].early && rows[1].narration_lost.is_some());
     assert_eq!(rows[2].health, Health::Damaged);
     let detail = Detail::open(&rows[2].directory, library::Mode::Keyframes)?;
-    assert_eq!(detail.frames.len(), 4);
+    assert_eq!(detail.frames.len(), 5);
     let mut reads = crate::show::preview::Reads::default();
     for (index, valid) in [(2, false), (1, true)] {
         let frame = &detail.frames[index];
@@ -86,9 +86,9 @@ async fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> 
     let path = &rows[0].directory;
     let manifest_path = path.join("show.json");
     let mut manifest: serde_json::Value = serde_json::from_slice(&fs::read(&manifest_path)?)?;
-    manifest["keyframes"][1]["event"] = "SECRET_SPOKEN_CUE".into();
-    manifest["keyframes"][1]["said"] = "SECRET_NARRATION".into();
-    manifest["keyframes"][1]["marks"] = serde_json::json!([0, 0]);
+    manifest["keyframes"][2]["event"] = "SECRET_SPOKEN_CUE".into();
+    manifest["keyframes"][2]["said"] = "SECRET_NARRATION".into();
+    manifest["keyframes"][2]["marks"] = serde_json::json!([0, 0]);
     fs::write(&manifest_path, serde_json::to_vec(&manifest)?)?;
     fs::write(path.join("summary.md"), "SECRET_USER_EDIT")?;
     let detail = Detail::open(path, library::Mode::Keyframes)?;

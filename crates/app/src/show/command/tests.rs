@@ -187,12 +187,12 @@ fn a_demo_is_inspectable_and_output_never_contains_its_narration() -> anyhow::Re
         if json {
             let value: Value = serde_json::from_str(&output)?;
             assert_eq!(value["status"], "ok");
-            assert_eq!(value["keyframes"], 4);
+            assert_eq!(value["keyframes"], 5);
             assert_eq!(value["marks"], 3);
-            assert_eq!(value["markFrames"][0]["frame"], 2);
+            assert_eq!(value["markFrames"][0]["frame"], 3);
             assert_eq!(
                 value["sheets"][0]["frames"],
-                serde_json::json!([1, 2, 3, 4])
+                serde_json::json!([1, 2, 3, 4, 5])
             );
             for frame in value["frames"].as_array().unwrap() {
                 assert!(PathBuf::from(frame["path"].as_str().unwrap()).is_file());
@@ -224,7 +224,7 @@ fn inspection_reports_damage_before_failing_and_does_not_repair_it() -> anyhow::
     );
     let value: Value = serde_json::from_slice(&output)?;
     assert_eq!(value["status"], "damaged");
-    assert_eq!(value["frames"].as_array().unwrap().len(), 4);
+    assert_eq!(value["frames"].as_array().unwrap().len(), 5);
     assert!(!missing.exists());
     fs::write(directory.join("show.json"), br#"{"version":99}"#)?;
     output.clear();
