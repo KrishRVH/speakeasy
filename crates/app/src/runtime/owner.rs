@@ -1,3 +1,5 @@
+mod commands;
+
 use std::{
     convert::Infallible, future::poll_fn, mem, ops::ControlFlow, pin::Pin, sync::Arc, task::Poll,
     time::Instant,
@@ -11,31 +13,42 @@ use tokio::{
     sync::{mpsc, watch},
     task::{JoinError, JoinHandle},
 };
+use zeroize::Zeroizing;
 
 use super::{
-    LOADING, Meter, ModelState, Phase, PracticeEvent, Recovery, Report, SHOW_COPIED, SHOW_GONE,
-    Snapshot, SnapshotEpoch, Wiring,
+    Directive, LOADING, Meter, ModelState, Phase, PracticeEvent, Recovery, Report, SHOW_COPIED,
+    SHOW_GONE, Snapshot, SnapshotEpoch, Wiring,
     device::Device,
     now,
     ports::{
         CaptureEvent, PUBLISH_STOPPED, Ports, Preservation, Published, SessionId, ShowEvent,
         Unchosen,
     },
-    session::{Delivered, Destination, Session},
+    session::{Delivered, Purpose, Session},
     worker::{Completion, Worker},
 };
 use crate::{
     config::{Change, Config, Engine},
+    control::{Call, Command, Reply, Status},
     show::SavedShow,
     sounds::Cue,
-    transcript::{self, vocabulary::Vocabulary},
+    transcript::{self, style::Style, vocabulary::Vocabulary},
 };
 
 const INSERT_FAILED: &str =
     "Cannot submit the text. Check desktop permissions and clipboard access, then try again.";
 
+const REPLAY_HINT: &str = if cfg!(target_os = "macos") {
+    " Your words are still available. Hold the dictation shortcut and press V, or choose Paste last dictation in the menu bar."
+} else if cfg!(target_os = "windows") {
+    " Your words are still available. Hold the dictation shortcut and press V, or choose Paste last dictation in the tray."
+} else {
+    " Your words are still available. Choose Paste last dictation in the tray, or run speakeasy paste-last."
+};
+
 enum Outcome {
     Idle,
+    Notice(&'static str),
     Done,
     Practiced,
     Copied(&'static str),
@@ -57,9 +70,9 @@ enum Outcome {
 impl Outcome {
     fn message(&self, notice: Option<&Notice>) -> String {
         let mut message = match self {
+            Self::Notice(message) | Self::Copied(message) => (*message).into(),
             Self::Practiced => "Practice complete. Your words stay in Settings.".into(),
             Self::Failed(message) => message.clone(),
-            Self::Copied(message) => (*message).into(),
             Self::ShowCopied {
                 ending,
                 preservation,
@@ -142,7 +155,7 @@ impl Outcome {
             Self::Idle => Phase::Idle,
             Self::Done | Self::Practiced => Phase::Done,
             Self::Copied(_) | Self::ShowCopied { .. } => Phase::Copied,
-            Self::ShowGone | Self::Recovered { .. } => Phase::Notice,
+            Self::Notice(_) | Self::ShowGone | Self::Recovered { .. } => Phase::Notice,
             Self::Empty => Phase::Empty,
             Self::Cancelled => Phase::Cancelled,
             Self::Unchosen(_) => Phase::Unchosen,
@@ -191,6 +204,8 @@ enum Wake<W> {
     Input(Result<Input, RecvError>),
     Report(Report),
     Configuration,
+    Style,
+    Command(Directive),
     Capture(CaptureEvent),
     Show(ShowEvent),
     Worker(Completion<W>),
@@ -207,12 +222,17 @@ struct Latest {
     id: SessionId,
     started: Instant,
     show: bool,
+    style: Style,
 }
 
 struct Owner<P: Ports> {
     ports: P,
     config: Config,
     changes: watch::Receiver<Config>,
+    styles: watch::Receiver<Style>,
+    commands: Receiver<Directive>,
+    incarnation: u64,
+    preset: Option<String>,
     inputs: Receiver<Input>,
     reports: Receiver<Report>,
     recoveries: Receiver<Recovery>,
@@ -228,6 +248,7 @@ struct Owner<P: Ports> {
     session: Option<Session>,
     latest: Latest,
     last_show: Option<SavedShow>,
+    last_dictation: Option<Zeroizing<String>>,
     reported: u64,
     worker: Worker<P::Speech>,
     microphone: Device<P::Microphone>,
@@ -248,7 +269,11 @@ struct Owner<P: Ports> {
 impl<P: Ports> Owner<P> {
     fn new(wiring: Wiring<P>) -> Self {
         let Wiring {
-            mut changes,
+            config,
+            changes,
+            styles,
+            commands,
+            incarnation,
             inputs,
             reports,
             recoveries,
@@ -261,15 +286,19 @@ impl<P: Ports> Owner<P> {
             epoch,
             last_show,
         } = wiring;
-        let config = changes.borrow_and_update().clone();
         let (capture_events, captures) = async_channel::bounded(64);
         let (show_events, shows) = async_channel::bounded(4);
         let desktop_ready = !ports.prepares_desktop();
         let worker = Worker::load(&ports, &config);
+        let preset = snapshots.borrow().preset.clone();
         Self {
             ports,
             config,
             changes,
+            styles,
+            commands,
+            incarnation,
+            preset,
             inputs,
             reports,
             recoveries,
@@ -287,9 +316,11 @@ impl<P: Ports> Owner<P> {
                 id: SessionId::default(),
                 started: now(),
                 show: false,
+                style: Style::Prose,
             },
             last_show,
             reported: 0,
+            last_dictation: None,
             worker,
             microphone: Device::Free,
             screen: Device::Free,
@@ -325,6 +356,8 @@ impl<P: Ports> Owner<P> {
             input = self.inputs.recv() => Wake::Input(input),
             report = self.reports.recv() => report.map_or(Wake::Stop, Wake::Report),
             change = self.changes.changed() => change.map_or(Wake::Stop, |()| Wake::Configuration),
+            Ok(()) = self.styles.changed() => Wake::Style,
+            Ok(command) = self.commands.recv() => Wake::Command(command),
             Ok(event) = self.captures.recv() => Wake::Capture(event),
             Ok(event) = self.shows.recv() => Wake::Show(event),
             Ok(recovery) = self.recoveries.recv(), if idle => Wake::Recover(recovery),
@@ -351,12 +384,13 @@ impl<P: Ports> Owner<P> {
                 self.configure();
                 None
             },
+            Wake::Style | Wake::Retired => None,
+            Wake::Command(command) => return self.command(command),
             Wake::Capture(event) => {
                 self.handle_capture(event);
                 None
             },
             Wake::Show(event) => self.handle_show(event),
-            Wake::Retired => None,
             Wake::Recover(recovery) => return self.start_recovery(recovery),
             Wake::Practice(practice) => {
                 self.arm_practice(practice);
@@ -393,6 +427,10 @@ impl<P: Ports> Owner<P> {
         let action = match input {
             Input::Press if self.desktop_ready => self.gesture.press(now()),
             Input::Toggle if self.desktop_ready => self.gesture.toggle(now()),
+            Input::PasteLast if self.desktop_ready => {
+                self.paste_last()?;
+                None
+            },
             Input::StartShow(scope)
                 if self.desktop_ready && self.gesture.state() == State::Idle =>
             {
@@ -403,7 +441,7 @@ impl<P: Ports> Owner<P> {
                 self.start_show(scope);
                 None
             },
-            Input::Press | Input::Toggle | Input::StartShow(_) => None,
+            Input::Press | Input::Toggle | Input::PasteLast | Input::StartShow(_) => None,
             Input::Release => self.gesture.release(now()),
             Input::Lock => {
                 self.gesture.lock();
@@ -464,6 +502,7 @@ impl<P: Ports> Owner<P> {
 
     fn configure(&mut self) {
         self.practice = None;
+        self.preset = None;
         let next = self.changes.borrow_and_update().clone();
         let reload = self.config.change_to(&next) >= Change::Engine;
         self.config = next;
@@ -622,10 +661,14 @@ impl<P: Ports> Owner<P> {
     }
 
     fn insert_transcript(&mut self, text: String) {
+        let Some(style) = self.session.as_ref().map(|session| session.style) else {
+            return;
+        };
         let text = Vocabulary::new(&self.config.vocabulary).text(&transcript::for_insertion(
             &text,
-            self.config.fillers(&self.config.language),
+            style.fillers(self.config.fillers(&self.config.language)),
         ));
+        let text = style.apply(text);
         let Some(session) = self
             .session
             .as_mut()
@@ -635,7 +678,7 @@ impl<P: Ports> Owner<P> {
         };
         if text.is_empty() {
             self.end_session(Outcome::Empty);
-        } else if let Destination::Practice(receipt) = &session.destination {
+        } else if let Purpose::Practice(receipt) = &session.purpose {
             let delivered = !receipt.is_closed()
                 && session.permit.commit()
                 && receipt
@@ -647,6 +690,7 @@ impl<P: Ports> Owner<P> {
                 Outcome::Cancelled
             });
         } else {
+            session.pending_text = Some(Zeroizing::new(text.clone()));
             session.insert(|permit| self.ports.insert(text, permit, self.config.delivery()));
         }
     }
@@ -731,7 +775,21 @@ impl<P: Ports> Owner<P> {
 
     fn handle_delivered(&mut self, result: Result<Delivered, JoinError>) {
         let show = self.session.as_ref().is_some_and(Session::is_show);
-        let outcome = match result {
+        let remembered = matches!(
+            &result,
+            Ok(Delivered::Inserted(
+                Ok(Inserted::Sent | Inserted::Copied(_) | Inserted::Unavailable(_)) | Err(_)
+            )) | Err(_)
+        );
+        if remembered
+            && let Some(text) = self
+                .session
+                .as_mut()
+                .and_then(|session| session.pending_text.take())
+        {
+            self.last_dictation = Some(text);
+        }
+        let mut outcome = match result {
             Ok(Delivered::Reopened(Ok(reopened))) => {
                 if let Some(session) = &mut self.session {
                     session.reopened(*reopened);
@@ -800,6 +858,13 @@ impl<P: Ports> Owner<P> {
             Err(_) if show => Outcome::Failed(PUBLISH_STOPPED.into()),
             Ok(Delivered::Inserted(Err(_))) | Err(_) => Outcome::Failed(INSERT_FAILED.into()),
         };
+        if !show
+            && remembered
+            && self.last_dictation.is_some()
+            && let Outcome::Failed(message) = &mut outcome
+        {
+            message.push_str(REPLAY_HINT);
+        }
         if let Outcome::Failed(message) = &outcome
             && let Some(session) = &mut self.session
         {
@@ -851,14 +916,50 @@ impl<P: Ports> Owner<P> {
             id,
             started: now(),
             show: false,
+            style: *self.styles.borrow(),
         };
         self.outcome = Outcome::Idle;
         self.notice = None;
         let mut session = Session::new(id, permit, self.latest.started);
+        session.style = self.latest.style;
         if let Some(practice) = &self.practice {
-            session.destination = Destination::Practice(practice.clone());
+            session.purpose = Purpose::Practice(practice.clone());
         }
         self.session = Some(session);
+        ControlFlow::Continue(())
+    }
+
+    fn paste_last(&mut self) -> ControlFlow<()> {
+        if self.practice.is_some() {
+            return ControlFlow::Continue(());
+        }
+        let Some(text) = self.last_dictation.as_deref().cloned() else {
+            if self.session.is_none() {
+                self.outcome = Outcome::Notice("No dictation to paste yet.");
+            }
+            return ControlFlow::Continue(());
+        };
+        if matches!(self.gesture.state(), State::Held | State::HandsFree)
+            && self
+                .session
+                .as_ref()
+                .is_some_and(|session| !session.is_show() && !session.is_practice())
+        {
+            self.gesture.abandon();
+            self.abandon();
+            self.worker.revive(&self.ports, &self.config);
+        }
+        if self.session.is_some() {
+            return ControlFlow::Continue(());
+        }
+        if !self.gesture.deliver() {
+            return ControlFlow::Continue(());
+        }
+        self.start_session()?;
+        if let Some(session) = &mut self.session {
+            session.purpose = Purpose::Replay;
+            session.insert(|permit| self.ports.insert(text, permit, self.config.delivery()));
+        }
         ControlFlow::Continue(())
     }
 
@@ -904,6 +1005,7 @@ impl<P: Ports> Owner<P> {
             id,
             started: now(),
             show: true,
+            style: Style::Prose,
         };
         self.outcome = Outcome::Idle;
         self.notice = None;
@@ -1133,6 +1235,10 @@ impl<P: Ports> Owner<P> {
             narration_lost,
             started: self.latest.started,
             last_show: self.last_show.clone(),
+            last_dictation: self.last_dictation.is_some(),
+            style: self.latest.style,
+            next_style: *self.styles.borrow(),
+            preset: self.preset.clone(),
             message: self.outcome.message(self.notice.as_ref()),
             model: self.worker.model(),
             desktop_ready: self.desktop_ready,

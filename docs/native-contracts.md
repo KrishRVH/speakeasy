@@ -29,6 +29,13 @@ Debug/error output.
 remains effective; retirement removes the handle before a later stop can wake it. This lock cannot
 become owner-only state because a blocked native run loop does not receive ordinary owner messages.
 
+The Show OpenCode delivery owner retains its `OwnedThread` through request cleanup. Cancellation
+before POST prevents submission; once submission begins, the thread drains its bounded receipt
+before replacement or Quit. Closing a view cannot imply that an accepted message was retracted. The
+instance listener owns its current-thread Tokio executor and bounded set of control tasks for
+receipt/disconnect waits. Shutdown aborts and drains those tasks before the server thread joins;
+application state changes remain on the Services or session owner.
+
 ## Windows handles, hooks, windows and dialogs
 
 Owners: `crates/platform/src/windows.rs`, `windows/input.rs`, `windows/insertion.rs`,

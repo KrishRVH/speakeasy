@@ -175,12 +175,12 @@ impl Protocol {
                 if params.get("cursor").is_some() {
                     return Some(error(id, -32602, "This tool list has no next page", None));
                 }
-                let mut result = json!({"tools": tools::definitions()});
+                let mut result = Map::from_iter([("tools".into(), tools::definitions())]);
                 if modern {
-                    result["ttlMs"] = json!(0);
-                    result["cacheScope"] = json!("private");
+                    result.insert("ttlMs".into(), json!(0));
+                    result.insert("cacheScope".into(), json!("private"));
                 }
-                result
+                Value::Object(result)
             },
             "tools/call" => {
                 let Some(name) = params.get("name").and_then(Value::as_str) else {
@@ -273,17 +273,23 @@ fn server_info() -> Value {
     json!({"name": "speakeasy-show", "version": env!("CARGO_PKG_VERSION")})
 }
 
-fn success(id: Value, mut result: Value, modern: bool) -> Value {
+fn success(id: Value, result: Value, modern: bool) -> Value {
+    let Value::Object(mut result) = result else {
+        return error(id, -32603, "MCP result must be an object", None);
+    };
     if modern {
-        result["resultType"] = json!("complete");
+        result.insert("resultType".into(), json!("complete"));
     }
     json!({"jsonrpc": "2.0", "id": id, "result": result})
 }
 
 fn error(id: Value, code: i32, message: &'static str, data: Option<Value>) -> Value {
-    let mut error = json!({"code": code, "message": message});
+    let mut error = Map::from_iter([
+        ("code".into(), json!(code)),
+        ("message".into(), json!(message)),
+    ]);
     if let Some(data) = data {
-        error["data"] = data;
+        error.insert("data".into(), data);
     }
     json!({"jsonrpc": "2.0", "id": id, "error": error})
 }

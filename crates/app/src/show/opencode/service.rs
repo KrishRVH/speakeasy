@@ -64,6 +64,7 @@ struct Cursor {
 struct Row {
     id: String,
     title: Option<String>,
+    #[serde(rename = "parentID")]
     parent_id: Option<String>,
     location: Location,
     time: Time,
@@ -84,6 +85,7 @@ struct Time {
 #[serde(rename_all = "camelCase")]
 struct Admission {
     id: String,
+    #[serde(rename = "sessionID")]
     session_id: String,
     #[serde(rename = "type")]
     kind: String,
@@ -205,8 +207,12 @@ impl Service {
         path: &str,
         query: &[(&str, &str)],
     ) -> Result<T, &'static str> {
+        let mut url = self.address(path);
+        if !query.is_empty() {
+            url.query_pairs_mut().extend_pairs(query.iter().copied());
+        }
         let response = self
-            .authorize(self.client.get(self.address(path)).query(query))
+            .authorize(self.client.get(url))
             .send()
             .await
             .map_err(|_error| CONNECTION)?;

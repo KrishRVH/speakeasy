@@ -23,9 +23,11 @@ use self::ports::{CaptureEvent, Ports, Published, SessionId, ShowEvent};
 use crate::{
     audio::Capture,
     config::{Change, Config, ValidConfig},
+    control::{Call, Reply},
     local_speech::LocalSpeech,
     show::{self, Canvas, Interrupted, SavedShow, ScreenRecorder},
     sounds::{Cue, Sounds},
+    transcript::style::Style,
 };
 
 pub(crate) const LOADING: &str = "Loading local model…";
@@ -51,6 +53,23 @@ pub(crate) enum Phase {
 }
 
 impl Phase {
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Starting => "starting",
+            Self::Recording => "recording",
+            Self::Stopping => "stopping",
+            Self::Processing => "processing",
+            Self::Done => "done",
+            Self::Copied => "copied",
+            Self::Notice => "notice",
+            Self::Empty => "empty",
+            Self::Cancelled => "cancelled",
+            Self::Unchosen => "unchosen",
+            Self::Error => "error",
+        }
+    }
+
     pub(crate) const fn is_active(self) -> bool {
         matches!(
             self,
@@ -66,6 +85,16 @@ pub(crate) enum ModelState {
     Unavailable,
 }
 
+impl ModelState {
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::Loading => "loading",
+            Self::Ready => "ready",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SnapshotEpoch(u64);
 
@@ -76,6 +105,10 @@ impl SnapshotEpoch {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "The immutable UI snapshot reports independent session, desktop and retained-text facts; it owns no transitions"
+)]
 pub(crate) struct Snapshot {
     pub epoch: SnapshotEpoch,
     pub session: u64,
@@ -87,6 +120,10 @@ pub(crate) struct Snapshot {
     pub narration_lost: Option<NarrationLoss>,
     pub started: Instant,
     pub last_show: Option<SavedShow>,
+    pub last_dictation: bool,
+    pub style: Style,
+    pub next_style: Style,
+    pub preset: Option<String>,
     pub message: String,
     pub model: ModelState,
     pub desktop_ready: bool,
@@ -107,6 +144,10 @@ impl Default for Snapshot {
             narration_lost: None,
             started: now(),
             last_show: None,
+            last_dictation: false,
+            style: Style::default(),
+            next_style: Style::default(),
+            preset: None,
             message: String::new(),
             model: ModelState::Unavailable,
             desktop_ready: true,
@@ -192,12 +233,21 @@ pub(crate) struct Runtime<Host = OwnedThread> {
     reports: Sender<Report>,
     recoveries: Sender<Recovery>,
     practices: Sender<mpsc::Sender<PracticeEvent>>,
+    commands: Sender<Directive>,
     stop: Sender<Infallible>,
+}
+
+struct Configuration {
+    effective: Config,
+    saved: Config,
+    styles: watch::Receiver<Style>,
 }
 
 impl Runtime {
     pub(crate) fn start(
         config: ValidConfig,
+        baseline: Config,
+        styles: watch::Receiver<Style>,
         snapshots: watch::Sender<Snapshot>,
         meter: watch::Sender<Meter>,
         canvas: watch::Sender<Canvas>,
@@ -212,7 +262,11 @@ impl Runtime {
             mac_shortcut: config.mac_shortcut,
         };
         let runtime = Self::host(
-            config.into_inner(),
+            Configuration {
+                effective: config.into_inner(),
+                saved: baseline,
+                styles,
+            },
             snapshots,
             meter,
             ports,
@@ -226,13 +280,18 @@ impl Runtime {
     #[cfg(test)]
     fn start_with<P: Ports>(
         config: Config,
+        styles: watch::Receiver<Style>,
         snapshots: watch::Sender<Snapshot>,
         meter: watch::Sender<Meter>,
         ports: P,
     ) -> anyhow::Result<Self> {
         let (input, inputs) = input_lane();
         Self::host(
-            config,
+            Configuration {
+                effective: config.clone(),
+                saved: config,
+                styles,
+            },
             snapshots,
             meter,
             ports,
@@ -253,7 +312,7 @@ impl Runtime {
 
 impl<Host> Runtime<Host> {
     fn host<P: Ports>(
-        config: Config,
+        configuration: Configuration,
         snapshots: watch::Sender<Snapshot>,
         meter: watch::Sender<Meter>,
         ports: P,
@@ -265,14 +324,26 @@ impl<Host> Runtime<Host> {
             let presented = snapshots.borrow();
             (presented.epoch, presented.last_show.clone())
         };
-        let (configuration, changes) = watch::channel(config);
+        let Configuration {
+            effective,
+            saved,
+            styles,
+        } = configuration;
+        let (configuration, changes) = watch::channel(saved);
+        let mut incarnation = [0_u8; 8];
+        getrandom::fill(&mut incarnation)?;
+        let (commands, directed) = async_channel::bounded(8);
 
         let (reports, reported) = async_channel::bounded(1);
         let (stop, stopping) = async_channel::bounded(1);
         let (recoveries, recovering) = async_channel::bounded(1);
         let (practices, practicing) = async_channel::bounded(1);
         let host = run(Wiring {
+            config: effective,
             changes,
+            styles,
+            commands: directed,
+            incarnation: u64::from_le_bytes(incarnation),
             inputs,
             reports: reported,
             recoveries: recovering,
@@ -292,6 +363,7 @@ impl<Host> Runtime<Host> {
             reports,
             recoveries,
             practices,
+            commands,
             stop,
         })
     }
@@ -338,6 +410,38 @@ impl<Host> Runtime<Host> {
 
         self.input.cancel();
         self.configuration.send_replace(config.into_inner());
+    }
+
+    pub(crate) fn control(&self, call: Call) {
+        self.direct(Directive::Control(call));
+    }
+
+    pub(crate) fn preset(
+        &self,
+        name: String,
+        config: ValidConfig,
+        baseline: Config,
+        session: u64,
+        call: Call,
+    ) {
+        self.direct(Directive::Preset {
+            name,
+            config: Box::new(config),
+            baseline: Box::new(baseline),
+            session,
+            call,
+        });
+    }
+
+    fn direct(&self, directive: Directive) {
+        if let Err(error) = self.commands.try_send(directive) {
+            let reason = if error.is_full() {
+                "Speakeasy is busy. Try the command again."
+            } else {
+                "Resume Speakeasy before using this command."
+            };
+            error.into_inner().call().respond(Reply::refused(reason));
+        }
     }
 
     pub(crate) fn request_stop(&self) {
@@ -457,7 +561,11 @@ struct Recovery {
 }
 
 struct Wiring<P> {
+    config: Config,
     changes: watch::Receiver<Config>,
+    styles: watch::Receiver<Style>,
+    commands: Receiver<Directive>,
+    incarnation: u64,
     inputs: Receiver<Input>,
     reports: Receiver<Report>,
     recoveries: Receiver<Recovery>,
@@ -469,6 +577,25 @@ struct Wiring<P> {
     ports: P,
     epoch: SnapshotEpoch,
     last_show: Option<SavedShow>,
+}
+
+enum Directive {
+    Control(Call),
+    Preset {
+        name: String,
+        config: Box<ValidConfig>,
+        baseline: Box<Config>,
+        session: u64,
+        call: Call,
+    },
+}
+
+impl Directive {
+    fn call(self) -> Call {
+        match self {
+            Self::Control(call) | Self::Preset { call, .. } => call,
+        }
+    }
 }
 
 impl<P: Ports> Wiring<P> {

@@ -1,3 +1,4 @@
+mod opencode;
 mod output;
 use super::evidence::query;
 mod source;
@@ -23,6 +24,10 @@ speakeasy show keep SHOW [--off] [--json]
 speakeasy show export SHOW --out NEW.zip [--json]
 speakeasy show video SHOW --out NEW.mp4 [FOCUS [--around MS]] [--captions] [--json]
 speakeasy show discard INTERRUPTED_SHOW [--json]
+speakeasy show mcp --root PATH [--root PATH ...]
+speakeasy show mcp --setup
+speakeasy show sessions [--json]
+speakeasy show send SHOW --session ID [--json]
 speakeasy show skill [--install DIR]
 speakeasy show demo [--out NEW_DIR]
 
@@ -60,10 +65,16 @@ Focus selects an interval; without FOCUS the entire retained video is exported.
 discard permanently removes an explicit interrupted:ID or checkpoint path from list,
 including pending audio. Saved Show bundles are unchanged.
 Recover interrupted Shows in the Shows window; recovery leaves the clipboard untouched.
+mcp serves read-only evidence tools over stdio within explicit roots; --setup prints client snippets.
+sessions lists sessions from an already-running local OpenCode V2 service; it selects none.
+send submits the edited summary and every contact sheet to that exact session.
+Its model provider may receive this content. Audio and movies are never sent.
+Queued confirms acceptance, not completion. Unknown means check the session before retrying.
 skill prints the agent reading guide for this installed version.
 --install DIR writes DIR/speakeasy-show/SKILL.md; identical content is unchanged and edits are never overwritten.
 demo writes a simulated Show and prints its summary.
-All commands work without a display, microphone, speech engine or running app.";
+All commands work without a display, microphone, speech engine or running Speakeasy app.
+Only sessions and send contact the local OpenCode service; Speakeasy never starts it.";
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Command {
@@ -77,6 +88,8 @@ pub(crate) enum Command {
     },
     Source(source::Command),
     Video(video::Command),
+    Mcp(super::mcp::Command),
+    OpenCode(opencode::Command),
     Export {
         directory: PathBuf,
         destination: PathBuf,
@@ -112,6 +125,12 @@ impl Command {
         }
         if verb == "video" {
             return video::Command::parse(args).map(Self::Video);
+        }
+        if verb == "mcp" {
+            return super::mcp::Command::parse(args).map(Self::Mcp);
+        }
+        if verb == "sessions" || verb == "send" {
+            return opencode::Command::parse(verb == "send", args).map(Self::OpenCode);
         }
         let mut json = false;
         let mut off = false;
@@ -223,6 +242,8 @@ impl Command {
             },
             Self::Source(command) => command.write(out)?,
             Self::Video(command) => command.write(out)?,
+            Self::Mcp(command) => command.write(out)?,
+            Self::OpenCode(command) => command.write(out)?,
             Self::Export {
                 directory,
                 destination,

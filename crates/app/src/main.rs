@@ -4,6 +4,7 @@
 mod audio;
 mod child;
 mod config;
+mod control;
 mod gpui_ext;
 mod http;
 mod icons;
@@ -43,7 +44,7 @@ use tokio::sync::watch;
 use crate::{
     config::{Config, Startup, ValidConfig},
     gpui_ext::AppUpdate as _,
-    instance::{Instance, Request},
+    instance::{Event, Instance, Request},
     runtime::{Meter, Phase, Report, Snapshot},
     shell::{LaunchMode, Services},
 };
@@ -63,6 +64,7 @@ enum Invocation {
         settings: Option<PathBuf>,
     },
     Show(show::Command),
+    Control(control::Invocation),
 }
 
 impl Invocation {
@@ -70,6 +72,12 @@ impl Invocation {
         let mut args = args.peekable();
         if args.next_if(|arg| arg == "show").is_some() {
             return show::Command::parse(args).map(Self::Show);
+        }
+        if args
+            .peek()
+            .is_some_and(|arg| control::Invocation::recognizes(arg))
+        {
+            return control::Invocation::parse(args).map(Self::Control);
         }
         let (mut mode, mut request, mut settings) = (LaunchMode::Live, None, None);
         while let Some(arg) = args.next() {
@@ -130,6 +138,20 @@ fn main() -> ExitCode {
             in_terminal(|| Instance::send(&settings_file(settings)?, request))
         },
         Invocation::Show(command) => in_terminal(|| command.run()),
+        Invocation::Control(invocation) => {
+            let mut code = 2;
+            let written = in_terminal(|| {
+                let reply =
+                    Instance::control(&settings_file(invocation.settings)?, invocation.command);
+                code = reply.exit_code();
+                reply.write(&mut io::stdout().lock())
+            });
+            if written == ExitCode::SUCCESS {
+                ExitCode::from(code)
+            } else {
+                written
+            }
+        },
     }
 }
 
@@ -161,7 +183,7 @@ fn run(mode: LaunchMode, settings: Option<PathBuf>) -> anyhow::Result<()> {
 fn launch(
     path: PathBuf,
     mode: LaunchMode,
-    acquired: Option<(Instance, async_channel::Receiver<Request>)>,
+    acquired: Option<(Instance, async_channel::Receiver<Event>)>,
 ) -> anyhow::Result<()> {
     let (instance, requests) = acquired.unzip();
     let default_settings = settings_file(None).is_ok_and(|default| default == path);
@@ -346,7 +368,7 @@ fn print_help() -> io::Result<()> {
     } else {
         writeln!(
             out,
-            "Hold to dictate; add Space or double-tap for hands-free, or S, W, or A to Show the screen, a window, or an area. {CANCEL_SHORTCUT} cancels, a Show only while the shortcut is held."
+            "Hold to dictate; add Space or double-tap for hands-free, or S, W, or A to Show the screen, a window, or an area. Add V to paste the last dictation. {CANCEL_SHORTCUT} cancels, a Show only while the shortcut is held."
         )?;
     }
     writeln!(
@@ -355,7 +377,7 @@ fn print_help() -> io::Result<()> {
     )?;
     writeln!(
         out,
-        "speakeasy --version prints the version.\nspeakeasy show --help lists the Show commands."
+        "speakeasy status [--config PATH]\nspeakeasy dictation start [--style STYLE] [--config PATH]\nspeakeasy dictation stop|cancel TOKEN [--config PATH]\nspeakeasy paste-last [--config PATH]\nspeakeasy style STYLE [--config PATH]\nspeakeasy preset NAME [--config PATH]\n\nControl commands return JSON: exit 0 acknowledged, 1 refused, 2 unknown or not running.\nStart returns a session token; stop and cancel require that exact token.\nStyles: prose, verbatim, camel, pascal, snake, kebab, constant.\nPreset selects a saved preset while idle. Style applies to the next recording.\nspeakeasy --version prints the version.\nspeakeasy show --help lists the Show commands."
     )
 }
 

@@ -19,6 +19,7 @@ use crate::{
     shell::{self, Services},
     status::{ServiceState, Status},
     theme::Theme,
+    transcript::style::Style,
 };
 
 #[derive(PartialEq, Eq)]
@@ -26,6 +27,11 @@ struct TrayState {
     status: Status,
     theme: Theme,
     menu: TrayMenu,
+    style: Style,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    presets: Vec<String>,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    preset: Option<String>,
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     last_show: bool,
     #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -37,11 +43,22 @@ impl TrayState {
         Self {
             status: services.status(snapshot),
             theme: services.config.theme,
+            style: services.style(),
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            presets: services
+                .config
+                .presets
+                .iter()
+                .map(|preset| preset.name().to_owned())
+                .collect(),
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            preset: services.preset_name().map(str::to_owned),
             menu: dictation_menu(
                 services.service_state(),
                 activity(snapshot),
                 snapshot.desktop_ready,
                 !services.mode.is_demo(),
+                snapshot.last_dictation,
             ),
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             last_show: services.recallable_show(snapshot).is_some(),
@@ -56,6 +73,7 @@ fn dictation_menu(
     activity: Activity,
     desktop_ready: bool,
     interactive: bool,
+    last_dictation: bool,
 ) -> TrayMenu {
     let running = service == ServiceState::Running;
 
@@ -99,6 +117,10 @@ fn dictation_menu(
                     Activity::Dictating | Activity::Showing | Activity::Finishing
                 ),
         },
+        paste_last: TrayItem {
+            label: "Paste last dictation",
+            enabled: startable && activity == Activity::Idle && last_dictation,
+        },
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         show_screen: show("Show screen"),
         #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -121,6 +143,15 @@ impl TrayChanges {
         }
     }
 
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    fn refresh(&mut self, cx: &AsyncApp) -> Option<&TrayState> {
+        let snapshot = self.snapshots.borrow_and_update().clone();
+        let state = cx
+            .update(|cx| TrayState::new(cx.global::<Services>(), &snapshot))
+            .ok()?;
+        Some(self.last.insert(state))
+    }
+
     #[expect(
         clippy::future_not_send,
         reason = "Tray states read Services through GPUI's thread-affine async context"
@@ -139,7 +170,7 @@ impl TrayChanges {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum TrayCommand {
     Settings,
     #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -147,6 +178,11 @@ enum TrayCommand {
     Pause,
     Toggle,
     Cancel,
+    PasteLast,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    Style(Style),
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    Preset(String),
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     Show(Scope),
     #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -163,6 +199,11 @@ impl TrayCommand {
             Self::Pause => shell::toggle_enabled(cx),
             Self::Toggle => shell::send(Input::Toggle, cx),
             Self::Cancel => shell::send(Input::Cancel, cx),
+            Self::PasteLast => shell::send(Input::PasteLast, cx),
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            Self::Style(style) => cx.global::<Services>().select_style(style),
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            Self::Preset(name) => Services::select_preset(name, cx),
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             Self::Show(scope) => shell::send(Input::StartShow(scope), cx),
             #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -232,7 +273,7 @@ mod tests {
                 toggle,
                 cancel,
                 ..
-            } = dictation_menu(service, activity, desktop_ready, interactive);
+            } = dictation_menu(service, activity, desktop_ready, interactive, false);
             assert_eq!(
                 [pause.enabled, toggle.enabled, cancel.enabled],
                 expected,
@@ -251,7 +292,7 @@ mod tests {
                 for (desktop_ready, interactive) in
                     [(true, true), (false, true), (true, false), (false, false)]
                 {
-                    let menu = dictation_menu(service, activity, desktop_ready, interactive);
+                    let menu = dictation_menu(service, activity, desktop_ready, interactive, false);
                     let starts = menu.toggle.enabled && menu.toggle.label == "Start dictation";
                     assert_eq!(
                         [menu.show_screen.enabled, menu.show_area.enabled],
@@ -296,6 +337,7 @@ mod tests {
                 activity(&snapshot(phase, show, hands_free)),
                 true,
                 true,
+                false,
             );
             assert_eq!(
                 [

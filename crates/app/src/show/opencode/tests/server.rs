@@ -1,6 +1,6 @@
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     task::JoinHandle,
 };
 
@@ -75,29 +75,10 @@ impl Server {
             let mut calls = Vec::new();
             for step in steps {
                 let (mut socket, _) = tokio::time::timeout(PATIENCE, listener.accept()).await??;
-                let mut bytes = Vec::new();
-                loop {
-                    let byte = tokio::time::timeout(PATIENCE, socket.read_u8()).await??;
-                    bytes.push(byte);
-                    if bytes.ends_with(b"\r\n\r\n") {
-                        break;
-                    }
-                    anyhow::ensure!(bytes.len() <= 64 * 1024, "Fixture header is too large");
-                }
-                let headers = String::from_utf8(bytes)?;
-                let path = headers.split_whitespace().nth(1).unwrap();
+                let call = read_call(&mut socket).await?;
+                let path = call.headers.split_whitespace().nth(1).unwrap();
                 assert_eq!(path, step.path);
-                let length = headers
-                    .lines()
-                    .find_map(|line| {
-                        let (name, value) = line.split_once(':')?;
-                        name.eq_ignore_ascii_case("content-length")
-                            .then(|| value.trim().parse::<usize>().unwrap())
-                    })
-                    .unwrap_or(0);
-                let mut body = vec![0; length];
-                tokio::time::timeout(PATIENCE, socket.read_exact(&mut body)).await??;
-                calls.push(Call { headers, body });
+                calls.push(call);
                 if let Some((reached, gate)) = step.gate {
                     reached.send(()).await?;
                     tokio::time::timeout(PATIENCE, gate.recv()).await??;
@@ -127,4 +108,28 @@ impl Server {
     pub(super) async fn finish(self) -> anyhow::Result<Vec<Call>> {
         tokio::time::timeout(PATIENCE, self.thread).await??
     }
+}
+
+async fn read_call(socket: &mut TcpStream) -> anyhow::Result<Call> {
+    let mut bytes = Vec::new();
+    loop {
+        let byte = tokio::time::timeout(PATIENCE, socket.read_u8()).await??;
+        bytes.push(byte);
+        if bytes.ends_with(b"\r\n\r\n") {
+            break;
+        }
+        anyhow::ensure!(bytes.len() <= 64 * 1024, "Fixture header is too large");
+    }
+    let headers = String::from_utf8(bytes)?;
+    let length = headers
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().unwrap())
+        })
+        .unwrap_or(0);
+    let mut body = vec![0; length];
+    tokio::time::timeout(PATIENCE, socket.read_exact(&mut body)).await??;
+    Ok(Call { headers, body })
 }

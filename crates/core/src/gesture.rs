@@ -32,6 +32,14 @@ pub struct Gesture {
 }
 
 impl Gesture {
+    pub fn deliver(&mut self) -> bool {
+        if self.phase != Phase::Idle {
+            return false;
+        }
+        self.phase = Phase::Processing;
+        true
+    }
+
     pub fn save(&mut self) -> bool {
         if self.phase != Phase::Idle {
             return false;

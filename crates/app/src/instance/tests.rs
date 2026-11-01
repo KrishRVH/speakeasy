@@ -139,49 +139,50 @@ fn pending_commands_wait_for_the_ui_instead_of_disappearing() -> anyhow::Result<
     Ok(())
 }
 
-#[test]
-fn failed_accepts_are_retried_until_shutdown() -> anyhow::Result<()> {
+async fn accept_or_fail(
+    listener: &tokio::net::TcpListener,
+    reachable: bool,
+    failures: &std::sync::mpsc::Sender<()>,
+) -> io::Result<AsyncStream> {
+    if reachable {
+        return listener.accept().await.map(|(stream, _)| stream);
+    }
+    failures.send(()).map_err(io::Error::other)?;
+    Err(io::ErrorKind::ConnectionAborted.into())
+}
+
+#[tokio::test]
+async fn failed_accepts_are_retried_until_shutdown() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
     let (Endpoint { nonce, .. }, _port_file) =
         Endpoint::publish(listener.local_addr()?.port(), directory.path())?;
     let (failure, failures) = std::sync::mpsc::channel();
-    let mut reaches_listener = [false, true].into_iter();
-    let accept = move || {
-        if reaches_listener.next() == Some(true) {
-            return listener.accept().map(|(stream, _)| stream);
-        }
-        failure.send(()).unwrap();
-        Err(io::ErrorKind::ConnectionAborted.into())
-    };
     let (requests, received) = async_channel::bounded(1);
+    let server_requests = requests.clone();
     let started = Instant::now();
-    let server = OwnedThread::spawn("instance-server", {
-        let requests = requests.clone();
-        move || serve(accept, nonce, &requests)
-    })?;
-
-    let delivered = Instance::send(&path, Request::Toggle).and_then(|()| next_request(&received));
-    thread::sleep(ACCEPT_RETRY * 5);
-    requests.close();
-    let (finished, completion) = std::sync::mpsc::channel();
-    let cleanup = thread::spawn(move || {
-        drop(server);
-        finished.send(()).unwrap();
+    let server = tokio::spawn(async move {
+        let mut reaches_listener = [false, true].into_iter();
+        accept_connections(
+            || accept_or_fail(&listener, reaches_listener.next() == Some(true), &failure),
+            nonce,
+            &server_requests,
+        )
+        .await;
     });
-    let stopped = completion.recv_timeout(PATIENCE);
-    let elapsed = started.elapsed();
-    assert_eq!(delivered?, Request::Toggle);
-    stopped.context("A server whose accepts kept failing outlived shutdown")?;
-
-    let most = elapsed.as_millis() / ACCEPT_RETRY.as_millis() + 2;
+    tokio::task::spawn_blocking(move || Instance::send(&path, Request::Toggle)).await??;
+    let delivered = tokio::time::timeout(PATIENCE, received.recv()).await??;
+    assert!(matches!(delivered, Event::Legacy(Request::Toggle)));
+    tokio::time::sleep(ACCEPT_RETRY * 5).await;
+    requests.close();
+    tokio::time::timeout(PATIENCE, server).await??;
+    let most = started.elapsed().as_millis() / ACCEPT_RETRY.as_millis() + 2;
     let retried = failures.try_iter().count();
     assert!(
         retried <= usize::try_from(most)?,
-        "{retried} failed accepts in {elapsed:?}"
+        "Failed accepts retried without waiting"
     );
-    cleanup.join().unwrap();
     Ok(())
 }
 

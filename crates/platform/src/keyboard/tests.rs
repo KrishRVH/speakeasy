@@ -40,6 +40,22 @@ const NONE_HELD: Physical = Physical {
 };
 
 #[test]
+fn paste_last_is_a_single_held_press_and_its_release_stays_swallowed() {
+    let mut chord = Chord::default();
+    assert!(!chord.hold_key(HoldKey::PasteLast, true).swallows());
+    chord.press();
+    let first = chord.hold_key(HoldKey::PasteLast, true);
+    assert!(first.swallows());
+    assert_eq!(first.action, Some(Action::PasteLast));
+    let repeat = chord.hold_key(HoldKey::PasteLast, true);
+    assert!(repeat.swallows());
+    assert_eq!(repeat.action, None);
+    chord.release();
+    assert!(chord.hold_key(HoldKey::PasteLast, false).swallows());
+    assert!(!chord.hold_key(HoldKey::PasteLast, true).swallows());
+}
+
+#[test]
 fn mac_presets_keep_hands_free_shows_and_escape_without_claiming_left_modifiers() {
     use crate::MacShortcut;
     for (shortcut, flags, left_code, left_flag) in [

@@ -8,6 +8,8 @@ use gpui::{Application, AsyncApp, Render, RenderImage, Timer, div, prelude::*};
 
 use super::*;
 
+mod handoff;
+
 #[cfg(target_os = "windows")]
 mod video;
 
@@ -91,6 +93,8 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                     Theme::default(),
                     snapshots,
                     Actions {
+                        sessions: |_| anyhow::bail!("Synthetic review does not contact OpenCode"),
+                        send: |_, _| anyhow::bail!("Synthetic review does not send Shows"),
                         edit: |edit, fixture, cx| {
                             cx.global_mut::<TestEdits>().0.submit(edit, fixture)
                         },
@@ -123,6 +127,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     pixels(window, cx).await?;
     export_selected(window, cx).await?;
     copy_selected(window, cx).await?;
+    handoff::exercise(window, cx).await?;
 
     for _ in 0..5 {
         key(window, "tab", cx)?;

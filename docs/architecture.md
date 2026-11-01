@@ -52,7 +52,18 @@ module unless a test file is named.
   [tests/streaming.rs](../crates/app/src/runtime/tests/streaming.rs) covers continuous cancellation,
   worker reuse, promotion, and private delivery;
   [tests/practice.rs](../crates/app/src/runtime/tests/practice.rs) checks practice destination and
-  lifetime.
+  lifetime. [tests/replay.rs](../crates/app/src/runtime/tests/replay.rs) defends the single
+  memory-only last-result slot: completed ordinary insertion attempts promote their exact final
+  text, cancelled or stale work cannot replace it, and each explicit replay obtains a new permit.
+  Pause, runtime restart, and Quit erase it; in-place settings changes preserve the exact result for
+  recovery. Style is frozen at session admission;
+  [transcript/style.rs](../crates/app/src/transcript/style.rs) applies deterministic local casing
+  after corrections, while Verbatim bypasses filler removal. Show narration keeps its own policy.
+  [shell/choices.rs](../crates/app/src/shell/choices.rs) owns transient style and saved-preset
+  selection. Presets validate off the UI thread, preserve the draft, and require owner confirmation
+  while idle. Generation, saved-configuration epoch, session counter, and caller lifetime reject
+  stale results. The runtime keeps its saved configuration baseline separate from effective preset
+  choices, including after Resume. Text-only choices reuse the worker; engine changes reload it.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
   [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs), and
@@ -234,7 +245,18 @@ module unless a test file is named.
   [shell/recovery.rs](../crates/app/src/shell/recovery.rs) copies or opens the last Show off the UI
   thread.
 - **Instance and relaunch**: [instance.rs](../crates/app/src/instance.rs) owns the lock and the
-  secret-gated loopback commands.
+  secret-gated loopback commands. Legacy opcodes 0–2 keep their meanings and Linux binding gate.
+  Opcode 3 carries versioned JSON in a length-prefixed 4 KiB frame. An owned server thread bounds
+  authentication and owns up to eight concurrent control receipts, each with a two-second deadline.
+  Legacy cancel/toggle bindings remain responsive while a receipt waits; shutdown drains every task.
+  [control.rs](../crates/app/src/control.rs) rejects malformed commands without echoing input.
+  [owner/commands.rs](../crates/app/src/runtime/owner/commands.rs) admits actions only for live
+  callers and acknowledges actual owner decisions. Stop/cancel tokens combine the runtime
+  incarnation with the session ID and exclude Shows and practice. Style is acknowledged by its
+  Services owner without inventing a session-status observation; ordinary status is observed by the
+  session owner. A lost receipt is unknown, never proof of refusal.
+  [tests/control.rs](../crates/app/src/runtime/tests/control.rs) covers stale authority, busy
+  admission, per-session style, and preset adoption.
 - **Command line**: [main.rs](../crates/app/src/main.rs) parses options and routes what they ask
   for, and [show/command.rs](../crates/app/src/show/command.rs) parses `show` commands. Its
   [output.rs](../crates/app/src/show/command/output.rs) projects metadata without private text,
@@ -242,11 +264,25 @@ module unless a test file is named.
   managed Show; inspection stays read-only.
   [command/tests.rs](../crates/app/src/show/command/tests.rs) inspects simulated Shows, checks
   failure output, and exercises the embedded [agent skill](../skills/speakeasy-show/SKILL.md). The
-  Windows package's [console entry](../crates/app/src/bin/speakeasy-cli.rs) relays only Show
+  Windows package's [console entry](../crates/app/src/bin/speakeasy-cli.rs) relays Show and control
   commands and version requests to the sibling app, with inherited handles, arguments, and working
   directory, and waits for its exit. [cli.rs](../crates/app/tests/cli.rs) checks the process
   boundary without opening devices or the app. Help and refused launch options never spawn a child.
   [check-package.sh](../scripts/check-package.sh) launches every release package before upload.
+- **Agent evidence and handoff**: [show/evidence.rs](../crates/app/src/show/evidence.rs) shares
+  inspection and temporal queries between CLI and [show/mcp.rs](../crates/app/src/show/mcp.rs). MCP
+  exposes three read-only tools within explicit launch roots, refuses child symlinks, bounds
+  lines/content/images, and reports actual source sample times. It serves the 2026-07-28 stateless
+  protocol and the 2025-11-25 initialized protocol. No tool exports, sends, or reads ordinary
+  dictation. Setup resolves the durable installed launcher and only prints client stanzas.
+  [show/opencode.rs](../crates/app/src/show/opencode.rs) owns explicit discovery and submission to
+  an already-running loopback V2 service. Review chooses a concrete session; the CLI requires its
+  ID. Submission rechecks the session and endpoint, preserves edited summaries, and includes every
+  manifest contact sheet within a 12 MiB request limit or refuses. Audio and movies are excluded.
+  Closing the receipt cancels preparation; after POST, the owner drains the bounded response even if
+  the view closes. Quit drains that owner. Only a matching session/message queue receipt proves
+  acceptance; ambiguous responses stay unknown and never trigger automatic retries. Module tests use
+  fake local servers and fixtures; no check contacts the user's agent service.
 - **Show recording and publication**: [show.rs](../crates/app/src/show.rs),
   [show/recorder.rs](../crates/app/src/show/recorder.rs),
   [show/publish.rs](../crates/app/src/show/publish.rs), and the session owner.
@@ -602,9 +638,11 @@ No single module owns these rules; a change to any party keeps them.
   reconfiguration keep it and Quit forgets it. A Show that commits before Pause or a settings change
   abandons its session is still saved and copied, so it becomes the last Show unless a later
   session's has, and the abandoned session still reads as cancelled.
-- **Insertion is never repeated.** Validation precedes the single commit. After it, a native failure
-  reports a partial, unavailable, or manual-paste outcome. Submission cannot prove that an editor
-  accepted the text, and Escape cannot retract input already submitted.
+- **Insertion is never automatically repeated.** Validation precedes the single commit. After it, a
+  native failure reports a partial, unavailable, or manual-paste outcome. Submission cannot prove
+  that an editor accepted the text, and Escape cannot retract input already submitted. Explicit
+  Paste last is a new user request with a new permit; it reuses exact final text without recognizing
+  or styling it again.
 - **Private content stays out of diagnostics.** No module logs or reports what
   [AGENTS.md](../AGENTS.md#app-contracts) keeps private; join failures and panics report fixed
   messages.

@@ -8,6 +8,7 @@ mod handoff;
 mod library;
 mod narration;
 mod navigation;
+mod opencode;
 mod render;
 mod source;
 mod timeline;
@@ -39,6 +40,8 @@ use crate::{
 };
 
 pub(crate) struct Actions {
+    pub sessions: fn(&mut App) -> anyhow::Result<super::opencode::SessionReceipt>,
+    pub send: fn(super::opencode::Request, &mut App) -> anyhow::Result<super::opencode::Receipt>,
     pub edit: fn(
         super::edits::Edit,
         Option<Arc<tempfile::TempDir>>,
@@ -59,6 +62,7 @@ enum ImageState {
 }
 
 pub(crate) struct Review {
+    handoff: opencode::Handoff,
     focus: FocusHandle,
     source: Source,
     theme: Theme,
@@ -139,6 +143,7 @@ impl Review {
         window.focus(&focus);
         Self {
             focus,
+            handoff: opencode::Handoff::Closed,
             source,
             theme,
             actions,
@@ -352,6 +357,7 @@ impl Review {
     }
 
     fn clear_selection(&mut self, window: Option<&mut Window>, cx: &mut Context<'_, Self>) {
+        self.handoff = opencode::Handoff::Closed;
         self.opening = None;
         self.loading = None;
         self.copying = None;
@@ -843,6 +849,9 @@ impl Review {
             },
             Action::Copy(kind) => self.copy(kind, cx),
             Action::Export(kind) => self.export(kind, cx),
+            Action::OpenCode => self.open_handoff(cx),
+            Action::SendOpenCode(session) => self.send_handoff(session, cx),
+            Action::CloseOpenCode => self.close_handoff(cx),
             Action::CancelExport => {
                 self.export_cancel = None;
                 self.notice = Some("Cancelling video export…".into());
@@ -889,8 +898,11 @@ impl CopyKind {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Action {
+    OpenCode,
+    SendOpenCode(String),
+    CloseOpenCode,
     Annotations,
     Pane(Pane),
     Clause(usize),

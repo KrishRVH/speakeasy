@@ -119,9 +119,17 @@ impl Case {
 
 fn push_cased(output: &mut String, character: char, uppercase: bool) {
     if uppercase {
-        output.extend(character.to_uppercase().filter(|character| character.is_alphanumeric()));
+        output.extend(
+            character
+                .to_uppercase()
+                .filter(|character| character.is_alphanumeric()),
+        );
     } else {
-        output.extend(character.to_lowercase().filter(|character| character.is_alphanumeric()));
+        output.extend(
+            character
+                .to_lowercase()
+                .filter(|character| character.is_alphanumeric()),
+        );
     }
 }
 

@@ -153,7 +153,7 @@ impl Paster {
         }
         if owner_changed {
             return Ok(ControlFlow::Break(Inserted::Unavailable(
-                "The clipboard changed while your shortcut keys were held. Release them, then dictate again.",
+                "The clipboard changed while your shortcut keys were held. Release them before pasting.",
             )));
         }
         let Some(owner) = self.clipboard.set_text(&request.text)? else {

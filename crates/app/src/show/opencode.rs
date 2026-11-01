@@ -49,6 +49,19 @@ pub(crate) enum Outcome {
 }
 
 impl Outcome {
+    pub(crate) fn note(&self) -> String {
+        match self {
+            Self::Queued {
+                session,
+                attachments,
+                ..
+            } => format!(
+                "Queued to OpenCode session {session} with {attachments} contact sheets. The recipient's copy does not expire with this Show."
+            ),
+            Self::NotSubmitted { reason } | Self::Unknown { reason } => reason.clone(),
+        }
+    }
+
     fn refused(reason: &str) -> Self {
         Self::NotSubmitted {
             reason: reason.into(),
@@ -63,6 +76,8 @@ impl Outcome {
         }
     }
 }
+
+pub(crate) type SessionReceipt = Receipt<Result<Listing, String>>;
 
 pub(crate) type Receipt<T = Outcome> = Pin<Box<dyn Future<Output = T> + Send>>;
 

@@ -157,7 +157,7 @@ impl NativeInsert for Insert {
                 let sent = send_input(&input)?;
                 if sent != input.len() {
                     return Ok(Inserted::Unavailable(
-                        "Typing was blocked or cut short. Dictate again, or turn off Keep clipboard in Settings to paste.",
+                        "Typing was blocked or cut short. Turn off Keep clipboard in Settings to paste.",
                     ));
                 }
                 Ok(Inserted::Sent)

@@ -12,10 +12,11 @@ fn main() -> ExitCode {
     match first.as_deref().and_then(std::ffi::OsStr::to_str) {
         None if first.is_none() => return help(),
         Some("--help" | "-h") => return help(),
-        Some("show" | "--version") => {},
+        Some("show" | "--version" | "status" | "dictation" | "paste-last" | "style" | "preset") => {
+        },
         _ => {
             return fail(
-                "Use show, --version, or --help. Start the desktop app with speakeasy.",
+                "Use show, status, dictation, paste-last, style, preset, --version, or --help. Start the desktop app with speakeasy.",
                 2,
             );
         },
@@ -47,7 +48,7 @@ fn main() -> ExitCode {
 fn help() -> ExitCode {
     match writeln!(
         io::stdout().lock(),
-        "speakeasy-cli show [COMMAND]\nspeakeasy-cli --version\n\nshow --help lists the Show tools. Start the desktop app with speakeasy."
+        "speakeasy-cli show [COMMAND]\nspeakeasy-cli status [--config PATH]\nspeakeasy-cli dictation start [--style STYLE] [--config PATH]\nspeakeasy-cli dictation stop|cancel TOKEN [--config PATH]\nspeakeasy-cli paste-last [--config PATH]\nspeakeasy-cli style STYLE [--config PATH]\nspeakeasy-cli preset NAME [--config PATH]\nspeakeasy-cli --version\n\nControl commands return JSON: exit 0 acknowledged, 1 refused, 2 unknown or not running.\nshow --help lists the Show tools. Start the desktop app with speakeasy."
     ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => fail(format!("Cannot write help: {error}"), 1),

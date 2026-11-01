@@ -206,6 +206,14 @@ impl Pill {
                         .items_center()
                         .gap(px(11.0))
                         .children(mark)
+                        .when(scene.shows_style(), |row| {
+                            row.child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .text_color(rgb(palette.muted))
+                                    .child(scene.style.label()),
+                            )
+                        })
                         .child(div().text_size(px(11.0)).text_color(rgb(color)).child(text)),
                 )
             })

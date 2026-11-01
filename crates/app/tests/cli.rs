@@ -95,7 +95,7 @@ fn mcp_stdio_roundtrips_both_protocols_through_the_console_process() -> anyhow::
     let manifest = json!({
         "version": 2, "duration": 1000, "surface": {"width": 2, "height": 2},
         "strokes": [], "pins": [], "actions": [], "narration": {"words": []},
-        "marks": [], "keyframes": [{"index": 1, "at": 500, "reason": "middle", "marks": [0,0]}]
+        "marks": [], "keyframes": [{"index": 1, "at": 500, "reason": "middle", "event": "public fixture", "marks": [0,0]}]
     });
     fs::write(directory.join("show.json"), serde_json::to_vec(&manifest)?)?;
     let summary = "Public fixture: ü, \"quoted\" and a literal \\ path.\nSecond line.\n";
@@ -145,7 +145,7 @@ fn mcp_stdio_roundtrips_both_protocols_through_the_console_process() -> anyhow::
             "{}",
             String::from_utf8_lossy(&result.stderr)
         );
-        assert!(result.stderr.is_empty());
+        assert_eq!(result.stderr, b"");
         let output = String::from_utf8(result.stdout)?;
         let replies = output
             .lines()
@@ -198,7 +198,7 @@ fn console_control_verbs_reach_the_app_and_preserve_json_exit_status_without_a_d
             .arg(&settings)
             .output()?;
         assert_eq!(output.status.code(), Some(2));
-        assert!(output.stderr.is_empty());
+        assert_eq!(output.stderr, b"");
         let text = String::from_utf8(output.stdout)?;
         assert_eq!(text.lines().count(), 1);
         let reply: Value = serde_json::from_str(&text)?;

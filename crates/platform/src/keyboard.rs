@@ -30,7 +30,9 @@ impl Chord {
 
     fn hold_key(&mut self, key: HoldKey, down: bool) -> Decision {
         let bit = key.bit();
-        let acts = down && self.hold == Hold::Held;
+        let acts = down
+            && self.hold == Hold::Held
+            && (!matches!(key, HoldKey::PasteLast) || self.swallowing & bit == 0);
         if acts {
             self.swallowing |= bit;
         }
@@ -84,6 +86,7 @@ enum Hold {
 #[derive(Clone, Copy)]
 enum HoldKey {
     Space,
+    PasteLast,
     Show(Scope),
 }
 
@@ -91,6 +94,7 @@ impl HoldKey {
     const fn action(self) -> Action {
         match self {
             Self::Space => Action::Lock,
+            Self::PasteLast => Action::PasteLast,
             Self::Show(scope) => Action::Show(scope),
         }
     }
@@ -101,6 +105,7 @@ impl HoldKey {
             Self::Show(Scope::Screen) => 2,
             Self::Show(Scope::Window) => 4,
             Self::Show(Scope::Area) => 8,
+            Self::PasteLast => 16,
         }
     }
 }
@@ -164,6 +169,7 @@ enum Action {
     Press,
     Release,
     Lock,
+    PasteLast,
     Show(Scope),
     Pin(Taps),
     Escape,
@@ -176,6 +182,7 @@ impl Action {
             Self::Press => input.deliver(Input::Press),
             Self::Release => input.deliver(Input::Release),
             Self::Lock => input.deliver(Input::Lock),
+            Self::PasteLast => input.deliver(Input::PasteLast),
             Self::Show(scope) => input.deliver(Input::Show(scope)),
             Self::Pin(taps) => input.deliver(Input::Pin(taps)),
             Self::Escape => input.deliver(Input::Escape),
@@ -297,6 +304,7 @@ impl Windows {
     const LEFT_CONTROL: u16 = 0xA2;
     const LEFT_SHIFT: u16 = 0xA0;
     const LEFT_WINDOWS: u16 = 0x5B;
+    const PASTE_LAST: u16 = 0x56;
     const RIGHT_CONTROL: u16 = 0xA3;
     const RIGHT_SHIFT: u16 = 0xA1;
     const RIGHT_WINDOWS: u16 = 0x5C;
@@ -357,6 +365,7 @@ impl Windows {
         match key {
             Self::ESCAPE => Decision::pass(down.then_some(Action::Escape)),
             Self::SPACE => self.chord.hold_key(HoldKey::Space, down),
+            Self::PASTE_LAST => self.chord.hold_key(HoldKey::PasteLast, down),
             Self::SCREEN => self.chord.hold_key(HoldKey::Show(Scope::Screen), down),
             Self::WINDOW => self.chord.hold_key(HoldKey::Show(Scope::Window), down),
             Self::AREA => self.chord.hold_key(HoldKey::Show(Scope::Area), down),
@@ -463,6 +472,7 @@ impl Mac {
     const LEFT_CONTROL: i64 = 59;
     const LEFT_OPTION: i64 = 58;
     const LEFT_SHIFT: i64 = 56;
+    const PASTE_LAST: i64 = 9;
     const RIGHT_COMMAND: i64 = 54;
     const RIGHT_CONTROL: i64 = 62;
     const RIGHT_OPTION: i64 = 61;
@@ -543,7 +553,7 @@ impl Mac {
                 self.taps.interrupt();
                 match code {
                     Self::ESCAPE => Decision::pass(down.then_some(Action::Escape)),
-                    Self::SPACE | Self::SCREEN | Self::WINDOW | Self::AREA
+                    Self::SPACE | Self::SCREEN | Self::WINDOW | Self::AREA | Self::PASTE_LAST
                         if down
                             && self.shortcut != crate::MacShortcut::Function
                             && self.pressed.is_none_or(|pressed| {
@@ -553,6 +563,7 @@ impl Mac {
                         self.chord.other_key(true)
                     },
                     Self::SPACE => self.chord.hold_key(HoldKey::Space, down),
+                    Self::PASTE_LAST => self.chord.hold_key(HoldKey::PasteLast, down),
                     Self::SCREEN => self.chord.hold_key(HoldKey::Show(Scope::Screen), down),
                     Self::WINDOW => self.chord.hold_key(HoldKey::Show(Scope::Window), down),
                     Self::AREA => self.chord.hold_key(HoldKey::Show(Scope::Area), down),

@@ -106,9 +106,9 @@ impl Delivery {
             Self::Paste => {
                 Inserted::Copied("Text copied. Focus an editor outside Speakeasy and paste.")
             },
-            Self::Direct => Inserted::Unavailable(
-                "Focus an editor outside Speakeasy, then dictate again. Clipboard preserved.",
-            ),
+            Self::Direct => {
+                Inserted::Unavailable("Focus an editor outside Speakeasy. Clipboard preserved.")
+            },
         })
     }
 
@@ -127,9 +127,7 @@ impl Delivery {
         }
         Some(match self {
             Self::Paste => PASTE_AFTER_RELEASE,
-            Self::Direct => {
-                Inserted::Unavailable("Release the shortcut and try again. Clipboard preserved.")
-            },
+            Self::Direct => Inserted::Unavailable("Release the shortcut. Clipboard preserved."),
         })
     }
 }

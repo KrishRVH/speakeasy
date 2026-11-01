@@ -202,6 +202,34 @@ impl Render for Review {
 }
 
 impl Review {
+    fn handoff_panel(&self, palette: &Palette, cx: &Context<'_, Self>) -> Div {
+        use super::opencode::Handoff;
+        let panel = div().flex().flex_col().gap(px(8.0));
+        match &self.handoff {
+            Handoff::Closed => panel,
+            Handoff::Loading { .. } => panel
+                .child("Looking for sessions in the running OpenCode service…")
+                .child(button(Action::CloseOpenCode, palette, true, false, cx).child("Cancel lookup")),
+            Handoff::Sending { .. } => panel
+                .child("Waiting for OpenCode's queue receipt. Closing does not retract a submitted Show.")
+                .child(button(Action::CloseOpenCode, palette, true, false, cx).child("Close handoff")),
+            Handoff::Choosing { listing, .. } => panel
+                .child(format!("Send this Show to a session at {}", listing.endpoint))
+                .child(div().text_color(rgb(palette.muted)).child("The edited summary and every contact sheet will be sent. OpenCode's model provider may receive this Show. Your original stays private and keeps its expiry."))
+                .when(listing.sessions.is_empty(), |panel| panel.child("No active top-level sessions. Open a session in OpenCode, then try again."))
+                .child(div().id("opencode-sessions").max_h(px(220.0)).overflow_y_scroll().flex().flex_col().gap(px(8.0))
+                    .children(listing.sessions.iter().map(|session| {
+                        button(Action::SendOpenCode(session.id.clone()), palette, true, false, cx)
+                            .flex().flex_col().items_start().gap(px(3.0))
+                            .child(format!("Send to {}", session.title.as_deref().unwrap_or("Untitled session")))
+                            .child(div().text_color(rgb(palette.muted)).child(session.directory.clone()))
+                            .child(div().text_color(rgb(palette.muted)).child(format!("{} · {}", session.id, updated(session.updated))))
+                    })))
+                .when(listing.truncated, |panel| panel.child("Only the first 500 sessions are shown. Archive old sessions in OpenCode to narrow the list."))
+                .child(button(Action::CloseOpenCode, palette, true, false, cx).child("Cancel")),
+        }
+    }
+
     fn detail_pane(
         &self,
         key: &super::library::Key,
@@ -494,6 +522,7 @@ impl Review {
                 Pane::Narration => self.narration(palette, cx).into_any_element(),
             })
             .child(self.commands(palette, now, cx))
+            .child(self.handoff_panel(palette, cx))
             .into_any_element()
     }
 
@@ -818,6 +847,18 @@ impl Review {
                 )
             })
             .child(button(Action::Folder, palette, true, false, cx).child("Open folder"))
+            .when(self.source == Source::Saved, |bar| {
+                bar.child(
+                    button(
+                        Action::OpenCode,
+                        palette,
+                        matches!(self.handoff, super::opencode::Handoff::Closed),
+                        false,
+                        cx,
+                    )
+                    .child("Send to OpenCode…"),
+                )
+            })
             .when(
                 self.detail
                     .as_ref()
@@ -878,6 +919,19 @@ impl Review {
     }
 }
 
+fn updated(milliseconds: u64) -> String {
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let seconds = now.as_secs().saturating_sub(milliseconds / 1_000);
+    match seconds {
+        0..60 => "updated just now".into(),
+        60..3_600 => format!("updated {}m ago", seconds / 60),
+        3_600..86_400 => format!("updated {}h ago", seconds / 3_600),
+        _ => format!("updated {}d ago", seconds / 86_400),
+    }
+}
+
 fn tag(label: &'static str, color: u32) -> impl IntoElement {
     div()
         .text_size(px(10.0))
@@ -901,7 +955,10 @@ fn button(
     selected: bool,
     cx: &Context<'_, Review>,
 ) -> gpui::Stateful<Div> {
-    let id: ElementId = match action {
+    let id: ElementId = match &action {
+        Action::OpenCode => "shows-opencode".into(),
+        Action::SendOpenCode(session) => SharedString::from(format!("shows-send-{session}")).into(),
+        Action::CloseOpenCode => "shows-close-opencode".into(),
         Action::Mark(number) => SharedString::from(format!("show-mark-{number}")).into(),
         Action::Recover => "recover-show".into(),
         Action::Discard => "discard-show".into(),
@@ -956,7 +1013,9 @@ fn button(
                 .cursor_pointer()
                 .hover(move |style| style.bg(hover))
                 .focus(move |style| style.border_color(rgb(accent)))
-                .on_click(cx.listener(move |view, _, window, cx| view.act(action, window, cx)))
+                .on_click(
+                    cx.listener(move |view, _, window, cx| view.act(action.clone(), window, cx)),
+                )
         })
 }
 

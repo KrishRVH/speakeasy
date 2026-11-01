@@ -213,6 +213,7 @@ impl Pill {
                 .and_then(|until| until.checked_duration_since(now)),
             hands_free: self.snapshot.hands_free,
             show: self.snapshot.show,
+            style: self.snapshot.style,
             ending: self.snapshot.ending,
             narration_lost: self.snapshot.narration_lost,
             clock: Clock::new(now.duration_since(self.snapshot.started)),
@@ -388,6 +389,7 @@ struct Scene {
     draw_hint: Option<Duration>,
     hands_free: bool,
     show: bool,
+    style: crate::transcript::style::Style,
     ending: Ending,
     narration_lost: Option<NarrationLoss>,
     clock: Clock,
@@ -433,8 +435,12 @@ impl Scene {
         }
     }
 
+    fn shows_style(&self) -> bool {
+        self.is_capturing() && !self.show && self.style != crate::transcript::style::Style::Prose
+    }
+
     fn shows_clock(&self) -> bool {
-        self.is_capturing() && (self.hands_free || self.clock.near_limit)
+        self.is_capturing() && (self.hands_free || self.clock.near_limit || self.shows_style())
     }
 
     fn shows_draw_hint(&self) -> bool {
@@ -448,7 +454,7 @@ impl Scene {
         if self.tray_hint.is_some() {
             return size(MESSAGE_WIDTH, 36.0);
         }
-        match self.phase {
+        let mut bounds = match self.phase {
             Phase::Starting => size(172.0, 38.0),
             Phase::Recording | Phase::Stopping if self.clock.near_limit => size(262.0, 38.0),
             Phase::Recording | Phase::Stopping if self.shows_draw_hint() => size(300.0, 38.0),
@@ -460,7 +466,11 @@ impl Scene {
             Phase::Empty => size(182.0, 36.0),
             Phase::Copied | Phase::Notice | Phase::Unchosen | Phase::Error => MESSAGE_SIZE,
             Phase::Idle | Phase::Cancelled => RESTING_SIZE,
+        };
+        if self.shows_style() {
+            bounds.width += 90.0;
         }
+        bounds
     }
 
     fn wake_after(&self) -> Option<Duration> {
@@ -678,6 +688,7 @@ mod tests {
             draw_hint: None,
             hands_free: true,
             show: false,
+            style: crate::transcript::style::Style::Prose,
             ending: Ending::Finished,
             narration_lost: None,
             clock: Clock::new(elapsed),

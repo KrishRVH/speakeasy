@@ -177,6 +177,6 @@ fn setup_uses_the_resolved_appimage_launcher_without_resolving_the_mount_again()
     assert!(!output.contains(".mount_"));
     let mut refused = Vec::new();
     assert!(setup(|| None, PathBuf::from("/home/public/Shows"), &mut refused).is_err());
-    assert!(refused.is_empty());
+    assert_eq!(refused, [] as [u8; 0]);
     Ok(())
 }

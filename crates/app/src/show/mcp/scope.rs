@@ -17,6 +17,36 @@ struct Root {
     requested: PathBuf,
 }
 
+impl Root {
+    fn translate(&self, path: &Path) -> Result<Option<PathBuf>, &'static str> {
+        let Ok(relative) = path
+            .strip_prefix(&self.directory)
+            .or_else(|_outside| path.strip_prefix(&self.requested))
+        else {
+            return Ok(None);
+        };
+        let mut inspected = self.directory.clone();
+        let parts = std::iter::once(None).chain(relative.components().map(Some));
+        for part in parts {
+            if let Some(part) = part {
+                if !matches!(part, Component::Normal(_) | Component::CurDir) {
+                    return Err("The Show path contains an invalid component");
+                }
+                inspected.push(part.as_os_str());
+            }
+            let metadata = fs::symlink_metadata(&inspected)
+                .map_err(|_private| "That exact Show is unavailable")?;
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err("Show paths must stay in directories, without symlinks");
+            }
+        }
+        let canonical = inspected
+            .canonicalize()
+            .map_err(|_private| "Cannot resolve that Show")?;
+        Ok(canonical.starts_with(&self.directory).then_some(canonical))
+    }
+}
+
 impl Roots {
     pub(super) fn open(roots: Vec<PathBuf>) -> Result<Self, &'static str> {
         let mut canonical = Vec::new();
@@ -84,31 +114,7 @@ impl Roots {
 
     fn check(&self, path: &Path) -> Result<PathBuf, &'static str> {
         for root in &self.0 {
-            let Ok(relative) = path
-                .strip_prefix(&root.directory)
-                .or_else(|_outside| path.strip_prefix(&root.requested))
-            else {
-                continue;
-            };
-            let mut inspected = root.directory.clone();
-            let parts = std::iter::once(None).chain(relative.components().map(Some));
-            for part in parts {
-                if let Some(part) = part {
-                    if !matches!(part, Component::Normal(_) | Component::CurDir) {
-                        return Err("The Show path contains an invalid component");
-                    }
-                    inspected.push(part.as_os_str());
-                }
-                let metadata = fs::symlink_metadata(&inspected)
-                    .map_err(|_private| "That exact Show is unavailable")?;
-                if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                    return Err("Show paths must stay in directories, without symlinks");
-                }
-            }
-            let canonical = inspected
-                .canonicalize()
-                .map_err(|_private| "Cannot resolve that Show")?;
-            if canonical.starts_with(&root.directory) {
+            if let Some(canonical) = root.translate(path)? {
                 return Ok(canonical);
             }
         }

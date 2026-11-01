@@ -356,3 +356,18 @@ fn recovery_owns_saving_until_completion_or_explicit_abandonment() {
     assert_eq!(gesture.press(now), Some(Action::Start));
     assert!(!gesture.save(), "Recovery cannot take over a recording");
 }
+
+#[test]
+fn explicit_delivery_excludes_capture_and_remains_cancellable() {
+    let mut gesture = Gesture::default();
+    let now = Instant::now();
+    assert!(gesture.deliver());
+    assert!(!gesture.deliver());
+    assert_eq!(gesture.press(now), None);
+    assert_eq!(gesture.release(now), None);
+    assert_eq!(gesture.state(), State::Processing);
+    assert_eq!(gesture.escape(), Some(Action::Cancel));
+    assert_eq!(gesture.state(), State::Idle);
+    assert_eq!(gesture.press(now), Some(Action::Start));
+    assert!(!gesture.deliver());
+}

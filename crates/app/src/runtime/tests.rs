@@ -581,14 +581,25 @@ impl OwnedTask {
 impl Runtime<OwnedTask> {
     fn on_task<P: Ports>(
         config: Config,
+        styles: watch::Receiver<Style>,
         snapshots: watch::Sender<Snapshot>,
         meter: watch::Sender<Meter>,
         ports: P,
     ) -> anyhow::Result<Self> {
         let (input, inputs) = input_lane();
-        Self::host(config, snapshots, meter, ports, input, inputs, |wiring| {
-            Ok(OwnedTask::spawn(owner::run(wiring)))
-        })
+        Self::host(
+            Configuration {
+                effective: config.clone(),
+                saved: config,
+                styles,
+            },
+            snapshots,
+            meter,
+            ports,
+            input,
+            inputs,
+            |wiring| Ok(OwnedTask::spawn(owner::run(wiring))),
+        )
     }
 
     async fn close(&mut self) -> anyhow::Result<()> {
@@ -601,6 +612,7 @@ impl Runtime<OwnedTask> {
 struct Harness<Host = OwnedTask> {
     _cleanup: CleanupGates,
     runtime: Runtime<Host>,
+    styles: watch::Sender<Style>,
     output: watch::Sender<Snapshot>,
     updates: watch::Receiver<Snapshot>,
     levels: watch::Receiver<Meter>,
@@ -656,6 +668,7 @@ impl<Host: Sync> Harness<Host> {
         customize: impl FnOnce(&mut FakePorts),
         start: impl FnOnce(
             Config,
+            watch::Receiver<Style>,
             watch::Sender<Snapshot>,
             watch::Sender<Meter>,
             FakePorts,
@@ -671,10 +684,12 @@ impl<Host: Sync> Harness<Host> {
             ..Snapshot::default()
         });
         let (meter, levels) = watch::channel(Meter::default());
-        let runtime = start(config, output.clone(), meter, ports)?;
+        let (styles, choices) = watch::channel(Style::default());
+        let runtime = start(config, choices, output.clone(), meter, ports)?;
         Ok(Self {
             _cleanup: cleanup,
             runtime,
+            styles,
             output,
             updates,
             levels,
@@ -814,12 +829,15 @@ fn change_settings(h: &Harness) {
     h.runtime.configure(ValidConfig::assume(config));
 }
 
+mod control;
 mod cues;
 mod dictation;
 mod last_show;
 mod model;
 mod practice;
+mod replay;
 mod shows;
+mod styles;
 
 mod recognition;
 mod recovery;

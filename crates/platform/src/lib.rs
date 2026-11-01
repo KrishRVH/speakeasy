@@ -87,6 +87,7 @@ pub struct TrayMenu {
     pub pause: TrayItem,
     pub toggle: TrayItem,
     pub cancel: TrayItem,
+    pub paste_last: TrayItem,
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub show_screen: TrayItem,
     #[cfg(any(target_os = "windows", target_os = "macos"))]

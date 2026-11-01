@@ -92,7 +92,10 @@ async fn explicit_send_preserves_edits_all_sheets_and_auth_and_checks_receipt() 
         bytes,
     } = outcome
     else {
-        anyhow::bail!("The valid fixture was not queued")
+        anyhow::bail!(
+            "The valid fixture was not queued: {}",
+            serde_json::to_string(&outcome)?
+        )
     };
     assert_eq!(
         (session.as_str(), message.as_str(), attachments),
@@ -167,6 +170,31 @@ async fn missing_session_or_endpoint_drift_never_posts() -> anyhow::Result<()> {
         let calls = server.finish().await?;
         assert!(calls.iter().all(|call| !call.headers.starts_with("POST ")));
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_child_session_is_refused_before_posting() -> anyhow::Result<()> {
+    let directory = show()?;
+    let mut child = row(SESSION);
+    child["parentID"] = json!("ses_parent");
+    let server = Server::start(vec![
+        health(),
+        Step::reply("/api/session/ses_explicit", json!({"data": child})),
+    ])
+    .await?;
+    let mut deliveries = Deliveries::default();
+    let receipt = deliveries.send_from(
+        request(directory.path(), &server.endpoint),
+        Ok(server.registration.clone()),
+    )?;
+    let outcome = tokio::time::timeout(PATIENCE, receipt).await?;
+    assert!(
+        matches!(outcome, Outcome::NotSubmitted { .. }),
+        "Child session was not refused: {}",
+        serde_json::to_string(&outcome)?
+    );
+    assert_eq!(server.finish().await?.len(), 2);
     Ok(())
 }
 
@@ -287,7 +315,12 @@ async fn committed_posts_drain_despite_cancel_or_closed_view() -> anyhow::Result
         release.send(()).await?;
         tokio::time::timeout(PATIENCE, deliveries.drained()).await?;
         if let Some(receipt) = receipt {
-            assert!(matches!(receipt.await, Outcome::Queued { .. }));
+            let outcome = receipt.await;
+            assert!(
+                matches!(outcome, Outcome::Queued { .. }),
+                "Committed handoff did not return Queued: {}",
+                serde_json::to_string(&outcome)?
+            );
         }
         assert_eq!(server.finish().await?.len(), 3);
         assert!(!deliveries.is_busy());
@@ -318,13 +351,15 @@ async fn abandoned_lookup_cancels_and_does_not_block_a_later_request() -> anyhow
 #[tokio::test]
 async fn listing_bounds_pages_and_returns_rows_without_selecting_one() -> anyhow::Result<()> {
     let mut steps = vec![health()];
+    let mut child = row("ses_child");
+    child["parentID"] = json!(SESSION);
     for page in 0_u32..5 {
         let query = if page == 0 {
             "/api/session?parentID=null&archived=false&limit=100".into()
         } else {
             format!("/api/session?parentID=null&archived=false&limit=100&cursor={page}")
         };
-        steps.push(Step::reply(query, json!({"data": [row(&format!("ses_{page}"))], "cursor": {"next": page.saturating_add(1).to_string()}})));
+        steps.push(Step::reply(query, json!({"data": [row(&format!("ses_{page}")), child], "cursor": {"next": page.saturating_add(1).to_string()}})));
     }
     let server = Server::start(steps).await?;
     let mut deliveries = Deliveries::default();

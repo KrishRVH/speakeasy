@@ -42,6 +42,61 @@ fn control_waits_for_its_owner_and_preserves_the_reply() -> anyhow::Result<()> {
 }
 
 #[test]
+fn pending_control_does_not_block_legacy_cancel_or_toggle() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
+    let mut client = connect(&path.with_file_name(PORT_FILE))?;
+    client.write_all(&[CONTROL])?;
+    write_frame(&mut client, &Command::Status.encode().unwrap())?;
+    let Event::Control(call) = requests.recv_blocking()? else {
+        panic!("Control request became a legacy action");
+    };
+    for request in [Request::Cancel, Request::Toggle] {
+        Instance::send(&path, request)?;
+        assert_eq!(next_request(&requests)?, request);
+    }
+    assert!(call.is_live());
+    call.respond(Reply::ok(status()));
+    let reply = Reply::decode(&read_frame(&mut client)?).unwrap();
+    assert_eq!(reply.result, Disposition::Ok);
+    Ok(())
+}
+
+#[test]
+fn concurrent_control_is_bounded_and_shutdown_closes_every_receipt() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    let (instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
+    let mut clients = Vec::new();
+    let mut calls = Vec::new();
+    for _ in 0..MAX_CONTROL_CALLS {
+        let mut client = connect(&path.with_file_name(PORT_FILE))?;
+        client.write_all(&[CONTROL])?;
+        write_frame(&mut client, &Command::Status.encode().unwrap())?;
+        let Event::Control(call) = requests.recv_blocking()? else {
+            panic!("Control request became a legacy action");
+        };
+        clients.push(client);
+        calls.push(call);
+    }
+    let overflow = Instance::control(&path, Command::Status);
+    assert_eq!(overflow.result, Disposition::Refused);
+    assert!(requests.try_recv().is_err());
+    Instance::send(&path, Request::Cancel)?;
+    assert_eq!(next_request(&requests)?, Request::Cancel);
+    drop(instance);
+    for call in calls {
+        assert!(call.reply.is_closed());
+        assert!(!call.is_live());
+    }
+    for mut client in clients {
+        assert!(read_frame(&mut client).is_err());
+    }
+    Ok(())
+}
+
+#[test]
 fn a_full_control_lane_refuses_without_waiting_or_dropping_legacy_work() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");

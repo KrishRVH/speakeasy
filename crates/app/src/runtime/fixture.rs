@@ -246,7 +246,13 @@ async fn profile_fixture_dictation() -> anyhow::Result<()> {
         replay: None,
         requests: None,
     };
-    let runtime = Runtime::start_with(config, output, meter, fixture)?;
+    let runtime = Runtime::start_with(
+        config,
+        watch::channel(super::Style::default()).1,
+        output,
+        meter,
+        fixture,
+    )?;
     wait_for_signal(&ready, &mut updates, STARTUP_TIMEOUT).await?;
     let startup_ms = started.elapsed().as_secs_f64() * 1000.0;
     let mut requests_ms = Vec::new();
@@ -440,7 +446,13 @@ async fn recording(
         requests: Some(requests),
     };
     let started = Instant::now();
-    let runtime = Runtime::start_with(config, output, meter, fixture)?;
+    let runtime = Runtime::start_with(
+        config,
+        watch::channel(super::Style::default()).1,
+        output,
+        meter,
+        fixture,
+    )?;
 
     let result = async {
         wait_for_signal(&ready, &mut updates, STARTUP_TIMEOUT).await?;

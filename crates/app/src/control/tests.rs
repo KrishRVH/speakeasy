@@ -128,7 +128,7 @@ fn replies_are_one_content_free_json_line_with_distinct_exit_dispositions() -> a
         let mut output = Vec::new();
         reply.write(&mut output)?;
         assert_eq!(reply.exit_code(), exit);
-        assert_eq!(output.iter().filter(|byte| **byte == b'\n').count(), 1);
+        assert_eq!(std::str::from_utf8(&output)?.lines().count(), 1);
         let parsed: serde_json::Value = serde_json::from_slice(&output)?;
         assert_eq!(parsed["v"], 1);
         if let Some(status) = parsed.get("status") {

@@ -16,11 +16,12 @@ use crate::{
     audio::MicrophoneScan,
     config::{Change, Config, ValidConfig},
     gpui_ext::AppUpdate,
-    instance::{Instance, Request},
+    instance::{Event, Instance, Request},
     pill::Pill,
     runtime::{self, Meter, ModelState, Phase, Report, Runtime, Snapshot},
     show::{Canvas, review::Review},
     status::{PAUSED, PAUSING, QUITTING, ServiceState, Status},
+    transcript::style::Style,
 };
 
 const CHECKING: &str = "Checking local speech settings…";
@@ -90,6 +91,9 @@ pub(crate) struct Services {
     pub(super) path: PathBuf,
     pub(super) default_settings: bool,
     pub config: Config,
+    pub(super) styles: watch::Sender<Style>,
+    pub(super) choices: super::choices::Choices,
+    pub(super) deliveries: crate::show::opencode::Deliveries,
     pub output: watch::Sender<Snapshot>,
     pub(super) meter: watch::Sender<Meter>,
     pub(super) canvas: watch::Sender<Canvas>,
@@ -137,6 +141,9 @@ impl Services {
             path,
             default_settings,
             config,
+            styles: watch::channel(Style::default()).0,
+            choices: super::choices::Choices::default(),
+            deliveries: crate::show::opencode::Deliveries::default(),
             output,
             meter,
             canvas,
@@ -197,21 +204,44 @@ impl Services {
     }
 
     pub(crate) fn status(&self, snapshot: &Snapshot) -> Status {
-        Status::new(snapshot, self.service_state(), self.config.engine)
+        let engine = self
+            .choices
+            .selected
+            .as_ref()
+            .map_or(self.config.engine, |choice| choice.config.engine);
+        Status::new(snapshot, self.service_state(), engine)
     }
 
-    fn runtime(&self) -> Option<&Runtime> {
+    pub(crate) fn style(&self) -> Style {
+        *self.styles.borrow()
+    }
+
+    pub(crate) fn select_style(&self, style: Style) {
+        self.styles.send_replace(style);
+        self.output
+            .send_modify(|snapshot| snapshot.next_style = style);
+    }
+
+    pub(super) fn runtime(&self) -> Option<&Runtime> {
         self.lifecycle.active().map(|owners| &owners.runtime)
     }
 
     pub(crate) fn listen_for_requests(
         &mut self,
-        requests: async_channel::Receiver<Request>,
+        requests: async_channel::Receiver<Event>,
         cx: &App,
     ) {
         self.requests = Some(cx.spawn(async move |cx| {
             while let Ok(request) = requests.recv().await {
-                if cx.update(|cx| handle_request(request, cx)).is_err() {
+                if cx
+                    .update(|cx| match request {
+                        Event::Legacy(request) => handle_request(request, cx),
+                        Event::Control(call) => cx.update_global::<Services, _>(|services, cx| {
+                            services.control(call, cx);
+                        }),
+                    })
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -298,6 +328,7 @@ impl Services {
         }
         self.show_copies.cancel();
 
+        self.reset_choice_for(&config);
         if self.runtime().is_some_and(|runtime| {
             !runtime.is_running() || self.config.change_to(&config) == Change::Desktop
         }) {
@@ -321,17 +352,32 @@ impl Services {
 
     fn start(&mut self, config: ValidConfig) -> anyhow::Result<()> {
         self.show_copies.cancel();
+        let baseline = self.config.clone();
+        let config = self
+            .choices
+            .selected
+            .as_ref()
+            .map_or(config, |choice| choice.config.clone());
+        let preset = self.preset_name().map(str::to_owned);
         let Self {
             lifecycle,
             output,
             meter,
             canvas,
+            styles,
             ..
         } = self;
         let started = lifecycle.start(|| {
             announce(output, runtime::LOADING);
-            let (runtime, monitor) =
-                Runtime::start(config, output.clone(), meter.clone(), canvas.clone())?;
+            output.send_modify(|snapshot| snapshot.preset.clone_from(&preset));
+            let (runtime, monitor) = Runtime::start(
+                config,
+                baseline,
+                styles.subscribe(),
+                output.clone(),
+                meter.clone(),
+                canvas.clone(),
+            )?;
             anyhow::Ok(Owners { runtime, monitor })
         });
         self.validation = None;
@@ -349,6 +395,7 @@ impl Services {
     ) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
         let start_at_login = config.start_at_login;
+        self.reset_choice_for(&config);
         let adopted = if self
             .lifecycle
             .save_may_enable(saved_at, |owners| owners.runtime.is_running())
@@ -378,7 +425,10 @@ impl Services {
         let Some(epoch) = self.lifecycle.validate() else {
             return;
         };
-        let config = self.config.clone();
+        let config = self.choices.selected.as_ref().map_or_else(
+            || self.config.clone(),
+            |choice| Config::clone(&choice.config),
+        );
         let path = self.path.clone();
         let validation = cx
             .background_executor()
@@ -396,7 +446,14 @@ impl Services {
                 return Ok(());
             }
             services.validation = None;
-            result.and_then(|config| services.apply(config, cx))
+            result.and_then(|config| {
+                if let Some(choice) = &mut services.choices.selected {
+                    choice.config = config.clone();
+                    services.start(config)
+                } else {
+                    services.apply(config, cx)
+                }
+            })
         });
         let Err(error) = applied else {
             return;
@@ -417,6 +474,7 @@ impl Services {
             return;
         }
         self.show_copies.cancel();
+        self.choices.cancel();
         self.validation = None;
         let started = self.lifecycle.pause();
         announce(
@@ -463,7 +521,9 @@ impl Services {
             return None;
         }
         self.show_copies.cancel();
+        self.choices.cancel();
         self.show_previews.cancel();
+        self.deliveries.cancel();
         self.validation = None;
         self.requests = None;
         self.visibility = None;
@@ -478,10 +538,12 @@ impl Services {
         let edited = self.show_edits.drained();
         let copied = self.show_copies.drained();
         let previewed = self.show_previews.drained();
+        let delivered = self.deliveries.drained();
         Some(async move {
             edited.await;
             copied.await;
             previewed.await;
+            delivered.await;
             if let Some(stopped) = stopped {
                 stopped.await;
             }

@@ -80,12 +80,11 @@ fn deliver(request: &Insertion) -> anyhow::Result<Inserted> {
 }
 
 const CLIPBOARD_CHANGED: Inserted = Inserted::Unavailable(
-    "The clipboard changed, so the paste was not sent and its new contents were kept. Dictate again.",
+    "The clipboard changed, so the paste was not sent and its new contents were kept.",
 );
 
-const CLIPBOARD_CHANGED_BEFORE_PASTE: Inserted = Inserted::Unavailable(
-    "The clipboard changed before pasting, and its new contents were kept. Dictate again.",
-);
+const CLIPBOARD_CHANGED_BEFORE_PASTE: Inserted =
+    Inserted::Unavailable("The clipboard changed before pasting, and its new contents were kept.");
 
 pub(crate) trait NativeInsert {
     type Mark: PartialEq;

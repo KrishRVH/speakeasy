@@ -13,7 +13,7 @@ fn punctuation_separates_words_and_apostrophes_join_them() {
         (Case::Constant, "DONT_STOP_APIS_NOW"),
     ] {
         assert_eq!(Style::Identifier(case).apply(text.into()), expected);
-        assert!(Style::Identifier(case).apply("—’''_ \n🙂".into()).is_empty());
+        assert_eq!(Style::Identifier(case).apply("—’''_ \n🙂".into()), "");
     }
 }
 
@@ -97,13 +97,13 @@ proptest! {
             let output = style.apply(text.clone());
             prop_assert!(output.chars().all(|character| {
                 character.is_alphanumeric() || Some(character) == separator
-            }));
+            }), "identifier alphabet");
             if let Some(separator) = separator {
                 prop_assert!(!output.starts_with(separator));
                 prop_assert!(!output.ends_with(separator));
                 prop_assert!(!output.chars().zip(output.chars().skip(1)).any(|(left, right)| {
                     left == separator && right == separator
-                }));
+                }), "adjacent separators");
                 prop_assert_eq!(style.apply(output.clone()), output);
             }
         }

@@ -393,7 +393,7 @@ const fn text_remedy(blocked: TextBlocked) -> Inserted {
             "This desktop does not support direct text input. Choose Insert: Paste in Settings."
         },
         TextBlocked::Paused => {
-            "Direct text input is paused on this desktop. Dictate again, or choose Insert: Paste in Settings."
+            "Direct text input is paused on this desktop. Choose Insert: Paste in Settings."
         },
         TextBlocked::NullCharacter => {
             "Direct input cannot contain a null character. Choose Insert: Paste in Settings."
@@ -402,7 +402,7 @@ const fn text_remedy(blocked: TextBlocked) -> Inserted {
 }
 
 const SELECTION_LOST: Inserted = Inserted::Unavailable(
-    "The clipboard changed or could not be confirmed before pasting. Dictate again, or choose Insert: Copy for manual paste in Settings.",
+    "The clipboard changed or could not be confirmed before pasting. Choose Insert: Copy for manual paste in Settings.",
 );
 
 fn finish_paste(

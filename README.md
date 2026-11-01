@@ -3,7 +3,7 @@
 <p align="center">
   <strong>Private dictation for Windows, macOS, and Linux.</strong><br>
   Hold a shortcut, speak, and your words appear wherever you are typing.<br>
-  Local speech engines. No account, no upload, no dictation history.
+  Local speech engines. No account, no automatic upload, no dictation history.
 </p>
 
 <p align="center">
@@ -19,7 +19,7 @@
 
 A speakeasy was a room behind an ordinary door. You spoke at a small slot, the door opened, and what
 was said inside stayed inside. Speakeasy works the same way: it waits in the tray, opens a small
-slot on screen while you speak, and keeps every word on your machine.
+slot on screen while you speak, and recognizes every word on your machine.
 
 <p align="center">
   <img src="docs/assets/pill.png"
@@ -32,12 +32,13 @@ slot on screen while you speak, and keeps every word on your machine.
 | Dictate while held; release to type              | <kbd>Ctrl</kbd> + <kbd>Win</kbd>                            | <kbd>Fn</kbd>                                               |
 | Hands-free; press the shortcut again to finish   | <kbd>Ctrl</kbd> + <kbd>Win</kbd> + <kbd>Space</kbd>         | <kbd>Fn</kbd> + <kbd>Space</kbd>                            |
 | Cancel dictation; the key still reaches your app | <kbd>Escape</kbd>                                           | <kbd>Escape</kbd>                                           |
+| Paste the last dictation                         | <kbd>V</kbd> during the hold                                | <kbd>V</kbd> during the hold                                |
 | Show the screen, a window, or an area; see below | <kbd>S</kbd>, <kbd>W</kbd>, or <kbd>A</kbd> during the hold | <kbd>S</kbd>, <kbd>W</kbd>, or <kbd>A</kbd> during the hold |
 
 The shortcuts match Wispr Flow's defaults, and double-tapping the shortcut also starts hands-free.
 On Mac, Settings offers Fn, Right Option, or Right Command. With either right modifier, hold it for
-a quarter-second before adding Space, S, W, or A; quick combinations keep their usual action. Left
-Option and Left Command remain ordinary modifiers.
+a quarter-second before adding Space, S, W, A, or V; quick combinations keep their usual action.
+Left Option and Left Command remain ordinary modifiers.
 
 For Fn, set **System Settings › Keyboard › Press 🌐 key to** to **Do Nothing** so Fn only dictates.
 **Remove um / uh** removes standalone English hesitation words locally when English is selected.
@@ -45,6 +46,19 @@ Automatic and other languages preserve words. For Parakeet, choose **Cleanup lan
 speech recognition still detects the language automatically. New installations start with Automatic.
 Turn the switch off for literal English transcription. Speech containing only removed fillers sends
 nothing.
+
+**Paste last dictation** in the tray, or V during the shortcut hold on Windows and Mac, inserts
+exactly the last completed text again. It can recover text when insertion failed. Speakeasy keeps
+one result in memory, clears it when dictation pauses or restarts or the app quits, and never writes
+ordinary dictation to disk. Each request has fresh cancellation authority; it cannot retract text
+already delivered.
+
+Choose **Dictation style** in the Windows/Mac tray, or use `speakeasy style STYLE`. **Prose** uses
+your filler setting; **Verbatim** preserves fillers. Both still apply phrase corrections. The other
+styles produce `camelCase`, `PascalCase`, `snake_case`, `kebab-case`, or `CONSTANT_CASE` locally.
+They join recognized words without rewriting their meaning. The non-Prose choice appears in the
+pill. A style change applies to the next recording, survives Pause, and resets to Prose when the app
+restarts. Shows keep ordinary narration regardless of the selected dictation style.
 
 ### Reading the pill
 
@@ -350,6 +364,50 @@ cannot read this value.
 Manifests are limited to 16 MiB and summaries to 1 MiB. Only format 2 is read; unknown fields are
 ignored.
 
+For MCP clients, run `speakeasy show mcp --setup` to print Claude Code, Codex, and generic setup
+snippets. The stdio server requires explicit `--root PATH` arguments: each root is one saved Show or
+a folder containing Shows. `show_list`, `show_read`, and `show_image` expose only those roots;
+requests cannot add folders. Tools can read the edited summary, bounded narration, saved images, and
+retained source frames by time, mark, or phrase. They report actual sample times and gaps. They do
+not expose ordinary dictation or export video. Requested content reaches the calling agent and may
+reach its model provider. Setup prints configuration without changing client settings.
+
+**Send to OpenCode** in Shows lists sessions from an already-running local OpenCode V2 service.
+Choose the exact session after checking its project and ID. The handoff includes the edited summary
+and every contact sheet, or refuses if the complete request exceeds 12 MiB; it excludes audio and
+movies. The selected agent and its model provider may receive this content. **Queued** confirms that
+session accepted the message, not that the agent finished. If delivery is uncertain, inspect the
+session before sending again. Closing the view cancels preparation; a submitted request still drains
+during Quit. No service is started and no session is selected automatically.
+
+The equivalent explicit terminal workflow is:
+
+```sh
+speakeasy show sessions --json
+speakeasy show send "SHOW_ID_OR_PATH" --session "SESSION_ID" --json
+```
+
+Scripts can control a running desktop app without reading dictation text:
+
+```sh
+speakeasy status
+speakeasy dictation start --style snake
+speakeasy dictation stop "TOKEN_FROM_START"
+speakeasy dictation cancel "TOKEN_FROM_START"
+speakeasy paste-last
+speakeasy style prose
+speakeasy preset "Coding"
+```
+
+Each command accepts `--config PATH` for that app instance and returns JSON. Exit 0 means the owner
+acknowledged the action, 1 means refused, and 2 means unavailable or uncertain; an acknowledgement
+does not prove transcription or insertion completed. Start creates a hands-free ordinary dictation;
+stop and cancel require its exact session token, which expires with that session or app restart.
+Busy starts, stale tokens, and commands targeting Shows or private practice are refused. Read status
+after an uncertain result instead of blindly retrying. `style` changes the next-recording default;
+`dictation start --style` overrides only that recording. These explicit commands work on all three
+platforms; Linux's legacy `--toggle` and `--cancel` still require Desktop bindings.
+
 `show skill` prints the [agent reading guide](skills/speakeasy-show/SKILL.md) embedded in the
 installed binary. Save it as `SKILL.md` in a skill folder your agent loads. It explains the reading
 order, numbered references, private-file handling, and source-frame retrieval. `frames` reports
@@ -380,7 +438,7 @@ deletions on its next pass.
 ## What's said here stays here
 
 - Speech runs in a local NeMo-Speech.cpp or whisper.cpp process that Speakeasy owns and stops. Setup
-  downloads the engine and model once; nothing is uploaded.
+  downloads the engine and model once; recognition uploads nothing.
 - The microphone opens only while you dictate. Audio, transcripts, and engine output are never
   logged.
 - The screen is recorded only during a Show you start, and Speakeasy's own windows stay out of it. A
@@ -396,7 +454,8 @@ deletions on its next pass.
 - Windows clipboard history and cloud clipboard skip what Speakeasy puts on the clipboard, pasted
   dictation and Show summaries alike, as do Universal Clipboard and Mac clipboard managers that
   honor transient data.
-- There are no accounts, cloud providers, telemetry, or dictation history.
+- There are no accounts, telemetry, or dictation history. Explicit MCP requests and OpenCode
+  handoffs share the requested Show evidence with the chosen agent and possibly its model provider.
 
 ## Get started
 
@@ -415,7 +474,8 @@ not change your PATH. Add its folder yourself if you want to run `speakeasy-cli`
 
 Keep the Windows package together: `speakeasy.exe` opens the app, and `speakeasy-cli.exe` runs Show
 commands from a terminal or agent, returning output and exit status to the caller. The CLI accepts
-`show`, `--version`, and `--help`; launching it without arguments prints help.
+`show`, `status`, `dictation`, `paste-last`, `style`, `preset`, `--version`, and `--help`; launching
+it without arguments prints help.
 
 On a Mac, allow Microphone and Accessibility access when asked, and Screen & System Audio Recording
 for Shows. If macOS says it cannot verify Speakeasy, open **System Settings › Privacy & Security**
@@ -639,6 +699,12 @@ applies it through the normal settings flow. Finish or cancel unfinished edits b
 Both take effect on disk when you save. Up to 16 presets are stored locally in `presets`, with
 distinct names of up to 48 characters. An unavailable model can remain in a saved preset; loading it
 requires choosing valid files before the settings can apply.
+
+**Use saved** applies an already-saved preset immediately while idle, preserving the Settings draft.
+The Windows/Mac tray's **Preset** menu and `speakeasy preset "NAME"` do the same. The selected
+preset survives Pause but resets on restart or a saved dictation-settings change. Model choices
+reload the engine only when needed; text-only choices reuse it. An unavailable preset leaves the
+current configuration intact.
 
 Changes apply when you save. Preset-library, theme, reduced-motion, and Start at login changes keep
 a recording running; microphone, language, filler removal, recognition hints, phrase correction,

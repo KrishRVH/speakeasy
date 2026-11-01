@@ -132,6 +132,12 @@ included, until Quit begins or either finds that Show gone. Errors remain access
 after the pill's notice expires, including while there are unsaved edits: its commands and status
 line stay in view below the scrolling controls.
 
+Paste last dictation is available between sessions when one result remains in memory. V during an
+ordinary Windows/macOS hold abandons that pending recording and pastes the previous result; repeated
+keydown events do not repeat insertion. Windows/macOS also offer Style and saved Preset submenus.
+Style selects the next recording and appears in the pill when non-Prose. Preset choices require idle
+dictation and leave unsaved Settings edits intact.
+
 ## Reviewing Shows
 
 Shows… follows Open last Show in the Windows/macOS tray. Settings offers Shows on every platform. It
@@ -153,6 +159,12 @@ changes the session's last Show. A missing frame keeps its numbered position and
 manifest can still show a readable summary. The summary pane displays at most 64 KiB; Copy summary
 includes the complete file within the reader's limit.
 
+Send to OpenCode opens an explicit session chooser with project, ID, and activity time. Its notice
+states that the edited summary and all contact sheets reach that agent and possibly its model
+provider. The user chooses a session; discovery never chooses one. Selection changes close the
+chooser and ignore old receipts. Queued confirms acceptance only. Closing a sending view says the
+message may already be queued and asks the user to check before sending again.
+
 Interrupted Shows offer Recover Show and confirmed Discard. Recovery uses the current local engine
 and original language, saves a new bundle, and leaves the clipboard alone. Narration pending offers
 Transcribe narration and Discard audio. Retry saves a narrated copy; its earlier bundle and edits
@@ -168,11 +180,11 @@ original seven-day schedule even when the saved bundle is kept.
 - Linux holds Ctrl+Super+Space or double-taps it for hands-free; its accepted binding is shown in
   Settings. Desktop command bindings start/finish hands-free.
 - On Windows/macOS, the shortcut's modifiers are observed, never swallowed. Only the Space that
-  locks hands-free and the S, W, or A that starts a Show are withheld from the focused app. Shift
-  stays passive so a Show can draw and pin with it, and another app's double Shift still works; any
-  other key during a hold belongs to a different shortcut, so it interrupts the recording, and the
-  shortcut waits for release. On Windows, an unassigned mask key keeps the released Win key from
-  opening Start.
+  locks hands-free, V that pastes the last dictation, and S, W, or A that starts a Show are withheld
+  from the focused app. Shift stays passive so a Show can draw and pin with it, and another app's
+  double Shift still works; any other key during a hold belongs to a different shortcut, so it
+  interrupts the recording, and the shortcut waits for release. On Windows, an unassigned mask key
+  keeps the released Win key from opening Start.
 - During a Windows/macOS hold, S, W, or A turns the recording into a Show, hands-free and keeping
   the narration since the press; pressing the shortcut again finishes it on release. The pill table
   shows what the pill presents. S records the display under the pointer and W the window under it,

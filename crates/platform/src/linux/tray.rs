@@ -30,6 +30,7 @@ pub enum TrayAction {
     Pause,
     Toggle,
     Cancel,
+    PasteLast,
     Quit,
 }
 
@@ -202,6 +203,7 @@ enum MenuEntry {
     Settings = 4,
     Quit = 5,
     Status = 6,
+    PasteLast = 7,
 }
 
 impl MenuEntry {
@@ -214,6 +216,7 @@ impl MenuEntry {
             Self::Pause => Some(TrayAction::Pause),
             Self::Toggle => Some(TrayAction::Toggle),
             Self::Cancel => Some(TrayAction::Cancel),
+            Self::PasteLast => Some(TrayAction::PasteLast),
             Self::Settings => Some(TrayAction::Settings),
             Self::Quit => Some(TrayAction::Quit),
             Self::Status => None,
@@ -389,6 +392,7 @@ fn menu_items(presentation: TrayPresentation) -> Vec<MenuItem> {
         item(MenuEntry::Pause, menu.pause),
         item(MenuEntry::Toggle, menu.toggle),
         item(MenuEntry::Cancel, menu.cancel),
+        item(MenuEntry::PasteLast, menu.paste_last),
         MenuItem {
             entry: MenuEntry::Settings,
             label: "Settings…".into(),

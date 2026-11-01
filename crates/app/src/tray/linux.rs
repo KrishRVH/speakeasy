@@ -55,6 +55,7 @@ fn handle(action: TrayAction, cx: &mut App) {
         TrayAction::Pause => TrayCommand::Pause.run(cx),
         TrayAction::Toggle => TrayCommand::Toggle.run(cx),
         TrayAction::Cancel => TrayCommand::Cancel.run(cx),
+        TrayAction::PasteLast => TrayCommand::PasteLast.run(cx),
         TrayAction::Quit => TrayCommand::Quit.run(cx),
     }
 }

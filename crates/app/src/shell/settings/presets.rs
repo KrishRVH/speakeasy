@@ -48,6 +48,7 @@ enum Edit {
     Capture,
     Cancel,
     Load(SharedString),
+    Use(SharedString),
     Replace(SharedString),
     Remove(SharedString),
 }
@@ -144,6 +145,7 @@ impl Settings {
             return;
         }
         match action {
+            Edit::Use(name) => Services::select_preset(name.to_string(), cx),
             Edit::Capture => {
                 self.capture_preset(None, cx);
             },
@@ -193,7 +195,7 @@ impl Settings {
         let busy = self.presets_busy();
         let button = |id: SharedString, label: &'static str, action: Edit| {
             let accessible: SharedString = match &action {
-                Edit::Load(name) | Edit::Replace(name) | Edit::Remove(name) => {
+                Edit::Load(name) | Edit::Use(name) | Edit::Replace(name) | Edit::Remove(name) => {
                     format!("{label} preset {name}").into()
                 },
                 _ => label.into(),
@@ -220,7 +222,10 @@ impl Settings {
         };
         div().flex().flex_col().gap(px(8.0))
             .child("Dictation presets")
-            .child(div().text_color(rgb(palette.muted)).child("Keep named models, languages, hints and corrections. Load a preset, then Save changes to apply it."))
+            .when_some(cx.global::<Services>().preset_name(), |section, name| {
+                section.child(format!("Using preset {name} until dictation settings change or you restart."))
+            })
+            .child(div().text_color(rgb(palette.muted)).child("Keep named models, languages, hints and corrections. Use saved applies a saved preset while idle; Load edits the draft."))
             .child(div().flex().gap(px(8.0))
                 .child(div().flex_1().min_w(px(0.0)).child(self.presets.name.clone()))
                 .child(button("preset-capture".into(), "Store current", Edit::Capture))
@@ -232,6 +237,9 @@ impl Settings {
                         .child(preset.name().to_owned())
                         .child(div().text_color(rgb(palette.muted)).child(preset.description()))
                         .child(div().flex().flex_wrap().gap(px(8.0))
+                            .when(cx.global::<Services>().config.presets.iter().any(|saved| saved.name() == name.as_ref()), |row| {
+                                row.child(button(format!("preset-use-{name}").into(), "Use saved", Edit::Use(name.clone())))
+                            })
                             .child(button(format!("preset-load-{name}").into(), "Load", Edit::Load(name.clone())))
                             .child(button(format!("preset-replace-{name}").into(), "Replace from draft", Edit::Replace(name.clone())))
                             .child(button(format!("preset-remove-{name}").into(), "Delete", Edit::Remove(name))))

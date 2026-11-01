@@ -11,29 +11,34 @@ use tokio::{
     sync::mpsc,
     task::{JoinError, JoinHandle},
 };
+use zeroize::Zeroizing;
 
 use super::{
     Phase, PracticeEvent,
     ports::{Footage, Published, Sealed, SessionId},
     recognition::{Detail, Recognition, Request, Ticket, Transcript},
 };
-use crate::show::{
-    AudioLog, Checkpointing, FrameLog, Kept, Origin, Publication, Reopened, SavedShow,
+use crate::{
+    show::{AudioLog, Checkpointing, FrameLog, Kept, Origin, Publication, Reopened, SavedShow},
+    transcript::style::Style,
 };
 
 pub(super) struct Session {
     pub id: SessionId,
     pub permit: InsertPermit,
     pub started: Instant,
-    pub destination: Destination,
+    pub purpose: Purpose,
+    pub style: Style,
+    pub pending_text: Option<Zeroizing<String>>,
     stage: Stage,
     recognition: Recognition,
     show: Option<Show>,
     receipt: Option<async_channel::Sender<Result<SavedShow, String>>>,
 }
 
-pub(super) enum Destination {
-    Focused,
+pub(super) enum Purpose {
+    Dictation,
+    Replay,
     Practice(mpsc::Sender<PracticeEvent>),
 }
 
@@ -118,7 +123,9 @@ impl Session {
             id,
             permit,
             started,
-            destination: Destination::Focused,
+            purpose: Purpose::Dictation,
+            style: Style::Prose,
+            pending_text: None,
             stage: Stage::Queued,
             recognition: Recognition::new(id),
             show: None,
@@ -225,7 +232,7 @@ impl Session {
     }
 
     pub(super) const fn is_practice(&self) -> bool {
-        matches!(self.destination, Destination::Practice(_))
+        matches!(self.purpose, Purpose::Practice(_))
     }
 
     pub(super) const fn is_queued(&self) -> bool {

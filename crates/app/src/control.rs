@@ -97,6 +97,16 @@ impl fmt::Debug for Reply {
 }
 
 impl Reply {
+    pub(crate) const fn accepted() -> Self {
+        Self {
+            v: VERSION,
+            result: Disposition::Ok,
+            reason: None,
+            session: None,
+            status: None,
+        }
+    }
+
     pub(crate) fn ok(status: Status) -> Self {
         Self {
             v: VERSION,
@@ -141,7 +151,8 @@ impl Reply {
     }
 
     pub(super) fn encode(&self) -> Result<Vec<u8>, &'static str> {
-        let bytes = serde_json::to_vec(self).map_err(|_| "Cannot encode the control reply.")?;
+        let bytes =
+            serde_json::to_vec(self).map_err(|_error| "Cannot encode the control reply.")?;
         if bytes.len() > MAX_BYTES {
             return Err("The control reply exceeds its size limit.");
         }
@@ -149,7 +160,8 @@ impl Reply {
     }
 
     pub(super) fn decode(bytes: &[u8]) -> Result<Self, &'static str> {
-        let reply: Self = serde_json::from_slice(bytes).map_err(|_| "Invalid control reply.")?;
+        let reply: Self =
+            serde_json::from_slice(bytes).map_err(|_error| "Invalid control reply.")?;
         if reply.v != VERSION {
             return Err("Unsupported control reply version.");
         }
@@ -161,6 +173,7 @@ pub(crate) struct Call {
     pub command: Command,
     pub reply: Sender<Reply>,
     pub deadline: Instant,
+    caller: Option<Sender<Reply>>,
 }
 
 impl fmt::Debug for Call {
@@ -178,13 +191,26 @@ impl Call {
                 command,
                 reply,
                 deadline: now.checked_add(TIMEOUT).unwrap_or(now),
+                caller: None,
             },
             receipt,
         )
     }
 
     pub(crate) fn is_live(&self) -> bool {
-        !self.reply.is_closed() && Instant::now() < self.deadline
+        !self.reply.is_closed()
+            && self
+                .caller
+                .as_ref()
+                .is_none_or(|caller| !caller.is_closed())
+            && Instant::now() < self.deadline
+    }
+
+    pub(crate) fn forwarded(&self) -> (Self, Receiver<Reply>) {
+        let (mut call, receipt) = Self::new(self.command.clone());
+        call.deadline = self.deadline;
+        call.caller = Some(self.caller.as_ref().unwrap_or(&self.reply).clone());
+        (call, receipt)
     }
 
     pub(crate) fn respond(self, reply: Reply) {
@@ -227,7 +253,7 @@ impl Command {
             v: VERSION,
             command: self,
         })
-        .map_err(|_| "Cannot encode the control command.")?;
+        .map_err(|_error| "Cannot encode the control command.")?;
         if bytes.len() > MAX_BYTES {
             return Err("The control command exceeds its size limit.");
         }
@@ -236,7 +262,7 @@ impl Command {
 
     pub(super) fn decode(bytes: &[u8]) -> Result<Self, &'static str> {
         let request: Incoming =
-            serde_json::from_slice(bytes).map_err(|_| "Invalid control command.")?;
+            serde_json::from_slice(bytes).map_err(|_error| "Invalid control command.")?;
         if request.v != VERSION {
             return Err("Unsupported control version. Restart Speakeasy to use this command.");
         }
@@ -305,7 +331,7 @@ impl Invocation {
                         .context("--config needs the path of a settings file.")?,
                 );
             } else {
-                words.push(argument.into_string().map_err(|_| {
+                words.push(argument.into_string().map_err(|_error| {
                     anyhow::anyhow!("Control command arguments must be Unicode text.")
                 })?);
             }

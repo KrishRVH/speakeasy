@@ -481,7 +481,13 @@ impl Model {
             releases,
         };
         let (meter, _) = watch::channel(Meter::default());
-        let runtime = Runtime::on_task(Config::default(), output, meter, ports)?;
+        let runtime = Runtime::on_task(
+            Config::default(),
+            watch::channel(Style::default()).1,
+            output,
+            meter,
+            ports,
+        )?;
         Ok(Self {
             runtime,
             updates,
