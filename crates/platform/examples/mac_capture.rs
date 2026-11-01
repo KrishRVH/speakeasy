@@ -195,7 +195,7 @@ mod native {
         let mut previous = 0;
         let mut menu_visible = false;
         loop {
-            let phase = (started.elapsed().as_millis() / 200) % 2;
+            let phase = (started.elapsed().as_millis() / 400) % 2;
             if phase != previous {
                 if moving && started.elapsed() >= Duration::from_secs(2) {
                     move_window(&window, phase);
@@ -213,7 +213,7 @@ mod native {
             }
             if let Some(popup) = &popup {
                 let visible = started.elapsed() >= Duration::from_secs(2)
-                    && started.elapsed().as_millis() % 1000 < 100;
+                    && (600..700).contains(&(started.elapsed().as_millis() % 1600));
                 if visible != menu_visible {
                     show_menu(popup, visible);
                     menu_visible = visible;
