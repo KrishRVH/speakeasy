@@ -198,7 +198,7 @@ mod native {
             let phase = (started.elapsed().as_millis() / 400) % 2;
             if phase != previous {
                 if moving && started.elapsed() >= Duration::from_secs(2) {
-                    move_window(&window, phase);
+                    move_window(&window, popup.as_deref(), phase);
                 }
                 window.setBackgroundColor(Some(&color(if phase == 0 {
                     [230, 30, 20]
@@ -223,7 +223,7 @@ mod native {
         }
     }
 
-    fn move_window(window: &NSWindow, phase: u128) {
+    fn move_window(window: &NSWindow, popup: Option<&NSWindow>, phase: u128) {
         let [x, y, width, height] = if phase == 0 {
             [100.0, 100.0, 400.0, 300.0]
         } else {
@@ -233,6 +233,9 @@ mod native {
             NSRect::new(NSPoint::new(x, y), NSSize::new(width, height)),
             true,
         );
+        if let Some(popup) = popup {
+            popup.setFrameOrigin(NSPoint::new(x + width * 0.4, y + height * 0.4));
+        }
     }
 
     #[cfg(feature = "native-acceptance")]
