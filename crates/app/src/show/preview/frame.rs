@@ -41,7 +41,7 @@ pub(super) fn read(request: Request, cancelled: &dyn Fn() -> bool) -> Result<Dec
                 .map_err(|error| format!("Cannot read source frame: {error:#}"))?
                 .image;
             image::RgbaImage::from_raw(image.width(), image.height(), image.into_bgra())
-                .ok_or_else(|| "Source frame dimensions are invalid".to_owned())?
+                .ok_or_else(|| "Cannot read source frame: invalid frame dimensions".to_owned())?
         },
         Content::Video {
             span,

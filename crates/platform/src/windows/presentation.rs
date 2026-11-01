@@ -100,7 +100,6 @@ unsafe extern "system" fn pill_window(
                 RemoveWindowSubclass(hwnd, Some(pill_window), id);
                 DefSubclassProc(hwnd, message, wparam, lparam)
             },
-
             WM_PAINT if IsWindowVisible(hwnd) == FALSE => {
                 let mut paint = PAINTSTRUCT::default();
                 BeginPaint(hwnd, &raw mut paint);
@@ -204,12 +203,10 @@ unsafe extern "system" fn settings_window(
                 drop(Box::from_raw(context as *mut Sender<()>));
                 DefSubclassProc(hwnd, message, wparam, lparam)
             },
-
             WM_SYSCOMMAND if wparam & 0xFFF0 == SC_MINIMIZE as usize => {
                 request_hide(context);
                 0
             },
-
             WM_SIZE if wparam == SIZE_MINIMIZED as usize => {
                 request_hide(context);
                 DefSubclassProc(hwnd, message, wparam, lparam)

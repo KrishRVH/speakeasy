@@ -86,8 +86,6 @@ const fn is_canonical(wav: &[u8]) -> bool {
     #[rustfmt::skip]
     let [
         b'R', b'I', b'F', b'F', r0, r1, r2, r3, b'W', b'A', b'V', b'E',
-
-
         b'f', b'm', b't', b' ', 16, 0, 0, 0, 1, 0, 1, 0,
         0x80, 0xBB, 0, 0, 0x00, 0x77, 0x01, 0, 2, 0, 16, 0,
         b'd', b'a', b't', b'a', d0, d1, d2, d3,

@@ -118,7 +118,6 @@ allow_attributes_without_reason = "forbid"
 # these lints can only recognize inline documentation.
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
-missing_safety_doc = "allow"
 
 # Production code handles failure explicitly. Tests may assert established
 # invariants through the four clippy.toml `allow-*-in-tests` settings.

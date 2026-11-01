@@ -67,7 +67,6 @@ impl<W: Speech> Worker<W> {
                 Ok((worker, Transcription::Heard(transcript))) => {
                     Completion::Transcribed(*ticket, Ok((worker, transcript)))
                 },
-
                 Ok((worker, Transcription::Cancelled)) => Completion::Loaded(Ok(worker)),
                 Ok((worker, Transcription::Abandoned)) => Completion::Abandoned(*ticket, worker),
                 Err(error) => Completion::Transcribed(*ticket, Err(error)),

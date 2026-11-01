@@ -82,7 +82,6 @@ impl Pill {
             Content::Error => self
                 .render_message(palette.warn, scene.footer(), palette)
                 .into_any_element(),
-
             Content::Notice => self
                 .render_message(palette.muted, scene.footer(), palette)
                 .into_any_element(),

@@ -71,8 +71,12 @@ evidence.
 
 ## Linux desktop and transfer ownership
 
-Owners: `crates/platform/src/linux/ei.rs`, `linux/portal.rs`, `linux/portal/insertion.rs`,
-`linux/portal/transfer.rs`, `linux/x11/clipboard.rs`, `linux/x11/paste.rs`.
+Owners: `crates/platform/src/linux.rs`, `linux/ei.rs`, `linux/portal.rs`,
+`linux/portal/insertion.rs`, `linux/portal/transfer.rs`, `linux/x11/clipboard.rs`,
+`linux/x11/paste.rs`.
+
+`linux::watch_readable` gives readiness registration its own duplicated descriptor, owned for the
+entire `AsyncFd` lifetime. Both the libei and X11 adapters use this registration.
 
 The libei function pointers use the declared C ABI, including integer-zero termination of variadic
 capability lists. `RTLD_NODELETE` keeps copied pointers valid after the library handle drops.
@@ -116,7 +120,8 @@ plus content checks bound clipboard replacement races.
 
 Owners: `crates/platform/src/screen.rs`, `screen/geometry.rs`, `windows/screen.rs`,
 `windows/screen/exclusion.rs`, `windows/screen/readback.rs`, `macos/screen.rs`,
-`macos/screen/stream.rs`, `macos/screen/stream/output.rs`.
+`macos/screen/stream.rs`, `macos/screen/stream/output.rs`; owned-window checks in
+`windows/screen/acceptance.rs` and `windows/screen/acceptance/geometry.rs`.
 
 Windows capture runs on one owner thread with a free-threaded frame pool. The process-lifetime MTA
 usage reference is intentional because cached WinRT activation factories outlive individual
@@ -142,6 +147,12 @@ stop errors do not. Failure notification precedes potentially blocking cleanup. 
 borrowed only during the call; copied bounded BGRA leaves the callback. Native image buffers stay
 locked through reads. The stream's bounded host-clock calibration and display-geometry checks
 precede frame admission.
+
+Owned-window acceptance creates and destroys its window classes and HWNDs on their owning thread.
+Monitor enumeration writes only to the local vector that remains live throughout the synchronous
+`EnumDisplayMonitors` call. The rescaling test window procedure casts `lparam` only for the
+corresponding `WM_NCCALCSIZE` or `WM_DPICHANGED` message and uses its buffer only during that
+callback.
 
 ## Shared movie presentation and checkpoint lease
 

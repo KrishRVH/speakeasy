@@ -73,7 +73,6 @@ fn dictation_menu(
                 ServiceState::Quitting => "Quitting…",
                 ServiceState::Paused | ServiceState::NotSetUp => "Resume dictation",
             },
-
             enabled: interactive && matches!(service, ServiceState::Running | ServiceState::Paused),
         },
         toggle: TrayItem {
@@ -93,7 +92,6 @@ fn dictation_menu(
                 Activity::Showing | Activity::Saving => "Cancel Show",
                 Activity::Idle | Activity::Dictating | Activity::Finishing => "Cancel dictation",
             },
-
             enabled: interactive
                 && running
                 && matches!(
@@ -187,7 +185,6 @@ fn activity(snapshot: &Snapshot) -> Activity {
     match (snapshot.phase, snapshot.show) {
         (Phase::Starting | Phase::Recording, false) => Activity::Dictating,
         (Phase::Stopping | Phase::Processing, false) => Activity::Finishing,
-
         (Phase::Starting | Phase::Recording, true) if snapshot.hands_free => Activity::Showing,
         (Phase::Starting | Phase::Recording | Phase::Stopping | Phase::Processing, true) => {
             Activity::Saving

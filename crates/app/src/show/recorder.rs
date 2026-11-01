@@ -349,16 +349,12 @@ impl<'a> Take<'a> {
                         Err(_) => (Ending::ScreenStopped, anyhow!(CAPTURE_STOPPED)),
                     };
 
-
-
                     break Some(if self.state.journal().is_empty() {
                         Err(failure)
                     } else {
                         Ok((runtime::now(), ending))
                     });
                 },
-
-
                 Ok(sample) = samples.recv() => {
                     if let Err(error) = self.pointer(sample) {
                         break Some(Err(error));

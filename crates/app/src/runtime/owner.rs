@@ -323,7 +323,6 @@ impl<P: Ports> Owner<P> {
             () = practice_closed => Wake::EndPractice,
             Ok(practice) = self.practices.recv() => Wake::Practice(practice),
             input = self.inputs.recv() => Wake::Input(input),
-
             report = self.reports.recv() => report.map_or(Wake::Stop, Wake::Report),
             change = self.changes.changed() => change.map_or(Wake::Stop, |()| Wake::Configuration),
             Ok(event) = self.captures.recv() => Wake::Capture(event),
@@ -1129,7 +1128,6 @@ impl<P: Ports> Owner<P> {
             reported: self.reported,
             phase: session.map_or_else(|| self.outcome.phase(), Session::phase),
             hands_free: self.gesture.state() == State::HandsFree,
-
             show: self.latest.show || matches!(self.outcome, Outcome::ShowCopied { .. }),
             ending,
             narration_lost,

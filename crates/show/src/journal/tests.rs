@@ -205,13 +205,11 @@ proptest! {
     fn a_budget_thins_frames_and_their_samples_together(
         arrivals in prop::collection::vec((-300_i64..=300, 0_u8..4, small()), 1..48),
     ) {
-
         const BUDGET: usize = 1_500;
         let mut journal = Journal::with_budget(BUDGET);
         let (mut shade, mut millis) = ([0_u8; 4], 0_u64);
         let (mut first, mut last) = (None, None);
         for (delta, quadrant, small) in arrivals {
-
             millis = millis.saturating_add_signed(delta);
             if let Some(value) = shade.get_mut(usize::from(quadrant)) {
                 *value = value.wrapping_add(40);

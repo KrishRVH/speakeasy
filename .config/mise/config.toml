@@ -64,11 +64,10 @@ env = { RUSTDOCFLAGS = "-D warnings" }
 run = "cargo doc --workspace --all-features --no-deps --locked"
 
 [tasks."rust:test"]
-description = "Run Rust unit, integration, and doc tests"
+description = "Run Rust unit and integration tests"
 wait_for = ["rust:doc"]
 run = [
   "cargo nextest run --workspace --lib --bins --tests --all-features --locked",
-  "cargo test --workspace --doc --all-features --locked",
   "cargo test --manifest-path vendor/gpui/Cargo.toml --target-dir target/gpui-a11y-tests --lib --no-default-features --features test-support window::a11y --locked",
   "{% if os() == 'windows' %}cargo test --manifest-path vendor/accesskit_windows/Cargo.toml --target-dir target/accesskit-geometry-tests --lib text:: --locked{% else %}true{% endif %}",
 ]

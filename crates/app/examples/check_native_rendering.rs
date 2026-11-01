@@ -185,7 +185,6 @@ fn paint_diamond(bounds: Bounds<Pixels>, window: &mut Window) {
 
 #[cfg(target_os = "linux")]
 mod linux {
-
     use std::time::Instant;
 
     use anyhow::{Context as _, anyhow, bail, ensure};

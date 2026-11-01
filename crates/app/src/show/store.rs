@@ -253,7 +253,6 @@ pub(super) fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
             },
             Ok(Cleanup::Keep) => {},
             Ok(Cleanup::Blocked) => stuck = true,
-
             Err(error) if error.kind() == ErrorKind::NotFound => {},
             Err(error) => {
                 unchecked.get_or_insert(error);

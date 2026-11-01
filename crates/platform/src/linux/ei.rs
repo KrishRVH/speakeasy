@@ -48,17 +48,9 @@ type TextInput = unsafe extern "C" fn(*mut EiDevice, *const u8, usize);
 
 macro_rules! api {
     ($($name:ident: $kind:ty),+ $(,)?) => {
-
         pub(super) struct Api { $($name: $kind,)+ text_utf8: Option<TextInput> }
         impl Api {
-
-
-
-
             pub(super) fn load() -> anyhow::Result<Self> {
-
-
-
                 unsafe {
                     let library = Library::open(
                         Some("libei.so.1"),

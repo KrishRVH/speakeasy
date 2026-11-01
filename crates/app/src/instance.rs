@@ -69,7 +69,6 @@ impl Instance {
         match lock.try_lock() {
             Ok(()) => {},
             Err(fs::TryLockError::WouldBlock) => return reveal_running(path).map(|()| None),
-
             Err(fs::TryLockError::Error(error)) => {
                 return Err(error).with_context(|| format!("Cannot lock {}", lock_file.display()));
             },

@@ -458,7 +458,6 @@ impl Settings {
                     ));
                 }
             },
-
             Some(Err(error)) => self.notice = Some(Notice::Problem(error.to_string().into())),
             None => {
                 self.notice = Some(Notice::Problem(

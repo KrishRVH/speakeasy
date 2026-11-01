@@ -44,7 +44,6 @@ impl Theme {
             },
             Self::Emerald => &Palette {
                 room: 0x07_12_0F,
-
                 door: 0x000C_1A16,
                 panel: 0x0F_1F_1A,
                 raise: 0x18_30_28,

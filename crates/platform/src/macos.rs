@@ -305,8 +305,6 @@ fn shortcut_tap<'tap>(
                 CGEventType::FlagsChanged,
             ],
             move |_, kind, event| {
-
-
                 panic::catch_unwind(AssertUnwindSafe(|| {
                     observe(input, &mut policy.lock(), policy.shortcut, port, kind, event)
                 }))

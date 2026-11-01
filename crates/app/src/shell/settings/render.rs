@@ -580,7 +580,6 @@ impl Settings {
             .flex_col()
             .gap(ROW_GAP)
             .child(
-
                 ui.button(label, Action::Language)
                     .track_focus(&self.language.button)
                     .on_click(|_, _, cx| cx.stop_propagation()),
@@ -760,7 +759,6 @@ fn primary_command(
             Some(("Save and resume", Action::Save))
         },
         ServiceState::Paused => Some(("Resume dictation", Action::Resume)),
-
         ServiceState::Pausing | ServiceState::Quitting => None,
     }
 }

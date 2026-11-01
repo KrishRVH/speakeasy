@@ -374,7 +374,6 @@ impl Render for Overlay {
         let opacity = sheet.opacity(now);
         self.wake = match sheet.next_frame(now) {
             Redraw::OnChange => None,
-
             Redraw::After(delay) => Some(cx.spawn(async move |this, cx| {
                 Timer::after(delay).await;
                 this.update_if_alive(cx, |_, cx| cx.notify());

@@ -73,7 +73,6 @@ impl InsertionWorker {
                     Ok(Err(error)) => input.fail(format!(
                         "X11 input is unavailable: {error}. Check your desktop connection, then resume dictation."
                     )),
-
                     Err(_) => input.fail(
                         "X11 input stopped unexpectedly. Resume dictation to reconnect.".into(),
                     ),

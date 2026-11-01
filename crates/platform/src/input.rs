@@ -174,6 +174,8 @@ impl InsertPermit {
 )]
 struct Gate(Arc<AtomicU64>);
 
+const _: () = assert!(Gate::STATE == (Gate::AUTHORIZED | Gate::REVOKED | Gate::SHIELDED));
+
 impl Gate {
     const AUTHORIZED: u64 = 1;
     const GENERATION_STEP: u64 = 1 << Self::STATE_BITS;

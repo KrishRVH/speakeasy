@@ -268,7 +268,6 @@ impl Departure {
             Self::Hide => unsafe {
                 ShowWindow(hwnd, SW_HIDE);
             },
-
             Self::Minimize => unsafe {
                 ShowWindow(hwnd, SW_SHOWMINNOACTIVE);
             },
@@ -285,7 +284,6 @@ impl Departure {
                 })
                 .ok()?;
             },
-
             Self::MoveAway => ok_or_last_error(unsafe {
                 SetWindowPos(
                     hwnd,
@@ -500,7 +498,6 @@ unsafe extern "system" fn rescale_like_gpui(
             };
             0
         },
-
         _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
     }
 }
@@ -929,7 +926,6 @@ impl Class {
     fn register(name: PCWSTR, procedure: WNDPROC, background: HBRUSH) -> anyhow::Result<Self> {
         let class = WNDCLASSW {
             lpfnWndProc: procedure,
-
             hInstance: unsafe { GetModuleHandleW(null()) },
             hbrBackground: background,
             lpszClassName: name,
@@ -1006,7 +1002,6 @@ unsafe extern "system" fn paint_pattern(
         bmiHeader: BITMAPINFOHEADER {
             biSize: HEADER_SIZE,
             biWidth: PATTERN_WIDTH,
-
             biHeight: -PATTERN_HEIGHT,
             biPlanes: 1,
             biBitCount: 32,

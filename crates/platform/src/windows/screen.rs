@@ -448,7 +448,7 @@ struct Capture {
 }
 
 struct PendingFrame {
-    native: Direct3D11CaptureFrame,
+    frame: Direct3D11CaptureFrame,
     at: Instant,
     part: Part,
 }
@@ -548,7 +548,7 @@ impl Capture {
         }
         let part = self.follow()?;
         self.pending = Some(PendingFrame {
-            native: frame,
+            frame,
             at: captured,
             part,
         });
@@ -558,7 +558,6 @@ impl Capture {
     fn next_frame(&self) -> Result<Option<Direct3D11CaptureFrame>, Failure> {
         match self.pool.TryGetNextFrame() {
             Ok(frame) => Ok(Some(frame)),
-
             Err(error) if error.code().is_ok() => Ok(None),
             Err(error) => Err(error.into()),
         }
@@ -569,12 +568,7 @@ impl Capture {
     }
 
     fn read_pending(&mut self) -> Result<Option<Frame>, Failure> {
-        let Some(PendingFrame {
-            native: frame,
-            at,
-            part,
-        }) = self.pending.take()
-        else {
+        let Some(PendingFrame { frame, at, part }) = self.pending.take() else {
             return Ok(None);
         };
         if self.follow()? != part {

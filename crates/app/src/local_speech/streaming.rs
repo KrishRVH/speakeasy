@@ -99,7 +99,6 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
                         return Ok(None);
                     };
 
-
                     for chunk in tail.chunks(chunk_size) {
                         send(socket, Message::Binary(chunk.to_vec().into())).await?;
                     }
@@ -137,7 +136,6 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
                                 final_seen = true;
                             },
                             "input_audio_buffer.committed" => {
-
                                 ensure!(committed && final_seen, FAILED);
                                 return Ok(Some(mem::take(&mut *text)));
                             },

@@ -531,7 +531,6 @@ impl Mac {
                 let pinned = self.taps.shift(held.shift, held.other_shortcut, at);
                 Decision::pass(pinned.map(Action::Pin))
             },
-
             MacEvent::FlagsChanged { code, held } if Self::SHORTCUT_MODIFIERS.contains(&code) => {
                 self.taps.interrupt();
                 self.chord.other_key(held.other_shortcut)
@@ -544,7 +543,6 @@ impl Mac {
                 self.taps.interrupt();
                 match code {
                     Self::ESCAPE => Decision::pass(down.then_some(Action::Escape)),
-
                     Self::SPACE | Self::SCREEN | Self::WINDOW | Self::AREA
                         if down
                             && self.shortcut != crate::MacShortcut::Function

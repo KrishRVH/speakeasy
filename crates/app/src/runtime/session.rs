@@ -49,11 +49,6 @@ struct Show {
 }
 
 impl Show {
-    fn close_producers(&mut self) {
-        self.audio = None;
-        self.frames = None;
-    }
-
     const fn new(screen: Screen) -> Self {
         Self {
             screen,
@@ -65,6 +60,11 @@ impl Show {
             origin: Origin::Live,
             incomplete: false,
         }
+    }
+
+    fn close_producers(&mut self) {
+        self.audio = None;
+        self.frames = None;
     }
 }
 

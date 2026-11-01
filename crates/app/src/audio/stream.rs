@@ -132,7 +132,6 @@ fn handle_stream_error(error: cpal::Error, errors: &Sender<cpal::Error>, control
 fn is_recoverable(kind: cpal::ErrorKind, first_sample_queued: bool) -> bool {
     match kind {
         cpal::ErrorKind::Xrun => !first_sample_queued,
-
         cpal::ErrorKind::RealtimeDenied | cpal::ErrorKind::DeviceChanged => true,
         _ => false,
     }
