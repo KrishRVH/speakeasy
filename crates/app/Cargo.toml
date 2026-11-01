@@ -20,6 +20,7 @@ speakeasy-platform = { path = "../platform" }
 speakeasy-show = { path = "../show" }
 anyhow.workspace = true
 async-channel.workspace = true
+base64.workspace = true
 cpal.workspace = true
 crc32fast.workspace = true
 getrandom.workspace = true

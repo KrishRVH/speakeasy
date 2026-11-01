@@ -5057,6 +5057,7 @@ version = "0.7.0"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
+ "base64 0.23.1",
  "cpal",
  "crc32fast",
  "embed-resource",
