@@ -55,6 +55,8 @@ pub enum Reason {
     Cue,
     /// Nothing else stood out, so it shows the screen midway through.
     Middle,
+    /// Narration began over it, before the screen first changed.
+    Opening,
 }
 
 /// A frame chosen to show, with what happened on it and what was said.
@@ -135,12 +137,13 @@ pub struct Selection {
 ///
 /// Marks come first: every group of ink drawn on one screen gets a keyframe. Clicks, scene
 /// changes, and spoken cues such as "look here" add keyframes anywhere in the recording, and its
-/// last screen gets one unless the latest keyframe already shows it. A click's or cue's keyframe
-/// waits for the change it started or pointed at to settle, unless the screen is still changing
-/// two seconds on. While ink is drawn and just after, another keyframe is chosen only where the
-/// screen differs from the mark's, and the nearest mark's keyframe reports the last click or drag
-/// then without a keyframe of its own. A cue never repeats a screen already chosen, so talking
-/// over a still screen yields one frame.
+/// last screen gets one unless the latest keyframe already shows it. So does the screen before
+/// the first keyframe when it differs and whole clauses were said over it. A click's or cue's
+/// keyframe waits for the change it started or pointed at to settle, unless the screen is still
+/// changing two seconds on. While ink is drawn and just after, another keyframe is chosen only
+/// where the screen differs from the mark's, and the nearest mark's keyframe reports the last
+/// click or drag then without a keyframe of its own. A cue never repeats a screen already chosen,
+/// so talking over a still screen yields one frame.
 ///
 /// A Show holds at most 36 keyframes. Past that, the most alike neighboring marks merge until
 /// they fit, the last screen keeps its keyframe while marks leave it room, and the other keyframes
@@ -188,6 +191,15 @@ fn select_within(recording: &Recording, samples: &[Sample], most: usize) -> Opti
 
     let mut chosen = choose(candidates, &frames);
     chosen.sort_by_key(|candidate| frames.at(candidate.frame));
+    if let Some(first) = chosen.first() {
+        let anchor = first.anchor(&frames);
+        let opening = frames.opening_candidate(anchor);
+        if frames.novel(opening.frame, first.frame)
+            && align::said_before(anchor, &recording.narration)
+        {
+            chosen.insert(0, opening);
+        }
+    }
     if let Some(last) = chosen.last()
         && frames.novel(last.frame, frames.last())
     {
@@ -241,6 +253,8 @@ pub(crate) enum Basis {
     Cue { word: &'static str, snapped: bool },
     /// The screen midway through, when nothing else stood out.
     Middle,
+    /// The screen before the first keyframe's, which narration began over.
+    Opening,
 }
 
 impl Basis {
@@ -251,13 +265,18 @@ impl Basis {
             Self::SceneChange => Reason::SceneChange,
             Self::Cue { .. } => Reason::Cue,
             Self::Middle => Reason::Middle,
+            Self::Opening => Reason::Opening,
         }
     }
 
     fn marks(&self) -> Range<usize> {
         match self {
             Self::Mark { group, .. } => group.clone(),
-            Self::Click(_) | Self::SceneChange | Self::Cue { .. } | Self::Middle => 0..0,
+            Self::Click(_)
+            | Self::SceneChange
+            | Self::Cue { .. }
+            | Self::Middle
+            | Self::Opening => 0..0,
         }
     }
 
@@ -265,16 +284,18 @@ impl Basis {
         match *self {
             Self::Click(action) => Some(action),
             Self::Mark { during, .. } => during,
-            Self::SceneChange | Self::Cue { .. } | Self::Middle => None,
+            Self::SceneChange | Self::Cue { .. } | Self::Middle | Self::Opening => None,
         }
     }
 
     const fn tier(&self) -> Tier {
         match self {
             Self::Mark { .. } => Tier::Mark,
-            Self::Click(_) | Self::SceneChange | Self::Cue { snapped: true, .. } | Self::Middle => {
-                Tier::Ordinary
-            },
+            Self::Click(_)
+            | Self::SceneChange
+            | Self::Cue { snapped: true, .. }
+            | Self::Middle
+            | Self::Opening => Tier::Ordinary,
             Self::Cue { snapped: false, .. } => Tier::UnsnappedCue,
         }
     }
@@ -317,9 +338,14 @@ impl Candidate {
                 self.frame == candidate.frame
                     || (self.span.end().distance(candidate.span.end()) < FRAME_GAP && same_screen())
             },
-            (Basis::Click(_) | Basis::SceneChange | Basis::Cue { .. } | Basis::Middle, _) => {
-                self.near(frames, candidate.frame)
-            },
+            (
+                Basis::Click(_)
+                | Basis::SceneChange
+                | Basis::Cue { .. }
+                | Basis::Middle
+                | Basis::Opening,
+                _,
+            ) => self.near(frames, candidate.frame),
         }
     }
 
@@ -371,7 +397,7 @@ fn admits(chosen: &[Candidate], candidate: &Candidate, frames: &Frames<'_>) -> b
     };
     match candidate.basis {
         Basis::Mark { .. } => true,
-        Basis::Click(_) | Basis::Middle => !covered(),
+        Basis::Click(_) | Basis::Middle | Basis::Opening => !covered(),
         Basis::SceneChange | Basis::Cue { .. } => !covered() && novel(),
     }
 }

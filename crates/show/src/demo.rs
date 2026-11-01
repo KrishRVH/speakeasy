@@ -470,7 +470,7 @@ mod tests {
     use crate::typeface::tests::typeface;
 
     #[test]
-    fn the_demo_tells_its_story_in_four_keyframes() {
+    fn the_demo_tells_its_story_in_five_keyframes() {
         let bundle = Demo::new(typeface()).bundle((720, 450)).unwrap();
         let expected = bundle.manifest.clone();
         let directory = Path::new("shows").join("demo");
@@ -478,19 +478,20 @@ mod tests {
         assert_eq!(
             summary,
             format!(
-                "Screen recording (0:20, 4 keyframes): `{}`
+                "Screen recording (0:20, 5 keyframes): `{}`
 Before acting, open the contact sheet, then the full-size frames that matter: they show what the words leave out. Speech recognition can mishear a name; where the screen spells it differently, trust the screen. Cite frames as #N and marks by their circled numbers.
 Contact sheet: `{}`
-- #1 (0:02) [clicked] “Here's the settings window. When I open Appearance,”
-- #2 (0:09) [① circled, ② drew an arrow] “the theme picker is here, but look, this label runs under the save button.”
-- #3 (0:12) [③ pinned, clicked] “Now I click reduce motion and nothing happens.”
-- #4 (0:17) [dragged right] “Dragging the text size slider works, though.”
+- #1 (0:02) “Here's the settings window.”
+- #2 (0:02) [clicked] “When I open Appearance,”
+- #3 (0:09) [① circled, ② drew an arrow] “the theme picker is here, but look, this label runs under the save button.”
+- #4 (0:12) [③ pinned, clicked] “Now I click reduce motion and nothing happens.”
+- #5 (0:17) [dragged right] “Dragging the text size slider works, though.”
 Full-size keyframes: `{}` to `{}`. Timeline: `{}`.
 ",
                 directory.display(),
                 directory.join("contact-sheet.png").display(),
                 directory.join("frames").join("frame-01.png").display(),
-                directory.join("frames").join("frame-04.png").display(),
+                directory.join("frames").join("frame-05.png").display(),
                 directory.join("show.json").display()
             )
         );
@@ -516,14 +517,15 @@ Full-size keyframes: `{}` to `{}`. Timeline: `{}`.
                 "frames/frame-02.png",
                 "frames/frame-03.png",
                 "frames/frame-04.png",
+                "frames/frame-05.png",
                 "summary.md",
                 "show.json"
             ]
         );
-        assert_eq!(files[5].contents, summary.as_bytes());
+        assert_eq!(files[6].contents, summary.as_bytes());
         let sheet = Image::decode_png(&files[0].contents);
         assert!(sheet.width().max(sheet.height()) <= 1_600);
-        let manifest: crate::Manifest = crate::Manifest::parse(&files[6].contents).unwrap();
+        let manifest: crate::Manifest = crate::Manifest::parse(&files[7].contents).unwrap();
         assert_eq!(manifest, expected);
     }
 }

@@ -136,14 +136,15 @@ a video-loss notice. A failed copy of surviving video keeps the checkpoint for r
 On Windows, the summary for that contact sheet reads as follows:
 
 ```text
-Screen recording (0:20, 4 keyframes): `…\speakeasy\shows\20261020T143205Z`
+Screen recording (0:20, 5 keyframes): `…\speakeasy\shows\20261020T143205Z`
 Before acting, open the contact sheet, then the full-size frames that matter: they show what the words leave out. Speech recognition can mishear a name; where the screen spells it differently, trust the screen. Cite frames as #N and marks by their circled numbers.
 Contact sheet: `…\speakeasy\shows\20261020T143205Z\contact-sheet.png`
-- #1 (0:02) [clicked] “Here's the settings window. When I open Appearance,”
-- #2 (0:09) [① circled, ② drew an arrow] “the theme picker is here, but look, this label runs under the save button.”
-- #3 (0:12) [③ pinned, clicked] “Now I click reduce motion and nothing happens.”
-- #4 (0:17) [dragged right] “Dragging the text size slider works, though.”
-Full-size keyframes: `…\speakeasy\shows\20261020T143205Z\frames\frame-01.png` to `…\speakeasy\shows\20261020T143205Z\frames\frame-04.png`. Timeline: `…\speakeasy\shows\20261020T143205Z\show.json`.
+- #1 (0:02) “Here's the settings window.”
+- #2 (0:02) [clicked] “When I open Appearance,”
+- #3 (0:09) [① circled, ② drew an arrow] “the theme picker is here, but look, this label runs under the save button.”
+- #4 (0:12) [③ pinned, clicked] “Now I click reduce motion and nothing happens.”
+- #5 (0:17) [dragged right] “Dragging the text size slider works, though.”
+Full-size keyframes: `…\speakeasy\shows\20261020T143205Z\frames\frame-01.png` to `…\speakeasy\shows\20261020T143205Z\frames\frame-05.png`. Timeline: `…\speakeasy\shows\20261020T143205Z\show.json`.
 ```
 
 A Show records only what you name. With no window to record under the pointer, or if you finish

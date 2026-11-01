@@ -497,6 +497,55 @@ fn a_spoken_cue_never_waits_for_a_screen_that_keeps_changing() {
 }
 
 #[test]
+fn narration_before_the_first_change_keeps_the_screen_it_describes() {
+    // "Here's the list." over one screen, then a click opens another.
+    let opened = samples(250, 6_000, |at| if at < 3_250 { 40 } else { 220 });
+    let introduced = words(&[
+        (200, "Here's"),
+        (400, "the"),
+        (600, "list."),
+        (2_800, "When"),
+        (3_000, "I"),
+        (3_200, "open"),
+        (3_400, "it."),
+    ]);
+    let clicked = |narration| recording(Vec::new(), vec![click(3_000)], narration);
+    let shown = select(&clicked(introduced.clone()), &opened).unwrap();
+    assert_eq!(times(&shown), [2_750, 3_250]);
+    assert_eq!(shown.keyframes[0].reason, Reason::Opening);
+    assert_eq!(
+        shown.keyframes[0].event,
+        "the screen before the first change"
+    );
+    assert_eq!(
+        said(&shown),
+        [Some("Here's the list."), Some("When I open it.")]
+    );
+
+    // Not when the first keyframe shows that screen still, nor when nothing timed was said
+    // before it.
+    let still = samples(250, 6_000, |_| 40);
+    assert_eq!(
+        times(&select(&clicked(introduced), &still).unwrap()),
+        [3_250]
+    );
+    for untold in [
+        Narration::default(),
+        Narration::Text("Here's the list.".to_owned()),
+    ] {
+        assert_eq!(times(&select(&clicked(untold), &opened).unwrap()), [3_250]);
+    }
+
+    // Nor when what was said before it belongs to a clause still under way, which stays whole.
+    let ongoing = words(&[(0, "So"), (300, "I"), (600, "open"), (900, "it.")]);
+    let changed = samples(250, 6_000, |at| if at < 750 { 40 } else { 220 });
+    let early = recording(Vec::new(), vec![click(600)], ongoing);
+    let shown = select(&early, &changed).unwrap();
+    assert_eq!(times(&shown), [750]);
+    assert_eq!(said(&shown), [Some("So I open it.")]);
+}
+
+#[test]
 fn groups_close_at_a_click_or_too_much_ink() {
     let still = samples(250, 10_000, |_| 128);
     let shown = select(
