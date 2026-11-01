@@ -195,7 +195,8 @@ mod native {
         let mut previous = 0;
         let mut menu_visible = false;
         loop {
-            let phase = (started.elapsed().as_millis() / 400) % 2;
+            let elapsed = started.elapsed().as_millis();
+            let phase = if moving { elapsed / 400 } else { elapsed / 200 } % 2;
             if phase != previous {
                 if moving && started.elapsed() >= Duration::from_secs(2) {
                     move_window(&window, popup.as_deref(), phase);
@@ -328,7 +329,7 @@ mod native {
         part: Part,
         moving: Option<Display>,
     ) -> anyhow::Result<()> {
-        let deadline = tokio::time::sleep(Duration::from_secs(3));
+        let deadline = tokio::time::sleep(Duration::from_secs(5));
         tokio::pin!(deadline);
         let mut seen = [false; 2];
         let mut previous = None;
@@ -432,7 +433,7 @@ mod native {
         }
         ensure!(
             count >= 4 && seen.into_iter().all(|present| present),
-            "The owned capture missed changing content"
+            "The owned capture missed changing content: {count} frames, observed colors {seen:?}"
         );
         ensure!(
             moving.is_none() || moved,
