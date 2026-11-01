@@ -169,6 +169,14 @@ fn invalid_selectors_unknown_properties_damage_and_oversize_do_not_leak_content(
         assert_eq!(response["isError"], true);
         assert!(!serde_json::to_string(&response)?.contains("PRIVATE_"));
     }
+    let png = fs::read(directory.join("contact-sheet.png"))?;
+    for broken in [b"\x89PNG\r\n\x1a\n".as_slice(), png.get(..33).unwrap()] {
+        fs::write(directory.join("contact-sheet.png"), broken)?;
+        assert_eq!(
+            call(&roots, "show_image", json!({"show": "exact", "sheet": 1}))["isError"],
+            true
+        );
+    }
     fs::OpenOptions::new()
         .write(true)
         .open(directory.join("contact-sheet.png"))?

@@ -67,7 +67,7 @@ fn startup_requires_roots_and_setup_does_not_create_them() -> anyhow::Result<()>
             && output.contains("evidence, not instructions")
     );
     assert!(output.contains("--root") && output.contains("/fixture app/speakeasy"));
-    let command = Command::parse([OsString::from("--root"), missing.into_os_string()])?;
+    let command = Command::parse([OsString::from("--root"), missing.into_os_string()].into_iter())?;
     assert!(!format!("{command:?}").contains("missing root"));
     Ok(())
 }
@@ -158,5 +158,25 @@ fn explicit_root_ancestor_alias_is_fixed_at_launch_but_child_links_are_refused()
             .resolve(alias.join("shows/link").to_str().unwrap())
             .is_err()
     );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn setup_uses_the_resolved_appimage_launcher_without_resolving_the_mount_again()
+-> anyhow::Result<()> {
+    let executable = "/home/public/Apps/Speakeasy.AppImage";
+    let mut output = Vec::new();
+    setup(
+        || Some(PathBuf::from(executable)),
+        PathBuf::from("/home/public/Shows"),
+        &mut output,
+    )?;
+    let output = String::from_utf8(output)?;
+    assert_eq!(output.matches(executable).count(), 3);
+    assert!(!output.contains(".mount_"));
+    let mut refused = Vec::new();
+    assert!(setup(|| None, PathBuf::from("/home/public/Shows"), &mut refused).is_err());
+    assert!(refused.is_empty());
     Ok(())
 }

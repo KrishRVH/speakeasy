@@ -75,7 +75,11 @@ impl Command {
     pub(crate) fn write(self, out: &mut impl io::Write) -> anyhow::Result<()> {
         match self {
             Self::Help => writeln!(out, "{HELP}")?,
-            Self::Setup => setup(out)?,
+            Self::Setup => setup(
+                crate::paths::command,
+                super::store::directory().context("Cannot resolve the default Shows folder")?,
+                out,
+            )?,
             Self::Serve { roots } => {
                 let roots = Roots::open(roots).map_err(anyhow::Error::msg)?;
                 protocol::serve(&roots, &mut io::stdin().lock(), out)?;
@@ -85,14 +89,14 @@ impl Command {
     }
 }
 
-fn setup(out: &mut impl io::Write) -> anyhow::Result<()> {
-    let executable = std::env::current_exe().context("Cannot resolve the Speakeasy executable")?;
-    #[cfg(windows)]
-    let executable = executable.with_file_name("speakeasy-cli.exe");
-    let executable = executable
-        .canonicalize()
-        .context("Cannot resolve the Speakeasy console executable")?;
-    let root = super::store::directory().context("Cannot resolve the default Shows folder")?;
+fn setup(
+    resolve_command: impl FnOnce() -> Option<PathBuf>,
+    root: PathBuf,
+    out: &mut impl io::Write,
+) -> anyhow::Result<()> {
+    let executable = resolve_command().context(
+        "Cannot resolve a persistent Speakeasy launcher. Install or move Speakeasy out of its temporary location, then try setup again.",
+    )?;
     let executable = executable
         .to_str()
         .context("The executable path must be valid UTF-8 for MCP client setup")?;

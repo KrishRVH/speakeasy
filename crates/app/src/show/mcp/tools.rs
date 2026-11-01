@@ -216,11 +216,19 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
         let query = query.ok_or("A source image needs a time, mark or phrase")?;
         source_image(&directory, manifest, &query)?
     };
-    if !u64::try_from(png.len()).is_ok_and(|length| length <= IMAGE_LIMIT)
-        || !png.starts_with(b"\x89PNG\r\n\x1a\n")
-    {
+    if !u64::try_from(png.len()).is_ok_and(|length| length <= IMAGE_LIMIT) {
         return Err("The selected image is not a PNG of at most 8 MiB".to_owned());
     }
+    let mut reader =
+        image::ImageReader::with_format(std::io::Cursor::new(&png), image::ImageFormat::Png);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(4096);
+    limits.max_image_height = Some(4096);
+    limits.max_alloc = Some(64 << 20);
+    reader.limits(limits);
+    reader.decode().map_err(
+        |_private| "The selected PNG is damaged or exceeds the image dimensions or decoding limit",
+    )?;
     Ok(vec![
         text(&metadata)?,
         json!({"type": "image", "data": STANDARD.encode(png), "mimeType": "image/png"}),
